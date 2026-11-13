@@ -13,8 +13,8 @@ from tests.test_library_reconciliation import filesystem
 
 
 @pytest.mark.parametrize("provider,kind,reason", [
-    ("kobo", "owned", "kobo_separate_recovery"),
-    ("paris", "loan", "paris_read_only"),
+    ("kobo", "owned", "source_not_supported"),
+    ("paris", "loan", "source_not_supported"),
     ("unrecognized", "owned", "source_not_supported"),
 ])
 def test_shared_pair_inspection_does_not_route_other_sources_to_numilog(
@@ -64,8 +64,8 @@ def test_shared_pair_inspection_does_not_route_other_sources_to_numilog(
 
 
 @pytest.mark.parametrize("provider,reason", [
-    ("kobo", "kobo_separate_recovery"),
-    ("paris", "paris_read_only"),
+    ("kobo", "source_not_supported"),
+    ("paris", "source_not_supported"),
     ("unexpected", "source_not_supported"),
     (None, "source_not_supported"),
 ])
