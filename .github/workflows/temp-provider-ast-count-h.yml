@@ -1,0 +1,22 @@
+name: TEMP provider AST count h
+on:
+  pull_request:
+    paths:
+      - .github/workflows/temp-provider-ast-count-h.yml
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          python3 scripts/ci_provider_core_coupling_report.py --json > /tmp/coupling.json
+          python3 -m scripts.ci_provider_ast_function_worklist --json > /tmp/worklist.json
+          python3 - <<'PY'
+          import json, subprocess
+          c=json.load(open('/tmp/coupling.json')); w=json.load(open('/tmp/worklist.json'))
+          print('AST_RESULT_BEGIN')
+          print(json.dumps({'sha':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'total':w['unique_lines'],'by_group':w['unique_lines_by_responsibility'],'by_provider':w['overlapping_occurrences_by_provider'],'files':w['files'],'functions':w['functions'],'parse_errors':w['parse_errors'],'dedicated_loc':c['historical']['dedicated_by_provider'],'named_modules':c['vendor_named_modules_outside_legacy_dedicated_scope']},ensure_ascii=False,sort_keys=True))
+          print('AST_RESULT_END')
+          PY
