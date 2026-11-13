@@ -138,3 +138,28 @@ def test_invalid_declaration_store_does_not_invent_displayed_links(rig):
         assert session.page(state="rights_without_verified_file").total == 1
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("rig", ["paris"], indirect=True)
+def test_local_declaration_scope_requires_active_exact_loan_for_any_provider(rig):
+    service, _book, root, right, _options = rig
+    current = _inspect(service, root)
+    try:
+        assert len(current._declared_right_scopes) == 1
+    finally:
+        current.close()
+
+    for mutation in (
+        {"state": "expired"},
+        {"loan_id": ""},
+        {"loan_id": None},
+        {"loan_id": 42},
+    ):
+        service.storage.entitlement_put({**right, **mutation})
+        session = _inspect(service, root)
+        try:
+            assert not session._declared_right_scopes
+            assert session.page(state="rights_without_verified_file").total >= 1
+        finally:
+            session.close()
+        service.storage.entitlement_put(right)
