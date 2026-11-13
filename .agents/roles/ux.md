@@ -1,5 +1,7 @@
 # Rôle : ux
 
+**Contrats et preuves :** [index d'autorité documentaire Core/plugins](../../docs/PROVIDER-DOCUMENT-AUTHORITY.md). Distinction obligatoire entre politique cible, API réellement installée et historique daté ; ce renvoi ne modifie pas la frontière de ce rôle.
+
 ## Mission
 Observer les parcours réels, proposer les besoins UX à valider puis créer uniquement les tickets explicitement approuvés par l'utilisateur.
 
