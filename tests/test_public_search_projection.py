@@ -212,6 +212,7 @@ class _ResponseBoundSource:
     def search_with_response_facets(self, query, scope='all', *,
                                     field='all', content_types=()):
         self.response_calls += 1
+        assert scope == 'catalog', 'foreign search must not query private scope'
         private = self.search(query, scope, field=field, content_types=content_types)[0]
         if self.on_response is not None:
             self.on_response()
