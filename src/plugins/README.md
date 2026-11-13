@@ -1,5 +1,7 @@
 # Cifereca plugins
 
+**Avant d'implémenter un provider :** [index d'autorité documentaire](../../docs/PROVIDER-DOCUMENT-AUTHORITY.md), puis [guide fournisseur commun](../../docs/PROVIDER-DEVELOPMENT.md). L'API `cifereca.plugin_api` de la version installée prime sur les exemples et mémos historiques.
+
 Les sources des plugins fonctionnels sont **actuellement** versionnées sous `src/plugins/<plugin>/`.
 
 Chaque répertoire contient son `cifereca-plugin.json`, son code Python, ses tests et, lorsqu'ils existent, ses documents propres.

@@ -1,5 +1,7 @@
 # Profils de rôles agents
 
+**Référence de contrats :** [index normatif Core/plugins](../../docs/PROVIDER-DOCUMENT-AUTHORITY.md). Distinguer le modèle cible, les signatures publiques réellement installées et les notes historiques datées.
+
 > **Règle impérative commune Core/Plugins :** [skill journalisation](../skills/cifereca-logging/SKILL.md) et [contrat canonique](../../docs/LOGGING-CONTRACT.md). Tout journaliser tel qu'émis, aucun masquage hors IHM, uniquement login et mot de passe pseudonymisés à l'affichage. Les consignes historiques de listes blanches ne prévalent pas.
 
 

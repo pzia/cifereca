@@ -1,5 +1,7 @@
 # CIFERECA — architecture et rationalisation
 
+**Point d'entrée normatif :** [index des contrats Core / providers](docs/PROVIDER-DOCUMENT-AUTHORITY.md), avec distinction entre modèle cible, API réellement installée et notes historiques. Les anciens chapitres de livraison ci-dessous sont conservés comme archives datées.
+
 **Guide opérationnel pour développer un nouveau provider : [docs/PROVIDER-DEVELOPMENT.md](docs/PROVIDER-DEVELOPMENT.md)** — catégories, frontières Core, catalogue C / inventaire A / livraison B, multi-tenants, isolation des credentials, recettes et inclusion dans les exports Browser Recorder.
 
 **Contrat canonique et parcours nominal : [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — décision du propriétaire [#3171](https://github.com/pzia/cifereca/issues/3171) des 28 et 30 octobre 2026.**

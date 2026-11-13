@@ -1,5 +1,7 @@
 # Rôle : cicd
 
+**Contrats et preuves :** [index d'autorité documentaire Core/plugins](../../docs/PROVIDER-DOCUMENT-AUTHORITY.md). Distinction obligatoire entre politique cible, API réellement installée et historique daté ; ce renvoi ne modifie pas la frontière de ce rôle.
+
 ## Mission
 Posséder la CI/CD, les quality gates, le packaging, les releases, la **résolution technique des conflits de PR** et les merges.
 
