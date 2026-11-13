@@ -27,14 +27,14 @@ def _imports(source: str, *, is_root_test: bool) -> tuple[list[tuple[str, str, i
     tree = ast.parse(source)
     edges: set[tuple[str, str, int]] = set()
     unknown: set[int] = set()
-    aliases = set(LOADERS)
+    aliases = {name: name for name in LOADERS}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module in {
             "importlib", "importlib.util", "importlib.machinery", "builtins",
         }:
             for alias in node.names:
                 if alias.name in LOADERS:
-                    aliases.add(alias.asname or alias.name)
+                    aliases[alias.asname or alias.name] = alias.name
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -82,7 +82,7 @@ def _imports(source: str, *, is_root_test: bool) -> tuple[list[tuple[str, str, i
                 continue
             # Import module is the first argument; file-based loaders carry
             # the filesystem module location in their second argument.
-            arg_index = 1 if name in {"spec_from_file_location", "SourceFileLoader"} or (
+            arg_index = 1 if aliases[name] in {"spec_from_file_location", "SourceFileLoader"} or (
                 isinstance(func, ast.Attribute) and func.attr in {
                     "spec_from_file_location", "SourceFileLoader",
                 }
