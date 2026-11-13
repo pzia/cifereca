@@ -33,16 +33,28 @@ class _Metadata:
         ]
 
 
-def _attest_public_author(session, *, author="Alice"):
-    """Modify only pre-existing synthetic public notices of the same response.
+def _attest_public_author(session, *, service, author="Alice"):
+    """Adapt an explicitly public synthetic parser, preserving owner search.
 
-    Never promote a private row into an attested public notice. The producer
-    must already have furnished an explicit source-bound public projection.
+    The owning identity still receives its private search response. Only a
+    different identity uses the independent, public-response notice parser.
     """
+    from cifereca.plugin_api import ProviderSearchResponse
     original = session.search_with_response_facets
 
-    def response(*args, **kwargs):
-        envelope = original(*args, **kwargs)
+    def response(query, scope="all", *, field="all", content_types=()):
+        active_id = getattr(getattr(service, "current_identity", None),
+                            "identity_id", None)
+        owner = service.storage.identity_for_connection(
+            session.provider_id, session.credential_id,
+        )
+        if type(active_id) is str and active_id and owner == active_id:
+            return ProviderSearchResponse(session.search(
+                query, scope, field=field, content_types=content_types,
+            ))
+        envelope = original(
+            query, scope, field=field, content_types=content_types,
+        )
         return replace(envelope, public_notices=tuple(
             PublicSearchNotice(replace(notice.result, author=author))
             for notice in envelope.public_notices
@@ -85,7 +97,7 @@ def test_shared_bibliography_survives_recommendations_ranking_without_b_rights(
         ]
 
     session.search = matched_search
-    _attest_public_author(session)
+    _attest_public_author(session, service=service)
 
     def shared_only(rows):
         assert rows
@@ -178,7 +190,7 @@ def test_recommendations_never_rank_foreign_catalogue_after_provider_revocation(
         ]
 
     session.search = matching_search
-    _attest_public_author(session)
+    _attest_public_author(session, service=service)
 
     def compute():
         partials = []
