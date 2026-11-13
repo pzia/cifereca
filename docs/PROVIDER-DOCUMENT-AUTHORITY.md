@@ -13,7 +13,7 @@ Cet index est **le point d'entrée de classement**, pas une nouvelle ABI. L'éta
 | **Contrat de livraison du kit** | [Guide copié dans Browser Recorder](../src/plugins/browser-recorder/PROVIDER-DEVELOPMENT.md), [générateur](../src/plugins/browser-recorder/browser_recorder_devkit.py) | La copie du guide doit rester identique octet pour octet ; les contrats embarqués décrivent le Core réellement installé |
 | **Contrat spécialisé — sécurité/diagnostics** | [LOGGING-CONTRACT.md](LOGGING-CONTRACT.md), [DIAGNOSTICS_CANONICAL_JOURNAL.md](DIAGNOSTICS_CANONICAL_JOURNAL.md) | Journaux bruts et exports volontaires ; ne remplacent pas les gardes de credentials, de droits ni de publication |
 | **Preuves fournisseur — non transversales** | [RIGHTS-OBSERVATION-CONFORMANCE.md](../src/plugins/RIGHTS-OBSERVATION-CONFORMANCE.md), [QUALIFICATION BnF](../src/plugins/provider-bnf-pret/QUALIFICATION.md) | Couvertures de lecture, routes et limites **observées** pour le fournisseur, jamais politiques globales |
-| **Historique / preuve datée** | [CORE-P0-3196-LEGACY](CORE-P0-3196-LEGACY-KOBO-CONTRACT.md) (si présent), `CORE-P0-3196-LEGACY-*`, `KOBO-LOCAL-RECONCILIATION.md`, `PLUGIN-P1-3252-RIGHTS-OBSERVATION.md`, `HANDOFF-*.md` | Contexte et audits passés uniquement ; **aucune injonction normative active** sans révalidation contre les contrats installés |
+| **Historique / preuve datée** | `CORE-P0-3196-LEGACY-*`, `KOBO-LOCAL-RECONCILIATION.md`, `PLUGIN-P1-3252-RIGHTS-OBSERVATION.md`, `HANDOFF-*.md` | Contexte et audits passés uniquement ; **aucune injonction normative active** sans révalidation contre les contrats installés |
 
 ## Invariants d'interprétation
 
