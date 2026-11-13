@@ -135,7 +135,7 @@ def test_opening_dashboard_resolves_bound_adept_profile_per_identity(tmp_path, m
         ))
         monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
         result = service.opening_sync()
-        by_identity = {row["identity_id"]: row["detail"] for row in result["identities"]}
+        by_identity = {row["identity_id"]: row for row in result["identities"]}
         assert calls == [("default", "profile-A"), ("alex", "profile-B")]
         assert by_identity["default"]["adept_profile_id"] == "profile-A"
         assert by_identity["default"]["adept_profile_name"] == "safe-default"
@@ -156,7 +156,7 @@ def test_opening_dashboard_missing_scoped_profile_never_uses_other_identity(tmp_
         ))
         monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
         result = service.opening_sync()
-        by_identity = {row["identity_id"]: row["detail"] for row in result["identities"]}
+        by_identity = {row["identity_id"]: row for row in result["identities"]}
         assert by_identity["default"]["adept_attention"] == "profile_missing"
         assert by_identity["default"]["adept_profile_id"] == "profile-A"
         assert "adept_provisioning" not in by_identity["alex"]
