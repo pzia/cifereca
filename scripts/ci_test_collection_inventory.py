@@ -68,6 +68,28 @@ def validate_manifest(value: object) -> dict[str, dict[str, str]]:
     return results
 
 
+def load_classifications(
+    manifest: Path, *, fragments: Path | None = None,
+) -> dict[str, dict[str, str]]:
+    """Read independent manifests and reject overlapping file ownership."""
+    sources = [manifest]
+    if fragments is not None:
+        sources.extend(sorted(fragments.glob("*.json")))
+    merged: dict[str, dict[str, str]] = {}
+    origins: dict[str, Path] = {}
+    for source in sources:
+        try:
+            entries = validate_manifest(json.loads(source.read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError) as exc:
+            raise ValueError(f"{source}: {exc}") from exc
+        for path, entry in entries.items():
+            if path in merged:
+                raise ValueError(f"duplicate classification for {path}: {origins[path]} and {source}")
+            merged[path] = entry
+            origins[path] = source
+    return merged
+
+
 def classify(nodeid: str, mapping: dict[str, dict[str, str]]) -> dict[str, str]:
     path = _item_path(nodeid)
     entry = mapping.get(path)
@@ -175,7 +197,8 @@ def write_verified_collection(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", required=True, help="tests or src/plugins/<package>/tests")
-    parser.add_argument("--manifest", type=Path, default=MANIFEST)
+    parser.add_argument("--manifest", type=Path,
+                        help="Use only this manifest instead of the repository manifests.")
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args(argv)
     if not _SUITE_RE.fullmatch(arguments.suite):
@@ -183,7 +206,16 @@ def main(argv: list[str] | None = None) -> int:
     suite_dir = ROOT / arguments.suite
     if not suite_dir.is_dir() or suite_dir.is_symlink():
         parser.error("suite must be an existing non-symlink test directory")
-    mapping = validate_manifest(json.loads(arguments.manifest.read_text(encoding="utf-8")))
+    try:
+        mapping = (
+            load_classifications(arguments.manifest)
+            if arguments.manifest is not None
+            else load_classifications(
+                MANIFEST, fragments=MANIFEST.with_suffix(".d"),
+            )
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     import pytest  # no pytest import until explicitly invoked
     collector = CollectionCapture()
     result = pytest.main(["--collect-only", "-q", arguments.suite], plugins=[collector])
