@@ -249,34 +249,32 @@ def _run_observed_canonical_convergence(
         legacy_source_auto_policy, legacy_source_auto_current,
         legacy_source_auto_in_transaction,
     )
-    canonical_on = False
+    observed = admitted_snapshots[0]
+    # One authoritative policy snapshot decides both the canonical branch
+    # and whether the historical source-wide loan switch may be consulted.
+    # A later grant/revocation is still fenced by revision checks before GET
+    # and inside the final SQLite publication transaction.
+    source_policy = read_policy(self.storage, observed.scope)
+    canonical_on = source_policy.mode == "on"
     legacy_revision = None
     legacy_keys = frozenset()
-    if type(admitted_snapshots) is list and len(admitted_snapshots) == 1:
-        observed = admitted_snapshots[0]
-        policy = read_policy(self.storage, observed.scope)
-        canonical_on = policy.mode == "on"
-        # Existing BnF source-wide ON is a user consent, not a loan right.
-        # Promote only the ephemeral exact keys from THIS admitted provider
-        # snapshot; never consult/persist old entitlement or file history.
-        # An explicitly configured generic policy always overrides legacy.
-        if not policy.configured:
-            from .source_convergence import SourceKey
-            keys = frozenset(
-                SourceKey(observed.scope, row.edition_id, row.right_id,
-                          row.kind, observed.branch)
-                for row in observed.rights
-                if row.provider_attested is True and row.kind == "loan"
+    if not source_policy.configured:
+        from .source_convergence import SourceKey
+        keys = frozenset(
+            SourceKey(observed.scope, row.edition_id, row.right_id,
+                      row.kind, observed.branch)
+            for row in observed.rights
+            if row.provider_attested is True and row.kind == "loan"
+        )
+        if keys:
+            mode, revision = legacy_source_auto_policy(
+                self.storage, observed.scope, "loan",
             )
-            if keys and all(key.kind == "loan" for key in keys):
-                mode, revision = legacy_source_auto_policy(
-                    self.storage, observed.scope, "loan",
-                )
-                if mode == "on" and type(revision) is str:
-                    legacy_revision = revision
-                    legacy_keys = keys
+            if mode == "on" and type(revision) is str:
+                legacy_revision = revision
+                legacy_keys = keys
     legacy_on = legacy_revision is not None
-    if (delivery is None and admitted_snapshots
+    if (delivery is None
             and (canonical_on or legacy_on or callable(consent_reader))):
         from inspect import getattr_static
         try:
@@ -299,7 +297,7 @@ def _run_observed_canonical_convergence(
                 # Plugins receive it only via the explicit guarded candidate ABI.
                 consent_still_current=lambda: current_consent(key),
             )
-    if (admitted_snapshots and callable(delivery)
+    if (callable(delivery)
             and (canonical_on or legacy_on or callable(consent_reader))):
         from .convergence_execution import execute_admitted_convergence
         from .source_convergence import SourceKey
@@ -313,8 +311,6 @@ def _run_observed_canonical_convergence(
         # An explicitly configured source-wide policy adds a second,
         # independently revocable generation fence. Legacy unset sources
         # retain their existing exact-right permission checks.
-        from .source_sync_consent import read_policy
-        source_policy = read_policy(self.storage, admitted_snapshots[0].scope)
         if source_policy.configured and source_policy.mode != "on":
             # A revoked/invalid whole-source policy withholds every observed
             # resource. Never invent one pending item for an empty inventory.
