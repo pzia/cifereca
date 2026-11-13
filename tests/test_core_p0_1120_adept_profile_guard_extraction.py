@@ -34,6 +34,9 @@ def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
         _paris_adept_identity_for_loan=borrower,
         resolve_adept_profile_for_identity=resolver,
         kobo_profiles=provider_profiles,
+        adept_profiles_for_identity=lambda identity_id, *, profile_name: (
+            provider_profiles() if identity_id == "identity-1" and profile_name == "reader-a" else []
+        ),
         _adept_profile_row=lambda name, values:
             next((row for row in values if row.get("name") == name), None),
     )
@@ -236,3 +239,30 @@ def test_profile_resolution_untrusted_code_fails_closed_without_execution_or_ret
     assert private not in repr(outcome) + repr(store.call_args.args[0])
     profiles.assert_not_called()
     resolver.assert_called_once_with("identity-1")
+
+
+def test_scoped_profile_lookup_is_not_an_implicit_ui_selection():
+    """B contract needs explicit identity and requested ADEPT profile."""
+    from cifereca.services import LibraryService
+    rows = [
+        {"name": "reader-a", "profile_id": "stable-a"},
+        {"name": "reader-b", "profile_id": "stable-b"},
+    ]
+    calls = []
+    owner = NS(
+        current_identity=NS(identity_id="other-ui-identity"),
+        identity_by_id=lambda identity: NS(identity_id=identity) if identity == "identity-1" else None,
+        kobo_profiles=lambda: calls.append("runtime") or rows,
+        _adept_profile_row=lambda name, values: next(
+            (row for row in values if row["name"] == name), None
+        ),
+    )
+    lookup = lambda identity, profile: LibraryService.adept_profiles_for_identity(
+        owner, identity, profile_name=profile,
+    )
+    assert lookup("identity-1", "reader-a") == [rows[0]]
+    assert lookup("identity-1", "reader-b") == [rows[1]]
+    assert lookup("unknown", "reader-a") == []
+    assert lookup("", "reader-a") == []
+    assert lookup("identity-1", "") == []
+    assert calls == ["runtime", "runtime"]
