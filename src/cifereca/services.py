@@ -81,7 +81,9 @@ def _loan_cache_key(account: Account) -> str:
     return "loans.v2:" + hashlib.sha256(serialized.encode('utf-8')).hexdigest()
 
 
-def _cached_loans_for_exact_account(value: object, account: Account) -> list[Loan] | None:
+def _cached_loans_for_exact_account(
+    value: object, account: Account, *, descriptor=None,
+) -> list[Loan] | None:
     """Treat cached rows as untrusted: never rewrite their source/identity.
 
     A cache hit is only usable if every row still identifies the same
@@ -90,9 +92,10 @@ def _cached_loans_for_exact_account(value: object, account: Account) -> list[Loa
     """
     if type(value) is not list or len(value) > 10_000:
         return None
-    expected_accounts = {account.unique_id}
-    if account.provider_id == 'paris' and account.unique_id == '':
-        expected_accounts.add('primary')
+    from .plugin_api.loan_scope import loan_matches_account
+    # Exact account IDs need no alias convention. A different observed ID
+    # requires an attestation from this installed provider descriptor, not
+    # an implicit Paris/default-primary fallback encoded in Core.
     loans = []
     for value_row in value:
         if type(value_row) is not dict:
@@ -109,7 +112,8 @@ def _cached_loans_for_exact_account(value: object, account: Account) -> list[Loa
             and type(row.source_credential) is str
             and row.source_credential == account.credential_id
             and type(row.source_account_id) is str
-            and row.source_account_id in expected_accounts
+            and (row.source_account_id == account.unique_id
+                 or loan_matches_account(row, account, descriptor))
             and type(row.identity_id) is str
             and row.identity_id == account.identity_id
             and type(row.medium) is str
@@ -1238,7 +1242,17 @@ class LibraryService:
         ttl = int(self.config.get("cache.dashboard_seconds", 300))
         if not force:
             cached = self.storage.cache_get("account", key)
-            rows = _cached_loans_for_exact_account(cached, account)
+            # A cache is never evidence of a supplier primary-account alias.
+            # Inspect only the registered session's static descriptor; do not
+            # reconnect, invoke plugin properties or issue a provider GET.
+            registered = self._sessions.get(
+                self._session_key(account.provider_id, account.credential_id),
+            )
+            descriptor = (inspect.getattr_static(registered, "descriptor", None)
+                          if registered is not None else None)
+            rows = _cached_loans_for_exact_account(
+                cached, account, descriptor=descriptor,
+            )
             if rows is not None:
                 self._record_loan_statistics(account, rows, from_cache=True)
                 return rows
@@ -1308,17 +1322,16 @@ class LibraryService:
         # Never silently rewrite a supplier-provided different identity into
         # the selected account. Validate the entire batch before mutation,
         # caching or entitlement persistence; provider exceptions remain closed.
+        from .plugin_api.loan_scope import loan_matches_account
+        descriptor = inspect.getattr_static(session, "descriptor", None)
         if type(rows) is not list or any(
             type(row) is not Loan
             or (row.identity_id is not None and row.identity_id != account.identity_id)
             or row.source_provider != account.provider_id
             or row.source_credential != account.credential_id
             or (row.source_account_id is not None
-                and row.source_account_id not in (
-                    account.unique_id,
-                    "primary" if account.provider_id == "paris" and not account.unique_id
-                    else account.unique_id,
-                ))
+                and row.source_account_id != account.unique_id
+                and not loan_matches_account(row, account, descriptor))
             for row in rows
         ):
             raise ProviderConfigurationError("Inventaire de prêts : périmètre de compte non conforme")
