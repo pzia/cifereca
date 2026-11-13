@@ -1,3 +1,5 @@
+> **Retiré — #5048 (13/11/2026) :** la chaîne autonome de diagnostic Paris/ADEPT (`adept_origin_audit`, `adept_canonical_origin_review`, `adept_transaction_reconciliation`, `adept_resolution_preview`, `adept_resolution_checkpoint`, `adept_resolution_snapshot`) a été supprimée après le retrait des commandes CLI qui la rendaient accessible. Aucun parcours Core installé ne l'appelait. Les vérifications d'emprunteur, l'inventaire ADEPT et les contrôles actifs de retour sont conservés dans leurs modules distincts. Cette page est une archive historique, non une description d'API disponible.
+
 > **Historique — #5842 (13/11/2026) :** les commandes `cifereca-cli paris-adept ...` décrites ci-dessous ont été retirées et ne sont plus exécutables. Les mécanismes Core/SQLite de preuves ADEPT restent disponibles aux traitements autorisés. Un **diagnostic ADEPT multicomptes** générique et hors réseau est prévu en P2 #5841. Ne pas réintroduire ces commandes comme solution de repli.
 
 # P1 #976 — empreinte d'observation locale avant validation ADEPT
