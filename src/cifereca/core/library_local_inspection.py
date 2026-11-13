@@ -469,14 +469,11 @@ class LocalInspection:
         # Core session only; never serialised or exposed through a plugin.
         self._manual_service = service
         self._manual_identity = identity_id
-        self._manual_pending = None
         # Private mapping from case keys observed in THIS scoped audit. The
         # UI never supplies raw Placement IDs or filesystem paths for repair.
         self._missing_case_placements = {}
         self._missing_operator = None
         self._missing_pending = None
-        self._manual_undo = None
-        self._manual_undo_pending = None
         # Optional, one-time private cache guard installed only on a verified
         # handoff. A confirmed Core commit may advance its SQLite stamp ONCE
         # so the same-session undo remains reachable.
@@ -1271,9 +1268,6 @@ class LocalInspection:
         self._declared_right_scopes.clear()
         self._declared_pending = None
         self._declared_last = None
-        self._manual_pending = None
-        self._manual_undo = None
-        self._manual_undo_pending = None
         self._accept_own_core_commit = None
         self._manual_preview_generation += 1
         self._manual_service = None
@@ -1564,8 +1558,6 @@ class LocalInspection:
         """A changed selection invalidates pending and in-flight previews."""
         self.cancel_missing_repair()
         self._manual_preview_generation += 1
-        self._manual_pending = None
-        self._manual_undo_pending = None
         self._declared_pending = None
         self._history_withdraw_pending = None
 
@@ -1748,30 +1740,17 @@ class LocalInspection:
     def confirm_manual_attachment(self, right_key, file_key, *,
                                   user_confirmed=False, cancelled=lambda: False):
         """Consume any stale token but never authorize a retired writer."""
-        pending, self._manual_pending = self._manual_pending, None
-        if (user_confirmed is not True or pending is None
-                or pending[:2] != (right_key, file_key)):
-            return {'status': 'unavailable', 'read_only': True}
-        return self._refuse_obsolete_manual_attachment(right_key, file_key)
+        return {'status': 'unavailable', 'read_only': True}
 
     def preview_manual_undo(self, right_key, file_key, *, cancelled=lambda: False):
         """No historical local-pair undo can reverse canonical provenance."""
         self.revoke_manual_attachment_preview()
-        previous = self._manual_undo
-        if (previous is None or previous[:2] != (right_key, file_key)
-                or self._manual_service is None):
-            return {'status': 'unavailable', 'read_only': True}
-        return self._refuse_obsolete_manual_attachment(right_key, file_key)
+        return {'status': 'unavailable', 'read_only': True}
 
     def confirm_manual_undo(self, right_key, file_key, *,
                             user_confirmed=False, cancelled=lambda: False):
         """Consume stale undo tokens; no link, placement or right mutation."""
-        pending, self._manual_undo_pending = self._manual_undo_pending, None
-        if (user_confirmed is not True or pending is None
-                or pending[:2] != (right_key, file_key)
-                or self._manual_undo != pending[:3]):
-            return {'status': 'unavailable', 'read_only': True}
-        return self._refuse_obsolete_manual_attachment(right_key, file_key)
+        return {'status': 'unavailable', 'read_only': True}
 
     def candidate_files(self, right_key):
         """Only local, metadata_only cross-reference hints; never an action plan.
