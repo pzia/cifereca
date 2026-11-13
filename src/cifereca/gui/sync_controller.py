@@ -743,7 +743,8 @@ def _refresh_sync_page(self) -> None:
         # absent: a declared materialization capability, never provider name,
         # selects explicit manual preview / confirmation. No action runs here.
         local_capabilities = getattr(source, "sync_capabilities", ())
-        if (type(local_capabilities) in (tuple, list)
+        if (source.sync_capable is True
+                and type(local_capabilities) in (tuple, list)
                 and "local_materialization" in local_capabilities):
             # Only a targeted Core broker may resolve the private credential.
             # Neither page building nor switching identity reads the ledger.
