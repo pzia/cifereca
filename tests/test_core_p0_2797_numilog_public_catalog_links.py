@@ -72,3 +72,35 @@ def test_query_free_public_covers_remain_generic_but_signed_covers_do_not():
         "https://cdn.another-publisher.org/../private.jpg",
     ):
         assert _numilog_public_catalog_url(url, cover=True) is None
+
+
+@pytest.mark.parametrize("provider", [
+    "numilog", "paris", "kobo", "synthetic-alpha", "unknown",
+])
+@pytest.mark.parametrize("kind", ["library_title_link", "public_search_product_card"])
+def test_product_url_proof_is_bound_to_exact_producer(provider, kind):
+    from cifereca.core.search_orchestration import _public_catalog_url
+    url = "https://books.new-publisher.org/public/title.ebook"
+    marker = f"{provider}.{kind}"
+    assert _public_catalog_url(url, evidence=marker, provider_id=provider) == url
+    assert _public_catalog_url(url, evidence="numilog." + kind,
+                               provider_id=provider) is (url if provider == "numilog" else None)
+    assert _public_catalog_url(url, evidence=marker, provider_id="different") is None
+    assert _public_catalog_url(url, provider_id=provider) is None
+
+
+@pytest.mark.parametrize("provider", [
+    "numilog", "paris", "kobo", "synthetic-alpha", "unknown",
+])
+@pytest.mark.parametrize("unsafe", [
+    "https://books.new-publisher.org/public/title.ebook?token=secret",
+    "https://books.new-publisher.org/download/private.epub",
+    "https://127.0.0.1/public/title.ebook",
+    "https://reader:secret@books.new-publisher.org/public/title.ebook",
+])
+def test_producer_proof_never_overrides_url_boundary(provider, unsafe):
+    from cifereca.core.search_orchestration import _public_catalog_url
+    assert _public_catalog_url(
+        unsafe, provider_id=provider,
+        evidence=f"{provider}.public_search_product_card",
+    ) is None
