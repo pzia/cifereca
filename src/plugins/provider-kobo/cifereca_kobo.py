@@ -768,6 +768,51 @@ class KoboSession(ProviderSession):
             private_guard()
         return accepted
 
+    def search_with_response_facets(
+        self, query: str, scope: str = "all", *, field: str = "all",
+        content_types: tuple[str, ...] = (),
+    ):
+        """Attest same-call real Vault /catalog/search, never /library/search.
+
+        Core invokes scope='catalog' for any foreign profile. A personal
+        combined search still follows its historical account-bound path,
+        but never publishes its mixed results as public notices.
+        """
+        from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+
+        rows = self.search(query, scope, field=field)
+        if scope != "catalog":
+            return ProviderSearchResponse(rows)
+        # Only the installed production catalogue parser, bound to the exact
+        # live Vault client, can establish the anonymous endpoint provenance.
+        # A mocked/replaced adapter or a forged row-level flag cannot do so.
+        trusted = (
+            type(self.client) is KoboVaultClient
+            and type(self.catalog) is KoboCatalogService
+            and self.catalog.client is self.client
+            and getattr(self.catalog.search, "__func__", None)
+            is KoboCatalogService.search
+        )
+        if not trusted:
+            return ProviderSearchResponse(rows)
+        notices = tuple(
+            PublicSearchNotice(replace(
+                row, owned=False, downloadable=False, download_url=None,
+                source_account_id=None, friendly_url=None, thumbnail_url=None,
+                metadata={}, description=None, price=None, currency=None,
+                revision_id=None, document_classification=None,
+            ))
+            for row in rows
+            if (type(row) is SearchResult
+                and row.source_provider == self.provider_id
+                and row.source_credential == self.credential_id
+                and row.source_collection == "catalog"
+                and row.owned is not True
+                and row.downloadable is not True
+                and row.source_account_id is None)
+        )
+        return ProviderSearchResponse(rows, public_notices=notices)
+
     def _ensure_personal_binding(
         self, account: Account, generation: int, *,
         expected_account_id: str | None = None,
