@@ -107,9 +107,9 @@ def _source(broker, source_id, *, allow_canonical=False):
     )
     _require(broker._enabled(source_id), "source_disabled")
     service = broker.service
-    _require(service.storage.identity_for_connection("kobo", account.credential_id) == account.identity_id, "invalid_source")
+    _require(service.storage.identity_for_connection(account.provider_id, account.credential_id) == account.identity_id, "invalid_source")
     sessions = [s for s in service._sessions.values()
-                if s.provider_id == "kobo" and s.credential_id == account.credential_id]
+                if s.provider_id == account.provider_id and s.credential_id == account.credential_id]
     _require(len(sessions) == 1, "ambiguous_source")
     session = sessions[0]
     _require(session.connected, "source_disconnected")
@@ -125,12 +125,12 @@ def _source(broker, source_id, *, allow_canonical=False):
     # manifest belongs to its issuing borrower, not merely to an upstream
     # account_id that can be reused under another profile or provider.
     _require(service._sessions.get(
-        service._session_key("kobo", account.credential_id)
+        service._session_key(account.provider_id, account.credential_id)
     ) is session, "source_changed")
     session_accounts = session.accounts
     _require(
         len(session_accounts) == 1
-        and session_accounts[0].provider_id == "kobo"
+        and session_accounts[0].provider_id == account.provider_id
         and session_accounts[0].credential_id == account.credential_id
         and session_accounts[0].unique_id == account.unique_id
         # Empty Kobo borrower is a valid *primary* source only. The
@@ -147,7 +147,7 @@ def _source(broker, source_id, *, allow_canonical=False):
         },
         "ambiguous_account",
     )
-    _require(sum(a.provider_id == "kobo" and a.credential_id == account.credential_id
+    _require(sum(a.provider_id == account.provider_id and a.credential_id == account.credential_id
                  for a in service.accounts) == 1, "ambiguous_account")
     if not has_complete_delivery_abi(session):
         # A configured source-wide CAS policy, even OFF or unreadable,
