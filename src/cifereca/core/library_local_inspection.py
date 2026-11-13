@@ -14,7 +14,7 @@ from .library_audit_broker import _run_scoped_audit, _unavailable
 from .library_evidence_scope import _public_provider_group
 from .library_inspection_cache import take_inspection_cache
 from .library_sqlite_freshness import sqlite_source_stamp
-from .library_manual_link_preflight import review_local_pair, review_source_read_only, review_kobo_candidate
+from .library_manual_link_preflight import review_local_pair, review_source_read_only
 
 def _private_edition_collision_counts(rights, identity_id):
     """Conservative count of same-edition rights across private credentials.
@@ -501,7 +501,6 @@ class LocalInspection:
         self._title_only_file_keys = {}
         # Revocable, private evidence summaries; no raw account/path exported.
         self._manual_right_proofs = {}
-        self._kobo_right_proofs = {}
         self._manual_file_proofs = {}
         self._manual_right_scopes = {}
         self._manual_file_observations = {}
@@ -589,16 +588,6 @@ class LocalInspection:
         edges, candidates, ledgers = defaultdict(list), defaultdict(list), defaultdict(list)
         rights = audit.snapshot.tables.get('entitlements', [])
         catalog = audit.snapshot.tables.get('catalog_entries', [])
-        # The older Kobo mirror intentionally omits manifest provenance and
-        # revision from the generic snapshot. It DOES contain a previously
-        # recorded backup SHA/size. Use this only to gate a fresh Kobo preview;
-        # the dedicated writer checks the missing account/revision/connection.
-        kobo_backups = defaultdict(list)
-        for backup in audit.snapshot.tables.get('backup_items', ()):
-            if backup.get('provider_id') == 'kobo':
-                kobo_backups[(
-                    backup.get('credential_id'), backup.get('item_id'),
-                )].append(backup)
         # Invert the already bounded, exact, same-identity, metadata_only
         # candidates from the shared auditor. There is deliberately NO
         # title/author/path/provider inference at the file level.
@@ -893,43 +882,6 @@ class LocalInspection:
                 self._declared_right_scopes[f'right:{index}'] = scope
             if scope is not None and right.get('provider_id') == 'numilog':
                 self._manual_right_scopes[f'right:{index}'] = scope
-            # The shared audit does not project backup revision or provider
-            # connections. These are deliberately NOT inferred from metadata:
-            # the independent Kobo transaction recollects them freshly.
-            if right.get('provider_id') == 'kobo':
-                backup_rows = (
-                    kobo_backups.get((scope[2], scope[4]), ())
-                    if scope is not None else ()
-                )
-                backup = backup_rows[0] if len(backup_rows) == 1 else {}
-                backup_sha = backup.get('sha256')
-                backup_signature = (
-                    (backup_sha.lower(), backup.get('size'))
-                    if type(backup_sha) is str else None
-                )
-                kobo_attested = (
-                    scope is not None
-                    and len(backup_rows) == 1
-                    and backup.get('identity_id') == scope[0]
-                    and type(backup_sha) is str and len(backup_sha) == 64
-                    and all(ch in '0123456789abcdef' for ch in backup_sha.lower())
-                    and type(backup.get('size')) is int and backup['size'] > 0
-                    # Legacy backup_items compatibility rights have no
-                    # attested_source marker. This gate only permits a fresh
-                    # read-only preview, NEVER a write. The Kobo engine
-                    # independently requires the personal backup, revision,
-                    # active owned entitlement and exact account/SHA.
-                    and right.get('state') == 'active'
-                    and right.get('entitlement_type') == 'owned'
-                    and not right.get('loan_id') and not right.get('expires_at')
-                    and scope_counts[scope] == 1
-                )
-                self._kobo_right_proofs[f'right:{index}'] = {
-                    'attested': kobo_attested,
-                    'ambiguous': (scope is None or scope_counts[scope] != 1
-                                  or len(backup_rows) != 1),
-                    'signature': backup_signature,
-                }
             self._manual_right_proofs[f'right:{index}'] = {
                 'attested': (
                     right.get('provider_id') == 'numilog'
@@ -1317,7 +1269,6 @@ class LocalInspection:
         self._title_only_file_keys.clear()
         self._file_facets.clear()
         self._manual_right_proofs.clear()
-        self._kobo_right_proofs.clear()
         self._manual_file_proofs.clear()
         self._manual_right_scopes.clear()
         self._manual_file_observations.clear()
@@ -1593,45 +1544,6 @@ class LocalInspection:
                 or not right_key.startswith('right:')
                 or not file_key.startswith('file:')):
             return review_local_pair(None, None, audit_complete=False)
-
-        # Shared browsing is available for Kobo and Paris, but neither can
-        # accidentally enter Numilog's purchase-only transaction from here.
-        # An explicit reason is safer than reporting a real Kobo/Paris right
-        # as a missing Numilog entitlement.
-        if right.provider == 'kobo':
-            proof = self._kobo_right_proofs.get(right_key)
-            if not proof or proof.get('attested') is not True:
-                return _explain_pair_coverage(review_source_read_only(
-                    'kobo', audit_complete=self._manual_audit_complete,
-                    bibliographic_hint=(
-                        file_key in self._candidate_file_keys.get(right_key, ())
-                    ),
-                ), self._manual_pair_coverage_gaps)
-
-            observation = self._manual_file_observations.get(file_key)
-            verified = (
-                observation is not None
-                and (
-                    (observation.media_format == 'epub'
-                     and observation.validation == 'ok'
-                     and observation.structure_validation == 'epub_structure_crc_ok')
-                    or
-                    (observation.media_format == 'pdf'
-                     and observation.validation == 'pdf_signature_only'
-                     and observation.structure_validation == 'pdf_structure_minimal')
-                )
-            )
-            return _explain_pair_coverage(review_kobo_candidate(
-                proof,
-                {'verified': verified,
-                 'signature': (observation.sha256, observation.size)
-                              if observation is not None else None},
-                audit_complete=self._manual_pair_evidence_complete,
-                global_audit_partial=not self._manual_audit_complete,
-                bibliographic_hint=(
-                    file_key in self._candidate_file_keys.get(right_key, ())
-                ),
-            ), self._manual_pair_coverage_gaps)
 
         if right.provider != 'numilog':
             return review_source_read_only(
