@@ -10,7 +10,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.models import Account, Loan
-from cifereca.providers.base import ProviderCapabilities
+from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
 from cifereca.core.sync_coordination import _opening_loan_acquisition_allowed
 
 
@@ -37,7 +37,7 @@ def loan(a, *, credential=None, provider=None, borrower=None, identity=None,
 
 
 def session(a, *, opt_in=False, connected=True, loans=True, digital_download=True,
-            accounts=None):
+            accounts=None, descriptor=None):
     return NS(
         provider_id=a.provider_id, credential_id=a.credential_id,
         connected=connected,
@@ -46,6 +46,7 @@ def session(a, *, opt_in=False, connected=True, loans=True, digital_download=Tru
             opening_loan_auto_acquisition=opt_in,
         ),
         accounts=list(accounts if accounts is not None else [a]),
+        descriptor=descriptor,
     )
 
 
@@ -115,6 +116,15 @@ def test_empty_primary_id_and_legacy_alias_are_not_wildcards():
     main = account()
     linked = account(borrower="linked-2", primary=False)
     s = session(main, opt_in=True, accounts=[main, linked])
+    # The old implicit primary alias is no longer a borrower admission policy.
+    assert not _opening_loan_acquisition_allowed(
+        loan(main, borrower="primary"), session=s
+    )
+    s.descriptor = ProviderDescriptor(
+        id="paris", display_name="Synthetic Paris", description="offline",
+        state="ready", capabilities=s.capabilities,
+        existing_primary_loan_account_alias="primary",
+    )
     assert _opening_loan_acquisition_allowed(
         loan(main, borrower="primary"), session=s
     )
@@ -155,3 +165,64 @@ def test_declared_bnf_get_staging_does_not_become_startup_acquisition():
     # capability and the actual manual/double-confirmation BnF gate.
     s.capabilities = replace(s.capabilities, opening_loan_auto_acquisition=True)
     assert not _opening_loan_acquisition_allowed(loan(bnf), session=s)
+
+
+def test_declared_alias_is_generic_and_bound_to_exact_installed_descriptor():
+    primary = account("synthetic-lender", borrower="", primary=True)
+    row = loan(primary, borrower="borrower-alias")
+    s = session(primary, opt_in=True)
+    assert not _opening_loan_acquisition_allowed(row, session=s)
+    s.descriptor = ProviderDescriptor(
+        id="synthetic-lender", display_name="Synthetic Lender",
+        description="offline", state="ready", capabilities=s.capabilities,
+        existing_primary_loan_account_alias="borrower-alias",
+    )
+    assert _opening_loan_acquisition_allowed(row, session=s)
+    assert not _opening_loan_acquisition_allowed(
+        replace(row, identity_id="other-profile"), session=s,
+    )
+    assert not _opening_loan_acquisition_allowed(
+        replace(row, source_credential="another-card"), session=s,
+    )
+
+
+def test_alias_never_authorizes_secondary_or_ambiguous_borrower():
+    main = account("synthetic-lender", borrower="", primary=True)
+    secondary = account("synthetic-lender", borrower="", primary=False)
+    s = session(main, opt_in=True)
+    s.descriptor = ProviderDescriptor(
+        id="synthetic-lender", display_name="Synthetic Lender",
+        description="offline", state="ready", capabilities=s.capabilities,
+        existing_primary_loan_account_alias="borrower-alias",
+    )
+    candidate = loan(main, borrower="borrower-alias")
+    assert _opening_loan_acquisition_allowed(candidate, session=s)
+    s.accounts = [secondary]
+    assert not _opening_loan_acquisition_allowed(candidate, session=s)
+    s.accounts = [main, main]
+    assert not _opening_loan_acquisition_allowed(candidate, session=s)
+
+
+@pytest.mark.parametrize("descriptor", [
+    NS(id="synthetic-lender", existing_primary_loan_account_alias="borrower-alias"),
+    object(),
+])
+def test_malformed_or_uninstalled_descriptor_does_not_authorize_alias(descriptor):
+    main = account("synthetic-lender", borrower="", primary=True)
+    s = session(main, opt_in=True, descriptor=descriptor)
+    assert not _opening_loan_acquisition_allowed(
+        loan(main, borrower="borrower-alias"), session=s,
+    )
+
+
+def test_mismatched_installed_descriptor_does_not_authorize_alias():
+    main = account("synthetic-lender", borrower="", primary=True)
+    s = session(main, opt_in=True)
+    s.descriptor = ProviderDescriptor(
+        id="unrelated-provider", display_name="Unrelated",
+        description="offline", state="ready", capabilities=s.capabilities,
+        existing_primary_loan_account_alias="borrower-alias",
+    )
+    assert not _opening_loan_acquisition_allowed(
+        loan(main, borrower="borrower-alias"), session=s,
+    )
