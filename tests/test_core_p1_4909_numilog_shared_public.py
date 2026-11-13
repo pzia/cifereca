@@ -8,6 +8,7 @@ from dataclasses import asdict, replace
 import pytest
 
 from tests.test_core043_progress_cache_stats import _FakeSession, _service
+from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 
 
 class NumilogFixture(_FakeSession):
@@ -45,6 +46,23 @@ class NumilogFixture(_FakeSession):
             scenario="NUMILOG_LIBRARY", source_collection="library",
             owned=True, downloadable=True, metadata={"private_account": "BOB"},
         )]
+
+    def search_with_response_facets(self, query, scope="all", *,
+                                    field="all", content_types=()):
+        # A separately parsed anonymous catalogue response, not MesLivres.
+        self.public_calls += 1
+        self.mutate()
+        base = super().search(query, "catalog", field=field,
+                              content_types=content_types)[0]
+        item = replace(
+            base, source_credential="__public__", docbase="NUMILOG",
+            scenario="NUMILOG_PUBLIC", source_collection="public_catalog",
+            owned=False, downloadable=False, download_url=None,
+            metadata={}, thumbnail_url=None, friendly_url=None,
+        )
+        return ProviderSearchResponse(
+            [item], public_notices=(PublicSearchNotice(item),),
+        )
 
     def holdings(self, *args, **kwargs):
         self.holdings_calls += 1

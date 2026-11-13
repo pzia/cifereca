@@ -24,6 +24,12 @@ def _failing_source(tmp_path, failure, when):
 
     session.search_stream = lambda *a, **kw: fail() if when == 'call' else iterator()
     service._sessions['good'] = _FakeSession('good')
+    real_owner = service.storage.identity_for_connection
+    service.storage.identity_for_connection = (
+        lambda provider, credential:
+        'alice' if (provider, credential) == ('good', 'good-credential')
+        else real_owner(provider, credential)
+    )
     _known(service, provider=PID, identity=service.current_identity.identity_id,
            key='stream', title='Progressive Book')
     return service, session

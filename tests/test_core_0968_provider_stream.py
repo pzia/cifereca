@@ -195,9 +195,19 @@ class Manager:
 
 def _library(tmp_path, collection):
     cfg = Config(tmp_path / "config.json")
+    cfg.set("identities", [{"id": "alice", "label": "Alice"}])
     lib = LibraryService(cfg, Storage(tmp_path / "db.sqlite3"), Diagnostics())
     lib.attach_plugin_manager(Manager(collection))
     lib.connect_configured()
+    # This synthetic streaming scenario exercises an explicitly Alice-owned
+    # source. An unknown/foreign owner must not use legacy streaming.
+    recorded_owner = lib.storage.identity_for_connection
+    lib.storage.identity_for_connection = (
+        lambda provider, credential:
+        "alice" if provider == PID and credential == getattr(
+            collection.plugin.session, "credential_id", None
+        ) else recorded_owner(provider, credential)
+    )
     # Deterministic tests need no index mirroring.
     lib._mirror_remote_results = lambda _rows, **kw: 0
     return lib

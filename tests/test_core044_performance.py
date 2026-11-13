@@ -126,6 +126,14 @@ def test_new_progressive_search_supersedes_previous_without_waiting_for_provider
 
     service = _service(tmp_path)
     monkeypatch.setattr(service, "_mirror_remote_results", lambda *_a, **_k: 0)
+    # Both synthetic supersession sessions are explicitly Alice-owned.
+    # Their slow/fast race must still exercise the private owner path.
+    monkeypatch.setattr(
+        service.storage, "identity_for_connection",
+        lambda p, c: "alice" if (p, c) in {
+            ("slow", "slow-credential"), ("fast", "fast-credential"),
+        } else None,
+    )
     first = {}
     try:
         service._sessions = {"slow": SlowSession()}

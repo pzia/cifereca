@@ -1,10 +1,12 @@
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
 from cifereca.models import SearchResult
 from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 from cifereca.core.public_search_projection import project_public_search_result
+from cifereca.core.search_orchestration import _public_rows_from_response, _configured_search_preferences
 
 
 def row(provider='synthetic-a', credential='source-b', **changes):
@@ -126,3 +128,302 @@ def test_hostile_authority_scalar_is_not_compared_or_executed():
         public = replace(item, **{field: Hostile()})
         response = ProviderSearchResponse([item], public_notices=(PublicSearchNotice(public),))
         assert project(response, item) is None
+
+
+@pytest.mark.parametrize('provider', ['synthetic-a', 'synthetic-b', 'unknown'])
+def test_orchestrator_admits_only_current_response_public_notice(provider):
+    private = row(provider, owned=True, source_account_id='borrower-b',
+                  download_url='https://private.invalid/download')
+    public = row(provider, metadata={'subjects': ['Fiction'], 'private': 'no'})
+    session = SimpleNamespace(provider_id=provider, credential_id='source-b')
+    response = ProviderSearchResponse(
+        [private], public_notices=(PublicSearchNotice(public),),
+    )
+    admitted = _public_rows_from_response(response, session)
+    assert len(admitted) == 1
+    assert admitted[0].title == 'Public title'
+    assert admitted[0].metadata == {
+        'catalogue_access': 'shared_read_only', 'subjects': ['Fiction'],
+    }
+    assert admitted[0].source_account_id is None
+    assert admitted[0].download_url is None
+    assert admitted[0].owned is False
+    assert _public_rows_from_response(
+        ProviderSearchResponse([private]), session,
+    ) == []
+    assert _public_rows_from_response(
+        ProviderSearchResponse([replace(private)],
+                               public_notices=(PublicSearchNotice(public),)), session,
+    ) == [admitted[0]]
+
+
+def test_orchestrator_rejects_cross_provider_and_ambiguous_notices():
+    session = SimpleNamespace(provider_id='synthetic-a', credential_id='source-b')
+    item = row()
+    other = row('synthetic-b')
+    assert _public_rows_from_response(
+        ProviderSearchResponse([other], public_notices=(PublicSearchNotice(other),)),
+        session,
+    ) == []
+    foreign_credential = row('synthetic-a', 'credential-from-unrelated-session')
+    assert _public_rows_from_response(
+        ProviderSearchResponse(
+            [foreign_credential],
+            public_notices=(PublicSearchNotice(foreign_credential),),
+        ), session,
+    ) == []
+    assert _public_rows_from_response(
+        ProviderSearchResponse([item], public_notices=(
+            PublicSearchNotice(item), PublicSearchNotice(item),
+        )), session,
+    ) == []
+    assert _public_rows_from_response(
+        ProviderSearchResponse([item, object()],
+                               public_notices=(PublicSearchNotice(item),)), session,
+    ) == []
+    assert _public_rows_from_response(
+        ProviderSearchResponse([item, item],
+                               public_notices=(PublicSearchNotice(item),)), session,
+    ) == []
+    assert _public_rows_from_response(
+        ProviderSearchResponse([item], public_notices=[PublicSearchNotice(item)]),
+        session,
+    ) == []
+
+
+class _ResponseBoundSource:
+    """Synthetic provider with separate private search and public response."""
+    def __init__(self, provider, credential):
+        self.provider_id = provider
+        self.credential_id = credential
+        self.connected = True
+        self.capabilities = SimpleNamespace(search=True)
+        self.descriptor = SimpleNamespace(display_name=provider)
+        self.client = None
+        self.last_search_warnings = []
+        self.private_calls = 0
+        self.response_calls = 0
+        self.stream_calls = 0
+        self.on_response = None
+        self.public_notices = True
+
+    def search(self, query, scope, *, field='all', content_types=()):
+        self.private_calls += 1
+        return [row(self.provider_id, self.credential_id, owned=True,
+                    title='Progressive Book', source_account_id='owner-b',
+                    download_url='https://private.invalid/token')]
+
+    def search_with_response_facets(self, query, scope='all', *,
+                                    field='all', content_types=()):
+        self.response_calls += 1
+        assert scope == 'catalog', 'foreign search must not query private scope'
+        private = self.search(query, scope, field=field, content_types=content_types)[0]
+        if self.on_response is not None:
+            self.on_response()
+        public = replace(private, title='Progressive Book',
+                         owned=False, source_account_id=None,
+                         download_url=None, metadata={'language': 'fr'})
+        return ProviderSearchResponse(
+            [private],
+            public_notices=(PublicSearchNotice(public),) if self.public_notices else (),
+        )
+
+    def search_stream(self, *args, **kwargs):
+        self.stream_calls += 1
+        raise AssertionError('foreign streaming must be suppressed')
+
+
+@pytest.mark.parametrize('provider', ['synthetic-a', 'synthetic-b', 'unknown'])
+@pytest.mark.parametrize('progressive', [False, True])
+def test_foreign_search_requires_current_response_and_preserves_private_owner(
+    tmp_path, monkeypatch, provider, progressive,
+):
+    from tests.test_core043_progress_cache_stats import _service
+    service = _service(tmp_path)
+    session = _ResponseBoundSource(provider, 'credential-b')
+    service._sessions = {provider: session}
+    owners = {(provider, 'credential-b'): 'bob'}
+    monkeypatch.setattr(service.storage, 'identity_for_connection',
+                        lambda p, c: owners.get((p, c)))
+    monkeypatch.setattr(service, '_mirror_remote_results', lambda *a, **kw: 0)
+
+    def search(*, force):
+        if progressive:
+            batches = []
+            summary = service.search_progressive(
+                'Progressive Book', force=force, on_batch=batches.append,
+            )
+            assert not summary.cancelled
+            assert len(batches) == 1
+            return list(service.last_search)
+        return service.search('Progressive Book', force=force)
+
+    try:
+        result = search(force=True)
+        assert len(result) == 1
+        assert result[0].source_provider == provider
+        assert result[0].metadata == {
+            'catalogue_access': 'shared_read_only', 'language': 'fr',
+        }
+        assert result[0].download_url is None and result[0].owned is False
+        assert session.response_calls == 1
+        assert session.stream_calls == 0
+        assert search(force=False) == result
+        assert session.response_calls == 1
+        # Revocation/ownership recheck must not publish a stale response.
+        session.on_response = lambda: owners.__setitem__((provider, 'credential-b'), 'alice')
+        if progressive:
+            summary = service.search_progressive('Progressive Book', force=True)
+            assert summary.cancelled
+        else:
+            assert service.search('Progressive Book', force=True) == []
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize('progressive', [False, True])
+def test_foreign_legacy_response_without_public_notice_never_publishes(
+    tmp_path, monkeypatch, progressive,
+):
+    from tests.test_core043_progress_cache_stats import _service
+    service = _service(tmp_path)
+    session = _ResponseBoundSource('synthetic-a', 'credential-b')
+    session.public_notices = False
+    service._sessions = {'synthetic-a': session}
+    monkeypatch.setattr(service.storage, 'identity_for_connection',
+                        lambda *_: 'bob')
+    monkeypatch.setattr(service, '_mirror_remote_results', lambda *a, **kw: 0)
+    try:
+        if progressive:
+            summary = service.search_progressive('Progressive Book', force=True)
+            assert not summary.cancelled
+            assert service.last_search == []
+        else:
+            assert service.search('Progressive Book', force=True) == []
+        assert session.response_calls >= 1
+        assert session.stream_calls == 0
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("provider", ["paris", "synthetic-a", "synthetic-b"])
+def test_configured_primary_preference_is_generic_but_never_rights(
+    tmp_path, provider,
+):
+    from tests.test_core043_progress_cache_stats import _service
+    service = _service(tmp_path)
+    try:
+        session = SimpleNamespace(provider_id=provider, credential_id="source-a")
+        service.config.set("identities", [{
+            "id": "alice", "label": "Alice",
+            f"primary_{provider}_connection_id": "source-a",
+        }])
+        hints = _configured_search_preferences(
+            service, service.current_identity, [session],
+        )
+        assert hints == {provider: "source-a"}
+        # A preference merely ranks already-owned credentials; it must not
+        # turn an unrelated session into a publicly attested response.
+        malformed = SimpleNamespace(provider_id="bad/name", credential_id="source-a")
+        assert _configured_search_preferences(
+            service, service.current_identity, [malformed],
+        ) == {}
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize('progressive', [False, True])
+def test_exact_owner_identity_cycle_a_to_b_to_a_is_cache_partitioned(
+    tmp_path, monkeypatch, progressive,
+):
+    from tests.test_core043_progress_cache_stats import _service
+    service = _service(tmp_path)
+    service.identities.append(replace(
+        service.current_identity, identity_id='bob', label='Bob',
+    ))
+    session = _ResponseBoundSource('synthetic-b', 'credential-b')
+    service._sessions = {'b': session}
+    monkeypatch.setattr(service.storage, 'identity_for_connection',
+                        lambda p, c: 'bob' if (p, c) == (
+                            'synthetic-b', 'credential-b',
+                        ) else None)
+    monkeypatch.setattr(service, '_mirror_remote_results', lambda *a, **kw: 0)
+
+    def invoke():
+        if progressive:
+            result = service.search_progressive(
+                'Progressive Book', force=False,
+            )
+            assert not result.cancelled
+            return list(service.last_search)
+        return service.search('Progressive Book', force=False)
+
+    try:
+        alice = invoke()
+        assert len(alice) == 1
+        assert alice[0].owned is False
+        assert alice[0].download_url is None
+        assert session.response_calls == 1
+        service.select_identity('bob')
+        bob = invoke()
+        assert len(bob) == 1
+        assert bob[0].owned is True
+        assert bob[0].source_account_id == 'owner-b'
+        assert bob[0].download_url == 'https://private.invalid/token'
+        assert session.private_calls == 2
+        service.select_identity('alice')
+        replay = invoke()
+        assert replay == alice
+        assert session.response_calls == 1
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize('progressive', [False, True])
+def test_sql_owner_rebind_invalidates_private_and_public_cache_without_new_identity(
+    tmp_path, monkeypatch, progressive,
+):
+    from tests.test_core043_progress_cache_stats import _service
+    service = _service(tmp_path)
+    session = _ResponseBoundSource('synthetic-a', 'credential-b')
+    service._sessions = {'source': session}
+    owners = {('synthetic-a', 'credential-b'): 'alice'}
+    monkeypatch.setattr(
+        service.storage, 'identity_for_connection',
+        lambda provider, credential: owners.get((provider, credential)),
+    )
+    monkeypatch.setattr(service, '_mirror_remote_results', lambda *a, **kw: 0)
+
+    def search():
+        if progressive:
+            summary = service.search_progressive(
+                'Progressive Book', force=False,
+            )
+            assert not summary.cancelled
+            return list(service.last_search)
+        return service.search('Progressive Book', force=False)
+
+    try:
+        private = search()
+        assert len(private) == 1 and private[0].owned is True
+        assert private[0].download_url == 'https://private.invalid/token'
+        private_calls = session.private_calls
+        assert search() == private
+        assert session.private_calls == private_calls
+
+        # Credential unchanged; only the SQL account owner is reassigned.
+        # Replaying Alice's earlier private cache would be a cross-account leak.
+        owners[('synthetic-a', 'credential-b')] = 'bob'
+        public = search()
+        assert len(public) == 1 and public[0].owned is False
+        assert public[0].download_url is None
+        assert public[0].metadata['catalogue_access'] == 'shared_read_only'
+        response_calls = session.response_calls
+        assert search() == public
+        assert session.response_calls == response_calls
+
+        owners[('synthetic-a', 'credential-b')] = 'alice'
+        assert search() == private
+        assert session.response_calls == response_calls
+    finally:
+        service.close()

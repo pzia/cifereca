@@ -55,6 +55,15 @@ def test_supplier_id_collisions_survive_fresh_query_batches_and_sqlite(
             return received
         session.search = search
         service._sessions = {_PROVIDER: session}
+        # Exact synthetic session is owned by the active "default" identity.
+        # Its emitted rows still preserve separate credential coordinates.
+        original_owner = service.storage.identity_for_connection
+        service.storage.identity_for_connection = (
+            lambda provider, credential:
+            "default" if (provider, credential) == (
+                _PROVIDER, session.credential_id,
+            ) else original_owner(provider, credential)
+        )
         batches = []
 
         if progressive:

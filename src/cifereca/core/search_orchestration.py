@@ -176,24 +176,27 @@ def _search_preference_score(self, row: SearchResult) -> int:
 
 
 def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> str:
-    """Translate provider availability into a user-actionable label."""
-    if item.source_provider == "kobo":
-        # A search notice is an observation, not a durable supplier right.
-        # Only the canonical selected-offer acquisition path may resolve a
-        # delivery for this exact provider account, on explicit consent.
-        if (item.metadata or {}).get("search_provenance") == "known_catalog_stale":
-            return "Notice Kobo connue hors ligne"
-        return "Origine Kobo · disponibilité à vérifier auprès du fournisseur"
+    """Translate availability without making public catalogue rows actionable."""
+    metadata = item.metadata if type(item.metadata) is dict else {}
+    if metadata.get("catalogue_access") == "shared_read_only":
+        # This explicit read-only projection never establishes a lender,
+        # account, fulfillment URL or any locally held entitlement.
+        if metadata.get("search_provenance") == "known_catalog_stale":
+            return "Notice publique connue hors ligne"
+        return "Notice publique · disponibilité à vérifier auprès du fournisseur"
+    if item.source_collection == "library":
+        # A supplier inventory observation is not a current delivery right,
+        # irrespective of vendor, owned/downloadable flags or upstream label.
+        # The selected-offer and entitlement contracts remain authoritative.
+        if metadata.get("search_provenance") == "known_catalog_stale":
+            return "Notice d’inventaire connue hors ligne"
+        return "Notice d’inventaire · disponibilité à vérifier auprès du fournisseur"
     if self.can_direct_download(item):
         return "Téléchargement direct"
+    # An upstream availability status is a descriptive observation.
+    # Do not rewrite "available" into a borrowing action for any supplier:
+    # manual borrow requires the separate account, consent and policy gates.
     label = str(detail.availability_label or detail.availability_status or "—").strip()
-    status = self._history_fold(detail.availability_status)
-    folded_label = self._history_fold(label)
-    available = status in {"available", "disponible"} or (
-        folded_label.startswith("disponible") and not folded_label.startswith("indisponible")
-    )
-    if item.source_provider == "paris" and item.medium == "digital" and available:
-        return "Disponible à l’emprunt"
     return label or "—"
 
 
@@ -300,37 +303,60 @@ def _without_redundant_merged(self, sessions: list[ProviderSession], *, field: s
     ]
 
 
-def _configured_paris_primary_for_search(self, identity: object) -> str | None:
-    """Read a local Paris primary preference; this never authorizes a loan."""
+def _configured_search_preferences(
+    self, identity: object, sessions: list[ProviderSession],
+) -> dict[str, str]:
+    """Read exact per-provider primary hints, without granting ownership."""
     identity_id = getattr(identity, "identity_id", None)
     if type(identity_id) is not str or not identity_id:
-        return None
+        return {}
     try:
         saved = self.config.identity(identity_id)
-        primary = saved.get("primary_paris_connection_id") if type(saved) is dict else None
     except (AttributeError, LookupError, TypeError, ValueError):
-        return None
-    if (type(primary) is not str or not primary or len(primary) > 256
-            or primary != primary.strip() or not primary.isprintable()):
-        return None
-    return primary
+        return {}
+    if type(saved) is not dict:
+        return {}
+    hints: dict[str, str] = {}
+    for session in sessions:
+        provider = getattr(session, "provider_id", None)
+        if (type(provider) is not str
+                or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider) is None):
+            continue
+        primary = saved.get(f"primary_{provider}_connection_id")
+        if (type(primary) is str and 0 < len(primary) <= 256
+                and primary == primary.strip() and primary.isprintable()):
+            hints[provider] = primary
+    return hints
 
 
 def _search_sessions_for_active_identity(
     self, sessions: list[ProviderSession], identity: object, *,
-    paris_primary: str | None = None,
+    preferred_credentials: dict[str, str] | None = None,
 ) -> list[ProviderSession]:
-    """Select exactly one catalogue session per provider.
-
-    The historical Paris primary preference is only an input hint; neutral
-    ownership ranking is performed by search_session_selection for every
-    provider and never grants access to another identity's private source.
-    """
+    """Select one session per provider, preferring the active owner."""
     from .search_session_selection import choose_search_sessions
-    hints = {"paris": paris_primary} if paris_primary is not None else None
     return choose_search_sessions(
-        self, sessions, identity, preferred_credentials=hints,
+        self, sessions, identity,
+        preferred_credentials=preferred_credentials,
     )
+
+
+_PRIVATE_CATALOGUE_SEGMENTS = frozenset({
+    "account", "accounts", "profile", "profiles", "member", "members",
+    "reader", "readers", "session", "sessions", "auth", "login", "oauth",
+    "token", "tokens", "download", "downloads", "acquisition", "acquire",
+    "loan", "loans", "borrow", "borrows", "private", "personal",
+    "user", "users", "drm", "adept", "licence", "license",
+})
+
+
+def _private_catalogue_path(path: str) -> bool:
+    """Reject account, session, borrowing and delivery routes for all sources."""
+    return bool(
+        {segment.casefold() for segment in path.split("/")}
+        & _PRIVATE_CATALOGUE_SEGMENTS
+    )
+
 
 def _shared_catalogue_cover_url(value: Any) -> str | None:
     """Preserve an ordinary public catalogue image, never account/private URLs.
@@ -342,82 +368,12 @@ def _shared_catalogue_cover_url(value: Any) -> str | None:
     """
     from urllib.parse import urlsplit
 
-    public = _numilog_public_catalog_url(value, cover=True)
+    public = _public_catalog_url(value, cover=True)
     if public is None:
         return None
-    segments = {segment.casefold() for segment in urlsplit(public).path.split("/")}
-    if segments & {
-        "account", "accounts", "profile", "profiles", "member", "members",
-        "reader", "readers", "session", "sessions", "auth", "login", "oauth",
-        "token", "tokens", "download", "downloads", "acquisition", "acquire",
-        "loan", "loans", "borrow", "borrows", "private", "personal",
-        "user", "users", "drm", "adept", "licence", "license",
-    }:
+    if _private_catalogue_path(urlsplit(public).path):
         return None
     return public
-
-
-def _shared_catalogue_bibliography(row: SearchResult) -> dict[str, Any]:
-    """Preserve bounded catalogue metadata across profiles, not raw account data.
-
-    Only known bibliographic fields of an admitted exact public catalogue
-    result may cross this projection. Identity is not a read ACL; these fields
-    do not grant a loan, a download or access to credentials.
-    """
-    raw = row.metadata if type(row.metadata) is dict else {}
-    result: dict[str, Any] = {"catalogue_access": "shared_read_only"}
-    for key in (
-        "language", "languages", "original_language", "isbn", "isbns",
-        "series", "collection", "publisher", "subjects", "subject",
-        "genres", "genre", "authors", "contributors", "edition",
-    ):
-        cleaned = _safe_public_search_text(key, raw.get(key))
-        if cleaned is not None:
-            result[key] = cleaned
-    return result
-
-
-def _shared_paris_catalogue_bibliography(row: SearchResult) -> dict[str, Any]:
-    """Keep attested catalogue metadata when the reader is not its account owner.
-
-    A different profile is not a read ACL. Only known bibliographic scalars
-    and same-notice Resource facets are admitted; never raw provider extras,
-    account identifiers, nested session payloads or authentication URLs.
-    """
-    raw = row.metadata if type(row.metadata) is dict else {}
-    result: dict[str, Any] = {"catalogue_access": "shared_read_only"}
-    for key in ("language", "languages", "original_language",
-                "isbn", "isbns", "series", "collection", "publisher"):
-        cleaned = _safe_public_search_text(key, raw.get(key))
-        if cleaned is not None:
-            result[key] = cleaned
-    result.update(_safe_paris_resource_facets(raw, row.scenario))
-    return result
-
-
-def _shared_paris_catalogue_row(
-    row: SearchResult, session: ProviderSession,
-) -> SearchResult | None:
-    """Only Paris catalogue bibliography and ordinary public image URLs.
-
-    Preserve the exact source credential for provenance; never rebind to A.
-    Refuse inventory/purchase rows and unqualified provider responses.
-    """
-    if (type(row) is not SearchResult
-            or row.source_provider != "paris"
-            or row.source_credential != getattr(session, "credential_id", None)
-            or row.scenario not in {"EBOOKS", "CATALOGUE"}
-            or type(row.docbase) is not str or not row.docbase
-            or row.source_collection not in {None, "", "catalog"}):
-        return None
-    return replace(
-        row, owned=False, downloadable=False, download_url=None,
-        thumbnail_url=_shared_catalogue_cover_url(row.thumbnail_url),
-        friendly_url=None,
-        price=None, currency=None, revision_id=None,
-        metadata=_shared_paris_catalogue_bibliography(row),
-        document_classification=None,
-    )
 
 
 def _private_search_owner(self, session: ProviderSession) -> str | None:
@@ -438,44 +394,40 @@ def _private_search_owner(self, session: ProviderSession) -> str | None:
     return owner if type(owner) is str and owner else None
 
 
-def _shared_numilog_public_row(row: SearchResult) -> SearchResult | None:
-    """Anonymous Numilog catalogue only, never another profile's purchases."""
-    if (type(row) is not SearchResult or row.source_provider != "numilog"
-            or row.source_credential != "__public__"
-            or row.scenario != "NUMILOG_PUBLIC"
-            or row.source_collection != "public_catalog"
-            or row.docbase != "NUMILOG"):
-        return None
-    return replace(
-        row, owned=False, downloadable=False, download_url=None,
-        revision_id=None,
-        thumbnail_url=_shared_catalogue_cover_url(row.thumbnail_url),
-        friendly_url=None,
-        metadata=_shared_catalogue_bibliography(row),
-        document_classification=None,
-    )
+def _public_rows_from_response(
+    response: ProviderSearchResponse, session: ProviderSession,
+) -> list[SearchResult]:
+    """Project only attested objects of this exact response, fail closed.
 
-
-def _shared_kobo_public_row(
-    row: SearchResult, session: ProviderSession,
-) -> SearchResult | None:
-    """Only descriptive public Kobo catalogue: never another profile's rights."""
-    if (type(row) is not SearchResult
-            or row.source_provider != "kobo"
-            or row.source_credential != getattr(session, "credential_id", None)
-            or row.docbase != "KOBO" or row.scenario != "KOBO"
-            or row.source_collection != "catalog"
-            or row.owned is True or row.downloadable is True
-            or row.download_url is not None):
-        return None
-    return replace(
-        row, owned=False, downloadable=False, download_url=None,
-        friendly_url=None,
-        thumbnail_url=_shared_catalogue_cover_url(row.thumbnail_url),
-        revision_id=None,
-        metadata=_shared_catalogue_bibliography(row),
-        document_classification=None,
-    )
+    A list-only legacy provider or a response without notices cannot authorize
+    foreign-profile publication. Never turn private rows into public notices.
+    """
+    from .public_search_projection import project_public_search_result
+    if (type(response) is not ProviderSearchResponse
+            or type(response.results) is not list
+            or len(response.results) > 10000
+            or type(response.public_notices) is not tuple
+            or len(response.public_notices) > 10000
+            or len({id(row) for row in response.results}) != len(response.results)):
+        # Repeated object identity is not an independently attested notice.
+        return []
+    admitted: list[SearchResult] = []
+    for row in response.results:
+        if type(row) is not SearchResult:
+            return []
+        projected = project_public_search_result(
+            response, row, provider_id=row.source_provider,
+            credential_id=row.source_credential,
+        )
+        if (
+            projected is not None
+            and row.source_provider == session.provider_id
+            and row.source_credential in (
+                getattr(session, "credential_id", None), "__public__",
+            )
+        ):
+            admitted.append(projected)
+    return admitted
 
 
 def _search_session_cache_scope(sessions: list[ProviderSession]) -> tuple[tuple[str, str], ...]:
@@ -488,6 +440,25 @@ def _search_session_cache_scope(sessions: list[ProviderSession]) -> tuple[tuple[
     return tuple(sorted(
         (str(session.provider_id), str(getattr(session, "credential_id", "")))
         for session in sessions
+    ))
+
+
+def _search_owner_cache_scope(
+    owner_leases: tuple[tuple[ProviderSession, str | None], ...],
+) -> tuple[tuple[str, str, str], ...]:
+    """Bind remote cached rows to the exact inert SQL owner snapshot.
+
+    A credential reassigned A -> B must not replay A's private cache to B,
+    even when source selection, search terms and active profile are unchanged.
+    The preimage stays local and is only persisted as a SHA-256 cache key.
+    """
+    return tuple(sorted(
+        (
+            str(session.provider_id),
+            str(getattr(session, "credential_id", "")),
+            owner if type(owner) is str else "",
+        )
+        for session, owner in owner_leases
     ))
 
 
@@ -628,16 +599,13 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     # or creating another search. Its in-flight old results are then revoked.
     source_leases: tuple[tuple[object, tuple[object, object, object] | None], ...] = ()
     owner_leases: tuple[tuple[ProviderSession, str | None], ...] = ()
-    shared_paris_sessions: set[int] = set()
-    shared_numilog_sessions: set[int] = set()
-    shared_kobo_sessions: set[int] = set()
 
     def sources_current() -> bool:
         if not source_leases:
             return True
-        if (paris_source_selected
-                and _configured_paris_primary_for_search(self, identity)
-                != configured_paris_primary):
+        if (preference_sensitive
+                and _configured_search_preferences(self, identity, available)
+                != configured_search_preferences):
             return False
         try:
             registered = tuple(self._sessions.values())
@@ -675,43 +643,32 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         and _search_credential_enabled(self, session)
         and (requested_provider == "all" or session.provider_id == requested_provider)
     ]
-    configured_paris_primary = (
-        _configured_paris_primary_for_search(self, identity)
-        if any(session.provider_id == "paris" for session in available)
-        else None
+    configured_search_preferences = _configured_search_preferences(
+        self, identity, available,
     )
     searchable = _search_sessions_for_active_identity(
-        self, available, identity, paris_primary=configured_paris_primary,
+        self, available, identity,
+        preferred_credentials=configured_search_preferences,
     )
     searchable = self._without_redundant_merged(
         searchable, field=field, scope=provider_scope,
         include_redundant_merged=include_redundant_merged,
     )
-    paris_source_selected = any(
-        session.provider_id == "paris" for session in searchable
+    preference_sensitive = any(
+        session.provider_id in configured_search_preferences
+        for session in searchable
     )
     # A single exact SQL owner snapshot per selected session, regardless
     # of provider. All snapshots are rechecked before publishing results.
-    # Vendor-specific public-row grammars below remain independently guarded.
+    # Foreign responses require exact same-call public notice provenance.
     owner_leases = tuple(
         (session, _private_search_owner(self, session))
         for session in searchable
     )
     active_id = getattr(identity, "identity_id", None)
     foreign_owner_sessions = {
-        id(session) for session, owner in owner_leases if owner != active_id
-    }
-    shared_paris_sessions = {
-        id(session) for session in searchable
-        if session.provider_id == "paris" and id(session) in foreign_owner_sessions
-    }
-    shared_numilog_sessions = {
-        id(session) for session in searchable
-        if session.provider_id == "numilog" and id(session) in foreign_owner_sessions
-    }
-    shared_kobo_sessions = {
-        id(session) for session in searchable
-        if session.provider_id == "kobo" and id(session) in foreign_owner_sessions
+        id(session) for session, owner in owner_leases
+        if not (type(active_id) is str and active_id and owner == active_id)
     }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
@@ -728,7 +685,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     )
     virtual_cache_tag = f"\0{virtual_versions}" if virtual_versions else ""
     cache_key = hashlib.sha256(
-        f"search-v11\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
+        f"search-v13\0{_search_session_cache_scope(searchable)!r}\0{_search_owner_cache_scope(owner_leases)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
     ).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
     if not force:
@@ -757,14 +714,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         effective_field, contract_warning = _effective_search_field(
             session, field, provider_scope, facade_type=facade_type,
         )
-        numilog_catalog_only = id(session) in shared_numilog_sessions
-        kobo_catalog_only = id(session) in shared_kobo_sessions
-        effective_search_scope = (
-            "catalog" if numilog_catalog_only or kobo_catalog_only
-            else provider_scope
-        )
-        if (numilog_catalog_only or kobo_catalog_only) and effective_field is not None:
-            effective_field = "all"
+        foreign_owner = id(session) in foreign_owner_sessions
+        # Never ask a foreign authenticated session for private library results.
+        # Public notices are still mandatory; catalogue scope alone grants nothing.
+        effective_search_scope = "catalog" if foreign_owner else provider_scope
         if contract_warning:
             warnings.append(contract_warning)
         if effective_field is None:
@@ -784,39 +737,44 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             if attempt > 0 and primary_ok:
                 break
             try:
-                try:
-                    import inspect
-                    parameters = inspect.signature(session.search).parameters
-                    kwargs = {"field": effective_field}
-                    if "content_types" in parameters:
-                        kwargs["content_types"] = tuple(content_types or ())
-                    session_rows = session.search(variant, effective_search_scope, **kwargs)
-                except TypeError as exc:
-                    # 0.4 keeps source compatibility with small third-party
-                    # provider prototypes that still implement the 0.3 signature.
-                    if "field" not in str(exc) or "unexpected keyword" not in str(exc):
-                        raise
-                    session_rows = session.search(variant, effective_search_scope)
+                response_partial = False
+                if foreign_owner:
+                    # Foreign sessions may only return an explicit, same-call
+                    # public projection; no legacy list-only fallback.
+                    if not isinstance(session, ProviderSearchWithFacets):
+                        session_rows = []
+                    else:
+                        response = session.search_with_response_facets(
+                            variant, effective_search_scope,
+                            field=effective_field,
+                            content_types=tuple(content_types or ()),
+                        )
+                        session_rows = _public_rows_from_response(response, session)
+                        response_partial = response.partial is True
+                else:
+                    try:
+                        import inspect
+                        parameters = inspect.signature(session.search).parameters
+                        kwargs = {"field": effective_field}
+                        if "content_types" in parameters:
+                            kwargs["content_types"] = tuple(content_types or ())
+                        session_rows = session.search(variant, effective_search_scope, **kwargs)
+                    except TypeError as exc:
+                        if "field" not in str(exc) or "unexpected keyword" not in str(exc):
+                            raise
+                        session_rows = session.search(variant, effective_search_scope)
                 for raw_row in session_rows:
                     row = _provider_search_row(raw_row)
-                    if id(session) in shared_paris_sessions:
-                        row = _shared_paris_catalogue_row(row, session)
-                        if row is None:
-                            continue
-                    if numilog_catalog_only:
-                        row = _shared_numilog_public_row(row)
-                        if row is None:
-                            continue
-                    if kobo_catalog_only:
-                        row = _shared_kobo_public_row(row, session)
-                        if row is None:
-                            continue
                     key = _search_result_scope_key(row)
                     if key not in provider_seen:
                         provider_seen.add(key)
                         provider_rows.append(row)
                 concrete = getattr(session, "client", None)
-                partial_failure = False
+                partial_failure = response_partial
+                if response_partial:
+                    warnings.append(
+                        f"{session.descriptor.display_name}: résultats partiels"
+                    )
                 for source in (session, concrete):
                     for _warning in list(getattr(source, "last_search_warnings", []) or []):
                         # A provider warning is untrusted: it may carry signed
@@ -1078,8 +1036,7 @@ def _search_provider_session(
     self, session: ProviderSession, query: str, scope: str, *, field: str = "all",
     content_types: tuple[str, ...] = (), facade_type,
     response_facets: list[CatalogSearchFacet] | None = None,
-    numilog_catalogue_only: bool = False,
-    kobo_catalogue_only: bool = False,
+    public_only: bool = False,
 ) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
 
@@ -1097,10 +1054,9 @@ def _search_provider_session(
         warnings.append(contract_warning)
     if effective_field is None:
         return [], warnings, "", ""
-    if numilog_catalogue_only or kobo_catalogue_only:
-        # Numilog all/digital reads MesLivres; Kobo can issue /library/search.
-        # Never query either foreign account for descriptive browsing.
-        effective_field = "all"
+    if public_only:
+        # Never invoke foreign library/holdings search by broad "all" scope.
+        # A legacy search() result cannot attest foreign public provenance.
         provider_scope = "catalog"
         response_facets = None
     identity = getattr(self, "current_identity", None)
@@ -1115,7 +1071,20 @@ def _search_provider_session(
         if attempt > 0 and primary_ok:
             break
         try:
-            if attempt == 0 and response_facets is not None:
+            if public_only:
+                if not isinstance(session, ProviderSearchWithFacets):
+                    session_rows = []
+                    partial_failure = False
+                else:
+                    response = session.search_with_response_facets(
+                        variant, provider_scope, field=effective_field,
+                        content_types=tuple(content_types or ()),
+                    )
+                    if type(response) is not ProviderSearchResponse:
+                        raise TypeError("Invalid provider search response")
+                    session_rows = _public_rows_from_response(response, session)
+                    partial_failure = response.partial is True
+            elif attempt == 0 and response_facets is not None:
                 response = session.search_with_response_facets(
                     variant, provider_scope, field=effective_field,
                     content_types=tuple(content_types or ()),
@@ -1143,14 +1112,6 @@ def _search_provider_session(
                 )
             for raw_row in session_rows:
                 row = _provider_search_row(raw_row)
-                if numilog_catalogue_only:
-                    row = _shared_numilog_public_row(row)
-                    if row is None:
-                        continue
-                if kobo_catalogue_only:
-                    row = _shared_kobo_public_row(row, session)
-                    if row is None:
-                        continue
                 key = _search_result_scope_key(row)
                 if key not in provider_seen:
                     provider_seen.add(key); provider_rows.append(row)
@@ -1288,44 +1249,33 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         and _search_credential_enabled(self, session)
         and (not requested or session.provider_id in requested)
     ]
-    configured_paris_primary = (
-        _configured_paris_primary_for_search(self, identity)
-        if any(session.provider_id == "paris" for session in available)
-        else None
+    configured_search_preferences = _configured_search_preferences(
+        self, identity, available,
     )
     searchable = _search_sessions_for_active_identity(
-        self, available, identity, paris_primary=configured_paris_primary,
+        self, available, identity,
+        preferred_credentials=configured_search_preferences,
     )
     searchable = self._without_redundant_merged(
         searchable, field=field, scope=scope,
         include_redundant_merged=include_redundant_merged,
     )
     searchable.sort(key=lambda row: row.provider_id)
-    paris_source_selected = any(
-        session.provider_id == "paris" for session in searchable
+    preference_sensitive = any(
+        session.provider_id in configured_search_preferences
+        for session in searchable
     )
     # A single exact SQL owner snapshot per selected session, regardless
     # of provider. All snapshots are rechecked before publishing results.
-    # Vendor-specific public-row grammars below remain independently guarded.
+    # Foreign responses require exact same-call public notice provenance.
     owner_leases = tuple(
         (session, _private_search_owner(self, session))
         for session in searchable
     )
     active_id = getattr(identity, "identity_id", None)
     foreign_owner_sessions = {
-        id(session) for session, owner in owner_leases if owner != active_id
-    }
-    shared_paris_sessions = {
-        id(session) for session in searchable
-        if session.provider_id == "paris" and id(session) in foreign_owner_sessions
-    }
-    shared_numilog_sessions = {
-        id(session) for session in searchable
-        if session.provider_id == "numilog" and id(session) in foreign_owner_sessions
-    }
-    shared_kobo_sessions = {
-        id(session) for session in searchable
-        if session.provider_id == "kobo" and id(session) in foreign_owner_sessions
+        id(session) for session, owner in owner_leases
+        if not (type(active_id) is str and active_id and owner == active_id)
     }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
@@ -1339,7 +1289,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         for session in searchable
         if (entry := self.registry.virtual_entry(session.provider_id)) is not None
     )
-    cache_key = hashlib.sha256(f"search-v12-progressive\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
+    cache_key = hashlib.sha256(f"search-v13-progressive\0{_search_session_cache_scope(searchable)!r}\0{_search_owner_cache_scope(owner_leases)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
     def request_current_locked() -> bool:
@@ -1347,9 +1297,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 or self.current_identity is not identity):
             return False
         # A reconnect or a changed Paris primary revokes old results.
-        if (paris_source_selected
-                and _configured_paris_primary_for_search(self, identity)
-                != configured_paris_primary):
+        if (preference_sensitive
+                and _configured_search_preferences(self, identity, available)
+                != configured_search_preferences):
             return False
         try:
             registered = tuple(self._sessions.values())
@@ -1478,14 +1428,13 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 break
             entry = self.registry.virtual_entry(session.provider_id)
             response_facets: list[CatalogSearchFacet] = []
-            if (id(session) in shared_numilog_sessions
-                    or id(session) in shared_kobo_sessions):
+            if id(session) in foreign_owner_sessions:
+                # Foreign streams have no per-upsert public response provenance.
+                # Force one response-bound worker and suppress stream events.
                 future = executor.submit(
                     _search_provider_session, self, session, query, scope,
                     field=field, content_types=tuple(content_types or ()),
-                    facade_type=type(self),
-                    numilog_catalogue_only=id(session) in shared_numilog_sessions,
-                    kobo_catalogue_only=id(session) in shared_kobo_sessions,
+                    facade_type=type(self), public_only=True,
                 )
             elif (
                 entry is not None
@@ -1554,29 +1503,6 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 if request_cancelled():
                     cancelled = True
                     break
-                if id(session) in shared_paris_sessions:
-                    # Strip account-specific fields BEFORE callbacks, mirror
-                    # and cache. Facets from B are not certified public.
-                    provider_rows = [
-                        projected for raw in provider_rows
-                        if (projected := _shared_paris_catalogue_row(raw, session))
-                        is not None
-                    ]
-                    response_facets.clear()
-                if id(session) in shared_numilog_sessions:
-                    provider_rows = [
-                        projected for raw in provider_rows
-                        if (projected := _shared_numilog_public_row(raw))
-                        is not None
-                    ]
-                    response_facets.clear()
-                if id(session) in shared_kobo_sessions:
-                    provider_rows = [
-                        projected for raw in provider_rows
-                        if (projected := _shared_kobo_public_row(raw, session))
-                        is not None
-                    ]
-                    response_facets.clear()
                 # An inventory revision during a search invalidates any
                 # partial results from the former generation.
                 expected = streamed.get(session.provider_id)
@@ -1725,17 +1651,15 @@ def filter_loaded_search_results(rows: list[dict[str, Any]], query: str='', *, f
     )
 
 
-def _numilog_public_catalog_url(
+def _public_catalog_url(
     value: Any, *, cover: bool = False, evidence: str | None = None,
+    provider_id: str | None = None,
 ) -> str | None:
-    """Keep only public HTTPS links qualified by their producing plugin.
+    """Structurally validate public URLs without supplier-specific decisions.
 
-    Numilog's public product hosts and path grammar belong to the Numilog
-    adapter, which emits the closed evidence marker after checking the actual
-    owned-card link. Core does not maintain a vendor-host allowlist and never
-    infers an acquisition URL from a catalogue notice. For older mirrored
-    cover fields the adapter has already verified public image origins; Core
-    retains its independent structural, query-free HTTP(S) protection.
+    Product URLs require exact producer-qualified evidence; a private search
+    result or an arbitrary friendly URL cannot grant public-link authority.
+    Only the producing plugin can attest its public title/card parser.
     """
     from urllib.parse import urlsplit
     import ipaddress
@@ -1769,6 +1693,11 @@ def _numilog_public_catalog_url(
             pass
         else:
             return None
+        # A product page and an image may not point to a private account,
+        # delivery, claim or authentication endpoint, even when the parser
+        # supplied otherwise valid public evidence.
+        if _private_catalogue_path(parsed.path):
+            return None
         if cover:
             return value if not parsed.query else None
         # An acquisition artifact or fulfillment token is never a product
@@ -1778,19 +1707,19 @@ def _numilog_public_catalog_url(
             ".acsm", ".lcpl", ".epub", ".pdf", ".zip",
         )):
             return None
-        # A public product link is qualified by the producing Numilog
-        # adapter's private-card parser. A raw SearchResult without this
-        # evidence may not persist an arbitrary private/download URL.
-        if evidence not in {
-            "numilog.library_title_link",
-            "numilog.public_search_product_card",
-        }:
+        # No evidence inferred from the URL, a known provider, an owned
+        # flag, or a catalogue row. The marker must match the producer exactly.
+        if (type(provider_id) is not str
+                or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider_id) is None
+                or evidence not in {
+                    f"{provider_id}.library_title_link",
+                    f"{provider_id}.public_search_product_card",
+                }):
             return None
-        # The public search card has no authenticated-library legacy query.
-        # The optional ref=library belongs only to the exact private-card
-        # title link checked separately by the provider adapter.
+        # The optional historical library reference belongs only to the
+        # private-card marker, never an anonymous search card.
         allowed_queries = (
-            ("", "ref=library") if evidence == "numilog.library_title_link"
+            ("", "ref=library") if evidence == f"{provider_id}.library_title_link"
             else ("",)
         )
         if parsed.query not in allowed_queries:
@@ -1798,6 +1727,15 @@ def _numilog_public_catalog_url(
         return value
     except (ValueError, AttributeError, TypeError):
         return None
+
+
+def _numilog_public_catalog_url(
+    value: Any, *, cover: bool = False, evidence: str | None = None,
+) -> str | None:
+    """Compatibility for existing plugin callers; no supplier policy here."""
+    return _public_catalog_url(
+        value, cover=cover, evidence=evidence, provider_id="numilog",
+    )
 
 
 _PUBLIC_SEARCH_TEXT_FIELDS = (
@@ -1839,10 +1777,9 @@ def _safe_public_search_text(key: str, value: Any) -> str | list[str] | None:
 
 
 
-# SearchService/Paris resource fields observed in #3415. The Core only keeps
-# evidence produced by that exact source; provider payloads are not generic
-# credentials, entitlement or acquisition evidence.
-_PARIS_RESOURCE_FACET_FIELDS = {
+# SearchService Resource facets: retain only exact source-attested fields.
+# Evidence is bibliographic, never entitlement or acquisition authority.
+_RESOURCE_FACET_FIELDS = {
     "subjects": "Subj",
     "tags": "Tags",
     "paris_blog_categories": "BlogPostCategories",
@@ -1850,11 +1787,17 @@ _PARIS_RESOURCE_FACET_FIELDS = {
 }
 
 
-def _safe_paris_resource_facets(
-    metadata: dict[str, Any], scenario: str,
+def _safe_resource_facets(
+    metadata: dict[str, Any], scenario: str, *, provider_id: str,
 ) -> dict[str, Any]:
-    """Persist bounded, already-attested Paris fields for the exact edition."""
-    if scenario not in {"CATALOGUE", "EBOOKS"}:
+    """Persist bounded Resource facets only with exact source-bound evidence.
+
+    The historical helper name remains for existing callers; admission is
+    based on the producing provider identity, not a Core supplier dispatch.
+    """
+    if (scenario not in {"CATALOGUE", "EBOOKS"}
+            or type(provider_id) is not str or not provider_id
+            or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider_id) is None):
         return {}
     evidence = metadata.get("bibliography_evidence")
     if type(evidence) is not dict:
@@ -1862,13 +1805,13 @@ def _safe_paris_resource_facets(
 
     fields: dict[str, Any] = {}
     proofs: dict[str, dict[str, str]] = {}
-    for name, source_field in _PARIS_RESOURCE_FACET_FIELDS.items():
+    for name, source_field in _RESOURCE_FACET_FIELDS.items():
         raw_values = metadata.get(name)
         proof = evidence.get(name)
         if type(raw_values) is not list or not 1 <= len(raw_values) <= 12:
             continue
         expected = {
-            "source": "paris.syracuse.search",
+            "source": f"{provider_id}.syracuse.search",
             "source_field": "Resource." + source_field,
             "scope": scenario,
             "confidence": "upstream_field_present",
@@ -1944,7 +1887,9 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             "remote_owned" if owned else
             # This is descriptive only: a supplier price is not a purchase right.
             "available_to_buy" if type(row.price) is str and bool(row.price.strip()) else
-            "available_to_borrow" if row.source_provider == "paris" and row.medium == "digital" else
+            # A public catalogue notice is not a borrowing right.
+            # Borrowability must be established by the independent lender
+            # policy/holding evidence, never inferred from provider or medium.
             "remote_catalog"
         )
         key, qualified = _mirrored_catalogue_key(identity_id, row)
@@ -1973,10 +1918,12 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             safe = _safe_public_search_text(name, raw_meta.get(name))
             if safe is not None:
                 allowed_meta[name] = safe
-        if row.source_provider == "paris":
-            # Only observed Resource fields + their exact scenario-specific
-            # evidence; never persist raw SearchService response dictionaries.
-            allowed_meta.update(_safe_paris_resource_facets(raw_meta, row.scenario))
+        # Only persist bounded Resource facets whose exact, scenario-specific
+        # upstream evidence matches the source of this same result. No
+        # supplier identity grants additional metadata or a right.
+        allowed_meta.update(_safe_resource_facets(
+            raw_meta, row.scenario, provider_id=row.source_provider,
+        ))
         # The generic youth-age contract is also edition-scoped and already
         # structured. Keep only its validated bounds/kind and harmless original
         # label; never persist a raw nested provider age object, provenance
@@ -1997,15 +1944,14 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             })
         if public_ages:
             allowed_meta["youth_age_ranges"] = public_ages
-        cover_url = (
-            _numilog_public_catalog_url(row.thumbnail_url, cover=True)
-            if row.source_provider == "numilog" else row.thumbnail_url
-        )
-        product_url = (
-            _numilog_public_catalog_url(
-                row.friendly_url, evidence=raw_meta.get("public_url_evidence"),
-            )
-            if row.source_provider == "numilog" else row.friendly_url
+        # A cover is descriptive, never a session or delivery URL. Apply
+        # the same conservative public-image boundary to every provider.
+        cover_url = _shared_catalogue_cover_url(row.thumbnail_url)
+        # Persist a product URL only when this exact producing provider
+        # supplies an eligible public-link marker and the URL is non-private.
+        product_url = _public_catalog_url(
+            row.friendly_url, evidence=raw_meta.get("public_url_evidence"),
+            provider_id=row.source_provider,
         )
         upserts.append({
             "catalog_entry_id": key, "title": row.title, "author": row.author, "media_format": row.format,

@@ -156,3 +156,42 @@ def test_reject_unverified_paris_resource_facets_without_inventing_rights(
         assert service.storage.acquisitions() == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("provider_id", ["synthetic-alpha", "unknown-provider"])
+def test_resource_facets_follow_exact_provider_evidence_not_vendor_dispatch(
+    tmp_path, provider_id,
+):
+    service = _service(str(tmp_path))
+    try:
+        source = _resource()
+        metadata = dict(source.metadata)
+        metadata["bibliography_evidence"] = {
+            key: {**proof, "source": f"{provider_id}.syracuse.search"}
+            for key, proof in _evidence("CATALOGUE").items()
+        }
+        source = replace(source, source_provider=provider_id, metadata=metadata)
+        assert service._mirror_remote_results([source], identity_id="default") == 1
+        stored, = service.storage.catalog_entries(identity_id="default")
+        saved = stored["metadata"]
+        assert saved["paris_blog_categories"] == ["Catégorie A"]
+        assert saved["bibliography_evidence"] == metadata["bibliography_evidence"]
+        assert service.storage.entitlements() == []
+        assert service.storage.acquisitions() == []
+    finally:
+        service.close()
+
+
+def test_cross_provider_resource_evidence_cannot_be_relabelled(tmp_path):
+    service = _service(str(tmp_path))
+    try:
+        source = replace(_resource(), source_provider="synthetic-alpha")
+        assert service._mirror_remote_results([source], identity_id="default") == 1
+        stored, = service.storage.catalog_entries(identity_id="default")
+        metadata = stored["metadata"]
+        assert "paris_blog_categories" not in metadata
+        assert "bibliography_evidence" not in metadata
+        assert service.storage.entitlements() == []
+        assert service.storage.acquisitions() == []
+    finally:
+        service.close()

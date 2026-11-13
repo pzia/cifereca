@@ -72,3 +72,95 @@ def test_query_free_public_covers_remain_generic_but_signed_covers_do_not():
         "https://cdn.another-publisher.org/../private.jpg",
     ):
         assert _numilog_public_catalog_url(url, cover=True) is None
+
+
+@pytest.mark.parametrize("provider", [
+    "numilog", "paris", "kobo", "synthetic-alpha", "unknown",
+])
+@pytest.mark.parametrize("kind", ["library_title_link", "public_search_product_card"])
+def test_product_url_proof_is_bound_to_exact_producer(provider, kind):
+    from cifereca.core.search_orchestration import _public_catalog_url
+    url = "https://books.new-publisher.org/public/title.ebook"
+    marker = f"{provider}.{kind}"
+    assert _public_catalog_url(url, evidence=marker, provider_id=provider) == url
+    assert _public_catalog_url(url, evidence="numilog." + kind,
+                               provider_id=provider) == (url if provider == "numilog" else None)
+    assert _public_catalog_url(url, evidence=marker, provider_id="different") is None
+    assert _public_catalog_url(url, provider_id=provider) is None
+
+
+@pytest.mark.parametrize("provider", [
+    "numilog", "paris", "kobo", "synthetic-alpha", "unknown",
+])
+@pytest.mark.parametrize("unsafe", [
+    "https://books.new-publisher.org/public/title.ebook?token=secret",
+    "https://books.new-publisher.org/download/private.epub",
+    "https://127.0.0.1/public/title.ebook",
+    "https://reader:secret@books.new-publisher.org/public/title.ebook",
+])
+def test_producer_proof_never_overrides_url_boundary(provider, unsafe):
+    from cifereca.core.search_orchestration import _public_catalog_url
+    assert _public_catalog_url(
+        unsafe, provider_id=provider,
+        evidence=f"{provider}.public_search_product_card",
+    ) is None
+
+
+@pytest.mark.parametrize("provider", [
+    "numilog", "paris", "kobo", "synthetic-alpha", "unknown",
+])
+def test_mirror_product_link_requires_same_provider_public_marker(tmp_path, provider):
+    from dataclasses import replace
+    from tests.test_catalog_083 import _service
+    from tests.test_core_p0_1354_mirrored_source_scope import notice
+
+    service = _service(str(tmp_path))
+    try:
+        url = "https://books.new-publisher.org/public/title.ebook"
+        proof = f"{provider}.public_search_product_card"
+        base = notice()
+        row = replace(
+            base, source_provider=provider, friendly_url=url,
+            metadata={"public_url_evidence": proof},
+        )
+        assert service._mirror_remote_results([row], identity_id="default") == 1
+        saved, = service.storage.catalog_entries(identity_id="default")
+        assert saved["metadata"]["product_url"] == url
+
+        # Another vendor's proof cannot authorize this exact row's URL.
+        wrong = replace(
+            row, metadata={"public_url_evidence": "other.public_search_product_card"},
+        )
+        assert service._mirror_remote_results([wrong], identity_id="default") == 1
+        saved, = service.storage.catalog_entries(identity_id="default")
+        assert saved["metadata"]["product_url"] is None
+        assert service.storage.entitlements() == []
+        assert service.storage.acquisitions() == []
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("provider", [
+    "numilog", "paris", "kobo", "synthetic-alpha", "unknown",
+])
+@pytest.mark.parametrize("path", [
+    "/account/reader/book", "/download/title", "/loan/details",
+    "/session/credential", "/public/private/item",
+    "/auth/login", "/acquisition/file",
+])
+def test_attested_public_product_never_persists_private_route(provider, path):
+    from cifereca.core.search_orchestration import _public_catalog_url
+    assert _public_catalog_url(
+        "https://books.new-publisher.org" + path,
+        provider_id=provider,
+        evidence=f"{provider}.public_search_product_card",
+    ) is None
+
+
+@pytest.mark.parametrize("path", [
+    "/catalogue/cover.jpg", "/covers/public/item.webp",
+])
+def test_generic_public_cover_keeps_nonprivate_paths(path):
+    from cifereca.core.search_orchestration import _shared_catalogue_cover_url
+    url = "https://cdn.new-publisher.org" + path
+    assert _shared_catalogue_cover_url(url) == url

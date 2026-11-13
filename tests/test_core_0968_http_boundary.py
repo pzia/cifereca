@@ -20,7 +20,7 @@ import pytest
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.models import SearchResult
-from cifereca.plugin_api import validate_provider_collection_snapshot
+from cifereca.plugin_api import validate_provider_collection_snapshot, ProviderSearchResponse, PublicSearchNotice
 from cifereca.providers import (
     ProviderCapabilities, ProviderDescriptor, ProviderPlugin, ProviderSession,
 )
@@ -156,6 +156,15 @@ class _HttpSession(ProviderSession):
             )
             for item in rows
         ]
+
+    def search_with_response_facets(self, query, scope="all", *,
+                                    field="all", content_types=()):
+        # The synthetic HTTP /search endpoint is a public catalogue parser,
+        # not a private account inventory or book-delivery API.
+        rows = self.search(query, scope, field=field)
+        return ProviderSearchResponse(
+            rows, public_notices=tuple(PublicSearchNotice(row) for row in rows),
+        )
 
 
 class _HttpProvider(ProviderPlugin):

@@ -37,6 +37,7 @@ from cifereca.providers.base import (
 )
 from cifereca.plugin_api import (
     CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
+    PublicSearchNotice,
 )
 
 
@@ -88,7 +89,29 @@ class _OfflineParisSession(ProviderSession):
             friendly_url=None, scenario="EBOOKS",
             source_provider="paris", source_credential=self.credential_id,
             source_collection="catalog",
+            # UI presentation hint is bound to this exact notice. It never
+            # authorizes borrowing: Core independently checks account,
+            # session, source and one-shot claim before permitting an action.
+            metadata={"manual_borrow_presentation": {
+                "provider_id": "paris",
+                "docbase": "DILICOM",
+                "record_id": "edition-" + self.credential_id,
+            }},
         )]
+
+    def search_with_response_facets(
+        self, query, scope="all", *, field="all", content_types=(),
+    ):
+        # Offline synthetic catalogue producer: its SearchResult is already
+        # a public, non-owned catalogue entry. The notice is explicit and
+        # attached only to this response, never inferred by Core from a
+        # foreign private library result.
+        rows = self.search(query, scope, field=field)
+        return ProviderSearchResponse(
+            rows, public_notices=tuple(
+                PublicSearchNotice(row) for row in rows
+            ),
+        )
 
     def holdings(self, item, search_terms=""):
         self.holdings_calls += 1
@@ -652,6 +675,14 @@ def main() -> int:
             capabilities=SimpleNamespace(search=True),
             search_with_response_facets=search_facets, close=lambda: None,
         )
+        # Explicit ownership for the GTK facet fixture: foreign responses
+        # cannot publish even descriptive facets without a public notice.
+        core.library.storage.provider_connection_put({
+            "identity_id": core.library.current_identity.identity_id,
+            "provider_id": "synthetic-facets",
+            "credential_id": "fixture", "label": "Catalogue de test",
+            "enabled": True, "metadata": {},
+        })
         window.search_controls.entry.set_text("Facettes")
         assert not window._search_response_facets.get_visible()
         later(100, lambda: (

@@ -8,6 +8,7 @@ from dataclasses import asdict, replace
 import pytest
 
 from tests.test_core043_progress_cache_stats import _FakeSession, _service
+from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 
 
 class KoboFixture(_FakeSession):
@@ -46,6 +47,30 @@ class KoboFixture(_FakeSession):
             source_collection="library", owned=True, downloadable=True,
             metadata={"private": "BOB"},
         )]
+
+    def search_with_response_facets(self, query, scope="all", *,
+                                    field="all", content_types=()):
+        # Independent public catalogue parser: never query the owner's
+        # authenticated library or infer a notice from private entitlements.
+        self.public_calls += 1
+        self.mutate()
+        base = super().search(query, "catalog", field=field,
+                              content_types=content_types)[0]
+        private = replace(
+            base, source_credential=self.credential_id,
+            scenario="KOBO", docbase="KOBO",
+            source_collection="catalog", owned=True, downloadable=True,
+            download_url="https://private.invalid/SECRET",
+            metadata={"private": "BOB"},
+        )
+        public = replace(
+            private, owned=False, downloadable=False, download_url=None,
+            source_account_id=None, thumbnail_url=None, friendly_url=None,
+            metadata={},
+        )
+        return ProviderSearchResponse(
+            [private], public_notices=(PublicSearchNotice(public),),
+        )
 
     def holdings(self, *_args, **_kwargs):
         self.holdings_calls += 1

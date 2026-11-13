@@ -22,7 +22,22 @@ def _service(tmp_path: Path) -> LibraryService:
     cfg.set("library.directory", str(tmp_path / "library"))
     cfg.set("identities", [{"id": "alice", "label": "Alice"}])
     cfg.set("providers.accounts", [])
-    return LibraryService(cfg, Storage(tmp_path / "db.sqlite3"), Diagnostics())
+    service = LibraryService(cfg, Storage(tmp_path / "db.sqlite3"), Diagnostics())
+    # These explicitly synthetic test sessions represent Alice-owned connections.
+    # A missing SQL owner is foreign/unknown in production and MUST remain
+    # fail-closed. Tests for unknown or foreign ownership override this method.
+    sqlite_owner = service.storage.identity_for_connection
+
+    def test_session_owner(provider_id, credential_id):
+        for session in service._sessions.values():
+            if (isinstance(session, _FakeSession)
+                    and session.provider_id == provider_id
+                    and session.credential_id == credential_id):
+                return "alice"
+        return sqlite_owner(provider_id, credential_id)
+
+    service.storage.identity_for_connection = test_session_owner
+    return service
 
 
 class _FakeSession:

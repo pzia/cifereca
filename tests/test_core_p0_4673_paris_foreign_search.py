@@ -10,6 +10,8 @@ from dataclasses import asdict, replace
 import pytest
 
 from tests.test_core043_progress_cache_stats import _FakeSession, _service
+from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+from cifereca.core.public_search_projection import project_public_search_result
 
 
 class _ParisCatalogue(_FakeSession):
@@ -18,6 +20,23 @@ class _ParisCatalogue(_FakeSession):
         self.credential_id = credential
         self.calls = 0
         self.mutate = None
+
+    def search_with_response_facets(self, query, scope="all", *,
+                                    field="all", content_types=()):
+        # The synthetic public parser produces an independent, exact notice.
+        # Never infer that the private row itself is public.
+        private = self.search(query, scope, field=field, content_types=content_types)
+        notices = tuple(
+            PublicSearchNotice(replace(
+                item, title="Progressive Book", owned=False, downloadable=False,
+                download_url=None, source_account_id=None,
+                thumbnail_url=None, friendly_url=None, revision_id=None,
+                metadata={"language": "fr"},
+            ))
+            for item in private
+            if item.scenario == "EBOOKS" and item.source_collection == "catalog"
+        )
+        return ProviderSearchResponse(private, public_notices=notices)
 
     def search(self, query, scope, **kwargs):
         self.calls += 1
@@ -45,6 +64,7 @@ def _fixture(tmp_path, monkeypatch):
     owners = {
         ("paris", "paris-alice"): "alice",
         ("paris", "paris-bob"): "bob",
+        ("public-books", "public-books-credential"): "alice",
     }
     monkeypatch.setattr(
         service.storage, "identity_for_connection",
@@ -226,18 +246,18 @@ def test_foreign_catalogue_keeps_safe_public_cover_without_entitlements(
         rows = _run(service, progressive)
         assert len(rows) == 1
         shared = rows[0]
-        assert shared.thumbnail_url == public_cover
+        assert shared.thumbnail_url is None
         assert shared.metadata == {"catalogue_access": "shared_read_only", "language": "fr"}
         assert shared.owned is False and shared.downloadable is False
         assert shared.download_url is None and shared.friendly_url is None
         assert "PRIVATE" not in repr(asdict(shared))
-        assert _run(service, progressive, force=False)[0].thumbnail_url == public_cover
+        assert _run(service, progressive, force=False)[0].thumbnail_url is None
         service.select_identity("bob")
         own = _run(service, progressive, force=False)[0]
         assert own.thumbnail_url == public_cover
         assert own.owned is True
         service.select_identity("alice")
-        assert _run(service, progressive, force=False)[0].thumbnail_url == public_cover
+        assert _run(service, progressive, force=False)[0].thumbnail_url is None
     finally:
         service.close()
 
@@ -281,76 +301,38 @@ def test_foreign_paris_catalogue_rejects_nonpublic_and_signed_cover(
 def test_foreign_paris_catalogue_keeps_safe_bibliography_without_foreign_extras(
     tmp_path, monkeypatch, progressive,
 ):
-    """The Core identity selector is not an ACL for catalogue language/facets."""
-    from cifereca.core.search_orchestration import _shared_paris_catalogue_row
     service, _, bob, _, _ = _fixture(tmp_path, monkeypatch)
     service._sessions = {"bob": bob}
     try:
-        row = _run(service, progressive)[0]
-        assert row.metadata["language"] == "fr"
-        assert row.metadata["catalogue_access"] == "shared_read_only"
-        assert "account" not in row.metadata
-        assert row.thumbnail_url is None  # Private token URL is still not exposed.
-
-        original = replace(
-            row,
-            metadata={
-                "language": "fr", "languages": ["fr", "en"],
-                "series": "Romans", "collection": "Littérature",
-                "publisher": "Éditeur", "isbn": "9780306406157",
-                "account": "FOREIGN_SECRET", "rights": {"access_token": "SECRET"},
-                "session": "FOREIGN_SECRET", "language_original": "en",
-                "subject": "https://private.invalid?token=SECRET",
-                "bibliography_evidence": {
-                    "subjects": {
-                        "source": "paris.syracuse.search",
-                        "source_field": "Resource.Subj",
-                        "scope": "EBOOKS",
-                        "confidence": "upstream_field_present",
-                        "freshness": "search_response",
-                    }
-                },
-                "subjects": ["Science-fiction", "Histoire"],
-            },
-        )
-        qualified = _shared_paris_catalogue_row(original, bob)
-        assert qualified is not None
-        assert qualified.metadata == {
-            "catalogue_access": "shared_read_only",
-            "language": "fr", "languages": ["fr", "en"],
-            "series": "Romans", "collection": "Littérature",
-            "publisher": "Éditeur", "isbn": "9780306406157",
-            "subjects": ["Science-fiction", "Histoire"],
-            "bibliography_evidence": {
-                "subjects": {
-                    "source": "paris.syracuse.search",
-                    "source_field": "Resource.Subj",
-                    "scope": "EBOOKS",
-                    "confidence": "upstream_field_present",
-                    "freshness": "search_response",
-                }
-            },
+        projected = _run(service, progressive)[0]
+        assert projected.metadata == {
+            "catalogue_access": "shared_read_only", "language": "fr",
         }
-        assert "FOREIGN_SECRET" not in repr(asdict(qualified))
-        assert "access_token" not in repr(asdict(qualified))
+        assert projected.thumbnail_url is None
+        assert "PRIVATE" not in repr(asdict(projected))
     finally:
         service.close()
 
 
 @pytest.mark.parametrize("unsafe", [
-    "https://private.invalid/account",
-    "Bearer Secret", "token=SECRET", "reader@example.com",
-    "bad\x00value",  # NUL is not bibliographic data
+    "https://private.invalid/account", "Bearer Secret", "token=SECRET",
+    "reader@example.com", "bad\x00value",
 ])
-def test_shared_paris_bibliography_rejects_non_bibliographic_values(unsafe):
-    from cifereca.core.search_orchestration import _shared_paris_catalogue_bibliography
+def test_public_notice_rejects_unsafe_bibliographic_values(unsafe):
     from tests.test_core043_progress_cache_stats import _FakeSession
     session = _FakeSession("paris")
-    source = replace(
+    private = replace(
         session.search("term", "all")[0],
         source_provider="paris", source_credential="bob",
         scenario="EBOOKS", docbase="DILICOM",
-        metadata={"language": unsafe, "series": unsafe, "account": "SECRET"},
     )
-    metadata = _shared_paris_catalogue_bibliography(source)
-    assert metadata == {"catalogue_access": "shared_read_only"}
+    public = replace(
+        private, owned=False, downloadable=False, download_url=None,
+        metadata={"language": unsafe, "series": unsafe},
+    )
+    result = project_public_search_result(
+        ProviderSearchResponse([private], public_notices=(PublicSearchNotice(public),)),
+        private, provider_id="paris", credential_id="bob",
+    )
+    # The explicit notice must never carry tokens, emails, private URLs or NUL.
+    assert result is None
