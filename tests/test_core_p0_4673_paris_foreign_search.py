@@ -64,6 +64,7 @@ def _fixture(tmp_path, monkeypatch):
     owners = {
         ("paris", "paris-alice"): "alice",
         ("paris", "paris-bob"): "bob",
+        ("public-books", "public-books-credential"): "alice",
     }
     monkeypatch.setattr(
         service.storage, "identity_for_connection",
