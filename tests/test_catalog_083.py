@@ -40,7 +40,7 @@ def test_search_results_are_progressively_mirrored():
             row = SearchResult(
                 id="kobo:c:p1", record_id="p1", docbase="KOBO", medium="digital", title="Book", author="A",
                 type="ebook", format="EPUB", publisher=None, published_at=None, description=None,
-                thumbnail_url="https://example/cover.jpg", friendly_url="https://example/book", scenario="KOBO",
+                thumbnail_url="https://cdn.books.org/cover.jpg", friendly_url="https://example/book", scenario="KOBO",
                 source_provider="kobo", source_credential="c", owned=False, price="9.99", currency="EUR",
             )
             assert service._mirror_remote_results([row], identity_id="default") == 1
@@ -48,6 +48,9 @@ def test_search_results_are_progressively_mirrored():
             assert len(entries) == 1
             assert entries[0]["item_id"] == "p1"
             assert entries[0]["metadata"]["cover_url"].endswith("cover.jpg")
+            # A raw friendly URL never gains public-product status without an
+            # exact producer attestation, even when mirroring a valid cover.
+            assert entries[0]["metadata"]["product_url"] is None
         finally:
             service.close()
 
