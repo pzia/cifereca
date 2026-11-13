@@ -16,6 +16,36 @@ class Service:
         self.calls.append(force)
         return dict(self.state)
 
+    def runtime_acquisition_state(self, provider_id, *, force=False):
+        # Simulate an attested producer, not a broker-owned vendor fallback.
+        if provider_id != "kobo":
+            return {}
+        state = self.kobo_adept_state(force=force)
+        download = state.get("capabilities", {}).get("download", {})
+        http = download.get("http", {})
+        declared = state.get("declared_capabilities", ())
+        modes = []
+        if http.get("available") is True or "download_http_epub_pdf" in declared:
+            modes.append("http_plain")
+        if state.get("acsm_available") is True:
+            modes.append("adobe_adept")
+        if state.get("kobo_delegated_available") is True:
+            modes.append("kobo_delegated")
+        if state.get("kobo_kdrm_available") is True:
+            modes.append("kobo_kdrm")
+        return {**state, "provider_id": provider_id, "provider_attested": True,
+                "modes": modes, "formats": state.get("kobo_formats", ())}
+
+
+def test_unbound_service_without_producer_never_probes_legacy_runtime():
+    class LegacyOnly:
+        def kobo_adept_state(self, *, force=False):
+            raise AssertionError("broker must not probe legacy Kobo runtime")
+
+    broker = RuntimeCapabilitiesBrokerImpl(LegacyOnly())
+    assert broker.acquisition("kobo") == RuntimeAcquisitionCapabilities(provider_id="kobo")
+    assert broker.acquisition("synthetic") == RuntimeAcquisitionCapabilities(provider_id="synthetic")
+
 
 def test_public_registry_exposes_runtime_capabilities_broker():
     broker = build_public_brokers(Service({}))["runtime.capabilities"]
@@ -246,7 +276,7 @@ def test_attested_runtime_rejects_untrusted_format_objects_and_bad_declared_valu
     assert service.calls == []
 
 
-def test_legacy_runtime_keeps_kobo_format_fallback():
+def test_attested_producer_projects_legacy_runtime_formats_without_broker_dispatch():
     service = Service({"kobo_formats": ["KEPUB"]})
     assert RuntimeCapabilitiesBrokerImpl(service).acquisition("kobo").formats == (
         "kepub",
