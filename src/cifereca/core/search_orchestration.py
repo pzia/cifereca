@@ -1755,10 +1755,9 @@ def _safe_public_search_text(key: str, value: Any) -> str | list[str] | None:
 
 
 
-# SearchService/Paris resource fields observed in #3415. The Core only keeps
-# evidence produced by that exact source; provider payloads are not generic
-# credentials, entitlement or acquisition evidence.
-_PARIS_RESOURCE_FACET_FIELDS = {
+# SearchService Resource facets: retain only exact source-attested fields.
+# Evidence is bibliographic, never entitlement or acquisition authority.
+_RESOURCE_FACET_FIELDS = {
     "subjects": "Subj",
     "tags": "Tags",
     "paris_blog_categories": "BlogPostCategories",
@@ -1766,7 +1765,7 @@ _PARIS_RESOURCE_FACET_FIELDS = {
 }
 
 
-def _safe_paris_resource_facets(
+def _safe_resource_facets(
     metadata: dict[str, Any], scenario: str, *, provider_id: str = "paris",
 ) -> dict[str, Any]:
     """Persist bounded Resource facets only with exact source-bound evidence.
@@ -1784,7 +1783,7 @@ def _safe_paris_resource_facets(
 
     fields: dict[str, Any] = {}
     proofs: dict[str, dict[str, str]] = {}
-    for name, source_field in _PARIS_RESOURCE_FACET_FIELDS.items():
+    for name, source_field in _RESOURCE_FACET_FIELDS.items():
         raw_values = metadata.get(name)
         proof = evidence.get(name)
         if type(raw_values) is not list or not 1 <= len(raw_values) <= 12:
@@ -1900,7 +1899,7 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
         # Only persist bounded Resource facets whose exact, scenario-specific
         # upstream evidence matches the source of this same result. No
         # supplier identity grants additional metadata or a right.
-        allowed_meta.update(_safe_paris_resource_facets(
+        allowed_meta.update(_safe_resource_facets(
             raw_meta, row.scenario, provider_id=row.source_provider,
         ))
         # The generic youth-age contract is also edition-scoped and already
