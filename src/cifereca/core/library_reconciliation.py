@@ -271,10 +271,19 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
                                 row['bibliographic_identifiers'] = identifiers(metadata)
                             else:
                                 source = metadata.get('source') if isinstance(metadata, dict) else None
+                                provider = row.get('provider_id')
+                                # Read-only descriptive provenance, not right
+                                # attestation: exact issuer and known evidence
+                                # grammar are required even for a local label.
                                 row['attested_source'] = (
-                                    source if source in (
-                                        'kobo.personal_manifest',
-                                        'numilog.authenticated_library',
+                                    source if (
+                                        type(provider) is str and bool(provider)
+                                        and provider == provider.strip()
+                                        and type(source) is str
+                                        and source in (
+                                            provider + '.personal_manifest',
+                                            provider + '.authenticated_library',
+                                        )
                                     ) else None
                                 )
                         projected.append(row)
