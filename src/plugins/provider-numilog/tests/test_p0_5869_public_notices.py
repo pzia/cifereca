@@ -60,7 +60,27 @@ def test_anonymous_catalogue_attests_only_exact_public_parser_cards(monkeypatch)
             projected = project_public_search_result(
                 response, row, provider_id="numilog", credential_id="__public__",
             )
-            assert projected is not None
+            if projected is None:
+                # Public HTML is not automatically safe to republish verbatim.
+                # The Core must reject even a genuinely public catalogue card
+                # if one of its descriptive text fields includes an URL,
+                # authentication marker or account/email string.
+                import re
+                sensitive = re.compile(
+                    r"(?i)(?:https?://|(?<!\\w)(?:bearer|basic)\\s+\\S+|"
+                    r"(?<!\\w)(?:token|auth|cookie|signature|access_token|refresh_token)\\s*=|"
+                    r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+)"
+                )
+                assert any(
+                    type(value) is str and sensitive.search(value)
+                    for value in (
+                        declaration.result.title, declaration.result.author,
+                        declaration.result.type, declaration.result.format,
+                        declaration.result.publisher, declaration.result.published_at,
+                        declaration.result.description, declaration.result.content_type,
+                    )
+                ), "unexpected rejection of an inert Numilog public card"
+                continue
             assert projected.metadata == {"catalogue_access": "shared_read_only"}
             assert projected.owned is projected.downloadable is False
             assert projected.download_url is projected.friendly_url is None
