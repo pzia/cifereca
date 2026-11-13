@@ -18,7 +18,7 @@ from recommendation_engine import ExplicitReadingSignal
 from cifereca.brokers import MetadataBrokerImpl
 from cifereca.core.explicit_reading_preferences import change_preference
 
-from tests.test_core_p1_4909_recommendations_integration import _Metadata
+from tests.test_core_p1_4909_recommendations_integration import _Metadata, _attest_public_author
 from tests.test_core_p0_4673_paris_foreign_search import _fixture as paris_setup
 from tests.test_core_p1_4909_numilog_shared_public import setup as numilog_setup
 from tests.test_core_p1_4909_kobo_shared_public import setup as kobo_setup
@@ -46,6 +46,7 @@ def _setup(tmp_path, monkeypatch, provider):
     session.search = lambda query, scope, **kwargs: [
         replace(row, author="Alice") for row in original(query, scope, **kwargs)
     ]
+    _attest_public_author(session)
     return service, session, MetadataBrokerImpl(service)
 
 
