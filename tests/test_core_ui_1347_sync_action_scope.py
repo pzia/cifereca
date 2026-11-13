@@ -156,6 +156,10 @@ def _source(identity_id="alice", source_id="kobo-one", **options):
         enabled=True, connected=True, sync_capable=True,
         status="idle", last_success=None, last_attempt=None, error="",
     )
+    # Other synthetic providers must not inherit the Kobo fixture's
+    # materialization capability merely by overriding provider_id.
+    if "sync_capabilities" not in options and options.get("provider_id", "kobo") != "kobo":
+        fields["sync_capabilities"] = ()
     fields.update(options)
     return NS(**fields)
 
@@ -459,3 +463,40 @@ def test_numilog_legacy_sync_uses_same_neutral_task_label():
     assert window.runner.tasks[0].label == "Synchronisation Mes achats…"
     assert window.runner.tasks[0].work() == "ok"
     assert ("sync-source", "numilog-source") in calls
+
+
+def test_legacy_local_materialization_is_capability_driven_for_synthetic_provider():
+    source = _source(
+        provider_id="future-library", source_id="future-account",
+        label="Future lender", sync_capabilities=("local_materialization",),
+    )
+    w, broker, calls, _, _ = _fixture(sources=[source])
+    row = _source_row(w)
+    assert row.suffixes[2].label == "Aperçu local…"
+    row.suffixes[2].click()
+    assert len(w.runner.tasks) == 1
+    assert w.runner.tasks[0].work().facts["status"] == "not_supported"
+    assert ("preview", "future-account") in calls
+    assert not any(name in {"materialize", "prepare"} for name, *_ in calls)
+
+
+def test_legacy_local_materialization_denies_missing_or_malformed_capabilities():
+    for declared in ((), ("remote_inventory",), "local_materialization", None, {"local_materialization": True}):
+        source = _source(
+            provider_id="future-library", source_id="future-account",
+            sync_capabilities=declared,
+        )
+        w, broker, calls, _, _ = _fixture(sources=[source])
+        row = _source_row(w)
+        assert len(row.suffixes) == 2
+        assert not any(button.label == "Aperçu local…" for button in row.suffixes)
+        assert w.runner.tasks == []
+
+
+def test_kobo_brand_without_materialization_capability_does_not_create_tools():
+    source = _source(provider_id="kobo", sync_capabilities=())
+    w, _, calls, _, _ = _fixture(sources=[source])
+    assert not any(
+        item.label == "Aperçu local…" for item in _source_row(w).suffixes
+    )
+    assert w.runner.tasks == []

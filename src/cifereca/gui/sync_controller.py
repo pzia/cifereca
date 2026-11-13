@@ -739,24 +739,30 @@ def _refresh_sync_page(self) -> None:
                 # Legacy per-vendor widgets must not re-enter this pathway.
                 # even if the generic read fails or the adapter is unsupported.
                 continue
-        if source.provider_id == "kobo":
+        # Compatibility surface only when the generic consent controls are
+        # absent: a declared materialization capability, never provider name,
+        # selects explicit manual preview / confirmation. No action runs here.
+        local_capabilities = getattr(source, "sync_capabilities", ())
+        if (source.sync_capable is True
+                and type(local_capabilities) in (tuple, list)
+                and "local_materialization" in local_capabilities):
             # Only a targeted Core broker may resolve the private credential.
             # Neither page building nor switching identity reads the ledger.
             preflight = self.action_button(
                 "Aperçu local…", "document-properties-symbolic",
             )
-            capability = "local_materialization" in source.sync_capabilities
+            capability = True  # already validated via strict capability declaration
             supported = callable(getattr(broker, "preview_local_materialization", None))
             preflight.set_sensitive(bool(source.enabled is True and capability and supported))
             preflight.set_tooltip_text(
                 "Prévisualiser ce seul compte, hors réseau, sans téléchargement"
                 if capability and supported else
-                "Aperçu Kobo non pris en charge par cette source"
+                "Aperçu local non pris en charge par cette source"
             )
             preflight.set_valign(Gtk.Align.CENTER)
             add_sync_action(row, preflight)
             preview_row = Adw.ActionRow()
-            preview_row.set_title("Aperçu local des acquisitions Kobo")
+            preview_row.set_title("Aperçu local des acquisitions")
             preview_row.set_subtitle(
                 "Non consulté · pas de téléchargement ni de rafraîchissement distant"
             )
@@ -790,7 +796,7 @@ def _refresh_sync_page(self) -> None:
                             "Aperçu local indisponible. Aucun téléchargement autorisé."
                         )
                 self.runner.submit(
-                    "Prévisualisation locale Kobo…",
+                    "Prévisualisation locale…",
                     lambda: broker.preview_local_materialization(sid)
                     if sync_action_scope_current(self, scope) else None,
                     completed, failed, control=button,
@@ -800,8 +806,8 @@ def _refresh_sync_page(self) -> None:
             group.add(sync_action_row(row))
             add_sync_detail(group, preview_row, action=preflight, source_row=row)
 
-            # #1347: this is the *only* GUI entry for confirmed Kobo local
-            # acquisitions. Unlike the advisory local preview above, the
+            # Compatibility GUI for explicitly confirmed local acquisitions.
+            # Unlike the advisory local preview above, the
             # broker prepares a fresh account-bound manifest and one-use token.
             # No preparation or materialization runs while building this page.
             download_button = self.action_button(
@@ -816,7 +822,7 @@ def _refresh_sync_page(self) -> None:
             download_button.set_tooltip_text(
                 "Préparer puis confirmer le téléchargement de ce compte uniquement"
                 if can_download else
-                "Compte Kobo connecté et capable de téléchargement requis"
+                "Compte connecté et capable de téléchargement requis"
             )
             stop_download = self.action_button("Annuler le téléchargement", "process-stop-symbolic")
             stop_download.set_sensitive(False)
@@ -929,7 +935,7 @@ def _refresh_sync_page(self) -> None:
                         return
                     output.set_subtitle(summary + " En attente d’une confirmation explicite.")
                     dialog = Adw.MessageDialog.new(
-                        self, "Confirmer les téléchargements Kobo ?",
+                        self, "Confirmer les téléchargements de ce compte ?",
                         summary + "\n\nSeuls les fichiers admissibles de ce compte "
                         "seront traités. Le manifeste et les preuves locales "
                         "seront revérifiés sous verrou. Les fichiers déjà "
@@ -972,9 +978,9 @@ def _refresh_sync_page(self) -> None:
                                     if self.cancelled():
                                         return
                                     if type(current) is int and 0 <= current <= 1000000:
-                                        report(f"Téléchargement Kobo · {current} fichier(s) acquis")
+                                        report(f"Téléchargement local · {current} fichier(s) acquis")
                                     else:
-                                        report("Téléchargement Kobo en cours…")
+                                        report("Téléchargement local en cours…")
 
                             try:
                                 return broker.materialize_source(
@@ -983,7 +989,7 @@ def _refresh_sync_page(self) -> None:
                             except Exception:
                                 # TaskRunner records exceptions before its
                                 # callback; redact at the worker boundary.
-                                raise RuntimeError("Téléchargement Kobo indisponible") from None
+                                raise RuntimeError("Téléchargement local indisponible") from None
 
                         def done(result):
                             if not current() or state["serial"] != serial:
@@ -1037,7 +1043,7 @@ def _refresh_sync_page(self) -> None:
                                 )
 
                         self.runner.submit(
-                            "Téléchargement Kobo confirmé…",
+                            "Téléchargement local confirmé…",
                             work, done, failed, control=button,
                             priority=TaskPriority.USER_ACTION,
                             kind="kobo-acquisition", with_progress=True,
@@ -1059,10 +1065,10 @@ def _refresh_sync_page(self) -> None:
                         return broker.prepare_local_materialization(sid)
                     except Exception:
                         # Do not leak a provider exception via TaskRunner.
-                        raise RuntimeError("Préparation Kobo indisponible") from None
+                        raise RuntimeError("Préparation locale indisponible") from None
 
                 self.runner.submit(
-                    "Préparer les acquisitions Kobo…",
+                    "Préparer les acquisitions locales…",
                     prepare_work,
                     prepared, failed, control=button,
                     priority=TaskPriority.USER_ACTION,
