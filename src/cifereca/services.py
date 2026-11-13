@@ -2382,7 +2382,9 @@ class LibraryService:
             match_local_book=match_local_book, AttentionRequired=AttentionRequired, time=time,
         )
 
-    def adept_inventory_reader_for_acquisition(self, row):
+    def adept_inventory_reader_for_acquisition(
+        self, row, *, profile_references=None,
+    ):
         """Lease one installed, ready read-only ADEPT inventory capability.
 
         Runtime acquisition ownership is *not* evidence for inventory reads.
@@ -2404,6 +2406,16 @@ class LibraryService:
         if (any(type(value) is not str or not value for value in scope[:3])
                 or (scope[3] is not None and type(scope[3]) is not str)
                 or self.identity_by_id(scope[0]) is None):
+            unavailable()
+        # Bind the runtime lease to the exact-origin profile candidates.
+        # Arbitrary caller-supplied names must never broaden inventory scope.
+        candidates = self.adept_inventory_candidates_for_acquisition(
+            row, profile_references=profile_references,
+        )
+        allowed_names = tuple(self._adept_profile_name(p) for p in candidates)
+        if (not 1 <= len(allowed_names) <= 8
+                or any(type(name) is not str or not name for name in allowed_names)
+                or len(set(allowed_names)) != len(allowed_names)):
             unavailable()
         manager = self._plugin_manager
         if manager is None:
@@ -2448,7 +2460,15 @@ class LibraryService:
         def read(names):
             if (type(names) is not list or not 1 <= len(names) <= 8
                     or any(type(name) is not str or not name for name in names)
-                    or len(set(names)) != len(names)):
+                    or len(set(names)) != len(names)
+                    or tuple(names) != allowed_names):
+                unavailable()
+            # A profile can be removed or rebound between lease creation
+            # and execution. Never reuse a stale scoped profile resolution.
+            refreshed = self.adept_inventory_candidates_for_acquisition(
+                row, profile_references=profile_references,
+            )
+            if tuple(self._adept_profile_name(p) for p in refreshed) != allowed_names:
                 unavailable()
             next_id, next_runtime = live_producer()
             if next_id != plugin_id or next_runtime is not runtime:
@@ -2461,6 +2481,11 @@ class LibraryService:
                 raise
             after_id, after_runtime = live_producer()
             if after_id != plugin_id or after_runtime is not runtime:
+                unavailable()
+            refreshed = self.adept_inventory_candidates_for_acquisition(
+                row, profile_references=profile_references,
+            )
+            if tuple(self._adept_profile_name(p) for p in refreshed) != allowed_names:
                 unavailable()
             if (type(payload) is not dict
                     or type(payload.get("complete")) is not bool
