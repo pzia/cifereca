@@ -1540,7 +1540,6 @@ class LocalInspection:
 
         if right.provider != 'numilog':
             return review_source_read_only(
-                right.provider,
                 audit_complete=self._manual_audit_complete,
                 loan_inactive='loan_inactive' in right.states,
                 bibliographic_hint=(
