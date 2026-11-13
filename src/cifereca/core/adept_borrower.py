@@ -46,16 +46,25 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     credential = loan.source_credential.strip()
     if not credential:
         return None, "adept_borrower_ambiguous"
+    # Account rows can also originate in a provider plugin. Only native
+    # coordinates may attest the source: never invoke untrusted __str__,
+    # __eq__ or subclass methods while selecting ADEPT grant ownership.
     matches = [
         account for account in self.accounts
-        if str(account.provider_id).casefold() == source_provider
-        and str(account.credential_id) == credential
+        if type(account.provider_id) is str
+        and account.provider_id.casefold() == source_provider
+        and type(account.credential_id) is str
+        and account.credential_id == credential
+        and type(account.is_primary) is bool
         and (
             (borrower == "primary" and account.is_primary)
-            or str(account.unique_id or "").strip() == borrower
+            or (type(account.unique_id) is str
+                and account.unique_id.strip() == borrower)
         )
     ]
-    if len(matches) != 1 or str(matches[0].identity_id) != connection_identity_id:
+    if (len(matches) != 1
+            or type(matches[0].identity_id) is not str
+            or matches[0].identity_id != connection_identity_id):
         return None, "adept_borrower_ambiguous"
     if matches[0].is_primary:
         if self._borrower_identity_conflict(
