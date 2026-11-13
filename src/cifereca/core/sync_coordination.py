@@ -1362,7 +1362,12 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     # solely from an identical credential or a book title.
                     affected = [
                         self.sync_source_id(account) for account in accounts
-                        if _opening_loans_scoped(account, identity.identity_id, [loan])
+                        if _opening_loans_scoped(
+                            account, identity.identity_id, [loan],
+                            session=self._sessions.get(
+                                self._session_key(account.provider_id, account.credential_id),
+                            ),
+                        )
                     ]
                     # An orphan/ambiguous loan cannot prove that any source
                     # completed its opening cycle. Be conservative.
