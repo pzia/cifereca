@@ -22,10 +22,13 @@ from ..plugin_api import BundleError, load_bundle_manifest
 from .local_placement_open_guard import scoped_existing_placement_path
 
 
-def refresh_history(self, force: bool=False) -> list[HistoryItem]:
-    account = self.current_account
+def refresh_history(self, force: bool=False, *, account=None) -> list[HistoryItem]:
+    # The caller may pin the exact account at task admission. Never derive a
+    # private cache key from mutable navigation state after that point.
+    account = self.current_account if account is None else account
     epoch = self._account_context_epoch
-    key = self._key("history-v3")
+    uid = account.unique_id or "primary"
+    key = f"{account.provider_id}:{account.credential_id}:{uid}:history-v3"
     ttl = int(self.config.get("cache.history_seconds", 1800))
     if not force:
         cached = self.storage.cache_get("account", key)
