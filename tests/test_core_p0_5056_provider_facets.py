@@ -17,7 +17,7 @@ def test_new_attested_provider_becomes_filter_without_core_allowlist():
     ]
     choices = _provider_options(cases)
     assert choices["all"] == PROVIDERS["all"]
-    assert choices["bnf-pret"] == PROVIDERS["bnf-pret"]
+    assert choices["bnf-pret"] == "bnf-pret"
     assert choices["future-library"] == "future-library"
     assert list(choices).count("future-library") == 1
     assert _provider("future-library") == "future-library"
@@ -34,6 +34,15 @@ def test_unknown_untrusted_identifier_cannot_become_a_filter_label():
 
 def test_options_copy_does_not_mutate_global_labels():
     choices = _provider_options([SimpleNamespace(provider="new-provider")])
-    choices["kobo"] = "changed"
-    assert PROVIDERS["kobo"] == "Kobo"
+    choices["all"] = "changed"
+    assert PROVIDERS["all"] == "Tous les fournisseurs"
     assert "new-provider" not in PROVIDERS
+
+
+def test_builtin_provider_identifiers_are_not_predeclared_in_core():
+    assert not {'kobo', 'numilog', 'paris', 'bnf-pret'} & PROVIDERS.keys()
+    cases = [SimpleNamespace(provider=value) for value in
+             ('kobo', 'numilog', 'paris', 'bnf-pret')]
+    choices = _provider_options(cases)
+    for value in ('kobo', 'numilog', 'paris', 'bnf-pret'):
+        assert choices[value] == value
