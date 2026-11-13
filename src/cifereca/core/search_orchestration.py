@@ -610,7 +610,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     )
     active_id = getattr(identity, "identity_id", None)
     foreign_owner_sessions = {
-        id(session) for session, owner in owner_leases if owner != active_id
+        id(session) for session, owner in owner_leases
+        if not (type(active_id) is str and active_id and owner == active_id)
     }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
@@ -1216,7 +1217,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     )
     active_id = getattr(identity, "identity_id", None)
     foreign_owner_sessions = {
-        id(session) for session, owner in owner_leases if owner != active_id
+        id(session) for session, owner in owner_leases
+        if not (type(active_id) is str and active_id and owner == active_id)
     }
     source_leases = tuple(
         (session, _inert_search_source_state(session))
