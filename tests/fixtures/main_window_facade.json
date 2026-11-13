@@ -1245,12 +1245,6 @@
     "decorators": [],
     "async": false
   },
-  "MainWindow._render_kobo_loans": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
-    "returns": "Constant(value=None)",
-    "decorators": [],
-    "async": false
-  },
   "MainWindow._book_recommendation_target": {
     "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='item')], kwonlyargs=[], kw_defaults=[], defaults=[])",
     "returns": null,
@@ -1264,12 +1258,6 @@
     "async": false
   },
   "MainWindow._library_selected": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='row', annotation=BinOp(left=Name(id='BookListItem', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
-    "returns": "Constant(value=None)",
-    "decorators": [],
-    "async": false
-  },
-  "MainWindow._kobo_selected": {
     "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='row', annotation=BinOp(left=Name(id='BookListItem', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
     "returns": "Constant(value=None)",
     "decorators": [],

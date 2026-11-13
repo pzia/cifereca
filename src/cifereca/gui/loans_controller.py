@@ -81,7 +81,7 @@ def _populate_loans(self, rows: list[Loan]) -> None:
     # Preserve both source-bound rows instead of overwriting by loan.id.
     self.loan_objects = {loan_source_key(x): x for x in rows}
     self._render_loans()
-    self._render_kobo_loans()
+    self._render_library()
     if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
 
 
