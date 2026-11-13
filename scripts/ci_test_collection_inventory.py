@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
@@ -168,9 +167,16 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    print(f"collected={report['count_collected']} collection_exit_code={int(result)} "
-          f"unclassified={sum(row['count'] for row in report['matrix'] if 'unclassified' "
-          f"in (row['owner_architecture'], row['business_object'], row['test_level']))}")
+    unclassified = sum(
+        row["count"] for row in report["matrix"]
+        if "unclassified" in (
+            row["owner_architecture"], row["business_object"], row["test_level"],
+        )
+    )
+    print(
+        f"collected={report['count_collected']} "
+        f"collection_exit_code={int(result)} unclassified={unclassified}"
+    )
     return 0 if int(result) == 0 else 1
 
 
