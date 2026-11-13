@@ -89,6 +89,14 @@ class _OfflineParisSession(ProviderSession):
             friendly_url=None, scenario="EBOOKS",
             source_provider="paris", source_credential=self.credential_id,
             source_collection="catalog",
+            # UI presentation hint is bound to this exact notice. It never
+            # authorizes borrowing: Core independently checks account,
+            # session, source and one-shot claim before permitting an action.
+            metadata={"manual_borrow_presentation": {
+                "provider_id": "paris",
+                "docbase": "DILICOM",
+                "record_id": "edition-" + self.credential_id,
+            }},
         )]
 
     def search_with_response_facets(
