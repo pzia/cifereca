@@ -555,18 +555,15 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 message = public_source_sync_message(public_detail)
                 severity = ("error" if public_detail["status"] == "failed" else
                             "warning" if public_detail["status"] == "cancelled" else "info")
-        if (category in {"PNB", "LOAN"} and operation == "download_loan"
+        if (category == "LOAN" and operation == "download_loan"
                 and type(diagnostics) is Diagnostics
                 and row.get("verified_loan_download") is True):
             candidate = public_loan_download_fields(row.get("detail"))
-            # New Core events use LOAN for every provider. Accept the old
-            # Paris-only PNB category solely for previously stored attested
-            # events; a foreign provider cannot claim the legacy exception.
-            if (candidate and (category == "LOAN" or (
-                category == "PNB" and candidate["provider_id"] == "paris"
-            )) and status == (
+            # A terminal loan download must originate from the canonical
+            # Core LOAN producer. Legacy supplier categories are not evidence.
+            if candidate and status == (
                 "ok" if candidate["status"] == "success" else candidate["status"]
-            )):
+            ):
                 loan_download_detail = candidate
                 public_detail = candidate
                 # Only attested Core terminal download operations may enter this domain.
