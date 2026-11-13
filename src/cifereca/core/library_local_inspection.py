@@ -502,7 +502,6 @@ class LocalInspection:
         # Revocable, private evidence summaries; no raw account/path exported.
         self._manual_right_proofs = {}
         self._manual_file_proofs = {}
-        self._manual_right_scopes = {}
         self._manual_file_observations = {}
         # A declaration is descriptive, never one of the attested strategies.
         self._declared_right_scopes = {}
@@ -880,8 +879,6 @@ class LocalInspection:
                     and (scope[1] != 'bnf-pret' or bnf_exact_loan)
                     and scope_counts[scope] == 1):
                 self._declared_right_scopes[f'right:{index}'] = scope
-            if scope is not None and right.get('provider_id') == 'numilog':
-                self._manual_right_scopes[f'right:{index}'] = scope
             self._manual_right_proofs[f'right:{index}'] = {
                 'attested': (
                     right.get('provider_id') == 'numilog'
@@ -1270,7 +1267,6 @@ class LocalInspection:
         self._file_facets.clear()
         self._manual_right_proofs.clear()
         self._manual_file_proofs.clear()
-        self._manual_right_scopes.clear()
         self._manual_file_observations.clear()
         self._declared_right_scopes.clear()
         self._declared_pending = None
