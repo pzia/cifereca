@@ -36,8 +36,9 @@ def _private_edition_collision_counts(rights, identity_id):
     return counts
 
 
-PROVIDERS = {'all': 'Tous les fournisseurs', 'kobo': 'Kobo', 'numilog': 'Numilog',
-             'paris': 'Paris', 'bnf-pret': 'BnF Prêt',
+# Generic scopes only. Provider facets are derived from the audited cases,
+# never from a Core-owned list of installed suppliers.
+PROVIDERS = {'all': 'Tous les fournisseurs',
              'local': 'Local (origine attestée)',
              'unattributed': 'Fichiers sans provenance attestée', 'other': 'Autre'}
 STATES = {
@@ -103,9 +104,9 @@ def _provider(value):
 def _provider_options(cases):
     """Only provider identifiers in this private, audited session become facets.
 
-    Preserve familiar built-in labels for existing choices; a newly installed
-    provider requires no Core change or inferred rights. Untrusted strings
-    remain grouped as `other` and never become new GTK labels.
+    Providers are discovered from audited cases, not a built-in allowlist.
+    This only creates read-only filters, never origin or rights evidence.
+    Untrusted strings stay grouped as `other`.
     """
     options = dict(PROVIDERS)
     found = {case.provider for case in cases if type(case.provider) is str}
