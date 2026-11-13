@@ -1164,7 +1164,17 @@ class IdentityBrokerImpl:
             rows.append({"identity_id": getattr(identity, "identity_id", ""), "name": getattr(identity, "name", ""), "label": getattr(identity, "label", "")})
         return rows
     def select(self, identity_id: str): return self.service.select_identity(identity_id)
-    def accounts(self, identity_id: str | None = None): return tuple(_account_ref(self.service, row) for row in self.service.accounts_for_identity(identity_id))
+    def accounts(self, identity_id: str | None = None):
+        # None remains the legacy navigation-only read. A supplied but empty
+        # identity is never permission to silently adopt the UI selection.
+        if identity_id is not None and (
+            type(identity_id) is not str or not identity_id.strip()
+        ):
+            raise ValueError("identity_id_required")
+        return tuple(
+            _account_ref(self.service, row)
+            for row in self.service.accounts_for_identity(identity_id)
+        )
     def statistics(self, identity_id: str, *, window_seconds: int = 2592000): return self.service.identity_statistics(identity_id, window_seconds=window_seconds)
 
 
