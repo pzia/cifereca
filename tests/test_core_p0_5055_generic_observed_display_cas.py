@@ -76,16 +76,15 @@ def test_wrong_receipt_coordinates_never_write(bnf_importer, wrong):
     )["metadata"]
 
 
-def test_existing_bnf_api_is_still_cas_compatible(bnf_importer):
+def test_bnf_display_binding_uses_generic_cas_without_legacy_facade(bnf_importer):
     service, loan, result = _receipt(bnf_importer)
-    first = observed_loan(loan)
-    next_borrower = observed_loan(replace(loan, source_account_id="other"))
-    assert service.storage.acquisition_bind_bnf_display_loan(
-        result["acquisition_id"], path=result["path"],
-        artifact_id=result["artifact_id"], scope=first,
-    )
-    assert not service.storage.acquisition_bind_bnf_display_loan(
-        result["acquisition_id"], path=result["path"],
-        artifact_id=result["artifact_id"], scope=next_borrower,
-    )
+    assert not hasattr(service.storage, "acquisition_bind_bnf_display_loan")
+    def bind(scope):
+        return service.storage.acquisition_bind_observed_display_loan(
+            result["acquisition_id"], path=result["path"],
+            artifact_id=result["artifact_id"], scope=scope,
+            placement_provider_id="bnf-pret", provenance_field="bnf_observed_loan",
+        )
+    assert bind(observed_loan(loan))
+    assert not bind(observed_loan(replace(loan, source_account_id="other")))
     assert service.storage.entitlements() == []
