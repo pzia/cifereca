@@ -11,10 +11,8 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import Any
 import json
-import re
 
 
-_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
 def _valid_scope(loan_id: Any, item_id: Any) -> bool:
@@ -133,49 +131,3 @@ def snapshot_paris_adept_local_evidence(
         canonical_rows=len(canonical),
     )
 
-
-def validate_paris_adept_local_snapshot(
-    storage: Any, *, loan_id: str, item_id: str, expected_fingerprint: str,
-) -> dict[str, Any]:
-    """Reobserve a fingerprint, refusing changed evidence without any writes."""
-    if (not _valid_scope(loan_id, item_id)
-            or type(expected_fingerprint) is not str
-            or not _SHA256.fullmatch(expected_fingerprint)):
-        return {
-            "status": "invalid_snapshot_request",
-            "evidence_unchanged": False,
-            "return_authorized": False,
-            "commit_available": False,
-            "adobe_profile_resolution": "unknown",
-            "requires_explicit_review": True,
-        }
-
-    current = snapshot_paris_adept_local_evidence(
-        storage, loan_id=loan_id, item_id=item_id,
-    )
-    if current["status"] != "local_snapshot":
-        status = "local_evidence_unavailable"
-        unchanged = False
-    elif current["fingerprint"] != expected_fingerprint:
-        status = "local_evidence_changed"
-        unchanged = False
-    else:
-        status = "local_evidence_unchanged_remote_attestation_required"
-        unchanged = True
-    return {
-        "status": status,
-        "evidence_unchanged": unchanged,
-        "current_fingerprint": (
-            current["fingerprint"] if current["status"] == "local_snapshot"
-            else None
-        ),
-        "return_authorized": False,
-        "commit_available": False,
-        "adobe_profile_resolution": "unknown",
-        "requires_explicit_review": True,
-        "note": (
-            "Cette comparaison ne prouve pas l'activation Adobe ni la "
-            "validité actuelle du prêt Paris ; toute écriture future "
-            "nécessite une revalidation atomique et une attestation serveur."
-        ),
-    }

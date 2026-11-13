@@ -10,9 +10,7 @@ import pytest
 from cifereca import cli
 from cifereca.core import adept_resolution_checkpoint as checkpoint
 from cifereca.core.adept_origin_audit import _opaque_ref
-from cifereca.core.adept_resolution_snapshot import (
-    validate_paris_adept_local_snapshot,
-)
+from cifereca.core.adept_resolution_snapshot import snapshot_paris_adept_local_evidence
 from cifereca.storage import Storage
 from tests.test_core_p1_976_manual_resolution_preview import _setup
 
@@ -54,15 +52,12 @@ def test_explicit_candidate_has_non_authorizing_stable_local_fingerprint(tmp_pat
         assert store.rights == original_rights
         assert store.ledger == original_receipts
         assert store.calls == ["rights", "ledger"] * 6
-        validated = validate_paris_adept_local_snapshot(
+        observed = snapshot_paris_adept_local_evidence(
             store, loan_id="paris-loan", item_id="item-1",
-            expected_fingerprint=first["local_evidence_fingerprint"],
         )
-        assert validated["status"] == (
-            "local_evidence_unchanged_remote_attestation_required"
-        )
-        assert validated["evidence_unchanged"] is True
-        _assert_never_grants(validated)
+        assert observed["status"] == "local_snapshot"
+        assert observed["fingerprint"] == first["local_evidence_fingerprint"]
+        _assert_never_grants(observed)
     finally:
         db.close()
 
