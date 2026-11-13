@@ -165,7 +165,7 @@ def test_retired_w2_does_not_reconcile_or_prune_legacy_receipts(
         monkeypatch.setattr(session, "backup_manifest", forbidden)
         assert not hasattr(service, "_execute_kobo_acquisition")
         monkeypatch.setattr(service.storage, "backup_put", forbidden)
-        monkeypatch.setattr(service.storage, "backup_prune_missing", forbidden)
+        assert not hasattr(service.storage, "backup_prune_missing")
         for _ in range(2):
             assert not hasattr(service, "sync_kobo_backup")
             assert service.storage.backup_get("kobo", "vault-1", "book-1") == before

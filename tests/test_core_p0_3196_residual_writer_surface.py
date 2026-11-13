@@ -37,7 +37,7 @@ def _production_legacy_calls() -> dict[str, set[str]]:
 
 def test_only_reviewed_kobo_compatibility_pipeline_calls_legacy_writer():
     # No installed source is allowed to call the old 0.7 writer.
-    # Archival APIs remain available for rollback/reconciliation.
+    # Only backup_put survives as an archive compatibility API.
     assert _production_legacy_calls() == {
         "backup_put": set(),
         "backup_prune_missing": set(),
@@ -45,16 +45,16 @@ def test_only_reviewed_kobo_compatibility_pipeline_calls_legacy_writer():
 
 
 def test_storage_still_exposes_the_historical_mutation_surface_for_cutover():
-    # Prevent accidentally declaring #3196 complete while an unreviewed SQL
-    # path has been removed from the inventory text: these three entrypoints
-    # must each be explicitly migrated or archived, not renamed silently.
+    # The manifest prune writer is physically absent, while the remaining
+    # backup and path relocation APIs retain independent safety contracts.
     storage = ROOT / "src" / "cifereca" / "storage.py"
     tree = ast.parse(storage.read_text(encoding="utf-8"))
     names = {
         node.name for node in ast.walk(tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
-    assert {"backup_put", "backup_prune_missing", "relocate_local_path"} <= names
+    assert {"backup_put", "relocate_local_path"} <= names
+    assert "backup_prune_missing" not in names
 
 
 

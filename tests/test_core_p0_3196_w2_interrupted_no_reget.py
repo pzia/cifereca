@@ -65,7 +65,7 @@ def test_retired_w2_never_retries_or_rewrites_historical_checkpoint(
         monkeypatch.setattr(session, "backup_manifest", forbidden)
         assert not hasattr(service, "_execute_kobo_acquisition")
         monkeypatch.setattr(service.storage, "backup_put", forbidden)
-        monkeypatch.setattr(service.storage, "backup_prune_missing", forbidden)
+        assert not hasattr(service.storage, "backup_prune_missing")
         for _ in range(2):  # repeated startup/replay must remain no-op
             assert not hasattr(service, "sync_kobo_backup")
             assert service.storage.backup_get(
