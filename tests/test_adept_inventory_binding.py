@@ -18,6 +18,18 @@ def _service(tmp_path: Path):
     config.set("providers.accounts", [])
     service = LibraryService(config, Storage(tmp_path / "db.sqlite3"), Diagnostics(level="detailed"))
     service._adept_return_capability = lambda: True
+    # Only tests inject a synthetic installed runtime through the legacy
+    # adapter seam. Production always uses the attested B read contract.
+    def read_inventory_for_test(_row, *, profile_references=None):
+        runtime = service._kobo_adapter()
+        read = getattr(runtime, "loan_inventories", None)
+        if not callable(read):
+            raise AttentionRequired(
+                "Inventaire ADEPT indisponible.",
+                code="adept_inventory_unavailable",
+            )
+        return read
+    service.adept_inventory_reader_for_acquisition = read_inventory_for_test
     service.execute_acquisition_request = lambda *args, **kwargs: (_ for _ in ()).throw(
         AssertionError("inventory reconciliation must never redownload")
     )

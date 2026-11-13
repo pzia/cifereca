@@ -126,7 +126,9 @@ def test_missing_inventory_capability_fails_closed_without_mutating_ledger(tmp_p
         aid = _acquisition(service, artifact)
         before = service.storage.acquisition_get(aid)
         service._kobo_adapter = lambda: NS()
-        service.kobo_profiles = lambda: pytest.fail("capability missing: no profile enumeration")
+        service.kobo_profiles = lambda: [
+            {"profile_id": "stable-profile", "name": "origin"},
+        ]
         with pytest.raises(Exception) as caught:
             service.reconcile_adept_acquisition(aid)
         assert getattr(caught.value, "code", None) == "adept_inventory_unavailable"

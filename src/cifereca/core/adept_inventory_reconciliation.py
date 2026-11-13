@@ -16,10 +16,6 @@ def reconcile_adept_acquisition(
     path = self._adept_acquisition_path(row)
     if not path or not path.is_file():
         return {"status": "artifact_missing", "acquisition_id": row["acquisition_id"]}
-    runtime = self._kobo_adapter()
-    inventory_fn = getattr(runtime, "loan_inventories", None)
-    if not callable(inventory_fn):
-        raise AttentionRequired("Inventaire ADEPT indisponible : capacité de consultation absente.", code="adept_inventory_unavailable")
     cache = cache if cache is not None else {}
     candidates = self.adept_inventory_candidates_for_acquisition(
         row, profile_references=profile_references, cache=cache,
@@ -27,6 +23,16 @@ def reconcile_adept_acquisition(
     if not candidates:
         return {"status": "profile_missing", "acquisition_id": row["acquisition_id"]}
     names = tuple(self._adept_profile_name(p) for p in candidates)
+    # Each reconciliation must obtain an exact-origin, runtime-attested read
+    # lease, including when a batch cache already contains prior inventory.
+    # No vendor-specific adapter or ambient UI session is consulted here.
+    inventory_fn = self.adept_inventory_reader_for_acquisition(
+        row, profile_references=profile_references,
+    )
+    if not callable(inventory_fn):
+        raise AttentionRequired(
+            "Inventaire ADEPT indisponible.", code="adept_inventory_unavailable",
+        )
     # Profile names are not globally unique: one batch can process distinct
     # provider accounts, credentials, or identities. Never reuse an inventory
     # obtained for one provenance scope to attest another scope.
