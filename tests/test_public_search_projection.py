@@ -182,6 +182,10 @@ def test_orchestrator_rejects_cross_provider_and_ambiguous_notices():
                                public_notices=(PublicSearchNotice(item),)), session,
     ) == []
     assert _public_rows_from_response(
+        ProviderSearchResponse([item, item],
+                               public_notices=(PublicSearchNotice(item),)), session,
+    ) == []
+    assert _public_rows_from_response(
         ProviderSearchResponse([item], public_notices=[PublicSearchNotice(item)]),
         session,
     ) == []
