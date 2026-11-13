@@ -253,6 +253,9 @@ def test_any_inventory_capable_provider_gets_the_same_consent_control(monkeypatc
 @pytest.mark.parametrize("capabilities", [
     (), ("local_materialization",), None, "remote_inventory",
     {"remote_inventory": True},
+    ("remote_inventory", None),
+    ("remote_inventory", 4),
+    ("remote_inventory", "remote_inventory"),
 ])
 def test_source_without_well_typed_inventory_capability_has_no_schedule(monkeypatch, capabilities):
     src = harness._source(
