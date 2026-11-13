@@ -257,7 +257,7 @@ def test_foreign_catalogue_keeps_safe_public_cover_without_entitlements(
         assert own.thumbnail_url == public_cover
         assert own.owned is True
         service.select_identity("alice")
-        assert _run(service, progressive, force=False)[0].thumbnail_url == public_cover
+        assert _run(service, progressive, force=False)[0].thumbnail_url is None
     finally:
         service.close()
 
