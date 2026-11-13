@@ -1219,9 +1219,6 @@ class LibraryService:
             self, logger=_TRACE_LOG, caller_category=caller_category,
         )
 
-    def login(self, username: str, password: str) -> dict[str, Any]:
-        return provider_sessions.login(self, username, password)
-
     def select_account(self, unique_id: str, provider_id: str | None = None, credential_id: str | None = None) -> Account:
         return provider_sessions.select_account(self, unique_id, provider_id, credential_id)
 
