@@ -119,3 +119,51 @@ def test_only_true_primary_empty_uid_can_match_legacy_provider_loan():
     legacy = replace(loan, identity_id=None)
     assert _paris_inventory_exact_borrower([legacy], primary)
     assert not _paris_inventory_exact_borrower([legacy], illegal)
+
+
+def test_synthetic_provider_alias_requires_explicit_descriptor_and_exact_scope():
+    from dataclasses import replace
+    primary = _account("", True)
+    primary.provider_id = "fixture-lender"
+    row = _loan("synthetic", credential="credential", account="primary")
+    row.source_provider = "fixture-lender"
+    assert not _opening_loans_scoped(primary, "default", [row])
+    descriptor = ProviderDescriptor(
+        id="fixture-lender", display_name="Fixture lender", description="offline",
+        state="ready", capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    )
+    session = NS(descriptor=descriptor)
+    assert _opening_loans_scoped(primary, "default", [row], session=session)
+    assert not _opening_loans_scoped(
+        primary, "default", [replace(row, identity_id="other")], session=session,
+    )
+    assert not _opening_loans_scoped(
+        primary, "default", [replace(row, source_credential="foreign")],
+        session=session,
+    )
+    assert not _opening_loans_scoped(
+        primary, "default", [replace(row, source_account_id="unrelated")],
+        session=session,
+    )
+    assert not _opening_loans_scoped(
+        primary, "default", [row], session=NS(descriptor=object()),
+    )
+    wrong = ProviderDescriptor(
+        id="foreign-provider", display_name="Foreign", description="offline",
+        state="ready", capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    )
+    assert not _opening_loans_scoped(
+        primary, "default", [row], session=NS(descriptor=wrong),
+    )
+
+
+def test_primary_empty_id_no_alias_can_validate_empty_positive_batch_but_not_an_alias():
+    primary = _account("", True)
+    assert _opening_loans_scoped(primary, "default", [])
+    row = _loan("synthetic", credential="credential", account="primary")
+    assert not _opening_loans_scoped(primary, "default", [row])
+    literal = replace(row, source_account_id="")
+    assert _opening_loans_scoped(primary, "default", [literal])
+    # An empty positive batch never authorizes negative rights realization.
