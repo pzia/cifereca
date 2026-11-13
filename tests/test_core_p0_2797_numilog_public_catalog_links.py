@@ -104,3 +104,37 @@ def test_producer_proof_never_overrides_url_boundary(provider, unsafe):
         unsafe, provider_id=provider,
         evidence=f"{provider}.public_search_product_card",
     ) is None
+
+
+@pytest.mark.parametrize("provider", [
+    "numilog", "paris", "kobo", "synthetic-alpha", "unknown",
+])
+def test_mirror_product_link_requires_same_provider_public_marker(tmp_path, provider):
+    from dataclasses import replace
+    from tests.test_catalog_083 import _service
+    from tests.test_core_p0_1354_mirrored_source_scope import notice
+
+    service = _service(str(tmp_path))
+    try:
+        url = "https://books.new-publisher.org/public/title.ebook"
+        proof = f"{provider}.public_search_product_card"
+        base = notice()
+        row = replace(
+            base, source_provider=provider, friendly_url=url,
+            metadata={"public_url_evidence": proof},
+        )
+        assert service._mirror_remote_results([row], identity_id="default") == 1
+        saved, = service.storage.catalog_entries(identity_id="default")
+        assert saved["metadata"]["product_url"] == url
+
+        # Another vendor's proof cannot authorize this exact row's URL.
+        wrong = replace(
+            row, metadata={"public_url_evidence": "other.public_search_product_card"},
+        )
+        assert service._mirror_remote_results([wrong], identity_id="default") == 1
+        saved, = service.storage.catalog_entries(identity_id="default")
+        assert saved["metadata"]["product_url"] is None
+        assert service.storage.entitlements() == []
+        assert service.storage.acquisitions() == []
+    finally:
+        service.close()
