@@ -1176,8 +1176,9 @@ class RuntimeCapabilitiesBrokerImpl:
     def _formats(download: Any, fallback: Any) -> tuple[str, ...]:
         values: list[str] = []
         if isinstance(download, dict):
-            for name in ("http", "acsm", "kobo"):
-                row = download.get(name)
+            # Each declared download recipe contributes formats; the Core
+            # must not maintain an allow-list of provider/runtime recipes.
+            for row in download.values():
                 if not isinstance(row, dict):
                     continue
                 formats = row.get("formats")
