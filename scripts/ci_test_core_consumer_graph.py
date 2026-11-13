@@ -103,7 +103,7 @@ def _imports(source: str, *, is_root_test: bool) -> tuple[list[tuple[str, str, i
 def inventory(root: Path = ROOT) -> dict:
     root_tests = sorted((root / "tests").glob("test_*.py"))
     plugin_tests = sorted((root / "src/plugins").glob("*/tests/**/*.py"))
-    sources = root_tests + [p for p in plugin_tests if p.name.startswith("test_") or p.name == "conftest.py"]
+    # Include support modules as well as test_*.py: an imported helper can\n    # itself depend on root tests, even if pytest does not collect it.\n    sources = root_tests + plugin_tests
     edges: list[dict] = []
     unresolved: list[dict] = []
     errors: list[dict] = []
