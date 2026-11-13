@@ -82,3 +82,27 @@ def test_stale_public_notice_does_not_become_current_availability(provider):
     )
     assert "hors ligne" in label
     service.can_direct_download.assert_not_called()
+
+
+@pytest.mark.parametrize("provider", [
+    "kobo", "numilog", "paris", "synthetic-alpha", "unknown",
+])
+@pytest.mark.parametrize("stale", [False, True])
+def test_private_inventory_observation_is_not_a_delivery_right(provider, stale):
+    item = replace(
+        _row(), source_provider=provider, source_collection="library",
+        downloadable=True, owned=True,
+        metadata={"search_provenance": "known_catalog_stale"} if stale else {},
+    )
+    service = NS(can_direct_download=Mock(
+        side_effect=AssertionError("inventory is not delivery evidence"),
+    ))
+    label = availability_display_label(
+        service, item, NS(
+            availability_label="Téléchargement direct",
+            availability_status="available",
+        ),
+    )
+    assert "hors ligne" in label if stale else "vérifier" in label
+    assert "Téléchargement direct" not in label
+    service.can_direct_download.assert_not_called()
