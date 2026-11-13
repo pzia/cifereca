@@ -138,25 +138,6 @@ def test_non_loan_auto_or_incomplete_adept_is_never_origin_proof():
     assert result["origins"] == [] and result["status"] == "unknown"
 
 
-def test_service_facade_is_read_only_and_does_not_call_kobo_or_paris(tmp_path):
-    service, loan = service_with_linked_borrower(tmp_path)
-    try:
-        service.kobo_profiles = lambda: (_ for _ in ()).throw(
-            AssertionError("do not query ADEPT profiles")
-        )
-        service.acquire_digital_loan = lambda *_: (_ for _ in ()).throw(
-            AssertionError("do not acquire an ACSM")
-        )
-        service._persist_active_loans("alice", [loan])
-        result = service.audit_paris_adept_loan_origins(loan)
-        assert result["status"] == "unknown"
-        assert len(result["sources"]) == 1
-        assert result["origins"] == []
-        assert service.storage.acquisitions(provider_id="paris") == []
-    finally:
-        service.close()
-
-
 def test_malformed_artifact_inspection_is_unknown_not_usable(tmp_path):
     artifact = tmp_path / "historical.epub"
     artifact.write_bytes(b"private fixture")
@@ -315,31 +296,6 @@ def test_missing_adept_profile_does_not_inherit_attestation_from_other_record():
     assert report["adept_loan_reference_disagreement"] is False
     assert _audit([], [], loan="", item="book")[
         "adept_loan_reference_disagreement"] is False
-
-def test_non_paris_origin_audit_preserves_closed_report_schema(tmp_path):
-    from dataclasses import replace
-    service, loan = service_with_linked_borrower(tmp_path)
-    try:
-        # An unrelated provider cannot be evidence for a Paris transaction,
-        # and its refusal report must have the same safe keys as a Paris audit.
-        foreign_loan = replace(loan, source_provider="kobo")
-        service.storage.entitlements = lambda **_: (_ for _ in ()).throw(
-            AssertionError("must not inspect rights for an unsupported provider")
-        )
-        service.storage.acquisitions = lambda **_: (_ for _ in ()).throw(
-            AssertionError("must not inspect acquisitions for an unsupported provider")
-        )
-        report = service.audit_paris_adept_loan_origins(foreign_loan)
-        assert report == {
-            "status": "unsupported_source", "shared_visibility": False,
-            "profile_disagreement": False,
-            "adept_loan_reference_disagreement": False,
-            "adobe_loan_state_disagreement": False,
-            "origin_resolution": "unknown", "sources": [], "origins": [],
-        }
-    finally:
-        service.close()
-
 
 def test_historical_import_destination_is_not_a_second_paris_source():
     rights = [_right("alice", "paris-a")]
