@@ -347,8 +347,12 @@ def _public_search_response_rows(response: ProviderSearchResponse, session: Prov
         return []
     rows: list[SearchResult] = []
     for raw in response.results:
-        if (type(raw) is not SearchResult or raw.source_provider != provider
-                or raw.source_credential not in (credential, "__public__")):
+        if (type(raw) is not SearchResult
+                or type(raw.source_provider) is not str
+                or raw.source_provider != provider
+                or type(raw.source_credential) is not str
+                or raw.source_credential not in (credential, "__public__")
+                or sum(candidate is raw for candidate in response.results) != 1):
             continue
         public = project_public_search_result(
             response, raw, provider_id=provider,
@@ -664,16 +668,23 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             try:
                 if public_only:
                     if not isinstance(session, ProviderSearchWithFacets):
+                        warnings.append(
+                            f"{session.descriptor.display_name}: provenance publique indisponible"
+                        )
                         break  # List-only providers have no public evidence.
                     response = session.search_with_response_facets(
                         variant, effective_search_scope, field=effective_field,
                         content_types=tuple(content_types or ()),
                     )
+                    if type(response) is not ProviderSearchResponse:
+                        raise TypeError("Invalid public search response")
                     session_rows = _public_search_response_rows(response, session)
-                    response_partial = (
-                        type(response) is ProviderSearchResponse
-                        and response.partial is True
-                    )
+                    response_partial = response.partial is True
+                    if response.results and not session_rows:
+                        warnings.append(
+                            f"{session.descriptor.display_name}: provenance publique non attestée"
+                        )
+                        break
                 else:
                     try:
                         import inspect
@@ -994,16 +1005,23 @@ def _search_provider_session(
         try:
             if public_only:
                 if not isinstance(session, ProviderSearchWithFacets):
+                    warnings.append(
+                        f"{session.descriptor.display_name}: provenance publique indisponible"
+                    )
                     break
                 response = session.search_with_response_facets(
                     variant, provider_scope, field=effective_field,
                     content_types=tuple(content_types or ()),
                 )
+                if type(response) is not ProviderSearchResponse:
+                    raise TypeError("Invalid public search response")
                 session_rows = _public_search_response_rows(response, session)
-                partial_failure = (
-                    type(response) is ProviderSearchResponse
-                    and response.partial is True
-                )
+                partial_failure = response.partial is True
+                if response.results and not session_rows:
+                    warnings.append(
+                        f"{session.descriptor.display_name}: provenance publique non attestée"
+                    )
+                    break
             elif attempt == 0 and response_facets is not None:
                 response = session.search_with_response_facets(
                     variant, provider_scope, field=effective_field,
