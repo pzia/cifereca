@@ -194,9 +194,11 @@ def test_metadata_broker_writer_propagates_consent_cas_and_core_profile_scope(
                 preference="not_interested", expected_revision=0,
                 user_confirmed=True,
             )
-        with pytest.raises(ValueError, match="reading_preference_identity_not_active"):
+        # An unregistered identity cannot acquire another owner's feedback;
+        # a mere change of GTK selection is no longer the authorization gate.
+        with pytest.raises(ValueError, match="reading_preference_identity_unknown"):
             metadata.change_reading_preference(
-                identity_id="bob", library_key="book:0",
+                identity_id="unknown", library_key="book:0",
                 preference="liked", expected_revision=1,
                 user_confirmed=True,
             )
