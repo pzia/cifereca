@@ -12,14 +12,12 @@ from uuid import uuid4
 
 import time
 import hashlib
-import json
 import logging
 from contextlib import ExitStack
 from inspect import getattr_static
 from .source_sync_timing import measure, timing_scope
 from datetime import datetime, timezone
 from typing import Any, Callable
-from ..diagnostics import _core_journal_record
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 
@@ -679,64 +677,6 @@ def opening_sync(self, progress: Callable[[dict[str, Any]], None] | None=None, *
         raise ProviderConfigurationError("Une synchronisation automatique est déjà en cours") from exc
 
 
-def _kobo_opening_decision(self, *, deep: bool = False) -> dict[str, Any]:
-    """Passive decision: only explicit *source* opt-ins permit acquisition.
-
-    Historical global kobo_backup.enabled remains diagnostic/rollback data,
-    never an authorization to download. Deep inventory scanning cannot
-    silently change an acquisition policy. No provider calls here.
-    """
-    legacy_enabled = self.config.get("kobo_backup.enabled", False) is True
-    try:
-        interval_minutes = max(15, int(self.config.get("kobo_backup.interval_minutes", 60)))
-    except (TypeError, ValueError):
-        interval_minutes = 60
-    kobo = [s for s in self._sessions.values() if s.provider_id == "kobo"]
-    connected = [s for s in kobo if s.connected]
-    capable = [s for s in connected if getattr(s.capabilities, "backup", False)]
-    eligible_accounts = [
-        a for a in self.accounts
-        if a.provider_id == "kobo"
-        and any(s.credential_id == a.credential_id for s in capable)
-        and self.sync_source_enabled(a)
-    ]
-    eligible = [
-        s for s in capable
-        if any(a.credential_id == s.credential_id for a in eligible_accounts)
-    ]
-    # #3198: only current source/session facts determine the opening state.
-    # Historical kobo_backup.enabled is exposed separately for rollback,
-    # never as a source-wide OFF decision or acquisition permission.
-    if not kobo and not any(a.provider_id == "kobo" for a in self.accounts):
-        reason = "disabled"  # No configured account and no active session.
-    elif not connected:
-        reason = "no_session"
-    elif not capable:
-        reason = "capability_unavailable"
-    elif not eligible:
-        reason = "source_disabled"
-    else:
-        reason = "manual_only"  # Legacy on_start W2 is retired.
-    # Only age/counts, never user/account identifiers, file paths or tokens.
-    raw_last = self.storage.metadata_get("kobo_backup_last_success_at")
-    try:
-        last = int(raw_last)
-        age = int(time.time()) - last
-        last_success_age_minutes = age // 60 if 0 <= age <= 366 * 86400 else None
-    except (TypeError, ValueError, OverflowError):
-        last_success_age_minutes = None
-    return {
-        "status": reason, "persisted_enabled": legacy_enabled,
-        "configured_kobo": len(kobo), "connected_kobo": len(connected),
-        "eligible_kobo": len(eligible),
-        "eligible_kobo_bindings": len(eligible_accounts),
-        "scheduled_kobo": 0,
-        "interval_minutes": interval_minutes,
-        "last_success_age_minutes": last_success_age_minutes,
-        "deep": bool(deep),
-    }
-
-
 def _opening_loan_acquisition_allowed(loan: Loan, *, session: Any = None) -> bool:
     """Opening acquisition requires an explicit capability, never a provider-ID exception.
 
@@ -977,10 +917,8 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     expired_before = self.acquisition_reconciler.realize_expired_loans()
     summaries: list[dict[str, Any]] = []
     all_loans: list[Loan] = []
-    # Canonical convergence is recorded for every exact source, not dispatched
-    # by supplier. A retired compatibility projection must never schedule a
-    # second acquisition after the Core A→B executor.
-    canonical_source_completion: dict[tuple[str, str], bool] = {}
+    # The canonical A→B convergence is tracked on exact source outcomes;
+    # no separate retired supplier-specific startup backup projection.
     # Device/profile state is provider-owned by Kobo-Adept. Read it once per
     # opening sync and only project it into the dashboard summary; Paris does
     # not persist a competing device inventory.
@@ -1237,16 +1175,6 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                             and canonical.get("pending", 0) > 0):
                         inventory_partial = True
                     if counts is not None:
-                        # Every exact source has already received its one
-                        # canonical acquisition decision, including pending.
-                        # Record only passive outcomes; no legacy worker/GET.
-                        canonical_source_completion[
-                            (account.provider_id, source_id)
-                        ] = not any(
-                            counts[name] for name in (
-                                "pending", "blocked", "failed", "cancelled"
-                            )
-                        )
                         completed = detail.setdefault("canonical_execution", {
                             status: 0 for status in counts
                         })
@@ -1503,85 +1431,6 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         logger.warning("TRACE catalog mirror opening error code=catalog_mirror_failed")
     emit("catalog_mirror", result=catalog_mirror)
 
-    # #4858 D4: startup Kobo acquisition is handled by the already-executed
-    # canonical source Sync above. Never schedule legacy W2 by the historical
-    # on_start preference or refresh its 0.7 retry clock/checkpoint.
-    kobo_decision = _kobo_opening_decision(self, deep=deep)
-    # Historical CLI/TRACE compatibility only; no provider-specific branch
-    # participates in the canonical source execution above.
-    canonical_kobo_sources = {
-        source_id: complete
-        for (provider_id, source_id), complete
-        in canonical_source_completion.items()
-        if provider_id == "kobo"
-    }
-    if canonical_kobo_sources:
-        canonical_ok = all(canonical_kobo_sources.values())
-        kobo_summary: dict[str, Any] | None = {
-            "scope": "accounts",
-            "status": "complete" if canonical_ok else "partial",
-            "canonical_sources": len(canonical_kobo_sources),
-            "sessions": len(canonical_kobo_sources),
-            "synced_accounts": len(canonical_kobo_sources),
-            "cached_accounts": 0,
-            "sources": [],
-            "skipped_fresh": False,
-        }
-        kobo_decision["status"] = "started" if canonical_ok else "partial"
-    else:
-        # Preserve only a descriptive compatibility state, never an implied
-        # 0.7 permission to acquire bytes or mutate backup_items.
-        kobo_summary = (
-            {"status": "manual_only", "skipped": True}
-            if kobo_decision["persisted_enabled"] is True else None
-        )
-        kobo_decision["status"] = "manual_only"
-    for field in ("manifest_items", "owned", "archived", "downloadable",
-                  "candidate_count", "attempted", "downloaded", "pending",
-                  "attention_required", "reconcile_required", "errors"):
-        value = (kobo_summary or {}).get(field)
-        if type(value) is int and 0 <= value <= 1_000_000:
-            kobo_decision[field] = value
-    # One physical log record: the canonical formatter persists the complete
-    # Core decision while existing TRACE listeners keep their original text.
-    _decision_format = (
-        "TRACE kobo backup decision status=%s enabled=%s connected=%s eligible=%s interval=%s"
-    )
-    _decision_args = (
-        kobo_decision["status"], kobo_decision["persisted_enabled"],
-        kobo_decision["connected_kobo"], kobo_decision["eligible_kobo"],
-        kobo_decision["interval_minutes"],
-    )
-    _decision_severity = (
-        logging.ERROR if kobo_decision["status"] == "error"
-        else logging.WARNING if kobo_decision["status"] == "partial"
-        else logging.INFO
-    )  # Never discard a failed opening in errors-only mode.
-    logger.log(
-        _decision_severity, _decision_format, *_decision_args,
-        extra=_core_journal_record(
-            "KOBO", "automatic backup decision",
-            "warning" if kobo_decision["status"] in {"partial", "error"} else "ok",
-            _decision_format % _decision_args, kobo_decision,
-        ),
-    )
-    # The no-item case has no backup rows or checkpoint. Persist only a
-    # minimal, enumerated decision so kobo-sync-errors can explain *why* on a
-    # fresh CLI process, without relying on volatile Diagnostics history.
-    try:
-        self.storage.metadata_set("kobo_backup_opening_decision_v1", json.dumps({
-            "schema_version": 1,
-            "status": kobo_decision["status"],
-            "persisted_enabled": kobo_decision["persisted_enabled"] is True,
-            "connected_kobo": kobo_decision["connected_kobo"],
-            "eligible_kobo": kobo_decision["eligible_kobo"],
-            "scheduled_kobo": kobo_decision["scheduled_kobo"],
-            "checked_at": int(time.time()),
-        }, sort_keys=True))
-    except Exception:
-        # Optional persistence must neither fail the opening nor reveal a
-        # filesystem, plugin or database exception class in TRACE.
-        logger.warning("TRACE kobo backup decision persistence error code=decision_save_failed")
     for identity in self.identities:
         emit("adept_inventory", identity_id=identity.identity_id, result=self._reconcile_identity_adept_inventory(identity.identity_id))
     # The opening inventory covers ALL local identities to keep their rights
@@ -1606,7 +1455,7 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         sync_mode = "fast"
     return {
         "started_at": started, "finished_at": int(time.time()), "recovered_interrupted": recovered,
-        "expired_realized": expired_before, "identities": summaries, "kobo": kobo_summary, "kobo_decision": kobo_decision, "catalog": catalog,
+        "expired_realized": expired_before, "identities": summaries, "catalog": catalog,
         "sync_mode": sync_mode, "acsm_cleanup": acsm_cleanup,
         "catalog_mirror": catalog_mirror,
     }
