@@ -405,6 +405,25 @@ def _search_session_cache_scope(sessions: list[ProviderSession]) -> tuple[tuple[
     ))
 
 
+def _search_owner_cache_scope(
+    owner_leases: tuple[tuple[ProviderSession, str | None], ...],
+) -> tuple[tuple[str, str, str], ...]:
+    """Bind remote cached rows to the exact inert SQL owner snapshot.
+
+    A credential reassigned A -> B must not replay A's private cache to B,
+    even when source selection, search terms and active profile are unchanged.
+    The preimage stays local and is only persisted as a SHA-256 cache key.
+    """
+    return tuple(sorted(
+        (
+            str(session.provider_id),
+            str(getattr(session, "credential_id", "")),
+            owner if type(owner) is str else "",
+        )
+        for session, owner in owner_leases
+    ))
+
+
 def _search_cooldown_clock() -> float:
     return time.monotonic()
 
@@ -628,7 +647,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     )
     virtual_cache_tag = f"\0{virtual_versions}" if virtual_versions else ""
     cache_key = hashlib.sha256(
-        f"search-v12\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
+        f"search-v13\0{_search_session_cache_scope(searchable)!r}\0{_search_owner_cache_scope(owner_leases)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
     ).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
     if not force:
@@ -1232,7 +1251,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         for session in searchable
         if (entry := self.registry.virtual_entry(session.provider_id)) is not None
     )
-    cache_key = hashlib.sha256(f"search-v12-progressive\0{_search_session_cache_scope(searchable)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
+    cache_key = hashlib.sha256(f"search-v13-progressive\0{_search_session_cache_scope(searchable)!r}\0{_search_owner_cache_scope(owner_leases)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
     def request_current_locked() -> bool:
