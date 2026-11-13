@@ -330,3 +330,50 @@ def test_configured_primary_preference_is_generic_but_never_rights(
         ) == {}
     finally:
         service.close()
+
+
+@pytest.mark.parametrize('progressive', [False, True])
+def test_exact_owner_identity_cycle_a_to_b_to_a_is_cache_partitioned(
+    tmp_path, monkeypatch, progressive,
+):
+    from tests.test_core043_progress_cache_stats import _service
+    service = _service(tmp_path)
+    service.identities.append(replace(
+        service.current_identity, identity_id='bob', label='Bob',
+    ))
+    session = _ResponseBoundSource('synthetic-b', 'credential-b')
+    service._sessions = {'b': session}
+    monkeypatch.setattr(service.storage, 'identity_for_connection',
+                        lambda p, c: 'bob' if (p, c) == (
+                            'synthetic-b', 'credential-b',
+                        ) else None)
+    monkeypatch.setattr(service, '_mirror_remote_results', lambda *a, **kw: 0)
+
+    def invoke():
+        if progressive:
+            result = service.search_progressive(
+                'Progressive Book', force=False,
+            )
+            assert not result.cancelled
+            return list(service.last_search)
+        return service.search('Progressive Book', force=False)
+
+    try:
+        alice = invoke()
+        assert len(alice) == 1
+        assert alice[0].owned is False
+        assert alice[0].download_url is None
+        assert session.response_calls == 1
+        service.select_identity('bob')
+        bob = invoke()
+        assert len(bob) == 1
+        assert bob[0].owned is True
+        assert bob[0].source_account_id == 'owner-b'
+        assert bob[0].download_url == 'https://private.invalid/token'
+        assert session.private_calls == 2
+        service.select_identity('alice')
+        replay = invoke()
+        assert replay == alice
+        assert session.response_calls == 1
+    finally:
+        service.close()
