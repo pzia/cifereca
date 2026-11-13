@@ -7,6 +7,7 @@ import pytest
 
 from scripts.ci_test_collection_inventory import (
     CollectionCapture, classify, make_report, validate_manifest,
+    write_verified_collection, main,
 )
 
 
@@ -107,3 +108,74 @@ def test_capture_reads_real_pytest_item_objects_without_running_them():
         "nodeid": "tests/test_a.py::test_a[1]",
         "skip_marked": True, "xfail_marked": False,
     }]
+
+
+@pytest.mark.parametrize("exit_code,sha,items", [
+    (2, "a" * 40, [{"nodeid": "tests/test_a.py::test_a"}]),
+    (0, None, [{"nodeid": "tests/test_a.py::test_a"}]),
+    (0, "a" * 40, []),
+])
+def test_incomplete_collection_never_overwrites_successful_report(
+    tmp_path, exit_code, sha, items,
+):
+    output = tmp_path / "inventory.json"
+    output.write_text('{"prior":"successful"}\n', encoding="utf-8")
+    report = make_report(items, {}, suite="tests", source_sha=sha)
+    with pytest.raises(ValueError):
+        write_verified_collection(report, output, collection_exit_code=exit_code)
+    assert output.read_text(encoding="utf-8") == '{"prior":"successful"}\n'
+
+
+def test_verified_report_replaces_previous_json_atomically(tmp_path):
+    output = tmp_path / "inventory.json"
+    output.write_text("prior", encoding="utf-8")
+    report = make_report(
+        [{"nodeid": "tests/test_a.py::test_a[1]"}], {},
+        suite="tests", source_sha="a" * 40,
+    )
+    write_verified_collection(report, output, collection_exit_code=0)
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["count_collected"] == 1
+    assert payload["source_sha"] == "a" * 40
+    assert list(tmp_path.iterdir()) == [output]
+
+
+@pytest.mark.parametrize("suite", [
+    "tests/subdir", "src/plugins/provider-x/tests/nested",
+    "src/plugins/../tests", "/tmp/tests", "tests/../../other",
+])
+def test_cli_rejects_noncanonical_collection_suite(monkeypatch, tmp_path, suite):
+    import scripts.ci_test_collection_inventory as module
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    with pytest.raises(SystemExit, match="2"):
+        main(["--suite", suite, "--output", str(tmp_path / "inventory.json")])
+
+
+def test_cli_rejects_missing_suite_directory(monkeypatch, tmp_path):
+    import scripts.ci_test_collection_inventory as module
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+    with pytest.raises(SystemExit, match="2"):
+        main(["--suite", "tests", "--output", str(tmp_path / "inventory.json")])
+
+
+def test_failed_collection_preserves_last_good_output(monkeypatch, tmp_path):
+    import scripts.ci_test_collection_inventory as module
+    suite = tmp_path / "tests"
+    suite.mkdir()
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(_manifest()), encoding="utf-8")
+    output = tmp_path / "inventory.json"
+    output.write_text("prior good report", encoding="utf-8")
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    def collection_error(argv, *, plugins):
+        assert argv == ["--collect-only", "-q", "tests"]
+        plugins[0].items = [{"nodeid": "tests/test_a.py::test_a"}]
+        return 2
+
+    monkeypatch.setattr(pytest, "main", collection_error)
+    assert main([
+        "--suite", "tests", "--manifest", str(manifest),
+        "--output", str(output),
+    ]) == 1
+    assert output.read_text(encoding="utf-8") == "prior good report"
