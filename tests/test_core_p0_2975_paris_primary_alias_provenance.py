@@ -13,8 +13,19 @@ import pytest
 from cifereca.core.loan_return_verification import _paris_inventory_exact_borrower
 from cifereca.core.sync_coordination import _opening_loans_scoped
 from cifereca.models import Account
+from cifereca.providers.base import ProviderDescriptor, ProviderCapabilities
+from types import SimpleNamespace as NS
 from tests.test_core_p0_2975_loan_absence_scope import _loan
 from tests.test_sync_state_contract import _service
+
+
+def _declared_session():
+    caps = ProviderCapabilities(loans=True)
+    return NS(descriptor=ProviderDescriptor(
+        id="paris", display_name="Synthetic Paris", description="offline",
+        state="ready", capabilities=caps,
+        existing_primary_loan_account_alias="primary",
+    ))
 
 
 def _account(uid, primary):
@@ -36,8 +47,14 @@ def test_unbound_secondary_never_claims_primary_even_for_empty_inventory(
 ):
     account = _account(uid, primary)
     row = _loan("borrowed", credential="credential", account="primary")
-    assert not _opening_loans_scoped(account, "default", [row])
-    assert not _opening_loans_scoped(account, "default", [])
+    if uid == "primary":
+        # A literal real borrower named "primary" can match exact positive
+        # rows; it is not the same as inheriting an empty-ID borrower's alias.
+        assert _opening_loans_scoped(account, "default", [row])
+        assert _opening_loans_scoped(account, "default", [])
+    else:
+        assert not _opening_loans_scoped(account, "default", [row])
+        assert not _opening_loans_scoped(account, "default", [])
     # This path decides whether absence of a PNB loan is provider-attested.
     assert not _paris_inventory_exact_borrower([row], account)
     assert not _paris_inventory_exact_borrower([], account)
@@ -48,13 +65,18 @@ def test_true_primary_sentinel_and_distinct_paired_id_are_supported():
     paired = _account("paired-uid", False)
     primary_row = _loan("P", credential="credential", account="primary")
     paired_row = _loan("S", credential="credential", account="paired-uid")
-    assert _opening_loans_scoped(primary, "default", [primary_row])
+    assert not _opening_loans_scoped(primary, "default", [primary_row])
+    assert _opening_loans_scoped(
+        primary, "default", [primary_row], session=_declared_session(),
+    )
     assert _opening_loans_scoped(paired, "default", [paired_row])
     assert _paris_inventory_exact_borrower([primary_row], primary)
     assert _paris_inventory_exact_borrower([paired_row], paired)
     assert _paris_inventory_exact_borrower([], primary)
     assert _paris_inventory_exact_borrower([], paired)
-    assert not _opening_loans_scoped(primary, "default", [paired_row])
+    assert not _opening_loans_scoped(
+        primary, "default", [paired_row], session=_declared_session(),
+    )
     assert not _paris_inventory_exact_borrower([paired_row], primary)
 
 
@@ -97,3 +119,51 @@ def test_only_true_primary_empty_uid_can_match_legacy_provider_loan():
     legacy = replace(loan, identity_id=None)
     assert _paris_inventory_exact_borrower([legacy], primary)
     assert not _paris_inventory_exact_borrower([legacy], illegal)
+
+
+def test_synthetic_provider_alias_requires_explicit_descriptor_and_exact_scope():
+    from dataclasses import replace
+    primary = _account("", True)
+    primary.provider_id = "fixture-lender"
+    row = _loan("synthetic", credential="credential", account="primary")
+    row.source_provider = "fixture-lender"
+    assert not _opening_loans_scoped(primary, "default", [row])
+    descriptor = ProviderDescriptor(
+        id="fixture-lender", display_name="Fixture lender", description="offline",
+        state="ready", capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    )
+    session = NS(descriptor=descriptor)
+    assert _opening_loans_scoped(primary, "default", [row], session=session)
+    assert not _opening_loans_scoped(
+        primary, "default", [replace(row, identity_id="other")], session=session,
+    )
+    assert not _opening_loans_scoped(
+        primary, "default", [replace(row, source_credential="foreign")],
+        session=session,
+    )
+    assert not _opening_loans_scoped(
+        primary, "default", [replace(row, source_account_id="unrelated")],
+        session=session,
+    )
+    assert not _opening_loans_scoped(
+        primary, "default", [row], session=NS(descriptor=object()),
+    )
+    wrong = ProviderDescriptor(
+        id="foreign-provider", display_name="Foreign", description="offline",
+        state="ready", capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias="primary",
+    )
+    assert not _opening_loans_scoped(
+        primary, "default", [row], session=NS(descriptor=wrong),
+    )
+
+
+def test_primary_empty_id_no_alias_can_validate_empty_positive_batch_but_not_an_alias():
+    primary = _account("", True)
+    assert _opening_loans_scoped(primary, "default", [])
+    row = _loan("synthetic", credential="credential", account="primary")
+    assert not _opening_loans_scoped(primary, "default", [row])
+    literal = replace(row, source_account_id="")
+    assert _opening_loans_scoped(primary, "default", [literal])
+    # An empty positive batch never authorizes negative rights realization.
