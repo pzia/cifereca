@@ -330,3 +330,31 @@ def set_canonical_acquisition_choice(
     # source, positive A, exact account and last in-memory context. Revocation
     # is valid even after the positive SourceReference becomes inactive.
     set_source_acquisition_consent(service, account, source, allowed=allowed)
+
+
+def legacy_inventory_enablement_toggle(service, account, enabled, preference_key, scope):
+    """Compatibility-only inventory switch; never grants acquisition consent.
+
+    Keep legacy source policy/epoch probing outside the versioned CAS module.
+    A persisted legacy acquisition switch is retired only on explicit OFF.
+    """
+    from .legacy_source_consent_metadata import (
+        _consent_generation_key, legacy_source_consent_switch_present,
+    )
+    from .source_sync_consent import retire_legacy_acquisition_on_source_disable
+
+    if enabled is False and legacy_source_consent_switch_present(
+        service.storage, scope,
+    ):
+        return retire_legacy_acquisition_on_source_disable(
+            service, account, preference_key,
+        )
+    # Preserve old revision fences for in-flight operations. Unknown source
+    # types get only the ordinary inventory preference, never an opt-in.
+    revision_key = _consent_generation_key(scope)
+    if revision_key is not None:
+        service.storage.metadata_set_with_revision(
+            preference_key, '1' if enabled else '0', revision_key,
+        )
+    else:
+        service.storage.metadata_set(preference_key, '1' if enabled else '0')

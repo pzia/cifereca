@@ -252,3 +252,28 @@ def set_source_enabled(service, account, enabled, preference_key):
         if not current():
             raise ValueError('source_sync_consent_scope_changed')
 
+
+
+def set_inventory_source_enabled(service, account, enabled, preference_key):
+    """Provider-neutral inventory toggle with a fail-closed legacy cutover.
+
+    Only an explicit OFF of a persisted historical acquisition switch
+    creates CAS OFF. ON never migrates an old preference to canonical ON.
+    Legacy epoch writing remains temporary until #5077 can remove the
+    compatibility readers without breaking already-started operations.
+    """
+    if type(enabled) is not bool:
+        raise ValueError("invalid source enabled preference")
+    scope = scope_for_account(account)
+    if preference_key != source_enablement_key(scope):
+        raise ValueError('source_sync_toggle_scope_mismatch')
+    if configured(service, account):
+        return set_source_enabled(service, account, enabled, preference_key)
+
+    # Legacy-only acquisition migration lives behind the existing acquisition
+    # consent boundary. The versioned source CAS module does not depend on
+    # the historical supplier consent decision bridge.
+    from .source_acquisition_consent import legacy_inventory_enablement_toggle
+    return legacy_inventory_enablement_toggle(
+        service, account, enabled, preference_key, scope,
+    )

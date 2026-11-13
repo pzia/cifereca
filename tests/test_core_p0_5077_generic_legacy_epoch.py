@@ -7,6 +7,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.core import source_auto_consent_bridge as bridge
+from cifereca.core import legacy_source_consent_metadata as metadata
 
 
 def scope(provider):
@@ -30,11 +31,11 @@ def test_legacy_epoch_uses_same_provider_mapping_as_toggle(provider, expected):
 def test_future_provider_policy_is_generic_but_unknown_and_ambiguous_fail_closed(monkeypatch):
     source = scope("fixture-provider")
     assert bridge._consent_generation_key(source) is None
-    policies = dict(bridge._POLICIES)
+    policies = dict(metadata._POLICIES)
     policies[("fixture-provider", "purchase")] = (
         "compat.fixture.", "enabled", "compat.epoch.fixture."
     )
-    monkeypatch.setattr(bridge, "_POLICIES", policies)
+    monkeypatch.setattr(metadata, "_POLICIES", policies)
     assert bridge._consent_generation_key(source) == (
         "compat.epoch.fixture." + bridge._source_id(source)
     )
