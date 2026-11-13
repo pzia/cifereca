@@ -645,7 +645,9 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             session, field, provider_scope, facade_type=facade_type,
         )
         foreign_owner = id(session) in foreign_owner_sessions
-        effective_search_scope = provider_scope
+        # Never ask a foreign authenticated session for private library results.
+        # Public notices are still mandatory; catalogue scope alone grants nothing.
+        effective_search_scope = "catalog" if foreign_owner else provider_scope
         if contract_warning:
             warnings.append(contract_warning)
         if effective_field is None:
@@ -983,7 +985,9 @@ def _search_provider_session(
     if effective_field is None:
         return [], warnings, "", ""
     if public_only:
+        # Never invoke foreign library/holdings search by broad "all" scope.
         # A legacy search() result cannot attest foreign public provenance.
+        provider_scope = "catalog"
         response_facets = None
     identity = getattr(self, "current_identity", None)
     credential = getattr(session, "credential_id", None)
