@@ -27,7 +27,7 @@ class HostileString(str):
         raise AssertionError(PRIVATE)
 
 
-@pytest.mark.parametrize("field", ["source_account_id", "source_credential"])
+@pytest.mark.parametrize("field", ["source_provider", "source_account_id", "source_credential"])
 @pytest.mark.parametrize("bad", [
     None, HostileValue(), HostileString("linked-123"), {"account": PRIVATE},
     1234, True,
@@ -68,5 +68,45 @@ def test_native_borrower_coordinates_keep_historical_whitespace_semantics(tmp_pa
         assert service._paris_adept_identity_for_loan(
             loan, connection_identity_id="alice",
         ) == (None, "adept_borrower_binding_required")
+    finally:
+        service.close()
+
+
+def test_borrower_source_provider_must_match_the_loan_not_a_static_alias(tmp_path):
+    """A similarly keyed account from another plugin cannot establish ADEPT custody."""
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        linked = service.accounts[1]
+        service.accounts[1] = replace(linked, provider_id="kobo")
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice",
+        ) == (None, "adept_borrower_ambiguous")
+        # Provider and connection coordinates must be checked together.
+        service.accounts[1] = replace(linked, provider_id="paris")
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice",
+        ) == (None, "adept_borrower_binding_required")
+    finally:
+        service.close()
+
+
+def test_primary_borrower_conflict_uses_explicit_loan_source(tmp_path, monkeypatch):
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        source = replace(loan, source_account_id="primary")
+        checked = []
+        monkeypatch.setattr(
+            service, "_borrower_identity_conflict",
+            lambda *args, **kwargs: checked.append(kwargs) or False,
+        )
+        assert service._paris_adept_identity_for_loan(
+            source, connection_identity_id="alice",
+        ) == ("alice", None)
+        assert checked == [{
+            "provider_id": source.source_provider,
+            "account_id": "primary",
+            "identity_id": "alice",
+            "credential_id": "alice-paris",
+        }]
     finally:
         service.close()
