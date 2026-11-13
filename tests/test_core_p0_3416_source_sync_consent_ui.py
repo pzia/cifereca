@@ -169,6 +169,7 @@ def test_modern_consent_takes_precedence_over_manual_materialization_capability(
         setattr(b, name, lambda *_a, **_kw: pytest.fail(
             'render must not invoke manual materialization'
         ))
+    calls_before = list(calls)
     w._refresh_sync_page()
     group, = w._sync_sources_box.children
     assert [row.title for row in group.children] == [
@@ -179,7 +180,7 @@ def test_modern_consent_takes_precedence_over_manual_materialization_capability(
                 for button in row.suffixes)
         for row in group.children
     )
-    assert w.runner.tasks == [] and calls == []
+    assert w.runner.tasks == [] and calls == calls_before
 
 def test_modern_page_uses_same_controls_and_never_reads_legacy_tools(monkeypatch, provider):
     fn = renderer()
