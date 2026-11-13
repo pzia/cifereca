@@ -349,6 +349,12 @@ def main(argv: list[str] | None = None) -> int:
                              ensure_ascii=False))
             return 2
 
+    # The pre-plugin username/password login was permanently retired: do
+    # not open Core, prompt for secrets, or contact a provider for this flag.
+    # Source-scoped commands above retain their stronger preflight refusals.
+    if a.username:
+        p.error("--username est retiré : configurez la connexion dans le plugin fournisseur")
+
     private_kobo_trace = a.cmd == "kobo-sync-edition" and a.trace
     core = CiferecaCore.open(
         diagnostics_enabled=True,
@@ -896,11 +902,6 @@ def main(argv: list[str] | None = None) -> int:
             "statistics", "catalog-scan", "catalog-list", "acquisition-ledger", "acquisition-reconcile",
         }
         if a.cmd not in local_adept_commands:
-            if a.username:
-                # The retired Core login path never authenticated anyone.
-                # Refuse before prompting for a password or contacting a
-                # configured provider; use explicit plugin credentials.
-                p.error("--username est retiré : configurez la connexion dans le plugin fournisseur")
             service.connect_configured()
 
         if a.account:
