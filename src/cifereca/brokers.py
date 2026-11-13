@@ -1210,9 +1210,11 @@ class RuntimeCapabilitiesBrokerImpl:
         values: list[str] = []
 
         def append(items: Any) -> None:
-            if type(items) not in (list, tuple):
+            if type(items) not in (list, tuple) or len(values) >= 64:
                 return
             for value in items[:64]:
+                if len(values) >= 64:
+                    return
                 if type(value) is not str:
                     continue
                 normalized = value.strip().casefold()
