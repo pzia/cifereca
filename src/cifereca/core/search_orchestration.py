@@ -365,7 +365,13 @@ def _public_rows_from_response(
     foreign-profile publication. Never turn private rows into public notices.
     """
     from .public_search_projection import project_public_search_result
-    if type(response) is not ProviderSearchResponse or type(response.results) is not list:
+    if (type(response) is not ProviderSearchResponse
+            or type(response.results) is not list
+            or len(response.results) > 10000
+            or type(response.public_notices) is not tuple
+            or len(response.public_notices) > 10000
+            or len({id(row) for row in response.results}) != len(response.results)):
+        # Repeated object identity is not an independently attested notice.
         return []
     admitted: list[SearchResult] = []
     for row in response.results:
