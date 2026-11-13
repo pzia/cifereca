@@ -1308,6 +1308,7 @@ class ParisProviderSession(ProviderSession):
         # Import the optional contract only when a compatible Core invokes it.
         from cifereca.plugin_api import (
             CatalogSearchFacet, CatalogSearchFacetValue, ProviderSearchResponse,
+            PublicSearchNotice,
         )
 
         self.last_search_warnings = []
@@ -1328,12 +1329,28 @@ class ParisProviderSession(ProviderSession):
             )
             for facet in facets
         )
+        # ParisClient.search_response parses the anonymous SearchService
+        # catalogue page. Keep that per-call origin distinct from account
+        # holdings, loans and private inventory: none of those are searched
+        # here or eligible for a public declaration.
+        result_rows = [
+            _project_paris_acquisition_formats(item)
+            for item in self._decorate(rows, self.provider_id, self.credential_id)
+        ]
+        public_notices = tuple(
+            PublicSearchNotice(replace(
+                item, owned=False, downloadable=False, download_url=None,
+                source_account_id=None, thumbnail_url=None, friendly_url=None,
+                # No raw Resource or account metadata crosses identities.
+                # Bibliographic text remains subject to Core v1 validation.
+                metadata={}, description=None, price=None, currency=None,
+                revision_id=None, document_classification=None,
+            ))
+            for item in result_rows
+        )
         return ProviderSearchResponse(
-            [_project_paris_acquisition_formats(item) for item in self._decorate(
-                rows, self.provider_id, self.credential_id
-            )],
-            projected,
-            partial=bool(warnings),
+            result_rows, projected, partial=bool(warnings),
+            public_notices=public_notices,
         )
 
     def acquisition_offers(self, item: SearchResult) -> AcquisitionOfferSet:
