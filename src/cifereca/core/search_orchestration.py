@@ -342,8 +342,9 @@ def _public_search_response_rows(response: ProviderSearchResponse, session: Prov
     if (type(response) is not ProviderSearchResponse
             or type(response.results) is not list
             or len(response.results) > 10000
-            or type(response.public_notices) is not tuple):
-        return []
+            or type(response.public_notices) is not tuple
+            or len({id(row) for row in response.results}) != len(response.results)):
+        return []  # Repeated result objects make exact response identity ambiguous.
     provider = getattr(session, "provider_id", None)
     credential = getattr(session, "credential_id", None)
     if (type(provider) is not str or not provider
@@ -356,7 +357,7 @@ def _public_search_response_rows(response: ProviderSearchResponse, session: Prov
                 or raw.source_provider != provider
                 or type(raw.source_credential) is not str
                 or raw.source_credential not in (credential, "__public__")
-                or sum(candidate is raw for candidate in response.results) != 1):
+                ):
             continue
         public = project_public_search_result(
             response, raw, provider_id=provider,
