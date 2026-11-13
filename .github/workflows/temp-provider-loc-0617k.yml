@@ -1,0 +1,28 @@
+name: TEMP provider LOC 0617k
+on:
+  pull_request:
+    paths:
+      - .github/workflows/temp-provider-loc-0617k.yml
+permissions:
+  contents: read
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Measure provider coupling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci_provider_core_coupling_report.py --json > /tmp/provider-loc.json
+          python3 - <<'PY'
+          import json,subprocess
+          d=json.load(open('/tmp/provider-loc.json'))
+          print('MEASURE_RESULT_BEGIN')
+          print(json.dumps({'sha':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),'files':d['total_core_python_files'],'dedicated':d['historical']['dedicated_by_provider'],'named':d['vendor_named_modules_outside_legacy_dedicated_scope'],'totals':d['expanded_named_modules'],'generic':d['remaining_generic_after_expanded_named_scope'],'ast_alias':d['generic_ast_signal_occurrences_by_provider_alias'],'errors':d['historical']['parse_errors']},sort_keys=True))
+          print('MEASURE_RESULT_END')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: provider-loc-report-0617k
+          path: /tmp/provider-loc.json
