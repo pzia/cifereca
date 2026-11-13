@@ -176,7 +176,14 @@ def _search_preference_score(self, row: SearchResult) -> int:
 
 
 def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> str:
-    """Translate provider availability into a user-actionable label."""
+    """Translate availability without making public catalogue rows actionable."""
+    metadata = item.metadata if type(item.metadata) is dict else {}
+    if metadata.get("catalogue_access") == "shared_read_only":
+        # This explicit read-only projection never establishes a lender,
+        # account, fulfillment URL or any locally held entitlement.
+        if metadata.get("search_provenance") == "known_catalog_stale":
+            return "Notice publique connue hors ligne"
+        return "Notice publique · disponibilité à vérifier auprès du fournisseur"
     if item.source_provider == "kobo":
         # A search notice is an observation, not a durable supplier right.
         # Only the canonical selected-offer acquisition path may resolve a
