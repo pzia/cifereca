@@ -152,3 +152,30 @@ def test_stale_legacy_writer_cannot_overwrite_cas_admitted_after_first_read(
     assert service.storage.metadata_get(pref) is None
     assert read_policy(service.storage, scope).mode == 'off'
     assert not downloaded
+
+
+def test_legacy_inventory_writer_refuses_detached_persisted_account(connected_core):
+    service, _session, account, _loan, _state, downloaded = connected_core
+    scope = scope_for_account(account)
+    pref = source_enablement_key(scope)
+    # The in-memory account can remain registered while another process
+    # removes its durable binding. The legacy writer must fail closed before
+    # it creates an inventory toggle or rotates any historical epoch.
+    from cifereca.core.legacy_source_consent_metadata import _consent_generation_key
+    epoch_key = _consent_generation_key(scope)
+    before_epoch = service.storage.metadata_get(epoch_key)
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute(
+            "DELETE FROM provider_accounts WHERE identity_id=? "
+            "AND provider_id=? AND credential_id=? AND account_id=?",
+            (scope.identity_id, scope.provider_id,
+             scope.credential_id, scope.account_id),
+        )
+    with pytest.raises(ValueError, match="source_sync_consent_scope_changed"):
+        SynchronizationBrokerImpl(service).set_enabled(
+            SynchronizationBrokerImpl._source_id(account), False,
+        )
+    assert service.storage.metadata_get(pref) is None
+    assert service.storage.metadata_get(epoch_key) == before_epoch
+    assert read_policy(service.storage, scope).mode == "unset"
+    assert not downloaded
