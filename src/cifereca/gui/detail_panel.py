@@ -755,7 +755,7 @@ class DetailPanel(Gtk.Box):
             self.window.service.can_download_loan(loan)
             if loan.medium == "digital" else False
         )
-        if loan.medium == "digital" and not downloadable and loan.source_provider != "bnf-pret":
+        if loan.medium == "digital" and not downloadable:
             # Presentation is read-only. Explain a withheld action without
             # logging at every GTK rerender or triggering any provider fetch.
             eligibility = getattr(
