@@ -140,7 +140,7 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             snapshot, loans = _sync_loan_inventory_observation(
                 self, account, session,
             )
-        if not _opening_loans_scoped(account, source_scope[0], loans):
+        if not _opening_loans_scoped(account, source_scope[0], loans, session=session):
             raise ProviderConfigurationError("loan_source_scope_mismatch")
         matching = [
             row for row in self.accounts
@@ -790,7 +790,9 @@ def _opening_loan_acquisition_allowed(loan: Loan, *, session: Any = None) -> boo
     return False
 
 
-def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool:
+def _opening_loans_scoped(
+    account: Account, identity_id: str, rows: Any, *, session: Any = None,
+) -> bool:
     """Reject a mixed or malformed supplier batch before writing loan rights.
 
     An account listing may contain several upstream branches (Paris DILICOM
@@ -802,17 +804,23 @@ def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool
     provider, credential = account.provider_id, account.credential_id
     if type(provider) is not str or not provider or type(credential) is not str or not credential:
         return False
-    # "primary" is a Core alias for the Paris principal account's empty
-    # upstream UID, NOT a default for any malformed/unpaired Account. A
-    # secondary account with no UID (or the reserved alias as its UID)
-    # must never publish or certify the principal borrower's loans.
-    if type(account.unique_id) is not str:
+    # Empty borrower IDs identify only an explicitly primary account.
+    # An alias can be admitted only by the exact installed descriptor, never
+    # by a provider name or by the contents of a borrowed item.
+    if (type(account.unique_id) is not str
+            or (account.unique_id == "" and account.is_primary is not True)
+            or type(identity_id) is not str or not identity_id
+            or account.identity_id != identity_id):
         return False
-    if (provider == "paris" and account.is_primary is not True
-            and account.unique_id in ("", "primary")):
-        return False
-    expected_account = account.unique_id or ("primary" if provider == "paris" else "")
-    if type(identity_id) is not str or not identity_id:
+    from inspect import getattr_static
+    from ..providers.base import ProviderDescriptor
+    from ..plugin_api.loan_inventory import LoanInventoryScope, _loan_matches_scope
+    try:
+        descriptor = getattr_static(session, "descriptor", None) if session is not None else None
+        if descriptor is not None and type(descriptor) is not ProviderDescriptor:
+            return False
+        scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
+    except (AttributeError, TypeError, ValueError):
         return False
     # Do not silently keep whichever conflicting upstream row happens to
     # arrive first. Opening sync deduplicates later by loan ID; without this
@@ -825,9 +833,8 @@ def _opening_loans_scoped(account: Account, identity_id: str, rows: Any) -> bool
             and type(loan.id) is str and bool(loan.id)
             and type(loan.source_provider) is str and loan.source_provider == provider
             and type(loan.source_credential) is str and loan.source_credential == credential
-            and type(loan.source_account_id) is str and loan.source_account_id == expected_account
-            and type(loan.identity_id) is str and loan.identity_id == identity_id
-            and type(loan.medium) is str and loan.medium in ("digital", "physical", "unknown")
+            and type(loan.source_account_id) is str
+            and _loan_matches_scope(loan, scope)
         ):
             return False
         key, signature = _positive_loan_identity(loan)
@@ -1062,7 +1069,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                         "TRACE loans sync end count=%s dt=%.3fs",
                         len(account_loans), time.monotonic() - loan_started,
                     )
-                    if not _opening_loans_scoped(account, identity.identity_id, account_loans):
+                    if not _opening_loans_scoped(
+                        account, identity.identity_id, account_loans, session=session,
+                    ):
                         # Do not persist any row from an ambiguous account batch;
                         # avoid displaying or logging provider-controlled details.
                         raise ProviderConfigurationError("loan_source_scope_mismatch")
@@ -1306,7 +1315,12 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 if any(
                     source_consent_configured(self, account)
                     for account in accounts
-                    if _opening_loans_scoped(account, identity.identity_id, [loan])
+                    if _opening_loans_scoped(
+                        account, identity.identity_id, [loan],
+                        session=self._sessions.get(
+                            self._session_key(account.provider_id, account.credential_id),
+                        ),
+                    )
                 ):
                     # This source has one authoritative canonical ON/OFF,
                     # including OFF/invalid or a failed typed inventory.
