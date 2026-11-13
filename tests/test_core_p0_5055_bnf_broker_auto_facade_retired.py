@@ -39,5 +39,10 @@ def test_historical_source_consent_reader_and_revision_fence_stay_in_core():
     assert "legacy_source_auto_policy" in funcs
     assert "legacy_source_auto_current" in funcs
     assert "legacy_source_auto_in_transaction" in funcs
-    assert '("bnf-pret", "loan")' in bridge
+    metadata = (ROOT / "src/cifereca/core/legacy_source_consent_metadata.py").read_text(
+        encoding="utf-8",
+    )
+    # The authoritative persisted key grammar stays in Core, independent of
+    # acquisition decision dispatch, and the bridge retains its reader ABI.
+    assert '("bnf-pret", "loan")' in metadata
     assert "revision" in bridge
