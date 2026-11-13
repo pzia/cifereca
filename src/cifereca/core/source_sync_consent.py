@@ -328,6 +328,17 @@ def set_inventory_source_enabled(service, account, enabled, preference_key):
     scope = scope_for_account(account)
     if preference_key != source_enablement_key(scope):
         raise ValueError('source_sync_toggle_scope_mismatch')
+    # The public broker supplies its exact account object. An equal-but-
+    # detached copy must not write source metadata on any compatibility path.
+    # Production accounts additionally pin Core registry and context epoch.
+    from ..models import Account
+    if type(account) is Account:
+        from .source_acquisition_consent import _context
+        _storage, _coords, current = _context(service, account)
+        if not current():
+            raise ValueError('source_sync_consent_scope_changed')
+    elif not any(row is account for row in service.accounts):
+        raise ValueError('source_sync_consent_scope_changed')
     if configured(service, account):
         return set_source_enabled(service, account, enabled, preference_key)
 
