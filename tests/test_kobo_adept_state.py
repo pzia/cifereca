@@ -163,15 +163,18 @@ def test_cold_start_missing_plugin_does_not_poison_kdrm_runtime_after_activation
         # The next normal broker read should not be held hostage by a 60s
         # cached answer obtained when the provider plugin was still starting.
         plugin_ready = True
-        broker = RuntimeCapabilitiesBrokerImpl(service)
-        warm = broker.acquisition("kobo")
-        assert warm.available is True
-        assert warm.compatible is True and warm.operational is True
-        assert "kobo_kdrm" in warm.modes
-        assert "kobo_delegated" in warm.modes
+        # The legacy diagnostics probe recovers immediately. The public
+        # capability broker must NOT attribute it to Kobo without a separate
+        # reciprocal installed provider/runtime binding.
+        warm = service.kobo_adept_state()
+        assert warm["available"] is True
+        assert warm["compatible"] is True and warm["operational"] is True
+        assert warm["kobo_kdrm_available"] is True
+        assert warm["kobo_delegated_available"] is True
         assert runtime.probe_calls == 1
-        assert broker.acquisition("kobo") == warm
+        assert service.kobo_adept_state() == warm
         assert runtime.probe_calls == 1  # successful probe remains cached
+        assert RuntimeCapabilitiesBrokerImpl(service).acquisition("kobo").available is False
     finally:
         service.close()
 
@@ -204,9 +207,11 @@ def test_cold_start_missing_cli_does_not_poison_kdrm_runtime_after_install(
         assert cold["available"] is False
         assert runtime.probe_calls == 0
         runtime.cli_ready = True
-        warm = RuntimeCapabilitiesBrokerImpl(service).acquisition("kobo")
-        assert warm.available is True
-        assert "kobo_kdrm" in warm.modes
+        warm = service.kobo_adept_state()
+        assert warm["available"] is True
+        assert warm["kobo_kdrm_available"] is True
         assert runtime.probe_calls == 1
+        # A successful local ADEPT probe alone cannot attest provider ownership.
+        assert RuntimeCapabilitiesBrokerImpl(service).acquisition("kobo").available is False
     finally:
         service.close()
