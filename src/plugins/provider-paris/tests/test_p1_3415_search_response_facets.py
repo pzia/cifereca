@@ -297,3 +297,76 @@ def test_response_with_no_facets_is_not_false_zero_server_facet_claim():
         assert client.last_search_response_facets == []
     finally:
         client.close()
+
+
+@pytest.mark.parametrize("scenario,scope", [
+    ("CATALOGUE", "physical"), ("EBOOKS", "digital"),
+])
+def test_paris_public_notices_from_same_anonymous_response(scenario, scope):
+    """The real Paris session attests only current SearchService catalogue rows."""
+    from cifereca.core.public_search_projection import project_public_search_result
+
+    payload = _response(scenario, _facet())
+    payload["d"]["Results"][0]["FriendlyUrl"] = "https://books.example.org/item"
+    payload["d"]["Results"][0]["Resource"]["Desc"] = "Private token=never-publish"
+    client = _client(lambda _req: httpx.Response(200, json=payload))
+    session = ParisProviderSession(
+        credential_id="synthetic", label="Paris", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    session.client.close()
+    session.client = client
+    try:
+        response = session.search_with_response_facets("synthetic", scope)
+        assert len(response.results) == len(response.public_notices) == 1
+        row = response.results[0]
+        declaration = response.public_notices[0]
+        assert declaration.result is not row
+        assert declaration.result.id == row.id
+        assert declaration.result.download_url is None
+        assert declaration.result.thumbnail_url is None
+        assert declaration.result.friendly_url is None
+        assert declaration.result.description is None
+        assert declaration.result.metadata == {}
+        assert declaration.result.source_account_id is None
+        assert declaration.result.owned is False
+        assert declaration.result.downloadable is False
+        public = project_public_search_result(
+            response, row, provider_id="paris", credential_id="synthetic",
+        )
+        assert public is not None
+        assert public.metadata == {"catalogue_access": "shared_read_only"}
+        assert public.download_url is public.thumbnail_url is public.friendly_url is None
+        assert public.owned is public.downloadable is False
+        assert len(response.facets) == 1
+        assert response.partial is False
+    finally:
+        session.close()
+
+
+def test_paris_failed_anonymous_search_never_reuses_previous_public_notice():
+    """Failed and successful queries cannot inherit old cross-account proof."""
+    from cifereca_paris_client import ParisSearchUnavailable
+
+    state = {"fail": False}
+    def respond(_request):
+        if state["fail"]:
+            return httpx.Response(403)
+        return httpx.Response(200, json=_response("EBOOKS"))
+
+    client = _client(respond)
+    session = ParisProviderSession(
+        credential_id="synthetic", label="Paris", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    session.client.close()
+    session.client = client
+    try:
+        first = session.search_with_response_facets("first", "digital")
+        assert len(first.public_notices) == 1
+        state["fail"] = True
+        with pytest.raises((ParisSearchUnavailable, httpx.HTTPError)):
+            session.search_with_response_facets("second", "digital")
+        assert first.public_notices[0].result is not first.results[0]
+    finally:
+        session.close()
