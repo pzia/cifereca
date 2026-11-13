@@ -1551,9 +1551,11 @@ def main() -> int:
         capture("03i-sync-partial-last-success-and-offline-source")
         # #980 acceptance uses the real MainWindow/controller/widgets and
         # XTEST, with eleven synthetic broker rows; no provider/network/DRM.
-        # Eleven sources and four Kobo accounts; the retired W4 local SHA
-        # audit row was physically removed from each Kobo group. Canonical
-        # preview, confirmed materialization and consent rows remain.
+        # Eleven sources; three explicitly materializable Kobo accounts
+        # retain manual preview + confirmation. The offline audit-only Kobo
+        # source declares remote_inventory but NOT local_materialization, so
+        # neither manual preview nor a confirmation row may appear for it.
+        # Two erstwhile ghost rows are intentionally gone.
         # These four synthetic Kobo sources explicitly declare remote_inventory,
         # so the capability-based scheduler still displays four inert policy
         # rows when the synthetic broker lacks scheduling APIs. No supplier ID
@@ -1562,7 +1564,16 @@ def main() -> int:
         # The synthetic broker has no consent APIs: the CTA must be inert.
         # Four retired Kobo W2 startup rows have been physically removed.
         # Keep asserting exact, provider-neutral visible row cardinality.
-        assert len(rows) == 24, ("Unexpected GTK sync action-row count", len(rows))
+        assert len(rows) == 22, ("Unexpected capability-scoped GTK sync action-row count", len(rows))
+        preview_rows = [
+            row for row in rows
+            if row.get_title() == "Aperçu local des acquisitions"
+        ]
+        confirmation_rows = [
+            row for row in rows
+            if row.get_title() == "Téléchargement local · confirmation obligatoire"
+        ]
+        assert len(preview_rows) == len(confirmation_rows) == 3
         assert not any(
             row.get_title() == "Sauvegarde automatique des achats Numilog"
             for row in rows
