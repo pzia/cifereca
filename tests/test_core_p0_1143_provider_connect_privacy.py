@@ -120,16 +120,17 @@ def test_successful_configured_provider_keeps_account_behavior_without_credentia
     }
 
 
-def test_adept_diagnostic_exception_and_error_map_keys_are_not_exported():
+def test_generic_diagnostics_never_probes_supplier_runtime_or_exports_secret():
     state, _session, _plugin = _rig()
-    def fail():
+    calls = []
+    def forbidden_runtime_diagnostic():
+        calls.append("runtime_probe")
         raise HostileFailure(SIGNED)
-    state.kobo_adept_state = fail
+    state.kobo_adept_state = forbidden_runtime_diagnostic
     state._session_errors = {"provider.test:" + SECRET: SIGNED}
     result = provider_sessions.provider_diagnostic_state(state)
-    assert result["kobo_adept"] == {
-        "available": False, "error": "ADEPT indisponible",
-    }
+    assert calls == []
+    assert "kobo_adept" not in result
     assert result["errors"] == {"connect_failed": 1}
     assert SECRET not in json.dumps(result)
     assert "SECRET_TOKEN" not in json.dumps(result)
