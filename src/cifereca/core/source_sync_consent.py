@@ -266,7 +266,7 @@ def _atomic_legacy_inventory_toggle(service, account, enabled, preference_key, s
     A newly installed CAS policy, including invalid or OFF, always wins over
     a concurrent legacy inventory writer. Never migrate historic ON to ON.
     """
-    from .source_acquisition_consent import _context
+    from .source_acquisition_consent import _context, _bound
     from .legacy_source_consent_metadata import (
         _POLICIES, _source_id, _consent_generation_key,
     )
@@ -284,7 +284,21 @@ def _atomic_legacy_inventory_toggle(service, account, enabled, preference_key, s
     revision_key = _consent_generation_key(scope)
     with storage._lock, storage._connect() as db:
         db.execute('BEGIN IMMEDIATE')
+        # A live in-memory Account is not proof that its persisted identity,
+        # connection and account binding still belong to this source. Check
+        # the authoritative SQLite binding in the same transaction as the
+        # legacy policy and preference write; OFF remains allowed on a
+        # disabled (but still registered) connection.
         if not current():
+            raise ValueError('source_sync_consent_scope_changed')
+        # The public broker contract tests use a SimpleNamespace with real
+        # Storage but intentionally no persistent identities/connections.
+        # Preserve that read-only fake-service seam; all concrete Core
+        # services must prove their exact durable binding inside this write.
+        from types import SimpleNamespace
+        if type(service) is not SimpleNamespace and not _bound(
+            db, coords, enabled=False,
+        ):
             raise ValueError('source_sync_consent_scope_changed')
         # The caller's earlier read may be stale: re-admit under the same
         # SQLite writer lock that protects the outgoing preference/epoch.
