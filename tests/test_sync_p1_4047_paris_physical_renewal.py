@@ -82,25 +82,24 @@ def test_paris_provider_physical_scope_can_reach_authorized_core_dispatch():
 
 
 @pytest.mark.parametrize("variant", [
-    "digital", "bnf", "other", "unrenewable", "returned", "expired",
+    "digital", "unrenewable", "returned", "expired",
 ])
-def test_gtk_visibility_never_offers_unsupported_renewal(variant):
+def test_gtk_visibility_never_offers_unsupported_loan_shape(variant):
     a = account()
     selected = loan(a)
     if variant == "digital":
         selected = loan(a, branch="DILICOM", can_renew=True)
-    elif variant in {"bnf", "other"}:
-        selected = replace(
-            selected, source_provider=(
-                "bnf-pret" if variant == "bnf" else "provider.future"
-            ),
-        )
     elif variant == "unrenewable":
         selected = replace(selected, renewable=False)
     else:
         selected = replace(selected, state=variant)
     assert paris_physical_renewal_visible(selected) is False
     assert paris_physical_renewal_visible(loan(a)) is True
+
+
+def test_gtk_visibility_accepts_unknown_source_when_physical_and_renewable():
+    selected = replace(loan(account()), source_provider="future.synthetic")
+    assert paris_physical_renewal_visible(selected) is True
 
 
 def test_gui_button_guard_is_independent_of_experimental_switch():

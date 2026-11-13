@@ -1959,7 +1959,7 @@ class LibraryService:
         return detail
 
     def renew(self, loan: Loan, *, confirmed: bool = False) -> dict[str, Any]:
-        """Manual Paris renewal; at-most-once remote POST per exact loan.
+        """Manually renew a physical loan when its source declares support.
 
         A GUI button, a cached CanRenew flag or a truthy confirmation is not
         sufficient. Preserve the existing cross-process loan mutation lock
@@ -1971,9 +1971,8 @@ class LibraryService:
                 "provider_request_accepted": False, "provider_verified": False,
                 "retry": "explicit_only",
             }
-        # Reject non-Paris/digital renewals before taking a mutation lock.
+        # Reject malformed and digital scopes before taking a mutation lock.
         if (type(loan) is not Loan
-                or loan.source_provider != "paris"
                 or loan.medium != "physical"
                 or type(loan.source_provider) is not str
                 or type(loan.id) is not str or not loan.id

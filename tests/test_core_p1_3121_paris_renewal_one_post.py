@@ -20,9 +20,9 @@ from cifereca.gui.loan_renewal_feedback import loan_renewal_feedback
 from tests.test_sync_state_contract import _service
 
 
-def account(*, credential="card", borrower="reader", identity="default"):
+def account(*, provider="paris", credential="card", borrower="reader", identity="default"):
     return Account(
-        provider_id="paris", credential_id=credential, unique_id=borrower,
+        provider_id=provider, credential_id=credential, unique_id=borrower,
         identity_id=identity, is_primary=not bool(borrower),
     )
 
@@ -34,7 +34,7 @@ def loan(a, *, loan_id="loan-1", record_id="edition-1", branch="SYRACUSE",
         provider=branch,
         medium="physical" if branch == "SYRACUSE" else "digital",
         state=state,
-        source_provider="paris", source_credential=a.credential_id,
+        source_provider=a.provider_id, source_credential=a.credential_id,
         source_account_id=a.unique_id or "primary",
         identity_id=a.identity_id,
         renewable=can_renew,
@@ -47,7 +47,7 @@ def loan(a, *, loan_id="loan-1", record_id="edition-1", branch="SYRACUSE",
 class FakeParis(ProviderSession):
     def __init__(self, a, inventory):
         descriptor = ProviderDescriptor(
-            id="paris", display_name="Synthetic Paris", description="Test",
+            id=a.provider_id, display_name="Synthetic lending source", description="Test",
             state="ready",
             existing_primary_loan_account_alias="primary",
             capabilities=ProviderCapabilities(loans=True, renew_loan=True),
@@ -78,6 +78,11 @@ class FakeParis(ProviderSession):
         return list(self.inventory)
 
     def renew(self, row, account):
+        if (self.provider_id == "paris"
+                and (type(row.raw) is not dict
+                     or row.raw.get("CanRenew") is not True
+                     or (row.raw.get("Id") or row.raw.get("HoldingId")) != row.id)):
+            raise ValueError("source renewal reference is unverified")
         self.posts.append((row.id, row.provider, account.unique_id, row.raw))
         self.during_post()
         if self.failure is not None:
@@ -85,20 +90,37 @@ class FakeParis(ProviderSession):
         return dict(self.result)
 
 
-def setup(tmp_path, *, selected=None, upstream=None):
+def setup(tmp_path, *, selected=None, upstream=None, provider="paris"):
     service = _service(tmp_path)
-    a = account()
+    a = account(provider=provider)
     ui = selected if selected is not None else loan(a)
     fresh = upstream if upstream is not None else loan(a, raw=True)
     session = FakeParis(a, [fresh])
     service.accounts = [a]
-    service._sessions[service._session_key("paris", a.credential_id)] = session
+    service._sessions[service._session_key(a.provider_id, a.credential_id)] = session
     service.storage.provider_connection_put({
-        "identity_id": "default", "provider_id": "paris",
+        "identity_id": "default", "provider_id": a.provider_id,
         "credential_id": a.credential_id, "label": "Synthetic Paris",
         "enabled": True, "metadata": {},
     })
     return service, a, ui, session
+
+
+def test_unknown_synthetic_source_renews_through_explicit_capability(tmp_path):
+    service, account_row, selected, session = setup(
+        tmp_path, provider="future.synthetic",
+    )
+    try:
+        upstream = loan(account_row, raw=True)
+        upstream.raw = {"opaque_source_renewal_ref": "fresh-ref"}
+        session.inventory = [upstream]
+        result = service.renew(selected, confirmed=True)
+        assert result["status"] == "submitted"
+        assert session.posts == [("loan-1", "SYRACUSE", "reader", {
+            "opaque_source_renewal_ref": "fresh-ref",
+        })]
+    finally:
+        service.close()
 
 
 def test_consent_is_strict_and_precedes_any_loan_read_or_claim(tmp_path):
@@ -171,7 +193,7 @@ def test_uncertain_post_never_replays_even_after_restart(tmp_path, failure):
 @pytest.mark.parametrize("change", [
     "foreign_borrower", "foreign_credential", "foreign_identity",
     "foreign_branch", "foreign_edition", "duplicate_id",
-    "missing_raw", "not_renewable", "unknown_loan",
+    "not_renewable", "unknown_loan",
 ])
 def test_mismatched_or_unverified_fresh_loan_refuses_before_claim(tmp_path, change):
     service, a, ui, session = setup(tmp_path)
@@ -193,8 +215,6 @@ def test_mismatched_or_unverified_fresh_loan_refuses_before_claim(tmp_path, chan
             session.inventory.append(replace(
                 original, provider="DILICOM", medium="digital",
             ))
-        elif change == "missing_raw":
-            session.inventory = [replace(original, raw={})]
         elif change == "not_renewable":
             session.inventory = [replace(
                 original, renewable=False,
