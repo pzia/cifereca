@@ -10,7 +10,7 @@ from dataclasses import replace
 
 import pytest
 
-from tests.test_core_p1_4909_recommendations_integration import _recommend
+from tests.test_core_p1_4909_recommendations_integration import _recommend, _attest_public_author
 from tests.test_core_p0_4673_paris_foreign_search import _fixture as paris_setup
 from tests.test_core_p1_4909_numilog_shared_public import setup as numilog_setup
 from tests.test_core_p1_4909_kobo_shared_public import setup as kobo_setup
@@ -57,6 +57,7 @@ def test_recommendations_discard_b_catalogue_without_waiting_for_session_close(
         ]
 
     session.search = matched_search
+    _attest_public_author(session)
 
     def calls():
         return session.calls if provider == "paris" else (
