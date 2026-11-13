@@ -161,3 +161,69 @@ def test_malformed_runtime_profile_rows_never_gain_binding(payload):
         broker.bind("alice", "not-proven")
     assert exc.value.code == "adept_origin_profile_missing"
     assert service.storage.bound == {}
+
+
+@pytest.mark.parametrize("mode", ["absent", "ambiguous", "mismatched_id", "unready"])
+def test_provision_does_not_bind_unattested_or_ambiguous_runtime_profile(mode):
+    service = Service()
+    runtime = service.runtime
+    original = runtime.provision_profile
+
+    def provision(name, username):
+        response = original(name, username)
+        if mode == "absent":
+            runtime.rows = []
+        elif mode == "ambiguous":
+            runtime.rows.append(dict(runtime.rows[0], profile_id="another-stable"))
+        elif mode == "mismatched_id":
+            runtime.rows[0]["profile_id"] = "substituted-profile"
+        elif mode == "unready":
+            runtime.rows[0]["provisioning"] = {"acsm_fetch_ready": False}
+        return response
+
+    runtime.provision_profile = provision
+    with pytest.raises(AttentionRequired) as exc:
+        AdeptProfileBrokerImpl(service).provision(
+            "reader", "reader@example.test", identity_id="alice",
+        )
+    assert exc.value.code == "adept_profile_provisioning_incomplete"
+    assert service.storage.bound == {}
+
+
+def test_provision_refuses_runtime_rebind_before_persisting_profile():
+    service = Service()
+    original = service.runtime
+    replacement = Runtime()
+
+    def provision(name, username):
+        response = Runtime.provision_profile(original, name, username)
+        service.runtime = replacement
+        replacement.rows = [dict(row) for row in original.rows]
+        return response
+
+    original.provision_profile = provision
+    with pytest.raises(AttentionRequired) as exc:
+        AdeptProfileBrokerImpl(service).provision(
+            "reader", "reader@example.test", identity_id="alice",
+        )
+    assert exc.value.code == "adept_profile_provisioning_incomplete"
+    assert service.storage.bound == {}
+
+
+def test_provision_name_only_acknowledgement_requires_unique_stable_inventory():
+    service = Service()
+
+    def provision(name, username):
+        service.runtime.rows = [{
+            "profile_id": "stable-reader", "name": name,
+            "complete": True, "fetch_capable": True,
+            "provisioning": {"acsm_fetch_ready": True},
+        }]
+        return {"profile": {"name": name}}
+
+    service.runtime.provision_profile = provision
+    profile = AdeptProfileBrokerImpl(service).provision(
+        "reader", "reader@example.test", identity_id="alice",
+    )
+    assert profile.profile_id == "stable-reader"
+    assert service.storage.bound == {("identity", "alice"): "stable-reader"}
