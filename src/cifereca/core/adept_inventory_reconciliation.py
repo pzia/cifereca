@@ -27,15 +27,22 @@ def reconcile_adept_acquisition(
     if not candidates:
         return {"status": "profile_missing", "acquisition_id": row["acquisition_id"]}
     names = tuple(self._adept_profile_name(p) for p in candidates)
-    if names not in cache:
+    # Profile names are not globally unique: one batch can process distinct
+    # provider accounts, credentials, or identities. Never reuse an inventory
+    # obtained for one provenance scope to attest another scope.
+    scope = tuple(row.get(field) for field in (
+        "identity_id", "provider_id", "credential_id", "account_id",
+    ))
+    inventory_key = ("adept_inventory", scope, names)
+    if inventory_key not in cache:
         try:
-            cache[names] = inventory_fn(list(names))
+            cache[inventory_key] = inventory_fn(list(names))
         except Exception:
             binding.update(inventory_status="inventory_error", return_available=False, return_verification="verification_failed")
             metadata["adept_binding"] = binding
             self.storage.acquisition_put({**row, "metadata": metadata})
             raise
-    inventory = cache[names]
+    inventory = cache[inventory_key]
     matches = match_local_book(path, inventory)
     if binding.get("adept_loan_id"):
         exact = [{"profile": group["profile"], "loan": loan} for group in inventory.get("profiles", [])
