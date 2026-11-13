@@ -164,3 +164,35 @@ def test_selected_offer_label_never_dispatches_on_provider(
     assert download_action_label(
         item, check_required=check_required, detailed_format=detailed_format,
     ) == expected
+
+
+def test_search_detail_dispatches_once_to_existing_closed_offer_guard():
+    """The outer GTK page cannot reintroduce a provider decision."""
+    import ast
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] /
+              "src/cifereca/gui/detail_panel.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    methods = {
+        node.name: node
+        for cls in tree.body if isinstance(cls, ast.ClassDef)
+        for node in cls.body if isinstance(node, ast.FunctionDef)
+    }
+    show = methods["show_search"]
+    guard = methods["_direct_download_action"]
+    calls = [
+        node for node in ast.walk(show)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_direct_download_action"
+    ]
+    assert len(calls) == 1
+    assert not any(
+        isinstance(node, ast.If) and "numilog-catalog" in ast.unparse(node.test)
+        for node in ast.walk(show)
+    )
+    assert any(
+        isinstance(node, ast.If) and "numilog-catalog" in ast.unparse(node.test)
+        for node in ast.walk(guard)
+    )
