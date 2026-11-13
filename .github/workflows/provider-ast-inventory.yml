@@ -3,6 +3,7 @@ name: Core provider AST responsibility inventory
 on:
   pull_request:
     paths:
+      - ".github/workflows/provider-ast-inventory.yml"
       - "src/cifereca/**"
       - "src/plugins/**/cifereca-plugin.json"
       - "scripts/ci_provider_ast_function_worklist.py"
@@ -22,11 +23,34 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: Generate comparable worklist for the PR base
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          base_tree="$RUNNER_TEMP/provider-ast-base"
+          git worktree add --detach "$base_tree" "$(git rev-parse HEAD^1)"
+          python3 -m scripts.ci_provider_ast_function_worklist --root "$base_tree" --json > "$RUNNER_TEMP/provider-ast-base.json"
       - name: Report unique AST and provider overlap by function
         run: |
           set -euo pipefail
-          python3 -m scripts.ci_provider_ast_function_worklist
-          python3 -m scripts.ci_provider_ast_function_worklist --json > provider-ast-responsibilities.json
+          args=()
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            args+=(--baseline "$RUNNER_TEMP/provider-ast-base.json")
+            {
+              echo "### Inventaire AST Core"
+              echo
+              echo "Base : \`$(git rev-parse HEAD^1)\` · Arbre de fusion : \`$(git rev-parse HEAD)\`"
+              echo
+              echo '~~~text'
+              python3 -m scripts.ci_provider_ast_function_worklist "${args[@]}"
+              echo '~~~'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            python3 -m scripts.ci_provider_ast_function_worklist
+          fi
+          python3 -m scripts.ci_provider_ast_function_worklist "${args[@]}" --json > provider-ast-responsibilities.json
           python3 -m scripts.ci_provider_core_coupling_report
           python3 -m scripts.ci_provider_core_coupling_report --json > provider-core-loc.json
       - name: Archive inspectable per-line worklist

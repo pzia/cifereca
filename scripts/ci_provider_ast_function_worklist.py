@@ -145,13 +145,50 @@ def inventory(root: Path) -> dict[str, object]:
     }
 
 
+def compare_counts(baseline: dict, current: dict) -> dict:
+    """Compare counts without treating line shifts as added or removed signals."""
+    if baseline.get("metric") != current["metric"] or baseline.get("parse_errors"):
+        raise ValueError("incompatible_or_incomplete_ast_baseline")
+
+    def counts(report):
+        return Counter((entry["path"], entry["function"]) for entry in report["entries"])
+
+    before, after = counts(baseline), counts(current)
+    changes = [
+        {
+            "path": path,
+            "function": function,
+            "responsibility": responsibility(path),
+            "before": before[path, function],
+            "after": after[path, function],
+            "delta": after[path, function] - before[path, function],
+        }
+        for path, function in sorted(before.keys() | after.keys())
+        if before[path, function] != after[path, function]
+    ]
+    return {
+        "before": baseline["unique_lines"],
+        "after": current["unique_lines"],
+        "delta": current["unique_lines"] - baseline["unique_lines"],
+        "functions": changes,
+    }
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path,
                         default=Path(__file__).resolve().parents[1])
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--baseline", type=Path,
+                        help="Compare with a JSON worklist from the PR base.")
     args = parser.parse_args(argv)
     data = inventory(args.root)
+    if args.baseline is not None:
+        try:
+            baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+            data["comparison"] = compare_counts(baseline, data)
+        except (OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
+            parser.error(f"Invalid AST baseline: {exc}")
     if args.json:
         print(json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True))
     else:
@@ -161,6 +198,13 @@ def main(argv=None) -> int:
         for row in data["top_functions"][:35]:
             print(f"{row['unique_lines']:3} {row['responsibility']:20} "
                   f"{row['path']}::{row['function']} {row['providers']}")
+        if "comparison" in data:
+            comparison = data["comparison"]
+            print(f"AST count vs base: {comparison['before']} → {comparison['after']}"
+                  f" ({comparison['delta']:+d})")
+            for row in comparison["functions"]:
+                print(f"  {row['delta']:+3d} {row['path']}::{row['function']}"
+                      f" ({row['before']} → {row['after']})")
         print("Parse errors:", len(data["parse_errors"]))
     return int(bool(data["parse_errors"]))
 
