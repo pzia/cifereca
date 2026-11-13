@@ -2382,6 +2382,119 @@ class LibraryService:
             match_local_book=match_local_book, AttentionRequired=AttentionRequired, time=time,
         )
 
+    def adept_inventory_reader_for_acquisition(
+        self, row, *, profile_references=None,
+    ):
+        """Lease one installed, ready read-only ADEPT inventory capability.
+
+        Runtime acquisition ownership is *not* evidence for inventory reads.
+        Profile names are supplied later by the exact-origin Core resolver.
+        The capability lease closes on plugin removal, replacement or a new
+        ambiguous producer, before and after each read; no GTK state is used.
+        """
+        def unavailable():
+            raise AttentionRequired(
+                "Inventaire ADEPT indisponible.",
+                code="adept_inventory_unavailable",
+            )
+
+        if type(row) is not dict:
+            unavailable()
+        scope = tuple(row.get(key) for key in (
+            "identity_id", "provider_id", "credential_id", "account_id",
+        ))
+        if (any(type(value) is not str or not value for value in scope[:3])
+                or (scope[3] is not None and type(scope[3]) is not str)
+                or self.identity_by_id(scope[0]) is None):
+            unavailable()
+        # Bind the runtime lease to the exact-origin profile candidates.
+        # Arbitrary caller-supplied names must never broaden inventory scope.
+        candidates = self.adept_inventory_candidates_for_acquisition(
+            row, profile_references=profile_references,
+        )
+        allowed_names = tuple(self._adept_profile_name(p) for p in candidates)
+        if (not 1 <= len(allowed_names) <= 8
+                or any(type(name) is not str or not name for name in allowed_names)
+                or len(set(allowed_names)) != len(allowed_names)):
+            unavailable()
+        manager = self._plugin_manager
+        if manager is None:
+            unavailable()
+
+        def live_producer():
+            try:
+                available = manager.candidates("runtime.adapter", ready_only=False)
+                if type(available) not in (list, tuple):
+                    unavailable()
+                enabled = []
+                for candidate in available:
+                    descriptor = candidate.descriptor
+                    caps = descriptor.capabilities
+                    if (candidate.enabled is True and candidate.state == "ready"
+                            and descriptor.type == "runtime.adapter"
+                            and type(descriptor.id) is str
+                            and type(caps) is tuple
+                            and "loan.inventory.readonly" in caps):
+                        enabled.append(descriptor.id)
+                if len(enabled) != 1:
+                    unavailable()
+                plugin_id = enabled[0]
+                status = manager.status(plugin_id)
+                desc = status.descriptor
+                if (status.enabled is not True or status.state != "ready"
+                        or desc.id != plugin_id or desc.type != "runtime.adapter"
+                        or type(desc.capabilities) is not tuple
+                        or "loan.inventory.readonly" not in desc.capabilities):
+                    unavailable()
+                runtime = manager.service(plugin_id)
+                if not callable(getattr(runtime, "loan_inventories", None)):
+                    unavailable()
+                return plugin_id, runtime
+            except AttentionRequired:
+                raise
+            except Exception:
+                unavailable()
+
+        plugin_id, runtime = live_producer()
+
+        def read(names):
+            if (type(names) is not list or not 1 <= len(names) <= 8
+                    or any(type(name) is not str or not name for name in names)
+                    or len(set(names)) != len(names)
+                    or tuple(names) != allowed_names):
+                unavailable()
+            # A profile can be removed or rebound between lease creation
+            # and execution. Never reuse a stale scoped profile resolution.
+            refreshed = self.adept_inventory_candidates_for_acquisition(
+                row, profile_references=profile_references,
+            )
+            if tuple(self._adept_profile_name(p) for p in refreshed) != allowed_names:
+                unavailable()
+            next_id, next_runtime = live_producer()
+            if next_id != plugin_id or next_runtime is not runtime:
+                unavailable()
+            try:
+                payload = runtime.loan_inventories(list(names))
+            except Exception:
+                # Caller records the normal inventory_error, never the raw
+                # runtime exception in a public or cross-identity receipt.
+                raise
+            after_id, after_runtime = live_producer()
+            if after_id != plugin_id or after_runtime is not runtime:
+                unavailable()
+            refreshed = self.adept_inventory_candidates_for_acquisition(
+                row, profile_references=profile_references,
+            )
+            if tuple(self._adept_profile_name(p) for p in refreshed) != allowed_names:
+                unavailable()
+            if (type(payload) is not dict
+                    or type(payload.get("complete")) is not bool
+                    or type(payload.get("profiles")) is not list):
+                unavailable()
+            return payload
+
+        return read
+
     def adept_inventory_candidates_for_acquisition(
         self, row, *, profile_references=None, cache=None,
     ):
