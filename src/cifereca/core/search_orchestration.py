@@ -659,6 +659,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             if attempt > 0 and primary_ok:
                 break
             try:
+                response_partial = False
                 if foreign_owner:
                     # Foreign sessions may only return an explicit, same-call
                     # public projection; no legacy list-only fallback.
@@ -671,6 +672,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                             content_types=tuple(content_types or ()),
                         )
                         session_rows = _public_rows_from_response(response, session)
+                        response_partial = response.partial is True
                 else:
                     try:
                         import inspect
@@ -690,7 +692,11 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                         provider_seen.add(key)
                         provider_rows.append(row)
                 concrete = getattr(session, "client", None)
-                partial_failure = False
+                partial_failure = response_partial
+                if response_partial:
+                    warnings.append(
+                        f"{session.descriptor.display_name}: résultats partiels"
+                    )
                 for source in (session, concrete):
                     for _warning in list(getattr(source, "last_search_warnings", []) or []):
                         # A provider warning is untrusted: it may carry signed
