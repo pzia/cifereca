@@ -118,18 +118,21 @@ def _host(storage):
         return list(rows)
     host = SimpleNamespace(
         current_identity=active, storage=storage,
+        identity_by_id=lambda key: (
+            SimpleNamespace(identity_id=key) if key in {"alice", "bob"} else None
+        ),
         _search_generation_lock=RLock(), library_entries=entries,
     )
     return host, rows, calls
 
 
-def test_core_service_explicit_writer_checks_active_owner_exact_key(tmp_path):
+def test_core_service_explicit_writer_checks_exact_owner_and_key(tmp_path):
     storage = Storage(tmp_path / "prefs.sqlite3")
     try:
         host, rows, calls = _host(storage)
         def write(**kw):
             return LibraryService.change_reading_preference(host, **kw)
-        with pytest.raises(ValueError, match="reading_preference_identity_not_active"):
+        with pytest.raises(ValueError, match="reading_preference_target_unverified"):
             write(identity_id="bob", library_key="artifact:verified",
                   preference="liked", expected_revision=0, user_confirmed=True)
         with pytest.raises(ValueError, match="reading_preference_confirmation_required"):
@@ -158,7 +161,9 @@ def test_core_service_explicit_writer_checks_active_owner_exact_key(tmp_path):
         )
         assert a2.preferences == () and a2.revision == 2
         host.current_identity = SimpleNamespace(identity_id="bob")
-        with pytest.raises(ValueError, match="reading_preference_identity_not_active"):
-            LibraryService.reading_preference_snapshot(host, identity_id="alice")
+        # The display changed, not the owner of this explicit local read.
+        assert LibraryService.reading_preference_snapshot(
+            host, identity_id="alice"
+        ).revision == 2
     finally:
         storage.close()
