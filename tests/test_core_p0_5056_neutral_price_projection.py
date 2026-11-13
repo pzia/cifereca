@@ -38,11 +38,15 @@ def test_price_does_not_mint_a_canonical_owned_entitlement(provider):
     assert mirrored_state(item, [right(provider)]) == "remote_owned"
 
 
-def test_historical_paris_digital_without_price_keeps_borrow_label():
+@pytest.mark.parametrize("provider", [
+    "paris", "kobo", "numilog", "fictional-a", "fictional-b", "unlisted",
+])
+@pytest.mark.parametrize("medium", ["digital", "physical"])
+def test_catalogue_medium_never_mints_borrow_availability(provider, medium):
     item = replace(
-        book("paris"), medium="digital", owned=False, price=None,
+        book(provider), medium=medium, owned=False, price=None,
     )
-    assert mirrored_state(item) == "available_to_borrow"
+    assert mirrored_state(item) == "remote_catalog"
 
 
 def test_price_does_not_override_attested_owned_right():
