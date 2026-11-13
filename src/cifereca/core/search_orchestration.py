@@ -1857,7 +1857,9 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             "remote_owned" if owned else
             # This is descriptive only: a supplier price is not a purchase right.
             "available_to_buy" if type(row.price) is str and bool(row.price.strip()) else
-            "available_to_borrow" if row.source_provider == "paris" and row.medium == "digital" else
+            # A public catalogue notice is not a borrowing right.
+            # Borrowability must be established by the independent lender
+            # policy/holding evidence, never inferred from provider or medium.
             "remote_catalog"
         )
         key, qualified = _mirrored_catalogue_key(identity_id, row)
