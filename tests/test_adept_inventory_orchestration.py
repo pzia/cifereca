@@ -157,11 +157,16 @@ def test_inventory_candidate_scope_never_uses_another_identity_or_ambient_select
         assert first == [{"profile_id": "stable-profile", "name": "origin"}]
         assert service.adept_inventory_candidates_for_acquisition(row, cache=cache) == first
         assert observed == ["stable-profile"]
+        other_account = dict(row, credential_id="another-credential")
+        assert service.adept_inventory_candidates_for_acquisition(
+            other_account, cache=cache,
+        ) == first
+        assert observed == ["stable-profile", "stable-profile"]
         foreign = dict(row, identity_id="nonexistent-identity")
         with pytest.raises(Exception) as exc:
             service.adept_inventory_candidates_for_acquisition(foreign, cache=cache)
         assert getattr(exc.value, "code", None) == "adept_identity_unproven"
-        assert observed == ["stable-profile"]
+        assert observed == ["stable-profile", "stable-profile"]
     finally:
         service.close()
 
