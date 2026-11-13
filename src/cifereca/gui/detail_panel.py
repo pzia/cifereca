@@ -905,8 +905,7 @@ class DetailPanel(Gtk.Box):
         # A direct-download action must be visible immediately.  Do not wait for
         # the asynchronous holdings request: Gallica has no meaningful holding
         # list and a failed availability lookup must never hide the download.
-        if item.source_provider != "numilog-catalog":
-            self._direct_download_action(item)
+        self._direct_download_action(item)
         availability = Adw.PreferencesGroup()
         availability.set_title("Disponibilités")
         row = Adw.ActionRow()
