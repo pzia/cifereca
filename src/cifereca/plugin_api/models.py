@@ -83,6 +83,9 @@ class PluginDescriptor:
     # Optional provider-declared runtime association, not an authorization or
     # proof of readiness. Core must cross-check the installed runtime service.
     runtime_acquisition_service: str | None = None
+    # Reciprocal runtime assertion of exact logical provider IDs. This
+    # declaration alone never grants acquisition rights or execution.
+    runtime_acquisition_providers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
