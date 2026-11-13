@@ -269,6 +269,13 @@ def set_inventory_source_enabled(service, account, enabled, preference_key):
     """
     if type(enabled) is not bool:
         raise ValueError("invalid source enabled preference")
+    from .source_acquisition_consent import _context
+    # The legacy inventory writer is not a consent grant, but it must never
+    # write an exact source preference for a detached/replaced account object.
+    # A source-id/key match alone does not establish current Core ownership.
+    _storage, _coords, current = _context(service, account)
+    if not current():
+        raise ValueError('source_sync_consent_scope_changed')
     scope = scope_for_account(account)
     if preference_key != source_enablement_key(scope):
         raise ValueError('source_sync_toggle_scope_mismatch')
