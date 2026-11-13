@@ -1084,6 +1084,10 @@ def _refresh_sync_page(self) -> None:
         # Malformed/missing declarations do not create schedule controls.
         inventory_capabilities = getattr(source, "sync_capabilities", ())
         if (type(inventory_capabilities) in (tuple, list)
+                and 0 < len(inventory_capabilities) <= 64
+                and all(type(capability) is str and bool(capability)
+                        for capability in inventory_capabilities)
+                and len(set(inventory_capabilities)) == len(inventory_capabilities)
                 and "remote_inventory" in inventory_capabilities):
             # Inventory consent is separate from local materialization.
             def inventory_current(expected_identity=source.identity_id, captured_scope=scope):
