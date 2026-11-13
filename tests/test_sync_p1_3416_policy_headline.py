@@ -172,7 +172,8 @@ def test_controller_adds_overview_before_last_run_not_a_new_action():
 def test_gtk_card_keeps_provider_first_line_without_extra_broker_actions():
     from tests.test_core_ui_1347_sync_action_scope import _fixture, _source
     window, _, calls, _, _ = _fixture(sources=[
-        _source(provider_id="future-provider", label="Compte fictif"),
+        _source(provider_id="future-provider", label="Compte fictif",
+                sync_capabilities=("local_materialization",)),
     ])
     row = window._sync_sources_box.children[0].children[0]
     assert row.subtitle.startswith("Fournisseur : future-provider\n")
