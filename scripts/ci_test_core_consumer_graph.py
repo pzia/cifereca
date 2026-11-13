@@ -108,10 +108,18 @@ def inventory(root: Path = ROOT) -> dict:
     sources = root_tests + plugin_tests
     edges: list[dict] = []
     unresolved: list[dict] = []
+    local_edges: list[dict] = []
+    ambiguous_edges: list[dict] = []
+    missing_edges: list[dict] = []
     errors: list[dict] = []
     root_modules = {
         "tests." + p.stem: p.relative_to(root).as_posix() for p in root_tests
     }
+    plugin_modules = {}
+    for source in plugin_tests:
+        path = source.relative_to(root)
+        if len(path.parts) == 5 and path.name.startswith("test_"):
+            plugin_modules[(path.parts[2], "tests." + source.stem)] = path.as_posix()
     adjacency: dict[str, set[str]] = {}
     plugin_direct: dict[str, set[str]] = {}
     for source in sources:
@@ -127,11 +135,25 @@ def inventory(root: Path = ROOT) -> dict:
             continue
         for module, mechanism, line in found:
             target = root_modules.get(module)
-            edges.append({
+            edge = {
                 "consumer": path, "owner": owner, "target_module": module,
                 "target": target, "mechanism": mechanism, "line": line,
                 "resolved": target is not None,
-            })
+            }
+            if owner != "root_tests":
+                local_target = plugin_modules.get((parts[2], module))
+                if local_target is not None:
+                    # Namespace selection depends on the test runner if both
+                    # roots provide the module. Do not infer an import edge.
+                    if target is not None:
+                        ambiguous_edges.append({**edge, "local_target": local_target})
+                    else:
+                        local_edges.append({**edge, "target": local_target, "resolved": True})
+                    continue
+                if target is None:
+                    missing_edges.append(edge)
+                    continue
+            edges.append(edge)
             if target is not None:
                 if owner == "root_tests":
                     adjacency.setdefault(path, set()).add(target)
@@ -152,7 +174,7 @@ def inventory(root: Path = ROOT) -> dict:
         for target in sorted(visited - starts):
             transitive.append({"consumer": consumer, "target": target})
     return {
-        "schema": "cifereca.test-core-consumers/1",
+        "schema": "cifereca.test-core-consumers/2",
         "root_test_files": len(root_tests),
         "plugin_test_files": len(sources) - len(root_tests),
         "plugin_to_root_direct": sorted(
@@ -164,6 +186,9 @@ def inventory(root: Path = ROOT) -> dict:
             key=lambda e: (e["consumer"], e["target_module"], e["line"]),
         ),
         "plugin_to_root_transitive": transitive,
+        "plugin_local_imports": local_edges,
+        "plugin_ambiguous_imports": ambiguous_edges,
+        "plugin_missing_imports": missing_edges,
         "unresolved_dynamic_or_pytest_plugins": sorted(
             unresolved, key=lambda e: (e["consumer"], e["line"]),
         ),
@@ -180,7 +205,9 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2))
     else:
         for key in ("root_test_files", "plugin_test_files", "plugin_to_root_direct",
-                    "plugin_to_root_transitive", "unresolved_dynamic_or_pytest_plugins",
+                    "plugin_to_root_transitive", "plugin_local_imports",
+                    "plugin_ambiguous_imports", "plugin_missing_imports",
+                    "unresolved_dynamic_or_pytest_plugins",
                     "parse_errors"):
             value = result[key]
             print(f"{key}: {len(value) if isinstance(value, list) else value}")
