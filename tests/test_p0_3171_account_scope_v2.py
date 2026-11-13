@@ -134,3 +134,17 @@ def test_immutable_item_already_bound_to_exact_credential_can_route():
         ImmutableItem(), identity_id="profile-A", account_id="same-upstream-id",
     ) == "cred-B"
     assert core.acquisitions == ["cred-B"]
+
+
+
+def test_identity_broker_explicit_empty_scope_never_uses_navigation_selection():
+    from pytest import raises
+    core = FakeCore()
+    broker = IdentityBrokerImpl(core)
+
+    for invalid in ("", " ", "\t"):
+        with raises(ValueError, match="identity_id_required"):
+            broker.accounts(invalid)
+
+    # Existing explicit scoped reads remain stable regardless of UI selection.
+    assert {row.credential_id for row in broker.accounts("profile-B")} == {"cred-C"}
