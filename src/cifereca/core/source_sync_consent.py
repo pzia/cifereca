@@ -259,6 +259,62 @@ def set_source_enabled(service, account, enabled, preference_key):
 
 
 
+def _atomic_legacy_inventory_toggle(service, account, enabled, preference_key, scope):
+    """Serialize legacy switch, CAS admission and revision into one SQL write.
+
+    In-flight legacy operations retain the exact historical generation fence.
+    A newly installed CAS policy, including invalid or OFF, always wins over
+    a concurrent legacy inventory writer. Never migrate historic ON to ON.
+    """
+    from .source_acquisition_consent import _context
+    from .legacy_source_consent_metadata import (
+        _POLICIES, _source_id, _consent_generation_key,
+    )
+
+    storage, coords, current = _context(service, account)
+    if not current():
+        raise ValueError('source_sync_consent_scope_changed')
+    specs = [
+        spec for (provider, _kind), spec in _POLICIES.items()
+        if provider == scope.provider_id
+    ]
+    legacy_toggle = (
+        specs[0][0] + _source_id(scope) if len(specs) == 1 else None
+    )
+    revision_key = _consent_generation_key(scope)
+    with storage._lock, storage._connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if not current():
+            raise ValueError('source_sync_consent_scope_changed')
+        # The caller's earlier read may be stale: re-admit under the same
+        # SQLite writer lock that protects the outgoing preference/epoch.
+        if policy_in_transaction(db, scope).configured:
+            raise ValueError('source_sync_consent_changed')
+        legacy_present = (
+            legacy_toggle is not None
+            and db.execute(
+                'SELECT 1 FROM metadata WHERE key=?', (legacy_toggle,),
+            ).fetchone() is not None
+        )
+        writes = [(preference_key, '1' if enabled else '0')]
+        if not enabled and legacy_present:
+            payload = json.dumps({
+                'schema': _SCHEMA, 'scope': list(coords),
+                'enabled': False, 'revision': secrets.token_hex(16),
+            }, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
+            writes.append((policy_key(scope), payload))
+        elif revision_key is not None:
+            writes.append((revision_key, secrets.token_hex(16)))
+        for key, value in writes:
+            db.execute(
+                'INSERT INTO metadata(key,value) VALUES(?,?) '
+                'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                (key, value),
+            )
+        if not current():
+            raise ValueError('source_sync_consent_scope_changed')
+
+
 def set_inventory_source_enabled(service, account, enabled, preference_key):
     """Provider-neutral inventory toggle with a fail-closed legacy cutover.
 
@@ -275,9 +331,14 @@ def set_inventory_source_enabled(service, account, enabled, preference_key):
     if configured(service, account):
         return set_source_enabled(service, account, enabled, preference_key)
 
-    # Legacy-only acquisition migration lives behind the existing acquisition
-    # consent boundary. The versioned source CAS module does not depend on
-    # the historical supplier consent decision bridge.
+    # Real Core accounts require one SQLite transaction for both the legacy
+    # preference and its epoch/CAS cutover. Keep lightweight broker contract
+    # fakes on their existing in-memory seam (no SQLite connection or Account).
+    from ..models import Account
+    if type(account) is Account:
+        return _atomic_legacy_inventory_toggle(
+            service, account, enabled, preference_key, scope,
+        )
     from .source_acquisition_consent import legacy_inventory_enablement_toggle
     return legacy_inventory_enablement_toggle(
         service, account, enabled, preference_key, scope,
