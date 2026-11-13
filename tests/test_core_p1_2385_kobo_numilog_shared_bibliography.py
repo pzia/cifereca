@@ -19,7 +19,8 @@ def test_public_bibliography_survives_cross_profile_search_and_cache(
 ):
     module = kobo if provider == "kobo" else numilog
     service, session, _owners = module.setup(tmp_path, monkeypatch)
-    old_search = session.search
+    from cifereca.plugin_api import PublicSearchNotice
+    original_response = session.search_with_response_facets
     public_cover = "https://cdn.example.org/covers/edition.jpg"
     bibliography = {
         "language": "fr", "languages": ["fr", "en"],
@@ -27,23 +28,22 @@ def test_public_bibliography_survives_cross_profile_search_and_cache(
         "isbn": "9780306406157", "publisher": "Éditeur",
         "contributors": ["Auteur Exemple"],
         "private": "SECRET", "account_id": "BOB",
-        "authorization": "Bearer SECRET",
-        "rights": {"token": "SECRET"},
+        "authorization": "Bearer SECRET", "rights": {"token": "SECRET"},
         "extra_url": "https://private.invalid/?token=SECRET",
     }
 
-    def observed_search(*args, **kwargs):
-        rows = old_search(*args, **kwargs)
-        return [
-            replace(row, thumbnail_url=public_cover, metadata=bibliography)
-            if (
-                row.source_collection == ("catalog" if provider == "kobo" else "public_catalog")
-                and row.scenario == ("KOBO" if provider == "kobo" else "NUMILOG_PUBLIC")
-            ) else row
-            for row in rows
-        ]
+    def observed_response(*args, **kwargs):
+        response = original_response(*args, **kwargs)
+        # Public catalogue parser explicitly emitted these bibliographic
+        # fields in this exact response; private extras are not promoted.
+        return replace(response, public_notices=tuple(
+            PublicSearchNotice(replace(
+                notice.result, thumbnail_url=public_cover,
+                metadata=bibliography,
+            )) for notice in response.public_notices
+        ))
 
-    session.search = observed_search
+    session.search_with_response_facets = observed_response
     expected = {
         "catalogue_access": "shared_read_only",
         "language": "fr", "languages": ["fr", "en"],
@@ -56,7 +56,7 @@ def test_public_bibliography_survives_cross_profile_search_and_cache(
         assert len(rows) == 1
         shared = rows[0]
         assert shared.metadata == expected
-        assert shared.thumbnail_url == public_cover
+        assert shared.thumbnail_url is None  # ABI v1 never exports URLs
         assert shared.downloadable is False and shared.download_url is None
         assert shared.owned is False and shared.friendly_url is None
         assert "SECRET" not in repr(asdict(shared))
@@ -73,21 +73,22 @@ def test_public_bibliography_survives_cross_profile_search_and_cache(
 
 @pytest.mark.parametrize("provider", ["kobo", "numilog"])
 def test_shared_catalogue_rejects_unsafe_and_unsupported_metadata(provider):
-    from cifereca.core.search_orchestration import _shared_catalogue_bibliography
+    from cifereca.core.public_search_projection import project_public_search_result
+    from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
     from tests.test_core043_progress_cache_stats import _FakeSession
 
     base = _FakeSession(provider).search("test", "all")[0]
-    row = replace(
-        base, source_provider=provider,
-        scenario="KOBO" if provider == "kobo" else "NUMILOG_PUBLIC",
-        metadata={
-            "language": "bad\x00value", "series": "Bearer SECRET",
-            "publisher": "reader@example.com",
-            "subjects": ["Fiction", "token=SECRET"],
-            "rights": "SECRET", "account": "BOB",
-            "thumbnail_url": "https://example.org/private",
-        },
-    )
-    assert _shared_catalogue_bibliography(row) == {
-        "catalogue_access": "shared_read_only"
-    }
+    private = replace(base, source_provider=provider)
+    notice = replace(private, owned=False, downloadable=False,
+                     download_url=None, metadata={
+                         "language": "bad\\x00value",
+                         "series": "Bearer SECRET",
+                         "publisher": "reader@example.com",
+                         "subjects": ["Fiction", "token=SECRET"],
+                         "rights": "SECRET", "account": "BOB",
+                     })
+    assert project_public_search_result(
+        ProviderSearchResponse(
+            [private], public_notices=(PublicSearchNotice(notice),),
+        ), private, provider_id=provider, credential_id=private.source_credential,
+    ) is None
