@@ -3593,6 +3593,7 @@ class LibraryService:
         _TRACE_LOG.info("TRACE download ledger acquiring loan_ref=%s", trace_ref)
         retained_acsm: Path | None = None
         failure_executor = "provider"
+        fulfillment_phase_entered = False
         try:
             acquisition = loan_provider_delivery.acquire_provider_loan(
                 self, loan, force_refresh=force_refresh, identity_id=identity.identity_id,
@@ -3606,6 +3607,7 @@ class LibraryService:
             if acquisition.kind == "acsm" and acquisition.acsm_path is not None:
                 retained_acsm = acquisition.acsm_path
                 failure_executor = "kobo-adept"
+                fulfillment_phase_entered = True
                 preflight = loan_adept_profile_guard.check(
                     self, loan, identity=identity, ledger_base=ledger_base,
                     previous_meta=previous_meta, retained_acsm=retained_acsm,
@@ -3708,7 +3710,7 @@ class LibraryService:
             classified = failure_fields(code=raw_code, process={}, loan_ref=None)["code"]
             code = classified if classified != "unclassified_error" else "adept_error"
             process = {}
-            if failure_executor == "kobo-adept":
+            if fulfillment_phase_entered:
                 raw = self.runtime_diagnostic("runtime.kobo-adept")
                 process = loan_failure_evidence.process_failure_facts(
                     raw, exc=exc,
@@ -3725,7 +3727,7 @@ class LibraryService:
             except Exception:
                 private_message = ""
             message = (
-                "Acquisition ADEPT indisponible" if failure_executor == "kobo-adept"
+                "Acquisition ADEPT indisponible" if fulfillment_phase_entered
                 else "Acquisition du prêt indisponible"
             )
             if code == "pnb_redirect_refused":
@@ -3798,7 +3800,7 @@ class LibraryService:
             # indication that the already-active loan or its ACSM is unavailable
             # (manual ACSM retrieval can still succeed). Keep it observable but
             # retryable instead of permanently blocking the loan.
-            validation_failure = failure_executor == "kobo-adept" and isinstance(exc, ProviderConfigurationError)
+            validation_failure = fulfillment_phase_entered and isinstance(exc, ProviderConfigurationError)
             metadata = loan_failure_evidence.provider_failure_metadata(
                 previous_meta, loan_id=loan.id, retained_acsm=retained_acsm,
                 attention_code=attention_code, validation_failure=validation_failure,

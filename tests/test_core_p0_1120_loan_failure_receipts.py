@@ -114,3 +114,27 @@ def test_failure_receipt_helpers_have_no_calls_to_services_or_providers():
         definition = next(n for n in module.body
                           if isinstance(n, ast.FunctionDef) and n.name == name)
         assert not [n for n in ast.walk(definition) if isinstance(n, ast.Call)]
+
+
+def test_failure_branches_use_acsm_phase_not_named_runtime_dispatch():
+    """The executor label is historical receipt metadata, not a branch policy."""
+    method = _service_acquisition_tree()
+    assignments = [
+        node for node in ast.walk(method)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "fulfillment_phase_entered"
+                for t in node.targets)
+    ]
+    assert len(assignments) == 2
+    assert {ast.unparse(node.value) for node in assignments} == {"False", "True"}
+    assert assignments[0].lineno < assignments[1].lineno
+    for handler in (n for n in ast.walk(method) if isinstance(n, ast.ExceptHandler)):
+        comparisons = [
+            n for n in ast.walk(handler) if isinstance(n, ast.Compare)
+            and "failure_executor" in ast.unparse(n)
+        ]
+        assert not comparisons
+    assert sum(
+        isinstance(n, ast.Name) and n.id == "fulfillment_phase_entered"
+        for n in ast.walk(method)
+    ) >= 5
