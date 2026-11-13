@@ -876,9 +876,10 @@ class LocalInspection:
                     and (scope[1] != 'bnf-pret' or bnf_exact_loan)
                     and scope_counts[scope] == 1):
                 self._declared_right_scopes[f'right:{index}'] = scope
+            is_numilog_right = right_provider == 'numilog'
             self._manual_right_proofs[f'right:{index}'] = {
                 'attested': (
-                    right.get('provider_id') == 'numilog'
+                    is_numilog_right
                     and right.get('attested_source') == 'numilog.authenticated_library'
                     and right.get('state') == 'active'
                     and right.get('entitlement_type') == 'owned'
@@ -886,7 +887,7 @@ class LocalInspection:
                 ),
                 'ambiguous': (
                     scope is None or scope_counts[scope] != 1
-                    or (right.get('provider_id') == 'numilog'
+                    or (is_numilog_right
                         and edition_collision_counts.get(
                             (identity_id, right.get('provider_id'),
                              right.get('item_id')), 0) != 1)
