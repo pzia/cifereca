@@ -120,37 +120,34 @@ def test_legacy_revision_failure_rolls_back_inventory_preference(connected_core)
             db.execute("DROP TRIGGER deny_legacy_epoch")
 
 
-def test_stale_legacy_writer_cannot_overwrite_cas_admitted_after_first_read(
+def test_inventory_toggle_uses_only_transactional_cas_decision(
     connected_core, monkeypatch,
 ):
     service, _session, account, _loan, _state, downloaded = connected_core
     import cifereca.core.source_sync_consent as policy_module
     scope = scope_for_account(account)
-    pref = source_enablement_key(scope)
-    original = policy_module.configured
+    key, _scope = _seed_legacy_on(service, account)
+    broker = SynchronizationBrokerImpl(service)
+    sid = broker._source_id(account)
 
-    def stale_read(target_service, target_account):
-        # Simulate another writer committing canonical OFF between the old
-        # preflight reader and this toggle's BEGIN IMMEDIATE.
-        assert original(target_service, target_account) is False
-        from cifereca.core.source_sync_consent import _SCHEMA
-        import json
-        service.storage.metadata_set(policy_key(scope), json.dumps({
-            'schema': _SCHEMA,
-            'scope': [scope.identity_id, scope.provider_id,
-                      scope.credential_id, scope.account_id],
-            'enabled': False,
-            'revision': 'a' * 32,
-        }))
-        return False
+    def cannot_preflight(*_args, **_kwargs):
+        raise AssertionError("pretransactional CAS read is forbidden")
 
-    monkeypatch.setattr(policy_module, 'configured', stale_read)
-    with pytest.raises(ValueError, match='source_sync_consent_changed'):
-        SynchronizationBrokerImpl(service).set_enabled(
-            SynchronizationBrokerImpl._source_id(account), True,
-        )
-    assert service.storage.metadata_get(pref) is None
-    assert read_policy(service.storage, scope).mode == 'off'
+    monkeypatch.setattr(policy_module, 'configured', cannot_preflight)
+    # Legacy ON -> explicit inventory OFF must retire to canonical OFF,
+    # entirely inside the transaction, without consulting the old preflight.
+    broker.set_enabled(sid, False)
+    disabled = read_policy(service.storage, scope)
+    assert disabled.mode == 'off'
+    assert service.storage.metadata_get(key) == '1'
+
+    # After CAS exists, a later inventory ON remains canonical OFF and
+    # advances its revision without ever reactivating acquisition.
+    broker.set_enabled(sid, True)
+    reenabled = read_policy(service.storage, scope)
+    assert reenabled.mode == 'off'
+    assert reenabled.revision != disabled.revision
+    assert service.storage.metadata_get(source_enablement_key(scope)) == '1'
     assert not downloaded
 
 
