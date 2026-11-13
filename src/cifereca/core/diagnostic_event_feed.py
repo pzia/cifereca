@@ -88,7 +88,7 @@ _STRUCTURED_TERMS = frozenset({
     "sync", "source", "opening", "connect", "download", "acquire", "acquisition",
     "return", "verification", "retry", "import", "runtime", "plugin", "parse",
     "catalog", "search", "library", "update", "install", "check", "health",
-    "error", "warning", "state", "fetch", "adept", "pnb", "paris", "kobo",
+    "error", "warning", "state", "fetch", "adept", "pnb",
 })
 _CATEGORIES = frozenset({
     "CORE", "SYNC", "ADEPT", "PNB", "PARIS", "KOBO", "PLUGIN",
