@@ -20,6 +20,7 @@ from .. import __version__
 from ..catalogue_link import safe_document_link_url
 from ..config import Config
 from ..core.search import file_format
+from ..core import library_projection
 from ..identity_selection import identity_change_required
 from ..language import language_label
 from ..diagnostics import Diagnostics
@@ -1265,7 +1266,7 @@ class MainWindow(Adw.ApplicationWindow):
                 self._populate_history(rows)
 
         self.runner.submit(
-            "Chargement de l'historique…", lambda: self.service.refresh_history(force=force, account=account), done, control=control,
+            "Chargement de l'historique…", lambda: library_projection.refresh_history(self.service, force=force, account=account), done, control=control,
             priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL, kind="history",
             origin="user" if control is not None else "automatic",
         )
