@@ -33,7 +33,7 @@ def test_four_pair_actions_are_pinned_to_the_bottom_bar_not_the_long_page():
     assert "action_scroll.set_visible(selected_right[0] is not None)" in code
     assert "action_scroll.set_visible(False)" in code
     # Widgets are not duplicated or rebound to a new, unauthenticated writer.
-    assert code.count("Gtk.Button(label='Préparer le rattachement')") == 1
+    assert code.count("Gtk.Button(label='Examiner les preuves')") == 1
     assert code.count("Gtk.Button(label='Confirmer le placement local…')") == 1
     assert "session.preview_manual_attachment(" in code
     assert "session.confirm_manual_attachment(" in code

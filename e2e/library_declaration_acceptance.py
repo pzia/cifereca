@@ -203,7 +203,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
         if attested:
             report['checks']['native_declaration_attested_right_selected'] = True
         if attested:
-            until(lambda: button('Préparer le rattachement').get_visible(),
+            until(lambda: button('Examiner les preuves').get_visible(),
                   choose_attested_file)
             return
         until(lambda: any(isinstance(w, Gtk.Label)
@@ -250,7 +250,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk, report,
         report['checks']['native_declaration_attested_preflight_reached'] = True
         assert service.storage.placement_for_path(book) is None
         assert {table: rows(table) for table in unchanged} == unchanged
-        click(button('Préparer le rattachement'), lambda: until(
+        click(button('Examiner les preuves'), lambda: until(
             lambda: button('Vérifier les preuves actuelles…').get_visible(),
             attested_revalidate))
 

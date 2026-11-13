@@ -142,12 +142,8 @@ def _attachment_refusal_message(outcome: object, provider: object, default: str)
     return default + '\nMotif vérifié : ' + label if label else default
 
 
-def _reconciliation_step_label(stage, provider=None):
-    """Closed, non-private navigation hints; never infer proof from a stage.
-
-    This is only a GTK orientation aid, NOT the Core preflight or a write
-    authorization. Paris attested placements remain read-only.
-    """
+def _reconciliation_step_label(stage, *, loan_inactive=False):
+    """Describe the current inspection step and the recorded loan state."""
     stages = {
         'idle': '1/4 · Choisir un droit non vérifié.',
         'right': '2/4 · Choisir un fichier. Les indices ne prouvent aucun droit.',
@@ -158,8 +154,8 @@ def _reconciliation_step_label(stage, provider=None):
         'applying': '4/4 · Confirmation reçue · revalidation sous verrou.',
         'done': 'Placement enregistré · relancer l’inspection pour actualiser.',
     }
-    if provider == 'paris' and stage in {'file', 'checking', 'blocked', 'ready'}:
-        return '3/4 · Prêt Paris : examen en lecture seule, sans placement.'
+    if loan_inactive and stage in {'file', 'checking', 'blocked', 'ready'}:
+        return '3/4 · Prêt non actif : examen en lecture seule, sans placement.'
     return stages.get(stage, stages['idle'])
 
 
@@ -773,7 +769,7 @@ class LocalInspectionController:
         # A right and file can be explicitly compared without permitting an
         # attachment. The separate Core preflight returns *closed reasons*
         # only and never a transaction token or write capability.
-        pair_prepare = Gtk.Button(label='Préparer le rattachement')
+        pair_prepare = Gtk.Button(label='Examiner les preuves')
         pair_prepare.set_tooltip_text(
             'Évaluer en lecture seule les preuves de la paire choisie. '
             'Aucun rattachement ni changement SQLite ne sera effectué.'
@@ -936,6 +932,7 @@ class LocalInspectionController:
         selected_right = [None]
         selected_file = [None]
         selected_provider = [None]
+        selected_loan_inactive = [False]
         pair_version = [0]
         placement_committed = [False]
         missing_case = [None]
@@ -963,7 +960,9 @@ class LocalInspectionController:
         pair_actions.insert_child_after(declarations.revoke, declarations.declare)
 
         def guide(stage):
-            label = _reconciliation_step_label(stage, selected_provider[0])
+            label = _reconciliation_step_label(
+                stage, loan_inactive=selected_loan_inactive[0],
+            )
             guide_status.set_text(label)
             guide_status.set_tooltip_text(label)
 
@@ -1669,12 +1668,8 @@ class LocalInspectionController:
                     ) else None
                 )
                 selected_provider[0] = case.provider if selected_right[0] else None
+                selected_loan_inactive[0] = 'loan_inactive' in case.states
                 action_scroll.set_visible(selected_right[0] is not None)
-                pair_prepare.set_label(
-                    'Examiner le prêt (lecture seule)'
-                    if ('loan_inactive' in case.states or case.provider == 'paris')
-                    else 'Préparer le rattachement'
-                )
                 reset_pair()
                 if case.key.startswith('right:'):
                     candidate_items[0] = session.candidate_files(case.key)
@@ -2268,6 +2263,7 @@ class LocalInspectionController:
             candidate_kind[0] = 'exact'
             selected_right[0] = None
             selected_provider[0] = None
+            selected_loan_inactive[0] = False
             action_scroll.set_visible(False)
             reset_pair()
             candidate_box.set_visible(False)

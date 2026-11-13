@@ -554,7 +554,7 @@ def exercise(*, parent, Gtk, Adw, GLib, Pango, device, until, walk,
         report['checks']['local_inspection_manual_unlinked_filter_same_identity']=True
         preflight=next(w for w in walk(controller.dialog)
                        if isinstance(w,Gtk.Button)
-                       and w.get_label()=='Préparer le rattachement')
+                       and w.get_label()=='Examiner les preuves')
         assert preflight.get_sensitive() and preflight.get_mapped()
 
         def preflight_ready():
