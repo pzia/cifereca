@@ -1401,8 +1401,17 @@ class LibraryService:
         self._record_loan_statistics(account, rows)
         return rows
 
-    def refresh_loans(self, force: bool = False) -> list[Loan]:
-        account, epoch = self.current_account, self._account_context_epoch
+    def refresh_loans(self, force: bool = False, *, account: Account | None = None) -> list[Loan]:
+        # An explicit caller pins its exact account, independent of GTK
+        # navigation. Only an omitted account uses the legacy UI selection.
+        explicit = account is not None
+        if explicit:
+            if (type(account) is not Account
+                    or not any(candidate is account for candidate in self.accounts)):
+                raise ProviderConfigurationError("loan_account_scope_invalid")
+        else:
+            account = self.current_account
+        epoch = self._account_context_epoch
         rows = self._loans_for_account(account, force=force)
         # Scoped reads may finish after a UI selection (including A→B→A).
         # Cache the exact source, but publish only to the original UI context.
