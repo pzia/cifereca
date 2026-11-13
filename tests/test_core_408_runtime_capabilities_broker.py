@@ -131,3 +131,26 @@ def test_formats_project_all_declared_recipes_without_provider_names():
 
     assert snapshot.formats == ("pdf", "cbz", "epub")
     assert snapshot.modes == ()
+
+
+
+def test_runtime_snapshot_uses_normalized_requested_provider_not_fixed_label():
+    service = Service({"available": True, "compatible": True})
+
+    snapshot = RuntimeCapabilitiesBrokerImpl(service).acquisition(" KOBO ")
+
+    assert snapshot.provider_id == "kobo"
+    assert snapshot.available is True
+    assert service.calls == [False]
+
+
+def test_other_runtime_provider_never_inherits_kobo_capabilities():
+    service = Service({
+        "available": True, "compatible": True, "operational": True,
+        "kobo_delegated_available": True,
+    })
+
+    snapshot = RuntimeCapabilitiesBrokerImpl(service).acquisition("synthetic")
+
+    assert snapshot == RuntimeAcquisitionCapabilities(provider_id="synthetic")
+    assert service.calls == []
