@@ -94,7 +94,7 @@ def test_fast_sync_uses_fresh_kobo_cache_and_skips_filesystem_scan(tmp_path: Pat
 
         assert result["sync_mode"] == "fast"
         assert result["catalog"]["filesystem_scan"] == "skipped"
-        assert result["kobo"] == {"status": "manual_only", "skipped": True}
+        assert "kobo" not in result and "kobo_decision" not in result
     finally:
         service.close()
 
@@ -124,7 +124,7 @@ def test_deep_sync_forces_kobo_backup_and_deep_catalog_scan(tmp_path: Path, monk
 
         assert result["sync_mode"] == "deep"
         # Deep scans the local catalog, never overrides manual acquisition.
-        assert result["kobo"] == {"status": "manual_only", "skipped": True}
+        assert "kobo" not in result and "kobo_decision" not in result
         assert result["catalog"] == {"scanned": 4, "invalid": 0}
         assert calls == {"kobo": 0, "catalog": [True]}
         assert int(service.storage.metadata_get("catalog_deep_last_at")) == 100_000
@@ -144,7 +144,7 @@ def test_fast_sync_shows_throttled_incomplete_kobo_batch(tmp_path: Path, monkeyp
             lambda progress=None: (_ for _ in ()).throw(AssertionError("pending cache should throttle")), raising=False)
         result = service._opening_sync_locked(deep=False)
         # An incomplete legacy batch must not silently start a new download.
-        assert result["kobo"] == {"status": "manual_only", "skipped": True}
+        assert "kobo" not in result and "kobo_decision" not in result
     finally:
         service.close()
 
