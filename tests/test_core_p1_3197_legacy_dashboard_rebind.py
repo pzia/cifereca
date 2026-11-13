@@ -88,10 +88,19 @@ def test_unchanged_legacy_reader_still_reads_once_and_caches_only_positives(tmp_
     service = _service(tmp_path)
     selected = account()
     service.accounts = [selected]
+    from cifereca.providers.base import ProviderDescriptor, ProviderCapabilities
     session = NS(
         provider_id=selected.provider_id,
         credential_id=selected.credential_id,
         connected=True, capabilities=NS(loans=True), close=lambda: None,
+        # Legacy loans(account) is allowed, but "primary" must be declared
+        # by the installed provider, not inferred from a Core vendor switch.
+        descriptor=ProviderDescriptor(
+            id=selected.provider_id, display_name="Synthetic lender",
+            description="Legacy offline session", state="ready",
+            capabilities=ProviderCapabilities(loans=True),
+            existing_primary_loan_account_alias="primary",
+        ),
     )
     calls = []
     session.loans = lambda current: calls.append(current) or [loan(selected)]

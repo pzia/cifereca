@@ -134,3 +134,132 @@ def test_immutable_item_already_bound_to_exact_credential_can_route():
         ImmutableItem(), identity_id="profile-A", account_id="same-upstream-id",
     ) == "cred-B"
     assert core.acquisitions == ["cred-B"]
+
+
+
+def test_identity_broker_explicit_empty_scope_never_uses_navigation_selection():
+    from pytest import raises
+    core = FakeCore()
+    broker = IdentityBrokerImpl(core)
+
+    for invalid in ("", " ", "\t"):
+        with raises(ValueError, match="identity_id_required"):
+            broker.accounts(invalid)
+
+    # Existing explicit scoped reads remain stable regardless of UI selection.
+    assert {row.credential_id for row in broker.accounts("profile-B")} == {"cred-C"}
+
+
+
+@pytest.mark.parametrize("identity", [None, "", " ", "\t", 0])
+def test_acquisition_requires_explicit_identity_before_any_account_read(identity):
+    core = FakeCore()
+    broker = AcquisitionBrokerImpl(core)
+
+    with pytest.raises(ValueError, match="identity_id_required"):
+        broker.acquire(item("cred-A"), identity_id=identity, account_id="same-upstream-id")
+
+    assert core.account_reads == 0
+    assert core.acquisitions == []
+
+
+def test_acquisition_scoped_identity_ignores_other_profiles_with_same_account_id():
+    core = FakeCore()
+    broker = AcquisitionBrokerImpl(core)
+
+    assert broker.acquire(
+        item("cred-C"), identity_id="profile-B", account_id="same-upstream-id",
+    ) == "cred-C"
+    assert core.acquisitions == ["cred-C"]
+
+
+
+@pytest.mark.parametrize("identity", ["", " ", "\t", 0])
+def test_eligible_account_read_refuses_explicit_invalid_identity(identity):
+    core = FakeCore()
+    broker = AcquisitionBrokerImpl(core)
+
+    with pytest.raises(ValueError, match="identity_id_required"):
+        broker.eligible_accounts(item("cred-A"), identity_id=identity)
+
+    assert core.account_reads == 0
+
+
+@pytest.mark.parametrize("identity", [None, "", " ", 0])
+def test_broker_acsm_import_refuses_navigation_identity_without_service_call(identity):
+    class ImportService:
+        def __init__(self):
+            self.calls = []
+
+        def import_acsm(self, path, **kwargs):
+            self.calls.append((path, kwargs))
+            return {"ok": True}
+
+    service = ImportService()
+    broker = AcquisitionBrokerImpl(service)
+
+    with pytest.raises(ValueError, match="identity_id_required"):
+        broker.import_acsm("/fake.acsm", identity_id=identity)
+
+    assert service.calls == []
+
+
+def test_broker_acsm_import_forwards_exact_identity():
+    class ImportService:
+        def import_acsm(self, path, **kwargs):
+            return path, kwargs
+
+    path, options = AcquisitionBrokerImpl(ImportService()).import_acsm(
+        "/fake.acsm", identity_id="profile-B", provider_id="synthetic",
+    )
+    assert path == "/fake.acsm"
+    assert options == {"identity_id": "profile-B", "provider_id": "synthetic"}
+
+
+
+@pytest.mark.parametrize("identity", ["", " ", "\t", 0])
+def test_sync_sources_reject_explicit_invalid_identity_before_account_read(identity):
+    from cifereca.brokers import SynchronizationBrokerImpl
+
+    core = FakeCore()
+    broker = SynchronizationBrokerImpl(core)
+
+    with pytest.raises(ValueError, match="identity_id_required"):
+        broker.sources(identity)
+
+    assert core.account_reads == 0
+    assert core.acquisitions == []
+
+
+
+@pytest.mark.parametrize("identity", [None, "", " ", "\t", 0])
+def test_sync_batch_rejects_invalid_identity_with_structured_result(identity):
+    from cifereca.brokers import SynchronizationBrokerImpl
+    from cifereca.plugin_api import SyncRequest
+
+    core = FakeCore()
+    result = SynchronizationBrokerImpl(core).synchronize(
+        SyncRequest(identity_id=identity),
+    )
+
+    assert result.ok is False
+    assert result.changed == 0
+    assert result.facts == {"reason": "identity_required"}
+    assert core.account_reads == 0
+    assert core.acquisitions == []
+
+
+
+@pytest.mark.parametrize("identity", [None, "", " ", "\t", 0])
+def test_scheduled_inventory_rejects_invalid_identity_before_account_read(identity):
+    from cifereca.brokers import SynchronizationBrokerImpl
+
+    core = FakeCore()
+    result = SynchronizationBrokerImpl(core).synchronize_scheduled_inventory(
+        identity, "periodic",
+    )
+
+    assert result.ok is False
+    assert result.facts == {"reason": "identity_required"}
+    assert core.account_reads == 0
+    assert core.acquisitions == []
