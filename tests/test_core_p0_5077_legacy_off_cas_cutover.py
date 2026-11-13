@@ -89,3 +89,66 @@ def test_legacy_writer_cannot_overwrite_existing_generic_cas_policy(connected_co
         )
     assert read_policy(service.storage, scope) == first
     assert not downloaded
+
+
+def test_legacy_revision_failure_rolls_back_inventory_preference(connected_core):
+    service, _session, account, _loan, _state, downloaded = connected_core
+    from cifereca.core.legacy_source_consent_metadata import _consent_generation_key
+    scope = scope_for_account(account)
+    pref = source_enablement_key(scope)
+    revision = _consent_generation_key(scope)
+    assert revision is not None
+    # An unconfigured, legacy-free source still rotates the historical epoch
+    # before old readers can reuse their previously admitted snapshot.
+    with service.storage._lock, service.storage._connect() as db:
+        db.execute(
+            "CREATE TRIGGER deny_legacy_epoch BEFORE INSERT ON metadata "
+            "WHEN NEW.key='" + revision + "' "
+            "BEGIN SELECT RAISE(ABORT,'epoch_failure'); END"
+        )
+    try:
+        before = service.storage.metadata_get(pref)
+        with pytest.raises(sqlite3.IntegrityError, match="epoch_failure"):
+            SynchronizationBrokerImpl(service).set_enabled(
+                SynchronizationBrokerImpl._source_id(account), False,
+            )
+        assert service.storage.metadata_get(pref) == before
+        assert read_policy(service.storage, scope).mode == "unset"
+        assert not downloaded
+    finally:
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute("DROP TRIGGER deny_legacy_epoch")
+
+
+def test_stale_legacy_writer_cannot_overwrite_cas_admitted_after_first_read(
+    connected_core, monkeypatch,
+):
+    service, _session, account, _loan, _state, downloaded = connected_core
+    import cifereca.core.source_sync_consent as policy_module
+    scope = scope_for_account(account)
+    pref = source_enablement_key(scope)
+    original = policy_module.configured
+
+    def stale_read(target_service, target_account):
+        # Simulate another writer committing canonical OFF between the old
+        # preflight reader and this toggle's BEGIN IMMEDIATE.
+        assert original(target_service, target_account) is False
+        from cifereca.core.source_sync_consent import _SCHEMA
+        import json
+        service.storage.metadata_set(policy_key(scope), json.dumps({
+            'schema': _SCHEMA,
+            'scope': [scope.identity_id, scope.provider_id,
+                      scope.credential_id, scope.account_id],
+            'enabled': False,
+            'revision': 'a' * 32,
+        }))
+        return False
+
+    monkeypatch.setattr(policy_module, 'configured', stale_read)
+    with pytest.raises(ValueError, match='source_sync_consent_changed'):
+        SynchronizationBrokerImpl(service).set_enabled(
+            SynchronizationBrokerImpl._source_id(account), True,
+        )
+    assert service.storage.metadata_get(pref) is None
+    assert read_policy(service.storage, scope).mode == 'off'
+    assert not downloaded
