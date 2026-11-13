@@ -214,3 +214,18 @@ def test_broker_acsm_import_forwards_exact_identity():
     )
     assert path == "/fake.acsm"
     assert options == {"identity_id": "profile-B", "provider_id": "synthetic"}
+
+
+
+@pytest.mark.parametrize("identity", ["", " ", "\t", 0])
+def test_sync_sources_reject_explicit_invalid_identity_before_account_read(identity):
+    from cifereca.brokers import SynchronizationBrokerImpl
+
+    core = FakeCore()
+    broker = SynchronizationBrokerImpl(core)
+
+    with pytest.raises(ValueError, match="identity_id_required"):
+        broker.sources(identity)
+
+    assert core.account_reads == 0
+    assert core.acquisitions == []
