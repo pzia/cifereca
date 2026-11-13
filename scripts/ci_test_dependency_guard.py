@@ -103,15 +103,37 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
                     ))):
                 continue
             parsed = ast.parse(source, filename=str(candidate))
-            # A dynamic import may refer to a separately built namespace:
-            # PREFIX = "tests."; name = PREFIX + fixture_name;
-            # importlib.import_module(name). The call expression alone no
-            # longer contains a literal and cannot be resolved statically.
-            # A matching namespace prefix anywhere in this consumer's AST
-            # therefore forces conservative selection for nonliteral calls.
-            dynamic_test_namespace = _contains_test_namespace(
-                parsed, changed_modules,
-            )
+            # Follow only namespace values assigned to names used by a
+            # dynamic import. Looking for "tests/" anywhere in the AST
+            # incorrectly treats unrelated test data as import provenance
+            # (e.g. selector tests containing path strings).
+            namespace_names: set[str] = set()
+            assignments = [
+                node for node in ast.walk(parsed)
+                if isinstance(node, (ast.Assign, ast.AnnAssign))
+            ]
+            for _ in range(len(assignments) + 1):
+                changed = False
+                for assignment in assignments:
+                    value = assignment.value
+                    if value is None:
+                        continue
+                    if not (_contains_test_namespace(value, changed_modules)
+                            or any(isinstance(part, ast.Name)
+                                   and part.id in namespace_names
+                                   for part in ast.walk(value))):
+                        continue
+                    targets = (
+                        assignment.targets if isinstance(assignment, ast.Assign)
+                        else [assignment.target]
+                    )
+                    for target in targets:
+                        for part in ast.walk(target):
+                            if isinstance(part, ast.Name) and part.id not in namespace_names:
+                                namespace_names.add(part.id)
+                                changed = True
+                if not changed:
+                    break
             # Keep import aliases local to each consumer module. A helper
             # imported as `from importlib import import_module as load`
             # is still an import loader, even though its call is `load(...)`.
@@ -160,7 +182,9 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
                             if _matches_changed_module(arg.value, changed_modules):
                                 return True
                         elif (_contains_test_namespace(arg, changed_modules)
-                              or dynamic_test_namespace):
+                              or any(isinstance(part, ast.Name)
+                                     and part.id in namespace_names
+                                     for part in ast.walk(arg))):
                             # Unresolved variable/alias may have been assembled
                             # from a test namespace elsewhere in this module.
                             # Fail closed instead of silently skipping plugins.
