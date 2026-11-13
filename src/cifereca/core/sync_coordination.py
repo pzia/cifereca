@@ -913,25 +913,9 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     expired_before = self.acquisition_reconciler.realize_expired_loans()
     summaries: list[dict[str, Any]] = []
     all_loans: list[Loan] = []
-    # The canonical A→B convergence is tracked on exact source outcomes;
-    # no separate retired supplier-specific startup backup projection.
-    # Only a persisted identity-to-ADEPT binding warrants a profile lookup.
-    # An opening inventory is not an invitation to probe a particular runtime
-    # or enumerate unrelated profiles. The profile list remains read-only and
-    # cannot grant a download or acquisition.
-    adept_profiles: list[dict[str, Any]] = []
-    try:
-        has_bound_profile = any(
-            bool(self.storage.adept_profile_binding_get("identity", identity.identity_id))
-            for identity in self.identities
-        )
-        if has_bound_profile:
-            adept_profiles = self.kobo_profiles()
-    except Exception:
-        self.diagnostics.add(
-            "ADEPT", "profile list for dashboard", "error",
-            detail={"code": "adept_profile_lookup_failed"},
-        )
+    # This is a read-only dashboard projection. Resolve an ADEPT profile
+    # only for its explicitly bound identity; never enumerate every runtime
+    # profile or accidentally publish another identity's profile metadata.
     for identity in self.identities:
         run_id = self.storage.sync_run_put({
             # A UUID per actual cycle preserves history across consecutive
@@ -949,11 +933,21 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
         }
         bound_profile = str(self.storage.adept_profile_binding_get("identity", identity.identity_id) or "").strip()
         if bound_profile:
-            profile = next((p for p in adept_profiles if str(p.get("profile_id") or "") == bound_profile or str(p.get("name") or "") == bound_profile), None)
+            try:
+                scoped = self.adept_profiles_for_identity(
+                    identity.identity_id, profile_name=bound_profile,
+                )
+                profile = scoped[0] if type(scoped) is list and len(scoped) == 1 and type(scoped[0]) is dict else None
+            except Exception:
+                profile = None
+                self.diagnostics.add(
+                    "ADEPT", "profile list for dashboard", "error",
+                    detail={"code": "adept_profile_lookup_failed"},
+                )
             detail["adept_profile_id"] = str((profile or {}).get("profile_id") or bound_profile)
             detail["adept_profile_name"] = str((profile or {}).get("name") or bound_profile)
             detail["adept_provisioning"] = dict((profile or {}).get("provisioning") or {})
-            if adept_profiles and profile is None:
+            if profile is None:
                 detail["adept_attention"] = "profile_missing"
         accounts: list[Account] = []
         # Source-level rights/discovery outcomes must not inherit failures from
