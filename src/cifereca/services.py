@@ -1156,6 +1156,44 @@ class LibraryService:
         """Read-only reciprocal registry proof; does not invoke a runtime."""
         return provider_sessions.runtime_acquisition_binding(self, provider_id)
 
+    def runtime_acquisition_state(self, provider_id: str, *, force: bool = False) -> dict[str, Any]:
+        """Core-attested runtime facts for one exact installed provider.
+
+        A runtime can describe its capabilities, but cannot attest provider
+        ownership by itself. Never infer that relationship from its ID,
+        declaration alone, a selected account or plugin recommendations.
+        """
+        if type(provider_id) is not str or not provider_id:
+            return {}
+        runtime_id = self.runtime_acquisition_binding(provider_id)
+        if not runtime_id:
+            return {}
+        manager = self._plugin_manager
+        if manager is None:
+            return {}
+        try:
+            runtime = manager.service(runtime_id)
+            producer = getattr(runtime, "acquisition_capabilities", None)
+            if not callable(producer):
+                return {}
+            reported = producer(force=bool(force))
+        except Exception:
+            # No runtime-controlled exception, path, stderr or message may
+            # become a public broker diagnostic.
+            return {}
+        if type(reported) is not dict:
+            return {}
+        # Only these public facts enter the broker. Never copy arbitrary
+        # runtime keys or allow it to assert another provider's provenance.
+        return {
+            "provider_id": provider_id,
+            "provider_attested": True,
+            **{key: reported[key] for key in (
+                "available", "compatible", "operational", "contract_version",
+                "software_version", "capabilities", "modes", "formats",
+            ) if key in reported},
+        }
+
     def provider_diagnostic_state(self) -> dict[str, Any]:
         return provider_sessions.provider_diagnostic_state(self)
 

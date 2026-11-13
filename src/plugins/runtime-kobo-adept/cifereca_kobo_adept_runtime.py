@@ -830,6 +830,85 @@ class KoboAdeptRuntime:
         }
         return result
 
+    def acquisition_capabilities(self, *, force=False):
+        """Safe, bounded acquisition capabilities for an attested Core binding.
+
+        This is descriptive runtime evidence, not consent, account ownership,
+        a download offer or authority to perform a remote operation. The Core
+        independently verifies the provider/runtime manifest relationship.
+        """
+        now = time.monotonic()
+        cached = getattr(self, '_public_acquisition_cache', None)
+        cached_at = getattr(self, '_public_acquisition_cache_at', 0)
+        if (force is not True and type(cached) is dict
+                and now - cached_at < 60):
+            return dict(cached)
+        # probe_core returns strictly filtered flags; never expose raw CLI
+        # responses, command arguments, paths, stdout or diagnostics.
+        probe = self.probe_core()
+        if type(probe) is not dict:
+            return {}
+        contract = probe.get('contract')
+        payload = probe.get('capabilities')
+        if type(contract) is not dict or type(payload) is not dict:
+            return {}
+        cv = contract.get('contract_version')
+        if type(cv) is not int or cv < 0:
+            return {}
+        caps = payload.get('capabilities')
+        caps = caps if type(caps) is dict else {}
+        download = caps.get('download')
+        download = download if type(download) is dict else {}
+        http = download.get('http')
+        acsm = download.get('acsm')
+        kobo = download.get('kobo')
+        http = http if type(http) is dict else {}
+        acsm = acsm if type(acsm) is dict else {}
+        kobo = kobo if type(kobo) is dict else {}
+        declared = contract.get('capabilities')
+        declared = set(declared[:128]) if type(declared) is list else set()
+        modes = []
+        if http.get('available') is True or 'download_http_epub_pdf' in declared:
+            modes.append('http_plain')
+        if acsm.get('available') is True or 'download_acsm_adept' in declared:
+            modes.append('adobe_adept')
+        delegated = (
+            cv >= 8 and
+            (kobo.get('available') is True or 'download_kobo_delegated' in declared)
+        )
+        if delegated:
+            modes.append('kobo_delegated')
+            drm = kobo.get('drm')
+            drm = drm if type(drm) is dict else {}
+            explicit = drm.get('KDRM', drm.get('kdrm'))
+            if type(explicit) is dict:
+                kdrm = explicit.get('available') is True
+            else:
+                kdrm = (kobo.get('pinned_delivery_candidate') is True
+                        and kobo.get('separate_content_keys_replay') is True)
+            if kdrm:
+                modes.append('kobo_kdrm')
+        formats = kobo.get('formats')
+        formats = formats[:32] if type(formats) is list else []
+        available = probe.get('resolved_executable') is True
+        compatible = cv >= self.required_contract
+        result = {
+            'available': available,
+            'compatible': compatible,
+            'operational': available and compatible and bool(modes),
+            'contract_version': cv or None,
+            'software_version': payload.get('software_version', ''),
+            'capabilities': caps,
+            'modes': modes,
+            'formats': formats,
+        }
+        # Only cache successful, resolved probes. Missing executable/plugin
+        # must be visible immediately after an activation or installation.
+        if available:
+            self._public_acquisition_cache = dict(result)
+            self._public_acquisition_cache_at = now
+        return result
+
     def probe(self):
         return self.probe_core()
     @staticmethod
