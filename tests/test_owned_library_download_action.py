@@ -4,13 +4,21 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.gui.local_book_action_controller import add_local_book_actions
+from cifereca.core.selected_source_offer import SourceOfferTarget
 from tests.test_core_ui_1129_local_book_actions import _environment
 
 
 def setup_action(provider="kobo", operation=None, *, provider_label=None):
     window, entry, detail, actions, events, submissions, launched, deps = _environment(
         item={"provider_id": "kobo", "item_id": "book", "possessions": []}, local=False)
-    target = NS(identity_id="alice", provider_id=provider, operation=operation)
+    target = (
+        NS(identity_id="alice", provider_id=provider, operation=operation)
+        if operation is not None else SourceOfferTarget(
+            identity_id="alice", provider_id=provider,
+            credential_id="synthetic-credential", account_id="synthetic-account",
+            item_id="book", branch="purchase", session=object(),
+        )
+    )
     if provider_label is not None:
         window.service.provider_display_name = lambda _provider: provider_label
     window.service.owned_library_download_target = lambda entry: target
@@ -117,6 +125,19 @@ def test_unrecognized_owned_target_never_creates_provider_action(provider):
     assert actions == [] and submissions == [] and called == []
 
 
+def test_synthetic_provider_with_generic_delivery_target_gets_action():
+    """CoreUI follows the exact generic target contract, not a provider list."""
+    provider = "synthetic-reader"
+    window, actions, calls, submissions, target = setup_action(provider)
+    assert len(actions) == 1
+    assert provider.capitalize() in actions[0].label
+    assert actions[0]._cifereca_action_id == "download-owned-" + provider
+    assert not calls and not submissions
+    actions[0].click()
+    assert len(submissions) == 1
+    assert submissions[0][0][1]() is not None
+
+
 def test_legacy_owned_download_target_class_is_absent():
     from cifereca.core import owned_library_download as action
     assert not hasattr(action, "OwnedDownloadTarget")
@@ -192,8 +213,8 @@ def test_numilog_stale_identity_never_submits_acquisition():
 
 
 def test_retired_numilog_index_resume_target_has_no_gtk_action():
-    window, actions, calls, submissions, target = setup_action('numilog', 'resume_index')
-    # A stale v1 receipt may still exist, but cannot create an executable action.
+    window, actions, calls, submissions, _target = setup_action('numilog', 'resume_index')
+    # A stale v1 target does not implement the current selected-offer contract.
     assert actions == []
     assert calls == [] and submissions == []
 
@@ -243,7 +264,11 @@ def test_p1_4664_reconnected_source_only_allows_a_newly_rendered_owned_button():
         item={"provider_id": "numilog", "item_id": "book", "possessions": []},
         local=False,
     )
-    target = NS(identity_id="alice", provider_id="numilog", operation=None)
+    target = SourceOfferTarget(
+        identity_id="alice", provider_id="numilog",
+        credential_id="synthetic-credential", account_id="synthetic-account",
+        item_id="book", branch="purchase", session=object(),
+    )
     window.service._source_context_epoch = 7
     window.service.owned_library_download_target = lambda _entry: target
     calls = []
