@@ -1232,9 +1232,17 @@ class RuntimeCapabilitiesBrokerImpl:
         # Optional Core-owned, source-attested producer. This is NOT a
         # provider plugin callback: Core must verify service ownership before
         # issuing a state bearing provider_attested=True.
-        state_for_provider = getattr(self.service, "runtime_acquisition_state", None)
+        try:
+            state_for_provider = getattr(self.service, "runtime_acquisition_state", None)
+        except Exception:
+            return RuntimeAcquisitionCapabilities(provider_id=provider)
         if callable(state_for_provider):
-            state = state_for_provider(provider, force=bool(refresh))
+            try:
+                state = state_for_provider(provider, force=bool(refresh))
+            except Exception:
+                # A failed producer must not trigger a cross-provider probe,
+                # leak diagnostic payloads or disrupt read-only capability UI.
+                return RuntimeAcquisitionCapabilities(provider_id=provider)
             if (type(state) is not dict
                     or state.get("provider_attested") is not True
                     or type(state.get("provider_id")) is not str
