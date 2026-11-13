@@ -1,0 +1,39 @@
+name: TEMP Core AST inventory r2 (do not merge)
+on:
+  pull_request:
+    paths:
+      - .github/workflows/temp-core-c-ast-r2.yml
+permissions:
+  contents: read
+jobs:
+  ast-inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read-only AST inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD
+          python3 -m scripts.ci_provider_ast_function_worklist --json > ast-worklist.json
+          python3 scripts/ci_provider_core_coupling_report.py --json > ast-coupling.json
+          python3 - <<'PY'
+          import json
+          from collections import Counter
+          r=json.load(open('ast-worklist.json'))
+          assert not r['parse_errors'], r['parse_errors']
+          print('TOTAL_UNIQUE_AST',r['unique_lines'])
+          print('RESPONSIBILITIES',json.dumps(r['unique_lines_by_responsibility'],sort_keys=True))
+          print('FILES',json.dumps(dict(Counter(e['path'] for e in r['entries'])),sort_keys=True))
+          for e in r['entries']:
+              print('AST_ENTRY',json.dumps(e,ensure_ascii=False,sort_keys=True))
+          PY
+      - name: Publish JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: temp-core-c-ast-r2-json
+          path: |
+            ast-worklist.json
+            ast-coupling.json
+          retention-days: 7
