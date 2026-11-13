@@ -20,6 +20,11 @@ ENTRYPOINTS = (
     ROOT / "src/plugins/README.md",
     ROOT / ".agents/roles/README.md",
     ROOT / ".agents/roles/plugins.md",
+    ROOT / ".agents/roles/core.md",
+    ROOT / ".agents/roles/focus.md",
+    ROOT / ".agents/roles/cicd.md",
+    ROOT / ".agents/roles/ux.md",
+    ROOT / ".agents/roles/backlog.md",
     ROOT / "docs/PLUGIN-BOUNDARIES.md",
 )
 
