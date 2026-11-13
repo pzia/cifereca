@@ -18,10 +18,14 @@ def _setup():
         candidates=lambda category, **kw: live["candidates"],
         status=lambda plugin_id: live["status"],
         service=lambda plugin_id: live["runtime"])
+    live["profile"] = "profile-a"
     core = NS(_plugin_manager=manager,
               current_identity=NS(identity_id="bob"),
               identity_by_id=lambda identity: NS(identity_id=identity)
-              if identity == "alice" else None)
+              if identity == "alice" else None,
+              adept_inventory_candidates_for_acquisition=lambda row, **kw: [
+                  {"name": live["profile"]}],
+              _adept_profile_name=lambda profile: profile["name"])
     row = {"identity_id": "alice", "provider_id": "fixture-lender",
            "credential_id": "reader", "account_id": "linked"}
     return core, row, live, reads
@@ -112,3 +116,30 @@ def test_untrusted_runtime_payload_cannot_be_a_complete_inventory():
     live["runtime"].loan_inventories = lambda names: {
         "complete": "yes", "profiles": []}
     denied(lambda: reader(core, row)(["profile-a"]))
+
+
+def test_unrelated_profile_name_cannot_expand_runtime_inventory():
+    core, row, live, reads = _setup()
+    read = reader(core, row)
+    denied(lambda: read(["foreign-profile"]))
+    assert reads == []
+
+
+def test_changed_profile_binding_invalidates_lease_before_read():
+    core, row, live, reads = _setup()
+    read = reader(core, row)
+    live["profile"] = "rotated-profile"
+    denied(lambda: read(["profile-a"]))
+    assert reads == []
+
+
+def test_changed_profile_binding_during_read_invalidates_result():
+    core, row, live, reads = _setup()
+    read = reader(core, row)
+    def changed(names):
+        reads.append(tuple(names))
+        live["profile"] = "rotated-profile"
+        return {"complete": True, "profiles": []}
+    live["runtime"].loan_inventories = changed
+    denied(lambda: read(["profile-a"]))
+    assert reads == [("profile-a",)]
