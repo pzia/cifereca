@@ -2397,8 +2397,10 @@ class LibraryService:
         if not identity_id or self.identity_by_id(identity_id) is None:
             raise AttentionRequired("Identité ADEPT inconnue.", code="adept_identity_unproven")
         metadata = row.get("metadata") or {}
+        if type(metadata) is not dict:
+            raise AttentionRequired("Provenance ADEPT invalide.", code="adept_profile_candidates_invalid")
         binding = metadata.get("adept_binding") or {}
-        if type(metadata) is not dict or type(binding) is not dict:
+        if type(binding) is not dict:
             raise AttentionRequired("Provenance ADEPT invalide.", code="adept_profile_candidates_invalid")
         origin = binding.get("adept_profile_id")
         if origin:
