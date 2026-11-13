@@ -1376,10 +1376,30 @@ class AdeptProfileBrokerImpl:
         rows = self._profile_rows()
         shown_name = str(shown.get("name") or shown.get("profile") or name or "").strip()
         candidates = [row for row in rows if str(row.get("name") or row.get("profile") or "").strip() == shown_name]
-        profile = self._ref(candidates[0] if len(candidates) == 1 else shown)
+        # The creation acknowledgement is not an authority to bind a profile.
+        # Only one freshly enumerated runtime row can attest its stable ID.
+        if len(candidates) != 1:
+            raise AttentionRequired(
+                "Le profil ADEPT créé est absent ou ambigu.",
+                code="adept_profile_provisioning_incomplete",
+            )
+        profile = self._ref(candidates[0])
+        acknowledged_id = str(shown.get("profile_id") or shown.get("id") or "").strip()
+        if acknowledged_id and acknowledged_id != profile.profile_id:
+            raise AttentionRequired(
+                "Le profil ADEPT créé ne correspond pas au profil observé.",
+                code="adept_profile_provisioning_incomplete",
+            )
         if not (profile.complete and profile.fetch_capable and profile.acsm_fetch_ready):
             raise AttentionRequired(
                 "Le profil ADEPT a été créé mais n’est pas prêt pour les ACSM.",
+                code="adept_profile_provisioning_incomplete",
+            )
+        # A runtime manager may rebind the service during provisioning or
+        # capability refresh. Never persist an observation from a stale runtime.
+        if self._runtime() is not runtime:
+            raise AttentionRequired(
+                "Le runtime ADEPT a changé pendant la création du profil.",
                 code="adept_profile_provisioning_incomplete",
             )
         if identity_id is not None:
