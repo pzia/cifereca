@@ -67,9 +67,9 @@ def test_anonymous_catalogue_attests_only_exact_public_parser_cards(monkeypatch)
                 # authentication marker or account/email string.
                 import re
                 sensitive = re.compile(
-                    r"(?i)(?:https?://|(?<!\\w)(?:bearer|basic)\\s+\\S+|"
-                    r"(?<!\\w)(?:token|auth|cookie|signature|access_token|refresh_token)\\s*=|"
-                    r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+)"
+                    r"(?i)(?:https?://|(?<!\w)(?:bearer|basic)\s+\S+|"
+                    r"(?<!\w)(?:token|auth|cookie|signature|access_token|refresh_token)\s*=|"
+                    r"[^\s@]+@[^\s@]+\.[^\s@]+)"
                 )
                 assert any(
                     type(value) is str and sensitive.search(value)
