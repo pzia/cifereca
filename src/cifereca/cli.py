@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import logging
 import os
@@ -42,7 +41,7 @@ def _export_parent_is_safe(destination: Path) -> bool:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="CLI auxiliaire multi-provider cifereca")
     p.add_argument("--version", action="version", version=f"cifereca {__version__}")
-    p.add_argument("--username", help="Compatibilité: login Paris ponctuel au lieu des providers configurés")
+    p.add_argument("--username", help="Option historique retirée ; configurez le plugin fournisseur")
     p.add_argument("--account", help="ID local du credential provider à sélectionner")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("diagnose")
@@ -898,10 +897,11 @@ def main(argv: list[str] | None = None) -> int:
         }
         if a.cmd not in local_adept_commands:
             if a.username:
-                password = getpass.getpass("Mot de passe Bibliothèques de Paris: ")
-                service.login(a.username, password)
-            else:
-                service.connect_configured()
+                # The retired Core login path never authenticated anyone.
+                # Refuse before prompting for a password or contacting a
+                # configured provider; use explicit plugin credentials.
+                p.error("--username est retiré : configurez la connexion dans le plugin fournisseur")
+            service.connect_configured()
 
         if a.account:
             account = next((x for x in service.accounts if x.credential_id == a.account), None)
