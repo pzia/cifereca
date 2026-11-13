@@ -919,12 +919,17 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
     all_loans: list[Loan] = []
     # The canonical A→B convergence is tracked on exact source outcomes;
     # no separate retired supplier-specific startup backup projection.
-    # Device/profile state is provider-owned by Kobo-Adept. Read it once per
-    # opening sync and only project it into the dashboard summary; Paris does
-    # not persist a competing device inventory.
+    # Only a persisted identity-to-ADEPT binding warrants a profile lookup.
+    # An opening inventory is not an invitation to probe a particular runtime
+    # or enumerate unrelated profiles. The profile list remains read-only and
+    # cannot grant a download or acquisition.
     adept_profiles: list[dict[str, Any]] = []
     try:
-        if self._kobo_adapter().available():
+        has_bound_profile = any(
+            bool(self.storage.adept_profile_binding_get("identity", identity.identity_id))
+            for identity in self.identities
+        )
+        if has_bound_profile:
             adept_profiles = self.kobo_profiles()
     except Exception:
         self.diagnostics.add(
