@@ -44,6 +44,7 @@ def test_collection_evidence_fails_closed_before_artifact_upload():
     assert 'report["count_collected"] > 0' in source
     assert 'sum(row["count"] for row in report["matrix"]) == report["count_collected"]' in source
     assert "if: success()" in source
-    assert "retention-days: 30" in source
-    assert "if-no-files-found: error" in source
+    assert "actions/upload-artifact@" not in source
+    assert '>> "$GITHUB_STEP_SUMMARY"' in source
+    assert "name: Publish report summary" in source
     assert "executed/passed/failed: not measured" in source.lower()
