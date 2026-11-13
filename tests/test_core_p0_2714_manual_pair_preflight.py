@@ -65,6 +65,7 @@ def test_right_without_attested_receipt_never_becomes_link_even_if_file_is_good(
     before = filesystem(tmp_path)
     audit, session = session_for(root, db)
     right, file = select_pair(session)
+    assert not hasattr(session, "_manual_right_scopes")
     report = session.preflight_manual_link(right.key, file.key)
     assert report.status == "insufficient_evidence"
     assert report.read_only is True and report.attachment_authorized is False
