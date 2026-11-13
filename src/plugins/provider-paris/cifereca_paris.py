@@ -208,7 +208,7 @@ DESCRIPTOR = ProviderDescriptor(
     ),
     search_capabilities=ProviderSearchCapabilities(
         fields=("all",),
-        scopes=("all", "digital", "physical"),
+        scopes=("all", "digital", "physical", "catalog"),
         pagination="page",
         page_size=50,
         max_pages=101,
@@ -1263,7 +1263,7 @@ class ParisProviderSession(ProviderSession):
         # author/ISBN/subject restriction that the upstream client ignores.
         if type(field) is not str or field.strip().casefold() != "all":
             raise ProviderCapabilityError("Bibliothèques de Paris : unsupported_field")
-        if type(scope) is not str or scope.strip().casefold() not in ("all", "digital", "physical"):
+        if type(scope) is not str or scope.strip().casefold() not in ("all", "digital", "physical", "catalog"):
             raise ProviderCapabilityError("Bibliothèques de Paris : unsupported_scope")
         if type(page) is not int or not 0 <= page <= 100:
             # A malformed index is not a valid empty page and must never
@@ -1281,7 +1281,7 @@ class ParisProviderSession(ProviderSession):
         # The public capability validator accepts case/whitespace variants,
         # but ParisClient dispatches exact tokens. Pass the validated scope
         # rather than implicitly widening " DIGITAL " to all catalogues.
-        return query, scope.strip().casefold()
+        return query, "all" if scope.strip().casefold() == "catalog" else scope.strip().casefold()
 
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
         # An unsupported field/scope is a new failed attempt.
