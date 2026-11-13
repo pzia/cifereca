@@ -142,7 +142,7 @@ def test_gui_loan_projection_filters_foreign_rows_even_from_stale_caller(tmp_pat
         host = NS(
             service=service,
             _render_loans=lambda: None,
-            _render_kobo_loans=lambda: None,
+            _render_library=lambda: None,
         )
         _populate_loans(host, [_loan(first, "visible", "physical"),
                                _loan(second, "foreign", "digital")])

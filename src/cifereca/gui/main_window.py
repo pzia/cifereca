@@ -1546,11 +1546,6 @@ class MainWindow(Adw.ApplicationWindow):
             self, row, Path=Path, format_recent_timestamp=format_recent_timestamp,
         )
 
-    # Compatibility name used by the 0.8.0 refresh paths.
-    def _render_kobo_loans(self) -> None:
-        self._render_library()
-
-
     def _book_recommendation_target(self, item):
         return recommendation_target_controller.book_recommendation_target(
             self, item,
@@ -1568,9 +1563,6 @@ class MainWindow(Adw.ApplicationWindow):
             book_detail_presentation=book_detail_presentation,
             detail_language=detail_language, document_links=document_links,
         )
-
-    def _kobo_selected(self, row: BookListItem | None) -> None:
-        self._library_selected(row)
 
     def choose_adept_loan(self, acquisition_id, loan, control):
         self.runner.submit("Lecture des prêts ADEPT…", lambda: self.service.adept_loan_choices(acquisition_id),

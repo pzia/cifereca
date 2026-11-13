@@ -69,6 +69,19 @@ def test_retired_bookings_are_absent_from_facade_contract_and_runtime_ast():
     assert not (MODULE.parent / "booking_view.py").exists()
 
 
+def test_retired_provider_named_loan_facades_are_absent():
+    """Loan rendering and selection now use their provider-neutral paths."""
+    for qualified in ("MainWindow._render_kobo_loans", "MainWindow._kobo_selected"):
+        assert qualified not in CONTRACTS
+        owner, _, method = qualified.partition(".")
+        declaration = _declaration(MODULE, owner)
+        assert not any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == method
+            for node in declaration.body
+        )
+
+
 def test_legacy_booking_data_model_stays_deserializable_without_gtk():
     """Retiring the reservation UI must not break v1 serialized data."""
     from dataclasses import asdict
