@@ -67,7 +67,7 @@ class DiagnosticEntry:
     verified_public_provider_success: bool = False
     verified_provider_connection_attempt: bool = False
     verified_source_sync: bool = False
-    verified_kobo_adept: bool = False
+    verified_adept_runtime: bool = False
     verified_browser_recorder: bool = False
     verified_reconciliation: bool = False
     verified_loan_download: bool = False
@@ -601,9 +601,9 @@ class Diagnostics:
         if record:
             entry = DiagnosticEntry(
                 timestamp=datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
-                category="ADEPT", operation="kobo adept", status=fields["status"],
+                category="ADEPT", operation="adept runtime", status=fields["status"],
                 duration_ms=fields.get("duration_ms"), detail=fields,
-                task_ref=fields.get("task_ref"), verified_kobo_adept=True,
+                task_ref=fields.get("task_ref"), verified_adept_runtime=True,
             )
             with self._lock:
                 self._items.append(entry)
@@ -612,7 +612,7 @@ class Diagnostics:
             logger.log(
                 severity, "%s", message,
                 extra=_core_journal_record(
-                    "ADEPT", "kobo adept", fields["status"], message, fields,
+                    "ADEPT", "adept runtime", fields["status"], message, fields,
                 ),
             )
         except Exception:
@@ -681,8 +681,8 @@ class Diagnostics:
                     row.pop("verified_public_provider_success", None)
                 if row.get("verified_source_sync") is False:
                     row.pop("verified_source_sync", None)
-                if row.get("verified_kobo_adept") is False:
-                    row.pop("verified_kobo_adept", None)
+                if row.get("verified_adept_runtime") is False:
+                    row.pop("verified_adept_runtime", None)
                 if row.get("verified_browser_recorder") is False:
                     row.pop("verified_browser_recorder", None)
                 if row.get("verified_reconciliation") is False:
