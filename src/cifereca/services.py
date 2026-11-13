@@ -2032,30 +2032,8 @@ class LibraryService:
         """Fresh exact-account read after ADEPT; never send ReturnDigitalLoan."""
         return loan_return_verification.verify_paris_return_inventory(self, loan, AttentionRequired=AttentionRequired, _TRACE_LOG=_TRACE_LOG)
 
-    @staticmethod
-    def _return_operation_lock_file(loan: Loan) -> Path:
-        """Coordinate Adobe and PNB mutations across threads and processes.
-
-        The lock is scoped by provider + upstream loan ID, not UI identity:
-        the same Paris loan may be exposed by two different connections.
-        No account identifiers or credentials are written in the lock path.
-        """
-        digest = hashlib.sha256(
-            (str(loan.source_provider).casefold() + "\\0" + str(loan.id or "")).encode("utf-8")
-        ).hexdigest()[:32]
-        return acquisition_lock_file().with_name(
-            "cifereca-return-" + digest + ".lock"
-        )
-
     def return_loan_prefer_adept(self, loan: Loan) -> dict[str, Any]:
         """Removed voluntary return: reject before lock, scope, storage or runtime."""
-        raise AttentionRequired(
-            "Restitution volontaire retirée de Cifereca.",
-            code="loan_return_removed",
-        )
-
-    def _return_loan_prefer_adept_guarded(self, loan: Loan) -> dict[str, Any]:
-        """Reject even a direct legacy guarded call before touching dependencies."""
         raise AttentionRequired(
             "Restitution volontaire retirée de Cifereca.",
             code="loan_return_removed",
