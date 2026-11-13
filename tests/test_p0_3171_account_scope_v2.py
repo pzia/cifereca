@@ -247,3 +247,19 @@ def test_sync_batch_rejects_invalid_identity_with_structured_result(identity):
     assert result.facts == {"reason": "identity_required"}
     assert core.account_reads == 0
     assert core.acquisitions == []
+
+
+
+@pytest.mark.parametrize("identity", [None, "", " ", "\t", 0])
+def test_scheduled_inventory_rejects_invalid_identity_before_account_read(identity):
+    from cifereca.brokers import SynchronizationBrokerImpl
+
+    core = FakeCore()
+    result = SynchronizationBrokerImpl(core).synchronize_scheduled_inventory(
+        identity, "periodic",
+    )
+
+    assert result.ok is False
+    assert result.facts == {"reason": "identity_required"}
+    assert core.account_reads == 0
+    assert core.acquisitions == []
