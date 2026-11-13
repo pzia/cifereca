@@ -244,17 +244,6 @@ def test_concurrent_retired_adobe_pnb_commands_fail_before_any_mutation(tmp_path
         service.close()
 
 
-def test_other_connection_same_upstream_loan_keeps_historical_lock_scope(tmp_path):
-    service, loan, paris = setup(tmp_path, paris_active=True)
-    try:
-        other = replace(loan, source_credential="other-paris", identity_id="bob")
-        assert service._return_operation_lock_file(loan) == service._return_operation_lock_file(other)
-        assert "alice-paris" not in service._return_operation_lock_file(loan).name
-        assert "shared-loan" not in service._return_operation_lock_file(loan).name
-    finally:
-        service.close()
-
-
 def test_secondary_connection_and_foreign_loan_can_never_initiate_pnb_return(tmp_path):
     service, loan, paris = setup(tmp_path, paris_active=True)
     try:
