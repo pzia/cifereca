@@ -671,7 +671,7 @@ class SynchronizationBrokerImpl:
             source_refresh_due,
         )
         from .plugin_api import Cancelled
-        if type(identity_id) is not str or not identity_id:
+        if type(identity_id) is not str or not identity_id.strip():
             return SyncResult(False, facts={"reason": "identity_required"})
         # A syntactically nonempty input is not proof of a configured
         # identity. Do not report a false-success empty scheduled batch for
