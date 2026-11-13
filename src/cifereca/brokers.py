@@ -1094,7 +1094,7 @@ class SynchronizationBrokerImpl:
         # An omitted identity must never turn a nominal "Sync" into an
         # unpreviewed batch across all provider accounts.
         if not isinstance(request, SyncRequest) or (
-            type(request.identity_id) is not str or not request.identity_id
+            type(request.identity_id) is not str or not request.identity_id.strip()
         ):
             return SyncResult(ok=False, changed=0, warnings=("explicit identity required",),
                               facts={"reason": "identity_required"})
