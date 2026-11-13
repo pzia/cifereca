@@ -46,3 +46,13 @@ def test_builtin_provider_identifiers_are_not_predeclared_in_core():
     choices = _provider_options(cases)
     for value in ('kobo', 'numilog', 'paris', 'bnf-pret'):
         assert choices[value] == value
+
+
+def test_absent_well_formed_provider_filter_is_not_a_permission_error():
+    # A legitimate but absent supplier is an empty read-only selection.
+    # This keeps old bookmarked filters usable without a static supplier list.
+    from cifereca.core.library_local_inspection import LocalInspection, LocalPage
+    from inspect import signature
+    assert 'provider' in signature(LocalInspection.page).parameters
+    assert _provider('future-library') == 'future-library'
+    assert _provider('bad/path') == 'other'
