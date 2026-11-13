@@ -1316,8 +1316,18 @@ class AdeptProfileBrokerImpl:
             acsm_fetch_ready=provisioning.get("acsm_fetch_ready") is True,
         )
 
+    def _runtime(self):
+        # Runtime acquisition/provisioning is supplied by the installed plugin,
+        # not by the historical Kobo-specific LibraryService adapter seam.
+        return self.service._required_plugin_service("runtime.kobo-adept")
+
+    def _profile_rows(self) -> list[dict[str, Any]]:
+        payload = self._runtime().profiles()
+        rows = payload.get("profiles") if type(payload) is dict else None
+        return [dict(row) for row in rows if type(row) is dict] if type(rows) is list else []
+
     def profiles(self) -> tuple[AdeptProfileRef, ...]:
-        return tuple(self._ref(row) for row in self.service.kobo_profiles())
+        return tuple(self._ref(row) for row in self._profile_rows())
 
     def _find(self, profile_id: str) -> AdeptProfileRef:
         wanted = str(profile_id or "").strip()
@@ -1352,7 +1362,7 @@ class AdeptProfileBrokerImpl:
     def provision(self, name: str, username: str, *, identity_id: str | None = None) -> AdeptProfileRef:
         if identity_id is not None and self.service.identity_by_id(str(identity_id)) is None:
             raise ValueError("unknown identity")
-        runtime = self.service._kobo_adapter()
+        runtime = self._runtime()
         provision = getattr(runtime, "provision_profile", None)
         if not callable(provision):
             raise AttentionRequired(
@@ -1363,7 +1373,7 @@ class AdeptProfileBrokerImpl:
         refresh_capabilities = getattr(runtime, "capabilities", None)
         if callable(refresh_capabilities):
             refresh_capabilities()
-        rows = list(self.service.kobo_profiles())
+        rows = self._profile_rows()
         shown_name = str(shown.get("name") or shown.get("profile") or name or "").strip()
         candidates = [row for row in rows if str(row.get("name") or row.get("profile") or "").strip() == shown_name]
         profile = self._ref(candidates[0] if len(candidates) == 1 else shown)

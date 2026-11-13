@@ -41,6 +41,9 @@ class Runtime:
         self.capability_refreshes += 1
         return {"capabilities": {"adept": {"fetch_capable_profiles": [row["name"] for row in self.rows]}}}
 
+    def profiles(self):
+        return {"profiles": [dict(row) for row in self.rows]}
+
 
 class Service:
     def __init__(self):
@@ -51,11 +54,9 @@ class Service:
     def identity_by_id(self, identity_id):
         return next((row for row in self.identities if row.identity_id == identity_id), None)
 
-    def _kobo_adapter(self):
+    def _required_plugin_service(self, plugin_id):
+        assert plugin_id == "runtime.kobo-adept"
         return self.runtime
-
-    def kobo_profiles(self):
-        return [dict(row) for row in self.runtime.rows]
 
 
 def test_public_api_exports_adept_profile_contract():
@@ -120,4 +121,43 @@ def test_profile_without_stable_id_is_never_persisted_by_name():
         broker.bind("alice", "alexandre")
 
     assert exc.value.code == "adept_profile_stable_id_required"
+    assert service.storage.bound == {}
+
+
+def test_broker_uses_only_installed_service_and_never_calls_legacy_adapter():
+    service = Service()
+    def forbidden():
+        pytest.fail("legacy adapter must not be invoked")
+    service._kobo_adapter = forbidden
+    service.kobo_profiles = forbidden
+    broker = AdeptProfileBrokerImpl(service)
+    assert broker.profiles() == ()
+    assert broker.provision("reader", "reader@example.test", identity_id="alice").profile_id == "stable-reader"
+
+
+def test_missing_installed_runtime_fails_closed_without_legacy_fallback():
+    service = Service()
+    def unavailable(_plugin_id):
+        raise AttentionRequired("runtime required", code="plugin_required")
+    service._required_plugin_service = unavailable
+    service._kobo_adapter = lambda: pytest.fail("legacy runtime fallback")
+    service.kobo_profiles = lambda: pytest.fail("legacy profile fallback")
+    broker = AdeptProfileBrokerImpl(service)
+    with pytest.raises(AttentionRequired) as exc:
+        broker.profiles()
+    assert exc.value.code == "plugin_required"
+    with pytest.raises(AttentionRequired) as exc:
+        broker.provision("reader", "reader@example.test", identity_id="alice")
+    assert exc.value.code == "plugin_required"
+
+
+@pytest.mark.parametrize("payload", [None, [], {"profiles": None}, {"profiles": "not-a-list"}])
+def test_malformed_runtime_profile_rows_never_gain_binding(payload):
+    service = Service()
+    service.runtime.profiles = lambda: payload
+    broker = AdeptProfileBrokerImpl(service)
+    assert broker.profiles() == ()
+    with pytest.raises(AttentionRequired) as exc:
+        broker.bind("alice", "not-proven")
+    assert exc.value.code == "adept_origin_profile_missing"
     assert service.storage.bound == {}
