@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from cifereca.models import Account, Loan, SearchResult
+from cifereca.providers.base import ProviderDescriptor
 from .lending_capabilities import LendingOperationFact
 
 LENDING_ACTION_CONTRACT = "cifereca.loan.action/1"
@@ -71,7 +72,10 @@ def _source_key(value: object, *, allow_empty: bool = False) -> bool:
     )
 
 
-def _exact_target(operation: str, target: object, account: Account) -> bool:
+def _exact_target(
+    operation: str, target: object, account: Account,
+    descriptor: ProviderDescriptor | None = None,
+) -> bool:
     if type(account) is not Account:
         return False
     if not all((
@@ -96,9 +100,15 @@ def _exact_target(operation: str, target: object, account: Account) -> bool:
     if type(target) is not Loan:
         return False
     borrowers = {account.unique_id}
-    if (account.provider_id == "paris" and account.unique_id == ""
+    # Existing-primary alias is an exact provider declaration, never a
+    # Core-owned convention or evidence of borrower permission.
+    if (type(descriptor) is ProviderDescriptor
+            and descriptor.id == account.provider_id
+            and account.unique_id == ""
             and account.is_primary is True):
-        borrowers.add("primary")
+        alias = descriptor.existing_primary_loan_account_alias
+        if (type(alias) is str and alias and _source_key(alias)):
+            borrowers.add(alias)
     return bool(
         _source_key(target.id)
         and _source_key(target.record_id)
@@ -123,6 +133,7 @@ def assess_lending_action(
     confirmed: bool = False, permission_attested: bool = False,
     cancelled: bool = False,
     policy: LendingActionOriginPolicy = LendingActionOriginPolicy(),
+    descriptor: ProviderDescriptor | None = None,
 ) -> LendingActionAdmission:
     """No I/O. Fail closed on capability, origin, consent and exact subject.
 
@@ -164,7 +175,7 @@ def assess_lending_action(
             or fact.session_ready is not True
             or fact.explicit_action_required is not True):
         return decision("unsupported", "not_declared")
-    if not _exact_target(key, target, account):
+    if not _exact_target(key, target, account, descriptor):
         return decision("blocked", "scope_unverified")
     if key != "loan.borrow" and target.state != "active":
         return decision("blocked", "loan_not_active")
