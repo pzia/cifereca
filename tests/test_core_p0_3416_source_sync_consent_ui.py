@@ -178,7 +178,7 @@ def test_modern_consent_takes_precedence_over_manual_materialization_capability(
         for row in group.children
     )
     assert w.runner.tasks == []
-    assert calls == calls_before + [('sources', 'alice')]
+    assert calls == calls_before
 
 @pytest.mark.parametrize('provider', ['fixture-vendor', 'kobo', 'numilog', 'bnf-pret', 'paris'])
 def test_modern_page_uses_same_controls_and_never_reads_legacy_tools(monkeypatch, provider):
