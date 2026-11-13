@@ -1229,12 +1229,25 @@ class RuntimeCapabilitiesBrokerImpl:
 
     def acquisition(self, provider_id: str, *, refresh: bool = False) -> RuntimeAcquisitionCapabilities:
         provider = str(provider_id or "").strip().casefold()
-        if provider != "kobo":
-            return RuntimeAcquisitionCapabilities(provider_id=provider)
-
-        state = self.service.kobo_adept_state(force=bool(refresh))
-        if not isinstance(state, dict):
-            state = {}
+        # Optional Core-owned, source-attested producer. This is NOT a
+        # provider plugin callback: Core must verify service ownership before
+        # issuing a state bearing provider_attested=True.
+        state_for_provider = getattr(self.service, "runtime_acquisition_state", None)
+        if callable(state_for_provider):
+            state = state_for_provider(provider, force=bool(refresh))
+            if (type(state) is not dict
+                    or state.get("provider_attested") is not True
+                    or type(state.get("provider_id")) is not str
+                    or state["provider_id"] != provider):
+                return RuntimeAcquisitionCapabilities(provider_id=provider)
+        else:
+            # Legacy Kobo-only probe. Never attribute this runtime's state to
+            # another provider while the Core attested producer is absent.
+            if provider != "kobo":
+                return RuntimeAcquisitionCapabilities(provider_id=provider)
+            state = self.service.kobo_adept_state(force=bool(refresh))
+            if not isinstance(state, dict):
+                state = {}
         caps = state.get("capabilities") if isinstance(state.get("capabilities"), dict) else {}
         download = caps.get("download") if isinstance(caps.get("download"), dict) else {}
         declared = {
@@ -1244,15 +1257,26 @@ class RuntimeCapabilitiesBrokerImpl:
         }
 
         modes: list[str] = []
-        http = download.get("http") if isinstance(download.get("http"), dict) else {}
-        if bool(http.get("available")) or "download_http_epub_pdf" in declared:
-            modes.append("http_plain")
-        if state.get("acsm_available") is True:
-            modes.append("adobe_adept")
-        if state.get("kobo_delegated_available") is True:
-            modes.append("kobo_delegated")
-        if state.get("kobo_kdrm_available") is True:
-            modes.append("kobo_kdrm")
+        declared_modes = state.get("modes")
+        if type(declared_modes) in (tuple, list):
+            # An attested source can publish its exact modes without a
+            # provider-specific decision in the broker's projection.
+            for mode in declared_modes[:32]:
+                if (type(mode) is str and 0 < len(mode) <= 64
+                        and mode.isascii() and mode.replace("_", "").isalnum()
+                        and mode not in modes):
+                    modes.append(mode)
+        elif state_for_provider is None or not callable(state_for_provider):
+            # Legacy Kobo probe format until the producer is upgraded.
+            http = download.get("http") if isinstance(download.get("http"), dict) else {}
+            if bool(http.get("available")) or "download_http_epub_pdf" in declared:
+                modes.append("http_plain")
+            if state.get("acsm_available") is True:
+                modes.append("adobe_adept")
+            if state.get("kobo_delegated_available") is True:
+                modes.append("kobo_delegated")
+            if state.get("kobo_kdrm_available") is True:
+                modes.append("kobo_kdrm")
 
         try:
             contract_version = int(state.get("contract_version")) if state.get("contract_version") is not None else None

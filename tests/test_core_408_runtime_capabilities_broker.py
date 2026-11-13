@@ -144,6 +144,60 @@ def test_runtime_snapshot_uses_normalized_requested_provider_not_fixed_label():
     assert service.calls == [False]
 
 
+class AttestedService(Service):
+    def __init__(self, state):
+        super().__init__({"available": True, "kobo_delegated_available": True})
+        self.attested_state = state
+        self.probes = []
+
+    def runtime_acquisition_state(self, provider_id, *, force=False):
+        self.probes.append((provider_id, force))
+        return self.attested_state
+
+
+def test_synthetic_provider_with_core_attestation_has_exact_capabilities():
+    service = AttestedService({
+        "provider_id": "synthetic", "provider_attested": True,
+        "available": True, "compatible": True, "operational": True,
+        "contract_version": 2,
+        "modes": ["synthetic_delivery", "synthetic_delivery", "adobe_adept"],
+        "capabilities": {"download": {"custom": {"formats": ["CBZ", "PDF"]}}},
+    })
+    snapshot = RuntimeCapabilitiesBrokerImpl(service).acquisition("synthetic", refresh=True)
+    assert snapshot == RuntimeAcquisitionCapabilities(
+        provider_id="synthetic", available=True, compatible=True,
+        operational=True, contract_version=2,
+        modes=("synthetic_delivery", "adobe_adept"), formats=("cbz", "pdf"),
+    )
+    assert service.probes == [("synthetic", True)]
+    assert service.calls == []
+
+
+def test_unattested_malformed_or_foreign_producer_never_falls_back_to_kobo():
+    for state in (
+        None, {}, {"provider_id": "synthetic", "provider_attested": 1},
+        {"provider_id": "foreign", "provider_attested": True, "available": True},
+        {"provider_id": "synthetic", "provider_attested": "yes"},
+    ):
+        service = AttestedService(state)
+        for provider in ("synthetic", "kobo"):
+            actual = RuntimeCapabilitiesBrokerImpl(service).acquisition(provider)
+            assert actual == RuntimeAcquisitionCapabilities(provider_id=provider)
+        assert service.calls == []
+
+
+def test_attested_producer_must_publish_modes_not_legacy_vendor_flags():
+    service = AttestedService({
+        "provider_id": "synthetic", "provider_attested": True,
+        "available": True, "compatible": True,
+        "kobo_delegated_available": True,
+    })
+    snapshot = RuntimeCapabilitiesBrokerImpl(service).acquisition("synthetic")
+    assert snapshot.available is True
+    assert snapshot.modes == ()
+    assert service.calls == []
+
+
 def test_other_runtime_provider_never_inherits_kobo_capabilities():
     service = Service({
         "available": True, "compatible": True, "operational": True,
