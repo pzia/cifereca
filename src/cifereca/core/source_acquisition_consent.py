@@ -338,7 +338,7 @@ def legacy_inventory_enablement_toggle(service, account, enabled, preference_key
     Keep legacy source policy/epoch probing outside the versioned CAS module.
     A persisted legacy acquisition switch is retired only on explicit OFF.
     """
-    from .source_auto_consent_bridge import (
+    from .legacy_source_consent_metadata import (
         _consent_generation_key, legacy_source_consent_switch_present,
     )
     from .source_sync_consent import retire_legacy_acquisition_on_source_disable
