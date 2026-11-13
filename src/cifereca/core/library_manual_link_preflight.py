@@ -61,19 +61,9 @@ _REASON_LABELS = {
         "actuelles… » puis confirmez explicitement ; le Core revalidera "
         "le droit, le reçu et le fichier avant toute écriture."
     ),
-    "kobo_separate_recovery": (
-        "Kobo : une restauration de lien exige les preuves personnelles "
-        "et la sauvegarde déjà attestées par le contrat Kobo dédié. "
-        "La comparaison bibliographique ne permet aucun placement ici."
-    ),
-    "paris_loan_inactive": (
-        "Prêt Paris enregistré comme inactif ou terminé : sa comparaison "
-        "reste consultative. Aucun placement ni changement de licence."
-    ),
-    "paris_read_only": (
-        "Paris : les prêts et leurs échéances nécessitent un contrat de prêt "
-        "spécifique. Cette comparaison est en lecture seule ; aucun placement "
-        "ni restitution ne sont autorisés."
+    "loan_inactive_read_only": (
+        "Prêt enregistré comme inactif ou terminé : consultation uniquement. "
+        "Aucun placement, changement de licence ou restitution n'est autorisé."
     ),
     "source_not_supported": (
         "Aucune transaction de rattachement n’est autorisée pour cette source."
@@ -168,21 +158,16 @@ def review_source_read_only(
     provider: object, *, audit_complete: bool,
     bibliographic_hint: bool = False, loan_inactive: bool = False,
 ) -> ManualLinkPreflight:
-    """Closed, non-authorizing review for non-Numilog provider comparisons.
+    """Closed, non-authorizing report for an unsupported attachment source.
 
-    Only provider IDs from the already-scoped private case enter this function.
-    This is not a substitute for Kobo's existing specific restore transaction,
-    and Paris loans have no writable attachment handler in this workflow.
+    The caller already owns the audited source and loan-state classification.
+    No provider dispatch, rights inference or writable fallback exists here.
     """
-    code = {
-        "kobo": "kobo_separate_recovery",
-        "paris": "paris_read_only",
-    }.get(provider if type(provider) is str else None, "source_not_supported")
-    reasons = {code}
+    reasons = {"source_not_supported"}
     if audit_complete is not True:
         reasons.add("audit_incomplete")
-    if provider == "paris" and loan_inactive is True:
-        reasons.add("paris_loan_inactive")
+    if loan_inactive is True:
+        reasons.add("loan_inactive_read_only")
     if bibliographic_hint is True:
         reasons.add("bibliographic_hint_only")
     return ManualLinkPreflight("blocked", tuple(sorted(reasons)))
