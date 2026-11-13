@@ -377,3 +377,53 @@ def test_exact_owner_identity_cycle_a_to_b_to_a_is_cache_partitioned(
         assert session.response_calls == 1
     finally:
         service.close()
+
+
+@pytest.mark.parametrize('progressive', [False, True])
+def test_sql_owner_rebind_invalidates_private_and_public_cache_without_new_identity(
+    tmp_path, monkeypatch, progressive,
+):
+    from tests.test_core043_progress_cache_stats import _service
+    service = _service(tmp_path)
+    session = _ResponseBoundSource('synthetic-a', 'credential-b')
+    service._sessions = {'source': session}
+    owners = {('synthetic-a', 'credential-b'): 'alice'}
+    monkeypatch.setattr(
+        service.storage, 'identity_for_connection',
+        lambda provider, credential: owners.get((provider, credential)),
+    )
+    monkeypatch.setattr(service, '_mirror_remote_results', lambda *a, **kw: 0)
+
+    def search():
+        if progressive:
+            summary = service.search_progressive(
+                'Progressive Book', force=False,
+            )
+            assert not summary.cancelled
+            return list(service.last_search)
+        return service.search('Progressive Book', force=False)
+
+    try:
+        private = search()
+        assert len(private) == 1 and private[0].owned is True
+        assert private[0].download_url == 'https://private.invalid/token'
+        private_calls = session.private_calls
+        assert search() == private
+        assert session.private_calls == private_calls
+
+        # Credential unchanged; only the SQL account owner is reassigned.
+        # Replaying Alice's earlier private cache would be a cross-account leak.
+        owners[('synthetic-a', 'credential-b')] = 'bob'
+        public = search()
+        assert len(public) == 1 and public[0].owned is False
+        assert public[0].download_url is None
+        assert public[0].metadata['catalogue_access'] == 'shared_read_only'
+        response_calls = session.response_calls
+        assert search() == public
+        assert session.response_calls == response_calls
+
+        owners[('synthetic-a', 'credential-b')] = 'alice'
+        assert search() == private
+        assert session.response_calls == response_calls
+    finally:
+        service.close()
