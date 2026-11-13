@@ -165,6 +165,13 @@ def test_orchestrator_rejects_cross_provider_and_ambiguous_notices():
         ProviderSearchResponse([other], public_notices=(PublicSearchNotice(other),)),
         session,
     ) == []
+    foreign_credential = row('synthetic-a', 'credential-from-unrelated-session')
+    assert _public_rows_from_response(
+        ProviderSearchResponse(
+            [foreign_credential],
+            public_notices=(PublicSearchNotice(foreign_credential),),
+        ), session,
+    ) == []
     assert _public_rows_from_response(
         ProviderSearchResponse([item], public_notices=(
             PublicSearchNotice(item), PublicSearchNotice(item),
