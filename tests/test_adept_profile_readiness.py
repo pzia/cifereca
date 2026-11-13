@@ -111,7 +111,7 @@ def test_bound_profile_explicitly_not_fetch_ready_blocks_before_adept(tmp_path: 
             "status": "attention_required",
             "loan_id": "loan-alex-not-ready",
             "code": "adept_profile_acsm_not_ready",
-            "error": "Le profil Kobo-Adept lié à cette identité n'est pas prêt pour les acquisitions ACSM",
+            "error": "Le profil ADEPT lié à cette identité n'est pas prêt pour les acquisitions ACSM",
         }
         assert called["adept"] is False
         assert acsm.exists()
