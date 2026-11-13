@@ -82,3 +82,16 @@ def test_read_only_provider_reason_is_closed_even_with_incomplete_index(
     assert report.read_only and not report.attachment_authorized
     assert report.requires_fresh_validation
     assert "secret" not in report.explanation.lower()
+
+
+@pytest.mark.parametrize("provider", ["paris", "kobo", "fixture-lender", None])
+def test_inactive_loan_is_a_provider_neutral_read_only_refusal(provider):
+    report = review_source_read_only(
+        provider, audit_complete=True, loan_inactive=True,
+    )
+    assert "loan_inactive" in report.codes
+    assert report.status == "blocked"
+    assert report.read_only and not report.attachment_authorized
+    assert report.requires_fresh_validation
+    assert "Prêt enregistré comme inactif" in report.explanation
+    assert "Prêt Paris enregistré" not in report.explanation
