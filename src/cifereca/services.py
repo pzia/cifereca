@@ -623,9 +623,11 @@ class LibraryService:
         from .core.diagnostic_explicit_loan_action import ActionObservation, LoanActionError
         observation = ActionObservation(self, 'import_acsm', provider_id='bnf-pret')
         try:
-            if (type(expected_identity_id) is not str or not expected_identity_id
-                    or self.current_identity is None
-                    or self.current_identity.identity_id != expected_identity_id):
+            # The operation is admitted against its explicit borrower and
+            # persisted connection owner, not the identity displayed in GTK.
+            # Changing the navigation selection cannot revoke an admitted
+            # import; the exact loan/account checks below remain mandatory.
+            if type(expected_identity_id) is not str or not expected_identity_id:
                 raise LoanActionError('bnf_loan_scope_unproven')
             if (type(loan) is not Loan or loan.source_provider != 'bnf-pret'
                     or loan.identity_id != expected_identity_id
