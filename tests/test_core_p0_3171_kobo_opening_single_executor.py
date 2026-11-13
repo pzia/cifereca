@@ -168,7 +168,7 @@ def test_on_start_partial_abi_never_reenables_older_kobo_worker(tmp_path, monkey
 
 
 def test_opening_canonical_account_convergence_is_supplier_neutral():
-    """No supplier branch in Core A→B execution; Kobo is a read-only legacy view."""
+    """No supplier branch or retired Kobo view in Core A→B execution."""
     import ast
     from pathlib import Path
 
@@ -181,9 +181,11 @@ def test_opening_canonical_account_convergence_is_supplier_neutral():
         "completed = detail.setdefault", 1,
     )[0]
     assert 'account.provider_id == "kobo"' not in target
-    assert 'canonical_source_completion[' in target
-    assert '(account.provider_id, source_id)' in target
-    assert 'if provider_id == "kobo"' in source  # compatibility projection
+    # The old supplier-specific completion mirror is physically retired.
+    # Exact-source convergence remains in the identity's canonical counters.
+    assert 'canonical_source_completion[' not in source
+    assert 'if provider_id == "kobo"' not in source
+    assert 'completed = detail.setdefault("canonical_execution"' in source
     assert '_run_observed_canonical_convergence(' in source
 
 
