@@ -195,9 +195,12 @@ def test_shared_runtime_and_plugin_log_do_not_attest_provider(application_log):
         handle.write("2026-10-23 00:00:00,000 ERROR cifereca_numilog "
                      "TRACE numilog session connected=False reason=connect_failed\n")
     rows = query_diagnostic_events(diag, log_path=application_log)["events"]
-    assert len(rows) == 3
+    # The retired Numilog-specific logger is not projected into Core events.
+    # The attested ADEPT producer still appears on both canonical channels.
+    assert len(rows) == 2
     assert {r["source"] for r in rows} == {"core_events", "app_log"}
     assert all("provider_id" not in r for r in rows)
+    assert all(r["business_module"] == "ADEPT" for r in rows)
 
 
 def test_actual_registered_provider_ids_match_fixed_diagnostic_producers():
