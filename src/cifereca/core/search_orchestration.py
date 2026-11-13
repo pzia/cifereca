@@ -301,37 +301,41 @@ def _without_redundant_merged(self, sessions: list[ProviderSession], *, field: s
     ]
 
 
-def _configured_paris_primary_for_search(self, identity: object) -> str | None:
-    """Read a local Paris primary preference; this never authorizes a loan."""
+def _configured_search_preferences(self, identity: object, sessions: list[ProviderSession]) -> dict[str, str]:
+    """Existing per-provider primary preference; never grants ownership."""
     identity_id = getattr(identity, "identity_id", None)
     if type(identity_id) is not str or not identity_id:
-        return None
+        return {}
     try:
         saved = self.config.identity(identity_id)
-        primary = saved.get("primary_paris_connection_id") if type(saved) is dict else None
     except (AttributeError, LookupError, TypeError, ValueError):
-        return None
-    if (type(primary) is not str or not primary or len(primary) > 256
-            or primary != primary.strip() or not primary.isprintable()):
-        return None
-    return primary
+        return {}
+    if type(saved) is not dict:
+        return {}
+    hints: dict[str, str] = {}
+    for session in sessions:
+        provider = getattr(session, "provider_id", None)
+        if (type(provider) is not str
+                or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider) is None):
+            continue
+        preferred = saved.get(f"primary_{provider}_connection_id")
+        if (type(preferred) is str and 0 < len(preferred) <= 256
+                and preferred == preferred.strip()
+                and preferred.isprintable()):
+            hints[provider] = preferred
+    return hints
 
 
 def _search_sessions_for_active_identity(
     self, sessions: list[ProviderSession], identity: object, *,
-    paris_primary: str | None = None,
+    preferred_credentials: dict[str, str] | None = None,
 ) -> list[ProviderSession]:
-    """Select exactly one catalogue session per provider.
-
-    The historical Paris primary preference is only an input hint; neutral
-    ownership ranking is performed by search_session_selection for every
-    provider and never grants access to another identity's private source.
-    """
+    """Rank exact owner-bound sessions without provider-specific branches."""
     from .search_session_selection import choose_search_sessions
-    hints = {"paris": paris_primary} if paris_primary is not None else None
     return choose_search_sessions(
-        self, sessions, identity, preferred_credentials=hints,
+        self, sessions, identity, preferred_credentials=preferred_credentials,
     )
+
 
 def _public_search_response_rows(response: ProviderSearchResponse, session: ProviderSession) -> list[SearchResult]:
     """Only exact public notices from the current typed response may cross identities."""
@@ -535,9 +539,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     def sources_current() -> bool:
         if not source_leases:
             return True
-        if (paris_source_selected
-                and _configured_paris_primary_for_search(self, identity)
-                != configured_paris_primary):
+        if _configured_search_preferences(self, identity, available) != configured_preferences:
             return False
         try:
             registered = tuple(self._sessions.values())
@@ -575,20 +577,13 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         and _search_credential_enabled(self, session)
         and (requested_provider == "all" or session.provider_id == requested_provider)
     ]
-    configured_paris_primary = (
-        _configured_paris_primary_for_search(self, identity)
-        if any(session.provider_id == "paris" for session in available)
-        else None
-    )
+    configured_preferences = _configured_search_preferences(self, identity, available)
     searchable = _search_sessions_for_active_identity(
-        self, available, identity, paris_primary=configured_paris_primary,
+        self, available, identity, preferred_credentials=configured_preferences,
     )
     searchable = self._without_redundant_merged(
         searchable, field=field, scope=provider_scope,
         include_redundant_merged=include_redundant_merged,
-    )
-    paris_source_selected = any(
-        session.provider_id == "paris" for session in searchable
     )
     # Every cross-identity row requires exact typed-response provenance.
     owner_leases = tuple(
@@ -1187,22 +1182,15 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         and _search_credential_enabled(self, session)
         and (not requested or session.provider_id in requested)
     ]
-    configured_paris_primary = (
-        _configured_paris_primary_for_search(self, identity)
-        if any(session.provider_id == "paris" for session in available)
-        else None
-    )
+    configured_preferences = _configured_search_preferences(self, identity, available)
     searchable = _search_sessions_for_active_identity(
-        self, available, identity, paris_primary=configured_paris_primary,
+        self, available, identity, preferred_credentials=configured_preferences,
     )
     searchable = self._without_redundant_merged(
         searchable, field=field, scope=scope,
         include_redundant_merged=include_redundant_merged,
     )
     searchable.sort(key=lambda row: row.provider_id)
-    paris_source_selected = any(
-        session.provider_id == "paris" for session in searchable
-    )
     # Every cross-identity row requires exact typed-response provenance.
     owner_leases = tuple(
         (session, _private_search_owner(self, session))
@@ -1232,9 +1220,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 or self.current_identity is not identity):
             return False
         # A reconnect or a changed Paris primary revokes old results.
-        if (paris_source_selected
-                and _configured_paris_primary_for_search(self, identity)
-                != configured_paris_primary):
+        if _configured_search_preferences(self, identity, available) != configured_preferences:
             return False
         try:
             registered = tuple(self._sessions.values())
