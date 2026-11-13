@@ -522,14 +522,13 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
                 observation.identity_id, placement['provider_id'],
                 placement['source_item_id'],
             ), [])
-            # Neither Kobo nor Numilog placements contain an account or
-            # credential column. One apparently complete purchase/backup
-            # cannot prove WHICH of two same-identity buyer accounts owns
-            # this placement, even if the other right is expired or lacks a
-            # receipt. Preserve byte evidence, but withhold right attestation.
-            # Foreign identities and *different* editions do not interfere.
-            if (placement['provider_id'] in {'numilog', 'kobo'}
-                    and len(edition_rights) > 1):
+            # A placement has provider/edition, but no credential or borrower.
+            # Two rights for that exact identity/provider/edition therefore
+            # cannot be distinguished by bytes or one completed acquisition.
+            # This is true for every provider, including future plugins; an
+            # inactive second right is still competing ownership evidence.
+            # Preserve byte evidence without publishing an attested right.
+            if len(edition_rights) > 1:
                 categories.add('ambiguous')
                 continue
             for ri, right in edition_rights:
