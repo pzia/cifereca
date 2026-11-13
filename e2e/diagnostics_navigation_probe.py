@@ -2270,7 +2270,7 @@ def main() -> int:
         f = loan_sync_fixture
         dialogs = [node for node in Gtk.Window.list_toplevels()
                    if isinstance(node, Adw.MessageDialog) and node.get_visible()
-                   and node.get_heading() == "Confirmer les téléchargements Kobo ?"]
+                   and node.get_heading() == "Confirmer les téléchargements de ce compte ?"]
         if not dialogs:
             assert monotonic() < f["download_deadline"], "Confirmation Kobo absente"
             later(100, kobo_download_dialog)
