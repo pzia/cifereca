@@ -31,28 +31,22 @@ jeton ou valeur brute de reçu n'est projetée. Une valeur non sérialisable
 bloque l'empreinte au lieu d'être convertie en texte. L'absence de toute
 preuve ne produit pas d'empreinte utilisable.
 
-## Validation locale non autorisante
+## Contrôle de stabilité dans le checkpoint actif
 
-`validate_paris_adept_local_snapshot(storage, *, loan_id, item_id,
-expected_fingerprint)` relit les preuves et compare une empreinte SHA-256
-exacte en minuscules :
+La façade autonome `validate_paris_adept_local_snapshot`, sans appelant de
+production, a été retirée (#5048). Le parcours Core actif
+`preview_paris_adept_with_local_checkpoint` relit directement les preuves
+avant et après la prévisualisation, puis compare leurs empreintes. Une
+empreinte absente ou différente bloque la prévisualisation et masque les
+coordonnées privées du candidat.
 
-- `local_evidence_unchanged_remote_attestation_required` : les observations
-  actuellement relues correspondent à l'empreinte annoncée.
-- `local_evidence_changed` : au moins une preuve enregistrée a changé ;
-  reprendre la prévisualisation avant de proposer une autre décision.
-- `local_evidence_unavailable` ou `invalid_snapshot_request` : aucune
-  validation exploitable.
-
-**Ces trois états ne donnent aucun droit.** Toutes les sorties portent
+Une empreinte stable est **un contrôle d'égalité local, jamais un jeton ni une
+signature**. Toutes les sorties conservent
 `return_authorized=false`, `commit_available=false` et
-`adobe_profile_resolution=unknown`. L'empreinte est un **contrôle
-d'égalité, pas un jeton ni une signature**, et elle ne prouve pas que la
-licence Adobe est encore active ou associée au profil observé.
+`adobe_profile_resolution=unknown`. Aucune écriture future ne peut en
+déduire une licence Adobe ou un prêt encore actif.
 
-Le hachage n'est **pas atomique** avec les opérations futures : celles-ci
-devront obtenir une preuve serveur actuelle et revalider **sous leurs propres
-verrous/transactions SQLite**, avec protection TOCTOU, audit et reprise après
-incident. Aucune opération destructive ou mutation métier n'est introduite
-par cette primitive. L'exposition éventuelle dans la CLI `preview-resolution`
-est un incrément distinct après validation des contrats en CI.
+Ces lectures ne sont **pas atomiques** avec les opérations futures, qui
+nécessitent une preuve serveur actuelle et une revalidation sous leurs
+propres verrous et transactions SQLite. Les anciennes commandes CLI de
+diagnostic restent supprimées.
