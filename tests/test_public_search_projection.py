@@ -268,7 +268,11 @@ def test_foreign_search_requires_current_response_and_preserves_private_owner(
         assert session.response_calls == 1
         # Revocation/ownership recheck must not publish a stale response.
         session.on_response = lambda: owners.__setitem__((provider, 'credential-b'), 'alice')
-        assert search(force=True) == []
+        if progressive:
+            summary = service.search_progressive('Progressive Book', force=True)
+            assert summary.cancelled
+        else:
+            assert service.search('Progressive Book', force=True) == []
     finally:
         service.close()
 
