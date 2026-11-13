@@ -1183,6 +1183,11 @@ class LibraryService:
             return {}
         if type(reported) is not dict:
             return {}
+        # A runtime can be disabled, replaced or rebound while its producer
+        # runs. The initial reciprocal claim is not a durable attestation:
+        # publish no capability if ownership changed during the probe.
+        if self.runtime_acquisition_binding(provider_id) != runtime_id:
+            return {}
         # Only these public facts enter the broker. Never copy arbitrary
         # runtime keys or allow it to assert another provider's provenance.
         return {
