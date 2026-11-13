@@ -98,12 +98,10 @@ def test_disconnected_active_paris_falls_back_to_foreign_catalogue_only(
             results = service.last_search
         else:
             results = service.search("Serpentine", provider_id="paris", force=True)
-        assert len(results) == 1
-        assert foreign_queries
-        assert results[0].source_credential == "paris-bob"
-        assert results[0].metadata == {"catalogue_access": "shared_read_only"}
-        assert results[0].owned is False and results[0].downloadable is False
-        assert results[0].download_url is None
+        # No PublicSearchNotice producer: never invoke Bob's legacy private
+        # search or sanitize its right-bearing SearchResult after the fact.
+        assert results == []
+        assert foreign_queries == []
     finally:
         service.close()
 
@@ -130,9 +128,7 @@ def test_session_without_owner_keeps_only_safe_catalogue_projection(
             results = service.last_search
         else:
             results = service.search("Serpentine", provider_id="paris", force=True)
-        assert len(results) == 1
-        assert results[0].source_credential == "paris-bob"
-        assert results[0].owned is False
-        assert results[0].metadata == {"catalogue_access": "shared_read_only"}
+        # An absent SQL owner is foreign/unverified, not a public attestation.
+        assert results == []
     finally:
         service.close()
