@@ -1,6 +1,6 @@
 # P1 #3913 — registre opératoire des outils de diagnostic
 
-**Référence vérifiée sur `main` au 01/11/2026.** L'entrée opérateur recommandée est
+**Référence actualisée pour #5842 (13/11/2026).** L'entrée opérateur recommandée est
 `cifereca-cli` ; les analyseurs spécialisés restent autonomes pour les données
 déjà collectées. Ce document distingue **l'effet métier** du **démarrage
 technique de Core** : même une commande d'observation pouvant appeler
@@ -55,17 +55,11 @@ ne jamais choisir arbitrairement un compte dans une identité tierce.
 | `kobo-audit [--credential C]` | O | Audit local Kobo en lecture seule ; l'ancien `--plan` de rapprochement 0.7 est retiré, sans téléchargement ni mutation de bibliothèque. |
 | `kobo-resume-preview --credential C [--verify-files]` | O | Preview à partir des données locales ; option SHA/FS. |
 | `kobo-resume-preview --credential C --refresh-manifest` | **N** | **Exception** : lecture explicite du manifeste distant ; ne plus classer cette variante « hors réseau ». Pas de téléchargement de livre par la seule preview. |
-| `paris-adept list [--credential C]` | O | Liaisons ADEPT locales explicites ; aucune autorité Adobe ou fournisseur déduite des configurations. L'ancien audit agrégé fondé sur les entitlements historiques a été retiré. |
-| `paris-adept audit-origin --loan-id L --item-id B` ; `audit-canonical --loan-id L --item-id B` ; `audit-transaction --loan-id L --item-id B` | O | Constat local exact des preuves historiques/canoniques ; ni retour Adobe ni transfert de permission. Les sous-commandes prennent le préfixe `cifereca-cli paris-adept`. |
-| `paris-adept validate-resolution-snapshot --loan-id L --item-id B --fingerprint SHA256` | O | Contrôle local d'un snapshot de preview ADEPT sans mutation ni attestation Adobe serveur ; une empreinte égale ne crée pas d'autorisation. Fusion #3826. |
-| `paris-adept preview-resolution --loan-id L --item-id B --source-reference-id R --acquisition-ref H` | O | Preview sans mutation, identités et références exactes requises ; revalidation locale, pas de « droit Adobe » nouveau. |
-| `paris-adept accounts` | **N** | Connexion Paris configurée avant restitution des comptes visibles ; ne pas présenter comme lecture SQLite seule. |
 | `diagnose` ; `loans` ; `history` ; `search TERME [--scope all|physical|digital|unknown] [--provider P] [--field all|title|author|isbn|subject]` | **N** | Parcours historiques susceptibles de `connect_configured()` / rafraîchissement ou recherche réseau. **Préférer** `doctor` / `sync list` / audit ciblé pour diagnostic local. |
 | `catalog-scan [--refresh-covers]` | **M** | Scan et réconciliation du catalogue local : écritures possibles ; ne pas confondre avec `catalog-list`. |
 | `acquisition-reconcile` | **M** | Réconciliation des acquisitions interrompues/prêts/catalogue ; pas un outil de lecture seule. |
 | `kobo-sync [--quiet]` ; `kobo-backup [--quiet]` | **N+M** | Backup/acquisition Kobo, alias `kobo-backup` conservé. |
 | `kobo-resume --credential C --confirm-downloads [--retry-scope-blocked --confirm-reauthorized]` | **N+M** | Reprise ciblée Kobo, peut télécharger ; confirmations avant connexion. |
-| `paris-adept bind --credential C --borrower A --identity I --confirm-ownership` ; `paris-adept unbind --credential C --borrower A` | **N+M** pour bind, **M** pour unbind | Changement explicite de liaison ADEPT : jamais un diagnostic passif. |
 | `identity-directory [identity_id] [directory_name] [--dry-run] [--abort]` | **M** sauf aperçu `--dry-run` | Migration, rollback/rescan des répertoires ; ne pas employer pour rechercher un fichier manquant. |
 | `plugin install ZIP [--no-activate]` ; `plugin enable|disable PLUGIN_ID` ; `plugin remove PACKAGE_ID [--version V]` ; `plugin rollback PACKAGE_ID` ; `plugin priority PLUGIN_ID N` ; `plugin config-set PLUGIN_ID JSON [--scope-id ID]` ; `plugin deps-repair` | **M** | Installation/suppression/configuration et dépendances locales ; hors diagnostic. |
 
@@ -95,9 +89,7 @@ interactive : les actions utilisateur peuvent être **N+M** ; la validation
 séparée du fichier n'est jamais une commande de synchronisation ou une preuve
 de prêt. Cf. `docs/CORE-P1-4093-GUI-CAPTURE.md`.
 
-**Accès spécialisé** : `cifereca-cli paris-adept ...` est la façade audit
-Paris/ADEPT ; `kobo-audit` et `kobo-resume-preview` sont les entrées Kobo
-historiques. Ces noms ne créent pas de deuxième moteur générique de Sync.
+**Retrait #5842 :** la famille `cifereca-cli paris-adept` entière, y compris `accounts`, `list`, `bind`, `unbind` et les audits, previews et validations, n'est plus exposée. Les fonctions de preuve et les liaisons Core/SQLite subsistent pour les traitements métiers autorisés. Un **diagnostic ADEPT multicomptes**, neutre et hors réseau, est différé en **P2 #5841**. Les anciennes documentations Paris/ADEPT décrivent des procédures historiques non exécutables via la CLI actuelle. Les anciens noms `kobo-audit` et `kobo-resume-preview` ne figurent pas non plus dans le parseur actuel.
 
 **Analyseur externe Kobo (#3252, script hors Core)** : `scripts/kobo_final_verdict_summary.py` (O — lecture locale uniquement). Depuis la racine du dépôt, lancer `python -m scripts.kobo_final_verdict_summary CHEMIN-PRIVE.zip` pour extraire les compteurs fermés des rejets finaux. N'ouvre pas le Core, ne modifie aucune donnée, ne déclenche aucune connexion ni acquisition et ne publie aucun contenu brut du ZIP. Le dossier `scripts/` ne fait pas partie du package Core installable.
 
@@ -238,7 +230,6 @@ Les wrappers environnementaux ne doivent pas être exécutés par le rôle backl
 | BnF-Prêt : ACSM obtenu mais livre absent | `cifereca-cli acquisition-audit --provider bnf-pret --identity I --verify-files --json` | Distinguer reçu/staging, transfert ADEPT, Placement final, OriginLink. Statut partiel des prêts ≠ retour attesté. |
 | BnF-Prêt : signal DOM d'emprunt introuvable dans une capture **déjà disponible** | `python3 scripts/bnf_borrow_dom_probe.py --page detail < PAGE_PRIVEE.html` (ou `--page profile`) | Seulement la structure DOM et le statut de reconnaissance ; **ne qualifie jamais le consentement, le quota, l'éligibilité ou l'autorisation de POST**. Ne pas publier le HTML privé. |
 | Kobo : état local ou rattrapage envisagé | `cifereca-cli kobo-audit` puis `kobo-resume-preview --credential C` | Aucun téléchargement sans commande de reprise explicitement consentie. |
-| Paris : prêt/ADEPT mal attribué | `cifereca-cli paris-adept audit-transaction --loan-id L --item-id B` | Comparer les sources exactes, sans interpréter ni muter les droits Adobe. |
 | Échec d'install d'un plugin | `cifereca-cli plugin diagnose PLUGIN_ID` | Version/manifest et diagnostic plugin ; `plugin deps-repair` est une mutation, pas une sonde. |
 
 ## Cas limites et responsabilités
