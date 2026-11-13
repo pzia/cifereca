@@ -1324,6 +1324,13 @@ class AdeptProfileBrokerImpl:
     def _profile_rows(self) -> list[dict[str, Any]]:
         payload = self._runtime().profiles()
         rows = payload.get("profiles") if type(payload) is dict else None
+        # A runtime response is untrusted input, even when produced by an
+        # installed plugin. Bound it before iterating/copying any profile rows.
+        if type(rows) is list and len(rows) > 2048:
+            raise AttentionRequired(
+                "Inventaire des profils ADEPT trop volumineux.",
+                code="adept_profile_inventory_invalid",
+            )
         return [dict(row) for row in rows if type(row) is dict] if type(rows) is list else []
 
     def profiles(self) -> tuple[AdeptProfileRef, ...]:

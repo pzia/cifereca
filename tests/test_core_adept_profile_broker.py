@@ -229,3 +229,56 @@ def test_provision_name_only_acknowledgement_requires_unique_stable_inventory():
     )
     assert profile.profile_id == "stable-reader"
     assert service.storage.bound == {("identity", "alice"): "stable-reader"}
+
+
+def test_oversized_runtime_profile_inventory_is_rejected_before_projection():
+    service = Service()
+    calls = []
+    row = {
+        "profile_id": "stable-reader", "name": "reader",
+        "complete": True, "fetch_capable": True,
+        "provisioning": {"acsm_fetch_ready": True},
+    }
+    service.runtime.profiles = lambda: {
+        "profiles": [dict(row) for _ in range(2049)],
+    }
+    broker = AdeptProfileBrokerImpl(service)
+    with pytest.raises(AttentionRequired) as exc:
+        broker.profiles()
+    assert exc.value.code == "adept_profile_inventory_invalid"
+    with pytest.raises(AttentionRequired) as exc:
+        broker.bind("alice", "stable-reader")
+    assert exc.value.code == "adept_profile_inventory_invalid"
+    assert service.storage.bound == {}
+
+
+def test_oversized_post_provision_inventory_cannot_bind_new_profile():
+    service = Service()
+    original = service.runtime.provision_profile
+
+    def provision(name, username):
+        result = original(name, username)
+        service.runtime.rows = service.runtime.rows * 2049
+        return result
+
+    service.runtime.provision_profile = provision
+    with pytest.raises(AttentionRequired) as exc:
+        AdeptProfileBrokerImpl(service).provision(
+            "reader", "reader@example.test", identity_id="alice",
+        )
+    assert exc.value.code == "adept_profile_inventory_invalid"
+    assert service.storage.bound == {}
+
+
+def test_exact_inventory_limit_preserves_read_only_projection():
+    service = Service()
+    service.runtime.rows = [
+        {"profile_id": f"stable-{i}", "name": f"reader-{i}",
+         "complete": True, "fetch_capable": True,
+         "provisioning": {"acsm_fetch_ready": True}}
+        for i in range(2048)
+    ]
+    profiles = AdeptProfileBrokerImpl(service).profiles()
+    assert len(profiles) == 2048
+    assert profiles[0].profile_id == "stable-0"
+    assert profiles[-1].profile_id == "stable-2047"
