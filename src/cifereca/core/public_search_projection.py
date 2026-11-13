@@ -5,6 +5,8 @@ retains the live search identity/session/generation lease before publication.
 """
 from __future__ import annotations
 
+import re
+
 from ..models import SearchResult
 from ..plugin_api.provider_search_facets import ProviderSearchResponse, PublicSearchNotice
 from .notice_source_observation import _safe_scalar
@@ -29,6 +31,26 @@ def _text(value: object, *, required: bool = False, limit: int = 8192) -> bool:
         type(value) is str and len(value) <= limit
         and (not required or bool(value.strip())) and _safe_scalar(value)
         and not any(ord(c) < 32 and c not in "\n\r\t" for c in value)
+    )
+
+
+_PRIVATE_BIBLIOGRAPHIC_PATTERN = re.compile(
+    r"(?i)(?:https?://|(?<!\\w)(?:bearer|basic)\\s+\\S+|"
+    r"(?<!\\w)(?:token|auth|cookie|signature|access_token|refresh_token)\\s*=|"
+    r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+)"
+)
+
+
+def _public_bibliographic_text(
+    value: object, *, required: bool = False, limit: int = 8192,
+) -> bool:
+    """A public notice cannot launder private URLs or auth/account strings."""
+    return (
+        _text(value, required=required, limit=limit)
+        and (value is None or (
+            type(value) is str
+            and _PRIVATE_BIBLIOGRAPHIC_PATTERN.search(value) is None
+        ))
     )
 
 
@@ -91,8 +113,9 @@ def project_public_search_result(
             or type(public.downloadable) not in (bool, type(None))
             or public.downloadable is True
             or public.download_url is not None or public.source_account_id is not None
-            or any(not _text(getattr(public, name), required=name == "title")
-                   for name in _TEXT_FIELDS)
+            or any(not _public_bibliographic_text(
+                       getattr(public, name), required=name == "title",
+                   ) for name in _TEXT_FIELDS)
             or type(public.metadata) is not dict or len(public.metadata) > 256):
         return None
     metadata = {"catalogue_access": "shared_read_only"}
@@ -100,10 +123,11 @@ def project_public_search_result(
         value = public.metadata.get(name)
         if value is None:
             continue
-        if type(value) is str and _text(value):
+        if type(value) is str and _public_bibliographic_text(value):
             metadata[name] = value
         elif (type(value) in (list, tuple) and len(value) <= 32
-              and all(type(part) is str and _text(part) for part in value)):
+              and all(type(part) is str and _public_bibliographic_text(part)
+                      for part in value)):
             metadata[name] = list(value)
         else:
             return None
