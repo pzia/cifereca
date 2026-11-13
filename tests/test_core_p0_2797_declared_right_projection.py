@@ -143,6 +143,10 @@ def test_invalid_declaration_store_does_not_invent_displayed_links(rig):
 @pytest.mark.parametrize("rig", ["paris"], indirect=True)
 def test_local_declaration_scope_requires_active_exact_loan_for_any_provider(rig):
     service, _book, root, right, _options = rig
+    # The synthetic Paris fixture intentionally has no loan_id. Supply an
+    # exact source transaction before checking positive declaration admission.
+    right = {**right, "loan_id": "PRIVATE-loan"}
+    service.storage.entitlement_put(right)
     current = _inspect(service, root)
     try:
         assert len(current._declared_right_scopes) == 1
