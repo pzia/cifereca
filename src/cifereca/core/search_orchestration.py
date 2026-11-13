@@ -341,6 +341,23 @@ def _search_sessions_for_active_identity(
     )
 
 
+_PRIVATE_CATALOGUE_SEGMENTS = frozenset({
+    "account", "accounts", "profile", "profiles", "member", "members",
+    "reader", "readers", "session", "sessions", "auth", "login", "oauth",
+    "token", "tokens", "download", "downloads", "acquisition", "acquire",
+    "loan", "loans", "borrow", "borrows", "private", "personal",
+    "user", "users", "drm", "adept", "licence", "license",
+})
+
+
+def _private_catalogue_path(path: str) -> bool:
+    """Reject account, session, borrowing and delivery routes for all sources."""
+    return bool(
+        {segment.casefold() for segment in path.split("/")}
+        & _PRIVATE_CATALOGUE_SEGMENTS
+    )
+
+
 def _shared_catalogue_cover_url(value: Any) -> str | None:
     """Preserve an ordinary public catalogue image, never account/private URLs.
 
@@ -354,14 +371,7 @@ def _shared_catalogue_cover_url(value: Any) -> str | None:
     public = _public_catalog_url(value, cover=True)
     if public is None:
         return None
-    segments = {segment.casefold() for segment in urlsplit(public).path.split("/")}
-    if segments & {
-        "account", "accounts", "profile", "profiles", "member", "members",
-        "reader", "readers", "session", "sessions", "auth", "login", "oauth",
-        "token", "tokens", "download", "downloads", "acquisition", "acquire",
-        "loan", "loans", "borrow", "borrows", "private", "personal",
-        "user", "users", "drm", "adept", "licence", "license",
-    }:
+    if _private_catalogue_path(urlsplit(public).path):
         return None
     return public
 
@@ -1682,6 +1692,11 @@ def _public_catalog_url(
         except ValueError:
             pass
         else:
+            return None
+        # A product page and an image may not point to a private account,
+        # delivery, claim or authentication endpoint, even when the parser
+        # supplied otherwise valid public evidence.
+        if _private_catalogue_path(parsed.path):
             return None
         if cover:
             return value if not parsed.query else None
