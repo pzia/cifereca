@@ -125,3 +125,19 @@ def test_untrusted_trace_never_promotes_business_module(tmp_path, logger, body):
         assert selected["events"] == []
     assert "VERY_PRIVATE" not in json.dumps(all_rows)
     assert "PRIVATE_CUSTOMER" not in json.dumps(all_rows)
+
+
+@pytest.mark.parametrize("supplier", ["paris", "kobo"])
+def test_supplier_names_cannot_admit_free_text_trace_or_logger_identity(tmp_path, supplier):
+    log = tmp_path / "cifereca.log"
+    _log(log, (f"cifereca.{supplier}", f"TRACE {supplier} connect status=failed"))
+    report = query_diagnostic_events(
+        Diagnostics(), source="app_log", log_path=log,
+    )
+    assert report["total"] == 1
+    event, = report["events"]
+    assert event["module"] == "cifereca"
+    assert event["message"] == "[contenu libre masqué : consulter le journal local]"
+    assert "provider_id" not in event
+    assert "business_module" not in event
+    assert supplier not in json.dumps(event)
