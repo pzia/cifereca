@@ -101,6 +101,12 @@ class AcquisitionBrokerImpl:
         return bool(self.service.can_direct_download(item))
 
     def eligible_accounts(self, item: Any, *, identity_id: str | None = None) -> tuple[AccountRef, ...]:
+        # None is retained for read-only ABI compatibility. An explicitly
+        # supplied empty identity must not inherit the UI selection.
+        if identity_id is not None and (
+            type(identity_id) is not str or not identity_id.strip()
+        ):
+            raise ValueError("identity_id_required")
         provider = str(getattr(item, "source_provider", "") or "")
         source_credential = str(getattr(item, "source_credential", "") or "")
         rows = []
@@ -165,6 +171,11 @@ class AcquisitionBrokerImpl:
         return self.service.acquire_direct_item(item)
 
     def import_acsm(self, path: Any, **options: Any):
+        # This broker method performs a mutation; unlike UI convenience
+        # reads it may never resolve the identity from navigation state.
+        identity_id = options.get("identity_id")
+        if type(identity_id) is not str or not identity_id.strip():
+            raise ValueError("identity_id_required")
         return self.service.import_acsm(path, **options)
 
 
