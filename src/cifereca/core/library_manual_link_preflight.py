@@ -155,7 +155,7 @@ def review_local_pair(
 
 
 def review_source_read_only(
-    provider: object, *, audit_complete: bool,
+    *, audit_complete: bool,
     bibliographic_hint: bool = False, loan_inactive: bool = False,
 ) -> ManualLinkPreflight:
     """Closed, non-authorizing report for an unsupported attachment source.
