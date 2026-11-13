@@ -238,6 +238,11 @@ def set_source_enabled(service, account, enabled, preference_key):
         state = policy_in_transaction(db, scope)
         if not state.configured:
             raise ValueError('source_sync_consent_unconfigured')
+        # Inventory ON is not an explicit repair of a corrupt acquisition
+        # policy. Keep the opaque invalid CAS fingerprint until the user
+        # explicitly revokes with OFF at the acquisition-consent boundary.
+        if enabled and state.mode == 'invalid':
+            raise ValueError('source_sync_consent_changed')
         row = db.execute('SELECT value FROM metadata WHERE key=?', (preference_key,)).fetchone()
         previous_enabled = source_enabled(row[0] if row else None)
         payload = json.dumps({
