@@ -193,11 +193,14 @@ def test_same_profile_name_from_other_account_cannot_reuse_inventory_cache(tmp_p
         first = service.storage.acquisition_get(
             _acquisition(service, path, acquisition_id="acq-a")
         )
-        second = service.storage.acquisition_get(
-            _acquisition(service, path, acquisition_id="acq-b")
-        )
-        second["credential_id"] = "another-credential"
-        second["account_id"] = "another-account"
+        # Create the second persisted acquisition with its final source
+        # coordinates. Rebinding an existing ledger ID is deliberately
+        # rejected by Storage's source-scope immutability guard.
+        second = {
+            **first, "acquisition_id": "acq-b",
+            "credential_id": "another-credential",
+            "account_id": "another-account",
+        }
         service.storage.acquisition_put(second)
         inventories = []
         def inventory(names):
