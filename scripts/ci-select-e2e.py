@@ -183,21 +183,24 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             return ALL  # unknown dependency in an otherwise targeted PR
     return tuple(name for name in ALL if name in selected)
 
-def main() -> int:
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--changed-files", type=Path)
-    parser.add_argument("--full", action="store_true")
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--changed-files", type=Path)
+    selection.add_argument("--full", action="store_true")
+    selection.add_argument("--scenario", choices=ALL + OPTIONAL_UX)
     parser.add_argument("--github-output", type=Path, required=True)
-    args = parser.parse_args()
-    if not args.full and args.changed_files is None:
-        parser.error("--changed-files is required unless --full")
+    args = parser.parse_args(argv)
     paths = args.changed_files.read_text(encoding="utf-8").splitlines() if args.changed_files else []
-    scenarios = select(paths, full=args.full)
+    scenarios = (args.scenario,) if args.scenario else select(paths, full=args.full)
+    mode = "manual-targeted" if args.scenario else (
+        "full" if scenarios == ALL else "selected" if scenarios else "docs-only"
+    )
     with args.github_output.open("a", encoding="utf-8") as output:
         output.write("scenarios=" + " ".join(scenarios) + "\n")
         output.write(f"count={len(scenarios)}\n")
         output.write(f"total={len(ALL)}\n")
-        output.write(f"mode={'full' if scenarios == ALL else 'selected' if scenarios else 'docs-only'}\n")
+        output.write(f"mode={mode}\n")
     print(f"GTK E2E selection: {len(scenarios)}/{len(ALL)}: {', '.join(scenarios) or 'docs only'}")
     return 0
 

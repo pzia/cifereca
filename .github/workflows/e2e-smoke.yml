@@ -2,6 +2,11 @@ name: E2E Smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Exact scenario ID from e2e/run.py. Leave empty to run the full smoke suite.'
+        required: false
+        type: string
   pull_request:
     paths:
       - 'e2e/**'
@@ -45,7 +50,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-smoke-${{ github.workflow }}-${{ github.ref }}
+  group: e2e-smoke-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || 'gate' }}
   cancel-in-progress: true
 
 jobs:
@@ -68,10 +73,15 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MANUAL_SCENARIO: ${{ inputs.scenario }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
-            /usr/bin/python3 scripts/ci-select-e2e.py --full --github-output "$GITHUB_OUTPUT"
+            if [[ -n "$MANUAL_SCENARIO" ]]; then
+              /usr/bin/python3 scripts/ci-select-e2e.py --scenario "$MANUAL_SCENARIO" --github-output "$GITHUB_OUTPUT"
+            else
+              /usr/bin/python3 scripts/ci-select-e2e.py --full --github-output "$GITHUB_OUTPUT"
+            fi
           else
             # Compare PR-owned changes from the merge base, not unrelated commits on main.
             git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/e2e-changed-files"

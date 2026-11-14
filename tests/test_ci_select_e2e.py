@@ -2,6 +2,7 @@
 from __future__ import annotations
 import importlib.util
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +11,26 @@ mod = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(mod)
 
 class SelectionTests(unittest.TestCase):
+    def test_manual_dispatch_selects_only_the_requested_scenario(self):
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "github-output"
+            self.assertEqual(mod.main([
+                "--scenario", "search-filter-1024", "--github-output", str(output),
+            ]), 0)
+            fields = dict(line.split("=", 1) for line in output.read_text().splitlines())
+            self.assertEqual(fields["scenarios"], "search-filter-1024")
+            self.assertEqual(fields["count"], "1")
+            self.assertEqual(fields["mode"], "manual-targeted")
+
+    def test_manual_dispatch_rejects_unknown_or_multiple_scenarios(self):
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "github-output"
+            for scenario in ("unknown", "search-filter-p0 search-filter-1024"):
+                with self.subTest(scenario=scenario), self.assertRaises(SystemExit) as exc:
+                    mod.main(["--scenario", scenario, "--github-output", str(output)])
+                self.assertEqual(exc.exception.code, 2)
+                self.assertFalse(output.exists())
+
     def test_modern_light_scenarios_follow_scoped_css_and_real_probe(self):
         self.assertEqual(mod.THEME, ("modern-light-1366", "modern-light-1600"))
         for path in ("src/cifereca/gui/modern_light_theme.py",
