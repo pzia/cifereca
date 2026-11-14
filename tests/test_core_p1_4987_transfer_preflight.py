@@ -38,9 +38,18 @@ def scope(monkeypatch):
 
 
 def checked(service, w, **overrides):
+    selected = service.current_identity
+    account_epoch = service._account_context_epoch
+    source_epoch = service._source_context_epoch
     return inspect(
         service, requesting_identity_id=overrides.get("reader", "bob"),
         borrowing_account=w.account, exact_notice=w.notice,
+        scope_current=lambda: (
+            service.current_identity is selected
+            and getattr(selected, "identity_id", None) == "bob"
+            and service._account_context_epoch == account_epoch
+            and service._source_context_epoch == source_epoch
+        ),
         lender_placement_id=overrides.get("placement", "placement-a"),
     )
 

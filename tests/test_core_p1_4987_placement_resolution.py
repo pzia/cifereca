@@ -47,8 +47,17 @@ def case(monkeypatch):
 
 
 def inspect(service, w):
+    selected = service.current_identity
+    account_epoch = service._account_context_epoch
+    source_epoch = service._source_context_epoch
     return resolve(
         service, requesting_identity_id="bob",
+        scope_current=lambda: (
+            service.current_identity is selected
+            and getattr(selected, "identity_id", None) == "bob"
+            and service._account_context_epoch == account_epoch
+            and service._source_context_epoch == source_epoch
+        ),
         borrowing_account=w.account, exact_notice=w.notice,
     )
 

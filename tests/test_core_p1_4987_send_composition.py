@@ -38,8 +38,17 @@ def environment(monkeypatch):
 
 
 def execute(service, w, *, confirmed=True):
+    selected = service.current_identity
+    account_epoch = service._account_context_epoch
+    source_epoch = service._source_context_epoch
     return send(
         service, requesting_identity_id="bob", borrowing_account=w.account,
+        scope_current=lambda: (
+            service.current_identity is selected
+            and getattr(selected, "identity_id", None) == "bob"
+            and service._account_context_epoch == account_epoch
+            and service._source_context_epoch == source_epoch
+        ),
         exact_notice=w.notice, confirmed=confirmed,
     )
 
