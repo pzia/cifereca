@@ -91,10 +91,10 @@ def test_numilog_search_selects_exact_live_offer_without_entitlement(monkeypatch
         def entitlements(self, **_kw):
             pytest.fail("historical rights forbidden")
     service = NS(current_identity=NS(identity_id="owner"), storage=Store())
-    assert search.obtain_selected_owned(service, item) == "canonical-result"
+    assert search.obtain_selected_owned(service, item, identity_id="owner") == "canonical-result"
     assert calls == [("select", {
         "provider_id": "numilog", "credential_id": "card",
-        "item_id": "edition",
+        "item_id": "edition", "identity_id": "owner",
     })]
 
 

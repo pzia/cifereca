@@ -10,10 +10,16 @@ from ..models import SearchResult
 from ..providers import ProviderConfigurationError
 
 
-def obtain_selected_owned(service, item: SearchResult):
+def obtain_selected_owned(
+    service, item: SearchResult, *, identity_id: str | None = None,
+    expected_epoch: int | None = None,
+):
     """Compatibility entrypoint: no persisted provider right is consulted."""
     try:
-        if (type(item) is not SearchResult
+        if (type(identity_id) is not str or not identity_id
+                or len(identity_id) > 1024
+                or any(c in identity_id for c in "\x00\r\n")
+                or type(item) is not SearchResult
                 or type(item.source_provider) is not str
                 or not item.source_provider
                 or type(item.source_credential) is not str
@@ -31,9 +37,11 @@ def obtain_selected_owned(service, item: SearchResult):
         from .selected_source_offer import (
             select_source_offer_target, obtain_source_offer,
         )
+        pinned = {"expected_epoch": expected_epoch} if expected_epoch is not None else {}
         target = select_source_offer_target(
             service, provider_id=item.source_provider,
             credential_id=item.source_credential, item_id=item.record_id,
+            identity_id=identity_id, **pinned,
         )
         if target is None:
             raise ValueError("explicit_source_not_bound")
