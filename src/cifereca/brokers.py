@@ -1388,7 +1388,8 @@ class AdeptProfileBrokerImpl:
         return profile
 
     def provision(self, name: str, username: str, *, identity_id: str | None = None) -> AdeptProfileRef:
-        if identity_id is not None and self.service.identity_by_id(str(identity_id)) is None:
+        identity = self.service.identity_by_id(str(identity_id)) if identity_id is not None else None
+        if identity_id is not None and identity is None:
             raise ValueError("unknown identity")
         runtime = self._runtime()
         provision = getattr(runtime, "provision_profile", None)
@@ -1442,8 +1443,16 @@ class AdeptProfileBrokerImpl:
                 "Le runtime ADEPT a changé pendant la création du profil.",
                 code="adept_profile_provisioning_incomplete",
             )
-        if identity_id is not None:
-            self.service.storage.adept_profile_binding_set("identity", str(identity_id), profile.profile_id)
+        if identity is not None:
+            # A profile may have been provisioned while local identities were
+            # reloaded or removed. Never bind it to a replacement identity
+            # with the same string identifier.
+            if self.service.identity_by_id(identity.identity_id) is not identity:
+                raise AttentionRequired(
+                    "L’identité ADEPT a changé pendant la création du profil.",
+                    code="adept_profile_provisioning_incomplete",
+                )
+            self.service.storage.adept_profile_binding_set("identity", identity.identity_id, profile.profile_id)
         return profile
 
 
