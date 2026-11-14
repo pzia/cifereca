@@ -1160,6 +1160,21 @@
       ],
       "pr": "#6112",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-local-account-bootstrap-no-default-navigation-fallback",
+      "original": "LibraryService._local_account manufactured an implicit local Account with identity_id='default' when current_identity was absent, without proving an exact configured owner. Bootstrap failure in provider_sessions could reuse that fallback.",
+      "original_classification": "navigation_dependent_implicit_local_owner_fallback",
+      "replacement": "Keep the frozen _local_account(self) ABI but require one native, present and exactly configured Identity object; refuse malformed, missing, duplicate or stale ownership before an Account is constructed. A synthetic default borrower is no longer synthesized. The local source is not an entitlement.",
+      "classification": "removed_implicit_default_local_owner_with_explicit_fail_closed_scope",
+      "evidence": "Live callsites are LibraryService bootstrap and provider_sessions reconnect fallback; both have configured identities after initial _sync_identity_configuration. Tests cover A/B switch, stale object with same ID, missing identity, invalid IDs, removal, duplicate identity and poison Account constructor. No provider GET/POST, SQLite writer or new right.",
+      "tests": [
+        "tests/test_core_p0_5975_local_account_scope.py",
+        "tests/test_library_service_facade_contract.py",
+        "tests/test_core_p0_2055_interactive_provider_startup.py"
+      ],
+      "pr": "#6114",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
