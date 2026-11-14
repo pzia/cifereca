@@ -59,7 +59,7 @@ def _selected_primary_source_current(service, item, identity_id, policy):
 
 
 def manual_borrow_action_diagnostic(
-    service, item: SearchResult,
+    service, item: SearchResult, *, identity_id: str | None = None,
 ) -> dict[str, object]:
     """Inert, provider-neutral scoped admission for new or spent requests.
 
@@ -79,6 +79,7 @@ def manual_borrow_action_diagnostic(
         return manual_borrow_diagnostic(
             service, item, provider_id=item.source_provider,
             docbase=policy.docbase, primary_id=policy.primary_borrower_id,
+            identity_id=identity_id,
             source_current=lambda service_, item_, identity: (
                 resolved_manual_borrow_policy(service_, item_) == policy
                 and _selected_primary_source_current(
@@ -95,7 +96,9 @@ def manual_borrow_action_diagnostic(
         }
 
 
-def manual_borrow_action_available(service, item: SearchResult) -> bool:
+def manual_borrow_action_available(
+    service, item: SearchResult, *, identity_id: str | None = None,
+) -> bool:
     """Inert visibility; supplier quota/offer/permission remain unknown."""
     from .manual_library_borrow import (
         manual_borrow_available, manual_borrow_diagnostic,
@@ -107,10 +110,12 @@ def manual_borrow_action_available(service, item: SearchResult) -> bool:
         return manual_borrow_available(
             service, item, provider_id=item.source_provider,
             docbase=policy.docbase, primary_id=policy.primary_borrower_id,
+            identity_id=identity_id,
         )
     result = manual_borrow_diagnostic(
         service, item, provider_id=item.source_provider,
         docbase=policy.docbase, primary_id=policy.primary_borrower_id,
+        identity_id=identity_id,
         source_current=lambda service_, item_, identity: (
             _selected_primary_source_current(service_, item_, identity, policy)
             and resolved_manual_borrow_policy(service_, item_) == policy
