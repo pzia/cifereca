@@ -4380,8 +4380,10 @@ class LibraryService:
         return sync_projection.identity_statistics(self, identity_id, window_seconds=window_seconds)
 
     def dashboard_state(self) -> list[dict[str, Any]]:
-        """Return dashboard cards without triggering network I/O."""
-        return sync_projection.dashboard_state(self)
+        """Capture GUI selection once, then delegate to headless Core."""
+        admitted = self.current_identity
+        selected = admitted.identity_id if admitted is not None else None
+        return sync_projection.dashboard_state(self, selected_identity_id=selected)
 
     def acquisition_ledger_records(self, *, status: str | None = None) -> list[dict[str, Any]]:
         return self.storage.acquisitions(status=status)
