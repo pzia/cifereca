@@ -29,7 +29,10 @@ dans l'Accueil.
   formateur `digital_loan_availability_lines`.
 - Les coordonnées `identity/provider/credential/borrower/digital`
   restent typées et distinctes ; credential et borrower exact ne sont jamais
-  imprimés comme titre de carte. L'énumération s'appuie sur les comptes
+  imprimés comme titre de carte. Une clé du registre de sessions
+  `(provider, credential)` partagée entre deux profils est
+  `scope_ambiguous` pour chacun (même si un seul des deux paraît
+  connecté) ; les connexions indépendantes restent visibles. L'énumération s'appuie sur les comptes
   **configurés** du profil exact et sur les comptes en mémoire,
   **sans appel** au fournisseur, à Sync, à l'acquisition ou à l'ADEPT.
 - Les méta-attributs purement présentatifs, ajoutés à
