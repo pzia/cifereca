@@ -10,7 +10,9 @@ from typing import Any
 
 from .borrower_scoped_options import linked_borrower_choices
 from .settings_loan_observation import loan_cache_observations
-from ..providers.base import validated_account_option_choices
+from ..providers.base import (
+    validated_account_option_choices, valid_account_option_boolean,
+)
 
 
 class _AccountChoiceText:
@@ -30,6 +32,29 @@ class _AccountChoiceText:
         except ValueError:
             index = 0xFFFFFFFF
         self.row.set_selected(index)
+
+    @property
+    def text(self) -> str:
+        return self.get_text()
+
+
+class _AccountBooleanText:
+    """Expose a Gtk.Switch as an exact, persisted opt-in token.
+
+    Existing generic Settings actions only consume get_text(). They never
+    receive the real switch or convert its value via str(bool).
+    """
+
+    def __init__(self, row: Any):
+        self.row = row
+
+    def get_text(self) -> str:
+        active = self.row.get_active()
+        if active is True:
+            return "on"
+        if active is False:
+            return "off"
+        return ""  # Invalid/stale GTK state must not become consent.
 
     @property
     def text(self) -> str:
@@ -100,8 +125,11 @@ def build_provider_account_editor(
     options = dict(raw_options) if type(raw_options) is dict else {}
     option_fields: dict[str, Any] = {}
     for field in getattr(descriptor, "account_options", ()):
-        choice_mode = getattr(field, "value_type", "text") == "choice"
-        entry = (Adw.ComboRow() if choice_mode else
+        option_type = getattr(field, "value_type", "text")
+        choice_mode = option_type == "choice"
+        boolean_mode = option_type == "boolean"
+        entry = (Adw.ActionRow() if boolean_mode else
+                 Adw.ComboRow() if choice_mode else
                  Adw.PasswordEntryRow() if field.secret else Adw.EntryRow())
         entry.set_title(field.label)
         if field.key in options:
@@ -150,6 +178,16 @@ def build_provider_account_editor(
                 values.index(selected) if selected in values else 0xFFFFFFFF
             )
             option_fields[field.key] = _AccountChoiceText(entry, values)
+        elif boolean_mode:
+            if not valid_account_option_boolean(field) or selected not in ("off", "on"):
+                # An invalid descriptor or legacy string ("yes", "true",
+                # etc.) must never be silently rewritten or become opt-in.
+                invalid_saved_snapshot = True
+            toggle = Gtk.Switch()
+            toggle.set_active(selected == "on")
+            toggle.set_valign(Gtk.Align.CENTER)
+            entry.add_suffix(toggle)
+            option_fields[field.key] = _AccountBooleanText(toggle)
         else:
             entry.set_text(selected)
             option_fields[field.key] = entry
