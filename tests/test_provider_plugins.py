@@ -240,7 +240,7 @@ def test_federated_search_falls_back_and_ranks_title_author_match_first():
         root = Path(td)
         cfg = Config(root / "config.json")
         cfg.set("providers.accounts", [
-            {"id": "flex-1", "provider": "flex", "label": "F", "enabled": True, "credentials": {}, "options": {}},
+            {"id": "flex-1", "provider": "flex", "identity_id": "default", "label": "F", "enabled": True, "credentials": {}, "options": {}},
         ])
         service = LibraryService(cfg, Storage(root / "cache.sqlite3"), Diagnostics(level="detailed"))
         plugin = FlexiblePlugin()
