@@ -18,7 +18,7 @@ _TRACE_LOG = logging.getLogger("cifereca")
 # Schema history is deliberately explicit from 0.7.10 onward.  Databases created
 # before that release had no schema_version metadata; they are treated as v0 and
 # migrated forward transactionally.
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 BASE_SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -1626,6 +1626,57 @@ class Storage:
                 db.execute("RELEASE SAVEPOINT migration_v16")
                 raise
             version = 16
+
+        if version < 17:
+            db.execute("SAVEPOINT migration_v17")
+            try:
+                # A retired Paris grant must never reappear after its
+                # explicit v16 reconfirmation, including after v16 deletion,
+                # profile rotation, a restart, or a direct legacy writer.
+                # Existing unconfirmed/unmigrated Paris rows are untouched.
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS paris_adept_grant_retirements (
+                        credential_id TEXT NOT NULL,
+                        account_id TEXT NOT NULL,
+                        retired_at INTEGER NOT NULL,
+                        PRIMARY KEY(credential_id, account_id)
+                    )
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_paris_adept_retired_insert
+                    BEFORE INSERT ON paris_borrower_adept_bindings
+                    WHEN EXISTS (
+                        SELECT 1 FROM paris_adept_grant_retirements
+                        WHERE credential_id=NEW.credential_id
+                          AND account_id=NEW.account_id
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT, 'adept_legacy_grant_retired');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_paris_adept_retired_update
+                    BEFORE UPDATE ON paris_borrower_adept_bindings
+                    WHEN EXISTS (
+                        SELECT 1 FROM paris_adept_grant_retirements
+                        WHERE credential_id=OLD.credential_id
+                          AND account_id=OLD.account_id
+                    ) OR EXISTS (
+                        SELECT 1 FROM paris_adept_grant_retirements
+                        WHERE credential_id=NEW.credential_id
+                          AND account_id=NEW.account_id
+                    )
+                    BEGIN
+                        SELECT RAISE(ABORT, 'adept_legacy_grant_retired');
+                    END
+                """)
+                cls._write_schema_version(db, 17)
+                db.execute("RELEASE SAVEPOINT migration_v17")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v17")
+                db.execute("RELEASE SAVEPOINT migration_v17")
+                raise
+            version = 17
 
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
@@ -3440,6 +3491,15 @@ class Storage:
             )
             if retired.rowcount != 1:
                 raise ValueError("adept_legacy_grant_retirement_failed")
+            # Persist a tombstone in the SAME SQLite transaction. The DB
+            # triggers veto even direct historical writers after v16 is
+            # deleted; rollback leaves both grant tables unchanged.
+            db.execute(
+                "INSERT OR IGNORE INTO paris_adept_grant_retirements "
+                "(credential_id, account_id, retired_at) VALUES (?, ?, ?)",
+                (scope[1], scope[2], int(time.time())),
+            )
+
 
     def adept_borrower_grant_get(
         self, *, provider_id: str, credential_id: str, account_id: str,

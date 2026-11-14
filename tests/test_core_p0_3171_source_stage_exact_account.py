@@ -19,7 +19,7 @@ def test_source_reference_stage_exact_account_amid_many_siblings(tmp_path):
             register(storage, "A", "seller", "card-A", account=f"sibling-{n}")
         with pytest.raises(ValueError, match="canonical_rights_core_binding_changed"):
             persist_attested_source_references(storage, snapshot)
-        assert storage.schema_version() == 16
+        assert storage.schema_version() == 17
         register(storage, "A", "seller", "card-A", account="buyer-A")
         assert persist_attested_source_references(storage, snapshot) == 1
         assert persist_attested_source_references(storage, snapshot) == 0
