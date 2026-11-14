@@ -138,3 +138,31 @@ def test_provenance_does_not_infer_activity_from_a_legacy_entitlement():
     row = _row(alice)
     row["entitlement_id"] = "legacy"
     assert _check(host, row) is False
+
+
+def test_exact_empty_native_primary_is_not_guessed_from_gtk():
+    primary = Account(
+        provider_id=PROVIDER, credential_id="card-A",
+        unique_id="", identity_id="alice", is_primary=True,
+    )
+    cache = {("account", _loan_cache_key(primary)): [asdict(_loan(primary))]}
+    host, reads = _host([primary], cache)
+    assert _check(host, _row(primary)) is True
+    assert reads == [("account", _loan_cache_key(primary))]
+
+
+def test_ambiguous_primary_alias_and_native_upstream_id_fail_closed():
+    primary = Account(
+        provider_id=PROVIDER, credential_id="card-A",
+        unique_id="", identity_id="alice", is_primary=True,
+    )
+    literal = Account(
+        provider_id=PROVIDER, credential_id="card-A",
+        unique_id="primary", identity_id="alice", is_primary=False,
+    )
+    cache = {("account", _loan_cache_key(primary)): [asdict(_loan(primary))]}
+    host, reads = _host([primary, literal], cache)
+    row = _row(primary)
+    row["account_id"] = "primary"
+    assert _check(host, row) is False
+    assert reads == []
