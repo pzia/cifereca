@@ -179,7 +179,7 @@ class SelectionTests(unittest.TestCase):
             "src/cifereca/core/device_usb_binding_proposal.py",
         ):
             expected = (mod.READER_USB_GTK + mod.READER_INSPECTION_GTK
-                        if owner.endswith("device_usb_discovery.py") else mod.READER_USB_GTK)
+                        if owner.startswith("src/cifereca/core/") else mod.READER_USB_GTK)
             self.assertEqual(set(mod.select([owner])), set(expected), owner)
 
     def test_p1_6041_reader_page_triggers_pairing_and_inspection_gates(self):
