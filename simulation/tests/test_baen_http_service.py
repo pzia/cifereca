@@ -57,6 +57,21 @@ class LocalBaenServer:
         except HTTPError as error:
             return error.code, dict(error.headers), error.read()
 
+    def post(self, url: str, body: bytes):
+        self.calls.append(url + "?" + body.decode("ascii"))
+        request = httpx.URL(url)
+        if request.scheme != "https" or request.host != "www.baen.com":
+            raise AssertionError("Transport de test : hôte Baen exact requis")
+        local = self.root + request.raw_path.decode("ascii")
+        try:
+            with urlopen(Request(
+                local, data=body, method="POST",
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            ), timeout=3) as result:
+                return result.status, dict(result.headers), result.read()
+        except HTTPError as error:
+            return error.code, dict(error.headers), error.read()
+
     def client(self, *, timeout_on_query: bool = False):
         def fetch(request):
             # A real socket stall would make this test timing-dependent.
@@ -65,7 +80,11 @@ class LocalBaenServer:
             if timeout_on_query and request.url.params.get("q") == "timeout":
                 self.calls.append(str(request.url))
                 raise httpx.ReadTimeout("PRIVATE_SYNTHETIC_TIMEOUT", request=request)
-            status, headers, content = self.get(str(request.url))
+            if request.method == "POST":
+                status, headers, content = self.post(
+                    str(request.url), request.content)
+            else:
+                status, headers, content = self.get(str(request.url))
             return httpx.Response(status, headers=headers, content=content, request=request)
         return httpx.Client(transport=httpx.MockTransport(fetch), trust_env=False)
 
@@ -127,12 +146,14 @@ class BaenContractTests(unittest.TestCase):
             transport = RecordingTransport(server)
             session = make_session(server, transport=transport)
             try:
-                session.page_size = 2
+                session.page_size = 2  # Legacy free-text q only; AJAX uses 20.
                 one = session.search("", page=0)
-                self.assertEqual([i.title for i in one], ["The Firefly Atlas", "The Garden of Words"])
+                self.assertEqual([i.title for i in one], [
+                    "The Firefly Atlas", "The Garden of Words", "The Last Shore",
+                ])
                 self.assertTrue(all(i.source_provider == "baen" for i in one))
                 two = session.search("", page=1)
-                self.assertEqual([i.title for i in two], ["The Last Shore"])
+                self.assertEqual(two, [])
                 self.assertEqual(session.search("", page=2), [])
                 self.assertEqual([i.title for i in session.search("Garden")], ["The Garden of Words"])
                 self.assertEqual(session.search("nothing"), [])
@@ -140,7 +161,7 @@ class BaenContractTests(unittest.TestCase):
                     UNVERIFIED_SEARCH_WARNING,
                 ], "zero markup cannot attest the upstream q/page semantics")
                 self.assertIn("page=2", server.calls[1])
-                self.assertIn("pageSize=2", server.calls[1])
+                self.assertIn("pageSize=20", server.calls[1])
 
                 item = one[0]
                 detail = session.holdings(item)
