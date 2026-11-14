@@ -127,7 +127,12 @@ def make_execution_report(
         exit_code in (0, 1)
         and capture.collection_errors == 0
         and bool(records)
-        and all(row["outcome"] in OUTCOMES and row["attempted"] for row in records)
+        and all(
+            row["outcome"] in OUTCOMES
+            and row["attempted"]
+            and "teardown" in capture.phases.get(row["nodeid"], {})
+            for row in records
+        )
         and (
             (exit_code == 0 and not totals["failed"] and not totals["error"])
             or (exit_code == 1 and (totals["failed"] or totals["error"]))
