@@ -152,6 +152,24 @@ def test_facade_blocks_a_b_a_selection_even_if_the_object_is_restored(monkeypatc
     assert captured == ["alice", "alice"]
 
 
+def test_public_owned_action_rejects_foreign_profile_before_core_dispatch(monkeypatch):
+    from cifereca.core import owned_library_download
+    session = object()
+    target = selection.SourceOfferTarget(
+        identity_id="bob", provider_id="future-books",
+        credential_id="card-B", account_id="account-B",
+        item_id="edition-1", branch="private-books",
+        session=session, selection_epoch=4,
+    )
+    host = NS(current_identity=NS(identity_id="alice"))
+    monkeypatch.setattr(
+        owned_library_download, "obtain_owned_library_item",
+        lambda *_a: pytest.fail("foreign action must not reach canonical Core"),
+    )
+    with pytest.raises(owned.OwnedDownloadRejected, match="owned_download_unavailable"):
+        LibraryService.obtain_owned_library_item(host, target)
+
+
 def test_core_selection_workers_do_not_reference_current_identity():
     for module, names in (
         (selection, (
