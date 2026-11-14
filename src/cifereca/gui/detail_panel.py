@@ -23,6 +23,7 @@ from .detail_selection_perf import current_detail_trace
 from .detail_model import fr_date, text_or_dash, detail_display_value, detail_language, compact_availability_label, compact_detail_rows, detail_subtitle_lines, book_detail_presentation, search_detail_borrow_action_candidate, search_detail_support_label, catalogue_availability_label
 from .action_widgets import clear_box, add_css
 from .loan_download_status import loan_download_unavailable_message
+from ..core.explicit_loan_acsm_visibility import explicit_loan_acsm_action_available
 from .loan_view import loan_due_detail_value
 
 
@@ -772,21 +773,23 @@ class DetailPanel(Gtk.Box):
                     self._group(
                         "Téléchargement du prêt", [("Disponibilité", reason)],
                     )
-        if (include_pnb_action and loan.source_provider == "bnf-pret"
-                and loan.medium == "digital" and loan.state == "active"):
-            prepare_bnf = self.window.action_button(
-                "Récupérer le jeton ACSM BnF…", "document-save-symbolic",
+        if (include_pnb_action
+                and explicit_loan_acsm_action_available(self.window.service, loan)):
+            # The static installed session contract selects this action.
+            # Button visibility never proves consent, rights or a live offer.
+            prepare_token = self.window.action_button(
+                "Récupérer le jeton ACSM du prêt…", "document-save-symbolic",
             )
-            prepare_bnf.set_tooltip_text(
-                "Action volontaire : vérifie le prêt BnF du compte exact, "
+            prepare_token.set_tooltip_text(
+                "Action volontaire : vérifie le prêt du compte exact, "
                 "puis demande séparément l'accord pour l'import ADEPT. "
                 "Aucun nouvel emprunt."
             )
-            prepare_bnf.connect(
+            prepare_token.connect(
                 "clicked",
-                lambda _b: self.window.prepare_explicit_loan_acsm_for_loan(loan, prepare_bnf),
+                lambda _b: self.window.prepare_explicit_loan_acsm_for_loan(loan, prepare_token),
             )
-            buttons.append(prepare_bnf)
+            buttons.append(prepare_token)
         if include_pnb_action and downloadable:
             prepare = self.window.action_button("Télécharger le livre du prêt", "document-save-symbolic", suggested=True)
             prepare.connect("clicked", lambda _b: self.window.prepare_pnb_for_loan(loan, send=False, control=prepare))
