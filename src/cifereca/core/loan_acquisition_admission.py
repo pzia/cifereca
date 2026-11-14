@@ -22,6 +22,21 @@ class AutomaticLoanAdmission:
 
 def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     request_ref = loan_trace_ref(loan, None)
+    # Loan provenance is plugin-provided. Do not call storage with custom
+    # objects or let a hostile __str__ select/skip the borrower grant gate.
+    # No UI/default identity, entitlement or runtime can repair this proof.
+    if (type(loan.source_provider) is not str or not loan.source_provider
+            or type(loan.source_credential) is not str
+            or not loan.source_credential):
+        _TRACE_LOG.warning(
+            "TRACE download loan_auto blocked reason=source_scope_unproven request_ref=%s",
+            request_ref,
+        )
+        return AutomaticLoanAdmission(refusal={
+            "status": "attention_required", "loan_id": loan.id,
+            "code": "adept_identity_unproven",
+            "reason": "source_scope_unproven", "retry": "explicit_only",
+        })
     bound_identity_id = self.storage.identity_for_connection(
         loan.source_provider, loan.source_credential
     )
