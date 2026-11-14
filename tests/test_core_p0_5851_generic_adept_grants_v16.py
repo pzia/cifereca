@@ -89,6 +89,10 @@ def test_profile_rotation_and_connection_rebinding_invalidate_generic_grant(tmp_
         assert store.adept_borrower_grant_get(**coords) is not None
         store.adept_profile_binding_set("identity", "bob", "new-profile")
         assert store.adept_borrower_grant_get(**coords) is None
+        # Rotating back never resurrects the old explicit confirmation.
+        store.adept_profile_binding_set("identity", "bob", "bob-profile")
+        assert store.adept_borrower_grant_get(**coords) is None
+        store.adept_profile_binding_set("identity", "bob", "new-profile")
         with pytest.raises(ValueError, match="evidence_invalid"):
             store.adept_borrower_grant_put(
                 **coords, connection_identity_id="alice",
@@ -143,3 +147,29 @@ def test_v15_upgrade_creates_empty_grants_without_copying_legacy(tmp_path):
             credential_id="alice-paris", account_id="linked-123") is not None
     finally:
         upgraded.close()
+
+
+def test_connection_reassignment_revokes_grant_even_after_owner_restoration(tmp_path):
+    service, _ = service_with_linked_borrower(tmp_path)
+    store = service.storage
+    coords = dict(provider_id="paris", credential_id="alice-paris",
+                  account_id="linked-123")
+    try:
+        store.adept_borrower_grant_put(
+            **coords, connection_identity_id="alice",
+            borrower_identity_id="bob", profile_id="bob-profile",
+            confirmed=True,
+        )
+        assert store.adept_borrower_grant_get(**coords) is not None
+        with store._lock, store._connect() as db:
+            db.execute(
+                "UPDATE provider_connections SET identity_id='bob' "
+                "WHERE provider_id='paris' AND credential_id='alice-paris'"
+            )
+            db.execute(
+                "UPDATE provider_connections SET identity_id='alice' "
+                "WHERE provider_id='paris' AND credential_id='alice-paris'"
+            )
+        assert store.adept_borrower_grant_get(**coords) is None
+    finally:
+        service.close()
