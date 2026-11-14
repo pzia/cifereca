@@ -204,7 +204,9 @@ def manual_borrow_diagnostic(
     reason = "local_admission_unavailable"
     possible = False
     try:
-        if type(identity_id) is not str or not identity_id:
+        if (type(identity_id) is not str or not identity_id
+                or len(identity_id) > 1024
+                or any(c in identity_id for c in "\x00\r\n")):
             reason = "identity_not_selected"
         elif (type(item) is not result_type
               or item.source_provider != provider_id
