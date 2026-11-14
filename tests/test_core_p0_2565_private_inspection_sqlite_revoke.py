@@ -87,8 +87,9 @@ def test_direct_fresh_session_retired_numilog_link_is_readonly(rig):
     before = {name: _rows(service, name) for name in
               ("placements", "entitlements", "acquisition_ledger", "artifacts")}
     result = session.preview_manual_attachment(right, file)
-    assert result == {"status": "blocked", "read_only": True,
-                      "reason_code": "canonical_source_validation_required"}
+    # Retired manual pairing cannot propose the former fresh-validation
+    # transaction. Canonical A-to-B source delivery remains separate.
+    assert result == {"status": "unavailable", "read_only": True}
     assert session.confirm_manual_attachment(right, file, user_confirmed=True)["status"] == "unavailable"
     assert session.preview_manual_undo(right, file)["status"] == "unavailable"
     assert session.confirm_manual_undo(right, file, user_confirmed=True)["status"] == "unavailable"
