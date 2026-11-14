@@ -69,6 +69,12 @@ def resolve_cross_profile_lender_placement(
                 loan=progress.loan if progress.loan in
                      ("confirmed", "unknown", "not_attempted") else "unknown",
             )
+        # A revoked requester cannot initiate even a passive read of another
+        # profile's precise local file placement.
+        if scope_current() is not True:
+            return LenderLocalPlacement(
+                "unavailable", "lender_scope_unverified", loan="unknown",
+            )
         # The public LibraryService facade has a frozen four-coordinate ABI.
         # Use the existing internal exact-account reader, not that facade.
         row = local_placement_for_source(

@@ -65,6 +65,10 @@ def preflight_cross_profile_loan_transfer(
         # provider or filesystem access is triggered by this projection.
         reader_epoch = service._account_context_epoch
         source_epoch = service._source_context_epoch
+        # Never read another profile's placement after the loan inspection
+        # has revoked the requesting identity or its source lease.
+        if scope_current() is not True:
+            return denied
         placement = service.storage.placement_get(lender_placement_id)
         if (scope_current() is not True
                 or service._account_context_epoch != reader_epoch

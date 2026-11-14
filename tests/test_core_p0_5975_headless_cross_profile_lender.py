@@ -170,3 +170,26 @@ def test_facade_supplies_lease_without_changing_public_signature(monkeypatch):
     )
     assert outcome.reason_code == "lender_scope_unverified"
     assert len(captured) == 1
+
+def test_revoked_after_claim_does_not_query_private_placement(monkeypatch):
+    w = witness()
+    class NoPrivateRead(Headless):
+        storage = NS(placement_get=Mock(
+            side_effect=AssertionError("revoked before placement read"),
+        ))
+    host = NoPrivateRead()
+    valid = {"current": True}
+    def observed(*_a, **_kwargs):
+        valid["current"] = False
+        return progress.CrossProfileBorrowProgress(
+            "confirmed", "unavailable", "blocked",
+            "lender_loan_confirmed_transfer_unverified",
+        )
+    monkeypatch.setattr(preflight, "observed_cross_profile_borrow_progress", observed)
+    result = preflight.preflight_cross_profile_loan_transfer(
+        host, requesting_identity_id="bob", borrowing_account=w.account,
+        exact_notice=w.notice, lender_placement_id="P",
+        scope_current=lambda: valid["current"],
+    )
+    assert result.executable is False
+    host.storage.placement_get.assert_not_called()
