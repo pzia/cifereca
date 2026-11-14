@@ -33,6 +33,34 @@ def _trusted_baen_url(value):
         return False
 
 
+def _public_free_library_image_url(value):
+    """Only a public, unsigned Baen catalogue image from the observed JSON.
+
+    An upstream imageUrl is bibliographic metadata, not a download offer or
+    account URL. Do not publish a signed, foreign or path-rewritten URL to
+    GTK's image loader. Unqualified images stay absent without hiding a book.
+    """
+    if type(value) is not str or len(value) > 2048:
+        return None
+    if not _trusted_baen_url(value):
+        return None
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return None
+    path = parsed.path
+    if (parsed.query or parsed.fragment
+            or not path.startswith('/media/catalog/product/')
+            or '%' in path or '\\' in path
+            or any(segment in ('', '.', '..') for segment in path.split('/')[1:])
+            or not re.fullmatch(
+                r'/media/catalog/product/[A-Za-z0-9_./-]+\.(?:jpe?g|png|webp)',
+                path, re.I,
+            )):
+        return None
+    return value
+
+
 def _listing_product_href(href, attrs, page_html):
     """Select only a plausible product URL; never a category or account link.
 
@@ -129,7 +157,9 @@ def _observed_free_library_json(response, credential_id, page):
             id='baen:'+rid, record_id=rid, docbase='BAEN',
             medium='digital', title=title, author=None, type='Livre numérique',
             format=None, publisher='Baen', published_at=None,
-            description=None, thumbnail_url=None, friendly_url=url,
+            description=None, thumbnail_url=_public_free_library_image_url(
+                entry.get('imageUrl'),
+            ), friendly_url=url,
             scenario='BAEN_FREE_LIBRARY', source_provider='baen',
             source_credential=credential_id, download_url=None,
             content_type='ebook', source_collection='public',

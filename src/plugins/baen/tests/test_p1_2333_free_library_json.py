@@ -10,7 +10,7 @@ import pytest
 from cifereca.plugin_api import ProviderError
 from cifereca_baen import (
     BaenSession, FREE_JSON, FREE_CATEGORY_ID, FREE_JSON_PAGE_SIZE,
-    UNVERIFIED_SEARCH_WARNING,
+    UNVERIFIED_SEARCH_WARNING, _public_free_library_image_url,
 )
 
 
@@ -205,3 +205,59 @@ def test_owned_download_redirect_to_login_never_becomes_public_epub(tmp_path):
         assert not tmp_path.exists() or not list(tmp_path.iterdir())
     finally:
         client.close()
+
+
+def test_free_library_json_projects_only_public_unsigned_baen_cover():
+    image = "https://www.baen.com/media/catalog/product/cache/public/cover.webp"
+    data = payload(count=2)
+    data["productData"][0]["imageUrl"] = image
+    data["productData"][1]["imageUrl"] = (
+        "https://www.baen.com/customer/account/login"
+    )
+    client = session(lambda _request: httpx.Response(200, json=data))
+    try:
+        rows = client.search("", page=1)
+        assert len(rows) == 2
+        assert rows[0].thumbnail_url == image
+        assert rows[1].thumbnail_url is None
+        assert rows[0].friendly_url.endswith("/synthetic-0.html")
+        assert not rows[0].downloadable and not rows[0].owned
+        assert client.last_search_warnings == [UNVERIFIED_SEARCH_WARNING]
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("image", [
+    None, False, 1, {}, "/media/catalog/product/cover.jpg",
+    "http://www.baen.com/media/catalog/product/cover.jpg",
+    "https://attacker.example/media/catalog/product/cover.jpg",
+    "https://www.baen.com@attacker.example/media/catalog/product/cover.jpg",
+    "https://www.baen.com/customer/account/login.png",
+    "https://www.baen.com/download/index/owned/id/42.jpg",
+    "https://www.baen.com/media/catalog/product/cover.svg",
+    "https://www.baen.com/media/catalog/product/cover.jpg?token=PRIVATE",
+    "https://www.baen.com/media/catalog/product/cover.jpg#PRIVATE",
+    "https://www.baen.com/media/catalog/product/%2e%2e/cover.jpg",
+    "https://www.baen.com/media/catalog/product/../cover.jpg",
+    "https://www.baen.com/media/catalog/product//cover.jpg",
+    "https://www.baen.com:444/media/catalog/product/cover.jpg",
+    "https://www.baen.com/media/catalog/product/cover.jpg\\private",
+])
+def test_json_cover_never_promotes_foreign_signed_or_private_image(image):
+    assert _public_free_library_image_url(image) is None
+
+
+def test_invalid_optional_cover_preserves_bibliographic_entry():
+    data = payload(count=1)
+    data["productData"][0]["imageUrl"] = (
+        "https://www.baen.com/media/catalog/product/cover.jpg?session=PRIVATE"
+    )
+    current = session(lambda _request: httpx.Response(200, json=data))
+    try:
+        rows = current.search("")
+        assert len(rows) == 1
+        assert rows[0].thumbnail_url is None
+        assert rows[0].title == "SYNTHETIC TITLE 0"
+        assert not rows[0].downloadable
+    finally:
+        current.close()

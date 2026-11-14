@@ -31,6 +31,13 @@ archive conservée dans Git**). Route observée dans la navigation Free Library 
   `owned=False`, `downloadable=False`, aucune URL de téléchargement,
   auteur/ISBN/droit non inférés. Une ligne malformée est rejetée et signale
   des résultats partiels.
+- Le champ optionnel `imageUrl` fournit une vignette **bibliographique
+  uniquement** quand il désigne une image HTTPS non signée du répertoire
+  public `www.baen.com/media/catalog/product/` (`jpg/jpeg/png/webp`,
+  sans query, fragment, identifiant, chemin encodé ni segment `..`).
+  Sinon l'image reste absente **sans supprimer la notice**. Cette validation
+  syntaxique n'atteste pas qu'un hôte distant serve réellement l'image,
+  et ne crée aucune acquisition, possession ou droit.
 - `search(query non vide)` conserve la route historique GET avec `q`,
   toujours **non qualifiée**. Aucun filtrage global de recherche libre ne
   peut être revendiqué depuis les pages Free Library. Les paramètres,
