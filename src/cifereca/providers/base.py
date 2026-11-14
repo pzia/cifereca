@@ -122,7 +122,7 @@ class AccountOptionField:
     legacy_config_key: str | None = None
     # Declarative validation; existing provider options remain text by default.
     # Numeric values stay decimal strings in the opaque provider account config.
-    value_type: Literal["text", "unsigned_integer", "choice", "url"] = "text"
+    value_type: Literal["text", "unsigned_integer", "choice", "url", "boolean"] = "text"
     min_value: int | None = None
     max_value: int | None = None
     help_text: str = ""
@@ -193,6 +193,23 @@ def valid_account_option_url(field: AccountOptionField, value: str) -> bool:
     except (UnicodeError, ValueError):
         return False
     return True
+
+
+def valid_account_option_boolean(field: AccountOptionField) -> bool:
+    """Admit an explicit, opt-in-safe toggle descriptor.
+
+    The public account schema stores canonical "off"/"on" strings, not JSON
+    booleans. A new account MUST begin with opt-in off; an invalid descriptor
+    cannot become implicit provider consent through GTK's default switch.
+    """
+    return (
+        getattr(field, "value_type", None) == "boolean"
+        and type(getattr(field, "default", None)) is str
+        and field.default == "off"
+        and getattr(field, "secret", None) is False
+        and type(getattr(field, "choices", None)) is tuple
+        and not field.choices
+    )
 
 
 def validated_account_option_choices(

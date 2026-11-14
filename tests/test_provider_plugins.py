@@ -151,6 +151,12 @@ def test_digital_acquisition_carries_borrower_acsm_and_drm():
         )
         service.accounts = [primary, linked]
         service.current_account = primary
+        # This fixture exercises an admitted digital acquisition, so the
+        # source owner must be persisted instead of inferred from GTK.
+        service.storage.provider_connection_put({
+            "identity_id": service.current_identity.identity_id,
+            "provider_id": "paris", "credential_id": "legacy", "enabled": True,
+        })
         loan = Loan(
             id="loan-linked", provider="DILICOM", medium="digital", record_id="42",
             title="Linked loan", due_at="2026-10-01T00:00:00+00:00",

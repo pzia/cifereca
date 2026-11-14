@@ -859,9 +859,21 @@ class LibraryService:
         return next((identity for identity in self.identities if identity.identity_id == identity_id), None)
 
     def identity_for_connection(self, provider_id: str, credential_id: str) -> Identity:
+        """Resolve only a persisted exact provider/credential owner.
+
+        A disconnected, removed or malformed binding cannot inherit the
+        GTK-selected identity or first local profile.
+        """
+        if (type(provider_id) is not str or not provider_id
+                or type(credential_id) is not str or not credential_id):
+            raise ProviderConfigurationError("provider_connection_identity_unproven")
         identity_id = self.storage.identity_for_connection(provider_id, credential_id)
+        if type(identity_id) is not str or not identity_id:
+            raise ProviderConfigurationError("provider_connection_identity_unproven")
         identity = self.identity_by_id(identity_id)
-        return identity or self.current_identity or self.identities[0]
+        if identity is None or identity.identity_id != identity_id:
+            raise ProviderConfigurationError("provider_connection_identity_unproven")
+        return identity
 
     def normal_paris_adept_status(self, identity_id: str) -> dict[str, Any]:
         """Read-only status of the normal Paris-primary/ADEPT configuration.
@@ -3087,7 +3099,9 @@ class LibraryService:
                     item.source_provider, item.source_credential,
                 ).identity_id
             except Exception:
-                identity_id = self.current_identity.identity_id if self.current_identity else None
+                # A failed exact-source owner lookup never reattributes an
+                # acquisition attempt to a navigated GTK identity.
+                identity_id = None
         try:
             result = (self._acquire_direct_item_impl(item, _admission=_admission) if _admission is not None
                       else self._acquire_direct_item_impl(item))
@@ -3311,9 +3325,12 @@ class LibraryService:
                 loan, connection_identity_id=identity.identity_id,
             )
         else:
-            identity = self.identity_for_connection(
-                loan.source_provider, loan.source_credential
-            )
+            try:
+                identity = self.identity_for_connection(
+                    loan.source_provider, loan.source_credential
+                )
+            except ProviderConfigurationError:
+                return {"status": "adept_identity_unproven", "return_available": False}
             borrower_identity_id = identity.identity_id
 
         all_rights = self.storage.entitlements(provider_id=loan.source_provider)
