@@ -1529,7 +1529,11 @@ class LibraryService:
         credential_id = row.get("credential_id")
         account_id = row.get("account_id")
         if any(type(value) is not str or not value
-               for value in (identity_id, provider_id, credential_id, account_id)):
+               for value in (identity_id, provider_id, credential_id)):
+            return False
+        # Empty native upstream UID is a valid exact primary coordinate;
+        # it is not interchangeable with an unverified "primary" alias.
+        if type(account_id) is not str:
             return False
         # A literal upstream borrower "primary" may coexist with the empty
         # primary sentinel. Ambiguous native accounts must not be selected.
