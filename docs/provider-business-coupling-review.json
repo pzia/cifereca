@@ -88,6 +88,21 @@
       ],
       "pr": "#5995",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-adept-loan-display-gtk-last-loans",
+      "original": "src/cifereca/services.py::_provider_loan_active_for_acquisition uses self.last_loans",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "core.provider_sessions.provider_loan_active_for_acquisition exact v2 borrower cache",
+      "classification": "removed_implicit_navigation_loan_observation",
+      "evidence": "The display-only ADEPT activity predicate no longer reads current_identity/current_account/last_loans. It obtains a v2 cache keyed by exact identity/provider/credential/borrower, validates each Loan and requires active status; legacy Entitlement only correlates already-observed exact provider loan, never grants rights. One historical method signature remains a thin delegation.",
+      "tests": [
+        "tests/test_core_p0_5851_b_exact_loan_status_cache.py",
+        "tests/test_adept_manual_binding.py",
+        "tests/test_adept_attested_historical_return.py"
+      ],
+      "pr": "#5997",
+      "in_ast_metric": false
     }
   ]
 }
