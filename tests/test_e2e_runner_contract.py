@@ -837,6 +837,12 @@ def test_p1_6041_xtest_callbacks_relinquish_real_glib_main_loop():
     assert 'button.connect("clicked", on_pair_clicked)' in probe
     assert "device.xtst.XTestFakeButtonEvent(" in probe
     assert 'native.pick(logical_x, logical_y, Gtk.PickFlags.DEFAULT)' in probe
+    # GTK Native transform is surface->widget; XTEST requires its inverse.
+    assert "local_x - surface_tx" in probe
+    assert "local_y - surface_ty" in probe
+    assert "qwx.value / scale + surface_tx" in probe
+    assert "qwy.value / scale + surface_ty" in probe
+    assert "device.window_point(native, local_x, local_y)" not in probe
     assert 'P1_6041_X11_WIDGET_HIT=' in probe
     assert 'P1_6041_XTEST_BUTTON_QUEUED=' in probe
 
