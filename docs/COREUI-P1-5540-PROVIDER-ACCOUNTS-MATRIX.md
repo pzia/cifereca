@@ -37,6 +37,7 @@ n'atteste pas la validité d'un abonnement ou d'une session distante.
   `emprunteur unique_id + branche`. Les valeurs numériques sauvegardées
   demeurent des chaînes décimales bornées. Les options `boolean` exigent
   un opt-in `off` initial ; les URLs excluent notamment le userinfo.
+- **Paris :** les deux plafonds primaires ont désormais une portée déclarative explicite : `advisory_loan_medium="digital"` (DILICOM) et `advisory_loan_medium="physical"` (SYRACUSE). Le champ physique ne participe jamais au calcul du reste numérique ; ces métadonnées ne sont ni un quota serveur ni un droit de prêt.
 - `src/cifereca/gui/settings_account_editor.py` : éditeur déclaratif
   `Adw.PasswordEntryRow` pour credential secret, `Adw.ComboRow`
   pour un choix, contrôle booléen, entrée et éditeur des options par
