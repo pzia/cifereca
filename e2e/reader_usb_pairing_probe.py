@@ -157,6 +157,20 @@ def main() -> int:
         )[-1],
     )
     button.add_controller(key_observer)
+    # Observe delivery at the native toplevel *before* the button gesture
+    # may claim a sequence. These controllers cannot fabricate a click.
+    native_pointer = Gtk.EventControllerLegacy()
+    native_pointer.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    native_pointer.connect("event", observe_pointer)
+    window.add_controller(native_pointer)
+    native_key = Gtk.EventControllerKey()
+    native_key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    native_key.connect(
+        "key-pressed", lambda *_: (
+            state.__setitem__("key_seen", state["key_seen"] + 1), False,
+        )[-1],
+    )
+    window.add_controller(native_key)
     box.append(button)
     box.append(window._reader_status_label)
     window.set_child(box)
@@ -287,7 +301,17 @@ def main() -> int:
         if not state["x11_target_window"]:
             state["checkpoint"] = "x11_hit_mismatch"
             raise AssertionError("XTEST root hit does not match GTK native")
-        device.click(screen_x, screen_y)
+        # A pressed/released pair dispatched as two server acknowledgements
+        # allows GTK4's gesture recognizer to inspect the real native press
+        # before the release. Both events remain strictly XTEST events.
+        device.move(screen_x, screen_y)
+        device.xtst.XTestFakeButtonEvent(device.display, 1, True, 0)
+        device.x11.XSync(device.display, False)
+        pump()
+        sleep(0.075)
+        device.xtst.XTestFakeButtonEvent(device.display, 1, False, 0)
+        device.x11.XSync(device.display, False)
+        pump()
 
     def toggle_expert(widget):
         was_active = widget.get_active()
