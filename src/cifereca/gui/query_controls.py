@@ -430,9 +430,12 @@ class LocalQueryControls(QueryControls):
                 self._scope_values = scope_values
             # A selection can become invalid even if the model/choices do
             # not change (late GTK notification after a profile refresh).
-            # Recover to the view's explicit All default without I/O.
-            if selected_scope not in scope_values:
-                self.scope.set_selected(0)
+            # Rebase a *valid* selection when facets changed their indices;
+            # otherwise recover to this view's explicit All default.
+            self.scope.set_selected(
+                scope_values.index(selected_scope)
+                if selected_scope in scope_values else 0
+            )
             self.scope.set_visible(known_medium)
             self.types.set_choices(tuple(
                 (value, label) for value, label in self._format_labels.items() if value in formats
