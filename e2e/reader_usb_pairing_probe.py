@@ -155,10 +155,48 @@ def main() -> int:
             sleep(0.025)
         raise AssertionError("gtk_" + key + "_not_observed")
 
+    def focus_native(widget):
+        # Xvfb has no window manager to grant keyboard input focus on click.
+        # The X11 surface belongs to the REAL Gtk.Window/Adw.MessageDialog.
+        # This only focuses the window: all activations still use XTEST.
+        import ctypes as C
+        from native_capture import pointer
+
+        native = widget.get_native()
+        if native is None or native.get_surface() is None:
+            raise RuntimeError("GTK native surface unavailable")
+        gtk_lib = C.CDLL("libgtk-4.so.1")
+        gtk_lib.gdk_x11_surface_get_xid.argtypes = [C.c_void_p]
+        gtk_lib.gdk_x11_surface_get_xid.restype = C.c_ulong
+        xid = gtk_lib.gdk_x11_surface_get_xid(
+            pointer(native.get_surface()),
+        )
+        if not xid:
+            raise RuntimeError("X11 native surface unavailable")
+        device.x11.XSetInputFocus.argtypes = [
+            C.c_void_p, C.c_ulong, C.c_int, C.c_ulong,
+        ]
+        device.x11.XSetInputFocus.restype = C.c_int
+        device.x11.XSetInputFocus(device.display, xid, 1, 0)
+        device.x11.XSync(device.display, False)
+        widget.grab_focus()
+        pump()
+
     def click(widget):
         until(lambda: widget.get_mapped(), "widget_mapped")
+        focus_native(widget)
         device.click_widget(widget)
         pump()
+
+    def toggle_expert(widget):
+        was_active = widget.get_active()
+        click(widget)
+        if widget.get_active() is was_active:
+            # Pure XTEST keyboard fallback, never set_active or emit clicked.
+            focus_native(widget)
+            device.key("space", True)
+            device.key("space", False)
+            pump()
 
     def open_dialog():
         before = state["button_clicks"]
@@ -168,6 +206,13 @@ def main() -> int:
             # Retry exactly once, still via XTEST, never by calling the
             # product handler directly or emitting a fake Gtk signal.
             click(button)
+        if state["button_clicks"] == before:
+            # XTEST Return on a genuinely focused GTK button also validates
+            # keyboard access when an unmanaged Xvfb window rejects pointers.
+            focus_native(button)
+            device.key("Return", True)
+            device.key("Return", False)
+            pump()
         if state["button_clicks"] == before:
             state["checkpoint"] = "button_not_clicked"
             raise AssertionError("GTK/XTEST pairing button did not activate")
@@ -209,12 +254,12 @@ def main() -> int:
         assert "Aucun volume" in status.get_text()
         assert chooser.get_model().get_n_items() == 1
         assert not uuid.get_visible() and label.get_visible()
-        click(expert)  # Actual GTK/XTEST click into the expert checkbutton.
+        toggle_expert(expert)  # Actual GTK/XTEST click into the expert checkbutton.
         until(lambda: expert.get_active() and uuid.get_visible()
               and not chooser.get_visible() and not label.get_visible(),
               "expert_mode")
         assert notice.get_visible()
-        click(expert)
+        toggle_expert(expert)
         until(lambda: not expert.get_active() and chooser.get_visible()
               and label.get_visible() and not uuid.get_visible(),
               "chooser_return")
@@ -294,7 +339,7 @@ def main() -> int:
         window.service.current_identity = NS(identity_id="alice")
         state["volumes"] = ()
         dialog, label, chooser, refresh, status, name, expert, uuid, notice = open_dialog()
-        click(expert)
+        toggle_expert(expert)
         until(lambda: expert.get_active() and uuid.get_visible(), "manual_uuid")
         name.set_text("Lecteur expert")
         uuid.set_text("CCCC-3333")
