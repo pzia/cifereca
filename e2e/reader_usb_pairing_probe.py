@@ -22,7 +22,7 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT / "environnements/openai-chat-debian
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk
 from PIL import ImageGrab
 
 from cifereca.core import device_usb_discovery as discovery
@@ -137,12 +137,12 @@ def main() -> int:
             state["dialog_build_errors"] += 1
     button.connect("clicked", on_pair_clicked)
     # Diagnostics only: observe actual GDK delivery, never synthesize GTK events.
-    pointer_observer = Gtk.GestureClick()
-    pointer_observer.connect(
-        "pressed", lambda *_: state.__setitem__(
-            "pointer_seen", state["pointer_seen"] + 1,
-        ),
-    )
+    pointer_observer = Gtk.EventControllerLegacy()
+    def observe_pointer(_controller, event):
+        if event.get_event_type() == Gdk.EventType.BUTTON_PRESS:
+            state["pointer_seen"] += 1
+        return False  # observe; never claim the GTK button's click sequence
+    pointer_observer.connect("event", observe_pointer)
     button.add_controller(pointer_observer)
     key_observer = Gtk.EventControllerKey()
     key_observer.connect(
