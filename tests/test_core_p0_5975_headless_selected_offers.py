@@ -54,7 +54,7 @@ def test_headless_selector_binds_unknown_provider_to_explicit_owner(monkeypatch)
     )
     target = selection.select_source_offer_target(
         host, provider_id="future-books", credential_id="card-A",
-        item_id="edition-1", identity_id="alice",
+        item_id="edition-1", identity_id="alice", expected_epoch=7,
     )
     assert type(target) is selection.SourceOfferTarget
     assert target.identity_id == "alice"
@@ -64,6 +64,10 @@ def test_headless_selector_binds_unknown_provider_to_explicit_owner(monkeypatch)
 
     # The same active identity can reappear after A→B→A. The epoch never does.
     host._account_context_epoch = 9
+    assert selection.select_source_offer_target(
+        host, provider_id="future-books", credential_id="card-A",
+        item_id="edition-1", identity_id="alice", expected_epoch=7,
+    ) is None
     with pytest.raises(ValueError, match="selected_source_identity_changed"):
         selection._resolve(host, target)
     assert selection.select_source_offer_target(
@@ -134,22 +138,22 @@ def test_facade_blocks_a_b_a_selection_even_if_the_object_is_restored(monkeypatc
     captured = []
     from cifereca.core import owned_library_download
 
-    def selected(_service, _entry, *, identity_id):
-        captured.append(identity_id)
+    def selected(_service, _entry, *, identity_id, expected_epoch):
+        captured.append((identity_id, expected_epoch))
         host._account_context_epoch += 2
         return object()
 
     monkeypatch.setattr(owned_library_download, "owned_library_download_target", selected)
     assert LibraryService.owned_library_download_target(host, {}) is None
-    assert captured == ["alice"]
+    assert captured == [("alice", 7)]
 
-    def steady(_service, _entry, *, identity_id):
-        captured.append(identity_id)
+    def steady(_service, _entry, *, identity_id, expected_epoch):
+        captured.append((identity_id, expected_epoch))
         return "target"
 
     monkeypatch.setattr(owned_library_download, "owned_library_download_target", steady)
     assert LibraryService.owned_library_download_target(host, {}) == "target"
-    assert captured == ["alice", "alice"]
+    assert captured == [("alice", 7), ("alice", 9)]
 
 
 def test_public_owned_action_rejects_foreign_profile_before_core_dispatch(monkeypatch):
