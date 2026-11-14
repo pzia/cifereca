@@ -978,23 +978,19 @@ def _unlinked_remote_entitlement_key(entitlement: dict[str, Any],
     ).hexdigest()
 
 
-def library_entries(self, *, identity_id: str | None=None, scan: bool=False, logger) -> list[dict[str, Any]]:
-    """Canonical Library projection.
+def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list[dict[str, Any]]:
+    """Canonical Library projection for a profile pinned before worker admission.
 
     Local rows are grouped by content identity (SHA-256/Artifact) rather than
     by provider/item. Remote-only rights remain distinct until reconciliation
     can bind them to a local Artifact.
     """
-    _lib_started = time.monotonic()
-    identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-    logger.info("TRACE library-entries begin identity=%s filesystem_scan=%s", identity_id, "requested" if scan else "skipped")
-    # There is no authorized union-of-profiles Library view. Without an
-    # explicit effective identity, the content-hash grouping below would
-    # collapse two owners' same-SHA placements and remote entitlements into
-    # one card, disclosing paths, account metadata and private possessions.
-    # Fail closed before scanning or reading any cross-profile SQLite rows.
-    if not identity_id:
+    # An unscoped, blank or malformed request cannot infer GTK navigation,
+    # perform a filesystem scan or read another profile's SQLite rows.
+    if type(identity_id) is not str or not identity_id.strip():
         return []
+    _lib_started = time.monotonic()
+    logger.info("TRACE library-entries begin identity=%s filesystem_scan=%s", identity_id, "requested" if scan else "skipped")
     if scan:
         self.catalog_scan()
     merged: dict[str, dict[str, Any]] = {}

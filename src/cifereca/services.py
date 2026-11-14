@@ -3200,13 +3200,19 @@ class LibraryService:
         return library_mutation.catalog_index_path(self, path, title=title, item_id=item_id, identity_id=identity_id, provider_id=provider_id)
 
     def library_entries(self, *, identity_id: str | None = None, scan: bool = False) -> list[dict[str, Any]]:
-        """Canonical Library projection.
+        """Canonical Library projection; snapshot a legacy GUI selection at admission.
 
-        Local rows are grouped by content identity (SHA-256/Artifact) rather than
-        by provider/item. Remote-only rights remain distinct until reconciliation
-        can bind them to a local Artifact.
+        Modern Core, broker and TaskRunner clients already pass identity_id.
+        The unchanged public facade tolerates omitted identity for legacy
+        synchronous GTK callers, but its worker cannot infer navigation.
         """
-        return library_projection.library_entries(self, identity_id=identity_id, scan=scan, logger=_TRACE_LOG)
+        admitted_identity = (
+            self.current_identity.identity_id if self.current_identity is not None
+            else None
+        ) if identity_id is None else identity_id
+        return library_projection.library_entries(
+            self, identity_id=admitted_identity, scan=scan, logger=_TRACE_LOG,
+        )
 
     def library_entries_all_profiles(self) -> list[dict[str, Any]]:
         """Read the shared Library without conflating placements across owners.
