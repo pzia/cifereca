@@ -613,7 +613,8 @@
       "tests": [
         "tests/test_core_p0_5975_configured_connect_exact_owner.py",
         "tests/test_core_p0_3719_scoped_provider_connection.py",
-        "src/plugins/provider-biblioaccess/tests/test_p1_5197_cas_reconnect.py"
+        "src/plugins/provider-biblioaccess/tests/test_p1_5197_cas_reconnect.py",
+        "tests/test_provider_plugins.py::test_library_service_routes_accounts_and_federates_ready_plugins"
       ],
       "pr": "#6045",
       "in_ast_metric": false
