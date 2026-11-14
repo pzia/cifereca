@@ -346,6 +346,8 @@ def test_inert_pairing_action_exists_on_native_reader_page(tmp_path):
         "reader-usb-activation",
     ]
     assert window._reader_pair_button is controls[2]
+    assert "choisir un volume USB monté" in window._reader_pair_button.tooltip
+    assert "UUID en mode expert" in window._reader_pair_button.tooltip
     assert window._reader_formats_button is controls[3]
     assert window._reader_activation_button is controls[4]
     assert db.device_placements() == []
