@@ -2910,13 +2910,11 @@ class Storage:
                         or type(keeper[0]) is not str
                         or rewrite_path(keeper[0], mappings, root) != keeper[0]):
                     raise ValueError("directory_migration_pending_dedup_keeper")
-            # #3196 W5: a directory migration is a mapping of ONE profile's
-            # files, not authority to rebind another owner's historical Kobo
-            # path. The old backup PK has no owner; use the stored identity,
-            # never infer it from the directory or identical bytes. Reject
-            # the entire transaction before moving placements/catalogue.
-            # Old NULL/foreign owners require explicit account-scoped
-            # recovery, not a silent path rewrite or rights transfer.
+            # #3196 W5: a directory mapping of ONE profile's files is
+            # not authority to move an archive belonging to another owner,
+            # regardless of provider. The legacy PK does not prove identity;
+            # use the stored owner, not the folder name or matching bytes.
+            # NULL/foreign owners require explicit scoped recovery.
             changed_folders = [
                 (str(change["identity_id"]), str(change["old"]))
                 for change in plan["changes"]
@@ -2924,8 +2922,7 @@ class Storage:
             if changed_folders:
                 old_paths = db.execute(
                     "SELECT identity_id,local_path FROM backup_items "
-                    "WHERE provider_id='kobo' AND local_path IS NOT NULL "
-                    "LIMIT 100001"
+                    "WHERE local_path IS NOT NULL LIMIT 100001"
                 ).fetchall()
                 if len(old_paths) > 100000:
                     raise ValueError("directory_migration_legacy_scope_budget")
@@ -2940,23 +2937,21 @@ class Storage:
                                 raise ValueError(
                                     "directory_migration_legacy_owner_requires_relink"
                                 )
-            # #3196 W5 cutover: a directory rename is not authority to
-            # rewrite an already canonical Kobo edition through backup_items.
-            # The legacy PK has no borrower/branch and can alias another
-            # SourceReference even on the same credential. Refuse the whole
-            # migration before touching Placements, catalogue or old rows;
-            # an exact canonical relink needs its own attested operation.
-            for credential, edition, historical_path in db.execute(
-                "SELECT credential_id,item_id,local_path FROM backup_items "
-                "WHERE provider_id='kobo' AND local_path IS NOT NULL"
+            # #3196 W5: a canonical SourceReference of ANY provider
+            # cannot inherit the changed pathname of a legacy checkpoint.
+            # The old receipt has no borrower/branch proof. Refuse before
+            # touching Placements or catalogue; use exact-source relink.
+            for provider, credential, edition, historical_path in db.execute(
+                "SELECT provider_id,credential_id,item_id,local_path "
+                "FROM backup_items WHERE local_path IS NOT NULL"
             ).fetchall():
                 if (type(historical_path) is str
                         and rewrite_path(historical_path, mappings, root) != historical_path
                         and db.execute(
                             "SELECT 1 FROM source_references WHERE "
-                            "provider_id='kobo' AND credential_id=? "
+                            "provider_id=? AND credential_id=? "
                             "AND edition_id=? LIMIT 1",
-                            (credential, edition),
+                            (provider, credential, edition),
                         ).fetchone() is not None):
                     raise ValueError(
                         "directory_migration_canonical_source_requires_relink"
