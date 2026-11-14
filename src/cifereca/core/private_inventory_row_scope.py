@@ -100,12 +100,14 @@ def declared_private_inventory_batch_valid(
         return False
 
 
-def selected_private_offer_hint(service: object, item: object) -> bool | None:
-    """Passive, provider-neutral visibility hint for selected private offers.
+def selected_private_offer_hint(
+    service: object, item: object, *, identity_id: str | None = None,
+) -> bool | None:
+    """Passive selected-private offer hint for one admitted identity.
 
-    True only means that the UI may offer an explicit verification action;
-    it never grants a GET, an offer, ownership or a durable right. None
-    delegates non-selected legacy sources to their existing display policy.
+    True only means that the UI may offer explicit verification, never a GET
+    or a durable right. The headless Core worker does not consult mutable GTK
+    navigation. Non-selected legacy sources retain a separate display policy.
     """
     if type(item) is not SearchResult:
         return None
@@ -163,14 +165,13 @@ def selected_private_offer_hint(service: object, item: object) -> bool | None:
 
     # A metadata row from another member's credential can never enable the
     # button on the selected profile. Require the one exact account.
-    identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
-    if type(identity) is not str or not identity:
+    if type(identity_id) is not str or not identity_id:
         return False
     accounts = [
         account for account in service.accounts
         if getattr(account, "provider_id", None) == provider
         and getattr(account, "credential_id", None) == credential
     ]
-    if len(accounts) != 1 or accounts[0].identity_id != identity:
+    if len(accounts) != 1 or accounts[0].identity_id != identity_id:
         return False
     return getattr(getattr(session, "capabilities", None), "direct_download", None) is True
