@@ -1190,6 +1190,21 @@
       ],
       "pr": "#6115",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-session-facade-noarg-navigation-account-fallback-retired",
+      "original": "LibraryService._session_for_account(account=None) still read mutable current_account when callers omitted an account, unlike the worker Core resolver that already required an explicit Account. The no-arg ABI and an obsolete test kept this navigation dependency alive.",
+      "original_classification": "navigation_dependent_legacy_account_session_selection",
+      "replacement": "Retain the frozen optional Account parameter and return type, but always forward the supplied account directly into the Core worker; omitted/None or malformed account fails with account_session_explicit_owner_required before GTK selection, session key or provider registry are read.",
+      "classification": "removed_implicit_gtk_account_fallback_from_facade_session_resolver",
+      "evidence": "Installed productive uses in sync_coordination, library_projection and source_sync_consent all supply the exact Account; only the old facade-characterization test omitted the argument. Tests now poison selected current_account, _sessions and _session_key for both omitted and explicit None, and separately assert that an exact account remains pinned across a selection switch.",
+      "tests": [
+        "tests/test_core_p0_5975_session_resolver_explicit_account.py",
+        "tests/test_library_service_facade_contract.py",
+        "tests/test_loan_reads_selection_independence.py"
+      ],
+      "pr": "#6116",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
