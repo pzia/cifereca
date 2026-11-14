@@ -498,8 +498,8 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         catalog_cover = metadata.get("catalog_cover")
         if isinstance(catalog_cover, dict):
             public = cover_candidate(
-                catalog_cover.get("url"), tier="catalog", source=str(catalog_cover.get("source") or "catalog"),
-                evidence_id=str(catalog_cover.get("evidence_id") or ""), evidence_strength=int(catalog_cover.get("evidence_strength") or 0),
+                catalog_cover.get("url"), tier="catalog", source=catalog_cover.get("source", "catalog"),
+                evidence_id=catalog_cover.get("evidence_id", ""), evidence_strength=catalog_cover.get("evidence_strength", 0),
             )
             if public:
                 cover_candidates.append(public)
@@ -1090,8 +1090,8 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
         catalog_cover = metadata.get("catalog_cover")
         if isinstance(catalog_cover, dict):
             public_cover = cover_candidate(
-                catalog_cover.get("url"), tier="catalog", source=str(catalog_cover.get("source") or "catalog"),
-                evidence_id=str(catalog_cover.get("evidence_id") or ""), evidence_strength=int(catalog_cover.get("evidence_strength") or 0),
+                catalog_cover.get("url"), tier="catalog", source=catalog_cover.get("source", "catalog"),
+                evidence_id=catalog_cover.get("evidence_id", ""), evidence_strength=catalog_cover.get("evidence_strength", 0),
             )
             if public_cover:
                 base_cover_candidates.append(public_cover)
@@ -1320,8 +1320,8 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
             public_meta = metadata_source.get("catalog_cover")
             if isinstance(public_meta, dict):
                 value = cover_candidate(
-                    public_meta.get("url"), tier="catalog", source=str(public_meta.get("source") or "catalog"),
-                    evidence_id=str(public_meta.get("evidence_id") or ""), evidence_strength=int(public_meta.get("evidence_strength") or 0),
+                    public_meta.get("url"), tier="catalog", source=public_meta.get("source", "catalog"),
+                    evidence_id=public_meta.get("evidence_id", ""), evidence_strength=public_meta.get("evidence_strength", 0),
                 )
                 if value:
                     cover_candidates.append(value)
