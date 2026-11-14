@@ -978,7 +978,7 @@ def _unlinked_remote_entitlement_key(entitlement: dict[str, Any],
     ).hexdigest()
 
 
-def library_entries(self, *, identity_id: str | None=None, scan: bool=False, logger) -> list[dict[str, Any]]:
+def library_entries(self, *, identity_id: str | None, scan: bool=False, logger) -> list[dict[str, Any]]:
     """Canonical Library projection.
 
     Local rows are grouped by content identity (SHA-256/Artifact) rather than
@@ -986,15 +986,14 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     can bind them to a local Artifact.
     """
     _lib_started = time.monotonic()
-    identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-    logger.info("TRACE library-entries begin identity=%s filesystem_scan=%s", identity_id, "requested" if scan else "skipped")
-    # There is no authorized union-of-profiles Library view. Without an
-    # explicit effective identity, the content-hash grouping below would
-    # collapse two owners' same-SHA placements and remote entitlements into
-    # one card, disclosing paths, account metadata and private possessions.
-    # Fail closed before scanning or reading any cross-profile SQLite rows.
-    if not identity_id:
+    # One identity must be admitted by the caller; a Core worker cannot
+    # discover a different, mutable GTK selection after task submission.
+    # A bad scope is rejected before logging, filesystem scan or SQLite read.
+    if type(identity_id) is not str or not identity_id.strip():
         return []
+    logger.info("TRACE library-entries begin identity=%s filesystem_scan=%s", identity_id, "requested" if scan else "skipped")
+    # There is no authorized union-of-profiles Library view. Grouping by
+    # content hash without an exact identity could conflate private owners.
     if scan:
         self.catalog_scan()
     merged: dict[str, dict[str, Any]] = {}

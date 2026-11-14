@@ -3185,7 +3185,12 @@ class LibraryService:
         by provider/item. Remote-only rights remain distinct until reconciliation
         can bind them to a local Artifact.
         """
-        return library_projection.library_entries(self, identity_id=identity_id, scan=scan, logger=_TRACE_LOG)
+        # Legacy synchronous UI callers may omit the identity. Pin exactly
+        # once at the public facade boundary; the extracted worker never
+        # reads current_identity and cannot retarget an admitted request.
+        admitted = (identity_id if identity_id is not None else
+                    (self.current_identity.identity_id if self.current_identity else None))
+        return library_projection.library_entries(self, identity_id=admitted, scan=scan, logger=_TRACE_LOG)
 
     def library_entries_all_profiles(self) -> list[dict[str, Any]]:
         """Read the shared Library without conflating placements across owners.
