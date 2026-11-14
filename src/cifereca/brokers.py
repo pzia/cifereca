@@ -1348,7 +1348,9 @@ class AdeptProfileBrokerImpl:
         return tuple(self._ref(row) for row in self._profile_rows())
 
     def _find(self, profile_id: str) -> AdeptProfileRef:
-        wanted = str(profile_id or "").strip()
+        wanted = self._profile_token(profile_id)
+        if not wanted:
+            raise AttentionRequired("Profil ADEPT absent ou ambigu.", code="adept_origin_profile_missing")
         matches = [row for row in self.profiles() if row.profile_id == wanted]
         if len(matches) != 1:
             raise AttentionRequired("Profil ADEPT absent ou ambigu.", code="adept_origin_profile_missing")
