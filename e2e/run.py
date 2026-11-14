@@ -47,6 +47,26 @@ SCENARIOS = {
         "runner": "gtk-probe",
         "width": 1024, "height": 768,
     },
+    "search-filter-1366": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": (
+            "P1 #774 : vraie Recherche GTK/XTEST 1366×900, comparaison de largeur "
+            "avec Recommandations 1366 ; filtres, scroll, identité et callbacks tardifs."
+        ),
+        "runner": "gtk-probe",
+        "width": 1366, "height": 900,
+    },
+    "search-filter-1600": {
+        "plugin": "core",
+        "fixture": "search-filters",
+        "description": (
+            "P1 #774 : vraie Recherche GTK/XTEST 1600×1000, comparaison de largeur "
+            "avec Recommandations 1600 ; filtres, scroll, identité et callbacks tardifs."
+        ),
+        "runner": "gtk-probe",
+        "width": 1600, "height": 1000,
+    },
     "book-detail-960": {
         "plugin": "core",
         "fixture": "search-filters",
@@ -652,17 +672,24 @@ def main() -> int:
                     *(["--plugin-scroll-only"] if scenario.get("plugin_scroll_only") else []),
                 ]
             elif scenario.get("runner") == "gtk-probe":
-                # Keep the existing P0 baseline's 1280x1024 display stable.
-                # The additional P1 acceptance runs in a physically smaller
-                # Xvfb, and the probe asserts actual screen/window geometry.
-                narrow = scenario.get("width") == 1024
+                # Preserve the historical P0 1280x1024 fixture unchanged.
+                # P1 #774 measures Search on the SAME physical 1024/1366/1600
+                # Xvfb widths as the independently run Recommendations probe.
+                width = scenario.get("width")
+                displays = {
+                    1024: "-screen 0 1024x768x24",
+                    1366: "-screen 0 1366x900x24",
+                    1600: "-screen 0 1600x1000x24",
+                }
+                if width is not None:
+                    env["CODEX_HEADLESS_SCREEN"] = f"{width}x{scenario['height']}x24"
                 command = [
                     xvfb, "-a", "-s",
-                    ("-screen 0 1024x768x24" if narrow
-                     else "-screen 0 1280x1024x24"),
+                    displays.get(width, "-screen 0 1280x1024x24"),
                     args.python, str(ROOT / "e2e/search_filter_probe.py"),
                     "--out", str(scenario_dir),
-                    *(["--width", "1024"] if narrow else []),
+                    *(["--width", str(width), "--matched-display"]
+                      if width is not None else []),
                 ]
             else:
                 command = [
