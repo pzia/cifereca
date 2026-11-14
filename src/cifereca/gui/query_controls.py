@@ -217,8 +217,21 @@ class QueryControls(Gtk.Box):
         self._changed_callback()
 
     def state(self):
-        return QueryState(self.entry.get_text().strip(), FIELDS[self.field.get_selected()],
-                          self._scope_values[self.scope.get_selected()], self.provider.values(), self.types.values(), self.languages.values())
+        field_index = self.field.get_selected()
+        scope_index = self.scope.get_selected()
+        # Gtk.DropDown can temporarily report INVALID_LIST_POSITION after
+        # a model replacement, and negative/stub indices are not a choice.
+        # Never map them to the last available provider/document facet.
+        field = FIELDS[field_index] if (
+            type(field_index) is int and 0 <= field_index < len(FIELDS)
+        ) else '\\x00'
+        scope = self._scope_values[scope_index] if (
+            type(scope_index) is int and 0 <= scope_index < len(self._scope_values)
+        ) else '\\x00'
+        return QueryState(
+            self.entry.get_text().strip(), field, scope,
+            self.provider.values(), self.types.values(), self.languages.values(),
+        )
 
     def set_state(self, state, *, notify=True):
         self._programmatic_update = True
@@ -387,7 +400,13 @@ class LocalQueryControls(QueryControls):
             media.add(medium)
             formats.update(offered)
         known_medium = bool(media - {'unknown'})
-        selected_scope = self._scope_values[self.scope.get_selected()]
+        selected_index = self.scope.get_selected()
+        selected_scope = (
+            self._scope_values[selected_index]
+            if type(selected_index) is int
+            and 0 <= selected_index < len(self._scope_values)
+            else '\\x00'
+        )
         selected_formats = set(self.types.values())
         if provisional:
             if selected_scope in self._attested_document_scopes:
@@ -409,7 +428,11 @@ class LocalQueryControls(QueryControls):
             if scope_values != self._scope_values:
                 self.scope.set_model(Gtk.StringList.new([label for _value, label in scope_choices]))
                 self._scope_values = scope_values
-                self.scope.set_selected(scope_values.index(selected_scope) if selected_scope in scope_values else 0)
+            # A selection can become invalid even if the model/choices do
+            # not change (late GTK notification after a profile refresh).
+            # Recover to the view's explicit All default without I/O.
+            if selected_scope not in scope_values:
+                self.scope.set_selected(0)
             self.scope.set_visible(known_medium)
             self.types.set_choices(tuple(
                 (value, label) for value, label in self._format_labels.items() if value in formats
@@ -428,7 +451,10 @@ class LocalQueryControls(QueryControls):
         queries a provider, rescales recommendations or infers permissions.
         """
         try:
-            scope = self._scope_values[self.scope.get_selected()]
+            selected = self.scope.get_selected()
+            if type(selected) is not int or not 0 <= selected < len(self._scope_values):
+                return ()
+            scope = self._scope_values[selected]
             formats = self.types.values()
             if type(formats) is not tuple:
                 return ()
@@ -450,7 +476,10 @@ class LocalQueryControls(QueryControls):
             return ()
 
     def matches_document(self, item):
-        scope = self._scope_values[self.scope.get_selected()]
+        selected = self.scope.get_selected()
+        if type(selected) is not int or not 0 <= selected < len(self._scope_values):
+            return False  # Unknown GTK position must never expose every row.
+        scope = self._scope_values[selected]
         formats = self.types.values()
         if scope == 'all' and not formats:
             return True
