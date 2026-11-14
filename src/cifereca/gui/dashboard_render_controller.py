@@ -93,6 +93,16 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
     cards = window.service.dashboard_state()
     if not is_current():
         return
+    # A transient contradictory selection cannot make the fallback inspect
+    # loans for multiple profiles. Keep the ordinary overview visible.
+    selected = [
+        card.get("identity_id") for card in cards
+        if type(card) is dict and card.get("selected") is True
+    ]
+    selected_id = (
+        selected[0] if len(selected) == 1
+        and type(selected[0]) is str and selected[0] else None
+    )
     for card in cards:
         if not is_current():
             return
@@ -144,12 +154,15 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
         # pinned profile ID. Never ask a provider for loan inventory on render.
         if card.get("selected") is True:
             from ..brokers import IdentityBrokerImpl
-            try:
-                availability = IdentityBrokerImpl(
-                    window.service,
-                ).digital_loan_availability(card["identity_id"])
-            except Exception:
+            if selected_id is None:
                 availability = ()
+            else:
+                try:
+                    availability = IdentityBrokerImpl(
+                        window.service,
+                    ).digital_loan_availability(selected_id)
+                except Exception:
+                    availability = ()
             head = Gtk.Label(
                 label="Prêts numériques — disponibles", xalign=0,
             )

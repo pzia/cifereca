@@ -109,3 +109,50 @@ def test_home_broker_unavailable_does_not_call_provider_or_claim_remaining():
         ) == ("Reste inconnu — aucun compte emprunteur vérifié.",)
     finally:
         controller.close()
+
+
+def test_home_ambiguous_selection_never_reads_two_profiles_and_recovers():
+    rows = [
+        {"identity_id": "alice", "selected": True, "label": "Alice"},
+        {"identity_id": "bob", "selected": True, "label": "Bob"},
+    ]
+    callbacks, queries, renders = [], [], []
+    host = NS(
+        identity_overview=lambda: rows,
+        subscribe_identity_overview=lambda callback: (
+            callbacks.append(callback) or (lambda: callbacks.remove(callback))
+        ),
+    )
+    broker = NS(
+        identities=lambda: [
+            {"identity_id": row["identity_id"], "label": row["label"]}
+            for row in rows
+        ],
+        digital_loan_availability=lambda identity: (
+            queries.append(identity) or (capacity(identity),)
+        ),
+    )
+    controller = home.OverviewController(host, renders.append, broker)
+    try:
+        assert queries == []
+        assert all("digital_loan_availability" not in row for row in renders[-1])
+
+        rows[1]["selected"] = False
+        callbacks[0]()
+        assert queries == ["alice"]
+        assert "digital_loan_availability" in renders[-1][0]
+        assert "digital_loan_availability" not in renders[-1][1]
+
+        rows[1]["selected"] = True
+        callbacks[0]()
+        assert queries == ["alice"]  # no stale Alice result retained
+        assert all("digital_loan_availability" not in row for row in renders[-1])
+
+        rows[0]["selected"] = False
+        callbacks[0]()
+        assert queries == ["alice", "bob"]
+        assert "digital_loan_availability" not in renders[-1][0]
+        assert renders[-1][1]["digital_loan_availability"][0].identity_id == "bob"
+    finally:
+        controller.close()
+    assert callbacks == []
