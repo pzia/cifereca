@@ -173,6 +173,11 @@ def test_admission_refuses_source_drift_during_connection_lookup(
     ("source_credential", _HostileLoanString("source-a")),
     ("source_credential", None),
     ("source_credential", ""),
+    ("source_account_id", _HostileLoanCoordinate()),
+    ("source_account_id", _HostileLoanString("primary")),
+    ("source_account_id", 0),
+    ("source_account_id", False),
+    ("source_account_id", []),
 ])
 def test_admission_refuses_non_native_source_before_storage_or_provider(
     tmp_path, monkeypatch, field, bad,
