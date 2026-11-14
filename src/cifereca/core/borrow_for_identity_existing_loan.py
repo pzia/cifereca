@@ -30,6 +30,7 @@ class ExistingLenderLoanCandidate:
 
 def existing_lender_loan_candidates(
     service, *, exact_notice: SearchResult,
+    requesting_identity_id: str | None = None, scope_current=None,
 ) -> tuple[ExistingLenderLoanCandidate, ...]:
     """Inspect only already-confirmed claims owned by other profiles.
 
@@ -38,14 +39,15 @@ def existing_lender_loan_candidates(
     source is silent; no raw claim, account ID or provider URL is returned.
     """
     try:
-        requester = service.current_identity
-        requester_id = requester.identity_id
+        requester_id = requesting_identity_id
         account_epoch = service._account_context_epoch
         source_epoch = service._source_context_epoch
         accounts = service.accounts
         if (type(exact_notice) is not SearchResult
                 or exact_notice.medium != "digital"
                 or type(requester_id) is not str or not requester_id
+                or not callable(scope_current)
+                or scope_current() is not True
                 or type(account_epoch) is not int or account_epoch < 0
                 or type(source_epoch) is not int or source_epoch < 0
                 or type(accounts) not in (tuple, list)
@@ -80,6 +82,7 @@ def existing_lender_loan_candidates(
             progress = observed_cross_profile_borrow_progress(
                 service, requesting_identity_id=requester_id,
                 borrowing_account=account, exact_notice=exact_notice,
+                scope_current=scope_current,
             )
             if (type(progress) is not CrossProfileBorrowProgress
                     or progress.loan != "confirmed"
@@ -89,6 +92,7 @@ def existing_lender_loan_candidates(
             placement = resolve_cross_profile_lender_placement(
                 service, requesting_identity_id=requester_id,
                 borrowing_account=account, exact_notice=exact_notice,
+                scope_current=scope_current,
             )
             if (type(placement) is not LenderLocalPlacement
                     or placement.loan != "confirmed"
@@ -105,7 +109,7 @@ def existing_lender_loan_candidates(
             else:
                 continue
             candidates.append(ExistingLenderLoanCandidate(account, status))
-        if (service.current_identity is not requester
+        if (scope_current() is not True
                 or service._account_context_epoch != account_epoch
                 or service._source_context_epoch != source_epoch):
             return ()

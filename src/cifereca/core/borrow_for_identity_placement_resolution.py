@@ -27,7 +27,7 @@ class LenderLocalPlacement:
 
 def resolve_cross_profile_lender_placement(
     service, *, requesting_identity_id: str, borrowing_account: Account,
-    exact_notice: SearchResult,
+    exact_notice: SearchResult, scope_current=None,
 ) -> LenderLocalPlacement:
     """Identify A's single existing completed acquisition by exact account.
 
@@ -37,14 +37,14 @@ def resolve_cross_profile_lender_placement(
     unavailable = LenderLocalPlacement("unavailable", "lender_scope_unverified")
     try:
         account, notice = borrowing_account, exact_notice
-        reader = service.current_identity
         context_epoch = service._account_context_epoch
         source_epoch = service._source_context_epoch
         if (type(requesting_identity_id) is not str or not requesting_identity_id
                 or type(account) is not Account
                 or type(notice) is not SearchResult
                 or account.identity_id == requesting_identity_id
-                or getattr(reader, "identity_id", None) != requesting_identity_id
+                or not callable(scope_current)
+                or scope_current() is not True
                 or type(context_epoch) is not int or context_epoch < 0
                 or type(source_epoch) is not int or source_epoch < 0
                 or not account.identity_id or not account.provider_id
@@ -59,6 +59,7 @@ def resolve_cross_profile_lender_placement(
         progress = observed_cross_profile_borrow_progress(
             service, requesting_identity_id=requesting_identity_id,
             borrowing_account=account, exact_notice=notice,
+            scope_current=scope_current,
         )
         if (progress.loan != "confirmed"
                 or progress.executable is not False
@@ -81,7 +82,7 @@ def resolve_cross_profile_lender_placement(
         # Never choose the first row from duplicates, infer from a title or
         # expose another borrower's local path. The existing reader rejects
         # ambiguous receipts and verifies the actual local artifact.
-        if (service.current_identity is not reader
+        if (scope_current() is not True
                 or service._account_context_epoch != context_epoch
                 or service._source_context_epoch != source_epoch
                 or type(row) is not dict

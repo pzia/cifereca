@@ -15,6 +15,7 @@ from .borrow_for_identity_placement_resolution import (
 def send_confirmed_lender_local_copy(
     service, *, requesting_identity_id: str, borrowing_account: Account,
     exact_notice: SearchResult, confirmed: bool = False,
+    scope_current=None,
 ) -> dict[str, object]:
     """Explicit A->B send, failing closed on missing/stale local delivery."""
     blocked = {
@@ -27,16 +28,16 @@ def send_confirmed_lender_local_copy(
     observed_loan = "unknown"
     observed_delivery = "unavailable"
     try:
-        reader = service.current_identity
         context_epoch = service._account_context_epoch
         source_epoch = service._source_context_epoch
-        if (getattr(reader, "identity_id", None) != requesting_identity_id
+        if (not callable(scope_current) or scope_current() is not True
                 or type(context_epoch) is not int or context_epoch < 0
                 or type(source_epoch) is not int or source_epoch < 0):
             return blocked
         resolution = resolve_cross_profile_lender_placement(
             service, requesting_identity_id=requesting_identity_id,
             borrowing_account=borrowing_account, exact_notice=exact_notice,
+            scope_current=scope_current,
         )
         if type(resolution) is LenderLocalPlacement and resolution.loan == "confirmed":
             observed_loan = "confirmed"
@@ -52,7 +53,7 @@ def send_confirmed_lender_local_copy(
                     else "unknown")
             return {**blocked, "loan": loan,
                     "reason_code": "lender_delivery_unverified"}
-        if (service.current_identity is not reader
+        if (scope_current() is not True
                 or service._account_context_epoch != context_epoch
                 or service._source_context_epoch != source_epoch):
             return {**blocked, "loan": "confirmed",
@@ -65,6 +66,11 @@ def send_confirmed_lender_local_copy(
             borrowing_account=borrowing_account, exact_notice=exact_notice,
             lender_placement_id=resolution._placement_id, confirmed=True,
         )
+        if (scope_current() is not True
+                or service._account_context_epoch != context_epoch
+                or service._source_context_epoch != source_epoch):
+            return {**blocked, "loan": "confirmed",
+                    "reason_code": "transfer_context_revoked"}
         if type(outcome) is not dict:
             return {**blocked, "loan": "confirmed",
                     "reason_code": "transfer_result_unverified"}
