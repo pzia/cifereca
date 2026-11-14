@@ -9,7 +9,9 @@ import shlex
 from typing import Any
 
 from ..identities.directory_selection import directory_choice
-from ..providers.base import validated_account_option_choices
+from ..providers.base import (
+    validated_account_option_choices, valid_account_option_url,
+)
 from .llm_settings import LLMSettingsError, normalize_llm_settings
 from .borrower_scoped_options import (
     MAX_BORROWERS, _valid_borrower_id, decimal_limit,
@@ -367,6 +369,28 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                         f'Choix non déclaré : {field.label}'
                     )
                 value = raw_value
+            elif value_type == 'url':
+                # URLs are configuration, not a probe or an authorization
+                # to contact the host. Preserve explicit historical blanks
+                # and defaults as for text, but never normalize malformed
+                # URLs into a new valid endpoint or log the submitted value.
+                original_account = editor.get('original_account')
+                existing_option = (
+                    type(original_account) is dict
+                    and original_account.get('id') == editor['id']
+                    and field.key in original_options
+                )
+                value = raw_value
+                if not value and not existing_option:
+                    value = fallback
+                if value and not valid_account_option_url(field, value):
+                    raise SettingsValidationError(
+                        f'URL de fournisseur invalide : {field.label}'
+                    )
+                if fallback and not valid_account_option_url(field, fallback):
+                    raise SettingsValidationError(
+                        f'Défaut d’URL fournisseur invalide : {field.label}'
+                    )
             elif value_type == 'text':
                 # An option explicitly stored on an existing account can be
                 # intentionally empty. The GTK editor preserves that blank;
