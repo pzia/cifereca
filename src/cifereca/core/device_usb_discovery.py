@@ -138,53 +138,58 @@ def discover_linux_usb_volumes() -> tuple[MountedUsbVolume, ...]:
         counts = Counter((major, minor) for major, minor, *_ in rows)
         candidates: list[MountedUsbVolume] = []
         for major, minor, mount_id, root, point, filesystem, source in rows:
-            if (counts[major, minor] != 1 or root != "/"
-                    or filesystem not in _FS_TYPES
-                    or not source.startswith("/dev/")):
-                continue
-            uuid = uuid_map.get((major, minor))
-            if uuid is None:
-                continue
-            mount = Path(point)
-            if (not mount.is_absolute() or ".." in mount.parts
-                    or mount.resolve(strict=True) != mount):
-                continue
-            root_lstat = mount.lstat()
-            before = mount.stat()
-            if not stat.S_ISDIR(root_lstat.st_mode) or not stat.S_ISDIR(before.st_mode):
-                continue
-            sysfs = Path(f"/sys/dev/block/{major}:{minor}")
-            if not sysfs.is_symlink():
-                continue
-            proof = _qualify_mount(
-                mountpoint=str(mount), mountinfo=mountinfo,
-                root_device=before.st_dev,
-                uuid_device=os.makedev(major, minor),
-                uuid_mode=stat.S_IFBLK,
-                uuid_is_symlink=True,
-                sysfs_is_symlink=True,
-                sysfs_target=str(sysfs.resolve(strict=True)),
-            )
-            if proof != (filesystem, major, minor, mount_id):
-                continue
-            after = mount.stat()
-            if (after.st_dev != before.st_dev
-                    or after.st_ino != before.st_ino
-                    or not stat.S_ISDIR(after.st_mode)):
-                continue
             try:
-                fs = os.statvfs(mount)
-                capacity = fs.f_frsize * fs.f_blocks
-                if type(capacity) is not int or not 0 <= capacity <= 2 ** 64 - 1:
+                if (counts[major, minor] != 1 or root != "/"
+                        or filesystem not in _FS_TYPES
+                        or not source.startswith("/dev/")):
+                    continue
+                uuid = uuid_map.get((major, minor))
+                if uuid is None:
+                    continue
+                mount = Path(point)
+                if (not mount.is_absolute() or ".." in mount.parts
+                        or mount.resolve(strict=True) != mount):
+                    continue
+                root_lstat = mount.lstat()
+                before = mount.stat()
+                if not stat.S_ISDIR(root_lstat.st_mode) or not stat.S_ISDIR(before.st_mode):
+                    continue
+                sysfs = Path(f"/sys/dev/block/{major}:{minor}")
+                if not sysfs.is_symlink():
+                    continue
+                proof = _qualify_mount(
+                    mountpoint=str(mount), mountinfo=mountinfo,
+                    root_device=before.st_dev,
+                    uuid_device=os.makedev(major, minor),
+                    uuid_mode=stat.S_IFBLK,
+                    uuid_is_symlink=True,
+                    sysfs_is_symlink=True,
+                    sysfs_target=str(sysfs.resolve(strict=True)),
+                )
+                if proof != (filesystem, major, minor, mount_id):
+                    continue
+                after = mount.stat()
+                if (after.st_dev != before.st_dev
+                        or after.st_ino != before.st_ino
+                        or not stat.S_ISDIR(after.st_mode)):
+                    continue
+                try:
+                    fs = os.statvfs(mount)
+                    capacity = fs.f_frsize * fs.f_blocks
+                    if type(capacity) is not int or not 0 <= capacity <= 2 ** 64 - 1:
+                        capacity = None
+                except (OSError, ValueError, OverflowError):
                     capacity = None
-            except (OSError, ValueError, OverflowError):
-                capacity = None
-            candidates.append(MountedUsbVolume(
-                usb_fingerprint=uuid, mountpoint=mount,
-                filesystem=filesystem, label=_safe_volume_label(mount.name),
-                capacity_bytes=capacity, major=major, minor=minor,
-                mount_id=mount_id,
-            ))
+                candidates.append(MountedUsbVolume(
+                    usb_fingerprint=uuid, mountpoint=mount,
+                    filesystem=filesystem, label=_safe_volume_label(mount.name),
+                    capacity_bytes=capacity, major=major, minor=minor,
+                    mount_id=mount_id,
+                ))
+            except (OSError, ValueError, UnicodeError, OverflowError):
+                # One disappearing or unreadable mount must not conceal other
+                # independent USB block volumes in the chooser.
+                continue
         return tuple(sorted(
             candidates, key=lambda row: (row.label.casefold(), str(row.mountpoint)),
         ))
