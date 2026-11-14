@@ -122,13 +122,74 @@ class AccountOptionField:
     legacy_config_key: str | None = None
     # Declarative validation; existing provider options remain text by default.
     # Numeric values stay decimal strings in the opaque provider account config.
-    value_type: Literal["text", "unsigned_integer", "choice"] = "text"
+    value_type: Literal["text", "unsigned_integer", "choice", "url"] = "text"
     min_value: int | None = None
     max_value: int | None = None
     help_text: str = ""
     # Append-only ABI: choices are opaque persisted values plus visible labels.
     # A choice is a local preference, never a provider entitlement or consent.
     choices: tuple[tuple[str, str], ...] = ()
+    # For value_type="url" only. HTTP is permitted only if a provider
+    # explicitly declares it (e.g. a user-managed local service).
+    url_schemes: tuple[str, ...] = ("https",)
+
+
+def valid_account_option_url(field: AccountOptionField, value: str) -> bool:
+    """Syntactic URL admission, never a probe or supplier authorization.
+
+    URL is a per-credential configuration preference, not a network request.
+    Query/fragment/userinfo are excluded: bearer credentials in a configured
+    URL must use declared secret CredentialFields instead of display text.
+    """
+    import re
+    from urllib.parse import unquote, urlsplit
+
+    schemes = getattr(field, "url_schemes", ())
+    if (type(schemes) is not tuple or not 1 <= len(schemes) <= 2
+            or len(schemes) != len(set(
+                part for part in schemes if type(part) is str
+            )) or any(type(part) is not str or part not in ("http", "https")
+                      for part in schemes)):
+        return False
+    if (type(value) is not str or not 1 <= len(value) <= 2048
+            or value != value.strip() or not value.isprintable()
+            or "\\" in value):
+        return False
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        port = parsed.port
+        if (parsed.scheme not in schemes or not parsed.netloc
+                or type(hostname) is not str
+                or parsed.username is not None or parsed.password is not None
+                or "@" in parsed.netloc or parsed.query or parsed.fragment
+                or port == 0):
+            return False
+    except (TypeError, ValueError):
+        return False
+    if (len(hostname) > 253 or not hostname.isascii()
+            or not all(
+                re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+                for label in hostname.split(".")
+            )):
+        # IPv6 URL literals are not part of this first generic URL schema;
+        # a provider needing them must request a separately proven contract.
+        return False
+    # Refuse malformed escape sequences and encoded control/bidi characters,
+    # including double-encoded paths that may be decoded by HTTP libraries.
+    try:
+        path = parsed.path
+        for _ in range(2):
+            if re.search(r"%(?![0-9A-Fa-f]{2})", path):
+                return False
+            path = unquote(path, errors="strict")
+            if any(ord(ch) < 32 or ord(ch) == 127 or ch in
+                   "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+                   for ch in path):
+                return False
+    except (UnicodeError, ValueError):
+        return False
+    return True
 
 
 def validated_account_option_choices(
