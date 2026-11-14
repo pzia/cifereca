@@ -3291,7 +3291,17 @@ class LibraryService:
         return target
 
     def obtain_owned_library_item(self, target):
-        from .core.owned_library_download import obtain_owned_library_item
+        from .core.owned_library_download import (
+            OwnedDownloadRejected, obtain_owned_library_item,
+        )
+        from .core.selected_source_offer import SourceOfferTarget
+        # A caller-supplied target is not a substitute for the active profile
+        # at this public action boundary. Once admitted, the Core worker
+        # relies only on exact source evidence and the pinned account epoch.
+        if type(target) is SourceOfferTarget:
+            selected = self.current_identity
+            if getattr(selected, "identity_id", None) != target.identity_id:
+                raise OwnedDownloadRejected("owned_download_unavailable")
         return obtain_owned_library_item(self, target)
 
     def prepare_direct_download(self, item: SearchResult) -> tuple[Path, str]:
