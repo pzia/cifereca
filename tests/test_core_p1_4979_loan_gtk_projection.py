@@ -42,6 +42,11 @@ def a_row(loan):
     return {
         "identity_id": loan.identity_id, "local": True,
         "artifact_id": "artifact-1", "placement_id": "placement-1",
+        "thumbnail_url": "file:///home/alice/.cache/cifereca/cover.png",
+        "metadata": {"cover_resolution": {
+            "status": "selected", "tier": "embedded",
+            "url": "file:///home/alice/.cache/cifereca/cover.png",
+        }},
         "_exact_loan_cover_proofs": [{
             "loan_source_key": loan_source_key(loan),
             "identity_id": loan.identity_id,
