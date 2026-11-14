@@ -199,3 +199,85 @@ def test_invalid_structural_review_fails_closed(tmp_path, invalid):
     ledger.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="reviewed|incomplete|duplicate"):
         inventory(tmp_path, registry=ledger)
+
+
+def test_reviewed_groups_require_explicit_reachability_and_never_merge_unreviewed(tmp_path):
+    write(
+        tmp_path, "src/cifereca/core/router.py",
+        "def route(provider):\n"
+        "    if provider == 'kobo':\n        return 1\n"
+        "    if provider == 'bnf':\n        return 2\n"
+        "    if provider == 'paris':\n        return 3\n",
+    )
+    original = inventory(tmp_path)
+    assert original["candidate_sites"] == 3
+    assert original["business_groups_inventoried"] == 3
+    assert original["business_groups_unproven"] == 3
+    reviews = []
+    for site in original["sites"][:2]:
+        reviews.append({
+            "id": site["id"], "classification": "safety_guard_pending_contract",
+            "journey": "historical migration", "productive_caller": "Core.router.route",
+            "effect": "safe negative veto", "authority": "historical source only",
+            "replacement_contract": "versioned generic source proof",
+            "tests": ["tests/test_router.py"], "retirement_pr": "",
+            "rationale": "explicit manually reviewed decision",
+            "decision_group_id": "historical.archive-owner-guard",
+            "reachability": "legacy_only",
+        })
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(json.dumps({"metric": METRIC, "reviews": reviews}))
+    observed = inventory(tmp_path, registry=ledger)
+    assert observed["raw_ast_unique_lines"] == original["raw_ast_unique_lines"] == 3
+    assert observed["candidate_sites"] == 3
+    assert observed["review_coverage_pct"] == 66.67
+    assert observed["business_groups_inventoried"] == 2
+    assert observed["business_groups_reviewed"] == 1
+    assert observed["business_groups_unproven"] == 1
+    assert observed["business_group_review_coverage_pct"] == 50
+    assert len(next(g for g in observed["business_candidate_groups"]
+                    if g["status"] == "reviewed")["site_ids"]) == 2
+    # A reviewed lexical signal is not an automatic reachability proof.
+    reviews[0]["reachability"] = "unproven"
+    ledger.write_text(json.dumps({"metric": METRIC, "reviews": reviews}))
+    unproven = inventory(tmp_path, registry=ledger)
+    assert unproven["business_groups_reviewed"] == 0
+    reviews[0].pop("reachability")
+    ledger.write_text(json.dumps({"metric": METRIC, "reviews": reviews}))
+    with pytest.raises(ValueError, match="incomplete_business_decision_group"):
+        inventory(tmp_path, registry=ledger)
+
+
+def test_storage_six_ast_reviews_make_mutations_and_retained_guards_visible():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads(
+        (root / "docs/provider-business-coupling-review.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    ids = {
+        "site-7313c6ad37cfecdb7936e8bc",
+        "site-d88574f6e28d059189c71da5",
+        "site-5a3051124e11f87bf24ccfb6",
+        "site-c668504ada66eace309e3e7f",
+        "site-b4a6753e2f0ac2d6b78c0992",
+        "site-1220521b4d5dc767addb6d29",
+    }
+    reviews = [r for r in ledger["reviews"] if r["id"] in ids]
+    assert {r["id"] for r in reviews} == ids
+    assert len(reviews) == 6
+    assert {r["decision_group_id"] for r in reviews} == {
+        "legacy-backup.w1-canonical-publication-veto",
+        "legacy-backup.w1-owner-archive-protection",
+        "legacy-backup.w5-path-relocation-cutover",
+    }
+    assert {r["reachability"] for r in reviews} == {"legacy_only", "productive"}
+    assert sum(r["classification"] == "legacy_mutating_cutover"
+               for r in reviews) == 1
+    assert sum(r["classification"] == "safety_guard_pending_contract"
+               for r in reviews) == 5
+    assert all(r["effect"] and r["authority"] and r["replacement_contract"]
+               and all((root / t).is_file() for t in r["tests"])
+               for r in reviews)
