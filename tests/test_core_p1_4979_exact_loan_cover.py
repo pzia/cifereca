@@ -29,6 +29,10 @@ def local_row(current, url="file:///home/alice/.cache/cifereca/cover.png",
     return {
         "local": True, "identity_id": current.identity_id,
         "artifact_id": artifact, "placement_id": placement,
+        "thumbnail_url": url,
+        "metadata": {
+            "cover_resolution": {"status": "selected", "url": url, "tier": tier},
+        },
         "_exact_loan_cover_proofs": [{
             "loan_source_key": loan_source_key(current),
             "identity_id": current.identity_id,
