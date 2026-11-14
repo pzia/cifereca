@@ -60,6 +60,31 @@ def _public_affinity_score(value: Any) -> int | None:
     return value if type(value) is int and 0 <= value <= 100 else None
 
 
+def _sort_visible_recommendations(
+    entries: list[tuple[Any, str]], mode: str,
+) -> list[tuple[Any, str]]:
+    """Order the already-filtered local projection, never the engine ranking.
+
+    Each pair includes its list key allocated in *original ranked order* so
+    a sort change cannot silently rebind selection/actions to another edition.
+    Python's stable sort preserves the engine's diversity order for ties.
+    """
+    if mode == "affinity":
+        return sorted(entries, key=lambda pair: (
+            -score if (score := _public_affinity_score(pair[0].score)) is not None
+            else 1
+        ))
+    if mode in ("title", "author"):
+        return sorted(entries, key=lambda pair: (
+            normalize(
+                _candidate_public_field(pair[0].item, "title", limit=2048)
+                if mode == "title" else
+                " ".join(_public_candidate_authors(pair[0].item))
+            ) or "\uffff"
+        ))
+    return list(entries)  # Default: retain the original diversified rank.
+
+
 def _public_ranked_values(raw: Any, *, limit: int = 32) -> tuple[str, ...]:
     """Bound public rank explanations and provider provenance.
 
@@ -902,6 +927,9 @@ class UxRecommendationsView:
         enable_field = getattr(self._query_controls, "enable_field_filter", None)
         if callable(enable_field):
             enable_field()
+        enable_sort = getattr(self._query_controls, "enable_local_sort", None)
+        if callable(enable_sort):
+            enable_sort()
 
         # The same one-row + horizontal-scroll layout as Search's shared
         # filters: this strip contains ONLY recommendation calculation
@@ -1622,6 +1650,17 @@ class UxRecommendationsView:
             (provider,) if provider else (), (language,) if language else (),
         )
 
+    def _local_sort_key(self) -> str:
+        getter = getattr(getattr(self, "_query_controls", None), "local_sort_key", None)
+        if callable(getter):
+            try:
+                value = getter()
+            except Exception:
+                value = None
+            if type(value) is str and value in ("rank", "affinity", "title", "author"):
+                return value
+        return "rank"
+
     def _local_filter_state(
         self,
     ) -> tuple[str, tuple[str, ...], tuple[str, ...]] | None:
@@ -2294,6 +2333,16 @@ class UxRecommendationsView:
                 filters.append(f"« {text_filter} »")
             filters.extend(self._display_source(source) for source in sources)
             filters.extend(_language_label(language) for language in languages)
+        # A view-only sort is not a new recommendation calculation. Include
+        # it in the visible local state and avoid claiming diversity order
+        # after the reader has explicitly chosen alphabetical/affinity order.
+        sort_mode = self._local_sort_key()
+        if sort_mode != "rank":
+            filters.append("Tri : " + {
+                "affinity": "affinité décroissante",
+                "title": "titre A–Z",
+                "author": "auteur A–Z",
+            }[sort_mode])
         # The default threshold already informs initial ranking visibility.
         # Once edited it becomes a *local, reversible* facet and belongs in
         # the same visible count as Source/Format/Champ; no new provider I/O.
@@ -2342,7 +2391,8 @@ class UxRecommendationsView:
         if provisional:
             parts.append("Provisoire · ordre susceptible d’évoluer")
         else:
-            parts.append("Ordre diversifié")
+            if sort_mode == "rank":
+                parts.append("Ordre diversifié")
             warnings = getattr(self, "_partial_warning_count", 0)
             if warnings:
                 parts.append(f"{warnings} recherche(s) partiellement en erreur")
@@ -2363,24 +2413,31 @@ class UxRecommendationsView:
 
         rows = []
         mapping = {}
-        # Keep the original identities reserved, including those on *later*
-        # rows: a generated suffix must never shadow a real edition key.
-        # This matters when two providers legitimately return the same
-        # candidate key or a key already ending in ":<index>".
+        # Reserve/allocate every list key from the original ranked order,
+        # BEFORE applying a local alphabetical/affinity sort. Otherwise two
+        # exact source variants with a shared candidate_key can exchange
+        # GTK keys (and stale detail actions) when the reader changes sort.
         original_keys = tuple(
             self._candidate_key(ranked) or f"recommendation-{index}"
             for index, ranked in enumerate(visible)
         )
         reserved_keys = set(original_keys)
+        used_keys: set[str] = set()
+        keyed = []
         for index, (ranked, original_key) in enumerate(zip(visible, original_keys)):
-            item = ranked.item
             key = original_key
-            if key in mapping:
+            if key in used_keys:
                 suffix = index
                 key = f"{original_key}:{suffix}"
-                while key in mapping or key in reserved_keys:
+                while key in used_keys or key in reserved_keys:
                     suffix += 1
                     key = f"{original_key}:{suffix}"
+            used_keys.add(key)
+            keyed.append((ranked, key))
+        for ranked, key in _sort_visible_recommendations(
+            keyed, self._local_sort_key(),
+        ):
+            item = ranked.item
             mapping[key] = ranked
 
             author = ", ".join(_public_candidate_authors(item))
