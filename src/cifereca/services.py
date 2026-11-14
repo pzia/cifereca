@@ -1515,18 +1515,79 @@ class LibraryService:
         return target[1] if target else None
 
     def _provider_loan_active_for_acquisition(self, row):
-        """Only the observed provider loan of this exact account/item can conflict."""
-        metadata = row.get('metadata') or {}
-        ids = {str(metadata.get('provider_loan_id') or '')}
-        for entitlement in self.storage.entitlements(provider_id=row.get('provider_id')):
-            if entitlement.get('entitlement_id') == row.get('entitlement_id'):
-                ids.add(str(entitlement.get('loan_id') or ''))
-        return any(str(loan.id) in ids and bool(str(loan.id))
-                   and loan.source_provider == row.get('provider_id')
-                   and loan.source_credential == row.get('credential_id')
-                   and str(loan.source_account_id or '') == str(row.get('account_id') or '')
-                   and loan.identity_id == row.get('identity_id')
-                   for loan in self.last_loans)
+        """Read only the exact source's cached loan observation, never GTK state.
+
+        A returned ADEPT record may be displayed alongside an independently
+        observed active lender loan. This check is display-only: a cache hit
+        does not attest a right, authorize a return or trigger a provider GET.
+        An absent, stale, malformed or ambiguous cache cannot prove activity.
+        """
+        if type(row) is not dict:
+            return False
+        identity_id = row.get("identity_id")
+        provider_id = row.get("provider_id")
+        credential_id = row.get("credential_id")
+        account_id = row.get("account_id")
+        if any(type(value) is not str or not value
+               for value in (identity_id, provider_id, credential_id, account_id)):
+            return False
+        # A literal upstream borrower "primary" may coexist with the empty
+        # primary sentinel. Ambiguous native accounts must not be selected.
+        matched = [
+            account for account in self.accounts
+            if type(account) is Account
+            and account.identity_id == identity_id
+            and account.provider_id == provider_id
+            and account.credential_id == credential_id
+            and (account.unique_id == account_id or (
+                account.is_primary is True and account.unique_id == ""
+                and account_id == "primary"
+            ))
+        ]
+        if len(matched) != 1:
+            return False
+        account = matched[0]
+        try:
+            # Only the exact scoped v2 cache written by _loans_for_account
+            # is admissible. The old unqualified alias was never safe.
+            cache_key = _loan_cache_key(account)
+            cached = self.storage.cache_get("account", cache_key)
+            session = self._sessions.get(
+                self._session_key(provider_id, credential_id),
+            )
+            descriptor = inspect.getattr_static(session, "descriptor", None) if session is not None else None
+            from .providers.base import ProviderDescriptor
+            if descriptor is not None and type(descriptor) is not ProviderDescriptor:
+                return False
+            loans = _cached_loans_for_exact_account(
+                cached, account, descriptor=descriptor,
+            )
+        except (AttributeError, TypeError, ValueError, ProviderConfigurationError):
+            return False
+        if loans is None:
+            return False
+        metadata = row.get("metadata")
+        metadata = metadata if type(metadata) is dict else {}
+        ids = {
+            metadata.get("provider_loan_id")
+            if type(metadata.get("provider_loan_id")) is str else None
+        }
+        # Legacy entitlement IDs are retained solely as an exact local link
+        # for display, never interpreted as a supplier permission.
+        for entitlement in self.storage.entitlements(provider_id=provider_id):
+            if entitlement.get("entitlement_id") == row.get("entitlement_id"):
+                if type(entitlement.get("loan_id")) is str:
+                    ids.add(entitlement["loan_id"])
+        ids.discard(None)
+        ids.discard("")
+        return any(
+            loan.id in ids and type(loan.id) is str
+            and loan.source_provider == provider_id
+            and loan.source_credential == credential_id
+            and loan.identity_id == identity_id
+            and loan.source_account_id == account_id
+            for loan in loans
+        )
 
     def refresh_adept_inventory(self, identity_id):
         # A refresh reads states only, never acquires or returns a book.
