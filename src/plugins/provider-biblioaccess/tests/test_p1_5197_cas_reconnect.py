@@ -146,8 +146,8 @@ def test_full_source_sync_retries_once_with_new_cas_and_keeps_positive_row(
             candidate,
         )
         assert len(loans.loans) == 1
-        assert loans.status == "partial"  # no negative entitlement inference
-        return {"status": "partial", "loans": 1}
+        assert loans.status == "success"  # full page; no negative rights authority
+        return {"status": "success", "loans": 1}
     host._synchronize_account_source_impl = simulate_source
     host._synchronize_account_source_inventory_impl = simulate_source
     host.sync_source_enabled = lambda _account: True
@@ -162,7 +162,7 @@ def test_full_source_sync_retries_once_with_new_cas_and_keeps_positive_row(
     monkeypatch.setattr(sync_coordination, "_run_observed_canonical_convergence",
                         lambda *a, **k: None)
     result = sync_coordination.synchronize_account_source(host, account)
-    assert result["status"] == "partial" and result["loans"] == 1
+    assert result["status"] == "success" and result["loans"] == 1
     assert len(starts) == 2 and starts[0] is account
     assert starts[1] is host.accounts[0]
     assert created == ["cred-a"] and renewed[0][2].count("post") == 1
@@ -262,7 +262,7 @@ def test_fresh_cas_without_acsm_retains_positive_loan_without_download(monkeypat
         host._sessions[host._session_key(mod.PROVIDER_ID, "cred-a")],
         replacement,
     )
-    assert snapshot.status == "partial" and len(snapshot.loans) == 1
+    assert snapshot.status == "success" and len(snapshot.loans) == 1
     assert snapshot.loans[0].raw == {} and snapshot.loans[0].ebook_url is None
     assert created == ["cred-a"] and renewed[0][2].count("post") == 1
     assert "SYNTHETIC-SECRET" not in repr(notes)

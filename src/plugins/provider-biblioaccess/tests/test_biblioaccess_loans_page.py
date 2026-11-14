@@ -98,6 +98,36 @@ def test_private_capture_shape_yields_one_positive_row_without_entitlement():
     assert "10001" not in repr(row) and "20002" not in repr(row)
 
 
+@pytest.mark.parametrize("navigation", [
+    '<nav class="pagination"><a href="?page=2">2</a></nav>',
+    '<a href="/1409/Catalog/MyLoans?page=2">Suivant</a>',
+    '<a href="/1409/Catalog/MyLoans?p=2" rel="next">Suivant</a>',
+    '<button class="load-more">Afficher davantage</button>',
+    '<a rel="next" href="/1409/Catalog/MyLoans">Suivant</a>',
+])
+def test_observed_pagination_never_qualifies_one_get_as_exhaustive(navigation):
+    html = (
+        '<form id="logoutForm" method="post" action="/1409/Account/LogOff"></form>'
+        + _observed_row() + navigation
+    )
+    found = loans.inspect_myloans_html(html)
+    assert found.logout_form_observed
+    assert found.page_loan_row_count == 1
+    assert found.page_loan_row_partial_count == 0
+    assert found.pagination_observed is True
+
+
+def test_book_links_elsewhere_do_not_look_like_loans_pagination():
+    html = (
+        '<form id="logoutForm" method="post" action="/1409/Account/LogOff"></form>'
+        + _observed_row()
+        + '<a href="/1409/Catalog/Book/20003?page=2">notice</a>'
+    )
+    found = loans.inspect_myloans_html(html)
+    assert found.pagination_observed is False
+    assert found.page_loan_row_count == 1
+
+
 def test_outside_row_recommendations_and_logout_form_do_not_create_loan():
     evidence = loans.inspect_myloans_html(
         '<form id="logoutForm" method="post" action="/1409/Account/LogOff"></form>'

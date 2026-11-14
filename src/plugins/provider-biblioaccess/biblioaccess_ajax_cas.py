@@ -47,6 +47,7 @@ class CasHttpObservation:
     page_loan_row_count: int = 0
     page_loan_row_partial_count: int = 0
     logout_form_observed: bool = False
+    pagination_observed: bool = False
     inventory_verified: bool = False
     _loan_rows: tuple[object, ...] = field(default=(), repr=False, compare=False)
     _candidate_book_urls: tuple[tuple[str, str], ...] = field(
@@ -359,6 +360,7 @@ class ObservedAjaxCasClient(ObservedAjaxLogonClient):
                     page_loan_row_count=candidates.page_loan_row_count,
                     page_loan_row_partial_count=candidates.page_loan_row_partial_count,
                     logout_form_observed=candidates.logout_form_observed,
+                    pagination_observed=candidates.pagination_observed,
                     _loan_rows=candidates._loan_rows,
                     _candidate_book_urls=candidates._book_urls,
                 )

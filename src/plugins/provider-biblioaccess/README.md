@@ -829,3 +829,34 @@ Une nouvelle chaîne fournisseur observée mais encore inconnue doit être
 qualifiée explicitement ; aucun suivi automatique de redirect arbitraire.
 Le Core conserve la chaîne canonique ACSM → ADEPT → EPUB déjà utilisée par
 les offres Numilog.
+
+
+## P1 #5538 — couverture MyLoans qualifiée par page (11/2026)
+
+Pour un GET `/1409/Catalog/MyLoans` en **HTTP 200** dans une session CAS
+déjà authentifiée (preuve de déconnexion attendue), le plugin peut désormais
+publier `LoanInventorySnapshot(status="success")` et la branche
+`biblioaccess/digital` `complete`, `pagination_complete=True`, **si et
+seulement si** toutes les lignes reconnues sont analysées sans rejet, le
+nombre de lignes est cohérent, aucun élément de pagination/« charger plus »
+n'est observé et le compte/identité exacts restent stables pendant le GET.
+La même règle s'applique à une page authentifiée sans ligne de prêt.
+
+**Hypothèse produit révisable :** la page MyLoans affichée est considérée
+comme couvrant les prêts actifs du compte vérifié. Cela ne prouve pas
+l'exhaustivité de toutes les ressources du serveur et ne confère ni droit
+d'emprunt, ni quota fournisseur, ni autorisation de restitution. Une pagination
+nouvellement signalée déclenche `partial`, sans GET supplémentaire ; une
+ligne rejetée ou une preuve manquante reste `partial`. Un refus de session,
+une page login 200, une redirection 302 ou une mutation de compte en cours
+révoque la session et ne génère jamais de faux inventaire complet.
+
+Le Core est seul responsable des éventuelles conséquences négatives
+d'une absence, après contrôle du scope identity/provider/credential/account/
+branch, de la session active et de son époque. **Le provider ne déclare pas
+`loan_absence_digital_branch` : cette PR ne permet donc pas d'inférer une
+restitution par absence.** Aucun fichier utilisateur n'est supprimé et
+aucun téléchargement supplémentaire n'est déclenché.
+
+Les tests utilisent uniquement des réponses synthétiques et ne publient pas
+les captures ni les URL signées du 11/11/2026.

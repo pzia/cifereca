@@ -780,7 +780,8 @@ def test_ajax_failure_diagnostic_reports_only_json_presence_and_error_count():
         session.close()
 
 
-def _synced_session(*, rows=None, logout=True, expired=False, credential="cred-a"):
+def _synced_session(*, rows=None, logout=True, expired=False, credential="cred-a",
+                    partial_rows=0, pagination=False, status=200):
     """No real cookie, title, identifier or private capture enters the tests."""
     from types import SimpleNamespace as NS
 
@@ -820,12 +821,13 @@ def _synced_session(*, rows=None, logout=True, expired=False, credential="cred-a
         def observe_loans_once(self):
             calls.append("initial_loans")
             return NS(
-                phase="loans_html_unverified", status=200,
+                phase="loans_html_unverified", status=status,
                 page_book_link_count=len(rows),
                 page_book_unique_count=len(rows),
                 page_loan_row_count=len(rows),
-                page_loan_row_partial_count=0,
+                page_loan_row_partial_count=partial_rows,
                 logout_form_observed=logout,
+                pagination_observed=pagination,
                 _loan_rows=tuple(rows))
         def read_authenticated_loans(self):
             calls.append("live_loans")
@@ -859,8 +861,8 @@ def test_background_auth_promotes_only_positive_cookie_scoped_account_and_loan()
     assert not http.closed
     account.identity_id = "identity-a"  # Core does this on registration
     observed = read_loan_inventory(session, account)
-    assert observed.status == "partial" and observed.reason_code == "inventory_not_exhaustive"
-    assert not observed.branch_claims_complete("biblioaccess", "digital")
+    assert observed.status == "success" and observed.reason_code is None
+    assert observed.branch_claims_complete("biblioaccess", "digital")
     assert len(observed.loans) == 1
     loan = observed.loans[0]
     assert loan.id == "biblioaccess:1409:10001"
@@ -888,7 +890,7 @@ def test_background_sync_rejects_missing_logout_form_without_retaining_session()
     session.close()
 
 
-def test_background_synced_empty_page_is_partial_not_evidence_of_returned_loans():
+def test_background_synced_authenticated_empty_page_is_complete_but_not_return_permission():
     from cifereca.plugin_api import read_loan_inventory
 
     session, http, calls = _synced_session(rows=[])
@@ -896,12 +898,85 @@ def test_background_synced_empty_page_is_partial_not_evidence_of_returned_loans(
         account, = session.connect()
         account.identity_id = "identity-a"
         observation = read_loan_inventory(session, account)
-        assert observation.status == "partial"
+        assert observation.status == "success"
         assert observation.loans == ()
-        assert not observation.branch_claims_complete("biblioaccess", "digital")
+        assert observation.branch_claims_complete("biblioaccess", "digital")
+        # Core still requires an explicit provider opt-in declaration before
+        # using absence as a negative observation for a local loan.
+        from cifereca.core.sync_coordination import _complete_digital_loan_scope
+        assert _complete_digital_loan_scope(account, observation, session) is None
         assert calls.count("post") == 1
     finally:
         session.close()
+
+
+@pytest.mark.parametrize(("partial_rows", "pagination", "status", "reason"), [
+    (1, False, 200, "inventory_not_exhaustive"),
+    (0, True, 200, "pagination_incomplete"),
+    (0, False, 206, "inventory_not_exhaustive"),
+])
+def test_inventory_does_not_claim_complete_when_page_is_unqualified(
+        partial_rows, pagination, status, reason):
+    from cifereca.plugin_api import read_loan_inventory
+    session, client, calls = _synced_session(
+        partial_rows=partial_rows, pagination=pagination, status=status)
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        result = read_loan_inventory(session, account)
+        assert result.status == "partial"
+        assert result.reason_code == reason
+        assert len(result.loans) == 1  # valid positive rows are preserved
+        assert not result.branch_claims_complete("biblioaccess", "digital")
+        assert calls.count("live_loans") == 1
+        assert calls.count("post") == 1
+    finally:
+        session.close()
+
+
+def test_five_complete_myloans_rows_claim_single_digital_branch():
+    from cifereca.plugin_api import read_loan_inventory
+    from types import SimpleNamespace as NS
+    rows = [
+        NS(product_ref=str(10000 + n), book_id=str(20000 + n),
+           title="SYNTHETIC-" + str(n),
+           due_at_local="08/11/2026 12:30:00",
+           acsm_offer_present=True)
+        for n in range(5)
+    ]
+    session, client, calls = _synced_session(rows=rows)
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        observed = read_loan_inventory(session, account)
+        assert observed.status == "success" and len(observed.loans) == 5
+        assert len(observed.branches) == 1
+        branch, = observed.branches
+        assert (branch.upstream, branch.medium, branch.completeness,
+                branch.pagination_complete) == (
+                    "biblioaccess", "digital", "complete", True)
+        assert calls.count("live_loans") == 1 and calls.count("post") == 1
+    finally:
+        session.close()
+
+
+def test_in_flight_account_identity_change_fails_closed_and_revokes_jar():
+    session, client, calls = _synced_session()
+    account, = session.connect()
+    account.identity_id = "identity-a"
+    original = client.read_authenticated_loans
+
+    def drift_during_get():
+        answer = original()
+        account.identity_id = "identity-b"
+        return answer
+
+    client.read_authenticated_loans = drift_during_get
+    with pytest.raises(mod.ProviderCapabilityError, match="loan_inventory_unavailable"):
+        session.loan_inventory_snapshot(account)
+    assert not session.connected and client.closed
+    assert calls.count("live_loans") == 1 and calls.count("post") == 1
+    session.close()
 
 
 def test_login_session_expiry_revokes_borrower_and_never_reuses_cookie():
@@ -970,7 +1045,7 @@ def test_authenticated_sync_does_not_get_stale_experimental_js():
         session.close()
 
 
-def test_live_loan_inventory_diagnostic_reports_only_counts_and_partial_coverage():
+def test_live_loan_inventory_diagnostic_reports_only_counts_and_qualified_coverage():
     from cifereca.plugin_api import read_loan_inventory
 
     class Diagnostics:
@@ -986,7 +1061,7 @@ def test_live_loan_inventory_diagnostic_reports_only_counts_and_partial_coverage
         account, = session.connect()
         account.identity_id = "identity-a"
         observed = read_loan_inventory(session, account)
-        assert observed.status == "partial"
+        assert observed.status == "success"
         live_events = [
             (status, detail) for _, _, status, detail in diagnostics.events
             if detail.get("phase") == "loan_inventory"
@@ -996,7 +1071,7 @@ def test_live_loan_inventory_diagnostic_reports_only_counts_and_partial_coverage
         assert status == "observed"
         assert detail["page_loan_row_count"] == 1
         assert detail["page_loan_row_partial_count"] == 0
-        assert detail["completeness"] == "partial"
+        assert detail["completeness"] == "complete"
         assert detail["connected"] is True
         assert detail["session_revoked"] is False
         assert detail["probe"] == "authenticated_sync"
@@ -1082,7 +1157,7 @@ def test_diagnostic_sink_failure_never_leaks_private_traceback(caplog):
             account, = session.connect()
             account.identity_id = "identity-a"
             snapshot = read_loan_inventory(session, account)
-        assert snapshot.status == "partial" and len(snapshot.loans) == 1
+        assert snapshot.status == "success" and len(snapshot.loans) == 1
         assert "biblioaccess_probe_diagnostic_sink_failed" in caplog.text
         assert "PRIVATE-SYNTHETIC-ACSM-TOKEN-NEVER-LOG" not in caplog.text
         assert calls.count("post") == 1

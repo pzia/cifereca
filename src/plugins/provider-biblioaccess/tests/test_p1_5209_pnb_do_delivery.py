@@ -192,7 +192,7 @@ def test_live_session_revalidates_exact_pnb_offer_and_hands_acsm_to_core(
         account, = session.connect()
         account.identity_id = "identity-a"
         snapshot = read_loan_inventory(session, account)
-        assert len(snapshot.loans) == 5 and snapshot.status == "partial"
+        assert len(snapshot.loans) == 5 and snapshot.status == "success"
         assert all(loan.raw == {"acsm_offer_present": True}
                    for loan in snapshot.loans)
         # Existing two Numilog loans are already present locally; only

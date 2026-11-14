@@ -95,7 +95,7 @@ DESCRIPTOR = ProviderDescriptor(
     interactive_authentication=True,
     background_authentication_option_key="authenticated_sync",
     notes=(
-        "Prêts numériques positifs, inventaire partiel, sans clôture par absence.",
+        "Prêts numériques : couverture complète si MyLoans authentifié est entièrement analysé, sans pagination observée.",
         "authenticated_sync=on requis pour le SSO HTTP en arrière-plan.",
         "Téléchargement ACSM des prêts actifs ; fulfillment par Kobo-Adept Core.",
     ),
@@ -464,19 +464,28 @@ class LaRochelleSession(ProviderSession):
                 or len(self._accounts) != 1 or account is not self._accounts[0]
                 or account.provider_id != PROVIDER_ID
                 or account.credential_id != self.credential_id
-                or account.unique_id != "primary"):
+                or account.unique_id != "primary"
+                or account.is_primary is not True):
             raise ProviderCapabilityError("biblioaccess_loan_account_unbound")
 
     def loan_inventory_snapshot(self, account: Account) -> LoanInventorySnapshot:
-        """Fresh, positive-only digital loans from one live CAS cookie jar.
+        """Fresh digital loans from the exact live, authenticated CAS jar.
 
-        No deleted/returned loan is inferred by absence, even on a 200 page
-        with zero rows. A session lost mid-read is revoked before re-use.
+        A fully parsed MyLoans screen with no observed paginator can declare
+        complete coverage of that screen only. Such a claim is not itself
+        an instruction to return/expire a loan or remove local artifacts.
         """
         with self._lock:
             self._validate_local_account(account)
+            scope = LoanInventoryScope.for_account(account)
             try:
                 observation = self._http.read_authenticated_loans()
+                # Account objects are mutable for Core identity registration.
+                # Reject a mid-GET scope change rather than publish an
+                # observation as if it belonged to the new borrower/session.
+                self._validate_local_account(account)
+                if LoanInventoryScope.for_account(account) != scope:
+                    raise ProviderCapabilityError("biblioaccess_loan_account_unbound")
                 if not observation.logout_form_observed:
                     raise ProviderCapabilityError(
                         "biblioaccess_authenticated_page_unverified")
@@ -503,15 +512,36 @@ class LaRochelleSession(ProviderSession):
                         raw=({"acsm_offer_present": True}
                              if row.acsm_offer_present else {}),
                     ))
+                # Success is intentionally narrower than HTTP 200: unknown
+                # pagination/row counts, rejected rows and partial HTML
+                # remain positive-only, never negative absence evidence.
+                complete = (
+                    type(getattr(observation, "status", None)) is int
+                    and observation.status == 200
+                    and observation.logout_form_observed is True
+                    and type(getattr(observation, "page_loan_row_count", None)) is int
+                    and observation.page_loan_row_count == len(loan_rows)
+                    and type(getattr(observation, "page_loan_row_partial_count", None)) is int
+                    and observation.page_loan_row_partial_count == 0
+                    and type(getattr(observation, "pagination_observed", None)) is bool
+                    and observation.pagination_observed is False
+                )
+                reason = None if complete else (
+                    "pagination_incomplete"
+                    if getattr(observation, "pagination_observed", None) is True
+                    else "inventory_not_exhaustive"
+                )
                 snapshot = LoanInventorySnapshot(
-                    scope=LoanInventoryScope.for_account(account),
-                    loans=tuple(loan_rows), status="partial",
+                    scope=scope,
+                    loans=tuple(loan_rows),
+                    status="success" if complete else "partial",
                     branches=(LoanBranchCoverage(
                         upstream="biblioaccess", medium="digital",
-                        completeness="partial",
-                        reason_code="inventory_not_exhaustive",
+                        completeness="complete" if complete else "partial",
+                        pagination_complete=True if complete else None,
+                        reason_code=reason,
                     ),),
-                    reason_code="inventory_not_exhaustive",
+                    reason_code=reason,
                 )
                 self._last_probe_phase = "loan_inventory_observed"
                 self.sync_reconnect_reason = None
@@ -523,7 +553,8 @@ class LaRochelleSession(ProviderSession):
                     page_loan_row_count=len(loan_rows),
                     page_loan_row_partial_count=getattr(
                         observation, "page_loan_row_partial_count", 0),
-                    completeness="partial", session_revoked=False,
+                    completeness="complete" if complete else "partial",
+                    session_revoked=False,
                 )
                 return snapshot
             except Exception as exc:
