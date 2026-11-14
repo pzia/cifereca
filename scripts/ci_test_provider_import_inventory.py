@@ -76,9 +76,9 @@ def inspect_source(path: str, content: str, modules: dict[str, list]) -> tuple[l
             for alias in node.names:
                 record(alias.name, "import", node.lineno)
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            # The imported module may itself be an explicit module symbol:
-            # from provider_pkg import module, or from provider_module import helper.
-            record(node.module, "from", node.lineno)
+            # Count each imported symbol once. A "from provider_module import
+            # symbol" is one edge, not an edge for the module plus an edge
+            # for its symbol. Package-submodule imports are also resolved.
             for alias in node.names:
                 record(node.module + "." + alias.name, "from", node.lineno, alias.name)
         elif isinstance(node, ast.Call):
