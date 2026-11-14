@@ -44,7 +44,10 @@ def test_local_account_stays_bound_to_exact_configured_profile_on_switch():
 ])
 def test_missing_or_malformed_selection_never_becomes_default(selected):
     alice = Identity("alice", "Reader A")
-    service = _service(selected, [alice])
+    # A malformed native Identity must be refused even if configured as-is;
+    # do not let a separate owner mismatch mask malformed-id acceptance.
+    configured = [selected] if type(selected) is Identity else [alice]
+    service = _service(selected, configured)
     with pytest.raises(ProviderConfigurationError, match="^local_account_identity_required$"):
         service._local_account()
 
@@ -65,6 +68,9 @@ def test_identity_removal_or_duplicate_reference_revokes_local_account():
     with pytest.raises(ProviderConfigurationError, match="local_account_identity_required"):
         service._local_account()
     service.identities.extend([alice, alice])
+    with pytest.raises(ProviderConfigurationError, match="local_account_identity_required"):
+        service._local_account()
+    service.identities[:] = [alice, Identity("alice", "Duplicate id")]
     with pytest.raises(ProviderConfigurationError, match="local_account_identity_required"):
         service._local_account()
 
