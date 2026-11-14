@@ -33,7 +33,7 @@
     },
     {
       "id": "site-105fb5dbf04033ddeb95cc3d",
-      "classification": "safety_guard_pending_contract",
+      "classification": "legacy_mutating_cutover",
       "journey": "legacy Kobo configuration cardinality repair during Config.load",
       "productive_caller": "Config.load -> provider_accounts -> legacy per-identity Kobo account splitting and persisted directory identity names",
       "effect": "May mutate legacy configuration identities/directories; not an entitlement, purchase, provider GET or canonical writer",
@@ -44,7 +44,7 @@
         "tests/test_core_p0_5743_sqlite_cardinality_v15.py"
       ],
       "retirement_pr": "",
-      "rationale": "Historical repair is not read-only and must not be mislabeled safe by an AST-only count; migration evidence required before deleting the compatibility path"
+      "rationale": "This active legacy load-time repair can write and reassign profile/directory configuration; it is a supplier-specific mutating compatibility path. Keep intact until a versioned, descriptor-neutral migration has replay/rollback proof."
     },
     {
       "id": "site-7baf3b4f552b2c895f2c79ae",
@@ -223,6 +223,52 @@
       ],
       "retirement_pr": "",
       "rationale": "Persisted migration safety guard rather than an active Kobo canonical writer; remove only once migration coverage and non-resurrection proof are complete"
+    },
+    {
+      "id": "site-8734b8047e04eb88d52753f3",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Offline reconciliation of historical provider rights and local placements",
+      "productive_caller": "core.library_reconciliation.reconcile on local SQLite/WAL images",
+      "effect": "Read-only retrospective classification of matching canonical receipts, bytes and historical attested_source for Kobo/Numilog; no right, OriginLink or Placement is granted",
+      "authority": "Exact provider/credential/account/item, Artifact SHA and producer-attested legacy origin; filenames and ISBNs are never authorization",
+      "replacement_contract": "A reviewed, versioned source-provenance classifier without Core provider-name decision, preserving mismatched-source/unknown-provider refusal",
+      "tests": [
+        "tests/test_library_reconciliation.py",
+        "tests/test_core_p0_3196_w5_passive_v2_migration.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Supplier whitelist within a read-only audit is a necessary historical safety gate pending a neutral proven substitute; not an active canonical producer."
+    },
+    {
+      "id": "site-9505ed058db59cf26b03c187",
+      "classification": "must_migrate",
+      "journey": "Kobo-only manual materialization admission before canonical Source Sync",
+      "productive_caller": "SynchronizationBrokerImpl.prepare_materialization/execute_materialization -> core.source_materialization._source -> canonical A-to-B Sync",
+      "effect": "Core routes this generic confirmation surface only to provider_id=kobo. `prepare`/`execute` now require a complete v1/v2 delivery ABI; partial ABI returns canonical_delivery_unavailable and CANNOT execute W2 backup writes",
+      "authority": "Kobo named Core UI routing plus verified session, exact account, live CAS policy and canonical source capability; legacy 0.7 backup is not a permitted executor",
+      "replacement_contract": "Generic provider-declared source-materialization capability, using already installed canonical Sync broker or retire this branded compatibility UI entrypoint",
+      "tests": [
+        "tests/test_source_materialization_confirmation.py",
+        "tests/test_core_p0_3196_residual_writer_surface.py",
+        "tests/test_core_p0_4858_manual_canonical_materialization.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Brand-specific execution routing remains in shared Core, but the old writer is physically absent: classifying it as an active legacy_mutating_cutover would be factually wrong."
+    },
+    {
+      "id": "site-dd2ac28f46a8a720315de122",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Input validation of historical Kobo backup_items writer compatibility API",
+      "productive_caller": "Storage.backup_put is an installed historical method (tests/legacy invocations); no current installed direct production caller of backup_put per static residual-writer fence",
+      "effect": "Rejects blank, ambiguous, oversized or control-character Kobo edition IDs and NUL paths before any historical backup_items UPSERT",
+      "authority": "Historical archive key validity only; this path does not attest provider ownership, rights or current A/B delivery",
+      "replacement_contract": "Physically retire the remaining backup_put legacy Storage surface after archival reads/migrations are proven and callers updated; retain malformed-input refusals as required for any archive reader",
+      "tests": [
+        "tests/test_core_p0_3196_legacy_kobo_item_write_admission.py",
+        "tests/test_core_p0_3196_residual_writer_surface.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "This AST anchor is inside backup_put, not Storage._migrate. It is a necessary input veto on a residual, non-productively called legacy writer surface, not an active Core acquisition producer."
     }
   ],
   "retirements": [
