@@ -1299,9 +1299,20 @@ class AdeptProfileBrokerImpl:
         nested = value.get("profile")
         return dict(nested) if isinstance(nested, dict) else dict(value)
 
+    @staticmethod
+    def _profile_token(value: Any) -> str:
+        # Never stringify arbitrary plugin objects into an identity-binding
+        # coordinate. A runtime may return malformed or hostile field values.
+        if type(value) is not str or not 0 < len(value) <= 256:
+            return ""
+        token = value.strip()
+        if not token or any(ord(char) < 32 or ord(char) == 127 for char in token):
+            return ""
+        return token
+
     def _ref(self, row: dict[str, Any]) -> AdeptProfileRef:
-        stable = str(row.get("profile_id") or row.get("id") or "").strip()
-        name = str(row.get("name") or row.get("profile") or "").strip()
+        stable = self._profile_token(row.get("profile_id") or row.get("id"))
+        name = self._profile_token(row.get("name") or row.get("profile"))
         if not stable or not name:
             raise AttentionRequired(
                 "Le runtime ADEPT ne publie pas de référence de profil stable.",
@@ -1391,8 +1402,11 @@ class AdeptProfileBrokerImpl:
         if callable(refresh_capabilities):
             refresh_capabilities()
         rows = self._profile_rows()
-        shown_name = str(shown.get("name") or shown.get("profile") or name or "").strip()
-        candidates = [row for row in rows if str(row.get("name") or row.get("profile") or "").strip() == shown_name]
+        shown_name = self._profile_token(shown.get("name") or shown.get("profile") or name)
+        candidates = [
+            row for row in rows
+            if shown_name and self._profile_token(row.get("name") or row.get("profile")) == shown_name
+        ]
         # The creation acknowledgement is not an authority to bind a profile.
         # Only one freshly enumerated runtime row can attest its stable ID.
         if len(candidates) != 1:
@@ -1403,14 +1417,15 @@ class AdeptProfileBrokerImpl:
         profile = self._ref(candidates[0])
         if sum(
             1 for row in rows
-            if str(row.get("profile_id") or row.get("id") or "").strip() == profile.profile_id
+            if self._profile_token(row.get("profile_id") or row.get("id")) == profile.profile_id
         ) != 1:
             raise AttentionRequired(
                 "L'identifiant du profil ADEPT est ambigu dans l'inventaire.",
                 code="adept_profile_provisioning_incomplete",
             )
-        acknowledged_id = str(shown.get("profile_id") or shown.get("id") or "").strip()
-        if acknowledged_id and acknowledged_id != profile.profile_id:
+        announced = shown.get("profile_id") or shown.get("id")
+        acknowledged_id = self._profile_token(announced)
+        if announced and (not acknowledged_id or acknowledged_id != profile.profile_id):
             raise AttentionRequired(
                 "Le profil ADEPT créé ne correspond pas au profil observé.",
                 code="adept_profile_provisioning_incomplete",
