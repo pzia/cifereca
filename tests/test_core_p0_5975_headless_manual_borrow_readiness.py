@@ -26,10 +26,17 @@ def test_missing_owner_is_closed_before_plugin_lookup():
             raise AssertionError("missing owner must deny before registry lookup")
 
     from cifereca.models import SearchResult
-    # This malformed candidate must never be expanded into a real provider
-    # admission or user selection.
+    item = SearchResult(
+        id="edition", record_id="edition", docbase="FUTURE",
+        medium="digital", title="Private", author=None, type=None,
+        format=None, publisher=None, published_at=None, description=None,
+        thumbnail_url=None, friendly_url=None, scenario="synthetic",
+        source_provider="future-library", source_credential="card",
+    )
+    # Even a correctly shaped supplier record cannot force a registry lookup
+    # when its selected owner is missing.
     assert manual.manual_borrow_available(
-        Host(), object(), provider_id="future-library",
+        Host(), item, provider_id="future-library",
         docbase="FUTURE", identity_id=None,
     ) is False
     result = manual.manual_borrow_diagnostic(
