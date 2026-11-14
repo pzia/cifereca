@@ -96,7 +96,7 @@ def main() -> int:
     state = {
         "volumes": (), "reads": 0, "errors": 0, "renders": 0,
         "button_clicks": 0, "dialog_build_errors": 0,
-        "checkpoint": "setup",
+        "checkpoint": "setup", "pointer_seen": 0, "key_seen": 0,
     }
     original_discovery = discovery.discover_linux_usb_volumes
 
@@ -136,6 +136,21 @@ def main() -> int:
             # Keep raw GTK/GObject exception text inside the runner, not CI.
             state["dialog_build_errors"] += 1
     button.connect("clicked", on_pair_clicked)
+    # Diagnostics only: observe actual GDK delivery, never synthesize GTK events.
+    pointer_observer = Gtk.GestureClick()
+    pointer_observer.connect(
+        "pressed", lambda *_: state.__setitem__(
+            "pointer_seen", state["pointer_seen"] + 1,
+        ),
+    )
+    button.add_controller(pointer_observer)
+    key_observer = Gtk.EventControllerKey()
+    key_observer.connect(
+        "key-pressed", lambda *_: (
+            state.__setitem__("key_seen", state["key_seen"] + 1), False,
+        )[-1],
+    )
+    button.add_controller(key_observer)
     box.append(button)
     box.append(window._reader_status_label)
     window.set_child(box)
@@ -225,6 +240,11 @@ def main() -> int:
             focus_native(button)
             device.key("Return", True)
             device.key("Return", False)
+        if not delivered(lambda: state["button_clicks"] > before):
+            # A native GTK button may accept Space instead of Return.
+            focus_native(button)
+            device.key("space", True)
+            device.key("space", False)
         if not delivered(lambda: state["button_clicks"] > before):
             state["checkpoint"] = "button_not_clicked"
             raise AssertionError("GTK/XTEST pairing button did not activate")
@@ -380,6 +400,15 @@ def main() -> int:
         checkpoint = state["checkpoint"]
         if checkpoint in allowed:
             print("P1_6041_CLOSED_FAILURE_CHECKPOINT=" + checkpoint, flush=True)
+        if checkpoint == "button_not_clicked":
+            # Closed, fixture-independent input-delivery diagnostics.
+            pointer = "seen" if state["pointer_seen"] else "absent"
+            keyboard = "seen" if state["key_seen"] else "absent"
+            print("P1_6041_INPUT_POINTER=" + pointer, flush=True)
+            print("P1_6041_INPUT_KEY=" + keyboard, flush=True)
+            print("P1_6041_BUTTON_SENSITIVE=" + (
+                "yes" if button.get_sensitive() else "no"
+            ), flush=True)
     finally:
         discovery.discover_linux_usb_volumes = original_discovery
         window._closed = True
