@@ -56,6 +56,15 @@ MUTATIONS = (
             "tests/test_core_p0_3867_attested_https_delivery.py::test_rejected_final_publish_after_stream_preserves_no_target",
         ),
     ),
+    Mutation(
+        "verify_published_candidate_sha",
+        "if checked.digest() != digest.digest():",
+        "if False:",
+        "tests/test_core_p0_3867_attested_https_delivery.py::test_same_inode_overwrite_before_link_never_publishes_stale_digest",
+        target_path="src/cifereca/core/attested_https_delivery.py",
+        target_module="cifereca.core.attested_https_delivery",
+        target_function="download_attested_https",
+    ),
 )
 
 _PLUGIN = r'''
@@ -103,7 +112,7 @@ def _run_pytest(root: Path, node: str, *, module_dir: Path | None,
 def campaign(root: Path = ROOT, *, timeout: int = 40) -> dict:
     report = {
         "schema": "cifereca.security-mutation-probe/1",
-        "subject": "Core transport and admission controls",
+        "subject": "Core public peers, consent and candidate integrity",
         "offline": True,
         "probes": [],
     }
