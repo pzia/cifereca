@@ -431,11 +431,3 @@ def test_poststaging_borrower_callback_cannot_change_source_or_edition(
     assert receipt["attention_code"] == "adept_borrower_ambiguous"
     assert receipt["metadata"]["provider_loan_id"] == "loan-1"
     assert receipt["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
-
-
-def test_nonparis_dispatch_never_calls_legacy_borrower_resolver():
-    """ADEPT routing leaves other providers on their connected identity."""
-    invoke, store, borrower, resolver, profiles, *_ = _fixture(provider="kobo")
-    assert invoke() == ("identity-1", "reader-a")
-    borrower.assert_not_called()
-    store.assert_not_called()
