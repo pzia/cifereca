@@ -23,16 +23,17 @@ def test_unconfigured_manager_never_invokes_injected_kobo_adapter():
         _plugin_manager=None,
         _kobo_adapter=forbidden_adapter,
         _required_plugin_service=missing_plugin,
+        runtime_acquisition_binding=lambda _provider: None,
     )
     request = {
         "source": {"type": "kobo"},
         "destination": "/tmp/synthetic.epub",
     }
 
-    with pytest.raises(ProviderConfigurationError, match="plugin_unavailable"):
+    with pytest.raises(ProviderConfigurationError, match="non supporté"):
         LibraryService.execute_acquisition_request(facade, request)
 
-    assert calls == [("plugin", "runtime.kobo-adept")]
+    assert calls == []
 
 
 def test_invalid_recipe_cannot_invoke_an_injected_runtime():
@@ -53,16 +54,19 @@ def test_kobo_recipe_still_routes_through_installed_runtime():
     expected = {"ok": True}
     request = {"source": {"type": "kobo"}}
 
+    runtime = SimpleNamespace(download_request=lambda value: (
+        calls.append(value) or expected
+    ))
     facade = SimpleNamespace(
-        _plugin_manager=object(),
+        _plugin_manager=SimpleNamespace(registry_generation=1),
         _kobo_adapter=lambda: pytest.fail("test-only adapter bypass"),
+        runtime_acquisition_binding=lambda provider: (
+            "runtime.kobo-adept" if provider == "kobo" else None
+        ),
         _required_plugin_service=lambda plugin_id: (
-            calls.append(plugin_id)
-            or SimpleNamespace(download_request=lambda value: (
-                calls.append(value) or expected
-            ))
+            calls.append(plugin_id) or runtime
         ),
     )
 
     assert LibraryService.execute_acquisition_request(facade, request) == expected
-    assert calls == ["runtime.kobo-adept", request]
+    assert calls == ["runtime.kobo-adept", request, "runtime.kobo-adept"]
