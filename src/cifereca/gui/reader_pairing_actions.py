@@ -8,6 +8,22 @@ Activation is a separate deliberate control, never implied by pairing.
 from __future__ import annotations
 
 
+class _PairingRefusal(ValueError):
+    """Only stable local GUI refusal reasons; never raw device metadata."""
+
+
+_PAIRING_FEEDBACK = {
+    "selection_required": (
+        "Choisissez un volume USB monté dans la liste, ou activez "
+        "la saisie d'UUID en mode expert."
+    ),
+    "volume_changed": (
+        "Le volume USB a changé ou a été débranché. Actualisez "
+        "les volumes et sélectionnez à nouveau le lecteur."
+    ),
+}
+
+
 def _identity_scope(window):
     service = getattr(window, "service", None)
     identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
@@ -170,7 +186,7 @@ def request_reader_pairing(window, *, Gtk, Adw=None) -> None:
             else:
                 index = volume_choice.get_selected()
                 if type(index) is not int or not 0 <= index < len(observed):
-                    raise ValueError("USB volume selection required")
+                    raise _PairingRefusal("selection_required")
                 chosen = observed[index]
                 # Reattest a *fresh* kernel observation at the confirmation
                 # edge. Replug, changed UUID or changed mount ID invalidates
@@ -182,7 +198,7 @@ def request_reader_pairing(window, *, Gtk, Adw=None) -> None:
                             and row.selection_key() == chosen.selection_key()
                             for row in live
                         ) != 1):
-                    raise ValueError("USB mount changed since selection")
+                    raise _PairingRefusal("volume_changed")
                 uuid = chosen.usb_fingerprint
             if not current():
                 return
@@ -205,6 +221,14 @@ def request_reader_pairing(window, *, Gtk, Adw=None) -> None:
                 window._reader_status_label.set_label(
                     "Liseuse déclarée · support non vérifié. "
                     "Activez les examens USB avant de choisir son volume."
+                )
+        except _PairingRefusal as refusal:
+            if current():
+                window.show_error(
+                    _PAIRING_FEEDBACK.get(
+                        str(refusal), "Association USB impossible.",
+                    ),
+                    "Liseuses",
                 )
         except Exception:
             if current():
