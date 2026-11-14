@@ -155,13 +155,21 @@ que des commentaires répétitifs ; ne pas committer un journal sur `main`.
 Ne pas fermer un ticket à la seule ouverture de la PR, ni laisser une issue
 livrée ouverte pour une recette exploratoire différée.
 
+## Revue de clôture : retour utilisateur et `PU`
+
+**But : terminer l'issue, ou obtenir une question utilisateur directement actionnable — jamais prolonger une étude sans critère.** Avant tout nouveau lot ou recherche, le pilote confronte les critères restant ouverts aux preuves déjà acquises (PR, HEAD, tests, risques). Deux voies seulement :
+
+1. **Input utilisateur indispensable :** un fait, accès, preuve terrain, consentement ou choix de produit **nouveau et non déductible** est strictement nécessaire à un critère de clôture. **Le pilote de l'issue**, quel que soit son rôle (Core, Plugins, UX, Focus, CI/CD, Backlog), documente **avant d'étiqueter** dans l'issue : ce qui est acquis et testé, la **question exacte** (2–3 options maximum avec recommandation si nécessaire), pourquoi **seul l'utilisateur** peut fournir la réponse, le critère de reprise et les éventuelles tranches indépendantes. Il **appose directement `PU`**, sans handoff préalable. Dès lors, le ticket est suspendu **pour tous**, y compris son pilote : aucune reprise de développement, test, PR, merge ni clôture. Continuer uniquement sur un autre ticket autonome et autorisé. Le P0 principal peut poursuivre des `P-1` non suspendus ; ne pas le placer en `PU` par simple propagation. **Seul `backlog` retire `PU`** après qualification de la réponse et des dépendances. Ni `next`, ni délai, ni CI verte ne le retirent.
+2. **Retour simplement utile ou facultatif :** poser éventuellement une question dans l'issue **sans `PU`**, et **livrer puis clore** lorsque les critères et quality gates réellement requis sont satisfaits. Marquer la preuve terrain optionnelle « non vérifiée » ; ne pas l'inventer ni la transformer en gate. Ne pas poser `PU` pour une panne technique, une CI pending/rouge, une recette UX réalisable par un agent, un environnement à installer, un test automatisable ou une extension de confort.
+
+**Exemples :** capture d'un compte fournisseur réel indispensable et inaccessible à l'agent → `PU` documenté ; inspection de PNG GTK ou CI réparable → pas `PU` ; enfant `P-1` suspendu mais autres parcours du parent autonomes → seul enfant `PU` ; retour reçu → **Backlog** vérifie et retire avant reprise. Les règles de sécurité, de no-double-mutation, de permissions et de gates restent inchangées.
+
 ## Recette utilisateur exceptionnelle
 
 Une recette utilisateur **préalable** n'est exigible que si un critère
 explicite du ticket identifie un risque **non simulable et indispensable**
 à l'acceptation (par exemple une action irréversible sur matériel réel).
-`backlog` doit documenter l'impossibilité d'automatiser, le risque et
-la décision avant d'en faire un blocage. Si le contrôle est utile mais
+Le pilote documente **dans l'issue avant `PU`** l'impossibilité de produire cette preuve de façon autonome, le risque et la question utilisateur ; il peut apposer `PU` sans attendre Backlog. **Backlog seul le retire** une fois l'input obtenu et vérifié. Si le contrôle est utile mais
 non indispensable, le sortir des critères bloquants et conserver son
 statut « non vérifié » ; ne pas prétendre qu'il a réussi.
 
