@@ -88,6 +88,10 @@ def _observed_free_library_json(response, credential_id, page):
             or not 0 <= payload['totalBooks'] <= 100000
             or type(payload.get('numOfBooks')) is not int
             or not 0 <= payload['numOfBooks'] <= FREE_JSON_PAGE_SIZE
+            # A claimed category total smaller than the number of rows
+            # on this same response is internally contradictory. Do not
+            # turn it into a valid-looking partial list or a false zero.
+            or payload['numOfBooks'] > payload['totalBooks']
             or type(payload.get('productData')) is not list
             or len(payload['productData']) != payload['numOfBooks']):
         raise ValueError('unverified_public_json')
