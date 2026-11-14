@@ -246,6 +246,7 @@ DESCRIPTOR = ProviderDescriptor(
             "manual_loan_limit_primary_physical",
             "Compte principal · maximum personnel de prêts physiques",
             default="4", value_type="unsigned_integer", min_value=0, max_value=99,
+            advisory_loan_medium="physical",
             help_text="4 par défaut · SYRACUSE seulement. Plafond renseigné par vous, "
                       "distinct du quota officiel et sans effet sur la prolongation. "
                       "Ne s'applique pas aux comptes lecteurs liés.",
