@@ -50,8 +50,13 @@ def index_local_loan_artifact(
     ProviderConfigurationError: type[Exception],
 ) -> tuple[Any, dict]:
     trace_ref = loan_trace_ref(loan, identity.identity_id)
-    if final_path is None or not final_path.is_file():
+    if final_path is None or not isinstance(final_path, Path) or not final_path.is_file():
         raise ProviderConfigurationError("L'acquisition automatique n'a produit aucun artefact local")
+    # The catalog's no-follow/owner checks happen *after* this inspection.
+    # Reject a stable symlink at the handoff too, before the inspector reads
+    # an unrelated file from a provider-controlled or rebound local path.
+    if final_path.is_symlink() or final_path.parent.is_symlink():
+        raise ProviderConfigurationError("Artefact local invalide")
     final_inspection = inspect_artifact(final_path)
     if final_path.suffix.casefold() in {".epub", ".pdf"} and not final_inspection.valid:
         raise ProviderConfigurationError("Artefact local invalide")
