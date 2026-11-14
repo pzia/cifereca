@@ -43,29 +43,34 @@ Trier, dédupliquer, prioriser et transformer les besoins en issues actionnables
 
 Un besoin technique est routé vers `cicd`, `core`, `plugins` ou `ux`.
 
-## Priorisation produit : P0 à P3
+## Priorisation produit : P0, P-1 et P1 à P3
 
 Les labels sont **mutuellement exclusifs** et reflètent **l'urgence / l'engagement du moment**, pas le type de fonctionnalité ou le rôle :
 
 | Label | Décision de triage | Action |
 | --- | --- | --- |
 | **P0** | Bloquant ou urgent, le plus souvent initié par le propriétaire. | Traiter en priorité ; pour une urgence signalée par un agent, documenter les faits et signaler l'arbitrage nécessaire. |
+| **P-1** | Sous-ticket du backlog d'un P0 principal, sans urgence ni agent indépendants. | Maintenir le lien vers son P0 parent, ses critères et ses preuves ; réalisation exclusivement par l'agent du parent, sans concurrence parallèle. |
 | **P1** | Sujet important sur lequel on travaille actuellement. | Définir le chantier actif, ses rôles, ses dépendances et ses critères de sortie. |
 | **P2** | Ticket fonctionnel précis, sans lien direct avec le chantier actuel. | Conserver actionnable au backlog ; ne pas lancer de développement opportuniste. |
 | **P3** | Idée ou concept non engagé. | Conserver et enrichir sans implémentation ni PR sans décision explicite. |
+
+**Convention décidée par le propriétaire le 14/11/2026 :** `P0` = ticket principal urgent ; `P-1` = backlog de sous-tickets de ce P0, **pas un synonyme de P1 ni un deuxième P0**. Les labels `P0`, `P-1`, `P1`, `P2`, `P3` sont mutuellement exclusifs. Le backlog ne transforme pas un `P-1` en chantier autonome ni en P0 sans arbitrage explicite, et ne clôt pas les sous-tickets par simple rattachement. [#5975](https://github.com/pzia/cifereca/issues/5975) est **l'unique P0 du découplage Core/fournisseurs**, confié à un seul agent de développement. Les sous-tickets `P-1` sont #3196, #5048, #5054, #5055, #5056, #5077, #5518, #5519, #5813, #5851 ; l'audit de tests [#5376](https://github.com/pzia/cifereca/issues/5376) reste P0 indépendant. Les rôles CI/CD et backlog continuent leur support, sans développer en parallèle cette dette. La revue des PR préexistantes est obligatoire avant reprise.
 
 - **P1 n'est pas une catégorie Plugins** : plusieurs rôles peuvent concourir au sujet actif. Un nouveau chantier P1 ou une promotion P2 → P1 résulte d'un arbitrage explicite du propriétaire **ou de la délégation bornée ci-dessous** ; ne pas l'inférer d'une simple opportunité.
 - **P0 n'est pas synonyme de « défaut technique »** : distinguer un vrai blocage/urgence d'une amélioration non urgente. Un risque grave objectivement confirmé doit être signalé immédiatement, même sans demande initiale de l'utilisateur.
 - **P2 et P3 sont distincts** : P2 = besoin concret et précis ; P3 = idée non retenue pour développement.
 - Conserver l'historique de reclassement pertinent dans l'issue canonique, sans créer d'issue-journal. Ne pas abaisser silencieusement un P0 ni engager un P3.
-- Pour chaque état du backlog, compter **P0, P1, P2 et P3** séparément et distinguer les PR ouvertes par priorité et rôle si utile.
+- Pour chaque état du backlog, compter **P0, P-1, P1, P2 et P3** séparément et distinguer les PR ouvertes par priorité et rôle si utile.
 
 ### Délégation de promotion du rôle Backlog (#4565)
 
 Le propriétaire autorise **uniquement le rôle `backlog`** à promouvoir une issue ouverte, de sa propre initiative, dans ces plafonds **globaux et inclusifs** :
 
-- **P1 → P0 : au plus 5 issues P0 ouvertes après promotion** (4 → 5 autorisé ; 5 → 6 refusé).
+- **P1 → P0 : au plus 5 issues portant effectivement `P0` ouvertes après promotion** (les `P-1` ne comptent pas comme P0 principaux) (4 → 5 autorisé ; 5 → 6 refusé).
 - **P2 → P1 : au plus 15 issues P1 ouvertes après promotion** (14 → 15 autorisé ; 15 → 16 ou 18 → 19 refusé).
+
+**Aucune promotion autonome `P-1 → P0` ni création d'un P0 concurrent au même programme.** Un `P-1` ne sort de la file de son parent que sur décision explicite du propriétaire. Les quotas de P0/P1 ne comptent que leurs labels exacts, pas `P-1` ; les tickets `PU` sont inclus uniquement dans le quota de leur priorité effective.
 
 **Procédure impérative avant chaque promotion autonome :** relire l'état GitHub live ; compter toutes les issues ouvertes de la priorité cible, **y compris celles marquées `PU`**, mais **jamais les PR ni les issues closes** ; vérifier le label unique et le périmètre actif, l'urgence avérée (P0) ou le travail effectivement engagé (P1), les dépendances et le rôle pilote. Dans l'issue promue, tracer l'ancienne et la nouvelle priorité, les preuves, la raison et les liens ; modifier le seul label de priorité ; **recompter après mutation**. Ne jamais lever `PU` par la promotion. Les tickets déjà au-dessus du plafond ne sont pas rétrogradés automatiquement.
 
@@ -75,15 +80,15 @@ Référence : [priorités communes](../../AGENTS.md#priorités--une-seule-file).
 
 ## Statut `PU` — attente d'un nouvel input utilisateur
 
-**`PU` (« Pending User ») est un statut suspensif, orthogonal à la priorité P0/P1/P2.** Le label de priorité est conservé pour mesurer l'importance du besoin, mais **un ticket `PU` est exclu de la file exécutable**, même lorsqu'il porte `P0` ou `P1`. Seul le rôle **`backlog`** peut le remettre dans la file en **retirant `PU`**, après qualification effective de l'input attendu. Un `next`, `go max`, l'arrivée d'une date ou une CI verte n'enlèvent jamais implicitement `PU`.
+**`PU` (« Pending User ») est un statut suspensif, orthogonal à la priorité P0/P-1/P1/P2.** Le label de priorité est conservé pour mesurer l'importance du besoin, mais **un ticket `PU` est exclu de la file exécutable**, même lorsqu'il porte `P0` ou `P1`. Seul le rôle **`backlog`** peut le remettre dans la file en **retirant `PU`**, après qualification effective de l'input attendu. Un `next`, `go max`, l'arrivée d'une date ou une CI verte n'enlèvent jamais implicitement `PU`.
 
 ### Responsabilité permanente du backlog
 
-1. **À chaque revue d'avancement, triage ou changement d'état**, interroger les issues ouvertes P0/P1/P2, leurs commentaires et dépendances, ainsi que les issues déjà `PU`. Réévaluer l'entrée **et** la sortie de `PU`, sans attendre qu'un utilisateur demande une revue spécifique de ce label. Recenser les P0/P1/P2 `ready` séparément des mêmes priorités `PU` ; remonter les demandes utilisateur manquantes.
+1. **À chaque revue d'avancement, triage ou changement d'état**, interroger les issues ouvertes P0/P-1/P1/P2, leurs commentaires et dépendances, ainsi que les issues déjà `PU`. Réévaluer l'entrée **et** la sortie de `PU`, sans attendre qu'un utilisateur demande une revue spécifique de ce label. Recenser les P0/P-1/P1/P2 `ready` séparément des mêmes priorités `PU` ; remonter les demandes utilisateur manquantes.
 2. **Étiqueter `PU` seulement si le ticket ne peut raisonnablement avancer sans une information, preuve terrain, accès/autorisation ou décision nouvelle et spécifique de l'utilisateur.** Vérifier d'abord les traces, documents, fixtures, tickets, PR et preuves déjà disponibles ; distinguer absence d'input utilisateur et attente technique (API, autre agent, CI, merge, défaut de code). Ne pas utiliser `PU` pour une simple recette manuelle non bloquante.
 3. **Renseigner dans l'issue canonique** : `État : blocked/PU`, input concret attendu, raison de son caractère indispensable, éventuel ticket `blocked-by #… (PU)`, preuves déjà exploitées, interdictions de reprise/retry, et critère explicite de déblocage. Ne jamais publier de captures authentifiées, credentials ou identifiants privés pour justifier le classement.
-4. **Examiner la propagation aux dépendants P0/P1/P2** : ajouter `PU` à un ticket dépendant **uniquement si la dépendance `PU` bloque tout travail utile et sûr dans son périmètre**. Une mention, un lien de coordination ou une fonctionnalité optionnelle ne suffisent pas. Si une tranche autonome existe, la préserver dans une issue indépendante ou délimiter clairement le ticket, sans bloquer artificiellement l'ensemble du chantier.
-5. **Réexaminer les `PU` à chaque revue** : lorsque l'utilisateur a fourni l'élément demandé, le backlog vérifie sa pertinence, les autres prérequis et les blocages en chaîne ; **retire lui-même `PU`** des tickets effectivement débloqués, individuellement, puis les réinsère dans leur priorité existante P0/P1/P2 (ou la révise selon arbitrage normal). La réception d'un input ne débloque pas automatiquement tous les dépendants.
+4. **Examiner la propagation aux dépendants P0/P-1/P1/P2** : ajouter `PU` à un ticket dépendant **uniquement si la dépendance `PU` bloque tout travail utile et sûr dans son périmètre**. Une mention, un lien de coordination ou une fonctionnalité optionnelle ne suffisent pas. Si une tranche autonome existe, la préserver dans une issue indépendante ou délimiter clairement le ticket, sans bloquer artificiellement l'ensemble du chantier.
+5. **Réexaminer les `PU` à chaque revue** : lorsque l'utilisateur a fourni l'élément demandé, le backlog vérifie sa pertinence, les autres prérequis et les blocages en chaîne ; **retire lui-même `PU`** des tickets effectivement débloqués, individuellement, puis les réinsère dans leur priorité existante P0/P-1/P1/P2 (ou la révise selon arbitrage normal). La réception d'un input ne débloque pas automatiquement tous les dépendants.
 
 ### Déclencheur anti-sur-ingénierie : arrêt plutôt que spéculation
 
@@ -95,7 +100,7 @@ Si le ticket est techniquement livrable sans cette validation, **ne pas utiliser
 
 Tant que `PU` figure sur l'issue, **aucun agent Focus, Core, Plugins, UX, CI/CD ou Merger ne prend ce ticket en travail** : ni implémentation, tests/recette, nouvelle branche/PR, reprise de PR, rebase, fusion ou clôture de réalisation. Le backlog peut seulement analyser, consigner et demander l'input, revoir le graphe de dépendances et lever le label après qualification. Des CI déjà lancées peuvent finir sans autoriser de nouveau travail. Les tickets indépendants, même du même fournisseur, continuent normalement ; un cas P0 urgent avec `PU` est **escaladé au backlog**, jamais contourné.
 
-**Vues utiles :** `is:issue is:open label:PU` ; `is:issue is:open label:P0 -label:PU` ; idem `P1` et `P2`. La priorité seule ne signifie jamais « prêt à exécuter ».
+**Vues utiles :** `is:issue is:open label:PU` ; `is:issue is:open label:P0 -label:PU` ; idem `P-1`, `P1` et `P2`. La priorité seule ne signifie jamais « prêt à exécuter ».
 
 ## Tickets proposés par UX : validation avant insertion
 
@@ -103,7 +108,7 @@ Pour les constats issus d'une **campagne exploratoire du rôle `ux`**, le backlo
 
 Cette règle ne limite **ni la création directe de tickets par `backlog` sur demande explicite, ni la remontée d'un risque grave**, et ne crée **aucune recette utilisateur préalable obligatoire** pour les merges ou clôtures de tickets implémentés. Référence : [rôle UX](ux.md#validation-utilisateur-avant-création-de-tickets-ux-p0-1449).
 
-## Découpage opératoire P0/P1 pour progresser pendant GitHub Actions
+## Découpage opératoire P0/P-1/P1 pour progresser pendant GitHub Actions
 
 **Règle Backlog de triage et d'ordonnancement, applicable à chaque revue P0/P1.** Examiner les gros tickets, leurs PR ouvertes, les chemins réellement modifiés, leurs dépendances et l'état des checks. Proposer ou créer des tickets enfants **si et seulement si** une séparation améliore le flux de livraison : lot atomique, propriétaire unique, tests et critères de réception propres, PR fusionnable indépendamment des travaux non encore intégrés. **Ne pas scinder uniquement sur une estimation de complexité, un numéro de lot ou pour gonfler la file.** Réutiliser d'abord les issues et PR déjà existantes.
 
@@ -111,9 +116,9 @@ Cette règle ne limite **ni la création directe de tickets par `backlog` sur de
 
 - **Parent :** conserve le besoin métier, les critères de réception de bout en bout, la matrice des dépendances et la clôture globale. Son statut ne prouve pas la livraison des enfants.
 - **Enfant :** une résolution concrète et bornée avec rôle pilote, fichiers/contrats détenus, tests nécessaires, interdits, dépendances `blocking/blocked-by`, état `ready / doing / review-CI / blocked` et prochain handoff. Une PR principale par enfant est un objectif, pas une obligation comptable.
-- **Priorités autonomes :** ne pas recopier automatiquement le label P0/P1 du parent sur tous les enfants. P0 reste une urgence réelle ; P1 signifie tranche effectivement engagée et exécutable ; P2 est une tranche actionnable mais différée. Les comptages et quotas de promotion #4565 portent sur **toutes les issues ouvertes**, parents et enfants inclus. Ne pas déclasser mécaniquement des tickets déjà décidés par le propriétaire pour satisfaire un quota ; motiver individuellement chaque reclassement.
+- **Priorités autonomes :** les sous-tickets d'un P0 principal explicitement structuré portent `P-1`, restent dans le backlog de ce parent et **ne sont pas exécutés par un agent distinct** ; seuls les P0 réellement indépendants conservent `P0`. Ne pas recopier automatiquement le label P0/P1 du parent sur tous les enfants. P0 reste une urgence réelle ; P1 signifie tranche effectivement engagée et exécutable ; P2 est une tranche actionnable mais différée. Les comptages et quotas de promotion #4565 portent sur **toutes les issues ouvertes**, parents et enfants inclus. Ne pas déclasser mécaniquement des tickets déjà décidés par le propriétaire pour satisfaire un quota ; motiver individuellement chaque reclassement.
 - **Dépendance :** un enfant qui ne peut être intégré avant un autre peut préparer des fixtures et contrats réellement indépendants, mais ne doit pas être présenté comme `ready` pour fusion. Si aucune action utile autonome n'existe, marquer `blocked-by` sans créer artificiellement une deuxième PR. Les décisions `PU` restent suspensives et ne se contournent jamais par le découpage.
-- **Anti-concurrence :** séparer les responsabilités Core, Plugins, CoreUI, UX et CI/CD ; pas deux agents sur la même résolution, la même branche, le même contrat ou une transaction SQLite/FS indivisible. Les recouvrements de fichiers sont inspectés, pas présumés conflictuels.
+- **Anti-concurrence :** pour #5975, un seul agent implémente de bout en bout tous les parcours Core/Plugins/CoreUI rattachés ; **aucune séparation A/B/C/D ni réservation permanente par fichier** ne justifie un second développeur. Les rôles backlog/CI restent séparés. Dans les autres programmes, séparer les responsabilités Core, Plugins, CoreUI, UX et CI/CD ; pas deux agents sur la même résolution, la même branche, le même contrat ou une transaction SQLite/FS indivisible. Les recouvrements de fichiers sont inspectés, pas présumés conflictuels.
 
 ### Passage immédiat à la tâche suivante pendant les workflows
 

@@ -8,16 +8,18 @@ Faire progresser Cifereca par **une action prioritaire et vérifiable à la fois
 
 ## Boucle de décision
 
-1. Consulter `main`, issues ouvertes (labels P0/P1/P2/P3), PR, CI et dépendances ; vérifier si un autre agent traite déjà le sujet.
-2. Prendre le plus important travail **débloqué** : P0 réellement urgent, sinon **P1 du chantier actif** (tout rôle). Ne prendre un P2 précis que sur demande explicite ou après promotion par le backlog ; ne jamais implémenter un P3 sans décision produit. Si le chantier est bloqué, consigner les blocages et ne pas s'inventer un P2 opportuniste.
+1. Consulter `main`, issues ouvertes (labels P0/P-1/P1/P2/P3), PR, CI et dépendances ; vérifier si un autre agent traite déjà le sujet.
+2. Prendre le plus important travail **débloqué** : P0 principal réellement urgent, puis ses `P-1` **uniquement sous la responsabilité du même agent** ; sinon **P1 du chantier actif** (tout rôle). Ne prendre un P2 précis que sur demande explicite ou après promotion par le backlog ; ne jamais implémenter un P3 sans décision produit. Si le chantier est bloqué, consigner les blocages et ne pas s'inventer un P2 opportuniste.
 3. Choisir **un rôle actif** pour l'étape parmi `backlog`, `core`, `plugins` et `cicd`, en respectant son profil. **Le rôle `ux` (et son alias `simulation`) est exclu de focus.** Transmettre les tâches UX à l'agent UX indépendant, même lorsqu'elles sont P0.
 4. Livrer un incrément atomique : correctif testé et PR, preuve de CI ou de recette technique hors UX, ticket de décision ou merge prêt. Ne jamais fabriquer une preuve de succès ni s'attribuer une preuve UX.
 5. Quand l'état ou le propriétaire change, mettre à jour **l'issue canonique** ou la PR avec le résultat et un handoff minimal.
 6. Relire les priorités et recommencer ; `Next` signifie la prochaine étape, pas une release.
 
+**Consolidation P0/P-1 :** un sous-ticket `P-1` n'est jamais sélectionné comme un chantier autonome par Focus. Pour le découplage Core/fournisseurs, [#5975](https://github.com/pzia/cifereca/issues/5975) est le seul P0 principal : aucun agent A/B/C/D parallèle n'implémente ses sous-tickets. Les PR préexistantes sont coordonnées avec l'agent unique ; CI/CD reste responsable du merge technique.
+
 **CI/E2E asynchrones — ne pas immobiliser Focus :** dès qu'un run autonome est lancé, consigner dans la PR ou l'issue **run, HEAD SHA, tests attendus et état `en cours`**, puis enchaîner sur **une autre tâche utile, indépendante et autorisée** (ou une préparation non conflictuelle), sans sonder la CI en boucle ni relancer les tests inutilement. **Revenir sur le run** à la prochaine revue et impérativement avant merge, clôture ou toute action dépendante : seuls les contrôles réellement réussis sur le bon SHA valent preuve. Un test en cours, absent ou échoué interdit de déclarer la livraison validée, **pas de progresser ailleurs**. Voir [politique de livraison](../../docs/AGENT-DELIVERY-POLICY.md#enchaîner-les-opérations-pendant-lexécution-des-tests).
 
-**Filtre suspensif `PU` (prioritaire sur P0/P1/P2) :** avant toute sélection ou reprise de PR, exclure les issues étiquetées `PU`, même dans un chantier actif et même après un `next max`. Ne pas coder, tester, prendre une branche, relancer une PR, merger ou clore une réalisation `PU`. Seul le rôle `backlog` vérifie le nouvel input utilisateur et **retire `PU`** pour réintroduire l'issue dans sa priorité existante. Si une dépendance `PU` bloque entièrement un autre ticket, signaler le blocage au backlog pour étiquetage transitif ; si le travail reste autonome, continuer uniquement dans son périmètre propre. Voir [AGENTS.md](../../AGENTS.md#pu--suspension-dexécution-distincte-de-p0p1p2).
+**Filtre suspensif `PU` (prioritaire sur P0/P-1/P1/P2) :** avant toute sélection ou reprise de PR, exclure les issues étiquetées `PU`, même dans un chantier actif et même après un `next max`. Ne pas coder, tester, prendre une branche, relancer une PR, merger ou clore une réalisation `PU`. Seul le rôle `backlog` vérifie le nouvel input utilisateur et **retire `PU`** pour réintroduire l'issue dans sa priorité existante. Si une dépendance `PU` bloque entièrement un autre ticket, signaler le blocage au backlog pour étiquetage transitif ; si le travail reste autonome, continuer uniquement dans son périmètre propre. Voir [AGENTS.md](../../AGENTS.md#pu--suspension-dexécution-distincte-de-p0p1p2).
 
 ## Périmètre strict — invariant d'exécution
 
@@ -33,7 +35,7 @@ Faire progresser Cifereca par **une action prioritaire et vérifiable à la fois
 
 ## Handoff minimal
 
-- **Priorité / ticket** : P0/P1/P2/P3 et référence GitHub.
+- **Priorité / ticket** : P0/P-1/P1/P2/P3 et référence GitHub.
 - **Rôle exécutant / état** : fait, bloqué ou prêt pour validation.
 - **Résultat et preuve** : commit, PR, tests, CI, logs ou captures GTK réelles.
 - **Suite** : rôle propriétaire, action précise, critère de fin et éventuel blocage.
