@@ -95,6 +95,7 @@ LOCAL_GUI = {
 }
 PROBES = {
     "e2e/modern_light_theme_probe.py": THEME,
+    "e2e/modern_light_review.py": THEME,
     "e2e/task_busy_settings_probe.py": BUSY_GTK,
     "e2e/capture_session_gtk_probe.py": CAPTURE_GTK,
     "e2e/public_fault_search_probe.py": ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366"),

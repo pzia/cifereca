@@ -122,3 +122,35 @@ six planches clair/sombre et une grille `ux-checklist.csv` privée.
 L'agent UX doit inspecter les PNG originaux en pleine résolution : la création
 de planches n'est **pas** une validation visuelle, WCAG ou un droit de fusion.
 Aucune capture réelle ni donnée de compte ne doit être publiée dans les CI.
+
+### Verdict de la grille privée (P1 #757)
+
+Le script **ne remplit pas** les observations UX à la place du reviewer.
+Après inspection des **PNG originaux en pleine résolution**, renseigner dans
+`modern-light-private-review/ux-checklist.csv` les **36 lignes** (9 vues,
+2 apparences, 2 largeurs). Pour chaque axe
+`readability_contrast / keyboard_focus / clipping /
+busy_disabled_error_states / density`, indiquer `OK`, `KO` ou `N/A`.
+Une valeur `N/A` exige une justification en notes privées et **n'est pas un
+PASS** ; un `KO` implique `ux_verdict=KO` pour la ligne.
+Les états non observés ne doivent pas être marqués `OK`.
+
+```bash
+python3 e2e/modern_light_review.py --root e2e-artifacts --verify-checklist
+```
+
+La commande vérifie **de nouveau** les PNG originaux (SHA-256, format,
+résolution, pair clair/sombre), l'identité du HEAD et du manifeste, puis la
+complétude et l'absence de doublons/contradictions dans les 36 observations.
+Elle dépose **localement seulement**, en mode `0600`, le fichier
+`visual-review-verdict.json` : SHA du commit, empreinte de la grille, nombre
+de lignes, anomalies et exclusions. Le contenu des notes et les PNG ne
+sortent pas de l'hôte de revue.
+
+`ready_for_ux_decision=true` signifie uniquement que le reviewer a rempli
+toutes les lignes sans `KO` ni `N/A`, **pas** qu'un test d'images aurait
+certifié le contraste, les états ou le thème. La décision de fermer #757
+nécessite toujours une revue UX effective, et la traçabilité de cette
+décision distincte. Un run CI vert ou une grille vide ne peuvent pas
+produire ce verdict.
+
