@@ -393,3 +393,34 @@ def test_profile_reference_unicode_name_remains_accepted():
     profile = AdeptProfileBrokerImpl(service).bind("alice", "stable-reader")
     assert profile.name == "Éloïse"
     assert service.storage.bound == {("identity", "alice"): "stable-reader"}
+
+
+@pytest.mark.parametrize("replacement", ["same_id_new_identity", "identity_removed"])
+def test_provision_never_binds_replaced_or_removed_identity(replacement):
+    service = Service()
+    original = service.runtime.provision_profile
+
+    def provision(name, username):
+        payload = original(name, username)
+        if replacement == "same_id_new_identity":
+            service.identities = [NS(identity_id="alice")]
+        else:
+            service.identities = []
+        return payload
+
+    service.runtime.provision_profile = provision
+    with pytest.raises(AttentionRequired) as exc:
+        AdeptProfileBrokerImpl(service).provision(
+            "reader", "reader@example.test", identity_id="alice",
+        )
+    assert exc.value.code == "adept_profile_provisioning_incomplete"
+    assert service.storage.bound == {}
+
+
+def test_provision_without_explicit_identity_keeps_profile_unbound():
+    service = Service()
+    profile = AdeptProfileBrokerImpl(service).provision(
+        "reader", "reader@example.test",
+    )
+    assert profile.profile_id == "stable-reader"
+    assert service.storage.bound == {}
