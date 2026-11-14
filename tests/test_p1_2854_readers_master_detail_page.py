@@ -353,3 +353,29 @@ def test_unproven_legacy_intention_refuses_reader_projection_without_leak(tmp_pa
     assert host.readers_page.rows == []
     assert "SECRET" not in host._reader_status_label.label
     assert actions == []
+
+
+def test_reader_selector_invalid_gtk_position_never_targets_last_reader(tmp_path):
+    """A negative selection must not silently switch to Alice's second reader."""
+    db, entries, host, actions = environment(tmp_path)
+    host._render_readers()
+    baseline = host._reader_selected_device_id
+    generation = host._reader_selection_generation
+    bindings = db.device_bindings()
+    assert baseline == "reader-alice"
+    chooser = host._reader_device_dropdown
+
+    for invalid in (-1, 0xFFFFFFFF, True, "1"):
+        chooser.set_selected(invalid)
+        chooser.trigger()
+        assert host._reader_selected_device_id == baseline
+        assert host._reader_selection_generation == generation
+        assert db.device_bindings() == bindings
+        assert len(host.readers_page.rows) == 1
+        assert host.readers_page.rows[0].title == "Private alice title"
+
+    chooser.set_selected(1)
+    chooser.trigger()
+    assert host._reader_selected_device_id == "reader-alice-2"
+    assert host._reader_selection_generation == generation + 1
+    assert db.device_bindings() == bindings
