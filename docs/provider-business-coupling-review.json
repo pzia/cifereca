@@ -167,6 +167,22 @@
       ],
       "pr": "#6020",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-queued-global-sync-ui-navigation-worker",
+      "original": "src/cifereca/gui/sync_controller.py::_build_sync_page.sync_all queued lambda calls sync_action_scope_current(window,scope)",
+      "original_classification": "navigation_dependent_worker_cancellation",
+      "replacement": "SyncRequest(identity_id=scope.identity_id) pinned at click; broker.synchronize(request) authorizes each exact source independently",
+      "classification": "removed_navigation_dependent_worker_gate",
+      "evidence": "After admission the queued worker no longer consults mutable GTK identity, generation, page lifetime or current account. The live SynchronizationBrokerImpl.synchronize validates identity and enumerates enabled connected source refs, then synchronize_source revalidates source and consent. GTK callbacks still call sync_action_scope_current to refuse stale display.",
+      "tests": [
+        "tests/test_core_ui_1347_sync_action_scope.py::test_admitted_global_sync_keeps_exact_identity_after_navigation_change",
+        "tests/test_core_ui_1347_sync_action_scope.py::test_queued_global_sync_survives_aba_navigation_without_stale_ui_publish",
+        "tests/test_core_ui_1347_sync_action_scope.py::test_queued_global_sync_survives_page_rebuild_without_retargeting",
+        "tests/test_core_p0_1346_source_sync_target_guard.py"
+      ],
+      "pr": "#6012",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
