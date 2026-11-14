@@ -15,21 +15,23 @@
       ],
       "retirement_pr": "",
       "rationale": "Removal would lose truthful provider filtering in archived 29/10 loan-sync diagnostics; compatibility is restricted, descriptive and covered by negative tests"
-    },
+    }
+  ],
+  "retirements": [
     {
       "id": "site-5354d32da0ea60fe18fe5127",
-      "classification": "must_migrate",
-      "journey": "digital_loan_explicit_acsm_action",
-      "productive_caller": "DetailPanel.show_loan → MainWindow.prepare_explicit_loan_acsm_for_loan → explicit_loan_acsm_controller.prepare_explicit_loan_acsm",
-      "effect": "BNF-specific GTK button wired to explicit ACSM staging; click may initiate provider loan confirmation only after separate user confirmation",
-      "authority": "CoreUI branch loan.source_provider == 'bnf-pret' and state/medium instead of provider-neutral action descriptor",
-      "replacement_contract": "Pending: provider-neutral typed explicit existing-loan ACSM action capability and Core exact-account/admission guard; no automatic borrowing",
+      "original": "src/cifereca/gui/detail_panel.py::DetailPanel.show_loan",
+      "original_classification": "must_migrate",
+      "replacement": "core.explicit_loan_acsm_visibility.explicit_loan_acsm_action_available",
+      "classification": "removed_from_executable_coreui_branch",
+      "evidence": "The provider-keyed Gtk action branch and BnF-only label were physically removed; Core now inspects the installed exact live session's static ACSM stage profile and methods. Consent, stage and import remain unchanged.",
       "tests": [
-        "tests/test_core_ui_p0_5048_neutral_loan_download_unavailable.py::test_detail_panel_refusal_path_has_no_supplier_specific_exception",
-        "tests/test_core_ui_bnf_acsm_native.py::test_native_bnf_actions_are_distinct_and_explain_safe_failure"
+        "tests/test_core_p0_5975_neutral_acsm_action.py",
+        "tests/test_core_ui_p0_5048_neutral_loan_download_unavailable.py",
+        "tests/test_core_ui_bnf_acsm_native.py",
+        "tests/test_core_ui_bnf_acsm_two_consent.py"
       ],
-      "retirement_pr": "",
-      "rationale": "Real provider-keyed UI action remains installed; preserve confirmation and no-double-GET semantics until a versioned action descriptor replaces it (#5055/#5056)"
+      "pr": "to_be_assigned"
     }
   ]
 }
