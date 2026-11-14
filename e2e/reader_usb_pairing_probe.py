@@ -301,6 +301,29 @@ def main() -> int:
         if not state["x11_target_window"]:
             state["checkpoint"] = "x11_hit_mismatch"
             raise AssertionError("XTEST root hit does not match GTK native")
+        # The GDK seat can report a different position than the X11 root.
+        # Re-pick the widget at the device's *observed* surface coordinates,
+        # not only at the requested logical coordinates.
+        try:
+            seat_pointer = native.get_surface().get_display().get_default_seat().get_pointer()
+            on_surface, cursor_x, cursor_y, _mask = (
+                native.get_surface().get_device_position(seat_pointer)
+            )
+            transform_x, transform_y = native.get_surface_transform()
+            actual = (
+                native.pick(
+                    cursor_x - transform_x, cursor_y - transform_y,
+                    Gtk.PickFlags.DEFAULT,
+                ) if on_surface else None
+            )
+            while actual is not None and actual is not widget:
+                actual = actual.get_parent()
+            state["geometry_hit"] = actual is widget
+        except Exception:
+            state["geometry_hit"] = False
+        if not state["geometry_hit"]:
+            state["checkpoint"] = "widget_geometry"
+            raise AssertionError("GDK device pointer does not hit GTK control")
         # A pressed/released pair dispatched as two server acknowledgements
         # allows GTK4's gesture recognizer to inspect the real native press
         # before the release. Both events remain strictly XTEST events.
