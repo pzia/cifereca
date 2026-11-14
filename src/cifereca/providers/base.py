@@ -132,6 +132,9 @@ class AccountOptionField:
     # For value_type="url" only. HTTP is permitted only if a provider
     # explicitly declares it (e.g. a user-managed local service).
     url_schemes: tuple[str, ...] = ("https",)
+    # Presentation-only personal limit for one medium of the primary borrower;
+    # no provider quota, lending right or eligibility is inferred.
+    advisory_loan_medium: Literal["digital", "physical"] | None = None
 
 
 def valid_account_option_url(field: AccountOptionField, value: str) -> bool:
@@ -257,6 +260,10 @@ class BorrowerScopedOptionField:
     min_value: int = 0
     max_value: int = 99
     help_text: str = ""
+    # Opt-in UI/projection metadata only: a configured personal maximum for
+    # an exact linked borrower, not a supplier quota or lending permission.
+    # Appended to preserve positional construction of historic descriptors.
+    advisory_loan_limit: bool = False
 
 
 @dataclass(frozen=True, slots=True)

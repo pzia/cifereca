@@ -1207,6 +1207,11 @@ class IdentityBrokerImpl:
             for row in self.service.accounts_for_identity(identity_id)
         )
     def statistics(self, identity_id: str, *, window_seconds: int = 2592000): return self.service.identity_statistics(identity_id, window_seconds=window_seconds)
+    def digital_loan_availability(self, identity_id: str):
+        # Additive, read-only broker facet; no UI-selected identity fallback,
+        # provider GET, session refresh or SQLite mutation at Home rendering.
+        from .core.digital_loan_availability import digital_loan_availability
+        return digital_loan_availability(self.service, identity_id)
 
 
 @dataclass(slots=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+from .digital_loan_availability import DigitalLoanAvailability
 from .models import (
     AccountRef, ActionStatistics, AdeptProfileRef, ArtifactFormat, ArtifactInputLease, ArtifactOutputLease, ArtifactRef, ArtifactRoutePlan,
     ArtifactRouteRequest, ArtifactRouteTarget, ArtifactTransferResult, ArtifactVariant, CacheNamespaceInfo, CachePurgeResult, CatalogSearchBatch, CatalogSearchSummary, CatalogueSourceCapability, LibraryMutationPlan,
@@ -108,6 +109,19 @@ class IdentityBroker(Protocol):
         """
         ...
     def statistics(self, identity_id: str, *, window_seconds: int = 2592000) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
+class DigitalLoanAvailabilityReadBroker(Protocol):
+    """Optional facet on 'identities'; old IdentityBroker remains compatible.
+
+    A no-argument getter is deliberately absent: callers must pin the
+    effective profile ID and feature-detect this method.
+    """
+    def digital_loan_availability(
+        self, identity_id: str,
+    ) -> tuple[DigitalLoanAvailability, ...]: ...
+
 
 @runtime_checkable
 class RuntimeCapabilitiesBroker(Protocol):

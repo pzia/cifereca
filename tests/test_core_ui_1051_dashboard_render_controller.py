@@ -680,3 +680,41 @@ def test_dashboard_unknown_current_sync_is_not_historic_failure_or_never_synced(
     assert "À actualiser" in bob_labels
     assert not any("Erreurs : 2" in label for label in alice_labels)
     assert "Nouvelles acquisitions : 0 · Actions : 0 · Erreurs : 2" in bob_labels
+
+
+def test_p1_6002_native_fallback_shows_current_profile_only_unknown_capacity(monkeypatch):
+    from cifereca.brokers import IdentityBrokerImpl
+    from cifereca.plugin_api import DigitalLoanAvailability
+
+    entries = [
+        _card("alice", selected=True),
+        _card("bob", selected=False),
+    ]
+    called = []
+    def capacity(self, identity_id):
+        called.append(identity_id)
+        return (DigitalLoanAvailability(
+            identity_id=identity_id, provider_id="synthetic",
+            credential_id="PRIVATE-CREDENTIAL", borrower_id="borrower",
+            provider_label="Bibliothèque", connection_label="Connexion 1",
+            borrower_label="Compte principal", personal_ceiling=4,
+            observed_loans=2,
+        ),)
+    monkeypatch.setattr(IdentityBrokerImpl, "digital_loan_availability", capacity)
+    window, _events, _diag, _styles, render = _window(entries)
+    render()
+    assert called == ["alice"]
+    alice = _descendant_labels(window.dashboard_cards.children[0])
+    bob = _descendant_labels(window.dashboard_cards.children[1])
+    assert "Prêts numériques — disponibles" in alice
+    assert any("Reste inconnu" in text and "plafond personnel 4" in text
+               for text in alice)
+    assert not any("Prêts numériques — disponibles" in text for text in bob)
+    assert "PRIVATE-CREDENTIAL" not in str(alice)
+    entries[0]["selected"], entries[1]["selected"] = False, True
+    render()
+    assert called == ["alice", "bob"]
+    alice = _descendant_labels(window.dashboard_cards.children[0])
+    bob = _descendant_labels(window.dashboard_cards.children[1])
+    assert "Prêts numériques — disponibles" not in alice
+    assert "Prêts numériques — disponibles" in bob

@@ -1,5 +1,5 @@
 """External identity dashboard; uses only the public UiIdentityHost broker."""
-from cifereca.plugin_api import UiPageContribution
+from cifereca.plugin_api import UiPageContribution, digital_loan_availability_lines
 import re
 
 STATUS={'running':'En cours','success':'Réussie','partial':'Partielle','failed':'Échouée'}
@@ -292,6 +292,7 @@ def compact_source_text(item):
     return label+' · '+files
 
 
+
 class OverviewController:
     def __init__(self,host,render,identity_broker=None):
         self.host=host;self.render=render;self.identity_broker=identity_broker;self.closed=False
@@ -303,15 +304,35 @@ class OverviewController:
         if self.closed:
             return
         legacy_rows = list(self.host.identity_overview())
+
+        def display_with_capacity(rows):
+            # Public broker takes the exact profile ID, never the selected
+            # GTK profile by implication. No provider call occurs here.
+            enriched = []
+            for row in rows:
+                if type(row) is not dict:
+                    continue
+                projected = dict(row)
+                if projected.get("selected") is True:
+                    iid = projected.get("identity_id")
+                    read = getattr(self.identity_broker, "digital_loan_availability", None)
+                    if type(iid) is str and iid and callable(read):
+                        try:
+                            projected["digital_loan_availability"] = read(iid)
+                        except Exception:
+                            projected["digital_loan_availability"] = ()
+                enriched.append(projected)
+            self.render(enriched)
+
         if self.identity_broker is None:
-            self.render(legacy_rows)
+            display_with_capacity(legacy_rows)
             return
         try:
             public_rows = list(self.identity_broker.identities())
         except Exception:
             public_rows = []
         if not public_rows:
-            self.render(legacy_rows)
+            display_with_capacity(legacy_rows)
             return
         by_id = {str(row.get('identity_id') or row.get('id') or ''): dict(row) for row in legacy_rows if isinstance(row,dict)}
         merged=[]
@@ -325,7 +346,7 @@ class OverviewController:
                 augmented=dict(by_id[iid]);augmented.update(row);row=augmented
             row.setdefault('identity_id',iid)
             merged.append(row)
-        self.render(merged or legacy_rows)
+        display_with_capacity(merged or legacy_rows)
     def open(self,identity_id):
         if not self.closed:self.host.open_identity_library(identity_id)
     def filter(self,identity_id,route,provider):
@@ -504,6 +525,16 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
                 compact_row(summary, owned_rights)
                 if stats.get('known_loans') is None and not _loan_scope_not_configured(row):
                     compact_row(summary,'Prêts de bibliothèque non actualisés · vérifier les alertes et la synchronisation')
+
+            # Only the selected Core profile gets the availability panel.
+            # The other identity cards remain overview-only, not an Ensemble
+            # aggregation. A local preference never becomes provider quota.
+            if row.get("selected") is True:
+                remaining_area = plain_section(box, 'Prêts numériques — disponibles')
+                for sentence in digital_loan_availability_lines(
+                    row.get("digital_loan_availability", ()), identity_id=iid,
+                ):
+                    compact_row(remaining_area, sentence)
 
             groups=compact_source_groups(row,public_providers)
             if any(groups.values()):

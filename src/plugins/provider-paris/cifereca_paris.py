@@ -237,6 +237,7 @@ DESCRIPTOR = ProviderDescriptor(
             "manual_loan_limit_primary_digital",
             "Compte principal · maximum personnel de prêts numériques",
             default="4", value_type="unsigned_integer", min_value=0, max_value=99,
+            advisory_loan_medium="digital",
             help_text="4 par défaut · DILICOM seulement. Plafond renseigné par vous, "
                       "sans effet sur les droits réels, l'emprunt ou la synchronisation. "
                       "Ne s'applique pas aux comptes lecteurs liés.",
@@ -256,6 +257,7 @@ DESCRIPTOR = ProviderDescriptor(
         branches=(("digital", "Numérique · DILICOM"),
                   ("physical", "Physique · SYRACUSE")),
         default="4", min_value=0, max_value=99,
+        advisory_loan_limit=True,
         help_text="Indication locale uniquement. Les comptes liés sont séparés "
                   "du principal et les deux branches ne se cumulent pas ; "
                   "aucune incidence sur les droits de prêt ou la synchronisation.",

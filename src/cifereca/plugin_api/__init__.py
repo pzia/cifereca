@@ -6,6 +6,7 @@ External plugins should import from this package only.  Internal modules such as
 
 from cifereca.http_trace import HTTPX_TRANSPORT, TraceHTTPTransport, TraceAsyncHTTPTransport, TraceHTTPClient, TraceAsyncHTTPClient
 from .context import PluginContext
+from .digital_loan_availability import DigitalLoanAvailability, digital_loan_availability_lines
 from .usb_storage import USB_STAGE_CAPABILITY, UsbStorageStageWriter
 from cifereca.document_classification import (
     DOCUMENT_CLASSIFICATION_CONTRACT, ClassificationEvidence,
@@ -69,7 +70,7 @@ from .models import (
     TransformCapability, TransformRequest, TransformPlan, TransformResult, ArtifactInputLease, ArtifactOutputLease, TaskControl, TaskHandle, TransportService, CatalogServiceFactory, HealthCheckResult, DiagnosticsCheckProvider, DocumentTransformer,
     UiActionContext, UiBookListHost, UiBookDetailHost, UiFacetHost, UiActionHost, UiBookNavigationHost, UiLoadedSearchNoticeHost, UiExactSearchDetailHost, UiKnownSearchNoticeHost, UiPluginManagementHost,
 )
-from .brokers import (CatalogBroker, CatalogueSourceInventoryBroker, ReleaseUpdateReadBroker, AcquisitionBroker, SynchronizationBroker, SourceSyncConsentBroker, SourceInventoryRefreshScheduleBroker, MetadataBroker, ReconciliationBroker, IdentityBroker, DiagnosticsBroker, LibraryNamingBroker, RuntimeCapabilitiesBroker, AdeptProfileBroker, AdeptLoanBroker,
+from .brokers import (CatalogBroker, CatalogueSourceInventoryBroker, ReleaseUpdateReadBroker, AcquisitionBroker, SynchronizationBroker, SourceSyncConsentBroker, SourceInventoryRefreshScheduleBroker, MetadataBroker, ReconciliationBroker, IdentityBroker, DigitalLoanAvailabilityReadBroker, DiagnosticsBroker, LibraryNamingBroker, RuntimeCapabilitiesBroker, AdeptProfileBroker, AdeptLoanBroker,
     ArtifactExecutionBroker, LibraryReadBroker, LibraryReconciliationReadBroker, LibraryMaintenanceBroker, ArtifactRoutingBroker, CacheBroker, TaskBroker)
 from .acquisition import (
     normalize_acquisition_offers,
@@ -121,6 +122,7 @@ __all__ = [
     "DOWNLOADABLE_RESOURCE_CONTRACT", "SourceReference", "DownloadCapability",
     "OptionalRightMetadata", "ResourceObservation", "ResourceSnapshot",
     "DeliveryCandidate", "from_legacy_rights_snapshot", "as_legacy_rights_snapshot",
+    "DigitalLoanAvailability", "digital_loan_availability_lines",
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
     "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "BorrowRequestNotSubmitted", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
@@ -134,7 +136,7 @@ __all__ = [
     "MaintenanceToolInfo", "MaintenanceContext", "MaintenancePlan", "MaintenanceResult", "MaintenanceTool",
     "TransformCapability", "TransformRequest", "TransformPlan", "TransformResult", "ArtifactInputLease", "ArtifactOutputLease", "TaskControl", "TaskHandle", "TransportService", "CatalogServiceFactory", "HealthCheckResult", "DiagnosticsCheckProvider", "DocumentTransformer",
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost", "UiActionHost", "UiBookNavigationHost", "UiLoadedSearchNoticeHost", "UiKnownSearchNoticeHost", "UiPluginManagementHost",
-    "CatalogBroker", "CatalogueSourceInventoryBroker", "ReleaseUpdateReadBroker", "AcquisitionBroker", "SynchronizationBroker", "SourceSyncConsentBroker", "SourceInventoryRefreshScheduleBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
+    "CatalogBroker", "CatalogueSourceInventoryBroker", "ReleaseUpdateReadBroker", "AcquisitionBroker", "SynchronizationBroker", "SourceSyncConsentBroker", "SourceInventoryRefreshScheduleBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DigitalLoanAvailabilityReadBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
     "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryReconciliationReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker",
     "normalize_language_tag", "sanitize_filename_component", "prefer_downloads_for_save", "description_text", "description_element", "redact_text",
     "normalize_acquisition_offers", "attested_offer_formats", "rank_acquisition_offers", "acquisition_format_projection", "ArtifactInspection", "detect_artifact_format", "inspect_artifact", "inspect_artifact_content", "publish_artifact_content", "publish_artifact_file",
