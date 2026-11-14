@@ -3667,6 +3667,57 @@ class LibraryService:
             return True
         return {str(account.identity_id) for account in matching} != {identity_id}
 
+    def bind_adept_borrower_grant(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        borrower_identity_id: str, confirmed: bool = False,
+    ) -> dict[str, Any]:
+        """Record one user-confirmed ADEPT borrower grant on an exact source.
+
+        The v16 storage boundary proves the persisted connection, account,
+        borrower and pinned profile in one transaction. An old Paris binding,
+        entitlement or UI selection must never be promoted into this grant.
+        """
+        coordinates = (
+            provider_id, credential_id, account_id, borrower_identity_id,
+        )
+        if (any(type(value) is not str or not value for value in coordinates)
+                or type(confirmed) is not bool or confirmed is not True):
+            raise ValueError("adept_borrower_grant_evidence_invalid")
+        connection_identity_id = self.storage.identity_for_connection(
+            provider_id, credential_id,
+        )
+        if type(connection_identity_id) is not str or not connection_identity_id:
+            raise ValueError("adept_borrower_grant_evidence_invalid")
+        borrower = self.identity_by_id(borrower_identity_id)
+        if (borrower is None or type(borrower.identity_id) is not str
+                or borrower.identity_id != borrower_identity_id):
+            raise ValueError("adept_borrower_grant_evidence_invalid")
+        profile_id = self.storage.adept_profile_binding_get(
+            "identity", borrower_identity_id,
+        )
+        if type(profile_id) is not str or not profile_id:
+            raise ValueError("adept_borrower_grant_evidence_invalid")
+        scope = {
+            "provider_id": provider_id,
+            "credential_id": credential_id,
+            "account_id": account_id,
+        }
+        self.storage.adept_borrower_grant_put(
+            **scope,
+            connection_identity_id=connection_identity_id,
+            borrower_identity_id=borrower_identity_id,
+            profile_id=profile_id,
+            confirmed=True,
+        )
+        proof = self.storage.adept_borrower_grant_get(**scope)
+        if (type(proof) is not dict
+                or proof.get("connection_identity_id") != connection_identity_id
+                or proof.get("borrower_identity_id") != borrower_identity_id
+                or proof.get("profile_id") != profile_id
+                or proof.get("confirmed_by") != "explicit"):
+            raise ValueError("adept_borrower_grant_evidence_invalid")
+        return proof
+
     def bind_paris_borrower_adept(
         self, *, credential_id: str, account_id: str, borrower_identity_id: str,
         confirmed: bool = False,
