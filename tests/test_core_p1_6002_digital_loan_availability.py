@@ -233,3 +233,35 @@ def test_no_source_side_effects_and_non_lender_catalogues_skipped():
     rows = digital_loan_availability(state, "alice")
     assert len(rows) == 1 and rows[0].provider_id == "demo"
     assert rows[0].status == "unknown"
+
+
+def test_borrower_advisory_schema_is_explicit_opt_in_and_append_only():
+    """An old linked-borrower setting must not become a digital quota."""
+    old = BorrowerScopedOptionField(
+        "linked_limits", "Ancien plafond",
+        (("digital", "Numérique"), ("physical", "Physique")),
+        "4", 0, 99, "Configuration locale",
+    )
+    assert old.advisory_loan_limit is False
+    assert BorrowerScopedOptionField(
+        "linked_limits", "Nouveau plafond",
+        branches=(("digital", "Numérique"),),
+        advisory_loan_limit=True,
+    ).advisory_loan_limit is True
+
+    a = account("demo", "one", "linked", primary=False)
+    linked = spec("demo", linked=True)
+    inactive = ProviderDescriptor(
+        id="demo", display_name="Démo", description="fictif",
+        state="ready", capabilities=ProviderCapabilities(loans=True),
+        borrower_scoped_options=(old,),
+    )
+    configured_account = configured("demo", "one", options={
+        "linked_limits": {"linked": {"digital": "99"}},
+    })
+    state = runtime([a], [configured_account], [inactive])
+    row, = digital_loan_availability(state, "alice")
+    assert row.personal_ceiling is None and row.remaining is None
+    state.provider_descriptors = lambda: [linked]
+    row, = digital_loan_availability(state, "alice")
+    assert row.personal_ceiling == 99 and row.remaining is None
