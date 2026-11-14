@@ -48,7 +48,7 @@ def test_single_source_uses_exact_account_not_historical_right(monkeypatch):
     assert selection.select_library_source_offer_target(_service(), entry) is marker
     assert calls == [{
         "provider_id": "numilog", "credential_id": "card-A",
-        "item_id": "edition-1",
+        "item_id": "edition-1", "expected_identity_id": "alice",
     }]
 
 
