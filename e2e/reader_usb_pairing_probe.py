@@ -551,7 +551,27 @@ def main() -> int:
     def on_activate(application):
         window.set_application(application)
         window.present()
-        GLib.idle_add(run_checks)
+
+        # Preflight dispatches ONE real XTEST click from a short timeout,
+        # which returns control to GApplication's event loop immediately.
+        # If the callback never runs, the old synchronous probe still fails
+        # closed; no Gtk signal is ever injected to fake success.
+        def native_preflight_click():
+            if button.get_mapped():
+                device.click_widget(button)
+            return False
+
+        def continue_after_preflight():
+            active = getattr(window, "_reader_pairing_dialog", None)
+            if active is not None:
+                # Reuse the real product dialog cancel response to reset
+                # the fixture before the regular zero/one/N acceptance.
+                active.response("cancel")
+            GLib.idle_add(run_checks)
+            return False
+
+        GLib.timeout_add(350, native_preflight_click)
+        GLib.timeout_add(1050, continue_after_preflight)
 
     app.connect("activate", on_activate)
     app.run([])
