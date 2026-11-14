@@ -421,14 +421,20 @@ def _provider_enabled_for_identity(self, provider_id: str, identity_id: str | No
         and getattr(status.descriptor, "instantiation", "multiple") != "singleton_public"
     ):
         return True
-    identity = identity_id or (self.current_identity.identity_id if self.current_identity else "default")
+    # A virtual/public provider visibility decision has to be scoped to the
+    # identity supplied by its caller, not mutable GTK navigation. Missing or
+    # malformed identity evidence refuses before manager/plugin lookup.
+    if (type(identity_id) is not str or not identity_id
+            or len(identity_id) > 1024
+            or any(ord(char) in (0, 10, 13) for char in identity_id)):
+        return False
     try:
-        if not self._plugin_manager.enabled_for_identity(status.descriptor.id, identity):
+        if not self._plugin_manager.enabled_for_identity(status.descriptor.id, identity_id):
             return False
         if provider_id in self._virtual_parent_by_provider:
             state = getattr(self._plugin_manager, "state", None)
             if state is not None:
-                override = state.identity_enabled_override(provider_id, identity)
+                override = state.identity_enabled_override(provider_id, identity_id)
                 return True if override is None else bool(override)
         return True
     except Exception:

@@ -146,12 +146,15 @@ def selected_private_offer_hint(
             or credential == "__public__"):
         return False
 
-    # Preserve the source-enable check normally performed by
-    # _session_for_source, but do not resolve or contact the provider.
+    # Admission is scoped to the identity already captured by the caller.
+    # Never ask a facade enablement method to infer a GTK-selected profile;
+    # fail before even reading per-identity provider policy on missing scope.
+    if type(identity_id) is not str or not identity_id:
+        return False
     enabled = getattr(service, "_provider_enabled_for_identity", None)
     if callable(enabled):
         try:
-            if enabled(provider) is not True:
+            if enabled(provider, identity_id) is not True:
                 return False
         except Exception:
             return False
