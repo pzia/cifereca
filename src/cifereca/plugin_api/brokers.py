@@ -105,9 +105,19 @@ class IdentityBroker(Protocol):
         """
         ...
     def statistics(self, identity_id: str, *, window_seconds: int = 2592000) -> Mapping[str, Any]: ...
-    # Optional additive read-only projection. Existing identity brokers may
-    # omit it; no observed complete inventory => only unknown remaining.
-    def digital_loan_availability(self, identity_id: str) -> tuple[DigitalLoanAvailability, ...]: ...
+
+
+@runtime_checkable
+class DigitalLoanAvailabilityReadBroker(Protocol):
+    """Optional facet on 'identities'; old IdentityBroker remains compatible.
+
+    A no-argument getter is deliberately absent: callers must pin the
+    effective profile ID and feature-detect this method.
+    """
+    def digital_loan_availability(
+        self, identity_id: str,
+    ) -> tuple[DigitalLoanAvailability, ...]: ...
+
 
 @runtime_checkable
 class RuntimeCapabilitiesBroker(Protocol):
