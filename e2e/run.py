@@ -353,6 +353,16 @@ SCENARIOS = {
         "description": "P1 #757 : même parcours GTK avec géométrie 1600 px et captures locales privées.",
         "runner": "gtk-modern-light", "width": 1600,
     },
+    "reader-usb-pairing-1024": {
+        "plugin": "ui.page.readers", "fixture": "startup",
+        "description": "P1 #6041 : dialogue Adw/GTK4 et clic XTEST à 1024, USB fictif 0/1/N, expert et révocation.",
+        "runner": "gtk-reader-pairing", "width": 1024,
+    },
+    "reader-usb-pairing-1366": {
+        "plugin": "ui.page.readers", "fixture": "startup",
+        "description": "P1 #6041 : même sélection GTK/XTEST à 1366 sans appareil ni écriture USB.",
+        "runner": "gtk-reader-pairing", "width": 1366,
+    },
 }
 
 
@@ -620,6 +630,13 @@ def main() -> int:
                     args.python, str(ROOT / "e2e/task_busy_settings_probe.py"),
                     "--out", str(scenario_dir), "--width", "1366",
                 ]
+            elif scenario.get("runner") == "gtk-reader-pairing":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    args.python, str(ROOT / "e2e/reader_usb_pairing_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
+                ]
             elif scenario.get("runner") == "gtk-capture-session":
                 command = [
                     xvfb, "-a", "-s", "-screen 0 1366x900x24",
@@ -682,6 +699,42 @@ def main() -> int:
             )
             output = completed.stdout or ""
             errors = completed.stderr or ""
+            if name in {"reader-usb-pairing-1024", "reader-usb-pairing-1366"} and completed.returncode:
+                # P1 #6041: expose only a closed, reviewed GTK checkpoint.
+                # The subprocess output, traceback, mountpaths, raw UUIDs and
+                # diagnostics never leave the private Xvfb runner.
+                import re
+                accepted = frozenset({
+                    "setup", "shell", "widget_mapped", "dialog_open",
+                    "expert_mode", "chooser_return", "dialog_response",
+                    "manual_uuid", "button_not_clicked", "dialog_build_failed",
+                    "expert_keyboard", "widget_geometry", "x11_hit_mismatch",
+                    "xtest_unavailable",
+                })
+                markers = re.findall(
+                    r"(?m)^P1_6041_CLOSED_FAILURE_CHECKPOINT=([a-z_]+)$",
+                    output,
+                )
+                if markers and markers[-1] in accepted:
+                    print(
+                        "P1_6041_CLOSED_FAILURE_CHECKPOINT=" + markers[-1],
+                        flush=True,
+                    )
+                # Only fixed enums, never a native event, coordinate or text.
+                for field, values in (
+                    ("GTK_HIT", frozenset({"yes", "no"})),
+                    ("TARGET_ONSCREEN", frozenset({"yes", "no"})),
+                    ("X11_TARGET_WINDOW", frozenset({"yes", "no"})),
+                    ("XTEST_EXTENSION", frozenset({"yes", "no"})),
+                    ("INPUT_POINTER", frozenset({"seen", "absent"})),
+                    ("INPUT_KEY", frozenset({"seen", "absent"})),
+                    ("BUTTON_SENSITIVE", frozenset({"yes", "no"})),
+                ):
+                    observations = re.findall(
+                        rf"(?m)^P1_6041_{field}=([a-z]+)$", output,
+                    )
+                    if observations and observations[-1] in values:
+                        print(f"P1_6041_{field}=" + observations[-1], flush=True)
             if name in {"modern-light-1366", "modern-light-1600"} and completed.returncode:
                 # Only an explicit fixed checkpoint emitted by the trusted
                 # probe may leave the private GTK sandbox. Never print stderr,
@@ -993,7 +1046,7 @@ def main() -> int:
                     if type(stage) is str and stage in allowed:
                         print("P1_4664_CLOSED_FAILURE_STAGE=" + stage, flush=True)
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-raw-export", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-bnf-covers", "gtk-optimizer-handoff", "gtk-reader-inspection", "gtk-capture-session", "gtk-modern-light"} and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-raw-export", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-bnf-covers", "gtk-optimizer-handoff", "gtk-reader-inspection", "gtk-reader-pairing", "gtk-capture-session", "gtk-modern-light"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")

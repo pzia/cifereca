@@ -351,3 +351,31 @@ l'absence de FileChooserNative sur le chemin exact, la relecture du
 mount ID avant le scan, la mise à jour visible du statut et la révocation
 du profil. Aucune opération sur clé USB, SQLite, réseau ou fournisseur.
 La recette matérielle #4983 et la preuve XTEST de #6041 sont distinctes.
+
+## Recette P1 #6041 — association USB réelle GTK4/XTEST, sans matériel
+
+Deux scénarios dédiés :
+- `python3 e2e/run.py --scenario reader-usb-pairing-1024`
+- `python3 e2e/run.py --scenario reader-usb-pairing-1366`
+
+Ils ouvrent le **vrai dialogue Adw.MessageDialog** depuis un clic XTEST
+sur le bouton Associer ; sur Xvfb sans gestionnaire de fenêtres, un
+**focus X11 natif** puis une activation clavier XTEST (Retour/Espace) sert
+de repli uniquement si les événements souris XTEST n'ont pas été reçus.
+Aucun signal GTK n'est simulé. La liste utilise les vrais `Gtk.DropDown` et signaux
+`notify::selected` du contrôleur de production. Le probe vérifie :
+0 périphérique (liste inactive, repli expert), 1 périphérique sans sélection
+automatique, plusieurs périphériques avec deuxième sélection, libellés et nom
+prérempli, relecture exacte au moment de confirmer, rejet d'un changement de
+`mount_id`, révocation par changement de profil, et saisie déclarative UUID
+historique. À 1024 px, l'écran Xvfb est physiquement plus étroit.
+
+Les volumes sont des **observations synthétiques typées en mémoire**
+(`MountedUsbVolume`), pas des disques montés ; le stockage de déclarations
+est un double mémoire qui enregistre les appels mais **ne réalise aucune
+écriture USB, SQLite, fournisseur ou transfert**. Les unités de tests Core de
+`device_usb_discovery` valident séparément le filtrage des preuves Linux.
+Des captures et un rapport JSON à valeurs fermées sont produits. Ces scénarios
+prouvent le parcours du vrai dialogue GTK et sa sûreté déclarative, **pas** la
+compatibilité d'un appareil SanDisk, ni l'activation, ni une copie matérielle.
+La recette #4983 (PU) reste distincte et ne doit pas être exécutée implicitement.
