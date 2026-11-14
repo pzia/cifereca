@@ -12,11 +12,22 @@ from tests.test_core_p1_4662_live_lender_preview import _candidate, harness
 
 
 def lease_for(service, account, session, *, notice=None):
+    selected = service.current_identity
+    account_epoch = service._account_context_epoch
+    source_epoch = service._source_context_epoch
+
+    def current():
+        return (
+            service.current_identity is selected
+            and service._account_context_epoch == account_epoch
+            and service._source_context_epoch == source_epoch
+        )
+
     return capture(
         service, requesting_identity_id="default",
         borrowing_account=account,
         exact_notice=notice or _candidate().notice,
-        lender_session=session,
+        lender_session=session, scope_current=current,
     )
 
 
@@ -27,7 +38,8 @@ def test_active_requester_keeps_own_profile_and_pins_exact_lender(harness):
     assert lease is not None and lease.current(service)
     assert lease._account is account
     assert lease._session is session
-    assert lease._requester is requesting
+    assert lease._requester_identity_id == requesting.identity_id
+    assert lease._scope_current() is True
     assert "card-alex" not in repr(lease)
     assert "record-1" not in repr(lease)
     assert service.current_identity is requesting

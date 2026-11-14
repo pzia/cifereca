@@ -15,9 +15,14 @@ from tests.test_core_p1_4662_live_lender_preview import (
 
 
 def prepare(service, captured, selected, *rows):
+    from cifereca.services import _capture_cross_profile_read_scope
+    requester_id, current = _capture_cross_profile_read_scope(
+        service, captured.requesting_identity_id,
+    )
     return plan(
         service, captured_preview=captured, selected_option_id=selected,
         expected_edition_id="edition-1", observations=rows, now=1100,
+        requesting_identity_id=requester_id, scope_current=current,
     )
 
 
