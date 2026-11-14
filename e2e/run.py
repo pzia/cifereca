@@ -692,6 +692,7 @@ def main() -> int:
                     "expert_mode", "chooser_return", "dialog_response",
                     "manual_uuid", "button_not_clicked", "dialog_build_failed",
                     "expert_keyboard", "widget_geometry", "x11_hit_mismatch",
+                    "xtest_unavailable",
                 })
                 markers = re.findall(
                     r"(?m)^P1_6041_CLOSED_FAILURE_CHECKPOINT=([a-z_]+)$",
@@ -707,6 +708,7 @@ def main() -> int:
                     ("GTK_HIT", frozenset({"yes", "no"})),
                     ("TARGET_ONSCREEN", frozenset({"yes", "no"})),
                     ("X11_TARGET_WINDOW", frozenset({"yes", "no"})),
+                    ("XTEST_EXTENSION", frozenset({"yes", "no"})),
                     ("INPUT_POINTER", frozenset({"seen", "absent"})),
                     ("INPUT_KEY", frozenset({"seen", "absent"})),
                     ("BUTTON_SENSITIVE", frozenset({"yes", "no"})),
