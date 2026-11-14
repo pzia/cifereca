@@ -694,6 +694,21 @@
       ],
       "pr": "#6055",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-private-owner-guard-current-navigation-fallback",
+      "original": "core.private_source_owner_scope.private_source_owner_matches read service.current_identity on each source-owner check; holdings cache key also re-read GTK identity separately and provider GET publication checked only final owner, not A→B→A epoch",
+      "original_classification": "navigation_dependent_legacy_read_authorization",
+      "replacement": "Headless owner guard requires an explicit admitted identity_id and refuses without any SQL on missing/malformed scope. LibraryService.holdings pins selected identity/account/source epochs once before cache/GET; cache key, preflight and post-I/O checks compare exact owner plus unchanged epochs. Direct-download visibility passes the selected identity into the worker explicitly.",
+      "classification": "removed_navigation_private_source_guard",
+      "evidence": "Headless poison-current_identity getter proves no worker navigation reads; invalid/unbound owners do not perform storage lookups. Two-identity owner matching, foreign holdings GET prevention, explicit  A→B→A cache and network revocation, and owner rebind still refuse without publishing/caching private details. The GTK source capture remains in the synchronous facade boundary and never grants a new provider operation.",
+      "tests": [
+        "tests/test_core_p0_5048_private_source_owner_scope.py",
+        "tests/test_core_p0_5056_neutral_public_holdings.py",
+        "tests/test_core_p0_5073_search_owned_evidence.py"
+      ],
+      "pr": "#6058",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [

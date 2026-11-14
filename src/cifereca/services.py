@@ -2002,7 +2002,28 @@ class LibraryService:
         from .core.private_source_owner_scope import (
             private_source_owner_matches, public_catalogue_source,
         )
-        if not public_catalogue_source(item) and not private_source_owner_matches(self, item):
+        # Pin one synchronous caller context before a cache read or provider
+        # GET. Core receives only this admitted identity; an A→B→A selection
+        # invalidates the result through the monotone account epoch.
+        admitted_identity_id = getattr(
+            getattr(self, "current_identity", None), "identity_id", None,
+        )
+        admitted_account_epoch = getattr(self, "_account_context_epoch", None)
+        admitted_source_epoch = getattr(self, "_source_context_epoch", None)
+
+        def private_source_current() -> bool:
+            return (
+                getattr(getattr(self, "current_identity", None), "identity_id", None)
+                == admitted_identity_id
+                and getattr(self, "_account_context_epoch", None)
+                == admitted_account_epoch
+                and getattr(self, "_source_context_epoch", None)
+                == admitted_source_epoch
+                and private_source_owner_matches(
+                    self, item, identity_id=admitted_identity_id,
+                )
+            )
+        if not public_catalogue_source(item) and not private_source_current():
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
@@ -2016,7 +2037,7 @@ class LibraryService:
         # Identical record IDs can belong to different collections. Scope
         # cached availability and offers to the exact source and profile.
         key = json.dumps((
-            "v2", getattr(self.current_identity, "identity_id", None),
+            "v2", admitted_identity_id,
             item.source_provider, item.source_credential, item.scenario,
             item.docbase, item.source_collection or "", item.record_id,
         ), separators=(",", ":"))
@@ -2026,7 +2047,7 @@ class LibraryService:
             if isinstance(cached, dict):
                 # A cached rights-bearing response must not outlive a source
                 # owner transfer or an active identity change mid-cache-read.
-                if not public_catalogue_source(item) and not private_source_owner_matches(self, item):
+                if not public_catalogue_source(item) and not private_source_current():
                     return ItemDetail(
                         record_id=item.record_id, docbase=item.docbase,
                         title=item.title, author=item.author,
@@ -2042,7 +2063,7 @@ class LibraryService:
         detail = self._session_for_source(item.source_provider, item.source_credential).holdings(item, search_terms)
         # Provider I/O can complete after A→B→A or a SQLite rebind.
         # A revoked read must not publish or cache private borrower details.
-        if not public_catalogue_source(item) and not private_source_owner_matches(self, item):
+        if not public_catalogue_source(item) and not private_source_current():
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
@@ -3007,9 +3028,14 @@ class LibraryService:
         from .core.private_source_owner_scope import (
             private_source_owner_matches, public_catalogue_source,
         )
+        admitted_identity_id = getattr(
+            getattr(self, "current_identity", None), "identity_id", None,
+        )
         if (item.source_credential != "__public__"
                 and not public_catalogue_source(item)
-                and not private_source_owner_matches(self, item)):
+                and not private_source_owner_matches(
+                    self, item, identity_id=admitted_identity_id,
+                )):
             return False
         try:
             from .core.private_inventory_row_scope import selected_private_offer_hint
