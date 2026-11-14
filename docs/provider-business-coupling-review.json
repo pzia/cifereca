@@ -833,7 +833,7 @@
         "tests/test_core_p0_5054_observed_private_library_origin.py",
         "tests/test_core_p0_5054_numilog_legacy_writer_retired.py"
       ],
-      "pr": "#pending",
+      "pr": "#6089",
       "in_ast_metric": false
     }
   ],
