@@ -39,6 +39,7 @@ def _resolve(service, target: SourceOfferTarget):
     # independent account/session/ABI binding guards below.
     current_epoch = getattr(service, "_account_context_epoch", None)
     if (type(current_epoch) not in (int, type(None))
+            or (type(current_epoch) is int and current_epoch < 0)
             or target.selection_epoch != current_epoch):
         raise ValueError("selected_source_identity_changed")
     accounts = [
@@ -81,7 +82,8 @@ def select_source_offer_target(
     try:
         identity = identity_id
         epoch = getattr(service, "_account_context_epoch", None)
-        if type(epoch) not in (int, type(None)):
+        if (type(epoch) not in (int, type(None))
+                or (type(epoch) is int and epoch < 0)):
             return None
         accounts = [a for a in service.accounts
                     if a.provider_id == provider_id
