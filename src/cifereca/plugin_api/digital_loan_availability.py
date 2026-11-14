@@ -19,6 +19,23 @@ DigitalAvailabilityReason = Literal[
 ]
 
 
+_PRIVATE_LABEL_MARKERS = (
+    "http://", "https://", "token=", "password=", "secret=",
+    "cookie=", "bearer ", "authorization:",
+)
+
+
+def _public_label(value: object) -> bool:
+    # The UI must never interpolate a provider-supplied object or a credential
+    # URL, including when a typed DTO is forged or mutated after construction.
+    return (
+        type(value) is str and len(value) <= 160
+        and value == value.strip() and value.isprintable()
+        and not any(marker in value.casefold()
+                    for marker in _PRIVATE_LABEL_MARKERS)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class DigitalLoanAvailability:
     """One exact identity/provider/credential/upstream borrower/digital branch.
@@ -59,6 +76,10 @@ class DigitalLoanAvailability:
                 or (self.borrower_id is not None and type(self.borrower_id) is not str)
                 or self.reason not in DigitalAvailabilityReason.__args__):
             raise ValueError("digital_loan_availability_invalid_scope")
+        if not all(_public_label(label) for label in (
+                self.provider_label, self.connection_label, self.borrower_label,
+        )):
+            raise ValueError("digital_loan_availability_invalid_public_label")
         for amount in (self.observed_loans, self.personal_ceiling):
             if amount is not None and (type(amount) is not int or not 0 <= amount <= 10000):
                 raise ValueError("digital_loan_availability_invalid_count")
@@ -91,7 +112,22 @@ def digital_loan_availability_lines(
         if (type(record) is not DigitalLoanAvailability
                 or record.identity_id != identity_id
                 or record.status != "unknown"
-                or record.remaining is not None):
+                or record.remaining is not None
+                or record.observed_at is not None
+                or record.branch != "digital"
+                or record.eligibility != "not_verified"
+                or type(record.reason) is not str
+                or record.reason not in DigitalAvailabilityReason.__args__
+                or not all(_public_label(label) for label in (
+                    record.provider_label, record.connection_label,
+                    record.borrower_label,
+                ))
+                or (record.observed_loans is not None and (
+                    type(record.observed_loans) is not int
+                    or not 0 <= record.observed_loans <= 10000))
+                or (record.personal_ceiling is not None and (
+                    type(record.personal_ceiling) is not int
+                    or not 0 <= record.personal_ceiling <= 99))):
             return ("Reste inconnu — projection des comptes invalide.",)
         name = (
             record.provider_label + " · " + record.connection_label
