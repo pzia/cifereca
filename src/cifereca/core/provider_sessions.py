@@ -1424,28 +1424,19 @@ def _session_for_account(self, account: Account | None=None) -> ProviderSession:
     return session
 
 
-def _session_for_source(self, provider_id: str, credential_id: str | None=None) -> ProviderSession:
+def _session_for_source(self, provider_id: str, credential_id: str) -> ProviderSession:
+    """Find only the exact source session, never enumerate provider-wide credentials.
+
+    The caller must capture the source and credential before entry. A removed
+    or disconnected credential cannot silently rebind to another account.
+    """
+    if (type(provider_id) is not str or not provider_id
+            or type(credential_id) is not str):
+        raise ProviderConfigurationError("source_session_scope_invalid")
     if not self._provider_enabled_for_identity(provider_id):
         raise ProviderConfigurationError(f"Provider désactivé ou indisponible: {provider_id}")
-    if credential_id is not None:
-        # A source item/loan carrying an explicit credential never belongs to
-        # another connected session of that provider. In particular a removed
-        # or disconnected B must not silently fall back to active A; an empty
-        # credential is still an explicit coordinate, not a wildcard.
-        key = self._session_key(provider_id, credential_id)
-        session = self._sessions.get(key)
-        if session is None:
-            raise ProviderConfigurationError(f"Provider non connecté: {provider_id}")
-        return session
-    # Legacy provider-wide lookup is admissible only for one live session.
-    # Choosing the first connected credential would silently redirect work
-    # from another account when concurrent Core callers share a provider.
-    matches = [
-        session for session in self._sessions.values()
-        if session.provider_id == provider_id and session.connected
-    ]
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
-        raise ProviderConfigurationError(f"Provider ambigu: {provider_id}")
-    raise ProviderConfigurationError(f"Provider non connecté: {provider_id}")
+    key = self._session_key(provider_id, credential_id)
+    session = self._sessions.get(key)
+    if session is None:
+        raise ProviderConfigurationError(f"Provider non connecté: {provider_id}")
+    return session
