@@ -23,7 +23,14 @@ def check(
     # provider staging can take time, and a grant may be revoked.
     adept_borrower_identity_id = identity.identity_id
     borrower_code = None
-    if str(loan.source_provider).lower() == "paris":
+    # The loan may have crossed an external staging boundary since source
+    # admission. Do not coerce plugin-owned coordinates, and never interpret
+    # malformed provenance as a non-Paris source exempt from the grant guard.
+    if (type(loan.source_provider) is not str or not loan.source_provider
+            or type(loan.source_credential) is not str
+            or not loan.source_credential):
+        borrower_code = "adept_borrower_ambiguous"
+    elif loan.source_provider.casefold() == "paris":
         adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
             loan, connection_identity_id=identity.identity_id,
         )
