@@ -108,16 +108,20 @@ class Diagnostics:
             raw_detail = journal_payload(detail) if type(detail) is dict else {}
         except Exception:
             raw_detail = {}
-        # BnF HTTP observations belong to the actual worker executing the GET.
-        # This reference is Core-owned; request_ref and plugin-supplied detail
-        # cannot claim task provenance. Leave unrelated generic events alone.
-        bnf_http = (type(category) is str and category == "API"
-                    and type(operation) is str and operation == "BnF HTTP"
-                    and type(raw_detail.get("provider_id")) is str
-                    and raw_detail["provider_id"] == "bnf-pret")
-        # Correlate these typed producer operations with the *current Core
-        # worker* only. A category or provider label is never task provenance.
-        correlate = bnf_http or (
+        # The worker owns the task reference. A provider's self-described
+        # HTTP operation can join THAT worker only when its native operation
+        # prefix agrees with the source label (e.g. "X HTTP" / "x-loans").
+        # Neither label attests a provider identity or grants rights.
+        source = raw_detail.get("provider_id")
+        source_http = (
+            type(category) is str and category == "API"
+            and type(operation) is str and operation.endswith(" HTTP")
+            and type(source) is str and bool(source)
+            and operation[:-len(" HTTP")].casefold()
+            == source.split("-", 1)[0].casefold()
+        )
+        # Correlate the current Core worker, never a plugin-supplied task_ref.
+        correlate = source_http or (
             type(operation) is str and operation in {
                 "acquisition_delivery", "session_state",
             }

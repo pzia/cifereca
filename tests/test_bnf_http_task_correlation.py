@@ -132,3 +132,30 @@ def test_errors_only_retains_http_failure_with_actual_worker(caplog):
         assert row['task_ref'] != row['detail']['task_ref']
     finally:
         pool.shutdown(wait=True)
+
+
+def test_future_provider_http_correlates_without_hardcoded_supplier_name():
+    """A native Core worker is the sole provenance of the task reference."""
+    diag = Diagnostics()
+    pool = PriorityExecutor(max_workers=1)
+
+    def issue():
+        expected = diagnostic_task_reference()
+        diag.add("API", "Fixture HTTP", "failed", detail={
+            "provider_id": "fixture-library",
+            "task_ref": "untrusted-plugin-reference",
+        })
+        diag.add("API", "Fixture HTTP", "failed", detail={
+            "provider_id": "unrelated-library",
+        })
+        return expected
+
+    try:
+        expected = pool.submit(0, issue).result(timeout=5)
+        first, second = diag.snapshot()
+        assert expected
+        assert first["task_ref"] == expected
+        assert first["detail"]["task_ref"] == "untrusted-plugin-reference"
+        assert "task_ref" not in second
+    finally:
+        pool.shutdown(wait=True)
