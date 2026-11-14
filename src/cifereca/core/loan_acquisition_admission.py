@@ -27,7 +27,8 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     # No UI/default identity, entitlement or runtime can repair this proof.
     if (type(loan.source_provider) is not str or not loan.source_provider
             or type(loan.source_credential) is not str
-            or not loan.source_credential):
+            or not loan.source_credential
+            or type(loan.source_account_id) not in (str, type(None))):
         _TRACE_LOG.warning(
             "TRACE download loan_auto blocked reason=source_scope_unproven request_ref=%s",
             request_ref,
