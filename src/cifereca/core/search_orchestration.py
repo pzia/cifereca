@@ -147,29 +147,34 @@ def _normalized_language_values(value: Any) -> list[str]:
     return out
 
 
-def _search_preference_score(self, row: SearchResult) -> int:
-    identity = self.current_identity
-    if identity is None:
-        return 0
+def _search_preference_score(
+    row: SearchResult, *, reading_languages: tuple[str, ...] = (),
+    prefer_original_language: bool = False,
+) -> int:
+    """Score metadata against an admitted immutable preference snapshot.
+
+    This headless, provider-neutral projection never reads mutable profile
+    selection or UI state. The synchronous LibraryService facade captures the
+    selected profile and preferences once at the presentation boundary.
+    """
     metadata = row.metadata if isinstance(row.metadata, dict) else {}
     languages: list[str] = []
     for key in ("language", "languages", "lang", "dc_language", "dc:language"):
         if key in metadata:
-            for code in self._normalized_language_values(metadata.get(key)):
+            for code in _normalized_language_values(metadata.get(key)):
                 if code not in languages:
                     languages.append(code)
-    prefs = identity.preferences
     score = 0
-    for index, preferred in enumerate(prefs.reading_languages):
+    for index, preferred in enumerate(reading_languages):
         code = str(preferred or "").strip().lower().split("-", 1)[0]
         if code and code in languages:
-            score += max(1, len(prefs.reading_languages) - index) * 10
+            score += max(1, len(reading_languages) - index) * 10
             break
-    if prefs.prefer_original_language and languages:
+    if prefer_original_language and languages:
         originals: list[str] = []
         for key in ("original_language", "originalLanguage", "language_original"):
             if key in metadata:
-                originals.extend(self._normalized_language_values(metadata.get(key)))
+                originals.extend(_normalized_language_values(metadata.get(key)))
         if originals and any(code in originals for code in languages):
             score += 5
     return score
