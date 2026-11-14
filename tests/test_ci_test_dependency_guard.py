@@ -185,3 +185,49 @@ def test_chained_namespace_assignments_reach_dynamic_loader(tmp_path):
         'load(two)\n',
     )
     assert has_test_consumers(root, ["tests/test_fixture.py"])
+
+@pytest.mark.parametrize("consumer", [
+    'import pytest\npytest.importorskip("tests.test_fixture")\n',
+    'import runpy\nrunpy.run_module("tests.test_fixture")\n',
+    'import runpy\nrunpy.run_path("tests/test_fixture.py")\n',
+    'from pytest import importorskip as load\nload("tests.test_fixture")\n',
+    'from runpy import run_module as execute\nexecute("tests.test_fixture")\n',
+    'from runpy import run_path as execute\nexecute("tests/test_fixture.py")\n',
+])
+def test_executable_module_loaders_are_test_consumers(tmp_path, consumer):
+    root = _sample(tmp_path, consumer)
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+@pytest.mark.parametrize("consumer", [
+    'pytest.importorskip(f"tests.{name}")\n',
+    'runpy.run_module("tests." + name)\n',
+    'runpy.run_path(Path("tests") / filename)\n',
+])
+def test_computed_executable_module_loaders_fail_closed(tmp_path, consumer):
+    root = _sample(tmp_path, consumer)
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+@pytest.mark.parametrize("consumer", [
+    'pytest.importorskip("pytest_cov")\n',
+    'runpy.run_module("tests.unrelated")\n',
+    'runpy.run_path("tests/test_other.py")\n',
+])
+def test_unrelated_executable_modules_keep_targeted_selection(tmp_path, consumer):
+    root = _sample(tmp_path, consumer)
+    assert not has_test_consumers(root, ["tests/test_fixture.py"])
+
+def test_transitive_plugin_helper_loading_core_test_forces_full(tmp_path):
+    root = _sample(tmp_path, "def test_unrelated(): pass\n")
+    package = root / "src/plugins/example/tests"
+    package.mkdir(parents=True)
+    (package / "test_plugin.py").write_text(
+        "from .shared_fixture import VALUE\n", encoding="utf-8",
+    )
+    (package / "shared_fixture.py").write_text(
+        'from runpy import run_module as execute\n'
+        'VALUE = execute("tests.test_fixture")\n',
+        encoding="utf-8",
+    )
+    assert has_test_consumers(root, ["tests/test_fixture.py"])

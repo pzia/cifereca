@@ -240,3 +240,17 @@ def test_pr_ci_forces_full_for_removed_or_renamed_test_modules():
     assert "grep -Eq '^(D|R[0-9]*|C[0-9]*|T|U)[[:space:]]'" in workflow
     assert "core_mode=full" in workflow
     assert "core_targets=tests" in workflow
+
+def test_changed_core_test_reused_by_plugin_via_pytest_loader_runs_full(tmp_path):
+    selector = _module()
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_fixture.py").write_text("VALUE = 1\n", encoding="utf-8")
+    plugin = tmp_path / "src/plugins/fixture/tests/test_consumer.py"
+    plugin.parent.mkdir(parents=True)
+    plugin.write_text(
+        'from pytest import importorskip as load\n'
+        'load("tests.test_fixture")\n',
+        encoding="utf-8",
+    )
+    assert selector.select(["tests/test_fixture.py"], tmp_path) == ("full", ["tests"])
