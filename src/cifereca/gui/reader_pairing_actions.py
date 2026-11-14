@@ -138,6 +138,10 @@ def request_reader_pairing(window, *, Gtk, Adw=None) -> None:
             found = ()
         reloading = True
         try:
+            if suggested_name and name.get_text() == suggested_name:
+                # Refresh must not leave the old device label attached to a
+                # newly selected USB mount. Explicit user edits survive.
+                name.set_text("")
             observed = found
             volume_choice.set_model(Gtk.StringList.new(
                 [row.display_label() for row in found]
