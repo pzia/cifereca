@@ -682,6 +682,25 @@ def main() -> int:
             )
             output = completed.stdout or ""
             errors = completed.stderr or ""
+            if name in {"reader-usb-pairing-1024", "reader-usb-pairing-1366"} and completed.returncode:
+                # P1 #6041: expose only a closed, reviewed GTK checkpoint.
+                # The subprocess output, traceback, mountpaths, raw UUIDs and
+                # diagnostics never leave the private Xvfb runner.
+                import re
+                accepted = frozenset({
+                    "setup", "shell", "widget_mapped", "dialog_open",
+                    "expert_mode", "chooser_return", "dialog_response",
+                    "manual_uuid",
+                })
+                markers = re.findall(
+                    r"(?m)^P1_6041_CLOSED_FAILURE_CHECKPOINT=([a-z_]+)$",
+                    output,
+                )
+                if markers and markers[-1] in accepted:
+                    print(
+                        "P1_6041_CLOSED_FAILURE_CHECKPOINT=" + markers[-1],
+                        flush=True,
+                    )
             if name in {"modern-light-1366", "modern-light-1600"} and completed.returncode:
                 # Only an explicit fixed checkpoint emitted by the trusted
                 # probe may leave the private GTK sandbox. Never print stderr,
