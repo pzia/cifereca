@@ -36,8 +36,9 @@ def _private_edition_collision_counts(rights, identity_id):
     return counts
 
 
-PROVIDERS = {'all': 'Tous les fournisseurs', 'kobo': 'Kobo', 'numilog': 'Numilog',
-             'paris': 'Paris', 'bnf-pret': 'BnF Prêt',
+# Generic scopes only. Provider facets are derived from the audited cases,
+# never from a Core-owned list of installed suppliers.
+PROVIDERS = {'all': 'Tous les fournisseurs',
              'local': 'Local (origine attestée)',
              'unattributed': 'Fichiers sans provenance attestée', 'other': 'Autre'}
 STATES = {
@@ -103,15 +104,17 @@ def _provider(value):
 def _provider_options(cases):
     """Only provider identifiers in this private, audited session become facets.
 
-    Preserve familiar built-in labels for existing choices; a newly installed
-    provider requires no Core change or inferred rights. Untrusted strings
-    remain grouped as `other` and never become new GTK labels.
+    Providers are discovered from audited cases, not a built-in allowlist.
+    This only creates read-only filters, never origin or rights evidence.
+    Untrusted strings stay grouped as `other`.
     """
     options = dict(PROVIDERS)
     found = {case.provider for case in cases if type(case.provider) is str}
     for provider_id in sorted(found):
         if provider_id not in options and _provider(provider_id) == provider_id:
-            options[provider_id] = provider_id
+            # Render a readable facet without a Core supplier-name registry.
+            # The key remains the exact canonical identifier for filtering.
+            options[provider_id] = provider_id.replace('-', ' ').title()
     return options
 
 
@@ -1442,7 +1445,9 @@ class LocalInspection:
 
     def page(self, *, provider='all', state='all', offset=0, limit=50, query='',
              hide_historical_paths=False):
-        if (type(provider) is not str or provider not in self.provider_options()
+        if (type(provider) is not str
+                or (provider not in self.provider_options()
+                    and _provider(provider) != provider)
                 or state not in STATES or
                 type(hide_historical_paths) is not bool or
                 type(offset) is not int or offset < 0 or type(limit) is not int or
@@ -1537,7 +1542,6 @@ class LocalInspection:
 
         if right.provider != 'numilog':
             return review_source_read_only(
-                right.provider,
                 audit_complete=self._manual_audit_complete,
                 loan_inactive='loan_inactive' in right.states,
                 bibliographic_hint=(

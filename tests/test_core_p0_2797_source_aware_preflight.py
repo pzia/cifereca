@@ -13,8 +13,8 @@ from tests.test_library_reconciliation import filesystem
 
 
 @pytest.mark.parametrize("provider,kind,reason", [
-    ("kobo", "owned", "kobo_separate_recovery"),
-    ("paris", "loan", "paris_read_only"),
+    ("kobo", "owned", "source_not_supported"),
+    ("paris", "loan", "source_not_supported"),
     ("unrecognized", "owned", "source_not_supported"),
 ])
 def test_shared_pair_inspection_does_not_route_other_sources_to_numilog(
@@ -63,21 +63,18 @@ def test_shared_pair_inspection_does_not_route_other_sources_to_numilog(
     assert session.preflight_manual_link(right.key, file.key).status == "unavailable"
 
 
-@pytest.mark.parametrize("provider,reason", [
-    ("kobo", "kobo_separate_recovery"),
-    ("paris", "paris_read_only"),
-    ("unexpected", "source_not_supported"),
-    (None, "source_not_supported"),
-])
-def test_read_only_provider_reason_is_closed_even_with_incomplete_index(
-    provider, reason,
-):
+@pytest.mark.parametrize("loan_inactive", [False, True])
+def test_read_only_refusal_has_no_provider_argument_or_authority(loan_inactive):
+    import inspect
+    assert "provider" not in inspect.signature(review_source_read_only).parameters
     report = review_source_read_only(
-        provider, audit_complete=False, bibliographic_hint=True,
+        audit_complete=False, bibliographic_hint=True,
+        loan_inactive=loan_inactive,
     )
     assert report.status == "blocked"
     assert report.codes == tuple(sorted({
-        reason, "audit_incomplete", "bibliographic_hint_only",
+        "source_not_supported", "audit_incomplete", "bibliographic_hint_only",
+        *({"loan_inactive_read_only"} if loan_inactive else set()),
     }))
     assert report.read_only and not report.attachment_authorized
     assert report.requires_fresh_validation
