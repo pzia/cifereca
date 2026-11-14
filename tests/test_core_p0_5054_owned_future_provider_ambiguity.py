@@ -30,7 +30,7 @@ def test_competing_origin_refuses_library_action_before_provider_call(
     monkeypatch.setattr(selection, "select_source_offer_target",
                         lambda *_a, **_kw: pytest.fail("ambiguous origin"))
     entry = {"possessions": [_pos("numilog"), _pos(other_provider)]}
-    assert selection.select_library_source_offer_target(_service(), entry) is None
+    assert selection.select_library_source_offer_target(_service(), entry, identity_id="alice") is None
 
 
 def test_single_source_uses_exact_account_not_historical_right(monkeypatch):
@@ -45,10 +45,10 @@ def test_single_source_uses_exact_account_not_historical_right(monkeypatch):
         _pos("future-library", state="expired"),
         _pos("future-library", kind="loan"),
     ]}
-    assert selection.select_library_source_offer_target(_service(), entry) is marker
+    assert selection.select_library_source_offer_target(_service(), entry, identity_id="alice") is marker
     assert calls == [{
         "provider_id": "numilog", "credential_id": "card-A",
-        "item_id": "edition-1",
+        "item_id": "edition-1", "identity_id": "alice",
     }]
 
 
@@ -78,10 +78,10 @@ def test_owned_download_target_never_guesses_among_multiple_origins(
     calls = []
     monkeypatch.setattr(
         selection, "select_library_source_offer_target",
-        lambda *_args: calls.append("selected") or object(),
+        lambda *_args, **_scope: calls.append("selected") or object(),
     )
     entry = {"possessions": [_pos("numilog"), _pos(other_provider)]}
-    assert action.owned_library_download_target(_service(), entry) is None
+    assert action.owned_library_download_target(_service(), entry, identity_id="alice") is None
     assert calls == []
 
 
@@ -91,7 +91,7 @@ def test_owned_download_target_allows_only_the_exact_single_origin(monkeypatch):
     calls = []
     monkeypatch.setattr(
         selection, "select_library_source_offer_target",
-        lambda *_args: calls.append("selected") or target,
+        lambda *_args, **_scope: calls.append("selected") or target,
     )
     entry = {"possessions": [
         _pos("numilog"),
@@ -99,5 +99,5 @@ def test_owned_download_target_allows_only_the_exact_single_origin(monkeypatch):
         _pos("future-library", state="expired"),
         _pos("future-library", kind="loan"),
     ]}
-    assert action.owned_library_download_target(_service(), entry) is target
+    assert action.owned_library_download_target(_service(), entry, identity_id="alice") is target
     assert calls == ["selected"]
