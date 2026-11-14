@@ -15,6 +15,214 @@
       ],
       "retirement_pr": "",
       "rationale": "Removal would lose truthful provider filtering in archived 29/10 loan-sync diagnostics; compatibility is restricted, descriptive and covered by negative tests"
+    },
+    {
+      "id": "site-9b7a3e896db6ff1e346f2365",
+      "classification": "safety_guard_pending_contract",
+      "journey": "confirmed Paris DILICOM first-offer ACSM staging",
+      "productive_caller": "acsm_cache.remember_initial -> _initial_scope -> stage_claimed_initial_acsm during selected canonical delivery",
+      "effect": "Reject a loan or borrower whose exact Paris DILICOM identity/credential/source coordinates differ before recording a one-shot ACSM claim; no grant inferred",
+      "authority": "Native Loan fields plus explicit identity_id and source_account_id, not title, URL or current GTK selection",
+      "replacement_contract": "Versioned provider-neutral first-offer ACSM attestation with exact borrower and PNB branch; retain Paris-specific fail-closed check until the replacement is installed",
+      "tests": [
+        "tests/test_core_p0_3121_canonical_first_acsm.py",
+        "tests/test_core_p0_2975_paris_primary_alias_provenance.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "This is a live provider-aware veto of replay/cross-borrower staging, not a removable detection heuristic; explicitly blocks zero-brand-decision closure until typed contract migration"
+    },
+    {
+      "id": "site-105fb5dbf04033ddeb95cc3d",
+      "classification": "safety_guard_pending_contract",
+      "journey": "legacy Kobo configuration cardinality repair during Config.load",
+      "productive_caller": "Config.load -> provider_accounts -> legacy per-identity Kobo account splitting and persisted directory identity names",
+      "effect": "May mutate legacy configuration identities/directories; not an entitlement, purchase, provider GET or canonical writer",
+      "authority": "Historical Kobo 0.8.1 repair from persisted legacy provider account rows; descriptor-time cardinality is too late for that legacy migration",
+      "replacement_contract": "Idempotent versioned migration with recorded completion/tombstone so normal runtime Config.load no longer branches on Kobo",
+      "tests": [
+        "tests/test_identities_081.py",
+        "tests/test_core_p0_5743_sqlite_cardinality_v15.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Historical repair is not read-only and must not be mislabeled safe by an AST-only count; migration evidence required before deleting the compatibility path"
+    },
+    {
+      "id": "site-7baf3b4f552b2c895f2c79ae",
+      "classification": "safety_guard_pending_contract",
+      "journey": "canonical selected-delivery DRM runtime callback",
+      "productive_caller": "complete_selected_delivery.execute_selected_runtime -> LibraryService.execute_acquisition_request behind live SourceKey and consent lease",
+      "effect": "Reject arbitrary/unrecognized DRM recipe source types before the only one-use runtime call and Core-owned destination validation",
+      "authority": "Canonical source admission, live epoch/consent and schema-v2 runtime recipe; a plugin cannot grant by choosing arbitrary executor type",
+      "replacement_contract": "Declared versioned DRM recipe capabilities from a verified runtime plugin, with a Core allowlist derived from installed attestations rather than branded type literals",
+      "tests": [
+        "tests/test_core_p0_4858_d3_exact_kobo_selected.py",
+        "tests/test_core_p0_3121_canonical_first_acsm.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "The Kobo/acsm allowlist is a presently necessary fail-closed restriction, but is still an active Core source-brand policy; it is not a justified permanent endpoint"
+    },
+    {
+      "id": "site-80fb78a9237ff64b17daf909",
+      "classification": "safety_guard_pending_contract",
+      "journey": "BnF observed-loan local declaration inspection",
+      "productive_caller": "LocalInspection.__init__ -> _declared_right_scopes -> read-only declaration candidate/preflight",
+      "effect": "For BnF only, rejects expired, owned or loan-id-missing provider rows as valid exact-loan declarations; never creates an acquisition right",
+      "authority": "SQLite historical loan state, loan_id and exact identity/provider/borrower scope; not Web catalogue search or ISBN",
+      "replacement_contract": "Provider-originated typed loan branch coverage and source-proof validity for all providers, preserving BnF fail-closed cases",
+      "tests": [
+        "tests/test_core_p0_2797_source_aware_preflight.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "A currently executed provider-specific veto; do not remove until the same negative behavior is represented by a typed source contract"
+    },
+    {
+      "id": "site-3b2694ab8fb302ff443ce689",
+      "classification": "must_migrate",
+      "journey": "Numilog manual-link receipt preflight",
+      "productive_caller": "LocalInspection.__init__ -> _manual_right_proofs -> preflight_manual_link, restricted to Numilog",
+      "effect": "Computes source-specific private receipt attestation/collision/ledger flags for an optional user-facing attachment preflight; not a canonical right from the title",
+      "authority": "Legacy authenticated-library receipts and exact source SQLite ledger; positive preflight is not itself a Placement or OriginLink",
+      "replacement_contract": "Plugin-provided versioned source receipt evidence validated by a provider-neutral read-only Core inspector; remove Numilog branch and private proof dictionary from shared Core",
+      "tests": [
+        "tests/test_core_p0_2797_source_aware_preflight.py",
+        "tests/test_core_p0_2714_manual_pair_preflight.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Active branded projection/decision remains in a shared Core inspector, so it must not be classified as retired or mere presentation"
+    },
+    {
+      "id": "site-9a427643ffc95bcc036e10d7",
+      "classification": "safety_guard_pending_contract",
+      "journey": "automatic digital-loan ADEPT admission for exact borrower",
+      "productive_caller": "LibraryService._acquire_active_loan_automatically_guarded -> loan_acquisition_admission.resolve",
+      "effect": "For Paris source, performs extra borrower/gateway veto before entitlement inventory, staging, DRM and locks; cannot infer another ADEPT profile",
+      "authority": "Persisted connection identity, bound source/loan coordinates and explicit `_paris_adept_identity_for_loan` approval",
+      "replacement_contract": "Typed provider borrower-grant attestation for the exact loan/profile, and a provider-neutral Core admission that denies absent or ambiguous grant",
+      "tests": [
+        "tests/test_automatic_loan_admission.py",
+        "tests/test_core_p0_3120_borrower_identity_ui.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Paris condition is an active security veto; removing it by AST normalization would weaken identity protections"
+    },
+    {
+      "id": "site-68325c336f6dcadf637017cb",
+      "classification": "safety_guard_pending_contract",
+      "journey": "automatic digital-loan ADEPT borrower callback",
+      "productive_caller": "loan_acquisition_admission.resolve -> _paris_adept_identity_for_loan for admitted Paris loan",
+      "effect": "Refuses a mutable or unbound borrower before acquiring protected bytes; callback refusal is authoritative even if its string is falsey",
+      "authority": "Core exact persisted borrower binding, never the selected GTK identity",
+      "replacement_contract": "Versioned source-neutral exact borrower grant query, not an additional ad-hoc Paris method",
+      "tests": [
+        "tests/test_automatic_loan_admission.py",
+        "tests/test_core_p0_3120_borrower_identity_ui.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Separate AST call anchored inside same live safety decision; do not count as another completed cutover or waive its guard"
+    },
+    {
+      "id": "site-bde7e6bb7d27db9b3a56d35b",
+      "classification": "safety_guard_pending_contract",
+      "journey": "ADEPT protected-loan post-staging borrower revalidation",
+      "productive_caller": "loan_adept_profile_guard.check following acquiring receipt and ACSM staging",
+      "effect": "Rechecks original Loan/source/identity against receipt and Paris borrower binding after side-effect boundaries, refusing any retarget before profile use",
+      "authority": "Frozen ledger_base plus exact account/identity and native Loan fields",
+      "replacement_contract": "Generic loan-to-DRM-profile exact owner lease and retry-safe refusal codes; preserve post-staging revalidation until migration",
+      "tests": [
+        "tests/test_automatic_loan_admission.py",
+        "tests/test_core_p0_3120_borrower_identity_ui.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Live safety check, not a decorative provider string; premature removal could cross profiles after a staged ACSM"
+    },
+    {
+      "id": "site-11782bea38b359a5de6fc278",
+      "classification": "safety_guard_pending_contract",
+      "journey": "post-staging Paris ADEPT borrower verifier",
+      "productive_caller": "loan_adept_profile_guard.check -> _paris_adept_identity_for_loan",
+      "effect": "Refuses ambiguous Paris grant before selecting an ADEPT profile and performing a one-use runtime mutation",
+      "authority": "Existing exact borrower binding and immutable acquiring receipt, not a library cover or title",
+      "replacement_contract": "Typed provider-neutral DRM borrowing owner proof checked again after staging",
+      "tests": [
+        "tests/test_automatic_loan_admission.py",
+        "tests/test_core_p0_3120_borrower_identity_ui.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Same post-staging safety barrier as related comparison but distinct AST call; must persist until replacement attested"
+    },
+    {
+      "id": "site-3677c84c35a55a9626000d6e",
+      "classification": "safety_guard_pending_contract",
+      "journey": "manual ACSM import placement provenance",
+      "productive_caller": "LibraryService.import_acsm -> core.manual_acsm_import.import_acsm before SHA, staging and final catalogue index",
+      "effect": "Accepts only manual import or explicitly BnF-Prêt-labelled placement under a manual source, rejecting forged provider attribution",
+      "authority": "User-selected manual ACSM plus exact identity binding; a source folder or ACSM alone is not a BnF entitlement",
+      "replacement_contract": "Versioned provider-owned observed-import source reference verified by Core; move provider-specific placement allowlist outside generic import",
+      "tests": [
+        "tests/test_core_p0_5851_acsm_explicit_identity.py",
+        "tests/test_core_p0_5056_acsm_reuse_neutral.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Current provider-specific refusal is necessary before source provenance can be represented generically; no automatic rights or links should result"
+    },
+    {
+      "id": "site-fa4141b996ceab0e1bd6be32",
+      "classification": "safety_guard_pending_contract",
+      "journey": "BnF web loan automatic-acquisition denial",
+      "productive_caller": "LibraryService._acquire_active_loan_automatically, directly callable outside opening_sync",
+      "effect": "Rejects Web-observed BnF loan with explicit-only retry before lock, network, provider request or ACSM fulfillment",
+      "authority": "Exact native Loan.source_provider, but Web inventory alone never proves an explicit user act or acquisition approval",
+      "replacement_contract": "Typed lending admission policy from provider declaring explicit_user_action required and Core-enforced default-deny for unverified source",
+      "tests": [
+        "tests/test_core_p0_2055_bnf_opening_guard.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "An active mandatory safety veto; removing provider comparison now would permit a destructive implicit GET and cannot be credited as decoupling"
+    },
+    {
+      "id": "site-5beae61d97f662122eedd8d8",
+      "classification": "must_migrate",
+      "journey": "Kobo DRM acquisition recipe dispatch",
+      "productive_caller": "LibraryService.execute_acquisition_request -> runtime.kobo-adept.download_request for source.type=kobo",
+      "effect": "Core selects a concrete runtime service from a source brand; can execute DRM download after admission and persistence policy checks elsewhere",
+      "authority": "Hardcoded Core runtime.kobo-adept plugin service ID, not an installed generic DRM recipe capability",
+      "replacement_contract": "Versioned negotiated DRM execution capability/registry bound to active plugin producer, selected by typed recipe without Core supplier switch",
+      "tests": [
+        "tests/test_core_p0_3252_kobo_runtime_dispatch.py",
+        "tests/test_core_acquisition_no_injected_runtime_bypass.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Live provider-named dispatch still executes. Cannot rename to a generic helper and claim removal without migrating actual runtime selection"
+    },
+    {
+      "id": "site-722f43d97235b07dcca4a1dd",
+      "classification": "must_migrate",
+      "journey": "Paris primary ADEPT connection validation in Settings",
+      "productive_caller": "gui.settings_draft.build_settings_draft -> saves identities primary_paris_connection_id with source account bindings",
+      "effect": "CoreUI validates that the chosen primary ADEPT connection has provider_id=paris and belongs to the same enabled identity; blocks wrong-account save",
+      "authority": "Legacy special `primary_paris_connection_id` config key and provider label, not a generic plugin-declared borrower binding policy",
+      "replacement_contract": "Typed source-binding capability/descriptors for the normal ADEPT borrower; generic Settings validates exact identity/provider/credential scope and saves only declared binding",
+      "tests": [
+        "tests/test_settings_draft.py",
+        "tests/test_core_p0_5743_sqlite_cardinality_v15.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Active supplier-branded CoreUI decision; must be replaced without loosening validation or silently rebinding a different login"
+    },
+    {
+      "id": "site-dd9fadf5918f4eb2fda40376",
+      "classification": "safety_guard_pending_contract",
+      "journey": "v3 historical backup import during SQLite schema migration",
+      "productive_caller": "Storage._migrate(version<3) enumerates legacy backup_items and refuses Kobo pseudo-right mirroring",
+      "effect": "Skips canonical right/acquisition/catalogue creation from archived Kobo v0.7 backup rows; mutation affects other legacy provider rows only",
+      "authority": "Historical non-attested Kobo checkpoint vs canonical source reference A/B chain; absence of canonical grant proof",
+      "replacement_contract": "Versioned read-only archive/tombstone migration with generic untrusted legacy source policy; do not re-enable Kobo checkpoint-derived rights",
+      "tests": [
+        "tests/test_core_p0_3196_w5_passive_v2_migration.py",
+        "tests/test_core_p0_3196_residual_writer_surface.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Persisted migration safety guard rather than an active Kobo canonical writer; remove only once migration coverage and non-resurrection proof are complete"
     }
   ],
   "retirements": [
