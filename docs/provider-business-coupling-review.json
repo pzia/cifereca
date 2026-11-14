@@ -582,7 +582,8 @@
       "evidence": "GTK selected identity cannot make an unbound configured credential match an explicit targeted request; absent binding is rejected before disconnect, session changes or provider network. Explicit matching owner remains accepted.",
       "tests": [
         "tests/test_core_p0_5975_confirmed_source_owner.py::test_targeted_reconnect_refuses_missing_owner_before_disconnect",
-        "tests/test_core_p0_5975_confirmed_source_owner.py::test_targeted_reconnect_requires_exact_row_identity"
+        "tests/test_core_p0_5975_confirmed_source_owner.py::test_targeted_reconnect_requires_exact_row_identity",
+        "tests/test_core_p0_3719_scoped_provider_connection.py"
       ],
       "pr": "#6040",
       "in_ast_metric": false

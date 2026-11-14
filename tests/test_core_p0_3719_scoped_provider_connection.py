@@ -16,15 +16,13 @@ ROWS = [
 
 def test_exact_configured_credential_only_and_gui_unfiltered():
     assert provider_sessions._configured_rows_for_source(
-        ROWS, source_scope=None, default_identity="A",
+        ROWS, source_scope=None,
     ) is ROWS
     assert provider_sessions._configured_rows_for_source(
         ROWS, source_scope=("A", "numilog", "credential-one"),
-        default_identity="A",
     ) == ROWS[:1]
     assert provider_sessions._configured_rows_for_source(
         ROWS, source_scope=("B", "numilog", "credential-three"),
-        default_identity="A",
     ) == ROWS[2:]
 
 
@@ -36,7 +34,7 @@ def test_exact_configured_credential_only_and_gui_unfiltered():
 def test_scope_mismatch_refuses_connection(scope):
     with pytest.raises(ValueError, match="selected_source_not_unique"):
         provider_sessions._configured_rows_for_source(
-            ROWS, source_scope=scope, default_identity="A",
+            ROWS, source_scope=scope,
         )
 
 
@@ -50,7 +48,7 @@ def test_scope_mismatch_refuses_connection(scope):
 def test_malformed_scope_refused_before_provider_creation(scope):
     with pytest.raises(ValueError, match="selected_source_invalid_scope"):
         provider_sessions._configured_rows_for_source(
-            ROWS, source_scope=scope, default_identity="A",
+            ROWS, source_scope=scope,
         )
 
 
