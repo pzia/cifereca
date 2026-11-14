@@ -127,6 +127,10 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
     if (type(item) is not SearchResult or item.source_provider != provider_id
             or item.docbase != docbase or item.medium != "digital"):
         return reject("local_edition_scope_invalid")
+    if (type(identity_id) is not str or not identity_id
+            or len(identity_id) > 1024
+            or any(c in identity_id for c in "\\x00\\r\\n")):
+        return reject("local_provider_or_identity_unavailable")
     try:
         manager = service._plugin_manager
         plugin_id = service._provider_plugin_ids[provider_id]
@@ -135,10 +139,7 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
         # mutable GTK selection while assessing a passive provider scope.
         if (plugin.enabled is not True or plugin.state != "ready"
                 or plugin.descriptor.type != "provider.library"
-                or plugin.descriptor.id != plugin_id
-                or type(identity_id) is not str or not identity_id
-                or len(identity_id) > 1024
-                or any(c in identity_id for c in "\\x00\\r\\n")):
+                or plugin.descriptor.id != plugin_id):
             return reject("local_provider_or_identity_unavailable")
         session = service._session_for_source(
             provider_id, item.source_credential)
