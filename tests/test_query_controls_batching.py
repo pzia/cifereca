@@ -448,3 +448,60 @@ def test_p1_4761_invalid_gtk_sort_selection_never_auto_selects_an_option():
     assert controls.clear_button.sensitive is True
     controls.reset_filters()
     assert controls.local_sort_key() == 'rank'
+
+
+def test_p1_4761_invalid_gtk_scope_is_never_last_facet_or_all_documents():
+    for invalid in (0xFFFFFFFF, -1, True):
+        events = []
+        controls = LocalQueryControls(
+            lambda: events.append(controls.state()), 'Filtre'
+        )
+        documents = (
+            {'medium': 'physical'},
+            {'medium': 'digital', 'format': 'application/pdf'},
+        )
+        controls.set_document_choices(documents)
+        controls.scope.set_selected(invalid)
+        # Both the shared QueryState and local document predicate fail closed.
+        # In particular, Python negative indexing cannot select 'digital'.
+        assert controls.state().scope == '\x00'
+        assert controls.active_document_labels() == ()
+        assert not controls.matches_document(documents[0])
+        assert not controls.matches_document(documents[1])
+        assert controls.clear_button.sensitive
+        notified = len(events)
+        # Same facet choices, but a stale GTK selection must be repaired.
+        controls.set_document_choices(documents)
+        assert controls.state().scope == 'all'
+        assert controls.matches_document(documents[0])
+        assert controls.matches_document(documents[1])
+        assert len(events) == notified  # reconciliation is not a new search
+
+
+def test_p1_4761_rebased_document_scope_maintains_exact_selected_medium():
+    controls = LocalQueryControls(lambda: None, 'Filtre')
+    controls.set_document_choices((
+        {'medium': 'physical'},
+        {'medium': 'digital', 'format': 'application/pdf'},
+    ))
+    controls.scope.set_selected(controls._scope_values.index('digital'))
+    assert controls.state().scope == 'digital'
+    # Physical disappears; digital survives but its GTK model index moves.
+    controls.set_document_choices(({'medium': 'digital'},))
+    assert controls._scope_values == ('all', 'digital')
+    assert controls.scope.get_selected() == 1
+    assert controls.state().scope == 'digital'
+    assert controls.matches_document({'medium': 'digital'})
+    assert not controls.matches_document({'medium': 'physical'})
+
+
+def test_p1_4761_invalid_shared_field_and_scope_are_not_negative_indexed():
+    control = QueryControls(
+        [('paris', 'Paris')], lambda: None, lambda: None
+    )
+    control.field.set_selected(-1)
+    control.scope.set_selected(0xFFFFFFFF)
+    assert control.state().field == '\x00'
+    assert control.state().scope == '\x00'
+    control.reset_filters()
+    assert control.state() == control._initial_filter_state
