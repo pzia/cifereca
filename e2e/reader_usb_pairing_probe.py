@@ -219,11 +219,32 @@ def main() -> int:
 
     def click(widget):
         until(lambda: widget.get_mapped(), "widget_mapped")
-        # Match the proven XTEST pattern from optimizer_handoff_probe:
-        # a pointer action must NOT steal native X11 keyboard focus first.
-        # Unmanaged Xvfb windows process that artificial focus as a separate
-        # toplevel handoff, dropping the intended button press.
-        device.click_widget(widget)
+        # A mapped button need not occupy the screen coordinates predicted by
+        # a GTK4 native-surface transform (especially with Xvfb CSD). Compute
+        # an actual native-local GTK hit and translate THAT position to XTEST.
+        # Never bypass the GTK input pipeline with emit()/activate()/clicked().
+        native = widget.get_native()
+        success, bounds = widget.compute_bounds(native)
+        if not success:
+            state["checkpoint"] = "widget_geometry"
+            raise AssertionError("GTK widget has no native bounds")
+        local_x = bounds.get_x() + bounds.get_width() / 2
+        local_y = bounds.get_y() + bounds.get_height() / 2
+        hit = native.pick(local_x, local_y, Gtk.PickFlags.DEFAULT)
+        while hit is not None and hit is not widget:
+            hit = hit.get_parent()
+        state["geometry_hit"] = hit is widget
+        if not state["geometry_hit"]:
+            state["checkpoint"] = "widget_geometry"
+            raise AssertionError("GTK native hit-test misses the intended control")
+        screen_x, screen_y = device.window_point(native, local_x, local_y)
+        state["geometry_onscreen"] = (
+            0 <= screen_x < args.width and 0 <= screen_y < 900
+        )
+        if not state["geometry_onscreen"]:
+            state["checkpoint"] = "widget_geometry"
+            raise AssertionError("XTEST target is outside physical Xvfb screen")
+        device.click(screen_x, screen_y)
 
     def toggle_expert(widget):
         was_active = widget.get_active()
@@ -404,13 +425,20 @@ def main() -> int:
             allowed = {
                 "shell", "widget_mapped", "dialog_open", "expert_mode",
                 "chooser_return", "dialog_response", "manual_uuid",
-                "button_not_clicked", "dialog_build_failed", "expert_keyboard", "setup",
+                "button_not_clicked", "widget_geometry",
+                "dialog_build_failed", "expert_keyboard", "setup",
             }
             checkpoint = state["checkpoint"]
             if checkpoint in allowed:
                 print("P1_6041_CLOSED_FAILURE_CHECKPOINT=" + checkpoint, flush=True)
-            if checkpoint == "button_not_clicked":
+            if checkpoint in {"button_not_clicked", "widget_geometry"}:
                 # Closed, fixture-independent input-delivery diagnostics.
+                print("P1_6041_GTK_HIT=" + (
+                    "yes" if state.get("geometry_hit") else "no"
+                ), flush=True)
+                print("P1_6041_TARGET_ONSCREEN=" + (
+                    "yes" if state.get("geometry_onscreen") else "no"
+                ), flush=True)
                 pointer = "seen" if state["pointer_seen"] else "absent"
                 keyboard = "seen" if state["key_seen"] else "absent"
                 print("P1_6041_INPUT_POINTER=" + pointer, flush=True)
