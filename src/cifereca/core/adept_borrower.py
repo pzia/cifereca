@@ -81,6 +81,26 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
         credential_id=credential, account_id=borrower,
     )
     if binding is None:
+        # The v16 register is independent of the historical Paris grant.
+        # This path is positive-only: a linked borrower may be resolved from
+        # newly confirmed, persisted source evidence, never an entitlement,
+        # a GTK selection, or a missing legacy row alone.
+        try:
+            owner, reason = self.explicit_adept_borrower_grant_for_source(
+                provider_id=source_provider,
+                credential_id=credential,
+                account_id=borrower,
+                connection_identity_id=connection_identity_id,
+            )
+        except Exception:
+            return None, "adept_borrower_ambiguous"
+        if reason is None:
+            if (type(owner) is not str or not owner
+                    or self.identity_by_id(owner) is None):
+                return None, "adept_borrower_ambiguous"
+            return owner, None
+        if reason != "adept_borrower_binding_required":
+            return None, public_borrower_refusal_code(reason)
         if matches[0].is_primary:
             return connection_identity_id, None
         return None, "adept_borrower_binding_required"
