@@ -259,14 +259,14 @@ def set_source_enabled(service, account, enabled, preference_key):
 
 
 
-def _atomic_legacy_inventory_toggle(service, account, enabled, preference_key, scope):
-    """Serialize legacy switch, CAS admission and revision into one SQL write.
+def _atomic_inventory_toggle(service, account, enabled, preference_key, scope):
+    """Decide versioned CAS or historical consent in one SQLite transaction.
 
-    In-flight legacy operations retain the exact historical generation fence.
-    A newly installed CAS policy, including invalid or OFF, always wins over
-    a concurrent legacy inventory writer. Never migrate historic ON to ON.
+    No preflight read selects a writer: every toggle observes the committed
+    policy while holding the same writer lock as its preference and epoch.
     """
     from .source_acquisition_consent import _context, _bound
+    from .source_enablement import source_enabled
     from .legacy_source_consent_metadata import (
         _POLICIES, _source_id, _consent_generation_key,
     )
@@ -300,25 +300,38 @@ def _atomic_legacy_inventory_toggle(service, account, enabled, preference_key, s
             db, coords, enabled=False,
         ):
             raise ValueError('source_sync_consent_scope_changed')
-        # The caller's earlier read may be stale: re-admit under the same
-        # SQLite writer lock that protects the outgoing preference/epoch.
-        if policy_in_transaction(db, scope).configured:
-            raise ValueError('source_sync_consent_changed')
-        legacy_present = (
-            legacy_toggle is not None
-            and db.execute(
-                'SELECT 1 FROM metadata WHERE key=?', (legacy_toggle,),
-            ).fetchone() is not None
-        )
+        state = policy_in_transaction(db, scope)
         writes = [(preference_key, '1' if enabled else '0')]
-        if not enabled and legacy_present:
+        if state.configured:
+            if enabled and state.mode == 'invalid':
+                raise ValueError('source_sync_consent_changed')
+            previous = db.execute(
+                'SELECT value FROM metadata WHERE key=?', (preference_key,),
+            ).fetchone()
+            acquisition_on = bool(
+                enabled and source_enabled(previous[0] if previous else None)
+                and state.mode == 'on'
+            )
             payload = json.dumps({
                 'schema': _SCHEMA, 'scope': list(coords),
-                'enabled': False, 'revision': secrets.token_hex(16),
+                'enabled': acquisition_on, 'revision': secrets.token_hex(16),
             }, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
             writes.append((policy_key(scope), payload))
-        elif revision_key is not None:
-            writes.append((revision_key, secrets.token_hex(16)))
+        else:
+            legacy_present = (
+                legacy_toggle is not None
+                and db.execute(
+                    'SELECT 1 FROM metadata WHERE key=?', (legacy_toggle,),
+                ).fetchone() is not None
+            )
+            if not enabled and legacy_present:
+                payload = json.dumps({
+                    'schema': _SCHEMA, 'scope': list(coords),
+                    'enabled': False, 'revision': secrets.token_hex(16),
+                }, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
+                writes.append((policy_key(scope), payload))
+            elif revision_key is not None:
+                writes.append((revision_key, secrets.token_hex(16)))
         for key, value in writes:
             db.execute(
                 'INSERT INTO metadata(key,value) VALUES(?,?) '
@@ -363,17 +376,14 @@ def set_inventory_source_enabled(service, account, enabled, preference_key):
             raise ValueError('source_sync_consent_scope_changed')
     elif not any(row is account for row in service.accounts):
         raise ValueError('source_sync_consent_scope_changed')
-    if configured(service, account):
-        return set_source_enabled(service, account, enabled, preference_key)
-
-    # Real Core accounts require one SQLite transaction for both the legacy
-    # preference and its epoch/CAS cutover. Keep lightweight broker contract
-    # fakes on their existing in-memory seam (no SQLite connection or Account).
-    from ..models import Account
+    # Real Core accounts decide versioned and legacy modes under the same
+    # SQL writer lock. Contract-only broker fakes retain their in-memory path.
     if type(account) is Account:
-        return _atomic_legacy_inventory_toggle(
+        return _atomic_inventory_toggle(
             service, account, enabled, preference_key, scope,
         )
+    if configured(service, account):
+        return set_source_enabled(service, account, enabled, preference_key)
     from .source_acquisition_consent import legacy_inventory_enablement_toggle
     return legacy_inventory_enablement_toggle(
         service, account, enabled, preference_key, scope,
