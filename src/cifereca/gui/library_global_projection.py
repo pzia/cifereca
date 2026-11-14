@@ -7,6 +7,24 @@ provider permission or a new physical placement.
 from __future__ import annotations
 
 
+# Canonical public Library entry fields produced by library_projection.
+# A foreign read shares business bibliography, placements and provenance,
+# not the raw provider/transport envelope. Core may attach internal fields
+# such as _exact_loan_cover_proofs to *owner* rows; a shallow dict(book)
+# would otherwise hand those signed/local cover witnesses to another GTK
+# profile, and any future unreviewed key would be public by default.
+_FOREIGN_BOOK_FIELDS = frozenset({
+    "key", "book_id", "title", "author", "provider_id", "providers",
+    "identity_id", "identity_ids", "item_id", "source_refs",
+    "state", "local", "local_path", "media_format", "artifact_kind",
+    "bundle_members", "playlist", "entitlement_type", "entitlement_id",
+    "due_at", "source", "loan_id", "thumbnail_url", "artifact_id",
+    "sha256", "placement_id", "placements", "possessions", "metadata",
+    # Existing optional read-side enrichment; never a transfer permission.
+    "source_item_id", "sync_status", "device_statuses",
+})
+
+
 _FOREIGN_BIBLIOGRAPHY = frozenset({
     "title", "author", "authors", "creator", "creators",
     "isbn", "isbns", "language", "languages", "original_language",
@@ -95,7 +113,13 @@ def global_library_display_rows(
             duplicated.add(identity)
             continue
         seen.add(identity)
-        row = dict(book)
+        # Current profile retains the complete owner-scoped Core record.
+        # Foreign profiles see only explicitly reviewed business fields;
+        # do not accidentally export future raw/session/proof fields.
+        row = (dict(book) if owner == viewing_identity_id else {
+            name: value for name, value in book.items()
+            if name in _FOREIGN_BOOK_FIELDS
+        })
         row["identity_id"] = owner
         # A global read is deliberately accessible between profiles, but a
         # raw signed cover URL or provider-auth metadata is not business
