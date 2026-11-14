@@ -36,6 +36,10 @@ Le rôle `core` ne modifie pas les plugins fonctionnels pour terminer une évolu
 
 Avant une extraction CoreUI ou un contrat transversal, consulter les PR ouvertes **et leurs chemins/fonctions modifiés** (notamment `main_window.py` et `e2e/**`) ; ne pas développer en parallèle la **même résolution**, même au sein du rôle Core. Si une évolution exige une adaptation plugin, livrer la primitive Core dans sa propre PR et transmettre l'API au pilote Plugins. Les modifications du runner/sélecteur E2E relèvent de `cicd`, pas de l'auteur Core. Voir [la matrice des propriétaires](../../AGENTS.md#coordination-anti-concurrence--un-propriétaire-par-résolution-889).
 
+## Revue de clôture et `PU`
+
+Avant de prolonger l'investigation, comparer les critères du ticket aux preuves déjà acquises. **Si seul un retour utilisateur nouveau et indispensable** (choix de produit, autorisation, accès ou preuve terrain non reproductible) empêche la clôture, **le pilote Core documente dans l'issue les preuves, la question ciblée (2–3 options maximum), sa recommandation et le critère de reprise, puis pose directement `PU`**, sans attente du rôle Backlog. Il stoppe alors toute exécution sur ce ticket et passe à un autre travail indépendant. **Seul Backlog retire `PU`** après réponse. Une panne technique, des tests ou une revue UX réalisables ne justifient pas `PU` ; si le retour est facultatif, demander sans bloquer et **livrer sur les critères prouvés**. Voir [règle commune](../../AGENTS.md#pu--suspension-dexécution-distincte-de-p0p1p2).
+
 ## Livraison et vérification avant handoff
 
 - Le rôle `core` (dont l'alias `coreui`) possède les tests unitaires et d'intégration des comportements modifiés, ainsi que les **assertions GTK/E2E ciblées** lorsque le parcours CoreUI constitue le critère d'acceptation ou présente un risque fonctionnel.
