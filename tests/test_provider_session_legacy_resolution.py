@@ -22,27 +22,28 @@ def _session(provider, credential, connected=True):
     )
 
 
-def test_legacy_source_resolution_requires_unique_connected_credential():
+def test_source_session_lookup_requires_a_credential_even_with_one_live_session():
     first = _session("synthetic", "alice")
     second = _session("synthetic", "bob")
     facade = _facade(first, second)
 
-    with pytest.raises(ProviderConfigurationError, match="ambigu"):
+    with pytest.raises(TypeError):
         _session_for_source(facade, "synthetic")
-
     assert _session_for_source(facade, "synthetic", "alice") is first
     assert _session_for_source(facade, "synthetic", "bob") is second
 
+    second.connected = False
+    with pytest.raises(TypeError):
+        _session_for_source(facade, "synthetic")
 
-def test_legacy_source_resolution_accepts_only_single_live_session():
+
+def test_explicit_credential_is_never_replaced_by_only_remaining_live_session():
     first = _session("synthetic", "alice", connected=False)
     second = _session("synthetic", "bob")
     facade = _facade(first, second)
-
-    assert _session_for_source(facade, "synthetic") is second
-
-    second.connected = False
-    with pytest.raises(ProviderConfigurationError):
+    assert _session_for_source(facade, "synthetic", "alice") is first
+    assert _session_for_source(facade, "synthetic", "bob") is second
+    with pytest.raises(TypeError):
         _session_for_source(facade, "synthetic")
 
 
