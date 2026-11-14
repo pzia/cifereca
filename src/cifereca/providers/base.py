@@ -140,6 +140,9 @@ def validated_account_option_choices(
     fail closed rather than pick the first entry or serialize a corrupt value.
     """
     rows = getattr(field, "choices", ())
+    # A choice exposes its label and cannot replace a password entry.
+    if getattr(field, "secret", False) is True:
+        return None
     if type(rows) is not tuple or not 1 <= len(rows) <= 32:
         return None
     seen: set[str] = set()
