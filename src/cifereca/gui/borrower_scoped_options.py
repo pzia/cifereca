@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import re
 
+from ..models import Account
+
 MAX_BORROWERS = 32
 MAX_BORROWER_ID = 128
 
@@ -57,7 +59,12 @@ def linked_borrower_choices(
     names = {borrower: "" for borrower in known}
     if type(observed) in (list, tuple) and len(observed) <= 256:
         for account in observed:
-            borrower = getattr(account, "unique_id", None)
+            # Only Core's inert typed observations are allowed to contribute
+            # a reader. Arbitrary plugin objects may implement properties
+            # whose access performs I/O or raises during passive Settings.
+            if type(account) is not Account:
+                continue
+            borrower = account.unique_id
             if (getattr(account, "is_primary", None) is not False
                     or getattr(account, "provider_id", None) != provider_id
                     or getattr(account, "credential_id", None) != credential_id

@@ -381,6 +381,7 @@ def test_p1_existing_account_with_invalid_identity_is_not_preassigned(saved_owne
         ],
     )
     assert editor["identity"].text == ""
+    assert editor["invalid_saved_snapshot"] is (type(saved_owner) is not str)
     assert editor["original_account"]["identity_id"] is saved_owner
     assert original["identity_id"] is saved_owner
 
