@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -676,10 +677,42 @@ def main() -> int:
                 ]
             # Collect subprocess output in memory and scrub it before making
             # CI artifact files. Even failed GTK probes cannot persist raw logs.
-            completed = subprocess.run(
-                command, cwd=ROOT, env=env, check=False,
-                capture_output=True, text=True,
-            )
+            if scenario.get("runner") == "gtk-reader-pairing":
+                # An embedded GTK/X11 loop can deadlock without exiting the
+                # process. Bound the *whole* private Xvfb process group, not
+                # just its parent shell, and never publish captured private
+                # stdout/stderr from a timed-out subprocess.
+                process = subprocess.Popen(
+                    command, cwd=ROOT, env=env,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True, start_new_session=True,
+                )
+                try:
+                    out_text, err_text = process.communicate(timeout=65)
+                    completed = subprocess.CompletedProcess(
+                        command, process.returncode, out_text, err_text,
+                    )
+                except subprocess.TimeoutExpired:
+                    # Xvfb and the GTK probe inherit the dedicated session.
+                    # Kill that group before collecting/draining pipe handles.
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        process.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    completed = subprocess.CompletedProcess(
+                        command, 124,
+                        "P1_6041_CLOSED_FAILURE_CHECKPOINT=gtk_timeout\n",
+                        "",
+                    )
+            else:
+                completed = subprocess.run(
+                    command, cwd=ROOT, env=env, check=False,
+                    capture_output=True, text=True,
+                )
             output = completed.stdout or ""
             errors = completed.stderr or ""
             if name in {"reader-usb-pairing-1024", "reader-usb-pairing-1366"} and completed.returncode:
@@ -692,6 +725,7 @@ def main() -> int:
                     "expert_mode", "chooser_return", "dialog_response",
                     "manual_uuid", "button_not_clicked", "dialog_build_failed",
                     "expert_keyboard", "widget_geometry", "x11_hit_mismatch",
+                    "gtk_timeout",
                 })
                 markers = re.findall(
                     r"(?m)^P1_6041_CLOSED_FAILURE_CHECKPOINT=([a-z_]+)$",
