@@ -454,3 +454,65 @@ def test_adept_profile_lookup_accepts_native_stable_id():
     assert broker.resolve_name("123") == "reader"
     assert broker.bind("alice", "123").profile_id == "123"
     assert service.storage.bound == {("identity", "alice"): "123"}
+
+
+@pytest.mark.parametrize(("field", "alias", "different"), [
+    ("profile_id", "id", "different-stable"),
+    ("name", "profile", "other-reader"),
+])
+def test_profile_conflicting_aliases_cannot_be_bound(field, alias, different):
+    service = Service()
+    service.runtime.rows = [{
+        "profile_id": "stable-reader", "name": "reader",
+        "complete": True, "fetch_capable": True,
+        "provisioning": {"acsm_fetch_ready": True},
+    }]
+    service.runtime.rows[0][alias] = different
+    broker = AdeptProfileBrokerImpl(service)
+    with pytest.raises(AttentionRequired) as exc:
+        broker.bind("alice", "stable-reader")
+    assert exc.value.code == "adept_profile_stable_id_required"
+    assert service.storage.bound == {}
+
+
+@pytest.mark.parametrize(("field", "alias", "different"), [
+    ("profile_id", "id", "different-stable"),
+    ("name", "profile", "other-reader"),
+])
+def test_provision_rejects_conflicting_runtime_ack_aliases(field, alias, different):
+    service = Service()
+    original = service.runtime.provision_profile
+
+    def provision(name, username):
+        response = original(name, username)
+        response["profile"][alias] = different
+        return response
+
+    service.runtime.provision_profile = provision
+    with pytest.raises(AttentionRequired) as exc:
+        AdeptProfileBrokerImpl(service).provision(
+            "reader", "reader@example.test", identity_id="alice",
+        )
+    assert exc.value.code == "adept_profile_provisioning_incomplete"
+    assert service.storage.bound == {}
+
+
+def test_coherent_legacy_profile_aliases_allow_valid_binding_and_provisioning():
+    service = Service()
+    original = service.runtime.provision_profile
+
+    def provision(name, username):
+        response = original(name, username)
+        for row in service.runtime.rows:
+            row["id"] = row["profile_id"]
+            row["profile"] = row["name"]
+        response["profile"]["id"] = response["profile"]["profile_id"]
+        response["profile"]["profile"] = response["profile"]["name"]
+        return response
+
+    service.runtime.provision_profile = provision
+    profile = AdeptProfileBrokerImpl(service).provision(
+        "reader", "reader@example.test", identity_id="alice",
+    )
+    assert profile.profile_id == "stable-reader"
+    assert service.storage.bound == {("identity", "alice"): "stable-reader"}
