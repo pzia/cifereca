@@ -89,7 +89,9 @@ class CatalogBrokerImpl:
     def searchable_providers(self): return self.service.searchable_providers()
     def catalog_entries(self, **options: Any): return self.service.catalog_entries(**options)
     def catalogue_source_capabilities(self, identity_id: str | None = None):
-        """Optional additive Core inventory; legacy CatalogBroker stays unchanged."""
+        """Optional additive Core inventory; missing headless owner denies empty."""
+        if type(identity_id) is not str or not identity_id:
+            return ()
         return self.service.catalogue_source_capabilities(identity_id=identity_id)
 
 
