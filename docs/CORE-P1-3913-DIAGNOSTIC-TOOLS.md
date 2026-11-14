@@ -51,6 +51,8 @@ et URLs signées. Aucune collecte ou publication automatique.
 
 ## Contrat public `cifereca-cli` — diagnostic et actions associées
 
+**Retrait #5813 (PR du responsable #5975) :** la commande racine `diagnose` est supprimée : elle connectait tous les fournisseurs configurés avant de restituer un bref statut et le compte GTK courant. Pour un diagnostic local, utiliser `doctor --json` (Core/runtime/base/config/plugins), `plugin list` / `plugin diagnose [PLUGIN_ID]` (états de plugins), ou `sync list --json` (liaisons enregistrées), en distinguant ces trois périmètres. Ces commandes n'attestent pas de connexion distante. Les anciens `kobo-audit` et `kobo-resume-preview` sont également absents du parseur actuel : leurs lignes de commande ne sont pas opérantes ; aucune fonction n'a été retirée dans cette PR sous ces noms.
+
 Toutes les commandes ci-dessous proviennent de `src/cifereca/cli.py`.
 Les sélecteurs facultatifs de source sont les identifiants **locaux** exacts ;
 ne jamais choisir arbitrairement un compte dans une identité tierce.
@@ -66,10 +68,7 @@ ne jamais choisir arbitrairement un compte dans une identité tierce.
 | `sync run ... --report RAPPORT.zip [--verify-files]` | **N+M+E** | ZIP privé 0600 : `manifest.json`, `sync-result.json`, audits avant/après, `events.jsonl` et `summary.txt`. Phases CLI, compteurs et observations SQLite ; SHA bornés sur demande. `summary.txt` distingue audit avant/après disponible ou non, classe les références et reçus locaux observés et signale les échantillons tronqués. **Les variations entre snapshots ne prouvent pas la causalité du run ni la finalisation d'un Placement ou OriginLink.** Le manifeste signale `event_coverage=cli_milestones_only` : **pas** de journal Core corrélé complet ni preuve HTTP. |
 | `sync run ... --trace-export TRACE.zip --confirm-trace-export` | **N+M+E** | ZIP **HTTP brut** capturé sur la sync sélectionnée, séparation obligatoire d'avec `--report` ; confirmation supplémentaire. Peut contenir les secrets de session. |
 | `statistics [--identity I]` ; `catalog-list [--state local|missing]` ; `acquisition-ledger [--status discovered|pending|acquiring|complete|retryable_error|attention_required]` | O | JSON de compteurs, catalogue et ledger locaux ; le ledger seul ne certifie pas SHA/Placement/OriginLink. |
-| `kobo-audit [--credential C]` | O | Audit local Kobo en lecture seule ; l'ancien `--plan` de rapprochement 0.7 est retiré, sans téléchargement ni mutation de bibliothèque. |
-| `kobo-resume-preview --credential C [--verify-files]` | O | Preview à partir des données locales ; option SHA/FS. |
-| `kobo-resume-preview --credential C --refresh-manifest` | **N** | **Exception** : lecture explicite du manifeste distant ; ne plus classer cette variante « hors réseau ». Pas de téléchargement de livre par la seule preview. |
-| `diagnose` ; `loans` ; `history` ; `search TERME [--scope all|physical|digital|unknown] [--provider P] [--field all|title|author|isbn|subject]` | **N** | Parcours historiques susceptibles de `connect_configured()` / rafraîchissement ou recherche réseau. **Préférer** `doctor` / `sync list` / audit ciblé pour diagnostic local. |
+| `loans` ; `history` ; `search TERME [--scope all|physical|digital|unknown] [--provider P] [--field all|title|author|isbn|subject]` | **N** | Parcours métiers pouvant appeler `connect_configured()` puis interroger un fournisseur. Ne pas employer pour un diagnostic local passif. |
 | `catalog-scan [--refresh-covers]` | **M** | Scan et réconciliation du catalogue local : écritures possibles ; ne pas confondre avec `catalog-list`. |
 | `acquisition-reconcile` | **M** | Réconciliation des acquisitions interrompues/prêts/catalogue ; pas un outil de lecture seule. |
 | `kobo-sync [--quiet]` ; `kobo-backup [--quiet]` | **N+M** | Backup/acquisition Kobo, alias `kobo-backup` conservé. |

@@ -23,7 +23,7 @@ def test_core_no_longer_exposes_dead_password_login():
 
 @pytest.mark.parametrize("argv", [
     ["--username", "reader", "search", "some book"],
-    ["--username", "reader", "diagnose"],
+    ["--username", "reader", "doctor"],
     ["--username", "reader", "plugin", "packages"],
 ])
 def test_removed_login_rejects_before_core_start_or_secret_prompt(monkeypatch, argv, capsys):
