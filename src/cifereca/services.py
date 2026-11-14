@@ -1576,11 +1576,21 @@ class LibraryService:
             metadata.get("provider_loan_id")
             if type(metadata.get("provider_loan_id")) is str else None
         }
-        # Legacy entitlement IDs are retained solely as an exact local link
-        # for display, never interpreted as a supplier permission.
-        for entitlement in self.storage.entitlements(provider_id=provider_id):
-            if entitlement.get("entitlement_id") == row.get("entitlement_id"):
-                if type(entitlement.get("loan_id")) is str:
+        # Legacy rights records are not supplier permissions. They may only
+        # link an already observed exact loan to an exact completed local
+        # acquisition for display; unknown IDs and foreign borrowers are not
+        # evidence.
+        entitlement_id = row.get("entitlement_id")
+        if type(entitlement_id) is str and entitlement_id:
+            for entitlement in self.storage.entitlements(provider_id=provider_id):
+                if (type(entitlement) is dict
+                        and entitlement.get("entitlement_id") == entitlement_id
+                        and entitlement.get("provider_id") == provider_id
+                        and entitlement.get("credential_id") == credential_id
+                        and entitlement.get("account_id") == account_id
+                        and entitlement.get("identity_id") == identity_id
+                        and entitlement.get("item_id") == row.get("item_id")
+                        and type(entitlement.get("loan_id")) is str):
                     ids.add(entitlement["loan_id"])
         ids.discard(None)
         ids.discard("")
