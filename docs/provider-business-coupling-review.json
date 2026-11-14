@@ -725,6 +725,21 @@
       ],
       "pr": "#6062",
       "in_ast_metric": true
+    },
+    {
+      "id": "struct-dashboard-core-navigation-selection",
+      "original": "core.sync_projection.dashboard_state projected the currently selected identity by reading mutable self.current_identity inside its read-only Core loop for each identity, coupling dashboard/Sync state projection to GTK navigation",
+      "original_classification": "navigation_dependent_readonly_core_projection",
+      "replacement": "Core dashboard_state requires only an explicit optional selected_identity_id, with no Core GUI getter; synchronous LibraryService.dashboard_state captures selected identity once and preserves its public no-argument ABI",
+      "classification": "removed_navigation_dashboard_worker",
+      "evidence": "Headless Core proxy with poison-current_identity getter proves no worker navigation access; default/alex selection, missing/invalid scope and a later facade navigation change do not change an earlier result. Selected is display-only and cannot grant source I/O, loan, receipt or sync. No provider-specific router added or filesystem/SQLite mutations.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_dashboard_scope.py",
+        "tests/test_sync_state_contract.py",
+        "tests/test_core0929_statistics.py"
+      ],
+      "pr": "#6064",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
