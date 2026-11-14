@@ -43,7 +43,7 @@ class DirectoryTests(unittest.TestCase):
     def test_move_rewrites_canonical_paths_but_preserves_legacy_archive_then_scans(self):
         file=self.book();self.service.catalog_scan();before=self.storage.placements()[0]
         entry=self.storage.catalog_entries()[0];entry['title']='Titre catalogue';entry['metadata']['description']='Résumé durable';self.storage.catalog_entry_put(entry)
-        self.storage.backup_put({'provider_id':'paris','credential_id':'p','item_id':'r','title':'Roman','format':'epub','local_path':str(file),'status':'complete'})
+        self.storage.backup_put({'provider_id':'paris','credential_id':'p','item_id':'r','title':'Roman','format':'epub','local_path':str(file),'status':'complete','identity_id':'stable-id'})
         archived = self.storage.backup_list('paris')[0].copy()
         with self.storage._connect() as db:
             # Directory moves must not write a historical provider locator.
@@ -167,7 +167,7 @@ class DirectoryTests(unittest.TestCase):
 
     def test_canonical_sql_error_rolls_back_paths_and_keeps_planned_journal(self):
         file=self.book();self.service.catalog_scan()
-        self.storage.backup_put({'provider_id':'paris','credential_id':'p','item_id':'r','title':'Roman','format':'epub','local_path':str(file),'status':'complete'})
+        self.storage.backup_put({'provider_id':'paris','credential_id':'p','item_id':'r','title':'Roman','format':'epub','local_path':str(file),'status':'complete','identity_id':'stable-id'})
         with self.storage._connect() as db:
             db.execute("CREATE TRIGGER fail_placement BEFORE UPDATE ON placements BEGIN SELECT RAISE(ABORT, 'simulated failure'); END")
         with self.assertRaises(Exception):self.service.change_identity_directory('stable-id','hugues')
