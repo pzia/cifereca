@@ -615,28 +615,42 @@ class LibraryService:
         self, source: Path, *, expected_identity_id: str, loan: Loan,
         title: str | None = None,
     ) -> dict[str, Any]:
-        """Import the exact staged loan token with manual ADEPT attestation.
+        """Import an exact provider-staged loan token as a manual ADEPT artifact.
 
-        Physical placement identifies BnF as the observed source. The ledger
-        and DRM execution remain manual; neither establishes a BnF right.
+        The existing BnF UI invokes this entrypoint; its admission and display
+        provenance now derive from the exact loan source rather than a Core
+        supplier-ID branch. This never establishes a provider right.
         """
+        from re import fullmatch
         from .core.diagnostic_explicit_loan_action import ActionObservation, LoanActionError
-        observation = ActionObservation(self, 'import_acsm', provider_id='bnf-pret')
+        from .core.loan_acsm_token_validation import staged_loan_acsm_path_safe
+
+        provider_id = loan.source_provider if type(loan) is Loan else None
+        prefix = (
+            provider_id.split('-', 1)[0]
+            if type(provider_id) is str
+            and fullmatch(r'[a-z][a-z0-9-]{0,63}', provider_id) is not None
+            else None
+        )
+        def reason(suffix: str) -> str:
+            return prefix + '_' + suffix if prefix is not None else 'loan_action_failed'
+
+        observation = ActionObservation(self, 'import_acsm', provider_id=provider_id)
         try:
             # The operation is admitted against its explicit borrower and
             # persisted connection owner, not the identity displayed in GTK.
             # Changing the navigation selection cannot revoke an admitted
             # import; the exact loan/account checks below remain mandatory.
-            if type(expected_identity_id) is not str or not expected_identity_id:
-                raise LoanActionError('bnf_loan_scope_unproven')
-            if (type(loan) is not Loan or loan.source_provider != 'bnf-pret'
+            if type(expected_identity_id) is not str or not expected_identity_id or prefix is None:
+                raise LoanActionError(reason('loan_scope_unproven'))
+            if (type(loan) is not Loan or type(loan.source_provider) is not str
                     or loan.identity_id != expected_identity_id
                     or loan.medium != 'digital' or loan.state != 'active'
                     or not loan.id or not loan.record_id or not loan.source_credential
                     or not loan.source_account_id
                     or self.storage.identity_for_connection(
                         loan.source_provider, loan.source_credential) != expected_identity_id):
-                raise LoanActionError('bnf_loan_scope_unproven')
+                raise LoanActionError(reason('loan_scope_unproven'))
             try:
                 account = self._account_for_loan(loan)
                 expected = self._acquisition_work_dir(expected_identity_id, loan.source_provider, loan.id)
@@ -645,15 +659,13 @@ class LibraryService:
                         or account.unique_id != loan.source_account_id
                         or account.credential_id != loan.source_credential
                         or account.identity_id != expected_identity_id
-                        or expected.is_symlink() or candidate.is_symlink()
-                        or candidate.parent.resolve() != expected.resolve()
-                        or not candidate.name.startswith('bnf-loan-')
-                        or candidate.suffix.casefold() != '.acsm'):
-                    raise LoanActionError('bnf_loan_scope_unproven')
+                        or not staged_loan_acsm_path_safe(candidate, expected)
+                        or not candidate.name.startswith(prefix + '-loan-')):
+                    raise LoanActionError(reason('loan_scope_unproven'))
             except LoanActionError:
                 raise
             except Exception:
-                raise LoanActionError('bnf_loan_scope_unproven') from None
+                raise LoanActionError(reason('loan_scope_unproven')) from None
             from .core.observed_loan_scope import observed_loan
             from .core.observed_import_provenance import remember_observed_import
             display_scope = observed_loan(loan)
@@ -663,14 +675,14 @@ class LibraryService:
                                       placement_provider_id=loan.source_provider)
             remember_observed_import(
                 self, result, display_scope, provider_id=loan.source_provider,
-                provenance_field='bnf_observed_loan',
+                provenance_field=prefix + '_observed_loan',
             )
         except LoanActionError as exc:
             observation.emit('failed', exc.code)
             raise
         except Exception:
-            observation.emit('failed', 'bnf_import_failed')
-            raise LoanActionError('bnf_import_failed') from None
+            observation.emit('failed', reason('import_failed'))
+            raise LoanActionError(reason('import_failed')) from None
         status = result.get('status') if type(result) is dict else None
         if status in {'complete', 'unchanged'}:
             observation.emit('success', status)
@@ -679,7 +691,7 @@ class LibraryService:
         }:
             observation.emit('attention_required', result['code'])
         else:
-            observation.emit('failed', 'bnf_import_unconfirmed')
+            observation.emit('failed', reason('import_unconfirmed'))
         return result
 
     def save_configuration(self, data: dict[str, Any]) -> dict[str, Any]:
