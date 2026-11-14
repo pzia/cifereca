@@ -810,8 +810,8 @@ def _publish_connection_success(
         pass
 
 
-def _configured_rows_for_source(rows, *, source_scope, default_identity):
-    """Select one enabled configured credential without provider/network I/O."""
+def _configured_rows_for_source(rows, *, source_scope):
+    """Select a credential only by its exact configured identity, without I/O."""
     if source_scope is None:
         return rows
     if (type(source_scope) is not tuple or len(source_scope) != 3
@@ -822,7 +822,8 @@ def _configured_rows_for_source(rows, *, source_scope, default_identity):
     identity, provider, credential = source_scope
     matches = [
         row for row in rows if isinstance(row, dict)
-        and str(row.get("identity_id") or default_identity).strip() == identity
+        and type(row.get("identity_id")) is str
+        and row["identity_id"].strip() == identity
         and str(row.get("provider") or "").strip().lower() == provider
         and str(row.get("id") or "").strip() == credential
     ]
@@ -1080,8 +1081,6 @@ def connect_configured(self, *, logger, caller_category: str = "other",
     rows = _configured_rows_for_source(
         self.config.provider_accounts(enabled_only=True),
         source_scope=source_scope,
-        default_identity=(self.current_identity.identity_id
-                          if self.current_identity else "default"),
     )
     self.disconnect_configured()
     all_accounts: list[Account] = []

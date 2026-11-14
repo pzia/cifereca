@@ -572,6 +572,20 @@
       ],
       "pr": "#6040",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-targeted-configured-source-gtk-selection-fallback",
+      "original": "core.provider_sessions.connect_configured derived default_identity from self.current_identity when selecting an exact source_scope before disconnecting sessions",
+      "original_classification": "navigation_dependent_legacy_mutation",
+      "replacement": "Exact targeted source selection requires a typed configured identity_id equal to the requested identity before disconnecting any live session; omitted or invalid owner fails as selected_source_not_unique",
+      "classification": "removed_implicit_navigation_targeted_source_selector",
+      "evidence": "GTK selected identity cannot make an unbound configured credential match an explicit targeted request; absent binding is rejected before disconnect, session changes or provider network. Explicit matching owner remains accepted.",
+      "tests": [
+        "tests/test_core_p0_5975_confirmed_source_owner.py::test_targeted_reconnect_refuses_missing_owner_before_disconnect",
+        "tests/test_core_p0_5975_confirmed_source_owner.py::test_targeted_reconnect_requires_exact_row_identity"
+      ],
+      "pr": "#6040",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [

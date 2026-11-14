@@ -92,3 +92,37 @@ def test_exact_config_and_sql_owner_allow_headless_source_binding(
         "credential_id": "card",
         "account_id": "borrower",
     }]
+
+
+def test_targeted_reconnect_refuses_missing_owner_before_disconnect():
+    # Even a matching GTK selection cannot authorize an unbound configured row.
+    disconnected = []
+    service = NS(
+        current_identity=NS(identity_id="alice"),
+        config=NS(provider_accounts=lambda *, enabled_only: [
+            {"id": "card", "provider": "future", "enabled": True},
+        ]),
+        disconnect_configured=lambda: disconnected.append(True),
+    )
+    with pytest.raises(ValueError, match="selected_source_not_unique"):
+        provider_sessions.connect_configured(
+            service,
+            logger=NS(info=lambda *_args, **_kwargs: None),
+            source_scope=("alice", "future", "card"),
+        )
+    assert disconnected == []
+
+
+def test_targeted_reconnect_requires_exact_row_identity():
+    rows = [
+        {"id": "card", "provider": "future", "enabled": True},
+        {"id": "other", "provider": "future", "identity_id": "bob"},
+    ]
+    with pytest.raises(ValueError, match="selected_source_not_unique"):
+        provider_sessions._configured_rows_for_source(
+            rows, source_scope=("alice", "future", "card"),
+        )
+    rows[0]["identity_id"] = "alice"
+    assert provider_sessions._configured_rows_for_source(
+        rows, source_scope=("alice", "future", "card"),
+    ) == [rows[0]]
