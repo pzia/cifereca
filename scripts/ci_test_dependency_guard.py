@@ -13,7 +13,12 @@ TEST_CONSUMER_GLOBS = (
     "scripts/test*.py",
 )
 
-DYNAMIC_IMPORT_LOADERS = ("import_module", "__import__", "spec_from_file_location", "SourceFileLoader")
+# These APIs execute or import test modules just like importlib. Missing one
+# means a changed shared Core test can leave its consumers unselected.
+DYNAMIC_IMPORT_LOADERS = (
+    "import_module", "__import__", "spec_from_file_location", "SourceFileLoader",
+    "importorskip", "run_module", "run_path",
+)
 
 
 def _matches_changed_module(value: str, changed_modules: dict[str, str]) -> bool:
@@ -143,7 +148,7 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
                     continue
                 if import_node.module not in {
                     "importlib", "importlib.util", "importlib.machinery",
-                    "builtins",
+                    "builtins", "pytest", "runpy",
                 }:
                     continue
                 for alias in import_node.names:
