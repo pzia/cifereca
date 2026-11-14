@@ -165,7 +165,7 @@
         "tests/test_core_p0_2847_recent_live_placements.py",
         "tests/test_core_p0_2797_recent_exact_origin_covers.py"
       ],
-      "pr": "#6019",
+      "pr": "#6020",
       "in_ast_metric": false
     }
   ],
