@@ -306,6 +306,16 @@ class OverviewController:
         legacy_rows = list(self.host.identity_overview())
 
         def display_with_capacity(rows):
+            # Profile selection is a single-owner fact. During A→B handoff,
+            # a contradictory snapshot must not read *both* profiles' loans.
+            selected = [
+                row.get("identity_id") for row in rows
+                if type(row) is dict and row.get("selected") is True
+            ]
+            selected_id = (
+                selected[0] if len(selected) == 1
+                and type(selected[0]) is str and selected[0] else None
+            )
             # Public broker takes the exact profile ID, never the selected
             # GTK profile by implication. No provider call occurs here.
             enriched = []
@@ -313,7 +323,7 @@ class OverviewController:
                 if type(row) is not dict:
                     continue
                 projected = dict(row)
-                if projected.get("selected") is True:
+                if projected.get("selected") is True and selected_id is not None:
                     iid = projected.get("identity_id")
                     read = getattr(self.identity_broker, "digital_loan_availability", None)
                     if type(iid) is str and iid and callable(read):
