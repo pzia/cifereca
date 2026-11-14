@@ -77,21 +77,6 @@
       "rationale": "A currently executed provider-specific veto; do not remove until the same negative behavior is represented by a typed source contract"
     },
     {
-      "id": "site-3b2694ab8fb302ff443ce689",
-      "classification": "must_migrate",
-      "journey": "Numilog manual-link receipt preflight",
-      "productive_caller": "LocalInspection.__init__ -> _manual_right_proofs -> preflight_manual_link, restricted to Numilog",
-      "effect": "Computes source-specific private receipt attestation/collision/ledger flags for an optional user-facing attachment preflight; not a canonical right from the title",
-      "authority": "Legacy authenticated-library receipts and exact source SQLite ledger; positive preflight is not itself a Placement or OriginLink",
-      "replacement_contract": "Plugin-provided versioned source receipt evidence validated by a provider-neutral read-only Core inspector; remove Numilog branch and private proof dictionary from shared Core",
-      "tests": [
-        "tests/test_core_p0_2797_source_aware_preflight.py",
-        "tests/test_core_p0_2714_manual_pair_preflight.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Active branded projection/decision remains in a shared Core inspector, so it must not be classified as retired or mere presentation"
-    },
-    {
       "id": "site-9a427643ffc95bcc036e10d7",
       "classification": "safety_guard_pending_contract",
       "journey": "automatic digital-loan ADEPT admission for exact borrower",
@@ -816,6 +801,23 @@
       ],
       "pr": "#6085",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-numilog-manual-receipt-preflight-retired",
+      "original_site_id": "site-3b2694ab8fb302ff443ce689",
+      "original": "Core LocalInspection constructed a Numilog-only per-right receipt/edition-collision ledger proof map and a per-file SHA/CRC signature map to produce a nominally eligible_for_fresh_validation manual-link diagnostic even though the manual attachment writer was retired.",
+      "original_classification": "active_branded_business_decision_must_migrate",
+      "replacement": "The obsolete local manual-right/file attachment path is now universally read-only and blocked, after scoped case existence and inactive-loan checks. Its provider-specific proof dictionary, per-file proof dictionary, manual pair evaluator/signature comparator and dead coverage classifier are physically deleted. Canonical source A-to-B delivery and separate descriptive/relocation previews remain unchanged; no plugin receipt is falsely minted from local SQLite.",
+      "classification": "retired_supplier_specific_manual_link_evidence_and_dead_comparator",
+      "evidence": "Exact scope and case validity still checked. A matching complete Numilog ledger+identical EPUB bytes, a foreign credential/provider, duplicate rights and cross-identity ledger cannot yield a positive preflight; inactive loans and incomplete audits preserve independent read-only labels. No acquisition, SQLite write, provider call, or manual attachment token exists. This narrows a defunct diagnostic rather than pretending to have installed a new provider-owned receipt ABI.",
+      "tests": [
+        "tests/test_core_p0_2714_manual_pair_preflight.py",
+        "tests/test_core_p0_2797_source_aware_preflight.py",
+        "tests/test_core_p0_2565_private_inspection_sqlite_revoke.py",
+        "tests/test_core_ui_p0_5048_neutral_local_placement_copy.py"
+      ],
+      "pr": "#pending",
+      "in_ast_metric": true
     }
   ],
   "guard_installations": [
