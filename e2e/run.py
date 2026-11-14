@@ -702,6 +702,17 @@ def main() -> int:
                         "P1_6041_CLOSED_FAILURE_CHECKPOINT=" + markers[-1],
                         flush=True,
                     )
+                # Only fixed enums, never a native event, coordinate or text.
+                for field, values in (
+                    ("INPUT_POINTER", frozenset({"seen", "absent"})),
+                    ("INPUT_KEY", frozenset({"seen", "absent"})),
+                    ("BUTTON_SENSITIVE", frozenset({"yes", "no"})),
+                ):
+                    observations = re.findall(
+                        rf"(?m)^P1_6041_{field}=([a-z]+)$", output,
+                    )
+                    if observations and observations[-1] in values:
+                        print(f"P1_6041_{field}=" + observations[-1], flush=True)
             if name in {"modern-light-1366", "modern-light-1600"} and completed.returncode:
                 # Only an explicit fixed checkpoint emitted by the trusted
                 # probe may leave the private GTK sandbox. Never print stderr,
