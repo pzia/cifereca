@@ -23,6 +23,11 @@ def test_primary_limit_options_are_two_independent_typed_decimal_fields():
         option = declared[key]
         assert option.value_type == "unsigned_integer"
         assert (option.default, option.min_value, option.max_value) == ("4", 0, 99)
+        # Both local ceilings must carry their exact declared medium; the
+        # Home digital availability projection must never count SYRACUSE.
+        assert option.advisory_loan_medium == (
+            "digital" if branch == "DILICOM" else "physical"
+        )
         assert "principal" in option.label.casefold()
         assert branch in option.help_text
         assert "liés" in option.help_text
