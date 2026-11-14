@@ -1,7 +1,8 @@
 """P1 #2854: explicit, asynchronous, read-only USB examination in Liseuses.
 
 Opening a page, changing the profile or selecting a book never starts a
-filesystem scan. Only the user's click opens a native mountpoint chooser.
+filesystem scan. Only an explicit click starts read-only USB discovery in a
+worker; the manual mountpoint chooser is a fallback, never the default.
 The result is an ephemeral advisory status, never an executable permission.
 """
 from __future__ import annotations
@@ -54,14 +55,63 @@ def _summary(result: object) -> str:
     )
 
 
-def request_reader_usb_preview(window, button, *, Gtk) -> None:
-    """User click -> folder chooser -> TaskRunner worker -> scoped GTK result.
+def _discover_mounted_binding(*, storage, identity_id: str, device_id: str,
+                              fingerprint: str):
+    """Worker-only: one exactly scoped, independently reattested USB mount.
 
-    The chosen folder MUST be the exact block-device mountpoint. Core's USB
-    scanner independently rejects ordinary directories or another device.
-    A remote/catalogue/borrowed book never gains any permission from here.
+    UI discovery is not an execution token; the subsequent scan reattests
+    again and the Core scanner independently qualifies the mount under lock.
     """
-    if getattr(window, "_closed", False):
+    from ..core.device_usb_discovery import (
+        MountedUsbVolume, discover_linux_usb_volumes,
+    )
+    from ..core.device_usb_mount import LinuxUsbMount, observe_linux_usb_mount
+    try:
+        binding = storage.device_binding_get(device_id)
+        if (type(binding) is not dict
+                or binding.get("identity_id") != identity_id
+                or binding.get("device_id") != device_id
+                or binding.get("enabled") is not True
+                or type(binding.get("metadata")) is not dict
+                or binding["metadata"].get("usb_fingerprint") != fingerprint):
+            return None
+        volumes = discover_linux_usb_volumes()
+        if (type(volumes) is not tuple or len(volumes) > 128
+                or any(type(item) is not MountedUsbVolume for item in volumes)):
+            return None
+        exact = [item for item in volumes
+                 if item.usb_fingerprint == fingerprint]
+        # Ambiguity includes two mounts with the same UUID. Never choose by
+        # pathname, label, presentation order, or a cached SQLite binding.
+        if len(exact) != 1:
+            return None
+        selected = exact[0]
+        proof = observe_linux_usb_mount(
+            identity_id=identity_id, binding=binding,
+            mountpoint=selected.mountpoint,
+        )
+        if (type(proof) is not LinuxUsbMount
+                or proof.identity_id != identity_id
+                or proof.device_id != device_id
+                or proof.usb_fingerprint != fingerprint
+                or proof.mountpoint != selected.mountpoint
+                or proof.filesystem != selected.filesystem
+                or (proof.major, proof.minor) != (selected.major, selected.minor)
+                or proof.mount_id != selected.mount_id):
+            return None
+        return selected
+    except Exception:
+        return None
+
+
+def request_reader_usb_preview(window, button, *, Gtk, manual: bool = False) -> None:
+    """User click -> worker mount discovery -> worker scan or manual fallback.
+
+    The Core scanner independently attests an exact block-device mount,
+    never trusting the chosen folder or this read-only discovery as authority.
+    No scan occurs during page construction or implicit navigation.
+    """
+    if type(manual) is not bool or getattr(window, "_closed", False):
         return
     service = getattr(window, "service", None)
     storage = getattr(service, "storage", None)
@@ -139,19 +189,6 @@ def request_reader_usb_preview(window, button, *, Gtk) -> None:
             and _exact_binding(storage, scope[0], scope[1], scope[2])
         )
 
-    try:
-        chooser = Gtk.FileChooserNative.new(
-            "Choisir la racine du volume USB de la liseuse", window,
-            Gtk.FileChooserAction.SELECT_FOLDER, "Examiner", "Annuler",
-        )
-    except Exception:
-        if current():
-            window._reader_status_label.set_label(
-                "Choix du volume USB indisponible. Aucun scan effectué."
-            )
-        return
-    window._reader_usb_preview_chooser = chooser
-
     def finish(report):
         if not current():
             return
@@ -203,6 +240,41 @@ def request_reader_usb_preview(window, button, *, Gtk) -> None:
                 "Aperçu USB indisponible. Aucun transfert effectué."
             )
 
+    def queue_scan(mountpoint: Path, *, observed=None):
+        if not current():
+            return
+        def work():
+            # Both discovery and every physical read remain in TaskRunner.
+            from ..core.device_usb_discovery import MountedUsbVolume
+            from ..core.device_usb_dry_run import inspect_usb_dry_run
+            if not current() or not root_current():
+                raise ValueError("reader scope changed")
+            if observed is not None:
+                live = _discover_mounted_binding(
+                    storage=storage, identity_id=identity,
+                    device_id=device, fingerprint=fingerprint,
+                )
+                if (type(observed) is not MountedUsbVolume
+                        or type(live) is not MountedUsbVolume
+                        or live.selection_key() != observed.selection_key()):
+                    raise ValueError("USB mount changed since discovery")
+            return inspect_usb_dry_run(
+                storage=storage, identity_id=identity,
+                device_id=device, identity_root=scope[7],
+                mountpoint=mountpoint,
+            )
+
+        window.runner.submit(
+            "Examiner les changements USB…", work,
+            ok=finish, err=error, control=button,
+            priority=TaskPriority.USER_ACTION,
+            kind="maintenance-inspection", origin="user",
+        )
+        if current():
+            window._reader_status_label.set_label(
+                "Examen USB en cours… aucune copie ni suppression."
+            )
+
     def respond(dialog, response):
         try:
             if (not current()
@@ -222,35 +294,9 @@ def request_reader_usb_preview(window, button, *, Gtk) -> None:
                 error(None)
                 return
 
-            def work():
-                # All physical reads and SHA calculations run in TaskRunner,
-                # never in GTK response or navigation handlers.
-                from ..core.device_usb_dry_run import inspect_usb_dry_run
-                if not root_current():
-                    raise ValueError("identity root changed")
-                # Use the pinned primary library root. An optional
-                # separately configured Kobo root cannot be silently merged
-                # with an unrelated profile's directory.
-                return inspect_usb_dry_run(
-                    storage=storage, identity_id=identity,
-                    device_id=device, identity_root=scope[7],
-                    mountpoint=mountpoint,
-                )
-
-            # Revalidate before queueing; a chooser can outlive a profile
-            # change, account reconfiguration or device rebinding.
-            if not current():
-                return
-            window.runner.submit(
-                "Examiner les changements USB…", work,
-                ok=finish, err=error, control=button,
-                priority=TaskPriority.USER_ACTION,
-                kind="maintenance-inspection", origin="user",
-            )
-            if current():
-                window._reader_status_label.set_label(
-                    "Examen USB en cours… aucune copie ni suppression."
-                )
+            # Manual expert fallback still goes through the exact Core
+            # scanner. A selected folder is never evidence of USB presence.
+            queue_scan(mountpoint)
         except Exception:
             error(None)
         finally:
@@ -260,8 +306,65 @@ def request_reader_usb_preview(window, button, *, Gtk) -> None:
                 if getattr(window, "_reader_usb_preview_chooser", None) is dialog:
                     window._reader_usb_preview_chooser = None
 
-    chooser.connect("response", respond)
-    chooser.show()
+    def show_chooser():
+        if not current():
+            return
+        try:
+            chooser = Gtk.FileChooserNative.new(
+                "Choisir la racine du volume USB de la liseuse", window,
+                Gtk.FileChooserAction.SELECT_FOLDER, "Examiner", "Annuler",
+            )
+        except Exception:
+            if current():
+                window._reader_status_label.set_label(
+                    "Choix du volume USB indisponible. Aucun scan effectué."
+                )
+            return
+        window._reader_usb_preview_chooser = chooser
+        chooser.connect("response", respond)
+        chooser.show()
+
+    if manual:
+        # Explicit expert invocation, also reused by legacy chooser tests.
+        show_chooser()
+        return
+
+    def discover():
+        # Never discover/block the GTK event thread.
+        if not current():
+            return None
+        return _discover_mounted_binding(
+            storage=storage, identity_id=identity,
+            device_id=device, fingerprint=fingerprint,
+        )
+
+    def discovered(result):
+        if not current():
+            return
+        from ..core.device_usb_discovery import MountedUsbVolume
+        if type(result) is MountedUsbVolume:
+            queue_scan(result.mountpoint, observed=result)
+            return
+        window._reader_status_label.set_label(
+            "Liseuse non connectée ou montage non vérifiable. "
+            "Choisissez le volume manuellement ou réessayez. "
+            "Aucun transfert effectué."
+        )
+        show_chooser()
+
+    def discovery_failed(_failure):
+        discovered(None)
+
+    window.runner.submit(
+        "Rechercher la liseuse USB associée…", discover,
+        ok=discovered, err=discovery_failed, control=button,
+        priority=TaskPriority.USER_ACTION,
+        kind="maintenance-inspection", origin="user",
+    )
+    if current():
+        window._reader_status_label.set_label(
+            "Recherche du volume USB associé… aucun transfert."
+        )
 
 
-__all__ = ["request_reader_usb_preview"]
+__all__ = ["request_reader_usb_preview", "_discover_mounted_binding"]
