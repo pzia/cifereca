@@ -24,7 +24,12 @@ def import_acsm(
     source = Path(source).expanduser().resolve()
     if not source.is_file() or source.suffix.casefold() != ".acsm":
         raise ProviderConfigurationError("Sélectionnez un fichier ACSM valide")
-    identity = self.identity_by_id(identity_id) if identity_id else self.current_identity
+    # The facade pins the operation owner before entry. A direct Core caller
+    # must supply the same stable identity; reading the selected UI profile
+    # here would allow navigation changes to retarget a staged DRM mutation.
+    if type(identity_id) is not str or not identity_id:
+        raise ProviderConfigurationError("Identité explicite requise pour l'import ACSM")
+    identity = self.identity_by_id(identity_id)
     if identity is None:
         raise ProviderConfigurationError("Aucune Identity active pour l'import ACSM")
     if placement_provider_id not in (None, 'bnf-pret') or (placement_provider_id and provider_id != 'manual'):

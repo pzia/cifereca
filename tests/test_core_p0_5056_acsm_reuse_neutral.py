@@ -53,10 +53,13 @@ def test_completed_acsm_reuse_requires_exact_artifact_for_every_provider(
             pytest.fail("completed import must never be rewritten")
 
     service = NS(
-        current_identity=NS(identity_id="alice"),
+        identity_by_id=lambda identity_id: (
+            NS(identity_id="alice") if identity_id == "alice" else None
+        ),
         storage=Storage(),
     )
     kwargs = dict(
+        identity_id="alice",
         provider_id="manual",
         placement_provider_id=placement,
         Path=Path,
