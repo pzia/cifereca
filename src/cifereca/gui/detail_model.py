@@ -73,23 +73,11 @@ def search_detail_support_label(item: object) -> str:
     return labels.get(legacy_medium, labels["unknown"]) if type(legacy_medium) is str else labels["unknown"]
 
 
-def paris_catalogue_availability(item: object, availability: str) -> tuple[bool, str]:
-    """Present Paris catalogue availability without inferring a reader's right.
-
-    Borrower eligibility is not established by a public catalogue notice.
-    Use the same attested-support projection as search/detail, never the
-    raw historical medium field when a documentary classification exists.
-    """
-    candidate = (
-        getattr(item, "source_provider", None) == "paris"
-        and search_detail_support_label(item) == "Numérique"
-    )
-    label = (
-        "Empruntable selon le catalogue · compte non vérifié"
-        if candidate and availability == "Empruntable"
-        else availability
-    )
-    return candidate, label
+def catalogue_availability_label(item: object, availability: str) -> str:
+    """Present a digital loan indication as a catalogue observation."""
+    if availability == "Empruntable" and search_detail_support_label(item) == "Numérique":
+        return "Empruntable selon le catalogue · compte non vérifié"
+    return availability
 
 
 def compact_availability_label(value: object) -> str:
