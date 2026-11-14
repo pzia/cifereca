@@ -1,5 +1,4 @@
 from __future__ import annotations
-import hashlib
 import json
 import os
 import re
@@ -142,49 +141,16 @@ class Config:
             if not str(row.get("identity_id") or "").strip():
                 row["identity_id"] = default_identity
                 changed = True
-        # 0.8.1 cardinality repair: one Kobo Vault connection per Paris
-        # identity. Early builds attached all legacy provider rows to the first
-        # identity. Split only the extra Kobo rows into deterministic identities;
-        # do not guess or duplicate ADE profile bindings.
-        seen_kobo: dict[str, str] = {}
-        identity_by_id = {str(item.get("id") or ""): item for item in identities if isinstance(item, dict)}
-        for row in rows:
-            if str(row.get("provider") or "").strip().lower() != "kobo":
-                continue
-            credential_id = str(row.get("id") or "").strip()
-            identity_id = str(row.get("identity_id") or default_identity).strip() or default_identity
-            previous = seen_kobo.get(identity_id)
-            if not previous or previous == credential_id:
-                seen_kobo[identity_id] = credential_id
-                continue
-            suffix = hashlib.sha256(credential_id.encode("utf-8", "surrogatepass")).hexdigest()[:8]
-            base_id = f"{identity_id}-kobo-{suffix}"
-            derived_id = base_id
-            serial = 2
-            while derived_id in identity_by_id:
-                derived_id = f"{base_id}-{serial}"
-                serial += 1
-            source = identity_by_id.get(identity_id, {})
-            derived_label = str(row.get("label") or f"{source.get('label') or identity_id} Kobo")
-            directory_base = _identity_directory_slug(derived_label, derived_id)
-            directory_name = directory_base
-            serial_dir = 2
-            while directory_name in used_directories:
-                directory_name = f"{directory_base}-{serial_dir}"
-                serial_dir += 1
-            used_directories.add(directory_name)
-            derived = {
-                "id": derived_id,
-                "label": derived_label,
-                "directory_name": directory_name,
-                "preferences": deepcopy(source.get("preferences") or {
-                    "prefer_original_language": False, "reading_languages": ["fr"]
-                }),
-            }
-            identities.append(derived)
-            identity_by_id[derived_id] = derived
-            row["identity_id"] = derived_id
-            seen_kobo[derived_id] = credential_id
+        # Versioned historical migrations only. Normal configuration reloads
+        # with a completed tombstone never run provider-specific cardinality
+        # rewriting. This is not an account or acquisition policy switch.
+        from .legacy_migrations import run_pending_config_migrations
+        if run_pending_config_migrations(
+            data=self.data, identities=identities, rows=rows,
+            default_identity=default_identity,
+            used_directories=used_directories,
+            directory_slug=_identity_directory_slug,
+        ):
             changed = True
 
         # An early 0.8.1 config could also repeat the same ADE profile on several
