@@ -54,3 +54,32 @@ def test_window_hit_point_never_emits_out_of_bounds_coordinates(point):
                 get_scale_factor=lambda: 2)
     with pytest.raises(RuntimeError, match="outside allocated GTK toplevel"):
         device.window_point(window, *point)
+
+
+@pytest.mark.parametrize(
+    ("widget_point", "surface_to_widget", "scale", "physical"),
+    [
+        (40, 0, 1, 40),
+        (40, 8, 1, 32),
+        (40, -8, 1, 48),
+        (40, 8, 2, 64),
+        (38, -9, 2, 94),
+        (40, 4.5, 2, 71),
+    ],
+)
+def test_native_transform_is_surface_to_widget_and_must_be_inverted(
+    widget_point, surface_to_widget, scale, physical,
+):
+    # GTK4 Gtk.Native.get_surface_transform() returns surface -> widget;
+    # using '+' would move XTEST away from the intended button under CSD.
+    assert module._gtk_widget_to_x11_surface_offset(
+        widget_point, surface_to_widget, scale,
+    ) == physical
+
+
+def test_widget_point_uses_inverse_surface_transform_before_scaling():
+    import inspect
+    source = inspect.getsource(module.X11Input.widget_point)
+    assert "_gtk_widget_to_x11_surface_offset(" in source
+    assert "rect.get_width() / 2, transform_x, scale" in source
+    assert "rect.get_height() / 2, transform_y, scale" in source
