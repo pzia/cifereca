@@ -21,8 +21,9 @@ dans l'Accueil.
 
 ## Contrat de lecture
 
-- `IdentityBroker.digital_loan_availability(identity_id)` : extension
-  facultative et rétrocompatible ; impose une identité explicite et retourne
+- `DigitalLoanAvailabilityReadBroker.digital_loan_availability(identity_id)` :
+  facette facultative sur le broker `identities`, sans changer les méthodes
+  obligatoires de `IdentityBroker` ; impose une identité explicite et retourne
   `tuple[DigitalLoanAvailability, ...]`. Le plugin Accueil utilise **le broker
   public**, le fallback natif passe par le même adaptateur et le même
   formateur `digital_loan_availability_lines`.
