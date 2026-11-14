@@ -104,5 +104,23 @@
       "pr": "#5997",
       "in_ast_metric": false
     }
+  ],
+  "guard_installations": [
+    {
+      "id": "adept-v17-monotone-paris-legacy-retirement",
+      "journey": "explicit borrower ADEPT reconfirmation of historical Paris grant",
+      "classification": "safety_guard_pending_final_legacy_writer_cutover",
+      "effect": "SQLite v17 makes legacy Paris binding write irreversible for an exact retired (credential_id,account_id), including SQL INSERT/UPDATE after revoke/reopen",
+      "authority": "transactional v16 reconfirmation then v17 tombstone and DB triggers; migration itself never grants rights or retires unconfirmed rows",
+      "remaining_debt": "historical writer/readers still exist for unreconfirmed grants; don't credit removal of mutating legacy paths yet",
+      "replacement_contract": "adept_borrower_grants exact provider/credential/borrower + local immutable tombstone",
+      "tests": [
+        "tests/test_core_p0_5851_monotone_legacy_retirement_v17.py",
+        "tests/test_core_p0_5851_generic_adept_grants_v16.py",
+        "tests/test_core_p0_5851_atomic_legacy_grant_reconfirmation.py"
+      ],
+      "pr": "#6003",
+      "rationale": "old authority cannot resurrect after explicit cutover; no automatic migration, rights, or supplier I/O"
+    }
   ]
 }
