@@ -97,6 +97,42 @@ class _HostileLoanString(str):
         raise AssertionError("untrusted string subclass must not select ADEPT grant")
 
 
+@pytest.mark.parametrize("field,new_value", [
+    ("source_provider", "future-library"),
+    ("source_credential", "source-b"),
+    ("source_account_id", "borrower-b"),
+    ("source_provider", _HostileLoanString("paris")),
+])
+def test_admission_refuses_source_drift_during_connection_lookup(
+    tmp_path, monkeypatch, field, new_value,
+):
+    service, loan = _setup(tmp_path)
+    try:
+        original_lookup = service.storage.identity_for_connection
+
+        def drifting_lookup(provider_id, credential_id):
+            owner = original_lookup(provider_id, credential_id)
+            setattr(loan, field, new_value)
+            return owner
+
+        monkeypatch.setattr(service.storage, "identity_for_connection", drifting_lookup)
+        def forbidden(*_args, **_kwargs):
+            pytest.fail("changed loan scope must not reach borrower or rights")
+        monkeypatch.setattr(service, "_paris_adept_identity_for_loan", forbidden)
+        monkeypatch.setattr(service.storage, "entitlements", forbidden)
+        monkeypatch.setattr(service.storage, "acquisitions", forbidden)
+        refused = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert refused.identity is None
+        assert refused.entitlement_id is None
+        assert refused.refusal == {
+            "status": "attention_required", "loan_id": loan.id,
+            "code": "adept_identity_unproven",
+            "reason": "source_scope_changed", "retry": "explicit_only",
+        }
+    finally:
+        service.close()
+
+
 @pytest.mark.parametrize("field,bad", [
     ("source_provider", _HostileLoanCoordinate()),
     ("source_provider", _HostileLoanString("paris")),
