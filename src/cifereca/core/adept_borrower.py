@@ -123,9 +123,19 @@ def _cross_identity_loan_conflict(
     for row in acquisitions:
         if type(row) is not dict:
             return True
+        # An unrelated strategy (including historical None) cannot be used
+        # to authorize ADEPT or to create a loan_auto owner conflict. Inspect
+        # its metadata only if the strategy is the exact native loan_auto.
+        strategy = row.get("strategy")
+        if strategy is None:
+            continue
+        if type(strategy) is not str:
+            return True
+        if strategy != "loan_auto":
+            continue
         metadata = row.get("metadata")
         if metadata is None:
-            metadata = {}
+            return True
         if type(metadata) is not dict:
             return True
         value = metadata.get("provider_loan_id")
@@ -134,11 +144,6 @@ def _cross_identity_loan_conflict(
         if type(value) is not str:
             return True
         if value.strip() != loan_key:
-            continue
-        strategy = row.get("strategy")
-        if type(strategy) is not str:
-            return True
-        if strategy != "loan_auto":
             continue
         owner = row.get("identity_id")
         if type(owner) is not str or owner != identity_id:
