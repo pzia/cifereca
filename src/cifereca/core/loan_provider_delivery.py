@@ -13,6 +13,21 @@ from typing import Any
 from .loan_safe_trace import loan_trace_ref
 
 
+def _has_symlink_component(path: Path) -> bool:
+    """Stable no-follow preflight for every directory component.
+
+    A symlink in a grandparent is no safer than the immediate parent.
+    This is not an inode lock: the canonical indexer still owns the final
+    no-follow path, owner and digest admission under concurrent rebinding.
+    """
+    try:
+        return path.is_symlink() or any(
+            parent.is_symlink() for parent in path.parents
+        )
+    except (OSError, ValueError):
+        return True
+
+
 def acquire_provider_loan(
     service: Any, loan: Any, *, force_refresh: bool,
     time: Any, _TRACE_LOG: Any, identity_id: str | None = None,
@@ -33,8 +48,13 @@ def acquire_provider_loan(
     } else "unknown"
     try:
         path = acquisition.path
-        artifact_bytes = (path.stat().st_size if isinstance(path, Path)
-                          and path.is_file() else 0)
+        # Even TRACE must not stat (follow) a provider-supplied symlink.
+        # An external target's private size is not an acquisition receipt.
+        artifact_bytes = (
+            path.stat().st_size
+            if isinstance(path, Path) and not _has_symlink_component(path)
+            and path.is_file() else 0
+        )
     except Exception:
         artifact_bytes = 0
     _TRACE_LOG.info(
@@ -50,13 +70,15 @@ def index_local_loan_artifact(
     ProviderConfigurationError: type[Exception],
 ) -> tuple[Any, dict]:
     trace_ref = loan_trace_ref(loan, identity.identity_id)
-    if final_path is None or not isinstance(final_path, Path) or not final_path.is_file():
+    if final_path is None or not isinstance(final_path, Path):
         raise ProviderConfigurationError("L'acquisition automatique n'a produit aucun artefact local")
-    # The catalog's no-follow/owner checks happen *after* this inspection.
-    # Reject a stable symlink at the handoff too, before the inspector reads
-    # an unrelated file from a provider-controlled or rebound local path.
-    if final_path.is_symlink() or final_path.parent.is_symlink():
+    # Reject *before* following the path for even an is_file/stat query.
+    # The catalog's own no-follow/owner checks run after this inspection,
+    # and remain mandatory for the physical publication decision.
+    if _has_symlink_component(final_path):
         raise ProviderConfigurationError("Artefact local invalide")
+    if not final_path.is_file():
+        raise ProviderConfigurationError("L'acquisition automatique n'a produit aucun artefact local")
     final_inspection = inspect_artifact(final_path)
     if final_path.suffix.casefold() in {".epub", ".pdf"} and not final_inspection.valid:
         raise ProviderConfigurationError("Artefact local invalide")

@@ -12,7 +12,9 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.core.loan_provider_delivery import index_local_loan_artifact
+from cifereca.core.loan_provider_delivery import (
+    acquire_provider_loan, index_local_loan_artifact,
+)
 from cifereca.providers import ProviderConfigurationError
 
 
@@ -93,3 +95,82 @@ def test_nonpath_receipts_do_not_reach_inspection(invalid):
             inspect_artifact=forbidden,
             ProviderConfigurationError=ProviderConfigurationError,
         )
+
+
+def test_symlinked_grandparent_is_rejected_before_inspection_or_index(tmp_path):
+    external = tmp_path / "private-target"
+    nested = external / "nested"
+    nested.mkdir(parents=True)
+    private = nested / "book.epub"
+    private.write_bytes(b"synthetic bytes must not be read")
+    link = tmp_path / "outer-aliased"
+    link.symlink_to(external, target_is_directory=True)
+    candidate = link / "nested" / "book.epub"
+
+    assert not candidate.is_symlink()
+    assert not candidate.parent.is_symlink()
+    assert candidate.parent.parent.is_symlink()
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("No inspection or index through a symlink ancestor")
+
+    with pytest.raises(ProviderConfigurationError, match="Artefact local invalide"):
+        index_local_loan_artifact(
+            NS(catalog_index_path=forbidden),
+            fake_loan(), NS(identity_id="alice"), candidate,
+            time=time, _TRACE_LOG=logging.getLogger("cifereca.test"),
+            inspect_artifact=forbidden,
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert private.read_bytes() == b"synthetic bytes must not be read"
+
+
+@pytest.mark.parametrize("alias", ["file", "parent", "grandparent"])
+def test_provider_trace_never_stats_symlinked_artifact(alias, tmp_path):
+    external = tmp_path / "private-target"
+    nested = external / "nested"
+    nested.mkdir(parents=True)
+    private = nested / "book.pdf"
+    private.write_bytes(b"SECRET synthetic fixture size")
+
+    if alias == "file":
+        candidate = tmp_path / "alias.pdf"
+        candidate.symlink_to(private)
+    elif alias == "parent":
+        candidate_dir = tmp_path / "alias-dir"
+        candidate_dir.symlink_to(nested, target_is_directory=True)
+        candidate = candidate_dir / "book.pdf"
+    else:
+        outer = tmp_path / "alias-outer"
+        outer.symlink_to(external, target_is_directory=True)
+        candidate = outer / "nested" / "book.pdf"
+
+    logs = []
+    trace = NS(info=lambda template, *args: logs.append((template, args)))
+    acquisition = NS(kind="direct", path=candidate)
+    service = NS(acquire_digital_loan=lambda _loan: acquisition)
+    assert acquire_provider_loan(
+        service, fake_loan(), force_refresh=False,
+        time=time, _TRACE_LOG=trace,
+    ) is acquisition
+    end = [args for template, args in logs
+           if template.startswith("TRACE download provider end")]
+    assert len(end) == 1 and end[0][2] == 0
+    assert private.read_bytes() == b"SECRET synthetic fixture size"
+
+
+def test_provider_trace_keeps_physical_file_size_without_any_symlink(tmp_path):
+    physical = tmp_path / "book.pdf"
+    physical.write_bytes(b"%PDF-1.7\nsynthetic\n%%EOF")
+    logs = []
+    service = NS(acquire_digital_loan=lambda _loan: NS(
+        kind="direct", path=physical,
+    ))
+    acquire_provider_loan(
+        service, fake_loan(), force_refresh=False,
+        time=time,
+        _TRACE_LOG=NS(info=lambda template, *args: logs.append((template, args))),
+    )
+    end = [args for template, args in logs
+           if template.startswith("TRACE download provider end")]
+    assert len(end) == 1 and end[0][2] == physical.stat().st_size
