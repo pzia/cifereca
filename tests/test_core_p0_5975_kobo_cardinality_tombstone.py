@@ -67,7 +67,9 @@ def test_completed_migration_does_not_repair_later_manual_duplicate(tmp_path):
     # validation, not silently attributed to a newly created identity.
     config = Config(path)
     before = config.identities()
-    config.provider_accounts()[1]["identity_id"] = "family"
+    rows = config.provider_accounts()
+    rows[1]["identity_id"] = "family"
+    config.set("providers.accounts", rows)
     config.save()
     loaded = Config(path)
     assert loaded.identities() == before
