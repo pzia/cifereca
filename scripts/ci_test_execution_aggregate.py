@@ -97,7 +97,7 @@ def aggregate(gates: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
     labels: set[str] = set()
     source_sha: str | None = None
     cases: dict[str, dict[str, Any]] = {}
-    observations: dict[str, list[dict[str, str]]] = defaultdict(list)
+    observations: dict[str, list[dict[str, Any]]] = defaultdict(list)
     execution_outcomes = Counter()
     gate_rows = []
     for label, report in gates:
@@ -124,16 +124,23 @@ def aggregate(gates: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
             prior = cases.setdefault(nodeid, classification)
             if prior != classification:
                 raise ValueError("conflicting_classification:" + nodeid)
-            observations[nodeid].append({"gate": label, "outcome": item["outcome"]})
+            observations[nodeid].append({
+                "gate": label, "outcome": item["outcome"],
+                "called": item["called"], "attempted": item["attempted"],
+            })
             execution_outcomes[item["outcome"]] += 1
 
     matrix: dict[tuple[str, str, str], dict[str, int]] = defaultdict(
-        lambda: {"unique_cases": 0, "case_executions": 0}
+        lambda: {"unique_cases": 0, "selected_observations": 0,
+                 "called_executions": 0}
     )
     for nodeid, classification in cases.items():
         key = tuple(classification[k] for k in _CLASSIFICATION)
         matrix[key]["unique_cases"] += 1
-        matrix[key]["case_executions"] += len(observations[nodeid])
+        matrix[key]["selected_observations"] += len(observations[nodeid])
+        matrix[key]["called_executions"] += sum(
+            item["called"] for item in observations[nodeid]
+        )
     replays = [
         {
             "nodeid": nodeid,
@@ -146,15 +153,28 @@ def aggregate(gates: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
         for nodeid in sorted(cases)
         if len(observations[nodeid]) > 1
     ]
-    total_executions = sum(len(value) for value in observations.values())
+    total_observations = sum(len(value) for value in observations.values())
+    total_called = sum(
+        item["called"] for values in observations.values() for item in values
+    )
+    repeated_calls = sum(
+        max(0, sum(item["called"] for item in values) - 1)
+        for values in observations.values()
+    )
     return {
         "schema": "cifereca.pytest-execution-aggregate/1",
         "source_sha": source_sha,
         "gate_count": len(gate_rows),
         "count_unique_cases": len(cases),
-        "count_case_executions": total_executions,
+        "count_selected_observations": total_observations,
+        "count_called_executions": total_called,
         "count_replayed_cases": len(replays),
-        "count_extra_executions": total_executions - len(cases),
+        "count_extra_selected_observations": total_observations - len(cases),
+        "count_reexecuted_cases": sum(
+            sum(item["called"] for item in values) > 1
+            for values in observations.values()
+        ),
+        "count_extra_called_executions": repeated_calls,
         "count_discordant_replayed_cases": sum(row["discordant_outcomes"] for row in replays),
         "execution_outcomes": {name: execution_outcomes[name] for name in OUTCOMES},
         "all_gates_passed": all(row["exit_code"] == 0 for row in gate_rows),
@@ -165,9 +185,10 @@ def aggregate(gates: list[tuple[str, dict[str, Any]]]) -> dict[str, Any]:
         ],
         "replayed_cases": replays,
         "note": (
-            "Unique cases deduplicated only by identical pytest nodeid at one "
-            "exact source SHA. Executions count each explicitly supplied gate. "
-            "No semantic coverage, historical trend or non-pytest suite is inferred."
+            "Unique cases are deduplicated by pytest nodeid at one exact SHA. "
+            "Selected observations include skips; only cases reaching the "
+            "pytest call phase count as executed. Gate labels are user-declared, "
+            "not proof of independent runs. No semantic coverage is inferred."
         ),
     }
 
@@ -217,8 +238,9 @@ def main(argv: list[str] | None = None) -> int:
     write_atomic(result, args.output)
     print(
         f"unique={result['count_unique_cases']} "
-        f"executions={result['count_case_executions']} "
-        f"replay_executions={result['count_extra_executions']} "
+        f"selected_observations={result['count_selected_observations']} "
+        f"called_executions={result['count_called_executions']} "
+        f"extra_calls={result['count_extra_called_executions']} "
         f"discordant={result['count_discordant_replayed_cases']}"
     )
     return 0 if result["all_gates_passed"] else 1
