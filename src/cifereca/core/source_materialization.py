@@ -8,6 +8,7 @@ or receipt authorizes GET, rights or final placement.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from inspect import getattr_static
 import hashlib
 import json
 import os
@@ -151,7 +152,7 @@ def _source(broker, source_id, *, allow_canonical=False):
                 account.is_primary is True
                 and session_accounts[0].is_primary is True
                 and session_accounts[0].identity_id == "default"
-                and getattr(type(session), "legacy_account_identity_alias_v1", None)
+                and getattr_static(type(session), "legacy_account_identity_alias_v1", None)
                     == "default"
             )
         ),
