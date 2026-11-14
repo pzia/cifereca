@@ -515,6 +515,22 @@
       ],
       "pr": "#6034",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-catalog-mirror-navigation-selected-identity-fallback",
+      "original": "core.search_orchestration._mirror_remote_results identity_id=None falls back to current_identity before catalog SQLite upserts",
+      "original_classification": "navigation_dependent_legacy_write",
+      "replacement": "All productive search/sync/LibraryService mirror callers supply exact admitted identity_id; invalid/omitted scope returns 0 before any SQLite work",
+      "classification": "removed_implicit_navigation_catalogue_writer",
+      "evidence": "Deleted current_identity fallback from the catalogue notice mirror (descriptive C, never proof of rights). Non-string, blank or absent identity cannot use a mutable GTK selection to write metadata; no catalog rows/entitlements/placements are touched. Existing productive search, sync and personal mirror callsites pin exact identity; one historical direct test is migrated to explicit scope.",
+      "tests": [
+        "tests/test_core_p0_5975_catalogue_mirror_explicit_identity.py",
+        "tests/test_core_p1_1916_public_catalogue_provenance.py",
+        "tests/test_core_p0_1354_mirrored_source_scope.py",
+        "tests/test_core_p0_5056_neutral_catalogue_rights.py"
+      ],
+      "pr": "#6036",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [

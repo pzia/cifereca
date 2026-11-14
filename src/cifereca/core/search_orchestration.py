@@ -1865,9 +1865,14 @@ def _mirrored_catalogue_key(identity_id: str, row: SearchResult) -> tuple[str, b
 
 
 def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None=None) -> int:
-    """Persist progressively discovered remote catalog metadata (0.8.3)."""
-    identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-    if not identity_id:
+    """Persist remote notices only for an identity pinned at admission.
+
+    A catalogue observation is not a right, and GTK navigation is not an
+    authority for placing either private or public metadata in SQLite.
+    """
+    # In particular, an explicit blank/invalid identity must never be
+    # replaced by the mutable selected profile while a provider worker runs.
+    if type(identity_id) is not str or not identity_id.strip():
         return 0
     now = int(time.time())
     # Generic exact Core ledger attestation; a legacy descriptive personal
