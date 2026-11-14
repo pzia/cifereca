@@ -118,7 +118,6 @@ def _source(broker, source_id, *, allow_canonical=False):
     # Core never guesses support from a vendor ID or backup-only legacy API.
     _require(getattr(session.capabilities, "local_materialization", None) is True,
              "not_supported")
-    _require(bool(getattr(session.capabilities, "backup", False)), "not_supported")
     # #3196: a fully typed source can never dispatch a second acquisition
     # through the retired backup_items-authoritative worker.
     # Check on BOTH preview and execution, including an ABI added after a
