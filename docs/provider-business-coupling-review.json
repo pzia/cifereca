@@ -740,6 +740,20 @@
       ],
       "pr": "#6064",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-search-preferences-core-navigation-ranking",
+      "original": "core.search_orchestration._search_preference_score ranked search results by reading mutable service.current_identity inside a headless search worker",
+      "original_classification": "navigation_dependent_readonly_core_projection",
+      "replacement": "Core search score takes an immutable tuple of preferred reading languages and a boolean original-language preference; LibraryService preserves its facade method ABI and captures the profile once per score",
+      "classification": "removed_navigation_search_preference_worker",
+      "evidence": "Pure Core scoring has no service argument, no GTK getter, provider session, storage, I/O or rights check; synthetic headless tests assert original-language bonus, missing identity returns zero and a facade getter is invoked once per score. Preference values cannot grant a source action or entitlement.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_search_preferences.py",
+        "tests/test_identities_081.py"
+      ],
+      "pr": "#pending",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
