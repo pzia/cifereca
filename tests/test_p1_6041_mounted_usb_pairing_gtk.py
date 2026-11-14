@@ -96,7 +96,16 @@ def test_cannot_pair_unselected_stale_or_replaced_volume(
     assert window._reader_selected_device_id == selected_before
     if scenario not in {"other-profile", "changed-generation"}:
         assert len(errors) == 1
+        message, title = errors[0]
+        assert title == "Liseuses"
+        if scenario in {"none", "invalid-selection"}:
+            assert "Choisissez un volume USB monté" in message
+            assert "mode expert" in message
+        else:
+            assert "Actualisez les volumes" in message
+            assert "sélectionnez à nouveau" in message
         assert "ABCD-1234" not in repr(errors)
+        assert "/media/alice" not in repr(errors)
     else:
         assert not errors
 

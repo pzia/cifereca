@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from itertools import islice
 import os
 from pathlib import Path
 import re
@@ -88,7 +89,9 @@ def _uuid_devices() -> dict[tuple[int, int], str]:
     """
     base = Path("/dev/disk/by-uuid")
     devices: dict[tuple[int, int], list[str]] = defaultdict(list)
-    entries = list(base.iterdir())
+    # Bound enumeration itself: list(base.iterdir()) can allocate arbitrarily
+    # before we ever check the limit on an adversarial/large udev directory.
+    entries = list(islice(base.iterdir(), _MAX_UUID_ENTRIES + 1))
     if len(entries) > _MAX_UUID_ENTRIES:
         return {}
     for path in entries:
