@@ -690,7 +690,7 @@ def main() -> int:
                 accepted = frozenset({
                     "setup", "shell", "widget_mapped", "dialog_open",
                     "expert_mode", "chooser_return", "dialog_response",
-                    "manual_uuid",
+                    "manual_uuid", "button_not_clicked", "dialog_build_failed",
                 })
                 markers = re.findall(
                     r"(?m)^P1_6041_CLOSED_FAILURE_CHECKPOINT=([a-z_]+)$",
