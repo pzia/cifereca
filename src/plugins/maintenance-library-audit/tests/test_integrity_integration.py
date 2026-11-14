@@ -60,18 +60,7 @@ class FakeLibraryReadBroker:
         return self._artifacts.get(str(artifact_id))
 
 
-class Control:
-    def __init__(self):
-        self.events = []
-
-    def cancelled(self):
-        return False
-
-    def check_cancelled(self):
-        return None
-
-    def report(self, **event):
-        self.events.append(dict(event))
+from .integrity_test_fixtures import Control
 
 
 def test_integrity_audit_through_public_brokers_is_read_only():

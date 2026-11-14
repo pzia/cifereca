@@ -5,7 +5,7 @@ The test is pure/headless: no live provider, no GTK, no search or HTTP GET.
 from types import SimpleNamespace as NS
 
 from recommendation_engine import RankedCandidate
-from tests.test_recommendation_catalogue_navigation_p1 import (
+from .recommendations_catalogue_test_fixtures import (
     _view, _variant, ISBN_1, ISBN_2,
 )
 

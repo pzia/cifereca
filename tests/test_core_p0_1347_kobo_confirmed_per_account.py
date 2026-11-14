@@ -141,7 +141,7 @@ def test_explicit_dialog_runs_only_chosen_account_and_safe_progress(monkeypatch)
     assert cancel.sensitive
     assert len(w.runner.tasks) == 2
     task = w.runner.tasks[-1]
-    assert task.options["kind"] == "kobo-acquisition"
+    assert task.options["kind"] == "source-materialize"
     assert task.options["with_progress"] is True
     labels = []
     result = task.work(labels.append)

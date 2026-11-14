@@ -286,3 +286,38 @@ def test_diagnostics_test_fixtures_are_package_local_not_core_dependencies():
     assert "class FakeBroker:" in helper.read_text(encoding="utf-8")
     assert "class FakeLLM:" in helper.read_text(encoding="utf-8")
     assert "def test_" not in helper.read_text(encoding="utf-8")
+
+
+def test_constellations_and_library_audit_fixtures_are_not_test_module_exports():
+    """#5376: two audited non-provider plugin helpers have stable ownership."""
+    root = Path(__file__).resolve().parents[1]
+    contracts = (
+        (
+            "constellations",
+            "constellations_test_fixtures",
+            "test_constellations_profile_reload_p1",
+            "test_constellations_sticky_missing_identity_p1",
+            ("view_with_profiles", "DropDown"),
+        ),
+        (
+            "maintenance-library-audit",
+            "integrity_test_fixtures",
+            "test_integrity_integration",
+            "test_integrity_runtime_candidates_p1",
+            ("Control",),
+        ),
+    )
+    for plugin, helper_name, producer_name, consumer_name, exports in contracts:
+        tests = root / "src/plugins" / plugin / "tests"
+        assert (tests / "__init__.py").is_file()
+        helper_path = tests / (helper_name + ".py")
+        helper = helper_path.read_text(encoding="utf-8")
+        producer = (tests / (producer_name + ".py")).read_text(encoding="utf-8")
+        consumer = (tests / (consumer_name + ".py")).read_text(encoding="utf-8")
+        assert "def test_" not in helper
+        assert "from ." + helper_name + " import " in producer
+        assert "from ." + helper_name + " import " in consumer
+        assert "from tests." + producer_name + " import" not in consumer
+        for symbol in exports:
+            assert "def " + symbol + "(" in helper or "class " + symbol + ":" in helper
+        assert all(path.name != helper_name + ".py" for path in tests.glob("test_*.py"))

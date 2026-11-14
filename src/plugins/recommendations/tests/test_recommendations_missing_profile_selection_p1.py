@@ -6,7 +6,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from tests.test_recommendations_ui import _identity_reload_view
+from .recommendations_identity_test_fixtures import _identity_reload_view
 
 
 def test_core_global_switch_after_profile_deletion_clears_previous_context():

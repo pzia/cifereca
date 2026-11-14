@@ -396,3 +396,55 @@ class QueryControlBatching(unittest.TestCase):
         self.assertEqual(control.active_document_labels(), ())
 
 if __name__ == '__main__': unittest.main()
+
+
+def test_p1_4761_local_sort_is_opt_in_and_does_not_change_query_state():
+    calls = []
+    controls = LocalQueryControls(lambda: calls.append(controls.local_sort_key()), 'Filtre')
+    initial_state = controls.state()
+    assert controls.local_sort_key() == 'rank'
+    assert controls._local_sort is None
+    controls.enable_local_sort()
+    controls.enable_local_sort()  # no duplicate widgets or callbacks
+    assert controls._local_sort_keys == ('rank', 'affinity', 'title', 'author')
+    assert controls.state() == initial_state
+
+    controls._local_sort.set_selected(2)
+    assert controls.local_sort_key() == 'title'
+    assert controls.state() == initial_state
+    assert controls.clear_button.sensitive is True
+    assert calls == ['title']  # local render only, not Search activation
+
+    controls.reset_filters()
+    assert controls.local_sort_key() == 'rank'
+    assert controls.state() == initial_state
+    assert controls.clear_button.sensitive is False
+    assert calls == ['title', 'rank']  # sort-only reset must render once
+
+
+def test_p1_4761_reset_sort_and_text_emits_single_change():
+    calls = []
+    controls = LocalQueryControls(lambda: calls.append(
+        (controls.filter_text(), controls.local_sort_key())),
+        'Filtre',
+    )
+    controls.enable_local_sort()
+    controls.entry.set_text('roman')
+    controls._local_sort.set_selected(3)
+    before = len(calls)
+    controls.reset_filters()
+    assert controls.filter_text() == ''
+    assert controls.local_sort_key() == 'rank'
+    assert controls.state() == controls._initial_filter_state
+    assert len(calls) == before + 1
+    assert calls[-1] == ('', 'rank')
+
+
+def test_p1_4761_invalid_gtk_sort_selection_never_auto_selects_an_option():
+    controls = LocalQueryControls(lambda: None, 'Filtre')
+    controls.enable_local_sort()
+    controls._local_sort.set_selected(0xFFFFFFFF)
+    assert controls.local_sort_key() == 'invalid'
+    assert controls.clear_button.sensitive is True
+    controls.reset_filters()
+    assert controls.local_sort_key() == 'rank'

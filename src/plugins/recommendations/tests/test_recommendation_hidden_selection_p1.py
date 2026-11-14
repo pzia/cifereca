@@ -6,7 +6,7 @@ No live GTK, provider GET or mutation is needed.
 from types import SimpleNamespace as NS
 
 from recommendation_engine import RankedCandidate
-from tests.test_recommendation_catalogue_navigation_p1 import _view, _variant
+from .recommendations_catalogue_test_fixtures import _view, _variant
 
 
 def test_nonempty_local_filter_revokes_hidden_selection_and_old_actions():

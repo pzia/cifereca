@@ -22,13 +22,33 @@ from ..plugin_api import BundleError, load_bundle_manifest
 from .local_placement_open_guard import scoped_existing_placement_path
 
 
-def refresh_history(self, force: bool=False, *, account=None) -> list[HistoryItem]:
-    # The caller may pin the exact account at task admission. Never derive a
-    # private cache key from mutable navigation state after that point.
-    account = self.current_account if account is None else account
+def _history_cache_key(account: Account) -> str:
+    """Cache an exact borrower scope, not an account label or GTK navigation.
+
+    v4 deliberately ignores v3: v3 omitted identity and used a tuple of
+    colon-delimited values that could alias different borrower scopes.
+    """
+    if (not isinstance(account, Account)
+            or type(account.identity_id) is not str or not account.identity_id
+            or type(account.provider_id) is not str or not account.provider_id
+            or type(account.credential_id) is not str or not account.credential_id
+            or type(account.unique_id) is not str
+            or type(account.is_primary) is not bool):
+        raise ProviderConfigurationError("Contexte de compte historique invalide")
+    scope = (
+        account.identity_id, account.provider_id, account.credential_id,
+        account.unique_id, account.is_primary,
+    )
+    digest = hashlib.sha256(
+        json.dumps(scope, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+    return f"history-v4:{digest}"
+
+
+def refresh_history(self, force: bool = False, *, account: Account) -> list[HistoryItem]:
+    # A Core worker must not rediscover the GTK-selected account after enqueue.
+    key = _history_cache_key(account)
     epoch = self._account_context_epoch
-    uid = account.unique_id or "primary"
-    key = f"{account.provider_id}:{account.credential_id}:{uid}:history-v3"
     ttl = int(self.config.get("cache.history_seconds", 1800))
     if not force:
         cached = self.storage.cache_get("account", key)
@@ -378,11 +398,12 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
     canonical entitlement metadata; backup_items is historical only and
     must never be queried to decorate a current placement.
     """
-    identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-    # A recent-acquisitions view belongs to one profile, never a union.
-    # Unscoped v0.7 local placements belong only to the default identity,
-    # exactly as in library_entries(); SQLite ownership remains unchanged.
-    if not identity_id:
+    # A Core read must be admitted for one exact identity. GTK navigation
+    # cannot supply an implicit profile to a queued or headless consumer.
+    # Historical unscoped v0.7 placements remain visible only through an
+    # explicit request for the default identity (see below); never rewrite
+    # their persisted owner to satisfy an unscoped request.
+    if type(identity_id) is not str or not identity_id.strip():
         return []
     default_identity_id = self.identities[0].identity_id if self.identities else None
     # A catalogue row is descriptive metadata, not a physical ownership

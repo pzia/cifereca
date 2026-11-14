@@ -7,7 +7,7 @@ import pytest
 
 from cifereca.plugin_api import MaintenancePlan
 from cifereca_library_audits import IntegrityAuditTool
-from tests.test_integrity_integration import Control
+from .integrity_test_fixtures import Control
 
 
 @pytest.mark.parametrize("bad", [

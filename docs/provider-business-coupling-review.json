@@ -103,6 +103,104 @@
       ],
       "pr": "#5997",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-coreui-kobo-acquisition-task-kind",
+      "original": "src/cifereca/gui/sync_controller.py::confirmed materialization TaskRunner.submit(kind='kobo-acquisition')",
+      "original_classification": "vendor_named_coreui_routing",
+      "replacement": "TaskRunner.submit(kind='source-materialize') with generic terminal GTK priority",
+      "classification": "removed_supplier_named_task_execution",
+      "evidence": "Confirmed manual local-materialization submits a provider-neutral kind, with identical USER_ACTION, origin=user, progress and cancellation contract; TaskRunner gives the same GLib.PRIORITY_DEFAULT final receipt to this kind. Historical kobo-acquisition strings remain only inert bounded telemetry compatibility (no active producer or privileged scheduling).",
+      "tests": [
+        "tests/test_core_p0_1347_kobo_confirmed_per_account.py",
+        "tests/test_core_p0_1346_task_terminal_gtk_priority.py",
+        "tests/test_core_p1_1741_phase_metrics.py",
+        "tests/test_core_p0_981_plugin_task_trace_redaction.py"
+      ],
+      "pr": "#6005",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-metadata-broker-library-implicit-navigation",
+      "original": "src/cifereca/brokers.py::MetadataBrokerImpl.library_entries(**options) may call service.library_entries() without identity",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "MetadataBroker.library_entries(*, identity_id: str, scan: bool=False)",
+      "classification": "removed_implicit_navigation_public_metadata_read",
+      "evidence": "Public metadata library projection requires an explicit identity before calling the service or scanning SQLite/files. No fallback to UI current_identity; exact identity is forwarded unchanged. Direct legacy GUI service API is separately retained as a navigation-only compatibility entrypoint.",
+      "tests": [
+        "tests/test_core_p0_5975_metadata_broker_scope.py",
+        "tests/test_core039_contract_surface.py",
+        "tests/test_core_p0_3196_unscoped_library_fence.py"
+      ],
+      "pr": "#6007",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-history-worker-navigation-and-v3-cache-scope",
+      "original": "core.library_projection.refresh_history(account=None) navigation fallback and identity-less history-v3 cache",
+      "original_classification": "navigation_dependent_legacy_read",
+      "journey": "History refresh admitted from GUI, CLI and Core facade",
+      "replacement": "Pinned Account at facade admission and worker keyword-only; history-v4 hash of unambiguous (identity,provider,credential,account,primary)",
+      "classification": "removed_implicit_navigation_history_worker",
+      "evidence": "Worker no longer reads current_account. Cache v4 excludes unsafe identity-less v3 entries and separates two owners with the same upstream coordinates. Invalid scope fails before I/O.",
+      "tests": [
+        "tests/test_core_account_scoped_secondary_async.py::test_history_worker_requires_admitted_account_before_any_io",
+        "tests/test_core_account_scoped_secondary_async.py::test_history_cache_never_reuses_old_or_other_identity_borrower_rows",
+        "tests/test_core_account_scoped_secondary_async.py::test_history_cache_key_does_not_alias_colon_delimited_account_coordinates",
+        "tests/test_core_account_scoped_secondary_async.py::test_history_explicit_account_uses_its_cache_and_session_after_switch"
+      ],
+      "pr": "#6015",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-core-recent-acquisitions-navigation-fallback",
+      "original": "src/cifereca/core/library_projection.py::recent_acquisitions(identity_id=None) derives selected current_identity at read time",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "exact nonblank identity_id at LibraryService/GUI caller boundary, fail-closed [] otherwise",
+      "classification": "removed_implicit_navigation_recent_read",
+      "evidence": "Deleted read of current_identity from recent-acquisition projection. Omitted/blank/malformed identity returns before invoking SQLite, placements, loan cache or provider metadata; existing GUI caller already passes explicit identity_id. Historical unowned placement remains scoped to the default identity only when explicitly requested.",
+      "tests": [
+        "tests/test_core_p0_5851_recent_explicit_identity.py::test_recent_unscoped_read_never_infers_navigation_or_touches_storage",
+        "tests/test_core_p0_5851_recent_explicit_identity.py::test_recent_requires_valid_explicit_identity_without_navigational_fallback",
+        "tests/test_core_p0_2847_recent_live_placements.py",
+        "tests/test_core_p0_2797_recent_exact_origin_covers.py"
+      ],
+      "pr": "#6020",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-queued-global-sync-ui-navigation-worker",
+      "original": "src/cifereca/gui/sync_controller.py::_build_sync_page.sync_all queued lambda calls sync_action_scope_current(window,scope)",
+      "original_classification": "navigation_dependent_worker_cancellation",
+      "replacement": "SyncRequest(identity_id=scope.identity_id) pinned at click; broker.synchronize(request) authorizes each exact source independently",
+      "classification": "removed_navigation_dependent_worker_gate",
+      "evidence": "After admission the queued worker no longer consults mutable GTK identity, generation, page lifetime or current account. The live SynchronizationBrokerImpl.synchronize validates identity and enumerates enabled connected source refs, then synchronize_source revalidates source and consent. GTK callbacks still call sync_action_scope_current to refuse stale display.",
+      "tests": [
+        "tests/test_core_ui_1347_sync_action_scope.py::test_admitted_global_sync_keeps_exact_identity_after_navigation_change",
+        "tests/test_core_ui_1347_sync_action_scope.py::test_queued_global_sync_survives_aba_navigation_without_stale_ui_publish",
+        "tests/test_core_ui_1347_sync_action_scope.py::test_queued_global_sync_survives_page_rebuild_without_retargeting",
+        "tests/test_core_p0_1346_source_sync_target_guard.py"
+      ],
+      "pr": "#6012",
+      "in_ast_metric": false
+    }
+  ],
+  "guard_installations": [
+    {
+      "id": "adept-v17-monotone-paris-legacy-retirement",
+      "journey": "explicit borrower ADEPT reconfirmation of historical Paris grant",
+      "classification": "safety_guard_pending_final_legacy_writer_cutover",
+      "effect": "SQLite v17 makes legacy Paris binding write irreversible for an exact retired (credential_id,account_id), including SQL INSERT/UPDATE after revoke/reopen",
+      "authority": "transactional v16 reconfirmation then v17 tombstone and DB triggers; migration itself never grants rights or retires unconfirmed rows",
+      "remaining_debt": "historical writer/readers still exist for unreconfirmed grants; don't credit removal of mutating legacy paths yet",
+      "replacement_contract": "adept_borrower_grants exact provider/credential/borrower + local immutable tombstone",
+      "tests": [
+        "tests/test_core_p0_5851_monotone_legacy_retirement_v17.py",
+        "tests/test_core_p0_5851_generic_adept_grants_v16.py",
+        "tests/test_core_p0_5851_atomic_legacy_grant_reconfirmation.py"
+      ],
+      "pr": "#6003",
+      "rationale": "old authority cannot resurrect after explicit cutover; no automatic migration, rights, or supplier I/O"
     }
   ]
 }

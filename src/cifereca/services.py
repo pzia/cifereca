@@ -1504,7 +1504,7 @@ class LibraryService:
         return summary
 
     def refresh_history(self, force: bool = False) -> list[HistoryItem]:
-        return library_projection.refresh_history(self, force)
+        return library_projection.refresh_history(self, force, account=self.current_account)
 
     @staticmethod
     def _history_fold(value: str | None) -> str:

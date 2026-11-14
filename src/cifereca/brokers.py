@@ -1141,7 +1141,20 @@ class SynchronizationBrokerImpl:
 @dataclass(slots=True)
 class MetadataBrokerImpl:
     service: Any
-    def library_entries(self, **options: Any): return self.service.library_entries(**options)
+    def library_entries(
+        self, *, identity_id: str, scan: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Private library projection requires a caller-owned exact identity.
+
+        A metadata plugin is never entitled to infer the current GTK profile
+        from an omitted argument. Validate before touching Core/Storage and
+        forward only the two installed, public projection options.
+        """
+        if type(identity_id) is not str or not identity_id.strip():
+            raise ValueError("identity_id_required")
+        if type(scan) is not bool:
+            raise ValueError("library_scan_flag_invalid")
+        return self.service.library_entries(identity_id=identity_id, scan=scan)
     def scan(self, **options: Any): return self.service.catalog_scan(**options)
     def reading_preference_snapshot(self, *, identity_id: str):
         """Optional Core-only opt-in feedback snapshot, active identity required.

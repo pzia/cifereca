@@ -119,6 +119,9 @@ class QueryControls(Gtk.Box):
         filter_row.set_hexpand(False)
         filter_scroller.set_child(filter_row)
         self.append(filter_scroller)
+        # Local consumers may opt in to a *view-only* sort on this same
+        # Search filter strip. Remote Search does not acquire a sort policy.
+        self._filter_row = filter_row
         def insert_filter(widget):
             widget.set_hexpand(False)
             widget.set_halign(Gtk.Align.START)
@@ -260,7 +263,78 @@ class LocalQueryControls(QueryControls):
         # A local projection starts with every loaded document visible,
         # unlike Search's default digital scope.
         self._initial_filter_state = self.state()
+        self._local_sort = None
+        self._local_sort_keys = ()
         self._sync_clear_button()
+
+    def enable_local_sort(self):
+        """Add a shared, local-only sort to the existing Search filter bar.
+
+        Does not change QueryState, provider queries or recommendation scores.
+        The ranked default preserves the original diversity/MMR ordering.
+        """
+        if self._local_sort is not None:
+            return
+        keys = ("rank", "affinity", "title", "author")
+        titles = (
+            "Tri · Ordre recommandé", "Tri · Affinité décroissante",
+            "Tri · Titre A–Z", "Tri · Auteur A–Z",
+        )
+        widget = Gtk.DropDown.new_from_strings(titles)
+        widget.set_tooltip_text(
+            "Réordonner uniquement les résultats déjà calculés ; "
+            "aucune nouvelle recherche ni modification du classement."
+        )
+        widget.set_selected(0)
+        widget.set_hexpand(False)
+        widget.set_halign(Gtk.Align.START)
+        self._filter_row.append(widget)
+        self._local_sort_keys = keys
+        self._local_sort = widget
+        widget.connect("notify::selected", self._sort_changed)
+
+    def local_sort_key(self):
+        """Return an exact known sort or a non-matching sentinel, not 'Tous'."""
+        widget = self._local_sort
+        if widget is None:
+            return "rank"
+        index = widget.get_selected()
+        if type(index) is int and 0 <= index < len(self._local_sort_keys):
+            return self._local_sort_keys[index]
+        return "invalid"
+
+    def _sort_changed(self, *_args):
+        if self._programmatic_update:
+            return
+        self._sync_clear_button()
+        # QueryState tracks the search criteria, not the display order.
+        # _changed() would suppress this callback as the filters did not move.
+        self._changed_callback()
+
+    def _sync_clear_button(self):
+        super()._sync_clear_button()
+        if getattr(self, "_local_sort", None) is not None and self.local_sort_key() != "rank":
+            self.clear_button.set_sensitive(True)
+
+    def reset_filters(self):
+        sort_changed = (
+            getattr(self, "_local_sort", None) is not None
+            and self.local_sort_key() != "rank"
+        )
+        filters_changed = self.state() != self._initial_filter_state
+        if sort_changed:
+            # Single reset operation: neither source filters nor sort
+            # can silently remain active when the user clicks Effacer.
+            self._programmatic_update = True
+            try:
+                self._local_sort.set_selected(0)
+            finally:
+                self._programmatic_update = False
+        super().reset_filters()
+        if sort_changed and not filters_changed:
+            # QueryState did not move, hence super() did not emit "changed".
+            # A sort-only reset must still restore the list's ranked order.
+            self._changed_callback()
 
     @property
     def widget(self):
