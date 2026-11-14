@@ -252,6 +252,8 @@ class TaskRunner:
         # kind and label for routing and on-screen progress; sanitize TRACE only.
         trace_kind = kind if type(kind) is str and kind in {
             "task", "opening-sync", "deep-sync", "source-sync", "source-materialize",
+            # Historical trace label is bounded read-only compatibility;
+            # producers use source-materialize for new work.
             "sync-preflight", "kobo-acquisition", "maintenance", "library",
             "recent", "search", "plugin", "other",
             "maintenance-plan", "maintenance-tool",
@@ -640,18 +642,15 @@ class TaskRunner:
                             self.present_error(payload)
                 return False
 
-            # Terminal outcomes are more important than repaint/progress
-            # idle traffic. A default-idle (priority 200) can starve while
-            # GTK has ready events at default priority (0), leaving a
-            # cancelled Kobo task visible as "Annulation demandée" long
-            # after its worker returned. Preserve idle_add's thread-safe
-            # dispatch while elevating only this final receipt.
-            # Keep other providers' UI ordering untouched: only the
-            # explicitly confirmed, cancellable Kobo acquisition benefits
-            # from this expedited terminal receipt.
+            # A confirmed, cancellable source materialization must deliver
+            # its final GTK receipt even under sustained repaint/progress
+            # traffic. This priority is bound to the generic task contract,
+            # never the provider ID; unrelated task kinds retain idle order.
+            # The old supplier-named kind remains a passive TRACE compatibility
+            # label only and cannot select expedited execution here.
             normal_priority = (
                 getattr(GLib, "PRIORITY_DEFAULT", None)
-                if trace_kind == "kobo-acquisition" else None
+                if trace_kind == "source-materialize" else None
             )
             if normal_priority is None:
                 # Headless adapters implementing the legacy GLib seam keep

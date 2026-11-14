@@ -187,7 +187,8 @@ def test_actual_task_runner_observes_three_correlated_phases_without_private_lab
     runner.close()
 
 
-def test_actual_task_runner_keeps_failed_worker_outcome_without_payload_in_report():
+@pytest.mark.parametrize("kind", ("source-materialize", "kobo-acquisition"))
+def test_actual_task_runner_keeps_failed_worker_outcome_without_payload_in_report(kind):
     TaskRunner, flush = _headless_runner()
     mon = UiPerfMonitor()
     mon.enable_detailed_capture(True)
@@ -203,7 +204,7 @@ def test_actual_task_runner_keeps_failed_worker_outcome_without_payload_in_repor
     )
     runner = TaskRunner(window)
     runner.submit("Private title", fail, err=errors.append,
-                  kind="kobo-acquisition", origin="automatic")
+                  kind=kind, origin="automatic")
     flush()
     report = mon.performance_report()
     assert len(errors) == 1
@@ -211,7 +212,7 @@ def test_actual_task_runner_keeps_failed_worker_outcome_without_payload_in_repor
         "unknown", "failed", "failed",
     ]
     assert "PRIVATE_TOKEN" not in json.dumps(report)
-    assert report["stats"]["kobo-acquisition.worker"]["count"] == 1
+    assert report["stats"][f"{kind}.worker"]["count"] == 1
     runner.close()
 
 
