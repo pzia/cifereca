@@ -128,6 +128,44 @@ def test_inventory_get_cannot_change_borrower_or_target_loan(
         service.close()
 
 
+class _PoisonedAccountString(str):
+    def __eq__(self, other):
+        raise AssertionError("untrusted account equality must not run")
+
+
+@pytest.mark.parametrize("field", [
+    "identity_id", "provider_id", "credential_id", "unique_id",
+])
+@pytest.mark.parametrize("phase", ["before_get", "during_get"])
+def test_return_inventory_refuses_non_native_account_without_equality_or_post(
+    tmp_path, field, phase,
+):
+    target = _loan()
+    source = Session([target])
+    service = _library(tmp_path, session=source)
+    account = service.accounts[1]
+    native = getattr(account, field)
+    poisoned = _PoisonedAccountString(native)
+    try:
+        if phase == "before_get":
+            setattr(account, field, poisoned)
+        else:
+            original_loans = source.loans
+
+            def mutate(account_arg):
+                rows = original_loans(account_arg)
+                setattr(account, field, poisoned)
+                return rows
+
+            source.loans = mutate
+        with pytest.raises(ValueError, match="return_inventory_source_changed|return_inventory_scope_changed"):
+            _read_paris_return_presence(service, account, source, target)
+        assert source.checks == ([] if phase == "before_get" else ["linked-b"])
+        assert source.posts == []
+    finally:
+        service.close()
+
+
 def test_plain_legacy_positive_return_presence_is_not_regressed(tmp_path):
     loan = _loan()
     source = Session([loan])
