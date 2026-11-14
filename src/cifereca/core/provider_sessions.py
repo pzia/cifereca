@@ -679,11 +679,15 @@ def bind_confirmed_source_account(
             and str(row.get("provider") or "").strip().lower() == provider_id
             and str(row.get("id") or "").strip() == credential_id
         ]
+        # Exact configured owner is an admission proof. A missing binding
+        # cannot inherit whichever GTK profile was selected meanwhile.
+        configured_owner_raw = (
+            configured_rows[0].get("identity_id")
+            if len(configured_rows) == 1 else None
+        )
         configured_owner = (
-            str(configured_rows[0].get("identity_id") or (
-                self.current_identity.identity_id
-                if self.current_identity else "default"
-            )).strip() if len(configured_rows) == 1 else None
+            configured_owner_raw.strip()
+            if type(configured_owner_raw) is str else None
         )
     except Exception:
         configured_owner = None
@@ -806,8 +810,8 @@ def _publish_connection_success(
         pass
 
 
-def _configured_rows_for_source(rows, *, source_scope, default_identity):
-    """Select one enabled configured credential without provider/network I/O."""
+def _configured_rows_for_source(rows, *, source_scope):
+    """Select a credential only by its exact configured identity, without I/O."""
     if source_scope is None:
         return rows
     if (type(source_scope) is not tuple or len(source_scope) != 3
@@ -818,7 +822,8 @@ def _configured_rows_for_source(rows, *, source_scope, default_identity):
     identity, provider, credential = source_scope
     matches = [
         row for row in rows if isinstance(row, dict)
-        and str(row.get("identity_id") or default_identity).strip() == identity
+        and type(row.get("identity_id")) is str
+        and row["identity_id"].strip() == identity
         and str(row.get("provider") or "").strip().lower() == provider
         and str(row.get("id") or "").strip() == credential
     ]
@@ -925,7 +930,7 @@ def reconnect_expired_configured_source_once(
         epoch = source_context_epoch(self)
         rows = self.config.provider_accounts(enabled_only=True)
         candidates = _configured_rows_for_source(
-            rows, source_scope=scope[:3], default_identity=scope[0],
+            rows, source_scope=scope[:3],
         )
         # Snapshot persisted consent and credential values before POST;
         # config can mutate in place during provider I/O.
@@ -1003,7 +1008,7 @@ def reconnect_expired_configured_source_once(
             return None
         latest_rows = self.config.provider_accounts(enabled_only=True)
         selected = _configured_rows_for_source(
-            latest_rows, source_scope=scope[:3], default_identity=scope[0],
+            latest_rows, source_scope=scope[:3],
         )[0]
         if (selected != row
                 or not _interactive_background_opted_in(plugin.descriptor, selected)
@@ -1076,8 +1081,6 @@ def connect_configured(self, *, logger, caller_category: str = "other",
     rows = _configured_rows_for_source(
         self.config.provider_accounts(enabled_only=True),
         source_scope=source_scope,
-        default_identity=(self.current_identity.identity_id
-                          if self.current_identity else "default"),
     )
     self.disconnect_configured()
     all_accounts: list[Account] = []
