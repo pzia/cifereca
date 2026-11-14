@@ -292,7 +292,13 @@ class LibraryService:
     def can_borrow_manual(self, item: SearchResult) -> bool:
         """Generic inert availability, with exact provider-owned scope."""
         from .core.manual_borrow_contract import manual_borrow_action_available
-        return manual_borrow_action_available(self, item)
+        selected = self.current_identity
+        epoch = self._account_context_epoch
+        possible = manual_borrow_action_available(
+            self, item, identity_id=getattr(selected, "identity_id", None),
+        )
+        return (possible is True and self.current_identity is selected
+                and self._account_context_epoch == epoch)
 
     def borrow_manual(
         self, item: SearchResult, *, expected_identity_id: str,
@@ -472,7 +478,19 @@ class LibraryService:
     def manual_borrow_diagnostic(self, item: SearchResult) -> dict[str, object]:
         """Read-only scoped admission from the installed provider policy."""
         from .core.manual_borrow_contract import manual_borrow_action_diagnostic
-        return manual_borrow_action_diagnostic(self, item)
+        selected = self.current_identity
+        epoch = self._account_context_epoch
+        result = manual_borrow_action_diagnostic(
+            self, item, identity_id=getattr(selected, "identity_id", None),
+        )
+        if (self.current_identity is not selected
+                or self._account_context_epoch != epoch):
+            return {
+                "local_action_possible": False,
+                "reason_code": "local_scope_changed",
+                "provider_eligibility": "unknown",
+            }
+        return result
 
     def manual_borrow_followup_available(self, item: SearchResult) -> bool:
         """A spent claim may be inspected, never submitted again."""
