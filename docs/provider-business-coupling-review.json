@@ -847,7 +847,7 @@
         "tests/test_core_p0_5048_manual_borrow_policy_abi.py",
         "tests/test_core_p1_4673_paris_local_reason_phases.py"
       ],
-      "pr": "#pending",
+      "pr": "#6095",
       "in_ast_metric": false
     }
   ],
