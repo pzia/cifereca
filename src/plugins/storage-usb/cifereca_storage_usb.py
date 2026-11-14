@@ -114,7 +114,18 @@ def observe_usb_files(root: Path, relative_paths: tuple[str, ...]) -> tuple[UsbF
                         dir_fd=parent_fd,
                     )
                 except FileNotFoundError:
-                    result.append(UsbFileObservation(path, "missing"))
+                    # An absent leaf on a *detached* directory FD is not a
+                    # trustworthy absence at the caller's selected USB path.
+                    # Verify both the pinned parent chain and root before
+                    # exposing "missing"; a swapped/unmounted volume is
+                    # always "unverified" and cannot drive a removal delta.
+                    unchanged = (
+                        _directory_chain_unchanged(root_fd, tuple(chain), flags)
+                        and _selected_root_unchanged(root, root_fd, flags)
+                    )
+                    result.append(UsbFileObservation(
+                        path, "missing" if unchanged else "unverified",
+                    ))
                     continue
                 before = os.fstat(file_fd)
                 if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
