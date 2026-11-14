@@ -95,7 +95,7 @@ DESCRIPTOR = ProviderDescriptor(
         AccountOptionField(
             "manual_loan_limit", "Maximum d’emprunts (valeur personnelle)",
             default="4", value_type="unsigned_integer",
-            min_value=0, max_value=99,
+            min_value=0, max_value=99, advisory_loan_medium="digital",
             help_text="Plafond renseigné par vous (4 par défaut) pour ce compte. "
                       "Il ne correspond pas à un quota attesté par La Rochelle "
                       "et ne change ni les droits d'emprunt, ni la synchronisation.",
