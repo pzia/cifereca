@@ -116,7 +116,7 @@
         "tests/test_core039_contract_surface.py",
         "tests/test_core_p0_3196_unscoped_library_fence.py"
       ],
-      "pr": "pending",
+      "pr": "#6007",
       "in_ast_metric": false
     }
   ],
