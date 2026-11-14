@@ -20,7 +20,7 @@ from cifereca.identities import AdeptProfileResolutionError
 
 def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
              profiles=None):
-    loan = NS(source_provider=provider, source_credential="reader", id="loan-1")
+    loan = NS(source_provider=provider, source_credential="reader", source_account_id="primary", id="loan-1")
     borrower = Mock(return_value=("identity-1", borrower_code))
     resolver = Mock(return_value=("reader-a", "explicit_binding"))
     if profile_error is not None:
@@ -42,7 +42,8 @@ def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
     )
     options = dict(
         identity=NS(identity_id="identity-1"),
-        ledger_base={"entitlement_id": "ent-1", "identity_id": "identity-1"},
+        ledger_base={"entitlement_id": "ent-1", "identity_id": "identity-1",
+                     "provider_id": provider, "credential_id": "reader", "account_id": "primary"},
         previous_meta={"prior": "kept"},
         retained_acsm=Path("/synthetic/staged.acsm"),
         trace_ref="0123456789abcdef0123",
@@ -310,3 +311,39 @@ def test_poststaging_untrusted_source_fails_closed_with_preserved_acsm(
     assert receipt["attention_code"] == "adept_borrower_ambiguous"
     assert receipt["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
     assert receipt["metadata"]["prior"] == "kept"
+
+
+@pytest.mark.parametrize("field,changed", [
+    ("source_provider", "kobo"),
+    ("source_credential", "another-credential"),
+    ("source_account_id", "other-borrower"),
+])
+def test_poststaging_source_swap_cannot_skip_original_paris_grant(
+    field, changed,
+):
+    """Persisted acquisition provenance is immutable across provider staging."""
+    invoke, store, borrower, resolver, profiles, loan, opts = _fixture()
+    setattr(loan, field, changed)
+    refusal = invoke()
+    assert refusal["code"] == "adept_borrower_ambiguous"
+    assert refusal["retry"] == "explicit_only"
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    receipt = store.call_args.args[0]
+    assert receipt["attention_code"] == "adept_borrower_ambiguous"
+    assert receipt["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
+    # Ledger source coordinates are immutable and remain the initial values.
+    assert receipt["provider_id"] == "paris"
+    assert receipt["credential_id"] == "reader"
+    assert receipt["account_id"] == "primary"
+
+
+def test_poststaging_changed_identity_is_not_an_adept_grant():
+    invoke, store, borrower, resolver, profiles, loan, opts = _fixture()
+    opts["identity"] = NS(identity_id="different-identity")
+    assert invoke()["code"] == "adept_borrower_ambiguous"
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    store.assert_called_once()
