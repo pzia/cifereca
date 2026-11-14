@@ -301,24 +301,6 @@
       "rationale": "An active veto around filesystem/SQLite rename is a safety requirement; not a right creation. It requires a tested generic replacement before removal."
     },
     {
-      "id": "site-1220521b4d5dc767addb6d29",
-      "classification": "legacy_mutating_cutover",
-      "journey": "W5 active historical backup_items local_path rewrite during file normalization",
-      "decision_group_id": "legacy-backup.w5-path-relocation-cutover",
-      "reachability": "productive",
-      "productive_caller": "artifact_runtime normalization -> Storage.relocate_local_path; provider_id passed from selected file scope",
-      "effect": "For non-Kobo values the method executes UPDATE backup_items.local_path inside the rename transaction; for Kobo it deliberately preserves the archived locator. This remains a real legacy mutating compatibility path, independently of whether an individual row is present",
-      "authority": "Legacy storage key and caller-selected provider_id still determine an archive write; not canonical OriginLink/Placement proof",
-      "replacement_contract": "End historical backup_items path writes for all providers after read-only migration, implement exact-source canonical relink and preserve no-automatic-user-file-deletion, owner and rollback checks",
-      "tests": [
-        "tests/test_core_p0_3185_relative_metadata_relocation.py",
-        "tests/test_core_p0_2789_rename_scope.py",
-        "tests/test_core_p0_3196_w5_directory_collision_scope.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "This AST decision is reached by a productive path and controls a SQL UPDATE; classify as outstanding legacy writer rather than as harmless compatibility or already retired code."
-    },
-    {
       "id": "site-48985b6dd27a2ea911e7026d",
       "classification": "presentation_only",
       "journey": "Settings ADEPT profile binding status subtitle",
@@ -1205,6 +1187,22 @@
       ],
       "pr": "#6116",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-w5-all-provider-legacy-backup-path-normalization-writer-retired",
+      "original": "Productive Storage.relocate_local_path(filename-normalization) updated backup_items.local_path for non-Kobo providers using caller-selected provider and identity, while Kobo receipts were already left unchanged. This historical write could manufacture an apparently current path for an unverified archive.",
+      "original_classification": "legacy_mutating_cutover",
+      "replacement": "Remove the UPDATE backup_items SQL for every provider. Normalize the user-confirmed file and admissible canonical Placement/catalog references only, preserving legacy local_path, updated_at, owner, provider and receipt status. Retain foreign/unknown-owner, typed-source, acquisition checkpoint, relative metadata and collision safety vetoes. Separately attested canonical relink remains the only positive B path migration.",
+      "classification": "removed_w5_legacy_backup_path_writer_for_all_providers",
+      "evidence": "The installed Storage.relocate_local_path no longer has an UPDATE backup_items call (AST guard). A synthetic matching non-Kobo archive carries a SQLite trigger that raises on any UPDATE OF local_path; the user-authorized filename normalization still succeeds and moves the scoped canonical Placement and catalogue while the historical archive path, timestamp and owner are byte-for-byte unchanged. Existing cross-provider, foreign identity, null identity, checkpoint and rollback tests remain applicable. Other historical writers including explicit canonical dedup relink are NOT claimed retired.",
+      "tests": [
+        "tests/test_core_p0_3185_relocation_checkpoint_isolation.py",
+        "tests/test_core_p0_3196_residual_writer_surface.py",
+        "tests/test_core_p0_3185_relative_metadata_relocation.py",
+        "tests/test_core_p0_2789_rename_scope.py"
+      ],
+      "pr": "#6118",
+      "in_ast_metric": true
     }
   ],
   "guard_installations": [
