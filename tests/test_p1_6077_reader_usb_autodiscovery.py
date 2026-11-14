@@ -223,3 +223,46 @@ def test_exact_binding_core_attestation_does_not_trust_uuid_or_mountpath_alone(
         storage=db, identity_id="alice", device_id="reader-alice",
         fingerprint=UUID,
     ) is None
+
+
+def test_binding_revoked_between_discovery_callback_and_scan_worker_refuses_io(
+    tmp_path, monkeypatch,
+):
+    db, window, root = rig(tmp_path)
+    fake_kernel(monkeypatch, lambda: (volume(),))
+    scanned = []
+    monkeypatch.setattr(
+        worker, "inspect_usb_dry_run",
+        lambda **kwargs: scanned.append(kwargs),
+    )
+    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK)
+    _label, discover, done, _err, _options = window.runner.calls[0]
+    selected = discover()
+    done(selected)
+    assert len(window.runner.calls) == 2
+    binding = db.device_binding_get("reader-alice")
+    db.device_binding_put({
+        **binding, "metadata": {"usb_fingerprint": "uuid-swapped-0003"},
+    })
+    _label, scan, _ok, _fail, _options = window.runner.calls[1]
+    with pytest.raises(ValueError, match="reader scope changed"):
+        scan()
+    assert scanned == []
+
+
+def test_worker_closures_never_read_gtk_window_from_task_thread():
+    from pathlib import Path
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src/cifereca/gui/reader_usb_preview_actions.py"
+    ).read_text(encoding="utf-8")
+    scan_worker = source.split("        def work():", 1)[1].split(
+        "        window.runner.submit(", 1
+    )[0]
+    discover_worker = source.split("    def discover():", 1)[1].split(
+        "    def discovered(", 1
+    )[0]
+    assert "current()" not in scan_worker
+    assert "current()" not in discover_worker
+    assert "window." not in scan_worker
+    assert "window." not in discover_worker
