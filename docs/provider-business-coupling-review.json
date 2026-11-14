@@ -119,6 +119,21 @@
       ],
       "pr": "#6005",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-metadata-broker-library-implicit-navigation",
+      "original": "src/cifereca/brokers.py::MetadataBrokerImpl.library_entries(**options) may call service.library_entries() without identity",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "MetadataBroker.library_entries(*, identity_id: str, scan: bool=False)",
+      "classification": "removed_implicit_navigation_public_metadata_read",
+      "evidence": "Public metadata library projection requires an explicit identity before calling the service or scanning SQLite/files. No fallback to UI current_identity; exact identity is forwarded unchanged. Direct legacy GUI service API is separately retained as a navigation-only compatibility entrypoint.",
+      "tests": [
+        "tests/test_core_p0_5975_metadata_broker_scope.py",
+        "tests/test_core039_contract_surface.py",
+        "tests/test_core_p0_3196_unscoped_library_fence.py"
+      ],
+      "pr": "#6007",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [

@@ -85,7 +85,11 @@ class SourceInventoryRefreshScheduleBroker(Protocol):
 
 @runtime_checkable
 class MetadataBroker(Protocol):
-    def library_entries(self, **options: Any) -> list[Mapping[str, Any]]: ...
+    def library_entries(
+        self, *, identity_id: str, scan: bool = False,
+    ) -> list[Mapping[str, Any]]:
+        """Explicit identity-bound library view, never an implicit UI profile."""
+        ...
     def scan(self, **options: Any) -> Mapping[str, Any]: ...
 
 @runtime_checkable
