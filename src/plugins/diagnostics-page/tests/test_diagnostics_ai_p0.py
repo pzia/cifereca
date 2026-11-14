@@ -11,42 +11,7 @@ from diagnostics_ai import (
 )
 
 
-class FakeLLM:
-    def __init__(self, *, remote=False, available=True):
-        self.remote = remote
-        self.enabled = available
-        self.sent = []
-        self.calls = 0
-
-    def available(self):
-        return self.enabled
-
-    def destination(self):
-        return {"available": self.enabled, "remote": self.remote,
-                "host": "model.example" if self.remote else "localhost",
-                "model": "qa-llm", "provider": "openai-compatible"}
-
-    def generate(self, request, *, control=None):
-        self.calls += 1
-        self.sent.append(request)
-        return LLMResult(
-            True, text="Hypothèse : vérifier les événements source.",
-            provider="openai-compatible", model="qa-llm", generated=True,
-            remote=self.remote,
-        )
-
-
-class FakeBroker:
-    def __init__(self, events):
-        self.items = events
-        self.filters = []
-    def events(self, **kwargs):
-        self.filters.append(kwargs)
-        return {
-            "events": self.items[:kwargs["limit"]],
-            "sources": [{"source": "app_log", "status": "partial"}],
-            "total": len(self.items), "offset": 0,
-        }
+from .diagnostics_test_fixtures import FakeBroker, FakeLLM
 
 
 def event(message="TRACE sync status=partial", ref="event-1"):

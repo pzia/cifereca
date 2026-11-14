@@ -136,7 +136,7 @@ def test_ui_has_explicit_filter_and_ai_inherits_same_server_scope():
 
 def test_ai_preserves_attested_provider_in_evidence_and_exact_scope_without_sending():
     from diagnostics_ai import prepare_analysis
-    from tests.test_diagnostics_ai_p0 import FakeBroker, FakeLLM
+    from .diagnostics_test_fixtures import FakeBroker, FakeLLM
     model = FakeLLM()
     broker = FakeBroker([event(1)])
     preview = prepare_analysis(model, broker, provider_id="paris")
@@ -151,7 +151,7 @@ def test_ai_preserves_attested_provider_in_evidence_and_exact_scope_without_send
                                       "PRIVATE@example.invalid", True])
 def test_ai_refuses_broker_ignoring_exact_provider_filter_before_consent(provider):
     from diagnostics_ai import prepare_analysis
-    from tests.test_diagnostics_ai_p0 import FakeBroker, FakeLLM
+    from .diagnostics_test_fixtures import FakeBroker, FakeLLM
     model = FakeLLM()
     with pytest.raises(ValueError, match="diagnostics_provider_scope_mismatch"):
         prepare_analysis(model, FakeBroker([event(1, provider)]), provider_id="paris")
@@ -160,7 +160,7 @@ def test_ai_refuses_broker_ignoring_exact_provider_filter_before_consent(provide
 
 def test_ai_unfiltered_events_keep_only_valid_explicit_provider():
     from diagnostics_ai import prepare_analysis
-    from tests.test_diagnostics_ai_p0 import FakeBroker, FakeLLM
+    from .diagnostics_test_fixtures import FakeBroker, FakeLLM
     model = FakeLLM()
     rows = [event(1), event(2, "PRIVATE@example.invalid"), event(3)]
     del rows[-1]["provider_id"]
@@ -201,7 +201,7 @@ def test_real_core_broker_provider_survives_page_bulk_copy_and_ai(tmp_path, monk
     from cifereca.diagnostics import Diagnostics
     from cifereca.logging_utils import CanonicalEventFormatter
     from diagnostics_ai import prepare_analysis
-    from tests.test_diagnostics_ai_p0 import FakeLLM
+    from .diagnostics_test_fixtures import FakeLLM
 
     path = tmp_path / "cifereca.log"
     monkeypatch.setattr("cifereca.paths.log_file", lambda: path)
