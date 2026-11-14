@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import adept_borrower
 from .adept_borrower import public_borrower_refusal_code
 from .loan_adept_profile_receipt import attention_receipt
 
@@ -27,32 +28,35 @@ def check(
     # The loan may have crossed an external staging boundary since source
     # admission. Do not coerce plugin-owned coordinates, and never interpret
     # malformed provenance as a non-Paris source exempt from the grant guard.
-    source_provider = loan.source_provider
-    source_credential = loan.source_credential
-    source_account_id = loan.source_account_id
-    source_loan_id = loan.id
-    source_record_id = loan.record_id
-    if (type(expected_loan_id) is not str or not expected_loan_id
-            or type(expected_record_id) not in (str, type(None))
-            or type(source_loan_id) is not str
-            or source_loan_id != expected_loan_id
-            or type(source_record_id) not in (str, type(None))
-            or source_record_id != expected_record_id
-            or type(source_provider) is not str or not source_provider
-            or type(source_credential) is not str or not source_credential
-            or type(source_account_id) not in (str, type(None))
-            or source_provider != ledger_base.get("provider_id")
-            or source_credential != ledger_base.get("credential_id")
-            or source_account_id != ledger_base.get("account_id")
-            or identity.identity_id != ledger_base.get("identity_id")):
-        # A provider-delivery hook may replace source coordinates between
-        # admission and ACSM staging. The initial ledger is the pinned
-        # transaction scope; a changed source must never skip borrower proof.
-        borrower_code = "adept_borrower_ambiguous"
-    elif source_provider.casefold() == "paris":
-        adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
-            loan, connection_identity_id=identity.identity_id,
+    def source_intact() -> bool:
+        # Read live coordinates on each call; a borrower resolver is another
+        # external hook capable of mutating the staged Loan.
+        return (
+            type(expected_loan_id) is str and bool(expected_loan_id)
+            and type(expected_record_id) in (str, type(None))
+            and type(loan.id) is str and loan.id == expected_loan_id
+            and type(loan.record_id) in (str, type(None))
+            and loan.record_id == expected_record_id
+            and type(loan.source_provider) is str and bool(loan.source_provider)
+            and type(loan.source_credential) is str and bool(loan.source_credential)
+            and type(loan.source_account_id) in (str, type(None))
+            and loan.source_provider == ledger_base.get("provider_id")
+            and loan.source_credential == ledger_base.get("credential_id")
+            and loan.source_account_id == ledger_base.get("account_id")
+            and identity.identity_id == ledger_base.get("identity_id")
         )
+
+    if not source_intact():
+        # The durable acquiring receipt is the pinned transaction scope.
+        borrower_code = "adept_borrower_ambiguous"
+    else:
+        adept_borrower_identity_id, borrower_code = adept_borrower.borrower_identity_for_loan(
+            self, loan, connection_identity_id=identity.identity_id,
+        )
+        # An account/grant lookup may change the Loan after the first check.
+        # Do not resolve a profile under post-staging provenance drift.
+        if borrower_code is None and not source_intact():
+            borrower_code = "adept_borrower_ambiguous"
     # Only None means proven: a falsey malformed code must not select ADEPT.
     if borrower_code is not None:
         code = public_borrower_refusal_code(borrower_code)
