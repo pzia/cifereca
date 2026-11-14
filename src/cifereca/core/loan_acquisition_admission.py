@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 from ..models import Loan
 from .loan_safe_trace import loan_trace_ref
+from . import adept_borrower
 from .adept_borrower import public_borrower_refusal_code
 
 
@@ -96,22 +97,22 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
         })
     trace_ref = loan_trace_ref(loan, identity.identity_id)
     _TRACE_LOG.info("TRACE download identity resolved request_ref=%s loan_ref=%s", request_ref, trace_ref)
-    if str(loan.source_provider).lower() == "paris":
-        _, borrower_code = self._paris_adept_identity_for_loan(
-            loan, connection_identity_id=identity.identity_id,
+    # A single ADEPT boundary handles the legacy Paris exceptional borrower;
+    # other providers retain the connection owner without a Paris branch here.
+    _, borrower_code = adept_borrower.borrower_identity_for_loan(
+        self, loan, connection_identity_id=identity.identity_id,
+    )
+    # A non-None refusal is never approval, including falsey plugin values.
+    if borrower_code is not None:
+        _TRACE_LOG.warning(
+            "TRACE download loan_auto blocked reason=borrower_binding_guard loan_ref=%s",
+            trace_ref,
         )
-        # A non-None borrower refusal is never an approval, even if its
-        # plugin-provided value is falsey or carries private text.
-        if borrower_code is not None:
-            _TRACE_LOG.warning(
-                "TRACE download loan_auto blocked reason=borrower_binding_guard loan_ref=%s",
-                trace_ref,
-            )
-            return AutomaticLoanAdmission(refusal={
-                "status": "attention_required", "loan_id": loan.id,
-                "code": public_borrower_refusal_code(borrower_code),
-                "retry": "explicit_only",
-            })
+        return AutomaticLoanAdmission(refusal={
+            "status": "attention_required", "loan_id": loan.id,
+            "code": public_borrower_refusal_code(borrower_code),
+            "retry": "explicit_only",
+        })
     if not source_intact():
         return source_changed()
     entitlement_inventory = self.storage.entitlements(
