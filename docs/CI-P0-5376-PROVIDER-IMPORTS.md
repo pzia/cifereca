@@ -63,3 +63,32 @@ qualifier et ne sont pas présentés comme une preuve d'absence de dette.
 
 Aucune collecte exhaustive pytest additionnelle n'est déclenchée par
 ce script ou son inventaire.
+
+
+## Point de mesure hebdomadaire sur `main`
+
+Le workflow GitHub Actions
+`.github/workflows/p0-test-dependency-inventory.yml` s'exécute le
+dimanche à 04:17 UTC ou à la demande via `workflow_dispatch`. Après
+`actions/checkout`, il vérifie que `git rev-parse HEAD` correspond au SHA
+exact de l'événement GitHub sur `refs/heads/main`, puis exécute deux
+analyses **AST uniquement**, sans importer les modules de tests :
+
+- `scripts.ci_test_core_consumer_graph --json`
+- `scripts.ci_test_provider_import_inventory --json`
+
+Sur réussite complète, l'artefact
+`p0-test-dependency-inventory-<SHA>` contient
+`core-plugin-consumers.json`, `core-test-provider-imports.json` et
+`provenance.json` (schémas, SHA exact, volumes, inconnues, zéro test
+pytest réellement exécuté). Conservation : 30 jours.
+
+La collecte échoue sans publier d'artefact si l'une des analyses présente
+une erreur de parsing/lecture, si les suites ou l'index provider sont vides,
+si le checkout est sale, ou si le SHA Git ne correspond pas à celui
+de l'événement. Les imports dynamiques inconnus sont conservés comme
+**inconnues** et ne deviennent pas artificiellement des arêtes certifiées.
+
+Il ne s'agit ni d'une preuve de couverture métier, ni de tests réellement
+exécutés, ni d'une CI exhaustive de tous les fournisseurs. Pour les
+résultats d'exécution, utiliser séparément les outils `#5989/#5990`.
