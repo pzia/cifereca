@@ -1487,18 +1487,11 @@ class LibraryService:
         return target[1] if target else None
 
     def _provider_loan_active_for_acquisition(self, row):
-        """Only the observed provider loan of this exact account/item can conflict."""
-        metadata = row.get('metadata') or {}
-        ids = {str(metadata.get('provider_loan_id') or '')}
-        for entitlement in self.storage.entitlements(provider_id=row.get('provider_id')):
-            if entitlement.get('entitlement_id') == row.get('entitlement_id'):
-                ids.add(str(entitlement.get('loan_id') or ''))
-        return any(str(loan.id) in ids and bool(str(loan.id))
-                   and loan.source_provider == row.get('provider_id')
-                   and loan.source_credential == row.get('credential_id')
-                   and str(loan.source_account_id or '') == str(row.get('account_id') or '')
-                   and loan.identity_id == row.get('identity_id')
-                   for loan in self.last_loans)
+        """Compatibility view over exact, non-navigational cached loan facts."""
+        return provider_sessions.provider_loan_active_for_acquisition(
+            self, row, cache_key_fn=_loan_cache_key,
+            cached_rows_fn=_cached_loans_for_exact_account,
+        )
 
     def refresh_adept_inventory(self, identity_id):
         # A refresh reads states only, never acquires or returns a book.
