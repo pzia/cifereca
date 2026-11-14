@@ -196,7 +196,10 @@ def main() -> int:
 
     def click(widget):
         until(lambda: widget.get_mapped(), "widget_mapped")
-        focus_native(widget)
+        # Match the proven XTEST pattern from optimizer_handoff_probe:
+        # a pointer action must NOT steal native X11 keyboard focus first.
+        # Unmanaged Xvfb windows process that artificial focus as a separate
+        # toplevel handoff, dropping the intended button press.
         device.click_widget(widget)
 
     def toggle_expert(widget):
