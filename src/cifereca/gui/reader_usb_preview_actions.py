@@ -75,6 +75,22 @@ def _discover_mounted_binding(*, storage, identity_id: str, device_id: str,
                 or type(binding.get("metadata")) is not dict
                 or binding["metadata"].get("usb_fingerprint") != fingerprint):
             return None
+        # A legacy/foreign binding with the same UUID makes association
+        # ownership ambiguous. Do not infer exclusivity from the chosen
+        # row alone; bound the complete transactional storage projection.
+        bindings = storage.device_bindings()
+        if type(bindings) is not list or len(bindings) > 4096:
+            return None
+        exact_bindings = [
+            item for item in bindings
+            if type(item) is dict
+            and type(item.get("metadata")) is dict
+            and item["metadata"].get("usb_fingerprint") == fingerprint
+        ]
+        if (len(exact_bindings) != 1
+                or exact_bindings[0].get("identity_id") != identity_id
+                or exact_bindings[0].get("device_id") != device_id):
+            return None
         volumes = discover_linux_usb_volumes()
         if (type(volumes) is not tuple or len(volumes) > 128
                 or any(type(item) is not MountedUsbVolume for item in volumes)):
