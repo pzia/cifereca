@@ -264,7 +264,7 @@ def test_worker_closures_never_read_gtk_window_from_task_thread():
     )[0]
     import re
     # root_current() is a pure config revalidation, not a GTK window call.
-    assert re.search(r"(?<![A-Za-z_])current\\(\\)", scan_worker) is None
-    assert re.search(r"(?<![A-Za-z_])current\\(\\)", discover_worker) is None
+    assert re.search(r"(?<![A-Za-z_])current\(\)", scan_worker) is None
+    assert re.search(r"(?<![A-Za-z_])current\(\)", discover_worker) is None
     assert "window." not in scan_worker
     assert "window." not in discover_worker
