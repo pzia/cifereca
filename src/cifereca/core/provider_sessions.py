@@ -1398,15 +1398,27 @@ def select_account(self, unique_id: str, provider_id: str | None=None, credentia
             continue
         if credential_id and account.credential_id != credential_id:
             continue
+        # A borrowed-account selection is only valid for an existing exact
+        # identity. Otherwise changing current_account while preserving the
+        # previous GTK identity could reattribute a private loan snapshot.
+        admitted_identity = account.identity_id
+        if type(admitted_identity) is not str or not admitted_identity:
+            raise ProviderConfigurationError("account_selection_identity_unproven")
+        owner = self.identity_by_id(admitted_identity)
+        if (owner is None or type(getattr(owner, "identity_id", None)) is not str
+                or owner.identity_id != admitted_identity):
+            raise ProviderConfigurationError("account_selection_identity_unproven")
         # Some callers select a borrower directly, without select_identity.
         # A cross-profile account change must revoke the prior loan list as
         # promptly as an explicit profile change does.
         with self._search_generation_lock:
+            if account.identity_id != admitted_identity:
+                raise ProviderConfigurationError("account_selection_identity_changed")
             previous_identity_id = getattr(self.current_identity, "identity_id", None)
             self.current_account = account
             self._account_context_epoch += 1
-            self.current_identity = self.identity_by_id(account.identity_id) or self.current_identity
-            if getattr(self.current_identity, "identity_id", None) != previous_identity_id:
+            self.current_identity = owner
+            if owner.identity_id != previous_identity_id:
                 self.last_loans = []
         key = self._session_key(account.provider_id, account.credential_id)
         if key in self._sessions:

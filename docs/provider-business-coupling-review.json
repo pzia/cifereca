@@ -484,6 +484,21 @@
       ],
       "pr": "#6023",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-provider-select-account-stale-identity-fallback",
+      "original": "core/provider_sessions.py::select_account assigns current_account then current_identity=identity_by_id(...) or current_identity",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "Validate an exact registered account.identity_id before selection and recheck it under the context lock; atomically install the matching Identity or reject without side effects",
+      "classification": "removed_stale_identity_account_navigation_fallback",
+      "evidence": "When a connected account refers to a removed/malformed identity, Core no longer installs it under whichever GTK identity was previously selected; rejected selection leaves account, identity, epoch, active session and cached loans unchanged. Valid A→B selection still advances epoch and invalidates prior loans.",
+      "tests": [
+        "tests/test_core_p0_5851_select_account_owner.py::test_invalid_borrower_identity_does_not_mutate_navigation_or_loans",
+        "tests/test_core_p0_5851_select_account_owner.py::test_valid_cross_identity_selection_updates_owner_and_invalidates_loans",
+        "tests/test_core_account_scoped_secondary_async.py"
+      ],
+      "pr": "#6028",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [

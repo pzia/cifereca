@@ -151,7 +151,11 @@ def _service_host():
     host._search_generation_lock = Lock()
     host.last_loans = []
     host._sessions = {}
-    host.identity_by_id = lambda _id: None
+    # The synthetic borrower belongs to a registered identity. Missing
+    # identities are tested separately in test_core_p0_5851_select_account_owner.
+    host.identity_by_id = lambda identity_id: (
+        host.current_identity if identity_id == "alice" else None
+    )
     host.last_history = ["existing active history"]
     host.last_bookings = ["existing active booking"]
     host.config = NS(get=lambda _key, default: default)
