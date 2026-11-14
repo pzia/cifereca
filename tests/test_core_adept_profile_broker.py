@@ -282,3 +282,60 @@ def test_exact_inventory_limit_preserves_read_only_projection():
     assert len(profiles) == 2048
     assert profiles[0].profile_id == "stable-0"
     assert profiles[-1].profile_id == "stable-2047"
+
+
+def test_bind_rejects_runtime_replacement_during_profile_read():
+    service = Service()
+    original = service.runtime
+    original.rows = [{
+        "profile_id": "stable-reader", "name": "reader",
+        "complete": True, "fetch_capable": True,
+        "provisioning": {"acsm_fetch_ready": True},
+    }]
+    original_profiles = original.profiles
+
+    def swapped_profiles():
+        result = original_profiles()
+        replacement = Runtime()
+        replacement.rows = [dict(row) for row in original.rows]
+        service.runtime = replacement
+        return result
+
+    original.profiles = swapped_profiles
+    with pytest.raises(AttentionRequired) as exc:
+        AdeptProfileBrokerImpl(service).bind("alice", "stable-reader")
+    assert exc.value.code == "adept_profile_binding_stale"
+    assert service.storage.bound == {}
+
+
+def test_bind_rejects_identity_replacement_during_profile_read():
+    service = Service()
+    service.runtime.rows = [{
+        "profile_id": "stable-reader", "name": "reader",
+        "complete": True, "fetch_capable": True,
+        "provisioning": {"acsm_fetch_ready": True},
+    }]
+    original_profiles = service.runtime.profiles
+
+    def replaced_identity_profiles():
+        result = original_profiles()
+        service.identities = [NS(identity_id="alice")]
+        return result
+
+    service.runtime.profiles = replaced_identity_profiles
+    with pytest.raises(AttentionRequired) as exc:
+        AdeptProfileBrokerImpl(service).bind("alice", "stable-reader")
+    assert exc.value.code == "adept_profile_binding_stale"
+    assert service.storage.bound == {}
+
+
+def test_bind_keeps_normal_ready_profile_and_stable_identity():
+    service = Service()
+    service.runtime.rows = [{
+        "profile_id": "stable-reader", "name": "reader",
+        "complete": True, "fetch_capable": True,
+        "provisioning": {"acsm_fetch_ready": True},
+    }]
+    profile = AdeptProfileBrokerImpl(service).bind("alice", "stable-reader")
+    assert profile.profile_id == "stable-reader"
+    assert service.storage.bound == {("identity", "alice"): "stable-reader"}

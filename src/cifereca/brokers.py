@@ -1357,11 +1357,21 @@ class AdeptProfileBrokerImpl:
         identity = self.service.identity_by_id(str(identity_id or ""))
         if identity is None:
             raise ValueError("unknown identity")
+        runtime = self._runtime()
         profile = self._find(profile_id)
         if not (profile.complete and profile.fetch_capable and profile.acsm_fetch_ready):
             raise AttentionRequired(
                 "Le profil ADEPT n’est pas prêt pour les ACSM.",
                 code="adept_profile_not_ready",
+            )
+        # The installed runtime or local identity may have changed while the
+        # inventory was read. Never commit a reference observed under a stale
+        # runtime or into an identity that no longer exists.
+        if (self._runtime() is not runtime
+                or self.service.identity_by_id(identity.identity_id) is not identity):
+            raise AttentionRequired(
+                "La liaison du profil ADEPT doit être vérifiée à nouveau.",
+                code="adept_profile_binding_stale",
             )
         self.service.storage.adept_profile_binding_set("identity", identity.identity_id, profile.profile_id)
         return profile
