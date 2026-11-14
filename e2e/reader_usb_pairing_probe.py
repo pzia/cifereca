@@ -142,8 +142,14 @@ def main() -> int:
     window.present()
 
     def pump():
-        while GLib.MainContext.default().pending():
-            GLib.MainContext.default().iteration(False)
+        # A new XTEST event can be pending in Xlib even when GLib.pending()
+        # has not yet polled the GDK X11 fd. Iterate at least once to dispatch
+        # external native input; then drain other ready sources. Never emit a
+        # GTK signal or call the production pairing callback directly.
+        context = GLib.MainContext.default()
+        context.iteration(False)
+        while context.pending():
+            context.iteration(False)
 
     def until(predicate, key, seconds=6):
         state["checkpoint"] = key
