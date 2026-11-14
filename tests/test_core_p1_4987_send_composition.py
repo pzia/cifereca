@@ -59,10 +59,12 @@ def test_native_copy_after_exact_local_resolution(environment):
     assert (result["status"], result["loan"], result["transfer"]) == (
         "complete", "confirmed", "completed",
     )
-    resolver.assert_called_once_with(
-        service, requesting_identity_id="bob",
-        borrowing_account=w.account, exact_notice=w.notice,
-    )
+    assert resolver.call_count == 1
+    assert resolver.call_args.args == (service,)
+    assert resolver.call_args.kwargs["requesting_identity_id"] == "bob"
+    assert resolver.call_args.kwargs["borrowing_account"] is w.account
+    assert resolver.call_args.kwargs["exact_notice"] is w.notice
+    assert resolver.call_args.kwargs["scope_current"]() is True
     service.send_cross_profile_borrowed_placement.assert_called_once_with(
         requesting_identity_id="bob", borrowing_account=w.account,
         exact_notice=w.notice, lender_placement_id="placement-a",

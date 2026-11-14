@@ -899,7 +899,7 @@
         "tests/test_core_p1_4988_existing_loan_recovery.py",
         "tests/test_core_p1_4987_composed_bnf_lender.py"
       ],
-      "pr": "#TBD",
+      "pr": "#6097",
       "in_ast_metric": false
     }
   ],
