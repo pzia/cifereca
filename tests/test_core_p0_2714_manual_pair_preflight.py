@@ -58,30 +58,24 @@ def add_acquisition(root, database, *, right_id="right-5",
             )
 
 
-def test_right_without_attested_receipt_never_becomes_link_even_if_file_is_good(
-    six_numilog, tmp_path,
-):
+def test_manual_pair_missing_receipt_is_read_only_for_retired_writer(six_numilog, tmp_path):
     root, db = six_numilog
     before = filesystem(tmp_path)
     audit, session = session_for(root, db)
     right, file = select_pair(session)
-    assert not hasattr(session, "_manual_right_scopes")
+    assert not hasattr(session, "_manual_right_proofs")
+    assert not hasattr(session, "_manual_file_proofs")
     report = session.preflight_manual_link(right.key, file.key)
-    assert report.status == "insufficient_evidence"
-    assert report.read_only is True and report.attachment_authorized is False
-    assert report.requires_fresh_validation is True
-    assert "acquisition_missing" in report.codes
-    assert "transaction_unavailable" in report.codes
-    assert "bibliographic_hint_only" not in report.codes
-    assert "reçu d’acquisition" in report.explanation
-    assert "PRIVATE" not in report.explanation
+    assert report.status == "blocked"
+    assert "source_not_supported" in report.codes
+    assert report.read_only and not report.attachment_authorized
     assert audit.redacted()["repair_authorized"] is False
     assert filesystem(tmp_path) == before
     session.close()
-    assert not session._manual_right_proofs and not session._manual_file_proofs
+    assert not session._manual_file_observations
 
 
-def test_same_scope_receipt_and_verified_same_bytes_is_reviewable_not_writable(
+def test_complete_numilog_receipt_and_identical_bytes_do_not_revive_manual_link(
     six_numilog, tmp_path,
 ):
     root, db = six_numilog
@@ -89,33 +83,17 @@ def test_same_scope_receipt_and_verified_same_bytes_is_reviewable_not_writable(
     before = filesystem(tmp_path)
     _audit, session = session_for(root, db)
     right, file = select_pair(session)
+    assert not hasattr(session, "_manual_right_proofs")
     report = session.preflight_manual_link(right.key, file.key)
-    assert report.status == "eligible_for_fresh_validation"
-    assert report.codes == ("transaction_unavailable",)
-    assert not report.attachment_authorized and report.read_only
+    assert report.status == "blocked"
+    assert "source_not_supported" in report.codes
+    assert report.read_only and not report.attachment_authorized
+    # No legacy source-specific proof even after a matching complete receipt.
+    assert session.preview_manual_attachment(right.key, file.key) == {
+        "status": "unavailable", "read_only": True,
+    }
     assert filesystem(tmp_path) == before
-
-
-def test_manual_preflight_requires_scoped_proof_not_a_provider_name(
-    six_numilog,
-):
-    root, db = six_numilog
-    add_acquisition(root, db)
-    _audit, session = session_for(root, db)
-    right, file = select_pair(session)
-    assert right.key in session._manual_right_proofs
-    assert session.preflight_manual_link(right.key, file.key).status == (
-        "eligible_for_fresh_validation"
-    )
-
-    # Even a known supplier cannot select the proof path when this
-    # inspection has no prepared evidence for the exact right key.
-    session._manual_right_proofs.pop(right.key)
-    refused = session.preflight_manual_link(right.key, file.key)
-    assert refused.status == "blocked"
-    assert refused.codes == ("source_not_supported",)
-    assert refused.read_only is True
-    assert refused.attachment_authorized is False
+    session.close()
 
 
 @pytest.mark.parametrize("forged_source", [
@@ -123,7 +101,7 @@ def test_manual_preflight_requires_scoped_proof_not_a_provider_name(
     "future-library.authenticated_library",
     "future-library.personal_manifest",
 ])
-def test_foreign_provider_cannot_spoof_numilog_proof_with_metadata(
+def test_foreign_provider_cannot_spoof_retired_manual_proof(
     six_numilog, forged_source,
 ):
     root, db = six_numilog
@@ -141,40 +119,34 @@ def test_foreign_provider_cannot_spoof_numilog_proof_with_metadata(
     _audit, session = session_for(root, db)
     foreign = session.page(provider="future-library").cases
     assert len(foreign) == 1
-    foreign_key = foreign[0].key
-    assert foreign_key not in session._manual_right_proofs
     _, file = select_pair(session)
-    denied = session.preflight_manual_link(foreign_key, file.key)
-    assert denied.status == "blocked"
-    assert denied.codes == ("source_not_supported",)
-    assert denied.read_only is True
-    assert denied.attachment_authorized is False
+    report = session.preflight_manual_link(foreign[0].key, file.key)
+    assert report.status == "blocked"
+    assert "source_not_supported" in report.codes
+    assert report.read_only and not report.attachment_authorized
+    assert not hasattr(session, "_manual_right_proofs")
+    session.close()
 
 
-@pytest.mark.parametrize("file_number,missing", [
-    (4, "artifact_mismatch"),
-    (5, "acquisition_missing"),
-])
-def test_receipt_mismatch_and_no_receipt_are_not_ownership_evidence(
-    six_numilog, file_number, missing,
+@pytest.mark.parametrize("file_number", [4, 5])
+def test_receipt_mismatch_or_absence_stays_non_authorizing(
+    six_numilog, file_number,
 ):
     root, db = six_numilog
     if file_number == 4:
         add_acquisition(root, db)
     _audit, session = session_for(root, db)
     right, file = select_pair(session, number=file_number)
-    # For the 4th EPUB use right-5, to exercise mismatched artifacts.
     if file_number == 4:
         right, _ = select_pair(session, number=5)
-    result = session.preflight_manual_link(right.key, file.key)
-    assert result.status in ("blocked", "insufficient_evidence")
-    assert missing in result.codes
-    assert result.attachment_authorized is False
+    report = session.preflight_manual_link(right.key, file.key)
+    assert report.status == "blocked"
+    assert "source_not_supported" in report.codes
+    assert not report.attachment_authorized
+    session.close()
 
 
-def test_partial_scan_or_unverified_sha_blocks_even_if_a_receipt_exists(
-    six_numilog,
-):
+def test_partial_scan_keeps_coverage_warning_and_refuses_manual_link(six_numilog):
     root, db = six_numilog
     add_acquisition(root, db)
     audit, session = session_for(root, db, limits=InventoryLimits(hash_bytes=1))
@@ -182,33 +154,19 @@ def test_partial_scan_or_unverified_sha_blocks_even_if_a_receipt_exists(
     right, file = select_pair(session)
     report = session.preflight_manual_link(right.key, file.key)
     assert report.status == "blocked"
-    assert {"audit_incomplete", "file_unverified"} <= set(report.codes)
+    assert {"audit_incomplete", "source_not_supported"} <= set(report.codes)
     assert not report.attachment_authorized
+    session.close()
 
 
-def test_cross_identity_duplicate_ledger_never_joins_right_as_positive_proof(
-    six_numilog,
-):
+def test_foreign_ledger_and_duplicate_rights_cannot_revive_manual_link(six_numilog):
     root, db = six_numilog
     add_acquisition(root, db, ledger_owner="bob")
-    _audit, session = session_for(root, db)
-    right, file = select_pair(session)
-    report = session.preflight_manual_link(right.key, file.key)
-    assert report.status == "blocked"
-    assert "acquisition_conflict" in report.codes
-    assert "acquisition_missing" in report.codes
-    assert "PRIVATE" not in json.dumps({
-        "status": report.status, "codes": report.codes,
-    })
-
-
-def test_same_edition_multiple_scoped_rights_are_ambiguous(six_numilog):
-    root, db = six_numilog
     with sqlite3.connect(db) as sql:
         sql.execute(
             "INSERT INTO entitlements "
             "(entitlement_id,provider_id,credential_id,account_id,item_id,"
-            "identity_id,state,entitlement_type,metadata_json)"
+            "identity_id,state,entitlement_type,metadata_json) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
             ("right-5-duplicate", "numilog", "cred-alice", "account-alice",
              "item-5", "alice", "active", "owned",
@@ -218,10 +176,15 @@ def test_same_edition_multiple_scoped_rights_are_ambiguous(six_numilog):
     right, file = select_pair(session)
     report = session.preflight_manual_link(right.key, file.key)
     assert report.status == "blocked"
-    assert "right_scope_ambiguous" in report.codes
+    assert "source_not_supported" in report.codes
+    assert not report.attachment_authorized
+    assert "PRIVATE" not in json.dumps({
+        "status": report.status, "codes": report.codes,
+    })
+    session.close()
 
 
-def test_invalid_or_confirmed_or_foreign_selection_and_revocation_return_no_authority(
+def test_invalid_confirmed_foreign_selection_and_revocation_return_no_authority(
     six_numilog,
 ):
     root, db = six_numilog
@@ -240,9 +203,7 @@ def test_invalid_or_confirmed_or_foreign_selection_and_revocation_return_no_auth
         assert report.codes == ("selection_unavailable",)
         assert not report.attachment_authorized
     session.close()
-    stale = session.preflight_manual_link(right.key, file.key)
-    assert stale.status == "unavailable"
-    assert not stale.attachment_authorized
+    assert session.preflight_manual_link(right.key, file.key).status == "unavailable"
 
 
 def test_action_guidance_is_current_but_never_authorizes_a_write():
@@ -316,30 +277,18 @@ def test_missing_or_malformed_private_negative_proof_cannot_be_reviewable(incomp
 
 
 
-def test_numilog_local_evidence_reuses_one_source_identity_decision():
-    """The two diagnostic proof fields share one typed provider veto."""
+def test_core_inspection_no_longer_branches_on_numilog_manual_rights():
     import ast
     import inspect
 
     tree = ast.parse(inspect.getsource(LocalInspection))
-    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef))
     initializer = next(
-        node for node in cls.body
-        if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+        node for node in tree.body if isinstance(node, ast.FunctionDef)
+        and node.name == "__init__"
     )
-    checks = [
-        node for node in ast.walk(initializer)
-        if isinstance(node, ast.Compare)
-        and any(isinstance(part, ast.Constant) and part.value == "numilog"
-                for part in [node.left, *node.comparators])
-    ]
-    assert len(checks) == 1
-    assert any(
-        isinstance(node, ast.If)
-        and isinstance(node.test, ast.Compare)
-        and isinstance(node.test.left, ast.Name)
-        and node.test.left.id == "right_provider"
-        and any(isinstance(value, ast.Constant) and value.value == "numilog"
-                for value in node.test.comparators)
+    assert not any(
+        isinstance(node, ast.Constant) and node.value == "numilog"
         for node in ast.walk(initializer)
     )
+    assert "_manual_right_proofs" not in inspect.getsource(LocalInspection)
+    assert "_manual_file_proofs" not in inspect.getsource(LocalInspection)
