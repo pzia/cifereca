@@ -46,6 +46,12 @@ def descriptor(provider, state='ready'):
     return NS(id=provider, state=state, display_name=provider,
               credential_fields=[NS(key='username')])
 
+def source_selection_descriptor(provider, key='primary_paris_connection_id'):
+    """Synthetic plugin declares the owner-selection key; CoreUI must not know its brand."""
+    result = descriptor(provider)
+    result.manual_borrow_policy = NS(source_selection_key=key)
+    return result
+
 
 def test_draft_neither_mutates_config_nor_writes_and_preserves_missing_adept_profile(editor):
     config, values = editor
@@ -1677,7 +1683,7 @@ def test_paris_primary_selection_is_exact_scoped_and_roundtrips(editor):
         account("paris", account_id="paris-secondary"),
     ]
     before = deepcopy(config.data)
-    draft = validate(editor, descriptors={"paris": descriptor("paris")})
+    draft = validate(editor, descriptors={"paris": source_selection_descriptor("paris")})
     assert draft.data["identities"][0]["primary_paris_connection_id"] == "paris-main"
     assert len(draft.data["providers"]["accounts"]) == 2
     assert config.data == before
@@ -1710,10 +1716,39 @@ def test_paris_primary_rejects_stale_or_cross_identity_account(editor, invalid_c
     before = deepcopy(config.data)
     with pytest.raises(SettingsValidationError):
         validate(editor, descriptors={
-            "paris": descriptor("paris"), "other": descriptor("other"),
+            "paris": source_selection_descriptor("paris"), "other": descriptor("other"),
         })
     assert config.data == before
     assert not config.path.exists()
+
+
+def test_primary_selection_accepts_only_declared_provider_contract(editor):
+    """A synthetic provider can own the key; the brand is not chosen by CoreUI."""
+    config, values = editor
+    key = "primary_paris_connection_id"  # Historical persisted ABI only.
+    values["identities"][0][key] = "source-a"
+    values["accounts"] = [account("synthetic-lender", account_id="source-a")]
+    before = deepcopy(config.data)
+    provider = source_selection_descriptor("synthetic-lender")
+    draft = validate(editor, descriptors={"synthetic-lender": provider})
+    assert draft.data["identities"][0][key] == "source-a"
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("policy", (
+    None, NS(source_selection_key="different_key"),
+    NS(source_selection_key=["primary_paris_connection_id"]),
+))
+def test_primary_selection_fails_closed_without_exact_contract(editor, policy):
+    config, values = editor
+    values["identities"][0]["primary_paris_connection_id"] = "source-a"
+    values["accounts"] = [account("synthetic-lender", account_id="source-a")]
+    provider = descriptor("synthetic-lender")
+    provider.manual_borrow_policy = policy
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="non déclarée"):
+        validate(editor, descriptors={"synthetic-lender": provider})
+    assert config.data == before and not config.path.exists()
 
 
 def test_untyped_persisted_primary_id_never_becomes_a_plausible_saved_binding(editor):
