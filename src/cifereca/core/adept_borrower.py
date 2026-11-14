@@ -80,6 +80,38 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     binding = self.storage.paris_borrower_adept_binding_get(
         credential_id=credential, account_id=borrower,
     )
+    if binding is not None:
+        # During the explicit reconfirmation transition, a concurrent or
+        # historically reintroduced legacy row must not silently override a
+        # different v16 owner. Neither source of evidence may pick the first
+        # identity when the two persisted grants disagree.
+        try:
+            v16 = self.storage.adept_borrower_grant_get(
+                provider_id=source_provider, credential_id=credential,
+                account_id=borrower,
+            )
+        except Exception:
+            return None, "adept_borrower_ambiguous"
+        if v16 is not None:
+            if type(v16) is not dict:
+                return None, "adept_borrower_profile_changed"
+            try:
+                v16_owner, v16_reason = self.explicit_adept_borrower_grant_for_source(
+                    provider_id=source_provider, credential_id=credential,
+                    account_id=borrower,
+                    connection_identity_id=connection_identity_id,
+                )
+            except Exception:
+                return None, "adept_borrower_ambiguous"
+            if v16_reason is not None:
+                return None, public_borrower_refusal_code(v16_reason)
+            if (type(v16_owner) is not str or not v16_owner
+                    or type(binding) is not dict
+                    or type(binding.get("borrower_identity_id")) is not str
+                    or binding["borrower_identity_id"] != v16_owner
+                    or type(binding.get("profile_id")) is not str
+                    or binding["profile_id"] != v16.get("profile_id")):
+                return None, "adept_borrower_profile_changed"
     if binding is None:
         # The v16 register is independent of the historical Paris grant.
         # This path is positive-only: a linked borrower may be resolved from
