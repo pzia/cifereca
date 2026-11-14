@@ -46,6 +46,7 @@ DESCRIPTOR = ProviderDescriptor(
     account_options=(AccountOptionField(
         'manual_loan_limit', 'Maximum d’emprunts (valeur personnelle)',
         default='4', value_type='unsigned_integer', min_value=0, max_value=99,
+        advisory_loan_medium='digital',
         help_text='4 par défaut. Valeur indicative renseignée par vous : '
                   'elle ne change pas vos droits auprès de la BnF.',
     ),),
