@@ -362,3 +362,34 @@ def test_fixed_anchor_cohort_refuses_unknown_revisions_or_missing_sha():
     current["metric"] = "not comparable"
     with pytest.raises(ValueError, match="incompatible_business_cohort_anchor"):
         compare_cohort(anchor, current)
+
+
+def test_adept_settings_and_runtime_provenance_ast_review_is_traceable():
+    """Five previously unknown signals remain protected, not counted as deletions."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    payload = json.loads(
+        (root / "docs/provider-business-coupling-review.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    expected = {
+        "site-48985b6dd27a2ea911e7026d": "presentation_only",
+        "site-e49e284729574d20512f4033": "safety_guard_pending_contract",
+        "site-6df69f482e5a9d7f97c2be97": "safety_guard_pending_contract",
+        "site-652521330913780fa6c34776": "safety_guard_pending_contract",
+        "site-62d608c21d04153e918b5bb3": "safety_guard_pending_contract",
+    }
+    records = {
+        row["id"]: row for row in payload["reviews"] if row["id"] in expected
+    }
+    assert set(records) == set(expected)
+    assert {key: row["classification"] for key, row in records.items()} == expected
+    assert len({row["decision_group_id"] for row in records.values()}) == 3
+    assert {row["reachability"] for row in records.values()} == {"productive"}
+    for row in records.values():
+        assert row["productive_caller"] and row["effect"]
+        assert row["replacement_contract"] and row["authority"]
+        assert all((root / path).is_file() for path in row["tests"])
+    assert all(not row["retirement_pr"] for row in records.values())
