@@ -334,3 +334,30 @@ les planches juxtaposant clair/sombre et `ux-checklist.csv` à remplir.
 Les captures demeurent **sur l'hôte GTK autorisé** et ne sont **jamais**
 des artefacts CI publics. Les planches servent au tri UX, les PNG originaux
 restent requis pour inspecter les détails ; aucun verdict UX n'est automatisé.
+
+
+## Recette P1 #6041 — association USB réelle GTK4/XTEST, sans matériel
+
+Deux scénarios dédiés :
+- `python3 e2e/run.py --scenario reader-usb-pairing-1024`
+- `python3 e2e/run.py --scenario reader-usb-pairing-1366`
+
+Ils ouvrent le **vrai dialogue Adw.MessageDialog** depuis un **clic XTEST**
+sur le bouton Associer ; les bascules de mode expert sont aussi des clics
+XTEST. La liste utilise les vrais `Gtk.DropDown` et signaux
+`notify::selected` du contrôleur de production. Le probe vérifie :
+0 périphérique (liste inactive, repli expert), 1 périphérique sans sélection
+automatique, plusieurs périphériques avec deuxième sélection, libellés et nom
+prérempli, relecture exacte au moment de confirmer, rejet d'un changement de
+`mount_id`, révocation par changement de profil, et saisie déclarative UUID
+historique. À 1024 px, l'écran Xvfb est physiquement plus étroit.
+
+Les volumes sont des **observations synthétiques typées en mémoire**
+(`MountedUsbVolume`), pas des disques montés ; le stockage de déclarations
+est un double mémoire qui enregistre les appels mais **ne réalise aucune
+écriture USB, SQLite, fournisseur ou transfert**. Les unités de tests Core de
+`device_usb_discovery` valident séparément le filtrage des preuves Linux.
+Des captures et un rapport JSON à valeurs fermées sont produits. Ces scénarios
+prouvent le parcours du vrai dialogue GTK et sa sûreté déclarative, **pas** la
+compatibilité d'un appareil SanDisk, ni l'activation, ni une copie matérielle.
+La recette #4983 (PU) reste distincte et ne doit pas être exécutée implicitement.
