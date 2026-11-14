@@ -192,9 +192,9 @@ def test_owned_download_redirect_to_login_never_becomes_public_epub(tmp_path):
             medium="digital", title="Synthetic", source_provider="baen",
             source_credential="public", friendly_url="https://www.baen.com/synthetic.html",
         )
-        with pytest.raises(ProviderError, match="transport.http indisponible"):
+        with pytest.raises(ProviderError, match="aucun lien EPUB public"):
             client.download_direct(result, tmp_path)
         assert len(requests) == 1 and requests[0].method == "GET"
-        assert not list(tmp_path.iterdir()) if tmp_path.exists() else True
+        assert not tmp_path.exists() or not list(tmp_path.iterdir())
     finally:
         client.close()
