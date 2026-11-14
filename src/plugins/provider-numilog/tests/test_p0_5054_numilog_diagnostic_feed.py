@@ -194,8 +194,6 @@ def test_unverified_numilog_session_log_is_not_a_core_provider_fact(tmp_path):
     events = query_diagnostic_events(
         Diagnostics(enabled=False), source='app_log', log_path=log,
     )['events']
-    assert len(events) == 1
-    assert 'provider_id' not in events[0]
-    assert 'business_module' not in events[0]
-    assert 'detail' not in events[0]
-    assert events[0]['module'] == 'cifereca_numilog'
+    # The retired supplier-specific logger remains in the raw physical
+    # journal but is no longer projected into the Core public event feed.
+    assert events == []
