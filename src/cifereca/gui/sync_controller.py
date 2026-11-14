@@ -1046,7 +1046,7 @@ def _refresh_sync_page(self) -> None:
                             "Téléchargement local confirmé…",
                             work, done, failed, control=button,
                             priority=TaskPriority.USER_ACTION,
-                            kind="kobo-acquisition", with_progress=True,
+                            kind="source-materialize", with_progress=True,
                             origin="user",
                         )
                     dialog.connect("response", response)

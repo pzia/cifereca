@@ -103,7 +103,10 @@ def test_progress_callback_is_still_delivered_unmodified(broker):
     assert actual == [(1, 2, private)]
 
 
-@pytest.mark.parametrize("kind", ("diagnostics", "recommendations", "browser-recorder"))
+@pytest.mark.parametrize("kind", (
+    "diagnostics", "recommendations", "browser-recorder",
+    "source-materialize", "kobo-acquisition",
+))
 def test_installed_plugin_task_kind_has_attributable_private_safe_trace(
     caplog, broker, kind,
 ):
