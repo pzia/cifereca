@@ -166,3 +166,27 @@ def test_ambiguous_primary_alias_and_native_upstream_id_fail_closed():
     row["account_id"] = "primary"
     assert _check(host, row) is False
     assert reads == []
+
+
+def test_legacy_local_loan_link_requires_full_exact_source_scope():
+    alice = _account("alice", "card-A", "reader-A")
+    cache = {("account", _loan_cache_key(alice)): [asdict(_loan(alice))]}
+    host, _ = _host([alice], cache)
+    row = _row(alice)
+    row["metadata"] = {}
+    row["entitlement_id"] = "attested-local-reference"
+    exact = {
+        "entitlement_id": row["entitlement_id"],
+        "provider_id": PROVIDER,
+        "identity_id": "alice",
+        "credential_id": "card-A",
+        "account_id": "reader-A",
+        "item_id": "same-edition",
+        "loan_id": "same-upstream-loan",
+    }
+    for changed in ("identity_id", "credential_id", "account_id", "item_id", "provider_id"):
+        foreign = {**exact, changed: "foreign"}
+        host.storage.entitlements = lambda **kwargs: [foreign]
+        assert _check(host, row) is False
+    host.storage.entitlements = lambda **kwargs: [exact]
+    assert _check(host, row) is True
