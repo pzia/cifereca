@@ -784,6 +784,21 @@
       ],
       "pr": "#6079",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-public-provider-enablement-core-navigation-fallback",
+      "original": "core.provider_sessions._provider_enabled_for_identity inferred the active GTK-selected profile (and default fallback) when applying virtual/public provider enabled_for_identity and per-identity overrides; selected_private_offer_hint invoked this policy without passing its already admitted source identity",
+      "original_classification": "navigation_dependent_provider_enablement_and_private_offer_visibility",
+      "replacement": "Core provider enablement requires a well-formed explicit identity for public/virtual visibility before reading plugin manager policy. The historical LibraryService no-argument method captures selection once at the synchronous facade boundary; selected_private_offer_hint always supplies the scoped identity and refuses missing scope before enablement.",
+      "classification": "removed_navigation_provider_enablement_worker",
+      "evidence": "Synthetic headless Core worker has poison current_identity and checks exact Alice/Bob enablement; malformed/missing/foreign identities refuse before manager queries. The facade getter runs once only for no-argument legacy callers; explicitly scoped private-offer hint cannot inherit another GTK identity and makes no provider calls. Non-virtual ready session behavior is unchanged.",
+      "tests": [
+        "tests/test_core_p0_5975_provider_enablement_scope.py",
+        "tests/test_core_p0_5054_selected_private_offer_hint.py",
+        "tests/test_core_0968_provider_collection_registry.py"
+      ],
+      "pr": "#6082",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
