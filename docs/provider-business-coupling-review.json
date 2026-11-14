@@ -679,6 +679,21 @@
       ],
       "pr": "#6053",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-catalogue-inventory-core-navigation-fallback",
+      "original": "core.catalogue_source_inventory.catalogue_source_capabilities identity_id=None fell back to service.current_identity for configured/private/public source catalogue discovery, and headless CatalogBrokerImpl forwarded missing identity to the navigation-compatible facade",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "Core catalogue inventory requires exact identity and returns empty on omitted/invalid scope before provider/account enumeration. CatalogBrokerImpl refuses missing owner; LibraryService facade snapshots optional GTK scope only at synchronous admission and passes it explicitly.",
+      "classification": "removed_navigation_catalogue_capability_worker",
+      "evidence": "Headless poison-getter demonstrates no Core GTK read; Alice/Bob installed/connected/scope filtering unchanged, unknown provider descriptors do not leak data or become acquisition permission. No provider HTTP, no SQLite writes, no source installation.",
+      "tests": [
+        "tests/test_core_p1_2385_catalogue_source_inventory.py",
+        "tests/test_core_p1_2703_scoped_capability_inventory.py",
+        "tests/test_core_ui_p1_2385_catalogue_section.py"
+      ],
+      "pr": "#6055",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
