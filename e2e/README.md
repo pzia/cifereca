@@ -352,30 +352,32 @@ mount ID avant le scan, la mise à jour visible du statut et la révocation
 du profil. Aucune opération sur clé USB, SQLite, réseau ou fournisseur.
 La recette matérielle #4983 et la preuve XTEST de #6041 sont distinctes.
 
-## Recette P1 #6041 — association USB réelle GTK4/XTEST, sans matériel
+## P1 #6041 — impasse explicite sur la recette XTEST du dialogue d'association
 
-Deux scénarios dédiés :
-- `python3 e2e/run.py --scenario reader-usb-pairing-1024`
-- `python3 e2e/run.py --scenario reader-usb-pairing-1366`
+**Décision propriétaire du 14 novembre 2026 :** ne pas bloquer le retour à
+un `main` stable sur les deux scénarios exploratoires
+`reader-usb-pairing-1024` et `reader-usb-pairing-1366` de la PR #6074.
+Ces scénarios **ne sont ni enregistrés dans `e2e/run.py` ni dans la
+sélection CI**, et leur sonde expérimentale n'est pas intégrée.
 
-Ils ouvrent le **vrai dialogue Adw.MessageDialog** depuis un clic XTEST
-sur le bouton Associer ; sur Xvfb sans gestionnaire de fenêtres, un
-**focus X11 natif** puis une activation clavier XTEST (Retour/Espace) sert
-de repli uniquement si les événements souris XTEST n'ont pas été reçus.
-Aucun signal GTK n'est simulé. La liste utilise les vrais `Gtk.DropDown` et signaux
-`notify::selected` du contrôleur de production. Le probe vérifie :
-0 périphérique (liste inactive, repli expert), 1 périphérique sans sélection
-automatique, plusieurs périphériques avec deuxième sélection, libellés et nom
-prérempli, relecture exacte au moment de confirmer, rejet d'un changement de
-`mount_id`, révocation par changement de profil, et saisie déclarative UUID
-historique. À 1024 px, l'écran Xvfb est physiquement plus étroit.
+Cette décision ne vaut **pas** validation XTEST. Les essais isolés ont
+réussi les 45 scénarios historiques, mais échoué sur les deux nouveaux
+scénarios : bouton actif, cible GTK correcte, surface X11 sous le pointeur,
+puis aucun événement souris/clavier livré au contrôleur GTK. Aucune
+régression du parcours d'association produit n'a été démontrée.
 
-Les volumes sont des **observations synthétiques typées en mémoire**
-(`MountedUsbVolume`), pas des disques montés ; le stockage de déclarations
-est un double mémoire qui enregistre les appels mais **ne réalise aucune
-écriture USB, SQLite, fournisseur ou transfert**. Les unités de tests Core de
-`device_usb_discovery` valident séparément le filtrage des preuves Linux.
-Des captures et un rapport JSON à valeurs fermées sont produits. Ces scénarios
-prouvent le parcours du vrai dialogue GTK et sa sûreté déclarative, **pas** la
-compatibilité d'un appareil SanDisk, ni l'activation, ni une copie matérielle.
-La recette #4983 (PU) reste distincte et ne doit pas être exécutée implicitement.
+Les garanties livrées pour #6041 demeurent les tests headless et
+d'intégration synthétique des PR #6043/#6072/#6080/#6081 :
+`tests/test_p1_6041_mounted_usb_pairing_gtk.py`,
+`tests/test_p1_6041_usb_volume_discovery.py` et les contrats existants.
+Elles vérifient la sélection explicite du volume, la relecture à la
+confirmation, le rejet des UUID ambigus, des changements de montage/profil
+et le repli UUID expert. Ces tests ne prétendent pas prouver le clic
+physique XTEST. La recette #6077 garde ses deux scénarios GTK, dont le
+bouton est déclenché programmatiquement, avec cette limite documentée.
+
+Il n'y a aucune modification du code produit, des règles d'activation,
+des droits ni du dispositif USB. La recette sur matériel réel #4983
+reste indépendante. Une éventuelle investigation XTEST devra faire
+l'objet d'un chantier isolé, non bloquant pour les fonctionnalités
+déjà fusionnées.

@@ -1999,6 +1999,18 @@ class LibraryService:
         lock, without deriving an entitlement, ACSM operation or a loan POST.
         """
         from .core.present_placement_copy import send_present_placement_copy
+
+        selected = getattr(self, "current_identity", None)
+
+        def scope_current() -> bool:
+            # Re-evaluate at every physical-copy boundary, including under
+            # the global lock and after publication. A→B→A changes epoch.
+            return (
+                self.current_identity is selected
+                and self._account_context_epoch == expected_account_context_epoch
+                and self._source_context_epoch == expected_source_context_epoch
+            )
+
         return send_present_placement_copy(
             self, source_placement_id=source_placement_id,
             source_identity_id=source_identity_id,
@@ -2006,7 +2018,8 @@ class LibraryService:
             requesting_identity_id=requesting_identity_id,
             expected_account_context_epoch=expected_account_context_epoch,
             expected_source_context_epoch=expected_source_context_epoch,
-            confirmed=confirmed,
+            confirmed=confirmed, requester_identity=selected,
+            scope_current=scope_current,
         )
 
     def enrich_provider_search_result(self, item: SearchResult, *, expected_identity_id: str) -> SearchResult:
