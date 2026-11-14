@@ -619,6 +619,35 @@
       ],
       "pr": "#6047",
       "in_ast_metric": true
+    },
+    {
+      "id": "struct-capability-inventory-navigation-fallback",
+      "original": "core.capability_inventory.capability_matrices_for_identity identity_id=None fell back to mutable service.current_identity before enumerating enabled plugin/account capabilities",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "Headless Core requires explicit identity_id and returns empty without plugin/storage work if omitted or invalid; LibraryService.capability_matrices snapshots the UI-selected identity at synchronous method admission",
+      "classification": "removed_navigation_capability_worker",
+      "evidence": "Two-profile synthetic registry demonstrates Core worker no longer reads current_identity (poison getter) and cannot query any source when unscoped. Explicit Alice/Bob projections remain independent and no reported capability grants mutation. Public optional ABI remains synchronous and pins the initial identity.",
+      "tests": [
+        "tests/test_core_p0_5975_capability_projection_exact_owner.py",
+        "tests/test_core_p1_2703_scoped_capability_inventory.py"
+      ],
+      "pr": "#6048",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-capability-precollected-navigation-fallback",
+      "original": "core.capability_snapshot_inventory.capability_matrices_with_precollected_evidence identity_id=None inferred mutable service.current_identity to select already-collected sync/loan/rights observations",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "Core evidence worker rejects absent/invalid identity before any provider inventory or foreign evidence projection; LibraryService facade captures optional identity at synchronous entry",
+      "classification": "removed_navigation_capability_evidence_worker",
+      "evidence": "Unscoped precollected snapshots are refused with capability_invalid_identity; no-snapshot unscoped queries are empty and make no calls. Exact explicit per-identity matrices preserve the existing read-only evidence policies, without widening consent or acquisition access.",
+      "tests": [
+        "tests/test_core_p0_5975_capability_projection_exact_owner.py",
+        "tests/test_core_p1_2703_precollected_evidence_bridge.py",
+        "tests/test_core_p1_2703_precollected_rights_capabilities.py"
+      ],
+      "pr": "#6048",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
