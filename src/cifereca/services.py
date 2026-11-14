@@ -1245,9 +1245,12 @@ class LibraryService:
 
     @property
     def active_session(self) -> ProviderSession:
-        if self._active_session_key is None or self._active_session_key not in self._sessions:
-            raise ProviderConfigurationError("Aucun provider n'est connecté")
-        return self._sessions[self._active_session_key]
+        """Retired selected-session shortcut; callers require an exact source.
+
+        Keep the public property ABI for historical consumers but never
+        expose a provider session chosen by mutable GUI navigation.
+        """
+        raise ProviderConfigurationError("active_session_explicit_source_required")
 
     def attach_plugin_manager(self, manager: Any) -> list[str]:
         """Attach Plugin API services, preferring external providers/runtimes when ready."""

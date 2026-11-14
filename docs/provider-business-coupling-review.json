@@ -1175,6 +1175,21 @@
       ],
       "pr": "#6114",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-active-session-navigation-selected-registry-escape-retired",
+      "original": "LibraryService.active_session public property read _active_session_key from selected GUI account navigation and returned a provider session from _sessions without an exact borrower/source admission. No installed productive consumer appears in repository code; the frozen public property ABI is characterized.",
+      "original_classification": "navigation_dependent_implicit_provider_session_escape",
+      "replacement": "Keep active_session(self) -> ProviderSession as an inert fail-closed property raising active_session_explicit_source_required. Continue using exact _session_for_account(account) and _session_for_source(provider_id,credential_id) resolution with independent source admission and leases.",
+      "classification": "retired_implicit_provider_session_escape_with_inert_property_abi",
+      "evidence": "Repository callsite search for active_session finds only its definition, facade descriptor fixture, docs, and tests referencing the distinct _active_session_key field; the property has no productive caller. Tests poison selected navigation and session registry while reading the retired property, preserve ABI and demonstrate explicit account resolution across two identities.",
+      "tests": [
+        "tests/test_core_p0_5975_active_session_retirement.py",
+        "tests/test_library_service_facade_contract.py",
+        "tests/test_core_p0_5975_session_resolver_explicit_account.py"
+      ],
+      "pr": "#6115",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
