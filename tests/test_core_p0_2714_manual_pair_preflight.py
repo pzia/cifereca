@@ -96,6 +96,28 @@ def test_same_scope_receipt_and_verified_same_bytes_is_reviewable_not_writable(
     assert filesystem(tmp_path) == before
 
 
+def test_manual_preflight_requires_scoped_proof_not_a_provider_name(
+    six_numilog,
+):
+    root, db = six_numilog
+    add_acquisition(root, db)
+    _audit, session = session_for(root, db)
+    right, file = select_pair(session)
+    assert right.key in session._manual_right_proofs
+    assert session.preflight_manual_link(right.key, file.key).status == (
+        "eligible_for_fresh_validation"
+    )
+
+    # Even a known supplier cannot select the proof path when this
+    # inspection has no prepared evidence for the exact right key.
+    session._manual_right_proofs.pop(right.key)
+    refused = session.preflight_manual_link(right.key, file.key)
+    assert refused.status == "blocked"
+    assert refused.codes == ("source_not_supported",)
+    assert refused.read_only is True
+    assert refused.attachment_authorized is False
+
+
 @pytest.mark.parametrize("file_number,missing", [
     (4, "artifact_mismatch"),
     (5, "acquisition_missing"),
