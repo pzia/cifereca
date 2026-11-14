@@ -1512,3 +1512,100 @@ def public_catalogue_target(self, row):
                     if callable(config_get) else "")
         catalogue = catalogue_url({"friendly_url": fallback})
     return ("catalogue", catalogue) if catalogue else None
+
+
+def provider_loan_active_for_acquisition(
+    self, row: object, *, cache_key_fn, cached_rows_fn,
+) -> bool:
+    """Display an active exact-source loan without GTK's mutable last_loans.
+
+    A provider loan cache is untrusted and never a right, return permission or
+    acquisition grant. Missing/foreign/stale/incomplete data is UNKNOWN,
+    represented by False for this legacy *display-only* boolean. No provider
+    network request, session switch, download or database mutation is made.
+    The facade injects its existing cache contracts; no Core → services import.
+    """
+    from inspect import getattr_static
+    from ..providers.base import ProviderDescriptor
+    from ..models import Loan
+
+    if type(row) is not dict:
+        return False
+    identity_id = row.get("identity_id")
+    provider_id = row.get("provider_id")
+    credential_id = row.get("credential_id")
+    account_id = row.get("account_id")
+    if (any(type(v) is not str or not v or len(v) > 1024 or "\0" in v
+            for v in (identity_id, provider_id, credential_id))
+            or type(account_id) is not str
+            or len(account_id) > 1024 or "\0" in account_id):
+        return False
+    try:
+        # A native empty upstream ID is a valid primary, but "primary"
+        # cannot silently become an alias if a literal borrower exists.
+        matching = [
+            account for account in self.accounts
+            if (type(account) is Account
+                and account.identity_id == identity_id
+                and account.provider_id == provider_id
+                and account.credential_id == credential_id
+                and (account.unique_id == account_id
+                     or (account.is_primary is True and account.unique_id == ""
+                         and account_id == "primary")))
+        ]
+        if len(matching) != 1:
+            return False
+        account = matching[0]
+        key = cache_key_fn(account)
+        # A cache hit must be in the exact identity/provider/credential/borrower
+        # namespace. Reading the old shared alias would cross borrower scopes.
+        raw = self.storage.cache_get("account", key)
+        session = self._sessions.get(self._session_key(provider_id, credential_id))
+        descriptor = (getattr_static(session, "descriptor", None)
+                      if session is not None else None)
+        if descriptor is not None and type(descriptor) is not ProviderDescriptor:
+            return False
+        loans = cached_rows_fn(raw, account, descriptor=descriptor)
+    except (AttributeError, TypeError, ValueError, ProviderConfigurationError):
+        return False
+    if loans is None:
+        return False
+
+    metadata = row.get("metadata")
+    metadata = metadata if type(metadata) is dict else {}
+    loan_id = metadata.get("provider_loan_id")
+    expected_ids: set[str] = {loan_id} if type(loan_id) is str and loan_id else set()
+    local_id = row.get("entitlement_id")
+    # Historical entitlement is only a reference to a local observation.
+    # It cannot certify the loan's existence unless an exact matching provider
+    # loan is ALREADY present in the validated v2 scoped cache.
+    if type(local_id) is str and local_id:
+        try:
+            legacy = self.storage.entitlements(provider_id=provider_id)
+        except (AttributeError, TypeError, ValueError, ProviderConfigurationError):
+            return False
+        if type(legacy) not in (tuple, list):
+            return False
+        for entitlement in legacy:
+            if (type(entitlement) is dict
+                    and entitlement.get("entitlement_id") == local_id
+                    and entitlement.get("provider_id") == provider_id
+                    and entitlement.get("credential_id") == credential_id
+                    and entitlement.get("account_id") == account_id
+                    and entitlement.get("identity_id") == identity_id
+                    and entitlement.get("item_id") == row.get("item_id")
+                    and type(entitlement.get("loan_id")) is str
+                    and entitlement.get("loan_id")):
+                expected_ids.add(entitlement["loan_id"])
+    if not expected_ids:
+        return False
+    return any(
+        (type(loan) is Loan
+         and type(loan.id) is str and loan.id in expected_ids
+         and loan.state == "active"
+         and loan.source_provider == provider_id
+         and loan.source_credential == credential_id
+         and loan.identity_id == identity_id
+         and loan.source_account_id == account_id)
+        for loan in loans
+    )
