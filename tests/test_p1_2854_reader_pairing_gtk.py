@@ -5,6 +5,7 @@ Fake GTK/Adw only; real SQLite with two profiles and independent device IDs.
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
@@ -16,17 +17,34 @@ from tests.test_p1_2854_readers_master_detail_page import environment
 
 
 class Field:
-    def __init__(self):
+    def __init__(self, **kwargs):
         self.value = ""
+        self.visible = True
+        self.handlers = {}
 
     def set_placeholder_text(self, value):
-        pass
+        self.placeholder = value
 
     def set_max_length(self, limit):
         self.limit = limit
 
+    def set_text(self, value):
+        self.value = value
+
     def get_text(self):
         return self.value
+
+    def set_visible(self, value):
+        self.visible = value
+
+    def connect(self, signal, callback):
+        self.handlers[signal] = callback
+
+    def set_hexpand(self, value):
+        self.hexpand = value
+
+    def set_tooltip_text(self, value):
+        self.tooltip = value
 
 
 class Group:
@@ -37,9 +55,68 @@ class Group:
         self.children.append(child)
 
 
-class Text:
+class Text(Field):
     def __init__(self, **kwargs):
-        self.text = kwargs.get("label")
+        super().__init__(**kwargs)
+        self.text = kwargs.get("label", "")
+
+    def set_label(self, value):
+        self.text = value
+
+    def set_wrap(self, value):
+        self.wrap = value
+
+
+class Button(Field):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.text = kwargs.get("label", "")
+
+    def click(self):
+        self.handlers["clicked"](self)
+
+
+class Check(Field):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.active = False
+
+    def get_active(self):
+        return self.active
+
+    def set_active(self, value):
+        if self.active != value:
+            self.active = value
+            if "toggled" in self.handlers:
+                self.handlers["toggled"](self)
+
+
+class Drop(Field):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.selection = 0
+        self.sensitive = True
+        self.model = []
+
+    @classmethod
+    def new_from_strings(cls, labels):
+        widget = cls()
+        widget.model = list(labels)
+        return widget
+
+    def set_model(self, model):
+        self.model = list(model)
+
+    def set_selected(self, position):
+        self.selection = position
+        if "notify::selected" in self.handlers:
+            self.handlers["notify::selected"](self, None)
+
+    def get_selected(self):
+        return self.selection
+
+    def set_sensitive(self, value):
+        self.sensitive = value
 
 
 class Dialog:
@@ -76,14 +153,34 @@ class Dialog:
 
     @property
     def name_field(self):
-        return self.extra.children[1]
+        return self.extra.children[5]
 
     @property
     def uuid_field(self):
+        return self.extra.children[8]
+
+    @property
+    def expert_field(self):
+        return self.extra.children[6]
+
+    @property
+    def volume_choice(self):
+        return self.extra.children[1]
+
+    @property
+    def refresh_button(self):
+        return self.extra.children[2]
+
+    @property
+    def volume_status(self):
         return self.extra.children[3]
 
 
-GUI = NS(Orientation=NS(VERTICAL=1), Box=Group, Label=Text, Entry=Field)
+GUI = NS(
+    Orientation=NS(VERTICAL=1), Box=Group, Label=Text, Entry=Field,
+    DropDown=Drop, Button=Button, CheckButton=Check,
+    StringList=NS(new=lambda values: list(values)),
+)
 ADW = NS(MessageDialog=Dialog)
 
 
@@ -97,12 +194,19 @@ def rig(tmp_path):
     return db, window, errors
 
 
-def open_dialog(window):
+def open_dialog(window, *, expert=True):
     request_reader_pairing(window, Gtk=GUI, Adw=ADW)
     dialog = getattr(window, "_reader_pairing_dialog", None)
     assert dialog is not None and dialog.presented
     assert "présence" in dialog.description
     assert dialog.responses == {"cancel": "Annuler", "confirm": "Associer"}
+    assert dialog.volume_choice.get_selected() == 0xFFFFFFFF
+    assert not dialog.uuid_field.visible
+    if expert:
+        # Existing tests exercise the preserved, explicitly selected expert
+        # workflow. New #6041 tests check the default chooser separately.
+        dialog.expert_field.set_active(True)
+        assert dialog.uuid_field.visible
     return dialog
 
 
