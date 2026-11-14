@@ -170,7 +170,7 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
         if (len(matches) > 32 or any(
                 type(a.unique_id) is not str
                 or len(a.unique_id) > 1024
-                or "\\x00" in a.unique_id
+                or "\x00" in a.unique_id
                 or type(a.is_primary) is not bool
                 for a in matches)):
             # A malformed or oversized borrower inventory invalidates ONLY
