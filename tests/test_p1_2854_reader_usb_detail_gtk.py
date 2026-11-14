@@ -154,7 +154,7 @@ def test_callback_projects_current_selected_book_only(tmp_path, monkeypatch):
         page_controller, "reader_selected",
         lambda window, row: calls.append((window, row.key)),
     )
-    request_reader_usb_preview(host, object(), Gtk=FAKE_GTK)
+    request_reader_usb_preview(host, object(), Gtk=FAKE_GTK, manual=True)
     chooser = host._reader_usb_preview_chooser
     chooser.respond(str(tmp_path))
     assert calls == []
@@ -188,7 +188,7 @@ def test_background_preview_does_not_attach_result_to_changed_library(
         total_local=1, wanted_keep=1, wanted_remove=0, no_intention=0,
     )
     host._reader_library_snapshot = snap
-    request_reader_usb_preview(host, object(), Gtk=FAKE_GTK)
+    request_reader_usb_preview(host, object(), Gtk=FAKE_GTK, manual=True)
     host._reader_usb_preview_chooser.respond(str(tmp_path))
     assert len(host.runner.calls) == 1
     _label, _work, done, _error, _opts = host.runner.calls[0]
