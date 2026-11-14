@@ -930,7 +930,7 @@ def reconnect_expired_configured_source_once(
         epoch = source_context_epoch(self)
         rows = self.config.provider_accounts(enabled_only=True)
         candidates = _configured_rows_for_source(
-            rows, source_scope=scope[:3], default_identity=scope[0],
+            rows, source_scope=scope[:3],
         )
         # Snapshot persisted consent and credential values before POST;
         # config can mutate in place during provider I/O.
@@ -1008,7 +1008,7 @@ def reconnect_expired_configured_source_once(
             return None
         latest_rows = self.config.provider_accounts(enabled_only=True)
         selected = _configured_rows_for_source(
-            latest_rows, source_scope=scope[:3], default_identity=scope[0],
+            latest_rows, source_scope=scope[:3],
         )[0]
         if (selected != row
                 or not _interactive_background_opted_in(plugin.descriptor, selected)
