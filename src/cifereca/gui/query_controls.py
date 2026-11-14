@@ -317,7 +317,12 @@ class LocalQueryControls(QueryControls):
             self.clear_button.set_sensitive(True)
 
     def reset_filters(self):
-        if getattr(self, "_local_sort", None) is not None:
+        sort_changed = (
+            getattr(self, "_local_sort", None) is not None
+            and self.local_sort_key() != "rank"
+        )
+        filters_changed = self.state() != self._initial_filter_state
+        if sort_changed:
             # Single reset operation: neither source filters nor sort
             # can silently remain active when the user clicks Effacer.
             self._programmatic_update = True
@@ -326,6 +331,10 @@ class LocalQueryControls(QueryControls):
             finally:
                 self._programmatic_update = False
         super().reset_filters()
+        if sort_changed and not filters_changed:
+            # QueryState did not move, hence super() did not emit "changed".
+            # A sort-only reset must still restore the list's ranked order.
+            self._changed_callback()
 
     @property
     def widget(self):
