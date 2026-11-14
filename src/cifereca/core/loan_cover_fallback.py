@@ -196,6 +196,24 @@ def loan_local_cover(
                               or type(row.get("entitlement_id")) is not str
                               or not row["entitlement_id"]):
                 continue
+            remote_resolution = None
+            if not local:
+                metadata = row.get("metadata")
+                remote_resolution = (
+                    metadata.get("cover_resolution")
+                    if type(metadata) is dict else None
+                )
+                # Bad metadata from one catalogue must not abort processing
+                # independent exact local/remote proofs in the same snapshot.
+                # A remote entitlement has no physical Placement; an
+                # "embedded" image can be attested only by a local row.
+                if (type(remote_resolution) is not dict
+                        or remote_resolution.get("status") != "selected"
+                        or type(remote_resolution.get("tier")) is not str
+                        or remote_resolution["tier"] not in ("origin", "catalog")
+                        or type(remote_resolution.get("url")) is not str
+                        or remote_resolution["url"] != row.get("thumbnail_url")):
+                    continue
             proofs = row.get("_exact_loan_cover_proofs", ())
             if type(proofs) not in (tuple, list) or len(proofs) > 128:
                 continue
@@ -214,20 +232,27 @@ def loan_local_cover(
                         or (not local and (
                             proof.get("kind") != "remote-entitlement"
                             or proof.get("entitlement_id") != row["entitlement_id"]
-                            or proof.get("url") != row.get("thumbnail_url")
-                            or type(row.get("metadata")) is not dict
-                            or row["metadata"].get("cover_resolution", {}).get("status") != "selected"
-                            or row["metadata"]["cover_resolution"].get("url") != proof.get("url")
-                            or row["metadata"]["cover_resolution"].get("tier") != proof.get("tier")
+                            or type(proof.get("url")) is not str
+                            or proof["url"] != remote_resolution["url"]
+                            or type(proof.get("tier")) is not str
+                            or proof["tier"] != remote_resolution["tier"]
                         ))):
                     continue
                 tier = proof.get("tier")
-                if tier not in ("embedded", "origin", "catalog"):
+                if (type(tier) is not str
+                        or tier not in (
+                            ("embedded", "origin", "catalog") if local
+                            else ("origin", "catalog")
+                        )):
                     continue
                 # Equal-strength conflicting evidence must remain ambiguous.
                 cover = candidate(
-                    proof.get("url"), tier=tier, source="verified-local-placement",
-                    evidence_id=str(row["placement_id"] if local else row["entitlement_id"]), evidence_strength=100,
+                    proof.get("url"), tier=tier,
+                    source=("verified-local-placement" if local
+                            else "verified-remote-entitlement"),
+                    evidence_id=(row["placement_id"] if local
+                                 else row["entitlement_id"]),
+                    evidence_strength=100,
                 )
                 if cover is not None:
                     candidates.append(cover)
