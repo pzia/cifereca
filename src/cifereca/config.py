@@ -66,6 +66,80 @@ def _archive_legacy_kobo_globals_once(data: dict[str, Any]) -> None:
     }
 
 
+# Persistent data-upgrade marker. This cannot grant source consent or rights.
+_LEGACY_CARDINALITY_V1 = "legacy_account_cardinality_v1"
+
+
+def _migrate_legacy_account_cardinality_once(
+    data: dict[str, Any], identities: list[dict[str, Any]],
+    rows: list[dict[str, Any]], default_identity: str,
+    used_directories: set[str],
+) -> bool:
+    """One-way 0.8.1 account repair, not a runtime provider policy.
+
+    Re-run only for a persisted config that has accounts and NO completion
+    marker. A malformed/unknown history is never overwritten or interpreted
+    as permission to create identities. Once saved, edited modern accounts
+    must use their normal cardinality validation instead.
+    """
+    history = data.get("migration_history")
+    if history is not None and type(history) is not dict:
+        return False
+    if not rows or (type(history) is dict and _LEGACY_CARDINALITY_V1 in history):
+        return False
+    split_count = 0
+    # Historical source-specific repair is deliberately quarantined in this
+    # versioned data migration. No plugin I/O, ADEPT binding or file mutation.
+        seen_kobo: dict[str, str] = {}
+        identity_by_id = {str(item.get("id") or ""): item for item in identities if isinstance(item, dict)}
+        for row in rows:
+            if str(row.get("provider") or "").strip().lower() != "kobo":
+                continue
+            credential_id = str(row.get("id") or "").strip()
+            identity_id = str(row.get("identity_id") or default_identity).strip() or default_identity
+            previous = seen_kobo.get(identity_id)
+            if not previous or previous == credential_id:
+                seen_kobo[identity_id] = credential_id
+                continue
+            suffix = hashlib.sha256(credential_id.encode("utf-8", "surrogatepass")).hexdigest()[:8]
+            base_id = f"{identity_id}-kobo-{suffix}"
+            derived_id = base_id
+            serial = 2
+            while derived_id in identity_by_id:
+                derived_id = f"{base_id}-{serial}"
+                serial += 1
+            source = identity_by_id.get(identity_id, {})
+            derived_label = str(row.get("label") or f"{source.get('label') or identity_id} Kobo")
+            directory_base = _identity_directory_slug(derived_label, derived_id)
+            directory_name = directory_base
+            serial_dir = 2
+            while directory_name in used_directories:
+                directory_name = f"{directory_base}-{serial_dir}"
+                serial_dir += 1
+            used_directories.add(directory_name)
+            derived = {
+                "id": derived_id,
+                "label": derived_label,
+                "directory_name": directory_name,
+                "preferences": deepcopy(source.get("preferences") or {
+                    "prefer_original_language": False, "reading_languages": ["fr"]
+                }),
+            }
+            identities.append(derived)
+            identity_by_id[derived_id] = derived
+            row["identity_id"] = derived_id
+            seen_kobo[derived_id] = credential_id
+            split_count += 1
+    if history is None:
+        history = {}
+        data["migration_history"] = history
+    history[_LEGACY_CARDINALITY_V1] = {
+        "schema_version": 1, "status": "completed",
+        "split_count": split_count,
+    }
+    return split_count > 0
+
+
 class Config:
     def __init__(self, path: Path | None = None):
         self.path = path or config_file()
@@ -142,49 +216,12 @@ class Config:
             if not str(row.get("identity_id") or "").strip():
                 row["identity_id"] = default_identity
                 changed = True
-        # 0.8.1 cardinality repair: one Kobo Vault connection per Paris
-        # identity. Early builds attached all legacy provider rows to the first
-        # identity. Split only the extra Kobo rows into deterministic identities;
-        # do not guess or duplicate ADE profile bindings.
-        seen_kobo: dict[str, str] = {}
-        identity_by_id = {str(item.get("id") or ""): item for item in identities if isinstance(item, dict)}
-        for row in rows:
-            if str(row.get("provider") or "").strip().lower() != "kobo":
-                continue
-            credential_id = str(row.get("id") or "").strip()
-            identity_id = str(row.get("identity_id") or default_identity).strip() or default_identity
-            previous = seen_kobo.get(identity_id)
-            if not previous or previous == credential_id:
-                seen_kobo[identity_id] = credential_id
-                continue
-            suffix = hashlib.sha256(credential_id.encode("utf-8", "surrogatepass")).hexdigest()[:8]
-            base_id = f"{identity_id}-kobo-{suffix}"
-            derived_id = base_id
-            serial = 2
-            while derived_id in identity_by_id:
-                derived_id = f"{base_id}-{serial}"
-                serial += 1
-            source = identity_by_id.get(identity_id, {})
-            derived_label = str(row.get("label") or f"{source.get('label') or identity_id} Kobo")
-            directory_base = _identity_directory_slug(derived_label, derived_id)
-            directory_name = directory_base
-            serial_dir = 2
-            while directory_name in used_directories:
-                directory_name = f"{directory_base}-{serial_dir}"
-                serial_dir += 1
-            used_directories.add(directory_name)
-            derived = {
-                "id": derived_id,
-                "label": derived_label,
-                "directory_name": directory_name,
-                "preferences": deepcopy(source.get("preferences") or {
-                    "prefer_original_language": False, "reading_languages": ["fr"]
-                }),
-            }
-            identities.append(derived)
-            identity_by_id[derived_id] = derived
-            row["identity_id"] = derived_id
-            seen_kobo[derived_id] = credential_id
+        # Only a version-gated historical data upgrade may reassign old
+        # account rows. Normal reloads with its persisted completion marker
+        # never enter the supplier-specific repair writer.
+        if _migrate_legacy_account_cardinality_once(
+            self.data, identities, rows, default_identity, used_directories,
+        ):
             changed = True
 
         # An early 0.8.1 config could also repeat the same ADE profile on several
