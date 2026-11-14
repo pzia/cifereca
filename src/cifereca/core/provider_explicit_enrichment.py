@@ -15,12 +15,12 @@ from .source_context import source_context_epoch
 _ERROR = "explicit_public_enrichment_unavailable"
 
 
-def _scope(service, item, expected_identity_id):
+def _scope(service, item, expected_identity_id, selected_identity_id):
     if (type(item) is not SearchResult
             or type(expected_identity_id) is not str
             or not expected_identity_id
-            or getattr(getattr(service, "current_identity", None),
-                       "identity_id", None) != expected_identity_id
+            or type(selected_identity_id) is not str
+            or selected_identity_id != expected_identity_id
             or type(item.source_provider) is not str or not item.source_provider
             or type(item.source_credential) is not str or not item.source_credential
             or item.download_url is not None):
@@ -43,12 +43,26 @@ def _scope(service, item, expected_identity_id):
     return "private"
 
 
-def enrich_provider_detail_once(service, item: SearchResult, *,
-                                expected_identity_id: str) -> SearchResult:
+def enrich_provider_detail_once(
+    service, item: SearchResult, *, expected_identity_id: str,
+    selected_identity_id: str | None = None,
+    expected_context_epoch: int | None = None,
+) -> SearchResult:
     """Invoke exactly one scoped provider detail method, fail-closed on rebind."""
+    # A typed identity snapshot must come from the synchronous facade, not
+    # from mutable GTK navigation inside this headless supplier worker.
+    def context_current() -> bool:
+        return (
+            type(expected_context_epoch) is int and expected_context_epoch >= 0
+            and getattr(service, "_account_context_epoch", None)
+                == expected_context_epoch
+        )
+
     try:
+        if not context_current():
+            raise ValueError("identity_context_unavailable")
         epoch = source_context_epoch(service)
-        kind = _scope(service, item, expected_identity_id)
+        kind = _scope(service, item, expected_identity_id, selected_identity_id)
         session = service._session_for_source(
             item.source_provider, item.source_credential,
         )
@@ -58,8 +72,11 @@ def enrich_provider_detail_once(service, item: SearchResult, *,
         if not callable(action):
             raise ValueError("method_unavailable")
         result = action(item)
-        if (source_context_epoch(service) != epoch
-                or _scope(service, item, expected_identity_id) != kind
+        if (not context_current()
+                or source_context_epoch(service) != epoch
+                or _scope(
+                    service, item, expected_identity_id, selected_identity_id,
+                ) != kind
                 or type(result) is not SearchResult
                 or any(getattr(result, key) != getattr(item, key)
                        for key in (

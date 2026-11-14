@@ -118,7 +118,7 @@ def test_kobo_default_adapter_label_remains_valid_for_named_core_owner(
 
 
 def test_materialization_registry_checks_use_admitted_source_provider():
-    """Only the legacy entry gate names Kobo; identity and leases are scoped."""
+    """Provider admission uses capabilities; every lease remains source-scoped."""
     import ast
     import inspect
     from cifereca.core import source_materialization
@@ -129,7 +129,8 @@ def test_materialization_registry_checks_use_admitted_source_provider():
         node.value for node in ast.walk(tree)
         if isinstance(node, ast.Constant) and node.value == "kobo"
     ]
-    assert literals == ["kobo"]
+    assert literals == []
+    assert '"local_materialization"' in source
     assert "identity_for_connection(account.provider_id, account.credential_id)" in source
     assert "service._session_key(account.provider_id, account.credential_id)" in source
     assert "session_accounts[0].provider_id == account.provider_id" in source

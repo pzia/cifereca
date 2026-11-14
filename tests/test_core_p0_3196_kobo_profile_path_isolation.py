@@ -37,10 +37,9 @@ def test_read_only_consumers_do_not_import_retired_backup_engine(module):
         if isinstance(node, ast.ImportFrom)
         and any(alias.name == "_kobo_preview_paths" for alias in node.names)
     ]
-    # Only canonical source preparation requires the read-only Kobo root selector.
-    # W4 reconciliation no longer imports it after the retired aliases vanish.
-    expected = ["profile_source_paths"] if module == "source_materialization.py" else []
-    assert selector_imports == expected
+    # Canonical preparation no longer imports supplier-specific W2 roots.
+    # The historical pure selector remains for reading old backup receipts.
+    assert selector_imports == []
 
 
 def test_root_selector_keeps_missing_identity_read_only(tmp_path):

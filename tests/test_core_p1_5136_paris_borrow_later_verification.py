@@ -145,7 +145,7 @@ def test_generic_followup_accepts_linked_primary_only_with_exact_spent_claim(tmp
         }
         # Readiness alone is insufficient, even for a primary linked reader.
         assert not borrow_followup_available(
-            service, item, readiness=neutral_readiness,
+            service, item, readiness=neutral_readiness, identity_id="default",
         )
         claimed, _receipt = service.storage.loan_borrow_claim_once(
             key, "synthetic-linked-operation",
@@ -159,7 +159,7 @@ def test_generic_followup_accepts_linked_primary_only_with_exact_spent_claim(tmp
         # linked borrower IDs; Core's generic machinery doesn't hardcode it.
         assert not service.manual_borrow_followup_available(item)
         assert borrow_followup_available(
-            service, item, readiness=neutral_readiness,
+            service, item, readiness=neutral_readiness, identity_id="default",
         )
         assert state["mutations"] == 0
         assert state["calls"] == []

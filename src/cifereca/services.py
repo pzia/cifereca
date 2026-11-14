@@ -292,7 +292,13 @@ class LibraryService:
     def can_borrow_manual(self, item: SearchResult) -> bool:
         """Generic inert availability, with exact provider-owned scope."""
         from .core.manual_borrow_contract import manual_borrow_action_available
-        return manual_borrow_action_available(self, item)
+        selected = self.current_identity
+        epoch = self._account_context_epoch
+        possible = manual_borrow_action_available(
+            self, item, identity_id=getattr(selected, "identity_id", None),
+        )
+        return (possible is True and self.current_identity is selected
+                and self._account_context_epoch == epoch)
 
     def borrow_manual(
         self, item: SearchResult, *, expected_identity_id: str,
@@ -472,21 +478,48 @@ class LibraryService:
     def manual_borrow_diagnostic(self, item: SearchResult) -> dict[str, object]:
         """Read-only scoped admission from the installed provider policy."""
         from .core.manual_borrow_contract import manual_borrow_action_diagnostic
-        return manual_borrow_action_diagnostic(self, item)
+        selected = self.current_identity
+        epoch = self._account_context_epoch
+        result = manual_borrow_action_diagnostic(
+            self, item, identity_id=getattr(selected, "identity_id", None),
+        )
+        if (self.current_identity is not selected
+                or self._account_context_epoch != epoch):
+            return {
+                "local_action_possible": False,
+                "reason_code": "local_scope_changed",
+                "provider_eligibility": "unknown",
+            }
+        return result
 
     def manual_borrow_followup_available(self, item: SearchResult) -> bool:
         """A spent claim may be inspected, never submitted again."""
         from .core.borrow_later_verification import borrow_followup_available
-        return borrow_followup_available(
+        selected = self.current_identity
+        epoch = self._account_context_epoch
+        available = borrow_followup_available(
             self, item, readiness=self.manual_borrow_diagnostic,
+            identity_id=getattr(selected, "identity_id", None),
         )
+        return (available is True and self.current_identity is selected
+                and self._account_context_epoch == epoch)
 
     def verify_manual_borrow_followup(self, item: SearchResult) -> dict[str, object]:
         """Independently observe a spent claim without mutation or entitlement."""
         from .core.borrow_later_verification import verify_pending_borrow_followup
-        return verify_pending_borrow_followup(
+        selected = self.current_identity
+        epoch = self._account_context_epoch
+        result = verify_pending_borrow_followup(
             self, item, readiness=self.manual_borrow_diagnostic,
+            identity_id=getattr(selected, "identity_id", None),
         )
+        if (self.current_identity is not selected
+                or self._account_context_epoch != epoch):
+            return {
+                "status": "blocked", "reason_code": "borrow_verification_claim_mismatch",
+                "retry_borrow": False, "mutated": False,
+            }
+        return result
 
     def verify_borrow_without_submission(
         self, item: SearchResult, *, expected_identity_id: str,
@@ -1180,6 +1213,11 @@ class LibraryService:
         return provider_sessions._provider_plugin_status(self, provider_id)
 
     def _provider_enabled_for_identity(self, provider_id: str, identity_id: str | None = None) -> bool:
+        # Historical no-argument callers remain supported at the synchronous
+        # facade boundary only. Core provider policy never reads UI state.
+        if identity_id is None:
+            current = self.current_identity
+            identity_id = getattr(current, "identity_id", None)
         return provider_sessions._provider_enabled_for_identity(self, provider_id, identity_id)
 
     def provider_descriptors(self):
@@ -1614,7 +1652,17 @@ class LibraryService:
         return search_orchestration._normalized_language_values(value)
 
     def _search_preference_score(self, row: SearchResult) -> int:
-        return search_orchestration._search_preference_score(self, row)
+        # Facade/GUI boundary: capture exactly one selected profile and copy
+        # its preference values. Headless Core never queries navigation state.
+        selected = self.current_identity
+        if selected is None:
+            return 0
+        prefs = selected.preferences
+        return search_orchestration._search_preference_score(
+            row,
+            reading_languages=tuple(prefs.reading_languages),
+            prefer_original_language=prefs.prefer_original_language is True,
+        )
 
     def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> str:
         """Translate provider availability into a user-actionable label."""
@@ -1964,9 +2012,23 @@ class LibraryService:
     def enrich_provider_search_result(self, item: SearchResult, *, expected_identity_id: str) -> SearchResult:
         """User-triggered metadata-only provider enrichment; never auto-sync."""
         from .core.provider_explicit_enrichment import enrich_provider_detail_once
-        return enrich_provider_detail_once(
+        from .plugin_api import ProviderCapabilityError
+
+        # Capture UI navigation once at the public boundary; the Core worker
+        # must never resolve mutable GTK selection during the provider GET.
+        selected = self.current_identity
+        account_epoch = self._account_context_epoch
+        enriched = enrich_provider_detail_once(
             self, item, expected_identity_id=expected_identity_id,
+            selected_identity_id=getattr(selected, "identity_id", None),
+            expected_context_epoch=account_epoch,
         )
+        # The worker fences account epoch before/after supplier IO. The
+        # facade also checks object identity, including a late re-selection.
+        if (self.current_identity is not selected
+                or self._account_context_epoch != account_epoch):
+            raise ProviderCapabilityError("explicit_public_enrichment_unavailable")
+        return enriched
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
         # Catalogue-only projections do not attest borrower rights. The
@@ -3236,7 +3298,12 @@ class LibraryService:
             # Even an invalid or partial declaration fails closed through the
             # selected-source validator; it must never downgrade to legacy GET.
             from .core.selected_owned_search import obtain_selected_owned
-            return obtain_selected_owned(self, item)
+            selected = self.current_identity
+            epoch = self._account_context_epoch
+            return obtain_selected_owned(
+                self, item, identity_id=getattr(selected, "identity_id", None),
+                expected_epoch=epoch,
+            )
         return MaterializationCoordinator(
             acquire=self.acquire_direct_item,
             index_path=self.catalog_index_path,
@@ -3245,10 +3312,31 @@ class LibraryService:
 
     def owned_library_download_target(self, entry):
         from .core.owned_library_download import owned_library_download_target
-        return owned_library_download_target(self, entry)
+        # The facade alone reads navigation. A changed selection, including
+        # A→B→A, cannot publish an action target from an earlier projection.
+        selected = self.current_identity
+        epoch = self._account_context_epoch
+        target = owned_library_download_target(
+            self, entry, identity_id=getattr(selected, "identity_id", None),
+            expected_epoch=epoch,
+        )
+        if (self.current_identity is not selected
+                or self._account_context_epoch != epoch):
+            return None
+        return target
 
     def obtain_owned_library_item(self, target):
-        from .core.owned_library_download import obtain_owned_library_item
+        from .core.owned_library_download import (
+            OwnedDownloadRejected, obtain_owned_library_item,
+        )
+        from .core.selected_source_offer import SourceOfferTarget
+        # A caller-supplied target is not a substitute for the active profile
+        # at this public action boundary. Once admitted, the Core worker
+        # relies only on exact source evidence and the pinned account epoch.
+        if type(target) is SourceOfferTarget:
+            selected = self.current_identity
+            if getattr(selected, "identity_id", None) != target.identity_id:
+                raise OwnedDownloadRejected("owned_download_unavailable")
         return obtain_owned_library_item(self, target)
 
     def prepare_direct_download(self, item: SearchResult) -> tuple[Path, str]:

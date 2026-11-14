@@ -48,7 +48,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(mod.ALL) | set(mod.OPTIONAL_UX), set(runner.SCENARIOS))
         self.assertEqual(set(mod.ALL) & set(mod.OPTIONAL_UX), set())
         self.assertEqual(mod.OPTIONAL_UX, ("book-detail-1700",))
-        self.assertEqual(len(mod.ALL), 47)
+        self.assertEqual(len(mod.ALL), 49)
         self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024"))
         self.assertEqual(mod.PLUGIN_SCROLL, ("plugin-manager-scroll-1024", "plugin-manager-scroll-1366"))
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
@@ -156,7 +156,6 @@ class SelectionTests(unittest.TestCase):
             "optimizer-handoff-1366", "optimizer-handoff-1600",
         })
 
-
     def test_p1_6041_reader_dialog_scenarios_are_selected_and_standalone(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("cifereca_e2e_runner",
@@ -176,11 +175,16 @@ class SelectionTests(unittest.TestCase):
         )
         for owner in (
             "src/cifereca/gui/reader_pairing_actions.py",
-            "src/cifereca/gui/reader_page_controller.py",
             "src/cifereca/core/device_usb_discovery.py",
             "src/cifereca/core/device_usb_binding_proposal.py",
         ):
-            self.assertEqual(mod.select([owner]), mod.READER_USB_GTK, owner)
+            self.assertEqual(set(mod.select([owner])), set(mod.READER_USB_GTK + mod.READER_INSPECTION_GTK), owner)
+
+    def test_p1_6041_reader_page_triggers_pairing_and_inspection_gates(self):
+        self.assertEqual(
+            set(mod.select(["src/cifereca/gui/reader_page_controller.py"])),
+            set(mod.READER_USB_GTK + mod.READER_INSPECTION_GTK),
+        )
 
     def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
         for path in ("src/cifereca/gui/settings_ai_actions.py",
@@ -450,6 +454,28 @@ class SelectionTests(unittest.TestCase):
 
     def test_test_contract_full(self):
         self.assertEqual(mod.select(["tests/test_e2e_runner_contract.py"]), mod.ALL)
+
+
+    def test_p1_6077_real_gtk_reader_inspection_is_a_scoped_and_honest_probe(self):
+        self.assertEqual(mod.READER_INSPECTION_GTK, (
+            "reader-usb-inspection-1024", "reader-usb-inspection-1366",
+        ))
+        for path in (
+            "src/cifereca/gui/reader_usb_preview_actions.py",
+            "src/cifereca/gui/reader_page_controller.py",
+            "e2e/reader_usb_inspection_probe.py",
+        ):
+            self.assertEqual(mod.select([path]), mod.READER_INSPECTION_GTK)
+        probe = (ROOT / "e2e/reader_usb_inspection_probe.py").read_text(
+            encoding="utf-8",
+        )
+        self.assertIn('button.emit("clicked")', probe)
+        self.assertIn('not XTEST', probe)
+        self.assertIn("Gtk.Window(", probe)
+        self.assertIn("inspect_usb_dry_run", probe)
+        self.assertIn("no_implicit_usb_search_on_render", probe)
+        self.assertIn("exact_mount_skips_native_folder_chooser", probe)
+        self.assertIn("revoked_profile_cannot_start_new_gtk_scan", probe)
 
 if __name__ == "__main__":
     unittest.main()

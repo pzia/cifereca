@@ -17,12 +17,12 @@ def test_only_exact_generic_selected_origin_is_offered(monkeypatch, provider):
     sentinel = object()
     monkeypatch.setattr(
         selection, "select_library_source_offer_target",
-        lambda service, entry: calls.append((service, entry)) or sentinel,
+        lambda service, entry, **scope: calls.append((service, entry, scope)) or sentinel,
     )
     service = NS()
     entry = {"provider_id": provider, "state": "remote_owned"}
-    assert action.owned_library_download_target(service, entry) is sentinel
-    assert calls == [(service, entry)]
+    assert action.owned_library_download_target(service, entry, identity_id="alice") is sentinel
+    assert calls == [(service, entry, {"identity_id": "alice"})]
 
 
 @pytest.mark.parametrize("legacy", [

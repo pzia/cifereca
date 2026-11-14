@@ -32,19 +32,20 @@
       "rationale": "This is a live provider-aware veto of replay/cross-borrower staging, not a removable detection heuristic; explicitly blocks zero-brand-decision closure until typed contract migration"
     },
     {
-      "id": "site-105fb5dbf04033ddeb95cc3d",
+      "id": "site-e3fc978e29d69c2c875be9dc",
       "classification": "legacy_mutating_cutover",
-      "journey": "legacy Kobo configuration cardinality repair during Config.load",
-      "productive_caller": "Config.load -> provider_accounts -> legacy per-identity Kobo account splitting and persisted directory identity names",
-      "effect": "May mutate legacy configuration identities/directories; not an entitlement, purchase, provider GET or canonical writer",
+      "journey": "Versioned historical Kobo account-cardinality migration; no runtime repeat after persisted completion marker",
+      "productive_caller": "Config.load -> _migrate_legacy_account_cardinality_once, only before migration_history completion tombstone; normal reloads skip the old supplier-specific repair",
+      "effect": "A never-migrated legacy config may deterministically split historical Kobo identities and directories in memory. Completed configurations cannot be reassigned by this writer; not a provider GET, consent, ADEPT grant, entitlement, or canonical writer.",
       "authority": "Historical Kobo 0.8.1 repair from persisted legacy provider account rows; descriptor-time cardinality is too late for that legacy migration",
-      "replacement_contract": "Idempotent versioned migration with recorded completion/tombstone so normal runtime Config.load no longer branches on Kobo",
+      "replacement_contract": "The versioned one-way migration with persisted tombstone is installed by #6075. The remaining historical supplier AST signal cannot be retired until all old configurations have a proven versioned generic migration path or complete deprecation.",
       "tests": [
         "tests/test_identities_081.py",
-        "tests/test_core_p0_5743_sqlite_cardinality_v15.py"
+        "tests/test_core_p0_5743_sqlite_cardinality_v15.py",
+        "tests/test_core_p0_5975_legacy_cardinality_single_run.py"
       ],
       "retirement_pr": "",
-      "rationale": "This active legacy load-time repair can write and reassign profile/directory configuration; it is a supplier-specific mutating compatibility path. Keep intact until a versioned, descriptor-neutral migration has replay/rollback proof."
+      "rationale": "The site moved from Config.load to a conditional versioned legacy migration and remains reachable on an old configuration without a tombstone. Retain legacy_mutating_cutover, track the new semantic AST site ID, and do not claim a reduction of the raw AST or a complete writer retirement."
     },
     {
       "id": "site-7baf3b4f552b2c895f2c79ae",
@@ -74,21 +75,6 @@
       ],
       "retirement_pr": "",
       "rationale": "A currently executed provider-specific veto; do not remove until the same negative behavior is represented by a typed source contract"
-    },
-    {
-      "id": "site-3b2694ab8fb302ff443ce689",
-      "classification": "must_migrate",
-      "journey": "Numilog manual-link receipt preflight",
-      "productive_caller": "LocalInspection.__init__ -> _manual_right_proofs -> preflight_manual_link, restricted to Numilog",
-      "effect": "Computes source-specific private receipt attestation/collision/ledger flags for an optional user-facing attachment preflight; not a canonical right from the title",
-      "authority": "Legacy authenticated-library receipts and exact source SQLite ledger; positive preflight is not itself a Placement or OriginLink",
-      "replacement_contract": "Plugin-provided versioned source receipt evidence validated by a provider-neutral read-only Core inspector; remove Numilog branch and private proof dictionary from shared Core",
-      "tests": [
-        "tests/test_core_p0_2797_source_aware_preflight.py",
-        "tests/test_core_p0_2714_manual_pair_preflight.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Active branded projection/decision remains in a shared Core inspector, so it must not be classified as retired or mere presentation"
     },
     {
       "id": "site-9a427643ffc95bcc036e10d7",
@@ -208,22 +194,6 @@
       ],
       "retirement_pr": "",
       "rationale": "Supplier whitelist within a read-only audit is a necessary historical safety gate pending a neutral proven substitute; not an active canonical producer."
-    },
-    {
-      "id": "site-9505ed058db59cf26b03c187",
-      "classification": "must_migrate",
-      "journey": "Kobo-only manual materialization admission before canonical Source Sync",
-      "productive_caller": "SynchronizationBrokerImpl.prepare_materialization/execute_materialization -> core.source_materialization._source -> canonical A-to-B Sync",
-      "effect": "Core routes this generic confirmation surface only to provider_id=kobo. `prepare`/`execute` now require a complete v1/v2 delivery ABI; partial ABI returns canonical_delivery_unavailable and CANNOT execute W2 backup writes",
-      "authority": "Kobo named Core UI routing plus verified session, exact account, live CAS policy and canonical source capability; legacy 0.7 backup is not a permitted executor",
-      "replacement_contract": "Generic provider-declared source-materialization capability, using already installed canonical Sync broker or retire this branded compatibility UI entrypoint",
-      "tests": [
-        "tests/test_source_materialization_confirmation.py",
-        "tests/test_core_p0_3196_residual_writer_surface.py",
-        "tests/test_core_p0_4858_manual_canonical_materialization.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Brand-specific execution routing remains in shared Core, but the old writer is physically absent: classifying it as an active legacy_mutating_cutover would be factually wrong."
     },
     {
       "id": "site-dd2ac28f46a8a720315de122",
@@ -739,6 +709,162 @@
         "tests/test_core0929_statistics.py"
       ],
       "pr": "#6064",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-acsmtoken-visibility-core-navigation-fallback",
+      "original": "core.explicit_loan_acsm_visibility.explicit_loan_acsm_action_available read service.current_identity after resolving the installed session to determine whether an existing loan should expose an ACSM action button",
+      "original_classification": "navigation_dependent_private_action_visibility_read",
+      "replacement": "The headless projection requires an explicit selected_identity_id equal to the native Loan.identity_id; GUI.DetailPanel.show_loan captures the selected identity once before calling the Core worker. Exact connected source/session/account and static staging profile still gate visibility; executable staging revalidates its own durable grant.",
+      "classification": "removed_navigation_loan_acsm_visibility_worker",
+      "evidence": "Headless Core synthetic service raises on any current_identity getter; valid Alice selected scope still shows a read-only button and missing/foreign/invalid selected scope refuses before session inspection. Existing mismatch/duplicate/closed session and static profile tests pass; presentation cannot grant consent, write a token, inspect file, GET/POST, or mutate SQL.",
+      "tests": [
+        "tests/test_core_p0_5975_neutral_acsm_action.py",
+        "tests/test_core_ui_p0_5048_neutral_loan_download_unavailable.py",
+        "tests/test_core_ui_bnf_acsm_native.py"
+      ],
+      "pr": "#6066",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-search-preferences-core-navigation-ranking",
+      "original": "core.search_orchestration._search_preference_score ranked search results by reading mutable service.current_identity inside a headless search worker",
+      "original_classification": "navigation_dependent_readonly_core_projection",
+      "replacement": "Core search score takes an immutable tuple of preferred reading languages and a boolean original-language preference; LibraryService preserves its facade method ABI and captures the profile once per score",
+      "classification": "removed_navigation_search_preference_worker",
+      "evidence": "Pure Core scoring has no service argument, no GTK getter, provider session, storage, I/O or rights check; synthetic headless tests assert original-language bonus, missing identity returns zero and a facade getter is invoked once per score. Preference values cannot grant a source action or entitlement.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_search_preferences.py",
+        "tests/test_identities_081.py"
+      ],
+      "pr": "#6073",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-opening-sync-readiness-no-gtk-identity",
+      "original": "core.provider_sessions._opening_sync_covers_visible_accounts read the mutable current_identity getter during the startup connect sweep to choose which borrower's loans could be suppressed",
+      "original_classification": "navigation_dependent_initial_loan_refresh_decision",
+      "replacement": "The startup connection sweep passes an exact admitted account/identity scope; the Core worker accepts only explicit selected_identity_id and refuses missing, malformed or accountless scope or indeterminate source Sync consent, instead of re-reading GUI selection.",
+      "classification": "removed_navigation_opening_sync_scope_worker",
+      "evidence": "Synthetic headless service with poison-current_identity proves no worker navigation read; unknown/malformed scope and absent accounts preserve forced refresh; explicit switched profiles and non-affirmative Sync policy never suppress the initial loan read. No supplier GET, consent update, acquisition, SQLite writes or new supplier switch.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_opening_sync_coverage.py",
+        "tests/test_core_p0_1354_exact_source_session.py"
+      ],
+      "pr": "#6079",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-public-provider-enablement-core-navigation-fallback",
+      "original": "core.provider_sessions._provider_enabled_for_identity inferred the active GTK-selected profile (and default fallback) when applying virtual/public provider enabled_for_identity and per-identity overrides; selected_private_offer_hint invoked this policy without passing its already admitted source identity",
+      "original_classification": "navigation_dependent_provider_enablement_and_private_offer_visibility",
+      "replacement": "Core provider enablement requires a well-formed explicit identity for public/virtual visibility before reading plugin manager policy. The historical LibraryService no-argument method captures selection once at the synchronous facade boundary; selected_private_offer_hint always supplies the scoped identity and refuses missing scope before enablement.",
+      "classification": "removed_navigation_provider_enablement_worker",
+      "evidence": "Synthetic headless Core worker has poison current_identity and checks exact Alice/Bob enablement; malformed/missing/foreign identities refuse before manager queries. The facade getter runs once only for no-argument legacy callers; explicitly scoped private-offer hint cannot inherit another GTK identity and makes no provider calls. Non-virtual ready session behavior is unchanged.",
+      "tests": [
+        "tests/test_core_p0_5975_provider_enablement_scope.py",
+        "tests/test_core_p0_5054_selected_private_offer_hint.py",
+        "tests/test_core_0968_provider_collection_registry.py"
+      ],
+      "pr": "#6082",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-manual-materialization-source-capability-cutover",
+      "original": "core.source_materialization._source restricted a generic manual confirmation to account.provider_id == 'kobo', imported a Kobo-only backup root selector and included obsolete kobo_backup policy/directory settings in the one-use canonical A-to-B fingerprint",
+      "original_classification": "active_branded_business_decision_must_migrate",
+      "replacement": "Admission now uses the provider-declared local_materialization capability with no legacy backup flag plus exact source/account/session/canonical consent checks, with Core-neutral canonical library/profile roots. A provider-owned versioned primary-account identity label is the only accepted legacy owner alias; missing declaration fails closed. No W2 backup writer can execute.",
+      "classification": "retired_supplier_specific_manual_confirmation_routing",
+      "evidence": "Exact connected source and storage identity binding still mandatory, duplicate borrower and stale session refused, no implicit GTK selection; full canonical delivery ABI + on-policy required to issue token, one-use confirmation revalidates provider epoch, source epoch, consent and A snapshot, then calls a single canonical Source Sync. Synthetic future provider with local_materialization capability uses the read-only preflight, backup-only provider cannot, but an explicitly capable future source needs no legacy backup flag; no branded source checks or legacy backup roots in shared Core.",
+      "tests": [
+        "tests/test_core_p0_5975_generic_materialization_admission.py",
+        "tests/test_source_materialization_confirmation.py",
+        "tests/test_core_p0_4858_manual_canonical_materialization.py",
+        "tests/test_core_p0_4858_d2_session_borrower_binding.py",
+        "tests/test_core_p0_3196_kobo_profile_path_isolation.py"
+      ],
+      "pr": "#6084",
+      "in_ast_metric": true
+    },
+    {
+      "id": "struct-spent-borrow-followup-core-navigation",
+      "original": "core.borrow_later_verification._pending_borrow_followup_scope resolved service.current_identity inside read-only spent manual-borrow claim checks, including a second lookup after provider observation",
+      "original_classification": "navigation_dependent_private_borrow_followup",
+      "replacement": "LibraryService.manual_borrow_followup_available and verify_manual_borrow_followup capture the selected identity at their synchronous facade entrypoints and supply it to the headless worker. Missing scope fails closed. Worker retains exact account/session identity, spent claim operation ID and post-observation checks, with no borrow POST, entitlement or claim reset.",
+      "classification": "removed_navigation_spent_borrow_followup_worker",
+      "evidence": "Headless worker refuses missing scope before touching a provider; synthetic facade captures one identity per call, including profile switch between calls, and fences A-B-A via context epoch. Existing typed rights-observation and one-use claim tests remain required.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_borrow_followup.py",
+        "tests/test_core_p1_5136_paris_borrow_later_verification.py",
+        "tests/test_core_p1_5136_paris_followup_ui.py",
+        "tests/test_core_p0_5048_generic_manual_followup.py"
+      ],
+      "pr": "#6085",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-numilog-manual-receipt-preflight-retired",
+      "original_site_id": "site-3b2694ab8fb302ff443ce689",
+      "original": "Core LocalInspection constructed a Numilog-only per-right receipt/edition-collision ledger proof map and a per-file SHA/CRC signature map to produce a nominally eligible_for_fresh_validation manual-link diagnostic even though the manual attachment writer was retired.",
+      "original_classification": "active_branded_business_decision_must_migrate",
+      "replacement": "The obsolete local manual-right/file attachment path is now universally read-only and blocked, after scoped case existence and inactive-loan checks. Its provider-specific proof dictionary, per-file proof dictionary, manual pair evaluator/signature comparator and dead coverage classifier are physically deleted. Canonical source A-to-B delivery and separate descriptive/relocation previews remain unchanged; no plugin receipt is falsely minted from local SQLite.",
+      "classification": "retired_supplier_specific_manual_link_evidence_and_dead_comparator",
+      "evidence": "Exact scope and case validity still checked. A matching complete Numilog ledger+identical EPUB bytes, a foreign credential/provider, duplicate rights and cross-identity ledger cannot yield a positive preflight; inactive loans and incomplete audits preserve independent read-only labels. No acquisition, SQLite write, provider call, or manual attachment token exists. This narrows a defunct diagnostic rather than pretending to have installed a new provider-owned receipt ABI.",
+      "tests": [
+        "tests/test_core_p0_2714_manual_pair_preflight.py",
+        "tests/test_core_p0_2797_source_aware_preflight.py",
+        "tests/test_core_p0_2565_private_inspection_sqlite_revoke.py",
+        "tests/test_core_ui_p0_5048_neutral_local_placement_copy.py"
+      ],
+      "pr": "#6088",
+      "in_ast_metric": true
+    },
+    {
+      "id": "struct-provider-explicit-enrichment-headless-context",
+      "original": "core.provider_explicit_enrichment._scope read service.current_identity both before and after a user-triggered provider metadata GET, making the headless worker dependent on mutable GTK navigation",
+      "original_classification": "navigation_dependent_provider_metadata_enrichment",
+      "replacement": "LibraryService.enrich_provider_search_result captures selected identity and monotonic account-context epoch on entry. The Core worker accepts only explicit selected_identity_id and expected_context_epoch, rejects missing or stale scopes before GET, and checks account/source generations after the provider response. Facade additionally checks selected object and epoch before returning descriptive metadata.",
+      "classification": "removed_navigation_from_provider_metadata_worker",
+      "evidence": "Headless Core poison getter, public metadata one-call success, missing/foreign identity and stale epoch deny before supplier I/O, A-B-A epoch mutation, source rebind and malicious URL refusals. Existing synthetic private purchase and public catalogue tests adapt to explicit admission.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_provider_enrichment.py",
+        "tests/test_core_generic_explicit_enrichment_p0.py",
+        "tests/test_core_p0_5054_provider_detail_synthetic.py"
+      ],
+      "pr": "#6092",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-selected-source-offers-headless-owner-and-context-epoch",
+      "original": "Shared Core selected_source_offer and owned_library_download read mutable service.current_identity several times while selecting a private owned source, and _resolve checked GTK navigation during canonical execution; an A-to-B-to-A transition could restore the same identity label between operations",
+      "original_classification": "navigation_dependent_private_offer_selection_and_delivery_read",
+      "replacement": "LibraryService.owned_library_download_target and LibraryService.obtain_search_item capture the active owner exactly at their public synchronous boundary. Core selected source, observed catalogue and owned-library workers require that explicit owner and never read GTK navigation. SourceOfferTarget pins the monotone account context epoch; _resolve checks it on every pre-execution/under-lock callback and rejects A-to-B-to-A even if the identity string is restored. Provider/credential/account/session/branch/typed delivery and permission checks remain independently required.",
+      "classification": "removed_selected_source_navigation_reads_after_admission",
+      "evidence": "Synthetic headless unknown provider with a poisoned current_identity getter, exact-identity and duplicate-origin guards, non-lookup refusal for missing identity, A-to-B-to-A epoch revocation and facade post-selection fencing. Existing source-offer and canonical delivery regressions remain gates. No right minted, no legacy direct GET fallback.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_selected_offers.py",
+        "tests/test_core_p0_5054_selected_source_offer_generic.py",
+        "tests/test_core_p0_5054_owned_future_provider_ambiguity.py",
+        "tests/test_core_p0_5054_observed_private_library_origin.py",
+        "tests/test_core_p0_5054_numilog_legacy_writer_retired.py"
+      ],
+      "pr": "#6089",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-manual-lender-readiness-headless-owner",
+      "original": "Core manual_borrow_available and manual_borrow_diagnostic consulted mutable service.current_identity as an implicit borrower selection while assessing a scoped, read-only manual loan. The generic provider policy bridge duplicated that implicit navigation.",
+      "original_classification": "navigation_dependent_manual_borrow_readiness",
+      "replacement": "LibraryService.can_borrow_manual and LibraryService.manual_borrow_diagnostic pin the active identity once and capture _account_context_epoch at the synchronous facade boundary. Manual borrowing policy and Core readiness workers accept only an explicit validated identity_id; both facades revoke stale positives after identity object or monotone epoch changes (including A→B→A). Explicit manual POST, immutable claim, and independent lender scope checks are unchanged.",
+      "classification": "removed_core_navigation_manual_borrow_readiness",
+      "evidence": "Core workers contain no AST attribute access to current_identity; synthetic headless diagnostics succeed with poisoned navigation; missing owner denies before plugin registry; facade tests block A→B→A and preserve steady positive local diagnostics. Existing Paris and BnF manual-borrow tests remain CI gates.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_manual_borrow_readiness.py",
+        "tests/test_core_p0_5055_generic_manual_borrow_diagnostic.py",
+        "tests/test_core_p0_5048_manual_borrow_policy_abi.py",
+        "tests/test_core_p1_4673_paris_local_reason_phases.py"
+      ],
+      "pr": "#6095",
       "in_ast_metric": false
     }
   ],

@@ -773,8 +773,17 @@ class DetailPanel(Gtk.Box):
                     self._group(
                         "Téléchargement du prêt", [("Disponibilité", reason)],
                     )
-        if (include_pnb_action
-                and explicit_loan_acsm_action_available(self.window.service, loan)):
+        # Capture the navigation selection at the synchronous CoreUI edge.
+        # The read-only Core capability projection receives an exact scope,
+        # never a live GTK getter. The executor independently revalidates.
+        try:
+            selected = self.window.service.current_identity if include_pnb_action else None
+            selected_identity_id = getattr(selected, "identity_id", None)
+        except Exception:
+            selected_identity_id = None
+        if (include_pnb_action and explicit_loan_acsm_action_available(
+            self.window.service, loan, selected_identity_id=selected_identity_id,
+        )):
             # The static installed session contract selects this action.
             # Button visibility never proves consent, rights or a live offer.
             prepare_token = self.window.action_button(

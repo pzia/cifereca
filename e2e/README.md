@@ -335,6 +335,22 @@ Les captures demeurent **sur l'hôte GTK autorisé** et ne sont **jamais**
 des artefacts CI publics. Les planches servent au tri UX, les PNG originaux
 restent requis pour inspecter les détails ; aucun verdict UX n'est automatisé.
 
+## P1 #6077 — recette GTK4 de l'examen du volume déjà associé
+
+Deux scénarios : `reader-usb-inspection-1024` et
+`reader-usb-inspection-1366`. Ils montent une vraie `Gtk.Window`,
+un vrai `Gtk.Button` et un vrai `Gtk.Label` à la résolution demandée.
+La séquence GTK déclenche le signal `clicked` **programmatiquement** :
+elle prouve le câblage du widget et les transitions du contrôleur GTK,
+**pas** la livraison d'un événement physique XTEST, ni un clic utilisateur
+de bout en bout. Cette limite n'est pas masquée par le verdict PASS.
+
+La découverte Linux, l'attestation de montage et la fonction de scan sont
+remplacées par des **observations synthétiques typées**. On vérifie
+l'absence de FileChooserNative sur le chemin exact, la relecture du
+mount ID avant le scan, la mise à jour visible du statut et la révocation
+du profil. Aucune opération sur clé USB, SQLite, réseau ou fournisseur.
+La recette matérielle #4983 et la preuve XTEST de #6041 sont distinctes.
 
 ## Recette P1 #6041 — association USB réelle GTK4/XTEST, sans matériel
 

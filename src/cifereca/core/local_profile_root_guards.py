@@ -38,6 +38,22 @@ def checked_profile_roots(service, identity: str, *,
     return (target, library / folder)
 
 
+
+def canonical_profile_preview_paths(service, identity: str) -> tuple[Path, Path]:
+    """Read-only Core A-to-B preview roots, independent of legacy backup dirs.
+
+    The executing canonical Source Sync owns final placement and revalidates
+    its own target. These roots only fence the one-use preview to a known
+    profile and reject symlinks/overlapping directory names.
+    """
+    library = Path(service.library_dir())
+    profile = service.identity_by_id(identity)
+    if profile is None:
+        raise ProfileRootRejected("unknown_identity")
+    folder = safe_library_component(profile.directory_name or identity, "default")
+    return library, library / folder
+
+
 def path_within_roots(path: object, roots: object) -> bool:
     """Historical lexical membership check; never follow as proof of bytes."""
     if type(path) is not str or not path or "\0" in path:
@@ -49,4 +65,4 @@ def path_within_roots(path: object, roots: object) -> bool:
     return any(value != root and value.is_relative_to(root) for root in roots)
 
 
-__all__ = ["ProfileRootRejected", "checked_profile_roots", "path_within_roots"]
+__all__ = ["ProfileRootRejected", "checked_profile_roots", "canonical_profile_preview_paths", "path_within_roots"]

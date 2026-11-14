@@ -49,8 +49,9 @@ CONSTELLATIONS = DETAIL + CONSTELLATIONS_GTK
 RECOMMENDATIONS_GTK = ("recommendations-detail-1024-hidpi", "recommendations-detail-1024", "recommendations-detail-1366", "recommendations-detail-1600")
 RECOMMENDATIONS = DETAIL + RECOMMENDATIONS_GTK
 OPTIMIZER_GTK = ("optimizer-handoff-1366", "optimizer-handoff-1600")
+READER_INSPECTION_GTK = ("reader-usb-inspection-1024", "reader-usb-inspection-1366")
 READER_USB_GTK = ("reader-usb-pairing-1024", "reader-usb-pairing-1366")
-ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK + OPTIMIZER_GTK + BNF_COVERS + BUSY_GTK + THEME + READER_USB_GTK
+ALL = CORE + DIAG + CONSTELLATIONS_GTK + RECOMMENDATIONS_GTK + OPTIMIZER_GTK + BNF_COVERS + BUSY_GTK + THEME + READER_INSPECTION_GTK + READER_USB_GTK
 SHELL = ("mainwindow-baseline-1366", "mainwindow-baseline-1600",
          *CAPTURE_GTK, "startup", "core-navigation", "diagnostics-navigation-1366",
          "diagnostics-navigation-slow-1366")
@@ -87,8 +88,9 @@ LOCAL_GUI = {
     "settings_lifetime.py": LLM,
     "llm_settings.py": LLM,
     "maintenance_tools.py": MAINT,
+    "reader_usb_preview_actions.py": READER_INSPECTION_GTK,
     "reader_pairing_actions.py": READER_USB_GTK,
-    "reader_page_controller.py": READER_USB_GTK,
+    "reader_page_controller.py": READER_INSPECTION_GTK + READER_USB_GTK,
     "maintenance_result_view.py": MAINT,
     "maintenance_line_progress.py": MAINT,
     "maintenance_line_widgets.py": MAINT,
@@ -106,6 +108,7 @@ PROBES = {
     "e2e/constellations_detail_probe.py": CONSTELLATIONS_GTK + THEME,
     "e2e/recommendations_detail_probe.py": RECOMMENDATIONS_GTK,
     "e2e/optimizer_handoff_probe.py": OPTIMIZER_GTK,
+    "e2e/reader_usb_inspection_probe.py": READER_INSPECTION_GTK,
     "e2e/reader_usb_pairing_probe.py": READER_USB_GTK,
     "e2e/llm_settings_probe.py": LLM,
     "e2e/maintenance_tools_probe.py": MAINT,
@@ -165,14 +168,14 @@ def select(paths: list[str], *, full: bool = False) -> tuple[str, ...]:
             selected.update(RECOMMENDATIONS)
         elif path.startswith("src/plugins/epub_optimizer/"):
             selected.update(OPTIMIZER_GTK)
+        elif path == "src/cifereca/core/provider_loan_renewal.py":
+            selected.update(BOOK_DETAIL)
         elif path in (
             "src/cifereca/core/device_usb_discovery.py",
             "src/cifereca/core/device_usb_binding_proposal.py",
             "src/cifereca/core/device_usb_mount.py",
         ):
-            selected.update(READER_USB_GTK)
-        elif path == "src/cifereca/core/provider_loan_renewal.py":
-            selected.update(BOOK_DETAIL)
+            selected.update(READER_USB_GTK + READER_INSPECTION_GTK)
         elif path in SYNC_PRODUCERS:
             selected.update(SYNC_CORE)
         elif path.startswith("src/cifereca/builtin_ui/"):
