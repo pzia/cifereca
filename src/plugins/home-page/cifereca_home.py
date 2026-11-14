@@ -296,6 +296,7 @@ def compact_source_text(item):
 class OverviewController:
     def __init__(self,host,render,identity_broker=None):
         self.host=host;self.render=render;self.identity_broker=identity_broker;self.closed=False
+        self._refresh_generation = 0
         self.unsubscribe=host.subscribe_identity_overview(self.refresh)
         try:self.refresh()
         except Exception:
@@ -303,9 +304,19 @@ class OverviewController:
     def refresh(self):
         if self.closed:
             return
+        self._refresh_generation += 1
+        generation = self._refresh_generation
+
+        def current():
+            return not self.closed and self._refresh_generation == generation
+
         legacy_rows = list(self.host.identity_overview())
+        if not current():
+            return
 
         def display_with_capacity(rows):
+            if not current():
+                return
             # Profile selection is a single-owner fact. During A→B handoff,
             # a contradictory snapshot must not read *both* profiles' loans.
             selected = [
@@ -320,6 +331,8 @@ class OverviewController:
             # GTK profile by implication. No provider call occurs here.
             enriched = []
             for row in rows:
+                if not current():
+                    return
                 if type(row) is not dict:
                     continue
                 projected = dict(row)
@@ -331,8 +344,11 @@ class OverviewController:
                             projected["digital_loan_availability"] = read(iid)
                         except Exception:
                             projected["digital_loan_availability"] = ()
+                        if not current():
+                            return
                 enriched.append(projected)
-            self.render(enriched)
+            if current():
+                self.render(enriched)
 
         if self.identity_broker is None:
             display_with_capacity(legacy_rows)
@@ -341,12 +357,16 @@ class OverviewController:
             public_rows = list(self.identity_broker.identities())
         except Exception:
             public_rows = []
+        if not current():
+            return
         if not public_rows:
             display_with_capacity(legacy_rows)
             return
         by_id = {str(row.get('identity_id') or row.get('id') or ''): dict(row) for row in legacy_rows if isinstance(row,dict)}
         merged=[]
         for public in public_rows:
+            if not current():
+                return
             if not isinstance(public,dict):
                 continue
             iid=str(public.get('identity_id') or public.get('id') or '')
