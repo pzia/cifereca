@@ -22,6 +22,25 @@ Pour **l'achat**, l'absence dans l'inventaire actuel n'efface jamais un fichier 
 
 Les plugins emploient les primitives réseau partagées (`HTTPX_TRANSPORT`) pour l'authentification et leurs requêtes métier ; le Core possède aussi la livraison HTTPS générique, les gardes, l'intégrité et la publication. Les anciens `rights`/`Entitlement` sont une compatibilité technique à retirer progressivement, pas une nouvelle autorité. Voir [PROVIDER-DEVELOPMENT.md](PROVIDER-DEVELOPMENT.md) pour le contrat normatif commun et [ARCHITECTURE.md](ARCHITECTURE.md) pour A→B.
 
+## Navigation catalogue publique (contrat installé #5975)
+
+Le plugin peut déclarer `ProviderDescriptor.public_catalogue_base_option_key`
+pour choisir, **sans routage par fournisseur dans le Core**, une option de
+compte explicitement décrite par `AccountOptionField` (`secret=False`).
+Cette URL **descriptive uniquement** prime sur `catalogue_url` et
+`descriptor.homepage` ; elle ne vaut jamais droit, offre de livraison,
+authentification, ni autorisation HTTP. Si l'option est absente (`None`), le
+`legacy_config_key` de *cette même option déclarée* peut fournir une lecture
+historique hors réseau. Une valeur explicite vide ne réactive pas un
+fallback legacy. Le composant générique refuse les liens signés, privés
+ou de téléchargement via la validation habituelle `catalogue_link`.
+
+Le plugin Paris installé déclare `base_url` et sa clé de migration `base_url`.
+Les anciens plugins qui n'annoncent pas ce contrat utilisent
+`catalogue_url` puis `homepage` : aucune heuristique de marque côté Core.
+Les liens publics ne sont jamais des notices de livre par défaut ; seules les
+URLs précises attestées comme notices peuvent être étiquetées « notice ».
+
 ## Principe
 
 Une fonctionnalité appartient au Core lorsqu'elle exprime un mécanisme transversal réutilisable par plusieurs plugins ou par l'orchestration générale. Elle appartient au plugin lorsqu'elle encode un protocole, une politique ou un comportement propre à un fournisseur/runtime.

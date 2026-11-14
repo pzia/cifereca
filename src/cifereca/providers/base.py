@@ -222,6 +222,11 @@ class ProviderDescriptor:
     # Separate from ManualBorrowPolicy (which admits new borrow attempts).
     # None requires the exact Account.unique_id; never a permission to mutate.
     existing_primary_loan_account_alias: str | None = None
+    # Optional, passive URL-navigation policy. The selected option must also
+    # exist as a non-secret AccountOptionField; legacy_config_key (if declared)
+    # supplies a read-only migration fallback. This is NOT a download or right.
+    # No Core brand table or provider getter is involved in resolving a link.
+    public_catalogue_base_option_key: str | None = None
 
 
 class ProviderSession(ABC):

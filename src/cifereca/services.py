@@ -1478,36 +1478,8 @@ class LibraryService:
         return rows
 
     def public_catalogue_target(self, row):
-        """Return ('notice'|'catalogue', URL) without mislabeling a generic page."""
-        from .catalogue_link import catalogue_notice_url, catalogue_url
-
-        provider = str(row.get('provider_id') or row.get('source_provider') or '')
-        descriptor = next((d for d in self.provider_descriptors() if d.id == provider), None)
-        base = descriptor.homepage if descriptor else None
-        # Any installed supplier can advertise an explicit per-credential
-        # public catalogue URL. This is a navigation hint, never a right,
-        # download endpoint or supplier URL invented by Core.
-        provider_option = getattr(getattr(self, 'config', None), 'provider_option', None)
-        if callable(provider_option):
-            base = provider_option(
-                provider, 'catalogue_url', None,
-                credential_id=row.get('source_credential'),
-            ) or base
-        if provider == 'paris':
-            # Preserve the legacy Paris base_url's precedence over an explicit
-            # catalogue option and the provider descriptor homepage.
-            base = self.config.paris_base_url(row.get('source_credential')) or base
-
-        notice = catalogue_notice_url(row, base=base, provider=provider)
-        if notice:
-            return ('notice', notice)
-
-        catalogue = catalogue_url({'friendly_url': base})
-        if not catalogue:
-            # This is a generic catalogue homepage, not a fabricated book notice.
-            fallback = self.config.get('library.public_catalogue_fallback', '')
-            catalogue = catalogue_url({'friendly_url': fallback})
-        return ('catalogue', catalogue) if catalogue else None
+        """Public navigation delegated to installed provider declarations."""
+        return provider_sessions.public_catalogue_target(self, row)
 
     def public_catalogue_url(self, row):
         """Compatibility URL broker; use public_catalogue_target for UI labels."""

@@ -9,6 +9,7 @@ import pytest
 from cifereca.catalogue_link import catalogue_notice_url
 from cifereca.plugin_api import document_links
 from cifereca.services import LibraryService
+from cifereca.providers.base import AccountOptionField, ProviderCapabilities, ProviderDescriptor
 
 
 def _service_host(provider="other", base="https://books.example/"):
@@ -58,9 +59,19 @@ def test_generic_url_precedes_explicit_book_product_url():
 
 def test_relative_notice_uses_provider_base_but_never_converts_homepage_to_notice():
     host = NS(
-        provider_descriptors=lambda: [NS(id="paris", homepage="https://old.example/")],
-        config=NS(paris_base_url=lambda credential: "https://paris.example/",
-                  get=lambda key, default: "https://public.example/"),
+        provider_descriptors=lambda: [ProviderDescriptor(
+            id="paris", display_name="Paris", description="public",
+            state="ready", capabilities=ProviderCapabilities(),
+            homepage="https://old.example/",
+            public_catalogue_base_option_key="base_url",
+            account_options=(AccountOptionField(
+                "base_url", "Portal", legacy_config_key="base_url",
+            ),),
+        )],
+        config=NS(get=lambda key, default: (
+            "https://paris.example/" if key == "base_url"
+            else "https://public.example/"
+        )),
     )
     row = {"source_provider": "paris", "source_credential": "one",
            "friendly_url": "/notice/42"}
