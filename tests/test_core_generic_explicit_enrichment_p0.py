@@ -10,6 +10,16 @@ from cifereca.models import SearchResult
 from cifereca.plugin_api import ProviderCapabilityError
 
 
+def _enrich(service, row, *, expected_identity_id):
+    # The standalone Core harness has the same explicit admission inputs as
+    # LibraryService's synchronous facade, without asking Core to read GTK.
+    return enrich_provider_detail_once(
+        service, row, expected_identity_id=expected_identity_id,
+        selected_identity_id=service.current_identity.identity_id,
+        expected_context_epoch=service._account_context_epoch,
+    )
+
+
 def item(**kwargs):
     values = dict(
         id="synthetic-private:scope:42:()", record_id="synthetic-private:scope:42:()",
@@ -28,6 +38,7 @@ def item(**kwargs):
 class Service:
     def __init__(self, accounts=()):
         self.current_identity = SimpleNamespace(identity_id="identity-A")
+        self._account_context_epoch = 1
         self.accounts = list(accounts)
         self.calls = []
         self.result = None
@@ -59,7 +70,7 @@ def test_owned_action_is_one_shot_and_does_not_change_download_rights():
     service = Service([OWNED_ACCOUNT])
     row = item()
     assert can_enrich_provider_detail_result(row)
-    value = enrich_provider_detail_once(service, row, expected_identity_id="identity-A")
+    value = _enrich(service, row, expected_identity_id="identity-A")
     assert value.publisher == "Éditeur public"
     assert value.owned is True and value.downloadable is True
     assert value.download_url is None and value.format is None
@@ -75,7 +86,7 @@ def test_public_catalogue_isolated_without_private_account_query():
         source_credential="__public__", source_collection="public_catalog",
         owned=False, downloadable=False,
     )
-    value = enrich_provider_detail_once(service, row, expected_identity_id="identity-A")
+    value = _enrich(service, row, expected_identity_id="identity-A")
     assert value.owned is False and value.downloadable is False
     assert not [x for x in service.calls if x[0] == "accounts"]
     assert service.calls.count(("enrich", row.record_id)) == 1
@@ -89,7 +100,7 @@ def test_public_catalogue_isolated_without_private_account_query():
 def test_invalid_purchase_does_not_start_any_provider_request(changes):
     service = Service([OWNED_ACCOUNT])
     with pytest.raises(ProviderCapabilityError, match="explicit_public_enrichment_unavailable"):
-        enrich_provider_detail_once(
+        _enrich(
             service, item(**changes), expected_identity_id="identity-A",
         )
     assert not any(entry[0] in {"session", "enrich"} for entry in service.calls)
@@ -98,7 +109,7 @@ def test_invalid_purchase_does_not_start_any_provider_request(changes):
 def test_wrong_active_identity_rejects_before_any_session_lookup():
     service = Service([OWNED_ACCOUNT])
     with pytest.raises(ProviderCapabilityError):
-        enrich_provider_detail_once(
+        _enrich(
             service, item(), expected_identity_id="identity-B",
         )
     assert service.calls == []
@@ -106,11 +117,12 @@ def test_wrong_active_identity_rejects_before_any_session_lookup():
 
 def test_changing_profile_mid_request_discards_result():
     service = Service([OWNED_ACCOUNT])
-    service.on_call = lambda: setattr(
-        service, "current_identity", SimpleNamespace(identity_id="identity-B"),
-    )
+    def change_profile():
+        service.current_identity = SimpleNamespace(identity_id="identity-B")
+        service._account_context_epoch += 1
+    service.on_call = change_profile
     with pytest.raises(ProviderCapabilityError):
-        enrich_provider_detail_once(
+        _enrich(
             service, item(), expected_identity_id="identity-A",
         )
     assert service.calls.count(("enrich", item().record_id)) == 1
@@ -127,7 +139,7 @@ def test_provider_must_not_promote_acquisition_or_cross_reference(changes):
     service = Service([OWNED_ACCOUNT])
     service.result = replace(item(), **changes)
     with pytest.raises(ProviderCapabilityError, match="explicit_public_enrichment_unavailable"):
-        enrich_provider_detail_once(
+        _enrich(
             service, item(), expected_identity_id="identity-A",
         )
 
@@ -135,7 +147,7 @@ def test_provider_must_not_promote_acquisition_or_cross_reference(changes):
 def test_legacy_can_be_a_real_credential_id_if_account_matches():
     service = Service([SimpleNamespace(provider_id="synthetic-private", credential_id="legacy")])
     row = item(source_credential="legacy")
-    result = enrich_provider_detail_once(service, row, expected_identity_id="identity-A")
+    result = _enrich(service, row, expected_identity_id="identity-A")
     assert result.source_credential == "legacy"
 
 
