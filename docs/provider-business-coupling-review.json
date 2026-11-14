@@ -183,6 +183,22 @@
       ],
       "pr": "#6012",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-library-service-connection-owner-navigation-fallback",
+      "original": "src/cifereca/services.py::LibraryService.identity_for_connection identity or current_identity or identities[0], reused by direct acquisition and ADEPT projection",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "Persisted exact (provider_id,credential_id)->identity_id binding plus registered Identity, failure as ProviderConfigurationError; no GTK owner fallback",
+      "classification": "removed_navigation_owner_inference_from_core_facade",
+      "evidence": "The Core facade now refuses absent/invalid/stale provider connection owners before attributing a private source. Direct acquisition telemetry does not fall back to current_identity when exact binding fails; non-Paris ADEPT historical status instead returns disabled with identity unproven. No rights, consent, or storage owner is invented.",
+      "tests": [
+        "tests/test_core_p0_5851_exact_connection_owner.py::test_exact_owner_resolver_refuses_missing_or_foreign_owner_even_if_gtk_selected",
+        "tests/test_core_p0_5851_exact_connection_owner.py::test_direct_acquisition_telemetry_never_attributes_unbound_source_to_gtk_identity",
+        "tests/test_core_p0_5851_exact_connection_owner.py::test_legacy_direct_download_denied_without_persisted_source_owner",
+        "tests/test_core_p0_5851_exact_connection_owner.py::test_unbound_non_paris_return_projection_rejects_without_ledger_reads"
+      ],
+      "pr": "#6024",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
