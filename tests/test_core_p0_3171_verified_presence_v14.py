@@ -20,7 +20,7 @@ from tests.test_core_p0_3171_atomic_publication_v14 import (
 def store(tmp_path):
     database = Storage(tmp_path / "local.sqlite")
     try:
-        assert database.schema_version() == 15
+        assert database.schema_version() == 16
         yield database
     finally:
         database.close()
