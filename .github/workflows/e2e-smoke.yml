@@ -7,6 +7,8 @@ on:
         description: 'Exact scenario ID from e2e/run.py. Leave empty to run the full smoke suite.'
         required: false
         type: string
+  # P1 #6041: Core USB discovery, exact mount qualification and declarative
+  # bindings must trigger the real reader-pairing GTK/XTEST E2E acceptance.
   pull_request:
     paths:
       - 'e2e/**'
@@ -23,8 +25,6 @@ on:
       - 'src/cifereca/core/loan_local_preparation.py'
       - 'src/cifereca/core/provider_loan_renewal.py'
       - 'src/cifereca/core/loan_provider_delivery.py'
-      # P1 #6041: an exact USB mount/UUID discovery or declarative binding
-      # change must run the real reader-pairing GTK/XTEST acceptance scenarios.
       - 'src/cifereca/core/device_usb_discovery.py'
       - 'src/cifereca/core/device_usb_mount.py'
       - 'src/cifereca/core/device_usb_binding_proposal.py'
