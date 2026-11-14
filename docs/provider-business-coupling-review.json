@@ -209,6 +209,114 @@
       ],
       "retirement_pr": "",
       "rationale": "This AST anchor is inside backup_put, not Storage._migrate. It is a necessary input veto on a residual, non-productively called legacy writer surface, not an active Core acquisition producer."
+    },
+    {
+      "id": "site-7313c6ad37cfecdb7936e8bc",
+      "classification": "safety_guard_pending_contract",
+      "journey": "W1/v2 legacy backup mirror refuses canonical promotion of typed Kobo SourceReference",
+      "decision_group_id": "legacy-backup.w1-canonical-publication-veto",
+      "reachability": "legacy_only",
+      "productive_caller": "Storage._migrate on historical database upgrade and Storage.backup_put (legacy W1 entry) call Storage._mirror_backup_row after exact-row validation",
+      "effect": "Inside SQLite transaction, the Kobo SourceReference branch refuses synthesis/updating of legacy entitlements, acquisition ledger or local placement from v0.7 backup_items; an unrelated non-Kobo historical row can still use the legacy mirror",
+      "authority": "SourceReference A and canonical completed-delivery B are independent of the old three-coordinate backup key, which cannot attest account/borrower/branch",
+      "replacement_contract": "Versioned migration preserving the archive as untrusted historical data; one-way canonical A/B provenance, no old-row-as-right fallback. Retire non-Kobo legacy publishing separately after consumer proof",
+      "tests": [
+        "tests/test_core_p0_3196_w1_archive_only_cutover.py",
+        "tests/test_core_p0_3196_w5_passive_v2_migration.py",
+        "tests/test_core_p0_3196_w1_live_mirror_retired.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "This is a provider-named negative gate inside a mutating compatibility mirror, not a live Kobo purchase/loan decision. Removing it before generic migration could resurrect rights. Productive callsite is the historical Storage layer; supplier-specific runtime reachability not established by AST."
+    },
+    {
+      "id": "site-d88574f6e28d059189c71da5",
+      "classification": "safety_guard_pending_contract",
+      "journey": "W1 legacy Kobo checkpoint transactional fence before archive upsert",
+      "decision_group_id": "legacy-backup.w1-owner-archive-protection",
+      "reachability": "legacy_only",
+      "productive_caller": "Storage.backup_put public legacy method: historical Kobo W1 backup checkpoint, called in compatibility/test contexts; no new canonical delivery permission",
+      "effect": "BEGIN IMMEDIATE, exact provider/credential/edition SourceReference existence and completed-status archive marker snapshot; refuses to overwrite a typed SourceReference-backed source or treat a previous completed W1 archive as a new delivery",
+      "authority": "Existing canonical source and monotone archive marker outrank mutable backup_items status; old PK excludes exact borrower",
+      "replacement_contract": "Read-only archive inspection and versioned per-source retirement with unambiguous owner, tombstone and rollback; remove writer only after historical consumers migrated",
+      "tests": [
+        "tests/test_core_p0_3196_w1_completed_archive_no_reprojection.py",
+        "tests/test_core_p0_3196_w1_archive_only_cutover.py",
+        "tests/test_core_p0_3196_legacy_kobo_item_write_admission.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "A defensive transaction/lookup in an installed legacy writer. It remains necessary while the Storage API exists; a provider-specific positive supply authority is not proven."
+    },
+    {
+      "id": "site-5a3051124e11f87bf24ccfb6",
+      "classification": "safety_guard_pending_contract",
+      "journey": "W1 historical Kobo backup archive-only return without canonical mirror",
+      "decision_group_id": "legacy-backup.w1-canonical-publication-veto",
+      "reachability": "legacy_only",
+      "productive_caller": "Storage.backup_put after one legacy backup_items UPSERT and exact persisted-row read, before Storage._mirror_backup_row",
+      "effect": "Routes Kobo archives to archive_only=True and returns before non-Kobo mirroring; Kobo backup status/SHA alone cannot create Entitlement, Acquisition, Artifact or Placement. The archive row is still writable and remains a separate residual legacy debt",
+      "authority": "No canonical A/B receipt can be derived from a v0.7 backup snapshot, even for complete rows or when canonical source is absent",
+      "replacement_contract": "Physically retire backup_put write surface after W2/D1-D5 migration with exact source and owner proofs; preserve archive readers and anti-resurrection SQL",
+      "tests": [
+        "tests/test_core_p0_3196_w1_archive_only_cutover.py",
+        "tests/test_core_p0_3196_w1_live_mirror_retired.py",
+        "tests/test_core_p0_3196_w2_interrupted_no_reget.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Protective provider-specific exclusion in an existing writer, not evidence that this old writer is gone. A generic archive/provenance contract must replace it."
+    },
+    {
+      "id": "site-c668504ada66eace309e3e7f",
+      "classification": "safety_guard_pending_contract",
+      "journey": "W1 historical archive collision validation against canonical owner and checkpoint",
+      "decision_group_id": "legacy-backup.w1-owner-archive-protection",
+      "reachability": "legacy_only",
+      "productive_caller": "Storage.backup_put calls Storage._check_kobo_legacy_canonical_owner for persisted Kobo archive under the same SQLite write transaction",
+      "effect": "Vetoes reassignment of historical provider/credential/edition archive to foreign canonical identity/account or same deterministic acquisition ID; still no right or placement published",
+      "authority": "Existing exact canonical right/acquisition owner and loan/edition coordinate; incomplete three-part legacy key cannot override it",
+      "replacement_contract": "Versioned historical archive reader with owner/identity collision veto and immutable retirement tombstone before final writer removal",
+      "tests": [
+        "tests/test_core_p0_3196_w1_archive_only_cutover.py",
+        "tests/test_core_p0_3196_legacy_kobo_item_write_admission.py",
+        "tests/test_legacy_backup_canonical_write_fence.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Specific safety validation call is invoked before an archive return. It cannot be marked false positive, nor deleted without equivalent cross-owner collision guards."
+    },
+    {
+      "id": "site-b4a6753e2f0ac2d6b78c0992",
+      "classification": "safety_guard_pending_contract",
+      "journey": "W5 local filename relocation refuses typed Kobo SourceReference relink from historical backup",
+      "decision_group_id": "legacy-backup.w5-path-relocation-cutover",
+      "reachability": "productive",
+      "productive_caller": "artifact_runtime filename normalization calls Storage.relocate_local_path when moving an explicitly scoped user file",
+      "effect": "Before any mutation, refuses old-path relink if a matching typed Kobo SourceReference exists; prevents a mutable 0.7 locator from reassigning a canonical source",
+      "authority": "Canonical SourceReference A and placement provenance B are distinct from backup_items.local_path and user-visible filename",
+      "replacement_contract": "Scoped canonical OriginLink/Placement path relink with transactional exact proof; retire Kobo-specific relocation decision only after reviewed neutral condition",
+      "tests": [
+        "tests/test_core_p0_3185_relative_metadata_relocation.py",
+        "tests/test_core_p0_2789_rename_scope.py",
+        "tests/test_core_p0_3196_w5_directory_foreign_archive.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "An active veto around filesystem/SQLite rename is a safety requirement; not a right creation. It requires a tested generic replacement before removal."
+    },
+    {
+      "id": "site-1220521b4d5dc767addb6d29",
+      "classification": "legacy_mutating_cutover",
+      "journey": "W5 active historical backup_items local_path rewrite during file normalization",
+      "decision_group_id": "legacy-backup.w5-path-relocation-cutover",
+      "reachability": "productive",
+      "productive_caller": "artifact_runtime normalization -> Storage.relocate_local_path; provider_id passed from selected file scope",
+      "effect": "For non-Kobo values the method executes UPDATE backup_items.local_path inside the rename transaction; for Kobo it deliberately preserves the archived locator. This remains a real legacy mutating compatibility path, independently of whether an individual row is present",
+      "authority": "Legacy storage key and caller-selected provider_id still determine an archive write; not canonical OriginLink/Placement proof",
+      "replacement_contract": "End historical backup_items path writes for all providers after read-only migration, implement exact-source canonical relink and preserve no-automatic-user-file-deletion, owner and rollback checks",
+      "tests": [
+        "tests/test_core_p0_3185_relative_metadata_relocation.py",
+        "tests/test_core_p0_2789_rename_scope.py",
+        "tests/test_core_p0_3196_w5_directory_collision_scope.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "This AST decision is reached by a productive path and controls a SQL UPDATE; classify as outstanding legacy writer rather than as harmless compatibility or already retired code."
     }
   ],
   "retirements": [
