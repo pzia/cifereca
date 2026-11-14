@@ -243,3 +243,38 @@ def test_plugin_replay_flags_ambiguous_local_namespace(tmp_path):
     _write(tmp_path, "src/plugins/p/tests/test_shared.py", "VALUE = 2\n")
     _write(tmp_path, "src/plugins/p/tests/test_p.py", "from tests.test_shared import VALUE\n")
     assert plugin_replay_required(["tests/test_shared.py"], tmp_path)
+
+
+def test_explicit_relative_plugin_fixture_avoids_shadowed_root_namespace(tmp_path):
+    """A plugin package-local test helper must not be attributed to Core."""
+    _write(tmp_path, "tests/test_local.py", "VALUE = 'root'\n")
+    _write(tmp_path, "src/plugins/diagnostics-page/tests/test_local.py",
+           "VALUE = 'plugin'\n")
+    _write(tmp_path, "src/plugins/diagnostics-page/tests/test_consumer.py",
+           "from .test_local import VALUE\n")
+    graph = inventory(tmp_path)
+    assert graph["plugin_to_root_direct"] == []
+    assert graph["plugin_ambiguous_imports"] == []
+    assert graph["plugin_missing_imports"] == []
+    assert {
+        "consumer": "src/plugins/diagnostics-page/tests/test_consumer.py",
+        "owner": "plugin:diagnostics-page",
+        "target": "src/plugins/diagnostics-page/tests/test_local.py",
+        "mechanism": "relative_plugin_helper",
+        "line": 1,
+    } in graph["plugin_to_plugin_helper_direct"]
+
+
+def test_diagnostics_test_fixtures_are_package_local_not_core_dependencies():
+    """Prevent reopening the actual Diagnostics package shadow-import debt."""
+    package = (
+        Path(__file__).resolve().parents[1]
+        / "src/plugins/diagnostics-page/tests"
+    )
+    consumer = (package / "test_provider_diagnostics_p1_2900.py").read_text(
+        encoding="utf-8",
+    )
+    assert "from tests.test_diagnostics_ai_p0 import" not in consumer
+    assert consumer.count("from .test_diagnostics_ai_p0 import") == 4
+    assert (package / "test_diagnostics_ai_p0.py").is_file()
+    assert (package / "__init__.py").is_file()
