@@ -113,8 +113,8 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
     pair = Gtk.Button.new_from_icon_name("list-add-symbolic")
     pair._cifereca_action_id = "reader-usb-pair"
     pair.set_tooltip_text(
-        "Associer une liseuse au profil par UUID de volume USB. "
-        "La déclaration ne prouve aucune présence et n'active aucun scan."
+        "Associer une liseuse : choisir un volume USB monté, ou saisir "
+        "l'UUID en mode expert. Aucun examen ni transfert automatique."
     )
     def pair_clicked(_button):
         from .reader_pairing_actions import request_reader_pairing
