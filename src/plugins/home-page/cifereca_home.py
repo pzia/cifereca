@@ -1,5 +1,5 @@
 """External identity dashboard; uses only the public UiIdentityHost broker."""
-from cifereca.plugin_api import UiPageContribution, DigitalLoanAvailability
+from cifereca.plugin_api import UiPageContribution, digital_loan_availability_lines
 import re
 
 STATUS={'running':'En cours','success':'Réussie','partial':'Partielle','failed':'Échouée'}
@@ -291,52 +291,6 @@ def compact_source_text(item):
             files+=' · achats non présumés à partir de ce compteur'
     return label+' · '+files
 
-
-_LOAN_UNKNOWN_REASONS = {
-    "inventory_unverified": "inventaire numérique complet et frais non attesté",
-    "borrower_unverified": "emprunteur exact non confirmé",
-    "account_disconnected": "connexion fournisseur non active",
-    "account_disabled": "connexion désactivée",
-    "provider_unverified": "fournisseur non qualifié",
-    "scope_ambiguous": "portée du compte ambiguë",
-    "observation_stale": "observation périmée",
-    "subscription_unverified": "abonnement non attesté",
-}
-
-
-def digital_loan_availability_lines(rows, *, identity_id):
-    """Present only Core typed facts for the current profile; never estimate.
-
-    No row (or an older broker) means UNKNOWN, not zero available. A local
-    ceiling can be mentioned separately from provider borrowing permission.
-    Neither technical IDs nor provider errors are printed as UI labels.
-    """
-    if type(rows) not in (tuple, list) or len(rows) > 128:
-        return ("Reste inconnu — projection des comptes indisponible.",)
-    if not rows:
-        return ("Reste inconnu — aucun compte emprunteur vérifié.",)
-    lines = []
-    for record in rows:
-        if (type(record) is not DigitalLoanAvailability
-                or record.identity_id != identity_id
-                or record.status != "unknown"
-                or record.remaining is not None):
-            return ("Reste inconnu — projection des comptes invalide.",)
-        label = (
-            record.provider_label + " · " + record.connection_label
-            + " · " + record.borrower_label
-        )
-        facts = []
-        if record.observed_loans is not None:
-            facts.append(f"{record.observed_loans} prêt(s) numériques actifs observés")
-        else:
-            facts.append("prêts numériques actifs non vérifiés")
-        if record.personal_ceiling is not None:
-            facts.append(f"plafond personnel {record.personal_ceiling} (indicatif)")
-        facts.append(_LOAN_UNKNOWN_REASONS.get(record.reason, "preuve absente"))
-        lines.append(label + " · Reste inconnu — " + " · ".join(facts))
-    lines.append("Total non calculable · estimation ≠ autorisation d’emprunter.")
-    return tuple(lines)
 
 
 class OverviewController:
