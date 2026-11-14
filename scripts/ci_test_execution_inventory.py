@@ -105,7 +105,7 @@ def make_execution_report(
     for item in capture.items:
         nodeid = item["nodeid"]
         phases = capture.phases.get(nodeid, {})
-        outcome = outcome_for(phases)
+        outcome = outcome_for(phases) or "incomplete"
         records.append({
             "nodeid": nodeid,
             **classify(nodeid, manifest),
@@ -135,7 +135,7 @@ def make_execution_report(
         )
         and (
             (exit_code == 0 and not totals["failed"] and not totals["error"])
-            or (exit_code == 1 and (totals["failed"] or totals["error"]))
+            or (exit_code == 1 and bool(totals["failed"] or totals["error"]))
         )
     )
     return {
