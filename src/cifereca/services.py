@@ -3789,6 +3789,20 @@ class LibraryService:
         profile_id = self.storage.adept_profile_binding_get("identity", owner.identity_id)
         if type(profile_id) is not str or not profile_id:
             raise ValueError("ADEPT borrower identity has no stable profile binding")
+        # Compatibility writer must not create a second authority after an
+        # explicitly confirmed v16 grant already exists. The v16 grant has
+        # provider-scoped provenance and is the only valid new binding path.
+        # The persistent no-resurrection rule after v16 revocation belongs
+        # to the storage migration; this guard prevents a live dual write.
+        try:
+            existing_v16 = self.storage.adept_borrower_grant_get(
+                provider_id="paris", credential_id=credential_id,
+                account_id=borrower,
+            )
+        except Exception:
+            raise ValueError("ADEPT borrower grant coordinates invalid") from None
+        if existing_v16 is not None:
+            raise ValueError("ADEPT borrower grant requires v16 binding")
         self.storage.paris_borrower_adept_binding_put(
             credential_id=credential_id, account_id=borrower,
             borrower_identity_id=owner.identity_id, profile_id=profile_id,
