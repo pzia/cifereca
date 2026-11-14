@@ -1229,7 +1229,9 @@ class LibraryService:
                 or not owner.identity_id or len(owner.identity_id) > 1024
                 or owner.identity_id != owner.identity_id.strip()
                 or any(ord(ch) < 32 or ord(ch) == 127 for ch in owner.identity_id)
-                or sum(row is owner for row in identities) != 1):
+                or sum(row is owner for row in identities) != 1
+                or sum(type(row) is Identity and row.identity_id == owner.identity_id
+                       for row in identities) != 1):
             raise ProviderConfigurationError("local_account_identity_required")
         return Account(
             display_name="Bibliothèque locale", unique_id="local", is_primary=True,
