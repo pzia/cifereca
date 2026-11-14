@@ -115,7 +115,7 @@ def test_automatic_acquisitions_are_serialized_in_process(monkeypatch):
     monkeypatch.setattr(services, "InterProcessLock", FakeInterProcessLock)
     monkeypatch.setattr(services, "acquisition_lock_file", lambda: Path("/tmp/cifereca-acquisition.lock"))
     monkeypatch.setattr(LibraryService, "_acquire_active_loan_automatically_guarded", guarded)
-    loans = [SimpleNamespace(id=str(i), source_provider="paris") for i in range(6)]
+    loans = [SimpleNamespace(id=str(i), source_provider="paris", source_credential="paris-a") for i in range(6)]
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(service._acquire_active_loan_automatically, loans))
     assert len(results) == 6
@@ -146,7 +146,7 @@ def test_automatic_acquisition_lock_uses_same_path_for_shared_loan(monkeypatch):
     )
     service = object.__new__(LibraryService)
     for identity in ("alice", "bob"):
-        loan = SimpleNamespace(id="shared-123", source_provider="paris", identity_id=identity)
+        loan = SimpleNamespace(id="shared-123", source_provider="paris", source_credential="paris-a", identity_id=identity)
         service._acquire_active_loan_automatically(loan)
     assert len(paths) == 2
     assert paths[0] == paths[1]
@@ -232,7 +232,7 @@ def test_auto_acquisition_lock_busy_never_enters_fulfillment(monkeypatch):
     monkeypatch.setattr(LibraryService, "_acquire_active_loan_automatically_guarded", forbidden)
     service = object.__new__(LibraryService)
     result = service._acquire_active_loan_automatically(
-        SimpleNamespace(id="loan-1", source_provider="paris")
+        SimpleNamespace(id="loan-1", source_provider="paris", source_credential="paris-a")
     )
     assert result["status"] == "attention_required"
     assert result["code"] == "acquisition_busy"
