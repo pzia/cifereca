@@ -394,7 +394,9 @@ class OverviewController:
         opener('provider.'+str(provider_id));return True
     def close(self):
         if not self.closed:
-            self.closed=True;self.unsubscribe();self.unsubscribe=lambda:None;self.render=None;self.host=None
+            self.closed=True
+            self._refresh_generation += 1
+            self.unsubscribe();self.unsubscribe=lambda:None;self.render=None;self.host=None
 
 def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broker=None):
     from gi.repository import Gtk, Pango
