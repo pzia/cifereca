@@ -91,8 +91,10 @@ def test_default_active_identity_and_read_only_no_io_or_persisted_changes():
     service.synchronize = service.acquire_direct_item = lambda *a, **kw: (
         _ for _ in ()
     ).throw(AssertionError("must never mutate or acquire"))
-    matrices = capability_matrices_for_identity(service)
-    assert matrices == LibraryService.capability_matrices(service)
+    # Headless Core cannot infer a live navigation identity, even if a
+    # synchronous LibraryService compatibility call still captures one.
+    assert capability_matrices_for_identity(service) == ()
+    matrices = LibraryService.capability_matrices(service)
     assert len(matrices) == 8
     assert all(not record.authorizes_mutation
                for matrix in matrices for record in matrix.observations)
