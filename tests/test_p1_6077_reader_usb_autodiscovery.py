@@ -270,8 +270,9 @@ def test_worker_closures_never_read_gtk_window_from_task_thread():
     assert "window." not in discover_worker
 
 
+@pytest.mark.parametrize("foreign_uuid", [UUID, UUID.upper()])
 def test_foreign_binding_with_duplicate_uuid_blocks_auto_selection(
-    tmp_path, monkeypatch,
+    tmp_path, monkeypatch, foreign_uuid,
 ):
     db, window, root = rig(tmp_path)
     reads, _proofs = fake_kernel(monkeypatch, lambda: (volume(),))
@@ -284,7 +285,8 @@ def test_foreign_binding_with_duplicate_uuid_blocks_auto_selection(
         def device_bindings(self):
             return [
                 owned,
-                {**owned, "identity_id": "bob", "device_id": "reader-bob"},
+                {**owned, "identity_id": "bob", "device_id": "reader-bob",
+                 "metadata": {"usb_fingerprint": foreign_uuid}},
             ]
 
     assert _discover_mounted_binding(
