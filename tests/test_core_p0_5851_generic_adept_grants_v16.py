@@ -193,3 +193,37 @@ def test_connection_reassignment_revokes_grant_even_after_owner_restoration(tmp_
         assert store.adept_borrower_grant_get(**coords) is None
     finally:
         service.close()
+
+
+def test_disabled_connection_revokes_grant_without_reenabling_it(tmp_path):
+    service, _ = service_with_linked_borrower(tmp_path)
+    store = service.storage
+    coords = dict(provider_id="paris", credential_id="alice-paris",
+                  account_id="linked-123")
+    try:
+        _persist_account(store)
+        store.adept_borrower_grant_put(
+            **coords, connection_identity_id="alice",
+            borrower_identity_id="bob", profile_id="bob-profile",
+            confirmed=True,
+        )
+        with store._lock, store._connect() as db:
+            db.execute(
+                "UPDATE provider_connections SET enabled=0 "
+                "WHERE provider_id='paris' AND credential_id='alice-paris'"
+            )
+        assert store.adept_borrower_grant_get(**coords) is None
+        with pytest.raises(ValueError, match="evidence_invalid"):
+            store.adept_borrower_grant_put(
+                **coords, connection_identity_id="alice",
+                borrower_identity_id="bob", profile_id="bob-profile",
+                confirmed=True,
+            )
+        with store._lock, store._connect() as db:
+            db.execute(
+                "UPDATE provider_connections SET enabled=1 "
+                "WHERE provider_id='paris' AND credential_id='alice-paris'"
+            )
+        assert store.adept_borrower_grant_get(**coords) is None
+    finally:
+        service.close()
