@@ -111,6 +111,27 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
     if type(cache) not in (list, tuple) or len(cache) > _MAX_LOANS:
         cache = ()
 
+    # Session registry keys are global (provider lowercased + credential),
+    # even when a saved connection claims a different profile. Such a reused
+    # key cannot safely identify a single owner's connected session. Inspect
+    # only bounded configuration metadata; never resolve provider credentials.
+    first_owners = {}
+    shared_registry_keys = set()
+    for entry in configured:
+        if type(entry) is not dict:
+            continue
+        owner = entry.get("identity_id")
+        provider, credential = entry.get("provider"), entry.get("id")
+        if (type(owner) is not str or not owner
+                or type(provider) is not str or not provider
+                or type(credential) is not str or not credential
+                or len(provider) > 128 or len(credential) > 128):
+            continue
+        registry_key = (provider.lower(), credential)
+        first = first_owners.setdefault(registry_key, owner)
+        if first != owner:
+            shared_registry_keys.add(registry_key)
+
     eligible = []
     seen = set()
     ambiguous_connections = set()
@@ -153,7 +174,10 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
         configured_label = _safe_label(configured_entry.get("label"), "")
         if configured_label:
             connection_label += " · " + configured_label
-        if (provider, credential) in ambiguous_connections:
+        if ((provider, credential) in ambiguous_connections
+                or (provider.lower(), credential) in shared_registry_keys):
+            # A global session key cannot belong to two profiles, regardless
+            # of which cached Account objects happen to survive today.
             rows.append(DigitalLoanAvailability(
                 identity_id=identity_id, provider_id=provider,
                 credential_id=credential, borrower_id=None,
