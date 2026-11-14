@@ -563,25 +563,33 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             'credentials': credentials, 'options': options,
         })
         saved_accounts.append(saved_account)
-    # The normal binding refers to a configured, enabled Paris connection
-    # of this exact identity. A save cannot silently redirect it to another
-    # login (including after an account was removed or reassigned).
+    # The historical selection key remains persisted for compatibility,
+    # but its provider is declared by the installed plugin's typed policy.
+    # Neither the UI nor the draft may choose a provider from a brand literal.
+    # An unknown, undeclared or moved connection cannot silently become the
+    # primary source of a different profile.
+    selection_key = 'primary_paris_connection_id'
     for identity in saved_identities:
-        selected = identity.get('primary_paris_connection_id')
+        selected = identity.get(selection_key)
         if not selected:
             continue
         matched = [row for row in saved_accounts if (
             type(row.get('id')) is str
             and row['id'] == selected
             and type(row.get('provider')) is str
-            and row['provider'].casefold() == 'paris'
+            and getattr(
+                getattr(
+                    descriptors.get(row['provider'].casefold()),
+                    'manual_borrow_policy', None,
+                ), 'source_selection_key', None,
+            ) == selection_key
             and row.get('identity_id') == identity['id']
             and row.get('enabled') is True
         )]
         if len(matched) != 1:
             raise SettingsValidationError(
-                'Connexion Paris principale absente, désactivée ou ambiguë : '
-                'corrigez son ID ou effacez le choix explicite.'
+                'Connexion principale absente, désactivée, non déclarée '
+                'ou ambiguë : corrigez son ID ou effacez le choix explicite.'
             )
     draft.set('providers.accounts', saved_accounts)
     try:
