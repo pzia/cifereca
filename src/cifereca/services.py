@@ -3667,9 +3667,10 @@ class LibraryService:
             return True
         return {str(account.identity_id) for account in matching} != {identity_id}
 
-    def bind_adept_borrower_grant(
+    def _write_adept_borrower_grant(
         self, *, provider_id: str, credential_id: str, account_id: str,
         borrower_identity_id: str, confirmed: bool = False,
+        retire_legacy: bool = False,
     ) -> dict[str, Any]:
         """Record one user-confirmed ADEPT borrower grant on an exact source.
 
@@ -3702,7 +3703,10 @@ class LibraryService:
             "credential_id": credential_id,
             "account_id": account_id,
         }
-        self.storage.adept_borrower_grant_put(
+        writer = (self.storage.adept_borrower_grant_reconfirm_legacy
+                  if retire_legacy is True
+                  else self.storage.adept_borrower_grant_put)
+        writer(
             **scope,
             connection_identity_id=connection_identity_id,
             borrower_identity_id=borrower_identity_id,
@@ -3717,6 +3721,28 @@ class LibraryService:
                 or proof.get("confirmed_by") != "explicit"):
             raise ValueError("adept_borrower_grant_evidence_invalid")
         return proof
+
+    def bind_adept_borrower_grant(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        borrower_identity_id: str, confirmed: bool = False,
+    ) -> dict[str, Any]:
+        """Write an exact explicit v16 grant, without importing legacy."""
+        return self._write_adept_borrower_grant(
+            provider_id=provider_id, credential_id=credential_id,
+            account_id=account_id, borrower_identity_id=borrower_identity_id,
+            confirmed=confirmed, retire_legacy=False,
+        )
+
+    def reconfirm_legacy_adept_borrower_grant(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        borrower_identity_id: str, confirmed: bool = False,
+    ) -> dict[str, Any]:
+        """Explicit user-initiated legacy retirement with atomic v16 grant."""
+        return self._write_adept_borrower_grant(
+            provider_id=provider_id, credential_id=credential_id,
+            account_id=account_id, borrower_identity_id=borrower_identity_id,
+            confirmed=confirmed, retire_legacy=True,
+        )
 
     def bind_paris_borrower_adept(
         self, *, credential_id: str, account_id: str, borrower_identity_id: str,
