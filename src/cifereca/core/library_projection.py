@@ -16,7 +16,7 @@ from typing import Any
 from ..catalog import LocalCatalog
 from ..epub_metadata import cached_cover_url
 from ..core.covers import candidate as cover_candidate, resolve_cover
-from ..models import HistoryItem, Loan, SearchResult
+from ..models import Account, HistoryItem, Loan, SearchResult
 from ..providers import ProviderConfigurationError
 from ..plugin_api import BundleError, load_bundle_manifest
 from .local_placement_open_guard import scoped_existing_placement_path
@@ -150,12 +150,28 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
     recherche. Une notice fiable sans image est enrichie via ``holdings``
     *avec l'identifiant issu de Search.svc*, qui est exploitable.
     """
+    # Pin the exact borrower before cache access. Catalogue cover URLs may
+    # carry account-specific tokens, so the old provider/title-only cache
+    # namespace cannot be shared between independent Core clients.
+    account = self.current_account
+    if (type(account) is not Account
+            or type(account.identity_id) is not str or not account.identity_id
+            or type(account.provider_id) is not str or not account.provider_id
+            or type(account.credential_id) is not str or not account.credential_id
+            or type(account.unique_id) is not str
+            or type(account.is_primary) is not bool):
+        return default_url, "error"
+    borrower_scope = (
+        account.identity_id, account.provider_id, account.credential_id,
+        account.unique_id, "primary" if account.is_primary else "linked",
+    )
     provider = (provider or "SYRACUSE").upper()
     title = str(title or "").strip()
     if not title:
         return default_url, "not_found"
 
     folded = "\0".join([
+        *borrower_scope,
         provider,
         str(record_id or ""),
         self._history_fold(title),
@@ -178,7 +194,7 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
 
     # Cover enrichment is provider-agnostic: use the current provider
     # session contract rather than any concrete Syracuse client.
-    session = self._session_for_account()
+    session = self._session_for_account(account)
     all_rows: list[SearchResult] = []
     seen: set[str] = set()
     attempts = 0
