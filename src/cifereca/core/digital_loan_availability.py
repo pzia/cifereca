@@ -113,6 +113,7 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
 
     eligible = []
     seen = set()
+    ambiguous_connections = set()
     for entry in configured:
         if type(entry) is not dict or entry.get("identity_id") != identity_id:
             continue
@@ -125,8 +126,10 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
             continue
         key = (provider, credential)
         if key in seen:
-            # Duplicated config cannot safely partition a supplier account.
-            return ()
+            # The duplicated connection is ambiguous, not the entire profile.
+            # Never choose the first saved config or read its advisory ceiling.
+            ambiguous_connections.add(key)
+            continue
         seen.add(key)
         descriptor = by_descriptor.get(provider)
         if descriptor is not None and descriptor.capabilities.loans is not True:
@@ -150,6 +153,14 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
         configured_label = _safe_label(configured_entry.get("label"), "")
         if configured_label:
             connection_label += " · " + configured_label
+        if (provider, credential) in ambiguous_connections:
+            rows.append(DigitalLoanAvailability(
+                identity_id=identity_id, provider_id=provider,
+                credential_id=credential, borrower_id=None,
+                provider_label=provider_label, connection_label=connection_label,
+                borrower_label="Emprunteur non vérifié", reason="scope_ambiguous",
+            ))
+            continue
         matches = [
             a for a in live_accounts
             if type(a) is Account and a.identity_id == identity_id
