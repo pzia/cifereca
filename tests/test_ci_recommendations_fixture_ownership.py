@@ -18,6 +18,10 @@ def test_recommendations_test_fixtures_are_stable_uncollected_helpers():
             "_view", "_variant", "ISBN_1", "ISBN_2",
         },
         "recommendations_detail_test_fixtures.py": {"_make_view"},
+        "recommendations_identity_test_fixtures.py": {
+            "_identity_reload_view", "_NoisyIdentityDropDown",
+            "_NoisyIdentityModel", "_TrackingSnapshotCache", "_CoalescingGLib",
+        },
     }
     for file, exports in expected.items():
         path = TESTS / file
@@ -48,6 +52,9 @@ def test_recommendations_consumers_no_longer_import_other_test_modules():
         "test_recommendation_source_filter_exact_actions_p1.py",
         "test_attested_score_projection_p1.py",
         "test_recommendation_ranked_provenance_public_p1.py",
+        "test_recommendations_ui.py",
+        "test_recommendations_missing_profile_selection_p1.py",
+        "test_recommendation_identity_switch_while_busy_p1.py",
     )
     assert (TESTS / "__init__.py").is_file()
     for name in names:
@@ -59,6 +66,7 @@ def test_recommendations_consumers_no_longer_import_other_test_modules():
             and node.module in {
                 "recommendations_catalogue_test_fixtures",
                 "recommendations_detail_test_fixtures",
+                "recommendations_identity_test_fixtures",
             }
         ]
         assert local_fixture_imports, name
