@@ -16,6 +16,7 @@ from .loan_adept_profile_receipt import attention_receipt
 def check(
     self: Any, loan: Any, *, identity: Any, ledger_base: dict[str, Any],
     previous_meta: dict[str, Any], retained_acsm: Any, trace_ref: str,
+    expected_loan_id: str, expected_record_id: str | None,
     AdeptProfileResolutionError: type, adept_acsm_plan: Any, _TRACE_LOG: Any,
 ) -> tuple[str, str] | dict[str, Any]:
     """Exact pre-ADEPT grant/profile sequence; dict is the existing refusal."""
@@ -29,7 +30,15 @@ def check(
     source_provider = loan.source_provider
     source_credential = loan.source_credential
     source_account_id = loan.source_account_id
-    if (type(source_provider) is not str or not source_provider
+    source_loan_id = loan.id
+    source_record_id = loan.record_id
+    if (type(expected_loan_id) is not str or not expected_loan_id
+            or type(expected_record_id) not in (str, type(None))
+            or type(source_loan_id) is not str
+            or source_loan_id != expected_loan_id
+            or type(source_record_id) not in (str, type(None))
+            or source_record_id != expected_record_id
+            or type(source_provider) is not str or not source_provider
             or type(source_credential) is not str or not source_credential
             or type(source_account_id) not in (str, type(None))
             or source_provider != ledger_base.get("provider_id")
@@ -50,7 +59,7 @@ def check(
         self.storage.acquisition_put(
             attention_receipt(
                 ledger_base=ledger_base, previous_meta=previous_meta,
-                loan_id=loan.id, retained_acsm=retained_acsm, code=code,
+                loan_id=expected_loan_id, retained_acsm=retained_acsm, code=code,
             )
         )
         _TRACE_LOG.warning(
@@ -58,7 +67,7 @@ def check(
             trace_ref,
         )
         return {
-            "status": "attention_required", "loan_id": loan.id,
+            "status": "attention_required", "loan_id": expected_loan_id,
             "code": code, "retry": "explicit_only",
         }
     try:
@@ -82,7 +91,7 @@ def check(
         self.storage.acquisition_put(
             attention_receipt(
                 ledger_base=ledger_base, previous_meta=previous_meta,
-                loan_id=loan.id, retained_acsm=retained_acsm, code=code,
+                loan_id=expected_loan_id, retained_acsm=retained_acsm, code=code,
                 error_message=message,
             )
         )
@@ -90,7 +99,7 @@ def check(
             "TRACE download acsm cleanup loan_ref=%s action=keep reason=profile_unresolved",
             trace_ref,
         )
-        return {"status": "attention_required", "loan_id": loan.id, "code": code, "error": message}
+        return {"status": "attention_required", "loan_id": expected_loan_id, "code": code, "error": message}
     _TRACE_LOG.info(
         "TRACE download adept profile-resolved loan_ref=%s",
         trace_ref,
@@ -113,7 +122,7 @@ def check(
             self.storage.acquisition_put(
                 attention_receipt(
                     ledger_base=ledger_base, previous_meta=previous_meta,
-                    loan_id=loan.id, retained_acsm=retained_acsm, code=code,
+                    loan_id=expected_loan_id, retained_acsm=retained_acsm, code=code,
                     error_message=message, attempt_profile=profile_name,
                     include_attempt_profile=True,
                 )
@@ -122,5 +131,5 @@ def check(
                 "TRACE download acsm cleanup loan_ref=%s action=keep reason=profile_not_ready",
                 trace_ref,
             )
-            return {"status": "attention_required", "loan_id": loan.id, "code": code, "error": message}
+            return {"status": "attention_required", "loan_id": expected_loan_id, "code": code, "error": message}
     return adept_borrower_identity_id, profile_name
