@@ -65,7 +65,10 @@ def _pytest_plugins_reuses_changed_test(value: ast.AST, changed_modules: dict[st
     return False
 
 
-def has_test_consumers(root: Path, changed: list[str]) -> bool:
+def has_test_consumers(
+    root: Path, changed: list[str], *,
+    consumer_globs: tuple[str, ...] = TEST_CONSUMER_GLOBS,
+) -> bool:
     """Return whether another test imports one of the changed test modules.
 
     Parse candidates that mention the changed names. Data strings and comments
@@ -83,7 +86,7 @@ def has_test_consumers(root: Path, changed: list[str]) -> bool:
     # Dynamic imports can construct "tests.<name>" without spelling out a
     # changed test module. Inert namespace references do not need AST parsing.
     namespace_fragments = ('"tests"', "'tests'", "tests.", "tests/")
-    for glob in TEST_CONSUMER_GLOBS:
+    for glob in consumer_globs:
         for candidate in root.glob(glob):
             if not candidate.is_file() or candidate.relative_to(root).as_posix() in changed_modules.values():
                 continue
