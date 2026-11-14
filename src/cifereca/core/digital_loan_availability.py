@@ -153,13 +153,14 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
                 or entry.get("enabled", True) not in (True, False)
                 or type(entry.get("enabled", True)) is not bool):
             continue
-        key = (provider, credential)
-        if key in seen:
-            # The duplicated connection is ambiguous, not the entire profile.
-            # Never choose the first saved config or read its advisory ceiling.
-            ambiguous_connections.add(key)
+        # The session registry lowercases provider IDs. Two differently
+        # cased spellings with the same credential are ONE ambiguous session,
+        # never two independent borrower or advisory-capacity claims.
+        registry_key = (provider.lower(), credential)
+        if registry_key in seen:
+            ambiguous_connections.add(registry_key)
             continue
-        seen.add(key)
+        seen.add(registry_key)
         descriptor = by_descriptor.get(provider)
         if (provider not in duplicate_descriptors
                 and descriptor is not None
@@ -184,7 +185,7 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
         configured_label = _safe_label(configured_entry.get("label"), "")
         if configured_label:
             connection_label += " · " + configured_label
-        if ((provider, credential) in ambiguous_connections
+        if ((provider.lower(), credential) in ambiguous_connections
                 or (provider.lower(), credential) in shared_registry_keys
                 or provider in duplicate_descriptors):
             # Neither an ambiguous global session key nor an ambiguous
