@@ -818,6 +818,21 @@
       ],
       "pr": "#6088",
       "in_ast_metric": true
+    },
+    {
+      "id": "struct-library-selected-offer-double-gtk-selection",
+      "original": "core.selected_source_offer.select_library_source_offer_target selected one origin against current_identity, then select_source_offer_target read current_identity again to resolve the account, allowing GTK profile drift between selection and account resolution",
+      "original_classification": "navigation_dependent_selected_source_offer_target",
+      "replacement": "The Library card snapshots the selected identity once and passes expected_identity_id to the generic selected-source constructor. Direct public constructor calls retain the existing no-argument ABI. _resolve still independently checks the currently selected profile and exact account/session before producing any executable target, and again at acquisition.",
+      "classification": "removed_duplicate_navigation_selected_offer_account_resolution",
+      "evidence": "Synthetic two-account headless fixture fails on any second GTK selection read and verifies the selected target retains Alice's exact account/credential. Foreign origin refuses before resolver; explicit scoped constructor reads no navigation. Existing ambiguous source and canonical delivery tests remain gates.",
+      "tests": [
+        "tests/test_core_p0_5975_selected_offer_identity_snapshot.py",
+        "tests/test_core_p0_5054_owned_future_provider_ambiguity.py",
+        "tests/test_core_p0_5054_owned_library_no_legacy_kobo.py"
+      ],
+      "pr": "#pending",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
