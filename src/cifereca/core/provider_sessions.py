@@ -852,17 +852,28 @@ def _configured_connection_identity(row, descriptor) -> str | None:
     return None
 
 
-def _opening_sync_covers_visible_accounts(self) -> bool:
-    """True only if the next opening Sync will inventory every visible source.
+def _opening_sync_covers_visible_accounts(
+    self, *, selected_identity_id: str | None,
+) -> bool:
+    """True only when opening Sync covers an explicitly admitted identity.
 
-    A source can be connected for consultation yet excluded from Sync. When
-    the enabled-state check is unavailable or ambiguous, keep the established
-    forced refresh rather than silently withholding its loans.
+    The connection sweep passes the exact account owner observed at its
+    synchronous publication boundary. This Core read-only projection may
+    not inspect mutable GTK navigation to choose a borrower after admission.
+    Unknown identity, missing accounts or ambiguous enabled state require
+    the established forced refresh, not a silent suppression of loan reads.
     """
+    if (type(selected_identity_id) is not str
+            or not selected_identity_id
+            or len(selected_identity_id) > 256
+            or selected_identity_id != selected_identity_id.strip()
+            or any(c in selected_identity_id for c in "\x00\r\n")):
+        return False
     try:
-        identity_id = self.current_identity.identity_id
-        accounts = self.accounts_for_identity(identity_id)
-        return all(self.sync_source_enabled(account) is True for account in accounts)
+        accounts = self.accounts_for_identity(selected_identity_id)
+        return bool(accounts) and all(
+            self.sync_source_enabled(account) is True for account in accounts
+        )
     except Exception:
         return False
 
@@ -1409,9 +1420,20 @@ def connect_configured(self, *, logger, caller_category: str = "other",
     self.current_identity = self.identity_by_id(self.current_account.identity_id) or self.current_identity
     self._active_session_key = self._session_key(self.current_account.provider_id, self.current_account.credential_id)
     self.primary = self.current_account
+    # The startup selection is already published above. Capture its exact
+    # admitted account owner ONCE; never let a delayed Core helper re-select
+    # another GTK identity while deciding whether to suppress a loan refresh.
+    admitted = self.current_identity
+    opening_sync_identity_id = (
+        self.current_account.identity_id
+        if getattr(admitted, "identity_id", None) == self.current_account.identity_id
+        else None
+    )
     if (caller_category == "startup/connect_configured"
             and source_scope is None
-            and _opening_sync_covers_visible_accounts(self)):
+            and _opening_sync_covers_visible_accounts(
+                self, selected_identity_id=opening_sync_identity_id,
+            )):
         # GTK queues the opening Sync as soon as this first connection
         # completes. It makes its own fresh, validated loan/rights reads.
         # A forced loan refresh here would duplicate the two Paris ListLoans
