@@ -60,7 +60,7 @@ def test_success_and_empty_diagnostic_have_same_non_authorizing_boolean(tmp_path
         raw = {"not_a_public_category": "should be removed"}
         assert manual_library_borrow.manual_borrow_available(
             service, item, provider_id="paris", docbase="DILICOM",
-            primary_id="", diagnostic=raw,
+            primary_id="", diagnostic=raw, identity_id=account.identity_id,
         ) is True
         assert raw == {"reason_code": "local_action_available_provider_unknown"}
         assert service.manual_borrow_diagnostic(item)["local_action_possible"] is True
