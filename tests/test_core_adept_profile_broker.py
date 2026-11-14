@@ -345,10 +345,10 @@ def test_bind_keeps_normal_ready_profile_and_stable_identity():
     ("profile_id", 123),
     ("profile_id", {"unexpected": "value"}),
     ("profile_id", "x" * 257),
-    ("profile_id", "stable\\nmalformed"),
+    ("profile_id", "stable" + chr(10) + "malformed"),
     ("name", 17),
     ("name", ["reader"]),
-    ("name", "reader\\x00invalid"),
+    ("name", "reader" + chr(0) + "invalid"),
 ])
 def test_profile_runtime_fields_must_be_bounded_text_before_binding(field, value):
     service = Service()
