@@ -6,6 +6,9 @@ per-credential options or explicitly configured generic fallback.
 from types import SimpleNamespace as NS
 
 from cifereca.services import LibraryService
+from cifereca.providers.base import (
+    AccountOptionField, ProviderCapabilities, ProviderDescriptor,
+)
 
 
 class Config:
@@ -23,6 +26,8 @@ class Config:
     def get(self, key, default):
         if key == "library.public_catalogue_fallback":
             return self.generic
+        if key == "base_url":
+            return self.paris
         return default
 
 
@@ -30,7 +35,19 @@ def _host(provider, homepage=None, config=None):
     return NS(
         config=config or Config(),
         provider_descriptors=lambda: [
-            NS(id=provider, homepage=homepage),
+            ProviderDescriptor(
+                id=provider, display_name=provider, description="public navigation",
+                state="ready", capabilities=ProviderCapabilities(),
+                homepage=homepage,
+                public_catalogue_base_option_key=(
+                    "base_url" if provider == "paris" else None
+                ),
+                account_options=(
+                    (AccountOptionField("base_url", "Portail",
+                                        legacy_config_key="base_url"),)
+                    if provider == "paris" else ()
+                ),
+            ),
         ] if homepage else [],
     )
 
@@ -161,9 +178,10 @@ def test_catalogue_option_never_special_cases_kobo_in_core():
         and item.name == "public_catalogue_target"
     )
     source_method = ast.get_source_segment(source, method)
-    assert "elif provider == 'kobo':" not in source_method
-    assert "provider, 'catalogue_url', None" in source_method
-    assert "if provider == 'paris':" in source_method
+    assert "provider_sessions.public_catalogue_target(self, row)" in source_method
+    assert "paris" not in source_method and "kobo" not in source_method
+    from cifereca.core.provider_sessions import public_catalogue_target
+    assert "if provider ==" not in __import__("inspect").getsource(public_catalogue_target)
 
 
 def test_minimal_catalogue_host_without_provider_option_still_uses_homepage():
