@@ -1142,7 +1142,7 @@
         "tests/test_core_acquisition_no_injected_runtime_bypass.py",
         "tests/test_core_p0_5975_session_resolver_explicit_account.py"
       ],
-      "pr": "#PENDING",
+      "pr": "#6111",
       "in_ast_metric": false
     }
   ],
