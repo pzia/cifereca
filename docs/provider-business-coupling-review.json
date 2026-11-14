@@ -831,7 +831,7 @@
         "tests/test_core_generic_explicit_enrichment_p0.py",
         "tests/test_core_p0_5054_provider_detail_synthetic.py"
       ],
-      "pr": "#pending",
+      "pr": "#6092",
       "in_ast_metric": false
     }
   ],
