@@ -1572,8 +1572,11 @@ class Storage:
                 """)
                 db.execute("""
                     CREATE TRIGGER IF NOT EXISTS trg_adept_grant_connection_update
-                    AFTER UPDATE OF identity_id ON provider_connections
+                    AFTER UPDATE OF identity_id,provider_id,credential_id
+                    ON provider_connections
                     WHEN OLD.identity_id IS NOT NEW.identity_id
+                      OR OLD.provider_id IS NOT NEW.provider_id
+                      OR OLD.credential_id IS NOT NEW.credential_id
                     BEGIN
                         DELETE FROM adept_borrower_grants
                         WHERE provider_id=OLD.provider_id
