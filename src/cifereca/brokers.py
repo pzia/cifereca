@@ -1312,9 +1312,19 @@ class AdeptProfileBrokerImpl:
         token = value.strip()
         return token
 
+    @classmethod
+    def _coherent_profile_field(cls, row: dict[str, Any], canonical: str, alias: str) -> str:
+        # Old runtimes may publish either spelling. When both are present
+        # their native, bounded values must attest the same coordinate.
+        present = [row[key] for key in (canonical, alias) if key in row and row[key] is not None]
+        values = [cls._profile_token(value) for value in present]
+        if not values or any(not value or value != values[0] for value in values):
+            return ""
+        return values[0]
+
     def _ref(self, row: dict[str, Any]) -> AdeptProfileRef:
-        stable = self._profile_token(row.get("profile_id") or row.get("id"))
-        name = self._profile_token(row.get("name") or row.get("profile"))
+        stable = self._coherent_profile_field(row, "profile_id", "id")
+        name = self._coherent_profile_field(row, "name", "profile")
         if not stable or not name:
             raise AttentionRequired(
                 "Le runtime ADEPT ne publie pas de référence de profil stable.",
@@ -1407,10 +1417,14 @@ class AdeptProfileBrokerImpl:
         if callable(refresh_capabilities):
             refresh_capabilities()
         rows = self._profile_rows()
-        shown_name = self._profile_token(shown.get("name") or shown.get("profile") or name)
+        shown_name = (
+            self._coherent_profile_field(shown, "name", "profile")
+            if "name" in shown or "profile" in shown
+            else self._profile_token(name)
+        )
         candidates = [
             row for row in rows
-            if shown_name and self._profile_token(row.get("name") or row.get("profile")) == shown_name
+            if shown_name and self._coherent_profile_field(row, "name", "profile") == shown_name
         ]
         # The creation acknowledgement is not an authority to bind a profile.
         # Only one freshly enumerated runtime row can attest its stable ID.
@@ -1422,15 +1436,15 @@ class AdeptProfileBrokerImpl:
         profile = self._ref(candidates[0])
         if sum(
             1 for row in rows
-            if self._profile_token(row.get("profile_id") or row.get("id")) == profile.profile_id
+            if self._coherent_profile_field(row, "profile_id", "id") == profile.profile_id
         ) != 1:
             raise AttentionRequired(
                 "L'identifiant du profil ADEPT est ambigu dans l'inventaire.",
                 code="adept_profile_provisioning_incomplete",
             )
-        announced = shown.get("profile_id") or shown.get("id")
-        acknowledged_id = self._profile_token(announced)
-        if announced and (not acknowledged_id or acknowledged_id != profile.profile_id):
+        has_ack_id = "profile_id" in shown or "id" in shown
+        acknowledged_id = self._coherent_profile_field(shown, "profile_id", "id") if has_ack_id else ""
+        if has_ack_id and acknowledged_id != profile.profile_id:
             raise AttentionRequired(
                 "Le profil ADEPT créé ne correspond pas au profil observé.",
                 code="adept_profile_provisioning_incomplete",
