@@ -28,6 +28,27 @@ ne prouve jamais un quota fournisseur, une disponibilité ou une permission.
   et le draft réutilisent une validation du schéma commune, sans appeler le
   provider.
 
+## Booléen d'opt-in : `value_type="boolean"` (#5540)
+
+Le contrat public accepte désormais `AccountOptionField(value_type="boolean",
+default="off")` pour une **préférence locale explicitement opt-in**.
+La ligne de Paramètres est générée avec un `Adw.ActionRow` + `Gtk.Switch`,
+sans test de l'identifiant fournisseur. Le switch conserve les mêmes
+chaînes canoniques `"off"` / `"on"` que le type `choice` ; les booléens
+Python/JSON, `"true"`, `"yes"`, les libellés et les valeurs inconnues
+ne sont jamais convertis en consentement. Le défaut `"on"`, les champs
+secrets et les choix mélangés à un switch sont **refusés** au rendu et au
+draft ; une configuration antérieure non canonique marque le formulaire
+invalide et ne se réécrit pas lors d'un Save indépendant.
+
+Les options `text`, `choice`, `url` et `unsigned_integer` gardent leur
+comportement. Aucun plugin n'est automatiquement migré vers `boolean`,
+aucun appel de connexion ou de synchronisation n'est déclenché par
+l'affichage ni par le retour de `get_text()`. L'activation réelle
+requiert toujours les contrôles Core de consentement/identité/credential.
+Tests : deux profils, comptes et options héritées, défaut OFF, validation
+du schéma, type malformé, switch GTK incohérent, persistance exacte.
+
 ## Portée de la tranche
 
 Les déclarations des plugins livrés restent inchangées. Le cas synthétique
