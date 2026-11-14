@@ -19,7 +19,7 @@ from tests.test_core_p0_3171_atomic_publication_v14 import (
 
 def rig(tmp_path, monkeypatch, *, typed=True):
     service = _service(tmp_path)
-    assert service.storage.schema_version() == 15
+    assert service.storage.schema_version() == 16
     if service.storage.identity_get("default") is None:
         service.storage.identity_put({
             "identity_id": "default", "directory_name": "hugues",

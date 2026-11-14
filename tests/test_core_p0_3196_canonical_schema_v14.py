@@ -49,7 +49,7 @@ def _link(db, link, kind, profile, *, source=None, parent=None,
 def test_fresh_schema_is_empty_and_legacy_tables_still_exist(tmp_path):
     storage = Storage(tmp_path / "reader.sqlite")
     try:
-        assert CURRENT_SCHEMA_VERSION == storage.schema_version() == 15
+        assert CURRENT_SCHEMA_VERSION == storage.schema_version() == 16
         with storage._lock, storage._connect() as db:
             assert {"source_references", "origin_links", "backup_items",
                     "entitlements", "artifacts", "placements",
@@ -84,7 +84,7 @@ def test_v13_migration_does_not_invent_provider_origins_from_old_backup(tmp_path
         db.execute("UPDATE metadata SET value='13' WHERE key='schema_version'")
     migrated = Storage(path)
     try:
-        assert migrated.schema_version() == 15
+        assert migrated.schema_version() == 16
         assert migrated.entitlements() == before_rights
         assert migrated.acquisitions() == before_ledger
         assert migrated.backup_list() == before_backup
@@ -94,7 +94,7 @@ def test_v13_migration_does_not_invent_provider_origins_from_old_backup(tmp_path
         migrated.close()
         reopened = Storage(path)
         try:
-            assert reopened.schema_version() == 15
+            assert reopened.schema_version() == 16
             assert reopened.backup_list() == before_backup
         finally:
             reopened.close()
@@ -194,7 +194,7 @@ def test_failed_migration_does_not_leave_partly_created_authority(tmp_path, monk
     monkeypatch.setattr(Storage, "_write_schema_version", staticmethod(before))
     recovered = Storage(path)
     try:
-        assert recovered.schema_version() == 15
+        assert recovered.schema_version() == 16
     finally:
         recovered.close()
 

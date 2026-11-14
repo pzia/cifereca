@@ -159,7 +159,7 @@ def test_schema_v8_merges_legacy_empty_and_primary_paris_loan_ledger_rows():
         db.commit(); db.close()
 
         migrated = Storage(db_path)
-        assert migrated.schema_version() == 15
+        assert migrated.schema_version() == 16
         entitlements = migrated.entitlements(provider_id="paris")
         assert len(entitlements) == 1
         assert entitlements[0]["account_id"] == "primary"

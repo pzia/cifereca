@@ -91,7 +91,7 @@ def test_v2_passive_kobo_backups_survive_without_synthesizing_v3_rights(tmp_path
 
     storage = Storage(db_path)
     try:
-        assert storage.schema_version() == 15
+        assert storage.schema_version() == 16
         with storage._lock, storage._connect() as db:
             assert db.execute(
                 "SELECT provider_id,credential_id,item_id,status,local_path,sha256,size,"
@@ -122,7 +122,7 @@ def test_v2_passive_kobo_backups_survive_without_synthesizing_v3_rights(tmp_path
     # Idempotent forward-only migration; no archive gets deleted on reopen.
     reopened = Storage(db_path)
     try:
-        assert reopened.schema_version() == 15
+        assert reopened.schema_version() == 16
         assert _positive(reopened) == facts
         assert {row["item_id"] for row in reopened.backup_list("kobo")} == {
             "archived", "pending", "queued", "complete", "interrupted",
@@ -152,7 +152,7 @@ def test_v2_pending_with_interruption_clue_remains_reviewable(tmp_path, clue):
     _v2(db_path, [{"status": "pending", **clue}])
     storage = Storage(db_path)
     try:
-        assert storage.schema_version() == 15
+        assert storage.schema_version() == 16
         assert storage.backup_get("kobo", "vault", "edition") is not None
         assert ("kobo", "vault", "edition") not in set(
             _positive(storage)["receipts"]

@@ -18,7 +18,7 @@ _TRACE_LOG = logging.getLogger("cifereca")
 # Schema history is deliberately explicit from 0.7.10 onward.  Databases created
 # before that release had no schema_version metadata; they are treated as v0 and
 # migrated forward transactionally.
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 
 BASE_SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -1528,6 +1528,104 @@ class Storage:
                 db.execute("RELEASE SAVEPOINT migration_v15")
                 raise
             version = 15
+
+        if version < 16:
+            db.execute("SAVEPOINT migration_v16")
+            try:
+                # Explicit ADEPT borrower grants are scoped to the complete
+                # provider connection. Never infer grants from the legacy
+                # Paris-only table, loan ledger, entitlement or UI selection.
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS adept_borrower_grants (
+                        provider_id TEXT NOT NULL,
+                        credential_id TEXT NOT NULL,
+                        account_id TEXT NOT NULL,
+                        connection_identity_id TEXT NOT NULL,
+                        borrower_identity_id TEXT NOT NULL,
+                        profile_id TEXT NOT NULL,
+                        confirmed_by TEXT NOT NULL CHECK (confirmed_by='explicit'),
+                        confirmed_at INTEGER NOT NULL,
+                        updated_at INTEGER NOT NULL,
+                        PRIMARY KEY(provider_id,credential_id,account_id)
+                    )
+                """)
+                # Revocation is monotonic: a profile rotated away and back
+                # must not resurrect a previously explicit grant.
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_profile_update
+                    AFTER UPDATE OF profile_id ON adept_profile_bindings
+                    WHEN OLD.scope_type='identity'
+                      AND OLD.profile_id IS NOT NEW.profile_id
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE borrower_identity_id=OLD.scope_id;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_profile_delete
+                    AFTER DELETE ON adept_profile_bindings
+                    WHEN OLD.scope_type='identity'
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE borrower_identity_id=OLD.scope_id;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_connection_update
+                    AFTER UPDATE OF identity_id,provider_id,credential_id,enabled
+                    ON provider_connections
+                    WHEN OLD.identity_id IS NOT NEW.identity_id
+                      OR OLD.provider_id IS NOT NEW.provider_id
+                      OR OLD.credential_id IS NOT NEW.credential_id
+                      OR (OLD.enabled=1 AND NEW.enabled<>1)
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE provider_id=OLD.provider_id
+                          AND credential_id=OLD.credential_id;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_connection_delete
+                    AFTER DELETE ON provider_connections
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE provider_id=OLD.provider_id
+                          AND credential_id=OLD.credential_id;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_account_update
+                    AFTER UPDATE OF connection_id,identity_id,provider_id,
+                                    credential_id,account_id ON provider_accounts
+                    WHEN OLD.connection_id IS NOT NEW.connection_id
+                      OR OLD.identity_id IS NOT NEW.identity_id
+                      OR OLD.provider_id IS NOT NEW.provider_id
+                      OR OLD.credential_id IS NOT NEW.credential_id
+                      OR OLD.account_id IS NOT NEW.account_id
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE provider_id=OLD.provider_id
+                          AND credential_id=OLD.credential_id
+                          AND account_id=OLD.account_id;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_account_delete
+                    AFTER DELETE ON provider_accounts
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE provider_id=OLD.provider_id
+                          AND credential_id=OLD.credential_id
+                          AND account_id=OLD.account_id;
+                    END
+                """)
+                cls._write_schema_version(db, 16)
+                db.execute("RELEASE SAVEPOINT migration_v16")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v16")
+                db.execute("RELEASE SAVEPOINT migration_v16")
+                raise
+            version = 16
 
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
@@ -3207,6 +3305,145 @@ class Storage:
                 (str(scope_type).strip().lower(), str(scope_id).strip()),
             ).fetchone()
         return str(row[0]) if row else None
+
+    @staticmethod
+    def _adept_grant_scope(
+        *, provider_id: str, credential_id: str, account_id: str,
+    ) -> tuple[str, str, str]:
+        """Validate exact native source coordinates; no plugin coercion."""
+        if (type(provider_id) is not str or not provider_id
+                or type(credential_id) is not str or not credential_id
+                or type(account_id) is not str or not account_id):
+            raise ValueError("adept_borrower_grant_scope_invalid")
+        provider = provider_id.casefold()
+        if (not provider or provider_id != provider_id.strip()
+                or credential_id != credential_id.strip()
+                or account_id != account_id.strip()):
+            raise ValueError("adept_borrower_grant_scope_invalid")
+        return provider, credential_id, account_id
+
+    def adept_borrower_grant_put(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        connection_identity_id: str, borrower_identity_id: str,
+        profile_id: str, confirmed: bool = False,
+    ) -> None:
+        """Commit an explicit, owner-and-profile-attested grant atomically.
+
+        The new generic register is independent of the historical Paris
+        binding table. Only explicit user confirmation may populate it.
+        """
+        scope = self._adept_grant_scope(
+            provider_id=provider_id, credential_id=credential_id,
+            account_id=account_id,
+        )
+        if (confirmed is not True or type(confirmed) is not bool
+                or type(connection_identity_id) is not str
+                or not connection_identity_id
+                or type(borrower_identity_id) is not str
+                or not borrower_identity_id
+                or type(profile_id) is not str or not profile_id):
+            raise ValueError("adept_borrower_grant_evidence_invalid")
+        now = int(time.time())
+        with self._lock, self._connect() as db:
+            connection = db.execute(
+                "SELECT identity_id FROM provider_connections "
+                "WHERE provider_id=? AND credential_id=? AND enabled=1",
+                scope[:2],
+            ).fetchone()
+            identity = db.execute(
+                "SELECT 1 FROM identities WHERE identity_id=?",
+                (borrower_identity_id,),
+            ).fetchone()
+            profile = db.execute(
+                "SELECT profile_id FROM adept_profile_bindings "
+                "WHERE scope_type='identity' AND scope_id=?",
+                (borrower_identity_id,),
+            ).fetchone()
+            accounts = db.execute(
+                "SELECT a.provider_account_id FROM provider_accounts AS a "
+                "JOIN provider_connections AS c "
+                "ON a.connection_id=c.connection_id "
+                "AND a.provider_id=c.provider_id "
+                "AND a.credential_id=c.credential_id "
+                "AND a.identity_id=c.identity_id "
+                "WHERE a.provider_id=? AND a.credential_id=? "
+                "AND a.account_id=? AND a.identity_id=?",
+                (*scope, connection_identity_id),
+            ).fetchall()
+            if (connection is None or connection[0] != connection_identity_id
+                    or len(accounts) != 1
+                    or identity is None or profile is None
+                    or profile[0] != profile_id):
+                raise ValueError("adept_borrower_grant_evidence_invalid")
+            db.execute(
+                "INSERT INTO adept_borrower_grants "
+                "(provider_id,credential_id,account_id,connection_identity_id,"
+                "borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,'explicit',?,?) "
+                "ON CONFLICT(provider_id,credential_id,account_id) DO UPDATE SET "
+                "connection_identity_id=excluded.connection_identity_id,"
+                "borrower_identity_id=excluded.borrower_identity_id,"
+                "profile_id=excluded.profile_id,confirmed_by=excluded.confirmed_by,"
+                "confirmed_at=excluded.confirmed_at,updated_at=excluded.updated_at",
+                (*scope, connection_identity_id, borrower_identity_id,
+                 profile_id, now, now),
+            )
+
+    def adept_borrower_grant_get(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+    ) -> dict[str, Any] | None:
+        """Return only a still-attested grant from the exact source scope.
+
+        Revocation, profile rotation or connection ownership changes return
+        no authority. No legacy grants are silently imported or projected.
+        """
+        scope = self._adept_grant_scope(
+            provider_id=provider_id, credential_id=credential_id,
+            account_id=account_id,
+        )
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT g.connection_identity_id,g.borrower_identity_id,"
+                "g.profile_id,g.confirmed_by,g.confirmed_at,g.updated_at "
+                "FROM adept_borrower_grants AS g "
+                "JOIN provider_connections AS c "
+                "ON c.provider_id=g.provider_id "
+                "AND c.credential_id=g.credential_id "
+                "AND c.identity_id=g.connection_identity_id "
+                "AND c.enabled=1 "
+                "JOIN provider_accounts AS a "
+                "ON a.provider_id=g.provider_id "
+                "AND a.credential_id=g.credential_id "
+                "AND a.account_id=g.account_id "
+                "AND a.connection_id=c.connection_id "
+                "AND a.identity_id=g.connection_identity_id "
+                "JOIN identities AS i ON i.identity_id=g.borrower_identity_id "
+                "JOIN adept_profile_bindings AS p "
+                "ON p.scope_type='identity' "
+                "AND p.scope_id=g.borrower_identity_id "
+                "AND p.profile_id=g.profile_id "
+                "WHERE g.provider_id=? AND g.credential_id=? "
+                "AND g.account_id=? AND g.confirmed_by='explicit'",
+                scope,
+            ).fetchone()
+        return (dict(zip(
+            ("connection_identity_id", "borrower_identity_id", "profile_id",
+             "confirmed_by", "confirmed_at", "updated_at"), row,
+        )) if row is not None else None)
+
+    def adept_borrower_grant_delete(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+    ) -> None:
+        scope = self._adept_grant_scope(
+            provider_id=provider_id, credential_id=credential_id,
+            account_id=account_id,
+        )
+        with self._lock, self._connect() as db:
+            db.execute(
+                "DELETE FROM adept_borrower_grants WHERE provider_id=? "
+                "AND credential_id=? AND account_id=?",
+                scope,
+            )
 
     def paris_borrower_adept_binding_put(
         self, *, credential_id: str, account_id: str, borrower_identity_id: str,
