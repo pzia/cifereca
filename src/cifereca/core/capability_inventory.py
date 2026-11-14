@@ -24,9 +24,8 @@ def capability_matrices_for_identity(
     provider, or infer capability evidence from a former synchronization.
     Other snapshots must be supplied through their explicit scoped projector.
     """
-    if identity_id is None:
-        current = getattr(service, "current_identity", None)
-        identity_id = getattr(current, "identity_id", None)
+    # A worker cannot take an owner from mutable navigation. The public
+    # LibraryService facade captures the optional synchronous UI scope once.
     if type(identity_id) is not str or not 0 < len(identity_id) <= 256:
         return ()
     # Reuse the existing Core admission and identity filter, including
