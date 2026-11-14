@@ -41,9 +41,9 @@ def test_non_native_requested_owner_is_always_a_veto(bad):
 
 
 @pytest.mark.parametrize("row", [
-    Hostile(), {"metadata": Hostile()},
-    {"metadata": {"provider_loan_id": Hostile()}},
-    {"metadata": {"provider_loan_id": HostileString("loan-1")}},
+    Hostile(), {"strategy": "loan_auto", "metadata": Hostile()},
+    {"strategy": "loan_auto", "metadata": {"provider_loan_id": Hostile()}},
+    {"strategy": "loan_auto", "metadata": {"provider_loan_id": HostileString("loan-1")}},
     {"metadata": {"provider_loan_id": "loan-1"}, "strategy": Hostile()},
     {"metadata": {"provider_loan_id": "loan-1"}, "strategy": "loan_auto", "identity_id": Hostile()},
 ])
@@ -79,3 +79,11 @@ def test_unrelated_valid_loan_is_not_an_owner_conflict():
         [{"metadata": {"provider_loan_id": "loan-2"}, "strategy": "loan_auto", "identity_id": "bob"}],
         rights=[{"loan_id": "loan-2", "identity_id": "bob"}],
     )
+
+
+@pytest.mark.parametrize("strategy", [None, "manual", "import", "adept_manual"])
+def test_foreign_acquisition_strategy_does_not_claim_an_automatic_loan(strategy):
+    assert not veto([
+        {"metadata": {"provider_loan_id": "loan-1"},
+         "strategy": strategy, "identity_id": "different-owner"},
+    ])
