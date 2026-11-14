@@ -424,3 +424,33 @@ def test_provision_without_explicit_identity_keeps_profile_unbound():
     )
     assert profile.profile_id == "stable-reader"
     assert service.storage.bound == {}
+
+
+@pytest.mark.parametrize("foreign_id", [123, {"id": "123"}, ["123"], "123" + chr(10), "x" * 257])
+def test_adept_profile_lookup_refuses_non_native_or_unbounded_ids(foreign_id):
+    service = Service()
+    service.runtime.rows = [{
+        "profile_id": "123", "name": "reader",
+        "complete": True, "fetch_capable": True,
+        "provisioning": {"acsm_fetch_ready": True},
+    }]
+    broker = AdeptProfileBrokerImpl(service)
+    for method in (lambda: broker.resolve_name(foreign_id),
+                   lambda: broker.bind("alice", foreign_id)):
+        with pytest.raises(AttentionRequired) as exc:
+            method()
+        assert exc.value.code == "adept_origin_profile_missing"
+    assert service.storage.bound == {}
+
+
+def test_adept_profile_lookup_accepts_native_stable_id():
+    service = Service()
+    service.runtime.rows = [{
+        "profile_id": "123", "name": "reader",
+        "complete": True, "fetch_capable": True,
+        "provisioning": {"acsm_fetch_ready": True},
+    }]
+    broker = AdeptProfileBrokerImpl(service)
+    assert broker.resolve_name("123") == "reader"
+    assert broker.bind("alice", "123").profile_id == "123"
+    assert service.storage.bound == {("identity", "alice"): "123"}
