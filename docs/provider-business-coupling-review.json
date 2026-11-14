@@ -181,7 +181,7 @@
         "tests/test_core_p0_3196_unscoped_library_fence.py",
         "tests/test_core_ui_095.py"
       ],
-      "pr": "#TBD",
+      "pr": "#6026",
       "in_ast_metric": false
     }
   ],
