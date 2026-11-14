@@ -79,37 +79,45 @@ def rig():
     return service, session, account, loan
 
 
+def _ui_action_available(service, loan):
+    # CoreUI alone captures the selected identity for a read-only button.
+    current = getattr(service, "current_identity", None)
+    return explicit_loan_acsm_action_available(
+        service, loan, selected_identity_id=getattr(current, "identity_id", None),
+    )
+
+
 def test_installed_non_bnf_session_exposes_action_without_calls_or_mutation():
     service, session, account, loan = rig()
     before = dict(vars(session))
-    assert explicit_loan_acsm_action_available(service, loan) is True
+    assert _ui_action_available(service, loan) is True
     assert vars(session) == before
     assert account in session._accounts
 
 
 def test_identity_account_credential_and_connection_are_exact_fail_closed():
     service, session, account, loan = rig()
-    assert explicit_loan_acsm_action_available(service, loan)
+    assert _ui_action_available(service, loan)
     service.current_identity.identity_id = "bob"
-    assert not explicit_loan_acsm_action_available(service, loan)
+    assert not _ui_action_available(service, loan)
     service.current_identity.identity_id = "alice"
     loan.source_credential = "unknown"
-    assert not explicit_loan_acsm_action_available(service, loan)
+    assert not _ui_action_available(service, loan)
     loan.source_credential = "credential"
     loan.source_account_id = "foreign"
-    assert not explicit_loan_acsm_action_available(service, loan)
+    assert not _ui_action_available(service, loan)
     loan.source_account_id = "borrower"
     session._accounts.append(Account(
         unique_id="borrower", provider_id="future-library",
         credential_id="credential", identity_id="alice",
     ))
-    assert not explicit_loan_acsm_action_available(service, loan)
+    assert not _ui_action_available(service, loan)
     session._accounts.pop()
     session.connected = False
-    assert not explicit_loan_acsm_action_available(service, loan)
+    assert not _ui_action_available(service, loan)
     session.connected = True
     session._closed = True
-    assert not explicit_loan_acsm_action_available(service, loan)
+    assert not _ui_action_available(service, loan)
 
 
 def test_unverified_stage_declaration_and_dynamic_getters_are_never_admitted():
@@ -120,26 +128,26 @@ def test_unverified_stage_declaration_and_dynamic_getters_are_never_admitted():
         loan_acsm_stage_profile = ("loan-private", ("future_loan_scope_unproven",))
 
     session.__class__ = Unverified
-    assert not explicit_loan_acsm_action_available(service, loan)
+    assert not _ui_action_available(service, loan)
 
     class Poison(original_type):
         def __getattribute__(self, name):
             raise AssertionError(f"untrusted_getter:{name}")
 
     session.__class__ = Poison
-    assert not explicit_loan_acsm_action_available(service, loan)
+    assert not _ui_action_available(service, loan)
 
 
 def test_only_live_loan_is_eligible_and_unrelated_session_never_selected():
     service, _session, _account, loan = rig()
     loan.medium = "physical"
-    assert not explicit_loan_acsm_action_available(service, loan)
+    assert not _ui_action_available(service, loan)
     loan.medium = "digital"
     loan.state = "returned"
-    assert not explicit_loan_acsm_action_available(service, loan)
+    assert not _ui_action_available(service, loan)
     loan.state = "active"
     service._sessions.clear()
-    assert not explicit_loan_acsm_action_available(service, loan)
+    assert not _ui_action_available(service, loan)
 
 
 def test_coreui_loan_button_uses_inert_contract_not_provider_id():
@@ -156,3 +164,35 @@ def test_coreui_loan_button_uses_inert_contract_not_provider_id():
     assert "bnf-pret" not in body
     assert "loan.source_provider ==" not in body
     assert "Récupérer le jeton ACSM du prêt" in body
+
+
+def test_headless_core_action_visibility_never_reads_navigation():
+    service, session, _account, loan = rig()
+
+    class Headless:
+        @property
+        def current_identity(self):
+            raise AssertionError("Core cannot inspect GTK navigation")
+
+        def __getattr__(self, key):
+            return getattr(service, key)
+
+    headless = Headless()
+    assert explicit_loan_acsm_action_available(
+        headless, loan, selected_identity_id="alice",
+    ) is True
+    for bad in (None, "", "bob", " alice ", False):
+        assert explicit_loan_acsm_action_available(
+            headless, loan, selected_identity_id=bad,
+        ) is False
+    assert session.connected is True
+
+
+def test_acsm_visibility_worker_has_no_current_identity_attribute():
+    import inspect
+
+    tree = ast.parse(inspect.getsource(explicit_loan_acsm_action_available))
+    assert not any(
+        isinstance(node, ast.Attribute) and node.attr == "current_identity"
+        for node in ast.walk(tree)
+    )

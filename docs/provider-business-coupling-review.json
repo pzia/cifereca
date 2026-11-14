@@ -742,6 +742,21 @@
       "in_ast_metric": false
     },
     {
+      "id": "struct-acsmtoken-visibility-core-navigation-fallback",
+      "original": "core.explicit_loan_acsm_visibility.explicit_loan_acsm_action_available read service.current_identity after resolving the installed session to determine whether an existing loan should expose an ACSM action button",
+      "original_classification": "navigation_dependent_private_action_visibility_read",
+      "replacement": "The headless projection requires an explicit selected_identity_id equal to the native Loan.identity_id; GUI.DetailPanel.show_loan captures the selected identity once before calling the Core worker. Exact connected source/session/account and static staging profile still gate visibility; executable staging revalidates its own durable grant.",
+      "classification": "removed_navigation_loan_acsm_visibility_worker",
+      "evidence": "Headless Core synthetic service raises on any current_identity getter; valid Alice selected scope still shows a read-only button and missing/foreign/invalid selected scope refuses before session inspection. Existing mismatch/duplicate/closed session and static profile tests pass; presentation cannot grant consent, write a token, inspect file, GET/POST, or mutate SQL.",
+      "tests": [
+        "tests/test_core_p0_5975_neutral_acsm_action.py",
+        "tests/test_core_ui_p0_5048_neutral_loan_download_unavailable.py",
+        "tests/test_core_ui_bnf_acsm_native.py"
+      ],
+      "pr": "#6066",
+      "in_ast_metric": false
+    },
+    {
       "id": "struct-search-preferences-core-navigation-ranking",
       "original": "core.search_orchestration._search_preference_score ranked search results by reading mutable service.current_identity inside a headless search worker",
       "original_classification": "navigation_dependent_readonly_core_projection",
