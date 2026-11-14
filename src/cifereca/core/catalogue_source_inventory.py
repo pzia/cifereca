@@ -21,9 +21,9 @@ def catalogue_source_capabilities(
     Legacy SynchronizationBroker.sources() remains exclusively account/rights
     based. No pseudo Account is ever synthesized for public catalogues here.
     """
-    if identity_id is None:
-        identity = getattr(service, "current_identity", None)
-        identity_id = getattr(identity, "identity_id", None)
+    # Headless inventory cannot inherit the mutable GTK-selected identity.
+    # The public LibraryService facade captures its optional synchronous
+    # navigation scope once; Core receives the exact admitted identity.
     if type(identity_id) is not str or not identity_id:
         return ()
     # An arbitrary provided identity must never project another person's
