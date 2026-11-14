@@ -835,7 +835,10 @@ def test_p1_6041_xtest_callbacks_relinquish_real_glib_main_loop():
     assert "MainContext.default().iteration(" not in probe
     assert "sleep(0.025)" not in probe
     assert 'button.connect("clicked", on_pair_clicked)' in probe
-    assert "device.click(screen_x, screen_y)" in probe
+    assert "device.xtst.XTestFakeButtonEvent(" in probe
+    assert 'native.pick(logical_x, logical_y, Gtk.PickFlags.DEFAULT)' in probe
+    assert 'P1_6041_X11_WIDGET_HIT=' in probe
+    assert 'P1_6041_XTEST_BUTTON_QUEUED=' in probe
 
 
 def test_p1_6041_native_probe_timeout_kills_xvfb_session_without_log_leak():
