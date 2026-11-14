@@ -260,6 +260,10 @@ class BorrowerScopedOptionField:
     min_value: int = 0
     max_value: int = 99
     help_text: str = ""
+    # Opt-in UI/projection metadata only: a configured personal maximum for
+    # an exact linked borrower, not a supplier quota or lending permission.
+    # Appended to preserve positional construction of historic descriptors.
+    advisory_loan_limit: bool = False
 
 
 @dataclass(frozen=True, slots=True)
