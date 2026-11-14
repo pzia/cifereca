@@ -31,40 +31,73 @@ def _still_current(window, scope) -> bool:
 
 
 def request_reader_pairing(window, *, Gtk, Adw=None) -> None:
-    """A native explicit pairing form; no existing bindings are reparented."""
+    """Choose a currently mounted USB volume or opt into manual UUID entry.
+
+    Pairing stores a declarative UUID only. The volume list is a revocable
+    read-only observation; neither choosing nor pairing activates examination.
+    """
     scope = _identity_scope(window)
     if scope is None:
         return
     if Adw is None:
         from gi.repository import Adw as AdwRuntime
         Adw = AdwRuntime
+    from ..core.device_usb_discovery import (
+        MountedUsbVolume, discover_linux_usb_volumes,
+    )
+    from ..core.device_usb_binding_proposal import propose_usb_reader_binding
 
     nonce = object()
     window._reader_pairing_nonce = nonce
     dialog = Adw.MessageDialog.new(
         window, "Associer une liseuse USB",
-        "Saisissez le nom de la liseuse et l'UUID exact de son volume "
-        "(consultable avec « lsblk -f »). Cette déclaration ne prouve aucune "
-        "présence physique et n'active aucun examen.",
+        "Sélectionnez un volume USB monté. L'association reste désactivée et "
+        "ne prouve pas la présence future de la liseuse ; aucun examen, "
+        "transfert ou effacement n'est déclenché.",
     )
     fields = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-    title = Gtk.Label(label="Nom de la liseuse", xalign=0)
-    fields.append(title)
+    fields.append(Gtk.Label(label="Volume USB monté", xalign=0))
+    volume_choice = Gtk.DropDown.new_from_strings(["Aucun volume compatible détecté"])
+    volume_choice.set_selected(0xFFFFFFFF)  # Explicit choice, no first-device default.
+    volume_choice.set_hexpand(True)
+    volume_choice.set_tooltip_text(
+        "Support, capacité, format et point de montage ; UUID masqué."
+    )
+    fields.append(volume_choice)
+    refresh = Gtk.Button(label="Actualiser les volumes")
+    fields.append(refresh)
+    status = Gtk.Label(label="", xalign=0)
+    status.set_wrap(True)
+    fields.append(status)
+    fields.append(Gtk.Label(label="Nom de la liseuse", xalign=0))
     name = Gtk.Entry()
     name.set_placeholder_text("Ex. Kobo Clara BW")
     name.set_max_length(90)
     fields.append(name)
-    uuid_label = Gtk.Label(label="UUID du volume USB", xalign=0)
+    expert = Gtk.CheckButton(label="Saisir l'UUID manuellement (mode expert)")
+    fields.append(expert)
+    uuid_label = Gtk.Label(label="UUID exact du volume USB", xalign=0)
     fields.append(uuid_label)
     fingerprint = Gtk.Entry()
-    fingerprint.set_placeholder_text("Ex. 1234-ABCD")
+    fingerprint.set_placeholder_text("Ex. 1234-ABCD (lsblk -f)")
     fingerprint.set_max_length(128)
     fields.append(fingerprint)
+    expert_notice = Gtk.Label(
+        label="Mode expert : un UUID déclaré ne prouve ni montage ni "
+              "présence physique. Aucun transfert sans vérification USB.",
+        xalign=0,
+    )
+    expert_notice.set_wrap(True)
+    fields.append(expert_notice)
+
     dialog.set_extra_child(fields)
     dialog.add_response("cancel", "Annuler")
     dialog.add_response("confirm", "Associer")
     dialog.set_close_response("cancel")
     window._reader_pairing_dialog = dialog
+    observed: tuple[MountedUsbVolume, ...] = ()
+    suggested_name = ""
+    reloading = False
 
     def current() -> bool:
         return (
@@ -73,25 +106,89 @@ def request_reader_pairing(window, *, Gtk, Adw=None) -> None:
             and getattr(window, "_reader_pairing_dialog", None) is dialog
         )
 
+    def mode_changed(*_args):
+        manual = expert.get_active() is True
+        for widget in (volume_choice, refresh, status):
+            widget.set_visible(not manual)
+        for widget in (uuid_label, fingerprint, expert_notice):
+            widget.set_visible(manual)
+
+    def selected_changed(*_args):
+        nonlocal suggested_name
+        if reloading or not current() or expert.get_active():
+            return
+        index = volume_choice.get_selected()
+        if type(index) is not int or not 0 <= index < len(observed):
+            return
+        label = observed[index].label
+        if not name.get_text() or name.get_text() == suggested_name:
+            name.set_text(label)
+        suggested_name = label
+
+    def reload_volumes(*_args):
+        nonlocal observed, suggested_name, reloading
+        if not current():
+            return
+        try:
+            found = discover_linux_usb_volumes()
+            if (type(found) is not tuple or len(found) > 128
+                    or any(type(row) is not MountedUsbVolume for row in found)):
+                found = ()
+        except Exception:
+            found = ()
+        reloading = True
+        try:
+            observed = found
+            volume_choice.set_model(Gtk.StringList.new(
+                [row.display_label() for row in found]
+                or ["Aucun volume compatible détecté"]
+            ))
+            volume_choice.set_selected(0xFFFFFFFF)
+            volume_choice.set_sensitive(bool(found))
+            status.set_label(
+                "Choisissez explicitement un volume ; aucun volume présélectionné."
+                if found else
+                "Aucun volume USB compatible détecté. Actualisez ou utilisez "
+                "la saisie d'UUID en mode expert."
+            )
+            suggested_name = ""
+        finally:
+            reloading = False
+
     def done(_dialog, response):
         try:
             if not current() or response != "confirm":
                 return
-            from ..core.device_usb_binding_proposal import (
-                propose_usb_reader_binding,
-            )
             identity, storage = scope[:2]
-            previous = storage.device_bindings()
+            if expert.get_active() is True:
+                uuid = fingerprint.get_text()
+            else:
+                index = volume_choice.get_selected()
+                if type(index) is not int or not 0 <= index < len(observed):
+                    raise ValueError("USB volume selection required")
+                chosen = observed[index]
+                # Reattest a *fresh* kernel observation at the confirmation
+                # edge. Replug, changed UUID or changed mount ID invalidates
+                # the earlier UI choice. Never fall back to a path-only match.
+                live = discover_linux_usb_volumes()
+                if (type(live) is not tuple
+                        or sum(
+                            type(row) is MountedUsbVolume
+                            and row.selection_key() == chosen.selection_key()
+                            for row in live
+                        ) != 1):
+                    raise ValueError("USB mount changed since selection")
+                uuid = chosen.usb_fingerprint
+            if not current():
+                return
             proposal = propose_usb_reader_binding(
-                identity_id=identity,
-                label=name.get_text(), usb_fingerprint=fingerprint.get_text(),
-                existing=previous,
+                identity_id=identity, label=name.get_text(),
+                usb_fingerprint=uuid, existing=storage.device_bindings(),
             )
             if not current():
                 return
-            # The storage operation rechecks owner, UUID uniqueness and
-            # exact device ID under its own IMMEDIATE transaction.
-            # Pairing is deliberately DISABLED until a separate user click.
+            # Storage still enforces uniqueness/owner in its IMMEDIATE
+            # transaction; association never activates a newly added reader.
             storage.device_usb_binding_declare(
                 identity_id=proposal.identity_id, device_id=proposal.device_id,
                 label=proposal.label, usb_fingerprint=proposal.usb_fingerprint,
@@ -115,7 +212,12 @@ def request_reader_pairing(window, *, Gtk, Adw=None) -> None:
             if getattr(window, "_reader_pairing_dialog", None) is dialog:
                 window._reader_pairing_dialog = None
 
+    expert.connect("toggled", mode_changed)
+    volume_choice.connect("notify::selected", selected_changed)
+    refresh.connect("clicked", reload_volumes)
     dialog.connect("response", done)
+    mode_changed()
+    reload_volumes()
     dialog.present()
 
 
