@@ -372,7 +372,7 @@ def main() -> int:
         allowed = {
             "shell", "widget_mapped", "dialog_open", "expert_mode",
             "chooser_return", "dialog_response", "manual_uuid",
-            "button_not_clicked", "dialog_build_failed", "setup",
+            "button_not_clicked", "dialog_build_failed", "expert_keyboard", "setup",
         }
         checkpoint = state["checkpoint"]
         if checkpoint in allowed:
