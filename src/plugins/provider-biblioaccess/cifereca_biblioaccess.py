@@ -89,6 +89,17 @@ DESCRIPTOR = ProviderDescriptor(
                       "off : aucun SSO ni téléchargement automatique. "
                       "Vous pouvez retélécharger un prêt au besoin.",
         ),
+        # Advisory preference only. The actual supplier quota, loan coverage
+        # and authority to borrow are independent observations; this option
+        # is never consulted by CAS, download or Core borrow admission.
+        AccountOptionField(
+            "manual_loan_limit", "Maximum d’emprunts (valeur personnelle)",
+            default="4", value_type="unsigned_integer",
+            min_value=0, max_value=99,
+            help_text="Plafond renseigné par vous (4 par défaut) pour ce compte. "
+                      "Il ne correspond pas à un quota attesté par La Rochelle "
+                      "et ne change ni les droits d'emprunt, ni la synchronisation.",
+        ),
     ),
     homepage="https://www.biblioaccess.com/1409/",
     # Interactive sources require exact per-account authenticated_sync consent.
