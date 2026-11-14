@@ -160,22 +160,15 @@ def main() -> int:
     box.append(button)
     box.append(window._reader_status_label)
     window.set_child(box)
-    def pump():
-        # Poll the native GDK/X11 source at least once even if pending() has
-        # not noticed newly queued XTEST events, then drain ready callbacks.
-        context = GLib.MainContext.default()
-        context.iteration(False)
-        while context.pending():
-            context.iteration(False)
-
     def until(predicate, key, seconds=6):
+        # A GTK idle callback must return to the *outer* GApplication loop:
+        # nested MainContext.iteration() starves native GDK/X11 event delivery.
         state["checkpoint"] = key
         limit = monotonic() + seconds
         while monotonic() < limit:
-            pump()
             if predicate():
                 return
-            sleep(0.025)
+            yield 25
         raise AssertionError("gtk_" + key + "_not_observed")
 
     def focus_native(widget):
@@ -203,22 +196,21 @@ def main() -> int:
         device.x11.XSetInputFocus(device.display, xid, 1, 0)
         device.x11.XSync(device.display, False)
         widget.grab_focus()
-        pump()
+        # Let the normal GTK event loop dispatch native X11 focus changes.
+        yield 25
 
     def delivered(predicate, *, seconds=1.2):
-        # XTestFake* queues native X11 events; XSync is not a GTK signal
-        # acknowledgement. Allow the GLib/GDK event source to dispatch them
-        # before deciding whether an XTEST pointer/key interaction failed.
+        # Real XTEST events require the outer GTK loop to resume before
+        # their controller/button callbacks can run. Never pump recursively.
         deadline = monotonic() + seconds
         while monotonic() < deadline:
-            pump()
             if predicate():
                 return True
-            sleep(0.025)
+            yield 25
         return False
 
     def click(widget):
-        until(lambda: widget.get_mapped(), "widget_mapped")
+        yield from until(lambda: widget.get_mapped(), "widget_mapped")
         # A mapped button need not occupy the screen coordinates predicted by
         # a GTK4 native-surface transform (especially with Xvfb CSD). Compute
         # an actual native-local GTK hit and translate THAT position to XTEST.
@@ -291,39 +283,39 @@ def main() -> int:
 
     def toggle_expert(widget):
         was_active = widget.get_active()
-        click(widget)
-        if not delivered(lambda: widget.get_active() is not was_active):
+        yield from click(widget)
+        if not (yield from delivered(lambda: widget.get_active() is not was_active)):
             # Pure XTEST keyboard fallback, never set_active or emit clicked.
-            focus_native(widget)
+            yield from focus_native(widget)
             device.key("space", True)
             device.key("space", False)
-            until(lambda: widget.get_active() is not was_active,
+            yield from until(lambda: widget.get_active() is not was_active,
                   "expert_keyboard")
 
     def open_dialog():
         before = state["button_clicks"]
-        click(button)  # Real XTEST click, real product callback, real Adw modal.
-        if not delivered(lambda: state["button_clicks"] > before):
+        yield from click(button)  # Real XTEST click, real product callback, real Adw modal.
+        if not (yield from delivered(lambda: state["button_clicks"] > before)):
             # An unmanaged Xvfb toplevel may consume an initial pointer click
             # for focus only. Retry once, after allowing event dispatch.
-            click(button)
-        if not delivered(lambda: state["button_clicks"] > before):
+            yield from click(button)
+        if not (yield from delivered(lambda: state["button_clicks"] > before)):
             # Keyboard XTEST fallback, never call the product handler directly.
-            focus_native(button)
+            yield from focus_native(button)
             device.key("Return", True)
             device.key("Return", False)
-        if not delivered(lambda: state["button_clicks"] > before):
+        if not (yield from delivered(lambda: state["button_clicks"] > before)):
             # A native GTK button may accept Space instead of Return.
-            focus_native(button)
+            yield from focus_native(button)
             device.key("space", True)
             device.key("space", False)
-        if not delivered(lambda: state["button_clicks"] > before):
+        if not (yield from delivered(lambda: state["button_clicks"] > before)):
             state["checkpoint"] = "button_not_clicked"
             raise AssertionError("GTK/XTEST pairing button did not activate")
         if state["dialog_build_errors"]:
             state["checkpoint"] = "dialog_build_failed"
             raise AssertionError("GTK pairing dialog construction failed")
-        until(lambda: getattr(window, "_reader_pairing_dialog", None) is not None
+        yield from until(lambda: getattr(window, "_reader_pairing_dialog", None) is not None
               and window._reader_pairing_dialog.get_visible(), "dialog_open")
         dialog = window._reader_pairing_dialog
         parts = children(dialog.get_extra_child())
@@ -338,8 +330,8 @@ def main() -> int:
 
     def answer(dialog, response):
         dialog.response(response)
-        until(lambda: window._reader_pairing_dialog is None, "dialog_response")
-        pump()
+        yield from until(lambda: window._reader_pairing_dialog is None, "dialog_response")
+        yield 25
 
     def capture():
         picture = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
@@ -350,25 +342,25 @@ def main() -> int:
 
     def run_checks():
         try:
-            until(lambda: window.get_mapped() and button.get_mapped(), "shell")
+            yield from until(lambda: window.get_mapped() and button.get_mapped(), "shell")
             # Zero discovered USB volumes: explicit expert path, no fake selection.
             report["phase"] = "zero_usb_expert"
             state["volumes"] = ()
-            dialog, label, chooser, refresh, status, name, expert, uuid, notice = open_dialog()
+            dialog, label, chooser, refresh, status, name, expert, uuid, notice = yield from open_dialog()
             assert chooser.get_sensitive() is False
             assert "Aucun volume" in status.get_text()
             assert chooser.get_model().get_n_items() == 1
             assert not uuid.get_visible() and label.get_visible()
-            toggle_expert(expert)  # Actual GTK/XTEST click into the expert checkbutton.
-            until(lambda: expert.get_active() and uuid.get_visible()
+            yield from toggle_expert(expert)  # Actual GTK/XTEST click into the expert checkbutton.
+            yield from until(lambda: expert.get_active() and uuid.get_visible()
                   and not chooser.get_visible() and not label.get_visible(),
                   "expert_mode")
             assert notice.get_visible()
-            toggle_expert(expert)
-            until(lambda: not expert.get_active() and chooser.get_visible()
+            yield from toggle_expert(expert)
+            yield from until(lambda: not expert.get_active() and chooser.get_visible()
                   and label.get_visible() and not uuid.get_visible(),
                   "chooser_return")
-            answer(dialog, "cancel")
+            yield from answer(dialog, "cancel")
             assert storage.writes == 0 and state["errors"] == 0
             report["checks"]["zero_discovery_and_expert_toggle"] = True
 
@@ -376,7 +368,7 @@ def main() -> int:
             report["phase"] = "one_usb"
             sandisk = volume("SanDisk", "AAAA-1111", "sandisk", 17, 189)
             state["volumes"] = (sandisk,)
-            dialog, label, chooser, refresh, status, name, expert, uuid, notice = open_dialog()
+            dialog, label, chooser, refresh, status, name, expert, uuid, notice = yield from open_dialog()
             assert chooser.get_sensitive() and chooser.get_selected() == 0xFFFFFFFF
             assert chooser.get_model().get_n_items() == 1
             display = chooser.get_model().get_string(0)
@@ -385,16 +377,16 @@ def main() -> int:
             assert storage.writes == 0
             capture()
             # Confirm with no choice: fail closed, never select the first volume.
-            answer(dialog, "confirm")
+            yield from answer(dialog, "confirm")
             assert state["errors"] == 1 and storage.writes == 0
             report["checks"]["single_device_not_autoselected"] = True
 
-            dialog, label, chooser, refresh, status, name, expert, uuid, notice = open_dialog()
+            dialog, label, chooser, refresh, status, name, expert, uuid, notice = yield from open_dialog()
             chooser.set_selected(0)  # Real Gtk.DropDown notify handler, exact choice.
             assert name.get_text() == "SanDisk"
             name.set_text("Ma liseuse")
             before = state["reads"]
-            answer(dialog, "confirm")
+            yield from answer(dialog, "confirm")
             assert state["reads"] == before + 1  # fresh re-observation at confirm
             assert storage.writes == 1 and storage.rows[0]["label"] == "Ma liseuse"
             assert storage.rows[0]["metadata"]["usb_fingerprint"] == "AAAA-1111"
@@ -406,7 +398,7 @@ def main() -> int:
             report["phase"] = "multiple_usb_and_replug"
             second = volume("Reader B", "BBBB-2222", "reader-b", 18, 202)
             state["volumes"] = (sandisk, second)
-            dialog, label, chooser, refresh, status, name, expert, uuid, notice = open_dialog()
+            dialog, label, chooser, refresh, status, name, expert, uuid, notice = yield from open_dialog()
             assert chooser.get_model().get_n_items() == 2
             assert chooser.get_selected() == 0xFFFFFFFF
             chooser.set_selected(1)
@@ -415,14 +407,14 @@ def main() -> int:
             state["volumes"] = (
                 sandisk, volume("Reader B", "BBBB-2222", "reader-b", 18, 203),
             )
-            answer(dialog, "confirm")
+            yield from answer(dialog, "confirm")
             assert state["errors"] == 2 and storage.writes == 1
             report["checks"]["changed_mount_id_refused"] = True
 
-            dialog, label, chooser, refresh, status, name, expert, uuid, notice = open_dialog()
+            dialog, label, chooser, refresh, status, name, expert, uuid, notice = yield from open_dialog()
             chooser.set_selected(1)
             assert name.get_text() == "Reader B"
-            answer(dialog, "confirm")
+            yield from answer(dialog, "confirm")
             assert storage.writes == 2
             assert {row["metadata"]["usb_fingerprint"] for row in storage.rows} == {
                 "AAAA-1111", "BBBB-2222",
@@ -432,10 +424,10 @@ def main() -> int:
 
             # Changing the selected identity invalidates the modal on confirm.
             report["phase"] = "identity_revocation"
-            dialog, label, chooser, refresh, status, name, expert, uuid, notice = open_dialog()
+            dialog, label, chooser, refresh, status, name, expert, uuid, notice = yield from open_dialog()
             chooser.set_selected(0)
             window.service.current_identity = NS(identity_id="bob")
-            answer(dialog, "confirm")
+            yield from answer(dialog, "confirm")
             assert storage.writes == 2 and state["errors"] == 2
             report["checks"]["profile_changed_refuses_write"] = True
 
@@ -443,13 +435,13 @@ def main() -> int:
             report["phase"] = "manual_expert"
             window.service.current_identity = NS(identity_id="alice")
             state["volumes"] = ()
-            dialog, label, chooser, refresh, status, name, expert, uuid, notice = open_dialog()
-            toggle_expert(expert)
-            until(lambda: expert.get_active() and uuid.get_visible(), "manual_uuid")
+            dialog, label, chooser, refresh, status, name, expert, uuid, notice = yield from open_dialog()
+            yield from toggle_expert(expert)
+            yield from until(lambda: expert.get_active() and uuid.get_visible(), "manual_uuid")
             name.set_text("Lecteur expert")
             uuid.set_text("CCCC-3333")
             before = state["reads"]
-            answer(dialog, "confirm")
+            yield from answer(dialog, "confirm")
             assert state["reads"] == before  # expert path makes no USB claim
             assert storage.writes == 3 and storage.rows[-1]["enabled"] is False
             assert storage.rows[-1]["metadata"]["usb_fingerprint"] == "CCCC-3333"
@@ -504,7 +496,20 @@ def main() -> int:
     def on_activate(application):
         window.set_application(application)
         window.present()
-        GLib.idle_add(run_checks)
+        checks = run_checks()
+
+        def advance():
+            # Every yield relinquishes GTK's main context. GDK dispatches
+            # native XTEST button/key events before the next continuation,
+            # without ever invoking signals or the product handler directly.
+            try:
+                interval = next(checks)
+            except StopIteration:
+                return False
+            GLib.timeout_add(interval, advance)
+            return False
+
+        GLib.idle_add(advance)
 
     app.connect("activate", on_activate)
     app.run([])
