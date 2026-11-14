@@ -78,7 +78,7 @@ class Service:
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
     db = Storage(tmp_path / "db.sqlite")
-    assert db.schema_version() == 16
+    assert db.schema_version() == 17
     register(db, "A", "seller-a", "card-a", account="buyer-a")
     root = tmp_path / "EBooks"
     service = Service(db, root)

@@ -32,8 +32,8 @@ def _result(record_id: str) -> SearchResult:
 def test_core044_performance_storage_schema(tmp_path: Path):
     storage = Storage(tmp_path / "db.sqlite3")
     try:
-        assert CURRENT_SCHEMA_VERSION == 16
-        assert storage.schema_version() == 16
+        assert CURRENT_SCHEMA_VERSION == 17
+        assert storage.schema_version() == 17
         with storage._lock, storage._connect() as db:
             indexes = {row[1] for row in db.execute("PRAGMA index_list(catalog_entries)").fetchall()}
         assert {"idx_catalog_identity_state", "idx_catalog_source", "idx_catalog_placement"} <= indexes
