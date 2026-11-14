@@ -18,10 +18,10 @@ def _service(tmp_path: Path):
     config.set("providers.accounts", [])
     service = LibraryService(config, Storage(tmp_path / "db.sqlite3"), Diagnostics(level="detailed"))
     service._adept_return_capability = lambda: True
-    # Only tests inject a synthetic installed runtime through the legacy
-    # adapter seam. Production always uses the attested B read contract.
+    # Only tests inject a synthetic inventory reader at the existing
+    # attested B read seam; no provider-name dispatcher in LibraryService.
     def read_inventory_for_test(_row, *, profile_references=None):
-        runtime = service._kobo_adapter()
+        runtime = getattr(service, '_fixture_inventory_runtime', None)
         read = getattr(runtime, "loan_inventories", None)
         if not callable(read):
             raise AttentionRequired(
@@ -100,7 +100,7 @@ def test_missing_adept_id_is_restored_from_unique_public_inventory_match(tmp_pat
     path = _artifact(tmp_path)
     acquisition_id = _acquisition(service, path)
     runtime, calls = _runtime("hb", path)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         before = path.read_bytes()
@@ -124,7 +124,7 @@ def test_origin_profile_id_resolves_renamed_profile_before_identity_binding(tmp_
     acquisition_id = _acquisition(service, path)
     service.storage.adept_profile_binding_set("identity", "default", "different")
     runtime, calls = _runtime("Héloïse", path)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [
         {"profile_id": "stable-profile", "name": "Héloïse"},
         {"profile_id": "different", "name": "Hugues"},
@@ -147,7 +147,7 @@ def test_identity_profile_is_used_only_when_origin_profile_is_absent(tmp_path: P
     acquisition_id = _acquisition(service, path, profile_id=None)
     service.storage.adept_profile_binding_set("identity", "default", "stable-profile")
     runtime, calls = _runtime("hb", path)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         result = service.reconcile_adept_acquisition(acquisition_id)
@@ -165,7 +165,7 @@ def test_missing_origin_and_identity_binding_never_uses_implicit_profile(tmp_pat
     path = _artifact(tmp_path)
     acquisition_id = _acquisition(service, path, profile_id=None)
     runtime, calls = _runtime("hb", path)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         result = service.reconcile_adept_acquisition(acquisition_id)
@@ -187,7 +187,7 @@ def test_duplicate_exact_inventory_matches_are_ambiguous(tmp_path: Path):
     inventory = runtime.loan_inventories(["hb"])
     inventory["profiles"][0]["loans"].append(dict(inventory["profiles"][0]["loans"][0]))
     runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         result = service.reconcile_adept_acquisition(acquisition_id)
@@ -208,7 +208,7 @@ def test_partial_inventory_cannot_establish_unique_binding(tmp_path: Path):
     inventory = runtime.loan_inventories(["hb"])
     inventory["complete"] = False
     runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         result = service.reconcile_adept_acquisition(acquisition_id)
@@ -232,7 +232,7 @@ def test_matching_title_with_old_migrated_path_is_not_binding_proof(tmp_path: Pa
         "title": "Livre",
     })
     runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         result = service.reconcile_adept_acquisition(acquisition_id)
@@ -253,7 +253,7 @@ def test_conflicting_inventory_id_never_overwrites_existing_binding(tmp_path: Pa
     row["metadata"]["adept_binding"]["adept_loan_id"] = "original"
     service.storage.acquisition_put(row)
     runtime, calls = _runtime("hb", path)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         result = service.reconcile_adept_acquisition(acquisition_id)
@@ -277,7 +277,7 @@ def test_multiple_explicit_profiles_keep_namespace_and_ambiguity(tmp_path: Path)
         "loans": [dict(inventory["profiles"][0]["loans"][0])],
     })
     runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [
         {"profile_id": "stable-profile", "name": "hb"},
         {"profile_id": "other", "name": "Hugues"},
@@ -302,7 +302,7 @@ def test_inventory_read_stays_available_when_return_capability_is_disabled(tmp_p
     path = _artifact(tmp_path)
     acquisition_id = _acquisition(service, path)
     runtime, calls = _runtime("hb", path)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     service._adept_return_capability = lambda: False
     try:
@@ -326,7 +326,7 @@ def test_expired_inventory_loan_disables_return(tmp_path: Path):
     inventory = runtime.loan_inventories(["hb"])
     inventory["profiles"][0]["loans"][0]["expired"] = True
     runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         result = service.reconcile_adept_acquisition(acquisition_id)
@@ -348,7 +348,7 @@ def test_missing_inventory_return_token_disables_return(tmp_path: Path):
     inventory = runtime.loan_inventories(["hb"])
     inventory["profiles"][0]["loans"][0]["token_present"] = False
     runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         result = service.reconcile_adept_acquisition(acquisition_id)
@@ -373,7 +373,7 @@ def test_returned_state_is_revalidated_from_public_inventory(tmp_path: Path):
         "token_present": False,
     })
     runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         result = service.reconcile_adept_acquisition(acquisition_id)
@@ -405,7 +405,7 @@ def test_missing_inventory_entry_preserves_historical_binding_and_artifact(tmp_p
     inventory = runtime.loan_inventories(["hb"])
     inventory["profiles"][0]["loans"] = []
     runtime.loan_inventories = lambda names: (calls.append(list(names)) or inventory)
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         before = path.read_bytes()
@@ -427,7 +427,7 @@ def test_missing_artifact_skips_inventory_lookup(tmp_path: Path):
     missing = tmp_path / "EBooks" / "hugues" / "paris" / "missing.epub"
     acquisition_id = _acquisition(service, missing)
     calls = []
-    service._kobo_adapter = lambda: SimpleNamespace(
+    service._fixture_inventory_runtime = SimpleNamespace(
         loan_inventories=lambda names: calls.append(list(names))
     )
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
@@ -445,7 +445,7 @@ def test_busy_lock_skips_inventory_lookup(tmp_path: Path):
     path = _artifact(tmp_path)
     acquisition_id = _acquisition(service, path)
     calls = []
-    service._kobo_adapter = lambda: SimpleNamespace(
+    service._fixture_inventory_runtime = SimpleNamespace(
         loan_inventories=lambda names: calls.append(list(names))
     )
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
@@ -499,7 +499,7 @@ def test_identity_batch_reuses_inventory_for_same_profile_combination(tmp_path: 
     runtime = SimpleNamespace(
         loan_inventories=lambda names: (calls.append(list(names)) or inventory)
     )
-    service._kobo_adapter = lambda: runtime
+    service._fixture_inventory_runtime = runtime
     service.kobo_profiles = lambda: [{"profile_id": "stable-profile", "name": "hb"}]
     try:
         summary = service._reconcile_identity_adept_inventory("default")

@@ -1129,6 +1129,21 @@
       ],
       "pr": "#6110",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-retire-unused-kobo-runtime-adapter",
+      "original": "LibraryService._kobo_adapter was a concrete runtime.kobo-adept selector checking plugin status/identity by hard-coded ID. No installed production caller remained; test-only ADEPT inventory fixtures were its last consumers.",
+      "original_classification": "dead_provider_named_core_runtime_selector",
+      "replacement": "Physically delete the private selector. ADEPT inventory characterisation tests use their existing injected read-only inventory callback with a test-local runtime fixture, independent from the private production facade. Real acquisition recipes remain routed through the installed typed runtime binding and _required_plugin_service.",
+      "classification": "removed_dead_provider_named_core_adapter",
+      "evidence": "Static repository callsite search found only the deleted method and the inventory fixture; no production calls. Legacy bypass test still injects a hostile fake and asserts execute_acquisition_request never invokes it. Inventory reconciliation fixtures continue to exercise exact ADEPT profile ownership and no-redownload constraints.",
+      "tests": [
+        "tests/test_adept_inventory_binding.py",
+        "tests/test_core_acquisition_no_injected_runtime_bypass.py",
+        "tests/test_core_p0_5975_session_resolver_explicit_account.py"
+      ],
+      "pr": "#PENDING",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [

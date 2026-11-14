@@ -70,3 +70,9 @@ def test_kobo_recipe_still_routes_through_installed_runtime():
 
     assert LibraryService.execute_acquisition_request(facade, request) == expected
     assert calls == ["runtime.kobo-adept", request, "runtime.kobo-adept"]
+
+
+def test_installed_library_service_has_no_legacy_kobo_adapter_dispatcher():
+    # A private, unused provider-selected adapter is not an installed
+    # capability. The recipe bypass tests above retain their hostile fake.
+    assert "_kobo_adapter" not in LibraryService.__dict__

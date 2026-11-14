@@ -2370,19 +2370,6 @@ class LibraryService:
     def default_downloads_dir(self) -> Path:
         return self.acquisition.target_dir("", "ebook")
 
-    def _kobo_adapter(self):
-        if self._plugin_manager is not None:
-            try:
-                status = self._plugin_manager.status("runtime.kobo-adept")
-                service = self._plugin_manager.service("runtime.kobo-adept")
-                if status.enabled and status.state == "ready" and service is not None:
-                    return service
-            except Exception:
-                pass
-        raise ProviderConfigurationError(
-            "Le runtime Kobo-Adept n'est pas disponible. Installez/activez le plugin runtime.kobo-adept."
-        )
-
     def _required_plugin_service(self, plugin_id: str) -> Any:
         manager = self._plugin_manager
         if manager is None:
