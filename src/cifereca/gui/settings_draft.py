@@ -233,6 +233,10 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         if (type(original_account) is dict and (
                 ('id' in original_account
                  and original_account['id'] != account_id)
+                # Headless/stale snapshots must not bypass the GTK editor's
+                # corrupt-label guard and silently rewrite a saved object.
+                or ('label' in original_account
+                    and type(original_account['label']) is not str)
                 or ('provider' in original_account
                     and (type(original_account['provider']) is not str
                          or original_account['provider'].casefold()
