@@ -3039,7 +3039,9 @@ class LibraryService:
             return False
         try:
             from .core.private_inventory_row_scope import selected_private_offer_hint
-            private_hint = selected_private_offer_hint(self, item)
+            private_hint = selected_private_offer_hint(
+                self, item, identity_id=admitted_identity_id,
+            )
             if private_hint is not None:
                 return private_hint
             session = self._session_for_source(
