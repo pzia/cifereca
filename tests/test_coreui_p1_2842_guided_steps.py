@@ -30,14 +30,14 @@ def test_guide_has_distinct_bounded_readonly_stages(stage, prefix):
 
 
 @pytest.mark.parametrize("stage", ["file", "checking", "blocked", "ready"])
-def test_paris_guidance_is_always_read_only(stage):
-    label = _reconciliation_step_label(stage, "paris")
-    assert "Paris" in label and "lecture seule" in label
+def test_inactive_loan_guidance_stays_read_only(stage):
+    label = _reconciliation_step_label(stage, loan_inactive=True)
+    assert "Prêt non actif" in label and "lecture seule" in label
     assert "sans placement" in label
 
 
-def test_unknown_stage_cannot_render_worker_or_provider_private_text():
-    assert _reconciliation_step_label("PRIVATE-auth-token", "PRIVATE-source") == (
+def test_unknown_stage_falls_back_to_idle():
+    assert _reconciliation_step_label("unknown", loan_inactive=True) == (
         _reconciliation_step_label("idle")
     )
 

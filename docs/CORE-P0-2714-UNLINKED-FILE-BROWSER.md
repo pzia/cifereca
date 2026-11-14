@@ -79,7 +79,7 @@ associé de façon unique à l'identité, au compte et à l'édition courants,
 et à un EPUB local dont les octets SHA/CRC et le reçu d'acquisition
 complet concordent. Aucun résultat bibliographique ne vaut preuve.
 
-1. Le bouton **« Préparer le rattachement »** ne fait que lire
+1. Le bouton **« Examiner les preuves »** ne fait que lire
    l'inspection privée ; il affiche ce qui manque et n'écrit rien.
 2. **« Vérifier les preuves actuelles… »** relit, dans une tâche de
    fond, les preuves SQLite et les octets locaux sans suivre de lien

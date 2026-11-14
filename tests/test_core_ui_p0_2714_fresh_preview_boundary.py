@@ -8,7 +8,7 @@ E2E = ROOT / "e2e/library_inspection_acceptance.py"
 
 def test_fresh_preview_is_a_distinct_explicit_button_never_automatic():
     source = VIEW.read_text(encoding="utf-8")
-    assert "Gtk.Button(label='Préparer le rattachement')" in source
+    assert "Gtk.Button(label='Examiner les preuves')" in source
     assert "Gtk.Button(label='Vérifier les preuves actuelles…')" in source
     assert "fresh_preview.set_visible(False)" in source
     assert "result.status == 'eligible_for_fresh_validation'" in source

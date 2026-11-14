@@ -27,8 +27,11 @@ def test_local_placement_confirmation_copy_is_provider_neutral():
     assert "'Annuler le placement Numilog ?'" not in source
     assert "if selected_provider[0] == 'kobo'" not in source
 
-    # Preserve the legacy Paris inspection-only decision. Removing this
-    # restriction would authorize a placement without sufficient rights.
-    assert "case.provider == 'paris'" in source
-    assert "or 'loan_inactive' in case.states" in source
+    # The selected pair goes through the Core preflight before any fresh
+    # validation is offered. Inactive loans remain available for inspection.
+    assert "session.preflight_manual_link(" in source
+    assert "result.status == 'eligible_for_fresh_validation'" in source
+    assert "result.read_only is True" in source
+    assert "result.attachment_authorized is False" in source
+    assert "'loan_inactive' in case.states" in source
     assert "'Emprunter'" not in source
