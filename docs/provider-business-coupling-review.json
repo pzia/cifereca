@@ -195,23 +195,6 @@
       "rationale": "Live provider-named dispatch still executes. Cannot rename to a generic helper and claim removal without migrating actual runtime selection"
     },
     {
-      "id": "site-722f43d97235b07dcca4a1dd",
-      "classification": "presentation_only",
-      "journey": "historical primary source-selection key in Settings after descriptor-based cutover",
-      "productive_caller": "gui.settings_draft.build_settings_draft validates a persisted primary source key via the installed provider's ManualBorrowPolicy.source_selection_key",
-      "effect": "Generic exact configured-account identity, uniqueness and enabled validation; historical Paris-named configuration key preserved without a hardcoded provider switch or rights grant",
-      "authority": "Installed provider descriptor's versioned manual_borrow_policy source_selection_key, plus the exact configured row and identity scope; UI only persists an explicit preference",
-      "replacement_contract": "Already installed ManualBorrowPolicy.source_selection_key; no new provider ABI, no fallback to a provider literal. Historical key/display remain compatibility/presentation only",
-      "tests": [
-        "tests/test_settings_draft.py::test_paris_primary_selection_is_exact_scoped_and_roundtrips",
-        "tests/test_settings_draft.py::test_paris_primary_rejects_stale_or_cross_identity_account",
-        "tests/test_settings_draft.py::test_primary_selection_accepts_only_declared_provider_contract",
-        "tests/test_settings_draft.py::test_primary_selection_fails_closed_without_exact_contract"
-      ],
-      "retirement_pr": "#6047",
-      "rationale": "The active CoreUI brand dispatch was removed: the configured primary account is accepted only if the installed descriptor declares this exact selection key. The remaining Paris-named field is an existing presentation/persistence ABI; untrusted missing or mismatching policy is rejected before save, not silently attributed to the brand."
-    },
-    {
       "id": "site-dd9fadf5918f4eb2fda40376",
       "classification": "safety_guard_pending_contract",
       "journey": "v3 historical backup import during SQLite schema migration",
@@ -627,7 +610,7 @@
       "original_classification": "must_migrate",
       "replacement": "Compare the exact persisted identity selection key to the installed provider's ManualBorrowPolicy.source_selection_key, preserving exact/unique/active owner checks without provider brand dispatch",
       "classification": "removed_core_ui_supplier_dispatch",
-      "evidence": "A synthetic unrelated provider that explicitly declares the selection key is accepted; absent/wrong/malformed declarations, wrong identity, disabled or duplicate configured connections remain refused with no persisted write. The Paris legacy field is retained as compatibility data, not a positive borrow right.",
+      "evidence": "A synthetic unrelated provider that explicitly declares the selection key is accepted; absent/wrong/malformed declarations, wrong identity, disabled or duplicate configured connections remain refused with no persisted write. The Paris legacy field is retained as compatibility data, not a positive borrow right. Previous AST site site-722f43d97235b07dcca4a1dd is physically absent on HEAD and therefore removed from live review IDs, not reclassified as retained.",
       "tests": [
         "tests/test_settings_draft.py::test_paris_primary_selection_is_exact_scoped_and_roundtrips",
         "tests/test_settings_draft.py::test_paris_primary_rejects_stale_or_cross_identity_account",
