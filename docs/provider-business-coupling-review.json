@@ -677,7 +677,7 @@
         "tests/test_core_p0_5056_catalogue_owned_attestation.py",
         "tests/test_search_results_view.py"
       ],
-      "pr": "#6054",
+      "pr": "#6053",
       "in_ast_metric": false
     }
   ],
