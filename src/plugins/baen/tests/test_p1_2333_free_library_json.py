@@ -189,8 +189,11 @@ def test_owned_download_redirect_to_login_never_becomes_public_epub(tmp_path):
         from cifereca.models import SearchResult
         result = SearchResult(
             id="baen:fixture", record_id="fixture", docbase="BAEN",
-            medium="digital", title="Synthetic", source_provider="baen",
-            source_credential="public", friendly_url="https://www.baen.com/synthetic.html",
+            medium="digital", title="Synthetic", author=None, type="Livre numérique",
+            format=None, publisher="Baen", published_at=None, description=None,
+            thumbnail_url=None, scenario="BAEN_FREE_LIBRARY",
+            source_provider="baen", source_credential="public",
+            friendly_url="https://www.baen.com/synthetic.html",
         )
         with pytest.raises(ProviderError, match="aucun lien EPUB public"):
             client.download_direct(result, tmp_path)
