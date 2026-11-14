@@ -11,8 +11,16 @@ import ast
 import json
 from pathlib import Path
 
+try:  # support module and direct script invocation
+    from scripts.ci_test_dependency_guard import has_test_consumers
+except ModuleNotFoundError:
+    from ci_test_dependency_guard import has_test_consumers
+
 ROOT = Path(__file__).resolve().parents[1]
-LOADERS = frozenset({"import_module", "__import__", "spec_from_file_location", "SourceFileLoader"})
+LOADERS = frozenset({
+    "import_module", "__import__", "spec_from_file_location", "SourceFileLoader",
+    "importorskip", "run_module", "run_path",
+})
 
 
 def _root_module(module: str) -> str | None:
@@ -31,6 +39,7 @@ def _imports(source: str, *, is_root_test: bool) -> tuple[list[tuple[str, str, i
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module in {
             "importlib", "importlib.util", "importlib.machinery", "builtins",
+            "pytest", "runpy",
         }:
             for alias in node.names:
                 if alias.name in LOADERS:
@@ -276,11 +285,67 @@ def inventory(root: Path = ROOT) -> dict:
     }
 
 
+def plugin_replay_required(changed: list[str], root: Path = ROOT) -> bool:
+    """Select plugin replays for changed root-test fixtures and consumers.
+
+    Follow static direct and transitive edges. Unknown loader provenance or
+    parsing errors must never make the affected plugin suites silently green.
+    """
+    tests = {
+        path.strip() for path in changed
+        if path.strip().startswith("tests/test_")
+        and path.strip().endswith(".py")
+    }
+    if not tests:
+        return False
+    modules = {"tests." + Path(path).stem for path in tests}
+    graph = inventory(root)
+    if graph["parse_errors"]:
+        return True
+    edges = (
+        graph["plugin_to_root_direct"]
+        + graph["plugin_to_root_transitive"]
+        + graph["plugin_to_root_via_helpers"]
+    )
+    if any(edge.get("target") in tests for edge in edges):
+        return True
+    if any(
+        edge["target_module"] in modules
+        for key in ("plugin_ambiguous_imports", "plugin_missing_imports")
+        for edge in graph[key]
+    ):
+        return True
+    reachable = {edge["target"] for edge in edges if edge.get("target") is not None}
+    if any(
+        edge["owner"] == "root_tests" and edge["consumer"] in reachable
+        for edge in graph["unresolved_dynamic_or_pytest_plugins"]
+    ):
+        return True
+    try:
+        return has_test_consumers(
+            root, sorted(tests),
+            consumer_globs=("src/plugins/*/tests/**/*.py",),
+        )
+    except (OSError, SyntaxError, UnicodeError, ValueError):
+        return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--plugin-replay-changed", type=Path,
+                        help="Print full/none when changed root tests affect plugins")
+    parser.add_argument("--root", type=Path, default=ROOT)
     args = parser.parse_args()
-    result = inventory()
+    if args.plugin_replay_changed is not None:
+        try:
+            changed = args.plugin_replay_changed.read_text(encoding="utf-8").splitlines()
+            full = plugin_replay_required(changed, args.root)
+        except (OSError, SyntaxError, UnicodeError, ValueError):
+            full = True
+        print("full" if full else "none")
+        return 0
+    result = inventory(args.root)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2))
     else:
