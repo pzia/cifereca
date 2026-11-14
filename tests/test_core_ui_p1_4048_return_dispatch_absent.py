@@ -46,7 +46,7 @@ def test_voluntary_return_is_absent_but_physical_renewal_and_read_side_survive()
     assert "def confirm_renew(" in controller
     assert "self.service.renew(loan, confirmed=True)" in controller
     assert "def confirm_renew(" in main
-    assert "if paris_physical_renewal_visible(loan):" in detail
+    assert "if physical_loan_renewal_visible(loan):" in detail
     assert "def refresh_loans(" in main
     assert "def reconcile_adept_from_detail(" in main
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 from ..models import Loan
 
 
-def paris_physical_renewal_visible(loan: object) -> bool:
+def physical_loan_renewal_visible(loan: object) -> bool:
     """Display a physical loan only when its normalized source says renewable."""
     return (
         type(loan) is Loan
