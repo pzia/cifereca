@@ -40,7 +40,7 @@ def test_shared_pair_inspection_does_not_route_other_sources_to_numilog(
     files = session.unconfirmed_files(query="code-5", limit=5)
     assert files.total == 1
     file = files.cases[0]
-    assert right.key not in session._manual_right_proofs
+    assert not hasattr(session, '_manual_right_proofs')
 
     # The retired Kobo pairing engine must no longer retain a private
     # backup-derived proof map or offer a provider-specific preflight.
@@ -122,8 +122,6 @@ def test_bnf_exact_loan_declaration_guard_does_not_authorize_other_sources(
     # Existing other-source declarations are descriptive user statements
     # only, not evidence of a provider grant or an authorized attachment.
     assert {"future-owned", "future-loan"} <= declared_items
-    assert session._manual_right_proofs.keys().isdisjoint(
-        key for key, scope in session._declared_right_scopes.items()
-        if scope[1] in {"bnf-pret", "future-library"}
-    )
+    # No retired private receipt proof map exists for any supplier.
+    assert not hasattr(session, "_manual_right_proofs")
     session.close()
