@@ -1286,7 +1286,7 @@ class LibraryService:
     def _session_for_account(self, account: Account | None = None) -> ProviderSession:
         return provider_sessions._session_for_account(self, account)
 
-    def _session_for_source(self, provider_id: str, credential_id: str | None = None) -> ProviderSession:
+    def _session_for_source(self, provider_id: str, credential_id: str) -> ProviderSession:
         return provider_sessions._session_for_source(self, provider_id, credential_id)
 
     def _key(self, kind: str, suffix: str = "") -> str:
