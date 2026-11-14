@@ -211,7 +211,8 @@ def _is_ui_aux(path: str) -> bool:
 def _changed_tests(paths: list[str], root: Path) -> list[str]:
     return sorted(
         path for path in paths
-        if path.startswith("tests/test") and path.endswith(".py") and (root / path).is_file()
+        if path.startswith("tests/") and Path(path).name.startswith("test_")
+        and path.endswith(".py") and (root / path).is_file()
     )
 
 
@@ -239,6 +240,10 @@ def select(paths: list[str], root: Path = ROOT) -> tuple[str, list[str]]:
     # README is documentation, but PR CI checks Git status separately.
     changed = [path.strip() for path in paths if path.strip() and path.strip() != "e2e/README.md"]
     changed_tests = _changed_tests(changed, root)
+    # Nested test packages have import-mode-dependent namespaces; until all
+    # consumer paths are attested, never run a nested test in isolation.
+    if any(Path(path).parent != Path("tests") for path in changed_tests):
+        return "full", ["tests"]
     # Native installed-recorder assertions run in the dedicated GTK job.
     # The headless PR job still verifies the package/API boundary; selecting
     # only the native module would produce pytest exit 5 (all import-skipped).
