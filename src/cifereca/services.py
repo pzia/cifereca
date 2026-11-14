@@ -3721,6 +3721,76 @@ class LibraryService:
             credential_id=credential_id, account_id=borrower,
         )
 
+    def explicit_adept_borrower_grant_for_source(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        connection_identity_id: str,
+    ) -> tuple[str | None, str | None]:
+        """Resolve only a positively confirmed v16 ADEPT borrower grant.
+
+        This API never reads the Paris legacy table or selects the current
+        GTK identity. Absence is *not* a hint to accept a primary borrower,
+        a provider right or a historical acquisition as an ADEPT grant.
+        """
+        if (type(provider_id) is not str or not provider_id
+                or type(credential_id) is not str or not credential_id
+                or type(account_id) is not str or not account_id
+                or type(connection_identity_id) is not str
+                or not connection_identity_id):
+            return None, "adept_borrower_ambiguous"
+        source = provider_id.casefold()
+        if (source != provider_id.strip().casefold()
+                or credential_id != credential_id.strip()
+                or account_id != account_id.strip()
+                or self.identity_by_id(connection_identity_id) is None):
+            return None, "adept_borrower_ambiguous"
+
+        # Plugin-published accounts are not an authorization by themselves,
+        # but their single exact match is a necessary provenance cross-check.
+        matches = [
+            account for account in self.accounts
+            if type(account.provider_id) is str
+            and account.provider_id.casefold() == source
+            and type(account.credential_id) is str
+            and account.credential_id == credential_id
+            and type(account.identity_id) is str
+            and account.identity_id == connection_identity_id
+            and type(account.is_primary) is bool
+            and (
+                (account_id == "primary" and account.is_primary)
+                or (type(account.unique_id) is str
+                    and account.unique_id == account_id
+                    and (not account.is_primary or account_id != "primary"))
+            )
+        ]
+        if len(matches) != 1:
+            return None, "adept_borrower_ambiguous"
+        try:
+            grant = self.storage.adept_borrower_grant_get(
+                provider_id=source, credential_id=credential_id,
+                account_id=account_id,
+            )
+        except ValueError:
+            return None, "adept_borrower_ambiguous"
+        if grant is None:
+            return None, "adept_borrower_binding_required"
+        if type(grant) is not dict:
+            return None, "adept_borrower_profile_changed"
+        if (type(grant.get("connection_identity_id")) is not str
+                or grant["connection_identity_id"] != connection_identity_id):
+            return None, "adept_borrower_connection_changed"
+        owner = grant.get("borrower_identity_id")
+        profile = grant.get("profile_id")
+        if (type(owner) is not str or not owner
+                or type(profile) is not str or not profile
+                or type(grant.get("confirmed_by")) is not str
+                or grant["confirmed_by"] != "explicit"
+                or self.identity_by_id(owner) is None):
+            return None, "adept_borrower_profile_changed"
+        current = self.storage.adept_profile_binding_get("identity", owner)
+        if type(current) is not str or current != profile:
+            return None, "adept_borrower_profile_changed"
+        return owner, None
+
     def _paris_adept_identity_for_loan(
         self, loan: Loan, *, connection_identity_id: str,
     ) -> tuple[str | None, str | None]:
