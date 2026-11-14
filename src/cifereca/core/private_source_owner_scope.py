@@ -7,16 +7,21 @@ source metadata, catalogue presence, or a current UI selection.
 from __future__ import annotations
 
 
-def private_source_owner_matches(service: object, item: object) -> bool:
-    """Require one durable provider/credential owner equal to current identity."""
+def private_source_owner_matches(
+    service: object, item: object, *, identity_id: str | None = None,
+) -> bool:
+    """Require one durable provider/credential owner for an admitted identity.
+
+    Headless Core never consults the mutable GTK-selected identity. Its
+    synchronous service facade must snapshot the selected scope beforehand.
+    """
     provider = getattr(item, "source_provider", None)
     credential = getattr(item, "source_credential", None)
-    identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
     metadata = getattr(item, "metadata", None)
     if (type(provider) is not str or not provider
             or type(credential) is not str or not credential
             or credential == "__public__"
-            or type(identity) is not str or not identity
+            or type(identity_id) is not str or not identity_id
             or (type(metadata) is dict
                 and metadata.get("catalogue_access") == "shared_read_only")):
         return False
@@ -24,7 +29,7 @@ def private_source_owner_matches(service: object, item: object) -> bool:
         owner = service.storage.identity_for_connection(provider, credential)
     except (AttributeError, LookupError, TypeError, ValueError):
         return False
-    return type(owner) is str and owner == identity
+    return type(owner) is str and owner == identity_id
 
 
 def public_catalogue_source(item: object) -> bool:
