@@ -129,7 +129,12 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
     # A mutable legacy Loan or borrower object must not silently switch the
     # verification target while the provider's inventory GET is in flight.
     # Native coordinates only: no provider-defined equality or accessors.
-    if (type(account.is_primary) is not bool
+    if (type(account) is not Account
+            or type(account.identity_id) is not str or not account.identity_id
+            or type(account.provider_id) is not str or not account.provider_id
+            or type(account.credential_id) is not str or not account.credential_id
+            or type(account.unique_id) is not str
+            or type(account.is_primary) is not bool
             or type(loan.id) is not str or not loan.id
             or type(loan.provider) is not str or not loan.provider
             or type(loan.medium) is not str or not loan.medium):
@@ -146,6 +151,11 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
             getattr(self, "_account_context_epoch", None) == epoch
             and self.accounts is accounts
             and sum(item is account for item in accounts) == 1
+            and type(account) is Account
+            and type(account.identity_id) is str
+            and type(account.provider_id) is str
+            and type(account.credential_id) is str
+            and type(account.unique_id) is str
             and type(account.is_primary) is bool
             and (account.identity_id, account.provider_id,
                  account.credential_id, account.unique_id,
