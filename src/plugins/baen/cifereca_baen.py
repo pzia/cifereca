@@ -54,7 +54,7 @@ def _public_free_library_image_url(value):
             or '%' in path or '\\' in path
             or any(segment in ('', '.', '..') for segment in path.split('/')[1:])
             or not re.fullmatch(
-                r'/media/catalog/product/[A-Za-z0-9_./-]+\\.(?:jpe?g|png|webp)',
+                r'/media/catalog/product/[A-Za-z0-9_./-]+\.(?:jpe?g|png|webp)',
                 path, re.I,
             )):
         return None
