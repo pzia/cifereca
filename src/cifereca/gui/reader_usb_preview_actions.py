@@ -85,7 +85,9 @@ def _discover_mounted_binding(*, storage, identity_id: str, device_id: str,
             item for item in bindings
             if type(item) is dict
             and type(item.get("metadata")) is dict
-            and item["metadata"].get("usb_fingerprint") == fingerprint
+            and type(item["metadata"].get("usb_fingerprint")) is str
+            and item["metadata"]["usb_fingerprint"].casefold()
+                == fingerprint.casefold()
         ]
         if (len(exact_bindings) != 1
                 or exact_bindings[0].get("identity_id") != identity_id
