@@ -82,3 +82,49 @@ def test_refused_context_preserves_public_outcome_and_never_falls_back_to_ui(tmp
         assert service.storage.acquisitions() == before_ledger
     finally:
         service.close()
+
+
+class _HostileLoanCoordinate:
+    def __str__(self):
+        raise AssertionError("untrusted provider coordinate must not be coerced")
+
+    def __bool__(self):
+        raise AssertionError("untrusted provider coordinate must not be used as truth")
+
+
+class _HostileLoanString(str):
+    def lower(self):
+        raise AssertionError("untrusted string subclass must not select ADEPT grant")
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("source_provider", _HostileLoanCoordinate()),
+    ("source_provider", _HostileLoanString("paris")),
+    ("source_provider", None),
+    ("source_provider", ""),
+    ("source_credential", _HostileLoanCoordinate()),
+    ("source_credential", _HostileLoanString("source-a")),
+    ("source_credential", None),
+    ("source_credential", ""),
+])
+def test_admission_refuses_non_native_source_before_storage_or_provider(
+    tmp_path, monkeypatch, field, bad,
+):
+    service, loan = _setup(tmp_path)
+    try:
+        malformed = replace(loan, **{field: bad})
+        def forbidden(*_args, **_kwargs):
+            pytest.fail("untrusted source must not query connection, grant or rights")
+        monkeypatch.setattr(service.storage, "identity_for_connection", forbidden)
+        monkeypatch.setattr(service.storage, "entitlements", forbidden)
+        monkeypatch.setattr(service.storage, "acquisitions", forbidden)
+        monkeypatch.setattr(service, "_paris_adept_identity_for_loan", forbidden)
+        result = resolve(service, malformed, _TRACE_LOG=LOGGER)
+        assert result.identity is None
+        assert result.entitlement_id is None
+        assert result.refusal["status"] == "attention_required"
+        assert result.refusal["code"] == "adept_identity_unproven"
+        assert result.refusal["reason"] == "source_scope_unproven"
+        assert result.refusal["retry"] == "explicit_only"
+    finally:
+        service.close()
