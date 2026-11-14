@@ -182,38 +182,47 @@ def main() -> int:
         widget.grab_focus()
         pump()
 
+    def delivered(predicate, *, seconds=1.2):
+        # XTestFake* queues native X11 events; XSync is not a GTK signal
+        # acknowledgement. Allow the GLib/GDK event source to dispatch them
+        # before deciding whether an XTEST pointer/key interaction failed.
+        deadline = monotonic() + seconds
+        while monotonic() < deadline:
+            pump()
+            if predicate():
+                return True
+            sleep(0.025)
+        return False
+
     def click(widget):
         until(lambda: widget.get_mapped(), "widget_mapped")
         focus_native(widget)
         device.click_widget(widget)
-        pump()
 
     def toggle_expert(widget):
         was_active = widget.get_active()
         click(widget)
-        if widget.get_active() is was_active:
+        if not delivered(lambda: widget.get_active() is not was_active):
             # Pure XTEST keyboard fallback, never set_active or emit clicked.
             focus_native(widget)
             device.key("space", True)
             device.key("space", False)
-            pump()
+            until(lambda: widget.get_active() is not was_active,
+                  "expert_keyboard")
 
     def open_dialog():
         before = state["button_clicks"]
         click(button)  # Real XTEST click, real product callback, real Adw modal.
-        if state["button_clicks"] == before:
-            # The first X11 click may only focus an unmanaged Xvfb toplevel.
-            # Retry exactly once, still via XTEST, never by calling the
-            # product handler directly or emitting a fake Gtk signal.
+        if not delivered(lambda: state["button_clicks"] > before):
+            # An unmanaged Xvfb toplevel may consume an initial pointer click
+            # for focus only. Retry once, after allowing event dispatch.
             click(button)
-        if state["button_clicks"] == before:
-            # XTEST Return on a genuinely focused GTK button also validates
-            # keyboard access when an unmanaged Xvfb window rejects pointers.
+        if not delivered(lambda: state["button_clicks"] > before):
+            # Keyboard XTEST fallback, never call the product handler directly.
             focus_native(button)
             device.key("Return", True)
             device.key("Return", False)
-            pump()
-        if state["button_clicks"] == before:
+        if not delivered(lambda: state["button_clicks"] > before):
             state["checkpoint"] = "button_not_clicked"
             raise AssertionError("GTK/XTEST pairing button did not activate")
         if state["dialog_build_errors"]:
