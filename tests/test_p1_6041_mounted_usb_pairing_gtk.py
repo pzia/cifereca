@@ -75,6 +75,7 @@ def test_cannot_pair_unselected_stale_or_replaced_volume(
                         lambda: tuple(shown))
     dialog = open_dialog(window, expert=False)
     previous = deepcopy(db.device_bindings())
+    selected_before = window._reader_selected_device_id
     if scenario != "none":
         dialog.volume_choice.set_selected(0)
     if scenario == "invalid-selection":
@@ -92,7 +93,7 @@ def test_cannot_pair_unselected_stale_or_replaced_volume(
     dialog.respond("confirm")
     assert db.device_bindings() == previous
     assert db.device_placements() == []
-    assert window._reader_selected_device_id is None
+    assert window._reader_selected_device_id == selected_before
     if scenario not in {"other-profile", "changed-generation"}:
         assert len(errors) == 1
         assert "ABCD-1234" not in repr(errors)
