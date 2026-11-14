@@ -53,9 +53,6 @@ CREATE TABLE IF NOT EXISTS backup_items (
 """
 
 
-_LEGACY_ADEPT_BINDING_SOURCE = "paris"  # historical table has no provider column
-
-
 class Storage:
     def __init__(self, path: Path | None = None):
         self.path = path or database_file()
@@ -3414,8 +3411,7 @@ class Storage:
             provider_id=provider_id, credential_id=credential_id,
             account_id=account_id,
         )
-        if (scope[0] != _LEGACY_ADEPT_BINDING_SOURCE
-                or type(confirmed) is not bool or confirmed is not True
+        if (type(confirmed) is not bool or confirmed is not True
                 or any(type(v) is not str or not v for v in (
                     connection_identity_id, borrower_identity_id, profile_id
                 ))):
@@ -3423,9 +3419,13 @@ class Storage:
         with self._lock, self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             legacy = db.execute(
-                "SELECT 1 FROM paris_borrower_adept_bindings "
-                "WHERE credential_id=? AND account_id=?",
-                scope[1:],
+                "SELECT 1 FROM paris_borrower_adept_bindings AS legacy "
+                "JOIN provider_connections AS connection "
+                "ON connection.provider_id='paris' "
+                "AND connection.credential_id=legacy.credential_id "
+                "WHERE legacy.credential_id=? AND legacy.account_id=? "
+                "AND connection.provider_id=?",
+                (scope[1], scope[2], scope[0]),
             ).fetchone()
             if legacy is None:
                 raise ValueError("adept_legacy_grant_not_found")
