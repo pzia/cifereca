@@ -752,7 +752,7 @@
         "tests/test_core_p0_5975_headless_search_preferences.py",
         "tests/test_identities_081.py"
       ],
-      "pr": "#pending",
+      "pr": "#6073",
       "in_ast_metric": false
     }
   ],
