@@ -850,6 +850,22 @@
       ],
       "pr": "#6089",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-manual-lender-readiness-headless-owner",
+      "original": "Core manual_borrow_available and manual_borrow_diagnostic consulted mutable service.current_identity as an implicit borrower selection while assessing a scoped, read-only manual loan. The generic provider policy bridge duplicated that implicit navigation.",
+      "original_classification": "navigation_dependent_manual_borrow_readiness",
+      "replacement": "LibraryService.can_borrow_manual and LibraryService.manual_borrow_diagnostic pin the active identity once and capture _account_context_epoch at the synchronous facade boundary. Manual borrowing policy and Core readiness workers accept only an explicit validated identity_id; both facades revoke stale positives after identity object or monotone epoch changes (including A→B→A). Explicit manual POST, immutable claim, and independent lender scope checks are unchanged.",
+      "classification": "removed_core_navigation_manual_borrow_readiness",
+      "evidence": "Core workers contain no AST attribute access to current_identity; synthetic headless diagnostics succeed with poisoned navigation; missing owner denies before plugin registry; facade tests block A→B→A and preserve steady positive local diagnostics. Existing Paris and BnF manual-borrow tests remain CI gates.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_manual_borrow_readiness.py",
+        "tests/test_core_p0_5055_generic_manual_borrow_diagnostic.py",
+        "tests/test_core_p0_5048_manual_borrow_policy_abi.py",
+        "tests/test_core_p1_4673_paris_local_reason_phases.py"
+      ],
+      "pr": "#6095",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [

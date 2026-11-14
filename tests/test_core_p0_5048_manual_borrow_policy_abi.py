@@ -50,7 +50,9 @@ def test_bnf_exact_installed_contract_uses_shared_readiness(tmp_path):
         policy = ManualBorrowPolicy("BNF_PRET")
         session.descriptor = replace(session.descriptor, manual_borrow_policy=policy)
         assert resolved_manual_borrow_policy(service, item) == policy
-        assert manual_borrow_action_available(service, item)
+        assert manual_borrow_action_available(
+            service, item, identity_id=account.identity_id,
+        )
         assert service.can_borrow_manual(item)
 
         # Notice metadata is not the opt-in source of truth.
@@ -61,6 +63,7 @@ def test_bnf_exact_installed_contract_uses_shared_readiness(tmp_path):
         assert resolved_manual_borrow_policy(service, forged) == policy
         assert not manual_borrow_action_available(
             service, replace(item, docbase="OTHER"),
+            identity_id=account.identity_id,
         )
 
         # A disabled installation, rebound session or absent ABI fails closed.
