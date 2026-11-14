@@ -1,5 +1,35 @@
 {
   "metric": "core.provider.business-coupling/1",
   "purpose": "Reviewed execution/authority evidence only; absent reviews remain unclassified. No automatic reachability claims.",
-  "reviews": []
+  "reviews": [
+    {
+      "id": "site-ec3bd8bf2ee3527ef2c55dd0",
+      "classification": "legitimate_readonly_compat",
+      "journey": "diagnostics_and_historical_observation",
+      "productive_caller": "query_journal → _events → _make_event (historical Core ACQUISITION/loan sync logs)",
+      "effect": "Read-only projection of legacy log field 'provider' to filterable provider_id; no GET/POST, file write or rights grant",
+      "authority": "Observed historic log payload, constrained by logger/category/operation/status/code/loan_id; never business entitlement",
+      "replacement_contract": "Canonical structured diagnostic.provider_id for new events; preserve bounded legacy reader for existing logs",
+      "tests": [
+        "tests/test_diagnostics_p0_2888_legacy_loan_provider.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Removal would lose truthful provider filtering in archived 29/10 loan-sync diagnostics; compatibility is restricted, descriptive and covered by negative tests"
+    },
+    {
+      "id": "site-5354d32da0ea60fe18fe5127",
+      "classification": "must_migrate",
+      "journey": "digital_loan_explicit_acsm_action",
+      "productive_caller": "DetailPanel.show_loan → MainWindow.prepare_explicit_loan_acsm_for_loan → explicit_loan_acsm_controller.prepare_explicit_loan_acsm",
+      "effect": "BNF-specific GTK button wired to explicit ACSM staging; click may initiate provider loan confirmation only after separate user confirmation",
+      "authority": "CoreUI branch loan.source_provider == 'bnf-pret' and state/medium instead of provider-neutral action descriptor",
+      "replacement_contract": "Pending: provider-neutral typed explicit existing-loan ACSM action capability and Core exact-account/admission guard; no automatic borrowing",
+      "tests": [
+        "tests/test_core_ui_p0_5048_neutral_loan_download_unavailable.py::test_detail_panel_refusal_path_has_no_supplier_specific_exception",
+        "tests/test_core_ui_bnf_acsm_native.py::test_native_bnf_actions_are_distinct_and_explain_safe_failure"
+      ],
+      "retirement_pr": "",
+      "rationale": "Real provider-keyed UI action remains installed; preserve confirmation and no-double-GET semantics until a versioned action descriptor replaces it (#5055/#5056)"
+    }
+  ]
 }
