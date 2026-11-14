@@ -797,3 +797,23 @@ def test_modern_light_real_gtk_scenarios_remain_targetable():
         scenario = runner.SCENARIOS[f"modern-light-{width}"]
         assert scenario["width"] == width
         assert scenario["runner"] == "gtk-modern-light"
+
+
+def test_p1_6041_failed_gtk_probe_exports_only_closed_stage():
+    runner = _module()
+    for width in (1024, 1366):
+        name = f"reader-usb-pairing-{width}"
+        descriptor = runner.SCENARIOS[name]
+        assert descriptor["runner"] == "gtk-reader-pairing"
+        assert descriptor["fixture"] == "startup"
+        assert descriptor["plugin"] == "ui.page.readers"
+    source = RUNNER.read_text(encoding="utf-8")
+    probe = (ROOT / "e2e/reader_usb_pairing_probe.py").read_text(
+        encoding="utf-8",
+    )
+    assert "P1_6041_CLOSED_FAILURE_CHECKPOINT=" in source
+    assert "P1_6041_CLOSED_FAILURE_CHECKPOINT=" in probe
+    assert 'if markers and markers[-1] in accepted:' in source
+    assert 'if checkpoint in allowed:' in probe
+    assert 'report.update(status="FAIL", error_code=type(exc).__name__)' in probe
+    assert 'print("P1_6041_CLOSED_FAILURE_CHECKPOINT=" + checkpoint' in probe
