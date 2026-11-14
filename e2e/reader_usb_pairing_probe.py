@@ -95,6 +95,7 @@ def main() -> int:
     storage = MemoryBindings()
     state = {
         "volumes": (), "reads": 0, "errors": 0, "renders": 0,
+        "button_clicks": 0, "dialog_build_errors": 0,
         "checkpoint": "setup",
     }
     original_discovery = discovery.discover_linux_usb_volumes
@@ -127,9 +128,14 @@ def main() -> int:
     heading = Gtk.Label(label="Liseuses — association USB (simulation sans appareil)")
     box.append(heading)
     button = Gtk.Button(label="Associer une liseuse")
-    button.connect("clicked", lambda *_: request_reader_pairing(
-        window, Gtk=Gtk, Adw=Adw,
-    ))
+    def on_pair_clicked(*_args):
+        state["button_clicks"] += 1
+        try:
+            request_reader_pairing(window, Gtk=Gtk, Adw=Adw)
+        except Exception:
+            # Keep raw GTK/GObject exception text inside the runner, not CI.
+            state["dialog_build_errors"] += 1
+    button.connect("clicked", on_pair_clicked)
     box.append(button)
     box.append(window._reader_status_label)
     window.set_child(box)
@@ -155,7 +161,19 @@ def main() -> int:
         pump()
 
     def open_dialog():
+        before = state["button_clicks"]
         click(button)  # Real XTEST click, real product callback, real Adw modal.
+        if state["button_clicks"] == before:
+            # The first X11 click may only focus an unmanaged Xvfb toplevel.
+            # Retry exactly once, still via XTEST, never by calling the
+            # product handler directly or emitting a fake Gtk signal.
+            click(button)
+        if state["button_clicks"] == before:
+            state["checkpoint"] = "button_not_clicked"
+            raise AssertionError("GTK/XTEST pairing button did not activate")
+        if state["dialog_build_errors"]:
+            state["checkpoint"] = "dialog_build_failed"
+            raise AssertionError("GTK pairing dialog construction failed")
         until(lambda: getattr(window, "_reader_pairing_dialog", None) is not None
               and window._reader_pairing_dialog.get_visible(), "dialog_open")
         dialog = window._reader_pairing_dialog
@@ -300,7 +318,7 @@ def main() -> int:
         allowed = {
             "shell", "widget_mapped", "dialog_open", "expert_mode",
             "chooser_return", "dialog_response", "manual_uuid",
-            "setup",
+            "button_not_clicked", "dialog_build_failed", "setup",
         }
         checkpoint = state["checkpoint"]
         if checkpoint in allowed:
