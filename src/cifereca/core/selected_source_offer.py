@@ -73,6 +73,7 @@ def _resolve(service, target: SourceOfferTarget):
 def select_source_offer_target(
     service, *, provider_id: str, credential_id: str, item_id: str,
     identity_id: str | None = None,
+    expected_epoch: int | None = None,
 ):
     """Passive target construction: never performs a catalogue or content GET."""
     if (not all(type(x) is str and x and len(x) <= 1024
@@ -83,7 +84,8 @@ def select_source_offer_target(
         identity = identity_id
         epoch = getattr(service, "_account_context_epoch", None)
         if (type(epoch) not in (int, type(None))
-                or (type(epoch) is int and epoch < 0)):
+                or (type(epoch) is int and epoch < 0)
+                or (expected_epoch is not None and expected_epoch != epoch)):
             return None
         accounts = [a for a in service.accounts
                     if a.provider_id == provider_id
@@ -134,6 +136,7 @@ def obtain_source_offer(service, target: SourceOfferTarget):
 
 def select_library_source_offer_target(
     service, entry, *, identity_id: str | None = None,
+    expected_epoch: int | None = None,
 ):
     """Select exactly one remote origin from a Library card; never a right.
 
@@ -182,7 +185,8 @@ def select_library_source_offer_target(
     ]
     if len(accounts) != 1:
         return None
+    pinned = {"expected_epoch": expected_epoch} if expected_epoch is not None else {}
     return select_source_offer_target(
         service, provider_id=provider, credential_id=accounts[0].credential_id,
-        item_id=item_id, identity_id=identity,
+        item_id=item_id, identity_id=identity, **pinned,
     )
