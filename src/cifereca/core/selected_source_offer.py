@@ -63,6 +63,7 @@ def _resolve(service, target: SourceOfferTarget):
 
 def select_source_offer_target(
     service, *, provider_id: str, credential_id: str, item_id: str,
+    expected_identity_id: str | None = None,
 ):
     """Passive target construction: never performs a catalogue or content GET."""
     if (not all(type(x) is str and x and len(x) <= 1024
@@ -70,7 +71,12 @@ def select_source_offer_target(
                 for x in (provider_id, credential_id, item_id))):
         return None
     try:
-        identity = service.current_identity.identity_id
+        # A Library card already pinned its owner. Do not reinterpret a
+        # changed GTK selection when choosing the account for that card.
+        identity = (expected_identity_id if expected_identity_id is not None
+                    else service.current_identity.identity_id)
+        if type(identity) is not str or not identity or len(identity) > 1024:
+            return None
         accounts = [a for a in service.accounts
                     if a.provider_id == provider_id
                     and a.credential_id == credential_id
@@ -165,5 +171,5 @@ def select_library_source_offer_target(service, entry):
         return None
     return select_source_offer_target(
         service, provider_id=provider, credential_id=accounts[0].credential_id,
-        item_id=item_id,
+        item_id=item_id, expected_identity_id=identity,
     )
