@@ -75,6 +75,7 @@ def test_private_remote_observation_visible_without_entitlement(tmp_path, monkey
         assert observed_calls == [{
             "provider_id": "fictional-provider",
             "credential_id": "card-1", "item_id": "edition-1",
+            "expected_identity_id": "default",
         }]
         assert service.storage.acquisitions() == []
         assert service.storage.placements() == []
