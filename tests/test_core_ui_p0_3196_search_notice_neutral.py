@@ -36,35 +36,3 @@ def test_unverified_kobo_owned_and_downloadable_catalogue_stays_inert():
     projected = result_row(item)
     assert projected["state"] == "remote_catalog"
     assert projected["owned"] is False
-
-
-def test_search_uses_core_to_hide_retired_direct_action():
-    from types import SimpleNamespace
-    from unittest.mock import Mock
-
-    from cifereca.services import LibraryService
-    from tests.test_search_results_view import _book, _host
-
-    host = _host()
-    offer = replace(
-        _book("kobo"), source_collection="public_catalog", owned=False,
-        downloadable=True, download_url="https://example.invalid/book.epub",
-    )
-    session = SimpleNamespace(
-        legacy_direct_get_retired=True,
-        capabilities=SimpleNamespace(direct_download=True),
-    )
-    host.service._sessions = {}
-    host.service._session_key = lambda provider, credential: (provider, credential)
-    host.service._session_for_source = Mock(return_value=session)
-    host.service.can_direct_download = lambda item: LibraryService.can_direct_download(
-        host.service, item,
-    )
-    host._remote_search_results = [offer]
-
-    host._populate_search([offer], announce=False)
-
-    host.service._session_for_source.assert_called_once_with("kobo", "credential")
-    row = host.search_page.show_rows.call_args.args[0][0]
-    assert row.options["action_callback"] is None
-    assert row.options["action_label"] is None

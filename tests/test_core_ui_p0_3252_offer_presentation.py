@@ -11,6 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from cifereca.services import LibraryService
 from cifereca.gui.offer_actions import (
     download_action_label, requires_selected_offer_check,
 )
@@ -131,19 +132,34 @@ def test_detail_does_not_promote_unknown_public_numilog_notice():
     window.action_button.assert_not_called()
 
 
-def test_kobo_legacy_search_action_is_never_promoted_by_owned_flag_or_v2_hint():
+@pytest.mark.parametrize("provider", ["kobo", "synthetic-retired-source"])
+def test_retired_legacy_search_action_uses_core_admission(provider):
     host = _host()
     session = _V2Session()
+    session.legacy_direct_get_retired = True
+    session.capabilities = NS(direct_download=True)
+    host.service.storage = NS(identity_for_connection=lambda *_: "alice")
+    host.service._sessions = {(provider, "credential"): session}
+    host.service._session_key = lambda source, credential: (source, credential)
     host.service._session_for_source = Mock(return_value=session)
-    host.service.can_direct_download = Mock(return_value=True)
-    item = replace(_book("kobo"), downloadable=True, owned=True)
+    host.service.can_direct_download = Mock(
+        wraps=LibraryService.can_direct_download.__get__(host.service),
+    )
+    item = replace(
+        _book(provider), downloadable=True, owned=True,
+        download_url="https://example.invalid/book.epub",
+    )
     host._remote_search_results = [item]
+
     host._populate_search([item], announce=False)
+
     row = host.search_page.show_rows.call_args.args[0][0]
     assert row.options["action_label"] is None
-    assert "Origine Kobo" not in row.meta
+    assert row.options["action_callback"] is None
+    assert "Offre à vérifier" not in row.meta
     assert "Livre numérique" in row.meta
-    host.service.can_direct_download.assert_not_called()
+    host.service.can_direct_download.assert_called_once_with(item)
+    host.service._session_for_source.assert_called_once_with(provider, "credential")
     session.snapshot.assert_not_called()
     session.selected.assert_not_called()
 
