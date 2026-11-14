@@ -7,7 +7,7 @@ from __future__ import annotations
 from types import SimpleNamespace as NS
 
 from recommendations import UxRecommendationsView
-from tests.test_recommendations_ui import _identity_reload_view
+from .recommendations_identity_test_fixtures import _identity_reload_view
 
 
 def _busy_view(rows):
