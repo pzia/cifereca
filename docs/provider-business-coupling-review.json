@@ -1148,13 +1148,14 @@
     },
     {
       "id": "struct-pnb-preferences-explicit-account-no-navigation",
-      "original": "Public LibraryService.pnb_preferences() selected service.current_account as implicit borrower before a provider digital_preferences() call. A direct headless or concurrent request could choose the GTK account instead of the caller's intended account.",
+      "original": "LibraryService.pnb_preferences(self) was a no-argument legacy provider preferences GET which used service.current_account to choose the borrower and session. No installed productive caller is known; the frozen facade descriptor requires the old signature.",
       "original_classification": "navigation_dependent_provider_preferences_get",
-      "replacement": "Preserve the frozen no-argument pnb_preferences(self) descriptor as an inert fail-closed compatibility entry. Introduce additive generic digital_preferences_for_account(Account) and reject unscoped/malformed owner coordinates before any session or GET; the same exact Account is handed to session resolution and the preferences reader.",
-      "classification": "removed_navigation_fallback_with_inert_legacy_facade",
-      "evidence": "The frozen library_service_facade.json requires the exact pnb_preferences(self) signature. No installed production caller invokes it; the new generic reader is usable without GTK. Tests poison current_account, validate no-arg legacy refusal, explicit session pinning across a navigation change and malformed-source refusal before provider I/O.",
+      "replacement": "Retain the exact frozen pnb_preferences(self) signature but remove the entire account-resolution, session and provider GET behavior. The method now unconditionally refuses with pnb_preferences_explicit_account_required. Do not create an additional unscoped or insufficiently attested public GET; the installed provider Session.digital_preferences(Account) contract remains unchanged for properly admitted callers.",
+      "classification": "removed_implicit_navigation_provider_get_with_inert_facade",
+      "evidence": "Static installed callsite search found only the unused facade and legacy characterization. Frozen signature remains byte-for-byte; tests validate unconditional refusal across selected Accounts, a poisoned current_account getter and a session stub, and assert no session/read side effects. No new public GET or right is introduced.",
       "tests": [
         "tests/test_core_p0_5975_session_resolver_explicit_account.py",
+        "tests/test_library_service_facade_contract.py",
         "tests/test_loan_reads_selection_independence.py"
       ],
       "pr": "#6112",

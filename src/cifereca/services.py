@@ -2362,21 +2362,6 @@ class LibraryService:
         """Retired no-argument GTK account inference, kept for facade ABI."""
         raise ProviderConfigurationError("pnb_preferences_explicit_account_required")
 
-    def digital_preferences_for_account(self, account: Account) -> dict[str, Any]:
-        """Read preferences for one explicit, exactly scoped provider account.
-
-        No GTK navigation or implicit fallback; the same validated Account
-        is used to resolve the provider session and to issue its read.
-        """
-        if (type(account) is not Account
-                or type(account.identity_id) is not str or not account.identity_id
-                or type(account.provider_id) is not str or not account.provider_id
-                or type(account.credential_id) is not str or not account.credential_id
-                or type(account.unique_id) is not str
-                or type(account.is_primary) is not bool):
-            raise ProviderConfigurationError("account_session_explicit_owner_required")
-        return self._session_for_account(account).digital_preferences(account)
-
     def content_type_for(self, item: SearchResult) -> str:
         return self.acquisition.content_type_for(item)
 

@@ -59,68 +59,50 @@ def test_public_facade_pins_current_account_at_sync_boundary(monkeypatch):
     assert host.current_account is bob
 
 
-def test_pnb_preferences_reuses_admitted_account_across_session_resolution():
+def test_legacy_pnb_preferences_refuses_before_selected_account_is_used():
     alice, bob = account("alice", "a"), account("bob", "b")
     host = LibraryService.__new__(LibraryService)
     host.current_account = alice
-    seen = []
+    calls = []
 
     def session_for_account(admitted):
-        seen.append(("session", admitted))
+        calls.append(admitted)
         host.current_account = bob
-        return NS(digital_preferences=lambda applied: (
-            seen.append(("preferences", applied)) or {"borrower": applied.identity_id}
-        ))
+        return NS(digital_preferences=lambda applied: {"borrower": applied.identity_id})
 
     host._session_for_account = session_for_account
-    assert host.digital_preferences_for_account(alice) == {"borrower": "alice"}
     with pytest.raises(ProviderConfigurationError, match="pnb_preferences_explicit_account_required"):
         host.pnb_preferences()
-    assert seen == [("session", alice), ("preferences", alice)]
-    assert host.current_account is bob
+    assert calls == []
+    assert host.current_account is alice
 
 
-def test_pnb_preferences_does_not_fallback_to_selected_account():
-    alice = account("alice", "a")
-    class Host:
+def test_legacy_pnb_preferences_does_not_read_gtk_selection():
+    class Headless:
         @property
         def current_account(self):
-            pytest.fail("PNB preferences worker inspected GTK selection")
-
-        def _session_for_account(self, admitted):
-            assert admitted is alice
-            return NS(digital_preferences=lambda exact: (
-                {"borrower": exact.identity_id}
-            ))
-    host = Host()
-    assert LibraryService.digital_preferences_for_account(host, alice) == {"borrower": "alice"}
-
-
-@pytest.mark.parametrize("invalid", [None, "", 0, {}, [], object(),
-                                     NS(identity_id="alice", provider_id="synthetic", credential_id="a"),
-                                     Account(identity_id="", provider_id="synthetic", credential_id="a"),
-                                     Account(identity_id="alice", provider_id="", credential_id="a"),
-                                     Account(identity_id="alice", provider_id="synthetic", credential_id=None)])
-def test_pnb_preferences_rejects_unscoped_or_invalid_account_before_get(invalid):
-    class Host:
-        @property
-        def current_account(self):
-            pytest.fail("invalid account must not read navigation")
+            pytest.fail("retired GET inspected mutable GTK selection")
 
         def _session_for_account(self, _account):
-            pytest.fail("invalid account reached provider session")
-    with pytest.raises(ProviderConfigurationError, match="account_session_explicit_owner_required"):
-        LibraryService.digital_preferences_for_account(Host(), invalid)
+            pytest.fail("retired GET called provider session")
+
+    with pytest.raises(ProviderConfigurationError, match="pnb_preferences_explicit_account_required"):
+        LibraryService.pnb_preferences(Headless())
 
 
-def test_legacy_pnb_entry_refuses_without_navigation_or_provider_read():
+@pytest.mark.parametrize("selected", [
+    None, "", 0, {}, [], object(),
+    NS(identity_id="alice", provider_id="synthetic", credential_id="a"),
+    Account(identity_id="", provider_id="synthetic", credential_id="a"),
+    Account(identity_id="alice", provider_id="", credential_id="a"),
+    Account(identity_id="alice", provider_id="synthetic", credential_id=None),
+])
+def test_legacy_pnb_preferences_never_infers_any_selected_borrower(selected):
     class Host:
-        @property
-        def current_account(self):
-            pytest.fail("retired PNB entry read GTK navigation")
+        current_account = selected
 
         def _session_for_account(self, _account):
-            pytest.fail("retired PNB entry requested a provider session")
+            pytest.fail("legacy PNB preferences requested a provider GET")
 
     with pytest.raises(ProviderConfigurationError, match="pnb_preferences_explicit_account_required"):
         LibraryService.pnb_preferences(Host())
