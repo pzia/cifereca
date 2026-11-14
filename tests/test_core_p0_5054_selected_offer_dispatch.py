@@ -14,6 +14,8 @@ from tests.test_core_p0_1862_numilog_store_mirror import _row
 def _service(session):
     sessions = {"fixture:credential": session}
     return NS(
+        current_identity=NS(identity_id="reader"),
+        _account_context_epoch=7,
         _sessions=sessions,
         _session_key=lambda provider, credential: f"{provider}:{credential}",
         acquire_direct_item=lambda _item: pytest.fail("no legacy provider GET"),
@@ -44,12 +46,14 @@ def test_any_selected_source_declaration_uses_canonical_path(
     calls = []
     monkeypatch.setattr(
         selected_owned_search, "obtain_selected_owned",
-        lambda received_service, received_item: (
-            calls.append((received_service, received_item)) or sentinel
+        lambda received_service, received_item, **scope: (
+            calls.append((received_service, received_item, scope)) or sentinel
         ),
     )
     assert LibraryService.obtain_search_item(service, item) is sentinel
-    assert calls == [(service, item)]
+    assert calls == [(
+        service, item, {"identity_id": "reader", "expected_epoch": 7},
+    )]
 
 
 def test_undeclared_session_keeps_legacy_materialization(monkeypatch):
