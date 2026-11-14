@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS backup_items (
 """
 
 
-class Storage:
+_LEGACY_ADEPT_BINDING_SOURCE = "paris"  # historical table has no provider column\n\n\nclass Storage:
     def __init__(self, path: Path | None = None):
         self.path = path or database_file()
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -3411,7 +3411,7 @@ class Storage:
             provider_id=provider_id, credential_id=credential_id,
             account_id=account_id,
         )
-        if (scope[0] != "paris"
+        if (scope[0] != _LEGACY_ADEPT_BINDING_SOURCE
                 or type(confirmed) is not bool or confirmed is not True
                 or any(type(v) is not str or not v for v in (
                     connection_identity_id, borrower_identity_id, profile_id
