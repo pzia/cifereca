@@ -1572,11 +1572,12 @@ class Storage:
                 """)
                 db.execute("""
                     CREATE TRIGGER IF NOT EXISTS trg_adept_grant_connection_update
-                    AFTER UPDATE OF identity_id,provider_id,credential_id
+                    AFTER UPDATE OF identity_id,provider_id,credential_id,enabled
                     ON provider_connections
                     WHEN OLD.identity_id IS NOT NEW.identity_id
                       OR OLD.provider_id IS NOT NEW.provider_id
                       OR OLD.credential_id IS NOT NEW.credential_id
+                      OR (OLD.enabled=1 AND NEW.enabled<>1)
                     BEGIN
                         DELETE FROM adept_borrower_grants
                         WHERE provider_id=OLD.provider_id
@@ -3346,7 +3347,7 @@ class Storage:
         with self._lock, self._connect() as db:
             connection = db.execute(
                 "SELECT identity_id FROM provider_connections "
-                "WHERE provider_id=? AND credential_id=?",
+                "WHERE provider_id=? AND credential_id=? AND enabled=1",
                 scope[:2],
             ).fetchone()
             identity = db.execute(
@@ -3409,6 +3410,7 @@ class Storage:
                 "ON c.provider_id=g.provider_id "
                 "AND c.credential_id=g.credential_id "
                 "AND c.identity_id=g.connection_identity_id "
+                "AND c.enabled=1 "
                 "JOIN provider_accounts AS a "
                 "ON a.provider_id=g.provider_id "
                 "AND a.credential_id=g.credential_id "
