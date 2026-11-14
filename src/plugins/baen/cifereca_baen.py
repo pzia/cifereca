@@ -82,7 +82,8 @@ def _observed_free_library_json(response, credential_id, page):
         raise ValueError('unverified_public_json') from None
     if (type(payload) is not dict
             or payload.get('returnCode') != 'single cat'
-            or str(payload.get('categoryId')) != FREE_CATEGORY_ID
+            or type(payload.get('categoryId')) not in (str, int)
+            or str(payload['categoryId']) != FREE_CATEGORY_ID
             or type(payload.get('totalBooks')) is not int
             or not 0 <= payload['totalBooks'] <= 100000
             or type(payload.get('numOfBooks')) is not int
@@ -155,7 +156,12 @@ def _baen_explicit_download_offer(html_text, detail_url):
         if not _trusted_baen_url(candidate):
             continue
         path = urlsplit(candidate).path.casefold()
-        if path.endswith(('.pdf', '.mobi', '.azw', '.azw3')):
+        # The user capture observed /download/index/owned/id/... redirect
+        # to login: no anonymous/public EPUB entitlement is established.
+        # Do not even hand this account-only route to transport.http.
+        if (path.startswith('/download/index/owned/')
+                or path.endswith(('.pdf', '.mobi', '.azw', '.azw3'))):
+            continue
             continue
         epub_attested = 'epub' in text or path.endswith('.epub')
         if epub_attested:
