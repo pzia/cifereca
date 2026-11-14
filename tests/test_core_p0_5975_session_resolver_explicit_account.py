@@ -42,19 +42,42 @@ def test_worker_ignores_navigation_after_explicit_account():
     assert provider_sessions._session_for_account(host, bob) is session_b
 
 
-def test_public_facade_pins_current_account_at_sync_boundary(monkeypatch):
+@pytest.mark.parametrize("omit", [True, False])
+def test_public_facade_never_reads_selected_account_for_missing_borrower(omit):
+    class Headless:
+        @property
+        def current_account(self):
+            pytest.fail("legacy facade consulted GTK-selected account")
+
+        @property
+        def _sessions(self):
+            pytest.fail("missing borrower reached provider registry")
+
+        def _session_key(self, *_args):
+            pytest.fail("missing borrower reached session key")
+
+    host = Headless()
+    with pytest.raises(ProviderConfigurationError,
+                       match="^account_session_explicit_owner_required$"):
+        if omit:
+            LibraryService._session_for_account(host)
+        else:
+            LibraryService._session_for_account(host, None)
+
+
+def test_public_facade_passes_only_explicit_account_to_core_worker(monkeypatch):
     alice, bob = account("alice", "a"), account("bob", "b")
     host = LibraryService.__new__(LibraryService)
     host.current_account = alice
     admitted = []
 
-    def worker(service, account):
-        admitted.append(account)
+    def worker(service, owner):
+        admitted.append(owner)
         host.current_account = bob
         return "alice-session"
 
     monkeypatch.setattr(provider_sessions, "_session_for_account", worker)
-    assert host._session_for_account() == "alice-session"
+    assert host._session_for_account(alice) == "alice-session"
     assert admitted == [alice]
     assert host.current_account is bob
 

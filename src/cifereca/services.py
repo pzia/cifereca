@@ -1428,10 +1428,10 @@ class LibraryService:
         return provider_sessions.select_account(self, unique_id, provider_id, credential_id)
 
     def _session_for_account(self, account: Account | None = None) -> ProviderSession:
-        # Preserve the legacy facade ABI, but pin its context at synchronous
-        # admission. The worker is forbidden from touching current_account.
-        admitted = self.current_account if account is None else account
-        return provider_sessions._session_for_account(self, admitted)
+        # The frozen optional-argument ABI is not permission to infer GTK's
+        # current_account. An omitted/None borrower fails closed in the Core
+        # resolver before reading any session registry or provider.
+        return provider_sessions._session_for_account(self, account)
 
     def _session_for_source(self, provider_id: str, credential_id: str) -> ProviderSession:
         return provider_sessions._session_for_source(self, provider_id, credential_id)
