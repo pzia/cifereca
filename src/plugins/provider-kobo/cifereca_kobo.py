@@ -271,6 +271,10 @@ class KoboSession(ProviderSession):
     # v0.7/D3 direct GET is permanently retired, regardless of ABI version.
     # The Core must use the exact selected canonical A→B executor instead.
     legacy_direct_get_retired = True
+    # Kobo-Vault's historical adapter labels the primary account "default"
+    # even under a named Core owner. Core accepts this *declared* alias only
+    # with a separately persisted exact connection binding.
+    legacy_account_identity_alias_v1 = "default"
 
     def __init__(self, *, config: Any, storage: Any, diagnostics: Any, catalog_factory=None, runtime_capabilities=None, identity_broker=None, **kwargs: Any) -> None:
         super().__init__(**kwargs)

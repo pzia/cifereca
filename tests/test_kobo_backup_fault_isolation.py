@@ -23,6 +23,9 @@ def _write_epub(path: Path) -> None:
 
 
 class BackupSession(ProviderSession):
+    # Synthetic declaration matching the installed Kobo adapter's explicit
+    # historical account owner label; unrelated providers do not inherit it.
+    legacy_account_identity_alias_v1 = "default"
     api_version = "2.3"
     supports_acquisition_delegation = True  # Synthetic verified token scope
     supports_acquisition_display_profile = False
