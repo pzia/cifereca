@@ -12,7 +12,7 @@ from cifereca.core import borrow_for_identity_transfer_preflight as preflight
 from cifereca.core import borrow_for_identity_transfer_executor as executor
 from cifereca.core import borrow_for_identity_send_composition as composition
 from cifereca.core import borrow_for_identity_existing_loan as recovery
-from cifereca.services import LibraryService, _cross_profile_read_scope_current
+from cifereca.services import LibraryService, _capture_cross_profile_read_scope
 from tests.test_core_p1_4662_cross_profile_borrow_preview import witness
 
 
@@ -140,7 +140,8 @@ def test_facade_scope_rejects_aba_and_same_id_replacement():
     identity = NS(identity_id="bob")
     service = NS(current_identity=identity,
                  _account_context_epoch=13, _source_context_epoch=19)
-    lease = _cross_profile_read_scope_current(service, "bob")
+    owner, lease = _capture_cross_profile_read_scope(service, "bob")
+    assert owner == "bob"
     assert lease() is True
     service._account_context_epoch += 2
     assert lease() is False

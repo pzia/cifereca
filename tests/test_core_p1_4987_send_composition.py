@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from cifereca.core import borrow_for_identity_send_composition as composition
 from cifereca.core.borrow_for_identity_send_composition import (
     send_confirmed_lender_local_copy as send,
 )
@@ -34,6 +35,7 @@ def environment(monkeypatch):
         "cifereca.core.borrow_for_identity_send_composition."
         "resolve_cross_profile_lender_placement", resolve,
     )
+    monkeypatch.setattr(composition, "send_cross_profile_borrowed_placement", native)
     return service, w, resolve
 
 
@@ -65,11 +67,15 @@ def test_native_copy_after_exact_local_resolution(environment):
     assert resolver.call_args.kwargs["borrowing_account"] is w.account
     assert resolver.call_args.kwargs["exact_notice"] is w.notice
     assert resolver.call_args.kwargs["scope_current"]() is True
-    service.send_cross_profile_borrowed_placement.assert_called_once_with(
-        requesting_identity_id="bob", borrowing_account=w.account,
-        exact_notice=w.notice, lender_placement_id="placement-a",
-        confirmed=True,
-    )
+    native = service.send_cross_profile_borrowed_placement
+    assert native.call_count == 1
+    assert native.call_args.args == (service,)
+    assert native.call_args.kwargs["requesting_identity_id"] == "bob"
+    assert native.call_args.kwargs["borrowing_account"] is w.account
+    assert native.call_args.kwargs["exact_notice"] is w.notice
+    assert native.call_args.kwargs["lender_placement_id"] == "placement-a"
+    assert native.call_args.kwargs["confirmed"] is True
+    assert native.call_args.kwargs["scope_current"]() is True
     service.execute_cross_profile_borrow.assert_not_called()
 
 

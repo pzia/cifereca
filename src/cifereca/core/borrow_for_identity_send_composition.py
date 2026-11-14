@@ -7,6 +7,9 @@ download, activate another profile or transfer a supplier entitlement.
 from __future__ import annotations
 
 from ..models import Account, SearchResult
+from .borrow_for_identity_transfer_executor import (
+    send_cross_profile_borrowed_placement,
+)
 from .borrow_for_identity_placement_resolution import (
     LenderLocalPlacement, resolve_cross_profile_lender_placement,
 )
@@ -61,10 +64,13 @@ def send_confirmed_lender_local_copy(
         observed_delivery = "present"
         # This executor independently revalidates the claim and placement;
         # the resolver's DTO never authorizes bypassing its checks.
-        outcome = service.send_cross_profile_borrowed_placement(
-            requesting_identity_id=requesting_identity_id,
+        # Reuse the *same* lease. Re-entering the public facade here would
+        # recapture a new epoch after a context switch between two callbacks.
+        outcome = send_cross_profile_borrowed_placement(
+            service, requesting_identity_id=requesting_identity_id,
             borrowing_account=borrowing_account, exact_notice=exact_notice,
             lender_placement_id=resolution._placement_id, confirmed=True,
+            scope_current=scope_current,
         )
         if (scope_current() is not True
                 or service._account_context_epoch != context_epoch
