@@ -301,3 +301,24 @@ def test_retired_adept_cli_and_deferred_diagnostic_are_documented():
     assert "P2 #5841" in document
     assert "procédures historiques non exécutables via la CLI actuelle" in document
     assert "ticket P0 #3909" in document
+
+
+def test_retired_root_diagnose_is_not_confused_with_plugin_diagnose():
+    tree = ast.parse(CLI.read_text(encoding="utf-8"))
+    registrations = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_parser"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "diagnose"
+    ]
+    assert len(registrations) == 1
+    assert isinstance(registrations[0].func.value, ast.Name)
+    assert registrations[0].func.value.id == "psub"
+    assert 'if a.cmd == "diagnose"' not in CLI.read_text(encoding="utf-8")
+    text = DOC.read_text(encoding="utf-8")
+    assert "la commande racine `diagnose` est supprimée" in text
+    assert "| `kobo-audit" not in text
+    assert "| `kobo-resume-preview" not in text

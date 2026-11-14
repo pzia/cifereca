@@ -44,7 +44,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--username", help="Option historique retirée ; configurez le plugin fournisseur")
     p.add_argument("--account", help="ID local du credential provider à sélectionner")
     sub = p.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("diagnose")
     doctor = sub.add_parser("doctor", help="Diagnostic technique consolidé, expurgé et copiable")
     doctor.add_argument("--verbose", action="store_true")
     doctor.add_argument("--json", action="store_true")
@@ -695,17 +694,7 @@ def main(argv: list[str] | None = None) -> int:
             service.select_account(account.unique_id, account.provider_id, account.credential_id)
 
         exit_code = 0
-        if a.cmd == "diagnose":
-            result = {
-                "providers": service.provider_diagnostic_state(),
-                "current_account": {
-                    "provider": service.current_account.provider_id,
-                    "credential_id": service.current_account.credential_id,
-                    "display_name": service.current_account.display_name,
-                },
-                "accounts": len(service.accounts),
-            }
-        elif a.cmd == "loans":
+        if a.cmd == "loans":
             result = [safe_model(x) for x in service.refresh_loans(force=True)]
         elif a.cmd == "history":
             result = [safe_model(x) for x in service.refresh_history(force=True)]
