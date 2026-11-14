@@ -478,7 +478,13 @@ class BaenSession(ProviderSession):
             'allowed_content_types':('application/epub+zip','application/zip','application/octet-stream'),
             'expected_format':'epub',
             'classify_http_status':True,
-            'overwrite':True,
+            # The observed anonymous route never attested a public redirect
+            # to a third-party host. Preserve only this Baen origin.
+            'redirect_policy':'same_origin',
+            # Repeated or failed fetches may not replace a previously
+            # published local file. transport.http already accepts
+            # byte-identical content without clobbering existing bytes.
+            'overwrite':False,
         }
         failure = None
         try:

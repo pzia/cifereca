@@ -46,6 +46,12 @@ archive conservée dans Git**). Route observée dans la navigation Free Library 
   d'exhaustivité serveur ou de disponibilité réelle d'un lien EPUB. Les
   notions `isOwned`, prix `Free` et bouton `Download` ne confèrent
   aucune permission.
+- Si un lien EPUB public explicite est ultérieurement confirmé sur une
+  fiche, la requête de livraison via `transport.http` impose
+  `redirect_policy=same_origin` et `overwrite=False`. Une destination
+  préexistante différente n'est jamais écrasée ; un contenu identique peut
+  être conservé suivant le contrat d'artefact du transport. Aucun chemin
+  observé vers `/download/index/owned/` n'est une permission anonyme.
 - Le plugin reste **désactivé par défaut**.
 
 ## Limites et validation

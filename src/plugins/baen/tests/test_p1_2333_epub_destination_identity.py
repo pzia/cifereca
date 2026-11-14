@@ -38,6 +38,8 @@ class FileTransport:
         self.calls = []
 
     def fetch(self, source, destination):
+        assert source["overwrite"] is False
+        assert source["redirect_policy"] == "same_origin"
         target = Path(destination)
         self.calls.append((source, target))
         target.write_bytes(source["headers"]["Referer"].encode("utf-8"))

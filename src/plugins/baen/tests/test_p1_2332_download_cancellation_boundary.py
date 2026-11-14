@@ -121,6 +121,8 @@ def test_broker_errors_are_closed_classified_without_private_exception_chains(
         assert source["url"] == DOWNLOAD
         assert source["classify_http_status"] is True
         assert source["expected_format"] == "epub"
+        assert source["redirect_policy"] == "same_origin"
+        assert source["overwrite"] is False
         assert dest.parent == tmp_path
         assert not list(tmp_path.glob("*.epub"))
     finally:
