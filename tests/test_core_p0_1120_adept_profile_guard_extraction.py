@@ -20,7 +20,7 @@ from cifereca.identities import AdeptProfileResolutionError
 
 def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
              profiles=None):
-    loan = NS(source_provider=provider, source_credential="reader", source_account_id="primary", id="loan-1")
+    loan = NS(source_provider=provider, source_credential="reader", source_account_id="primary", id="loan-1", record_id="edition-1")
     borrower = Mock(return_value=("identity-1", borrower_code))
     resolver = Mock(return_value=("reader-a", "explicit_binding"))
     if profile_error is not None:
@@ -47,6 +47,7 @@ def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
         previous_meta={"prior": "kept"},
         retained_acsm=Path("/synthetic/staged.acsm"),
         trace_ref="0123456789abcdef0123",
+        expected_loan_id="loan-1", expected_record_id="edition-1",
         AdeptProfileResolutionError=AdeptProfileResolutionError,
         adept_acsm_plan=adept_acsm_plan,
         _TRACE_LOG=logging.getLogger("cifereca.tests.loan-guard"),
@@ -347,3 +348,54 @@ def test_poststaging_changed_identity_is_not_an_adept_grant():
     borrower.assert_not_called()
     resolver.assert_not_called()
     store.assert_called_once()
+
+
+class _HostilePoststagingLoanIdentifier:
+    def __str__(self):
+        raise AssertionError("post-staging loan key must not be stringified")
+
+    def __eq__(self, other):
+        raise AssertionError("post-staging loan key must not be compared")
+
+
+class _HostilePoststagingLoanString(str):
+    def __eq__(self, other):
+        raise AssertionError("post-staging str subclass must not be compared")
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("id", "other-loan"),
+    ("id", ""),
+    ("id", None),
+    ("id", _HostilePoststagingLoanIdentifier()),
+    ("id", _HostilePoststagingLoanString("loan-1")),
+    ("record_id", "other-edition"),
+    ("record_id", None),
+    ("record_id", _HostilePoststagingLoanIdentifier()),
+    ("record_id", _HostilePoststagingLoanString("edition-1")),
+])
+def test_poststaging_loan_and_edition_drift_never_reaches_adept_or_borrower(
+    field, bad,
+):
+    invoke, store, borrower, resolver, profiles, loan, opts = _fixture()
+    setattr(loan, field, bad)
+    refusal = invoke()
+    assert refusal == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    row = store.call_args.args[0]
+    assert row["attention_code"] == "adept_borrower_ambiguous"
+    assert row["metadata"]["provider_loan_id"] == "loan-1"
+    assert row["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
+
+
+def test_poststaging_stable_loan_and_edition_preserve_profile_selection():
+    invoke, store, borrower, resolver, profiles, loan, opts = _fixture()
+    assert invoke() == ("identity-1", "reader-a")
+    borrower.assert_called_once_with(loan, connection_identity_id="identity-1")
+    store.assert_not_called()
