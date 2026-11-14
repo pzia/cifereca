@@ -104,6 +104,9 @@ class IdentityBroker(Protocol):
         """
         ...
     def statistics(self, identity_id: str, *, window_seconds: int = 2592000) -> Mapping[str, Any]: ...
+    # Optional additive read-only projection. Existing identity brokers may
+    # omit it; no observed complete inventory => only unknown remaining.
+    def digital_loan_availability(self, identity_id: str) -> tuple[Any, ...]: ...
 
 @runtime_checkable
 class RuntimeCapabilitiesBroker(Protocol):
