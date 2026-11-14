@@ -24,18 +24,12 @@ def test_exact_source_owner_is_required_even_if_catalogue_flags_claim_owned(prov
     storage = FakeStorage({(provider, "credential-b"): "bob"})
     service = NS(storage=storage, current_identity=NS(identity_id="alice"))
     item = row(provider=provider, credential="credential-b", metadata={"owned": True})
-    assert private_source_owner_matches(service, item, identity_id=(
-        "bob" if service.current_identity.identity_id == "bob" else "alice"
-    )) is False
+    assert private_source_owner_matches(service, item, identity_id="alice") is False
     assert storage.reads == [(provider, "credential-b")]
     service.current_identity = NS(identity_id="bob")
-    assert private_source_owner_matches(service, item, identity_id=(
-        "bob" if service.current_identity.identity_id == "bob" else "alice"
-    )) is True
+    assert private_source_owner_matches(service, item, identity_id="bob") is True
     storage.owners[(provider, "credential-b")] = None
-    assert private_source_owner_matches(service, item, identity_id=(
-        "bob" if service.current_identity.identity_id == "bob" else "alice"
-    )) is False
+    assert private_source_owner_matches(service, item, identity_id="bob") is False
 
 
 def test_core_guard_cannot_read_navigation_or_access_sql_without_scope():
