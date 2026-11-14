@@ -1132,15 +1132,16 @@
     },
     {
       "id": "struct-retire-unused-kobo-runtime-adapter",
-      "original": "LibraryService._kobo_adapter was a concrete runtime.kobo-adept selector checking plugin status/identity by hard-coded ID. No installed production caller remained; test-only ADEPT inventory fixtures were its last consumers.",
+      "original": "LibraryService._kobo_adapter was a private provider-name dispatcher selecting runtime.kobo-adept from plugin manager status/service. No production callsite remains, but historical tests monkeypatch its descriptor as an intentional compatibility injection seam.",
       "original_classification": "dead_provider_named_core_runtime_selector",
-      "replacement": "Physically delete the private selector. ADEPT inventory characterisation tests use their existing injected read-only inventory callback with a test-local runtime fixture, independent from the private production facade. Real acquisition recipes remain routed through the installed typed runtime binding and _required_plugin_service.",
-      "classification": "removed_dead_provider_named_core_adapter",
-      "evidence": "Static repository callsite search found only the deleted method and the inventory fixture; no production calls. Legacy bypass test still injects a hostile fake and asserts execute_acquisition_request never invokes it. Inventory reconciliation fixtures continue to exercise exact ADEPT profile ownership and no-redownload constraints.",
+      "replacement": "Delete the concrete selector and replace it with an inert, fail-closed method of the same private name/signature for historical monkeypatch and LibraryService descriptor characterization. The default implementation never consults the plugin manager, network or provider; acquisition remains routed via current typed runtime binding and _required_plugin_service.",
+      "classification": "removed_concrete_provider_selector_with_inert_compatibility_seam",
+      "evidence": "Full Core CI identified a historical descriptor fixture and several ADEPT tests that monkeypatch the method. Preserve this private ABI seam and the original tests, replace provider selection with unconditional refusal; a poison plugin manager verifies zero dispatch. No positive production caller was found and no current GET or borrower permission is introduced.",
       "tests": [
         "tests/test_adept_inventory_binding.py",
+        "tests/test_adept_inventory_orchestration.py",
         "tests/test_core_acquisition_no_injected_runtime_bypass.py",
-        "tests/test_core_p0_5975_session_resolver_explicit_account.py"
+        "tests/test_library_service_facade_contract.py"
       ],
       "pr": "#6111",
       "in_ast_metric": false

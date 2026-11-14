@@ -72,7 +72,16 @@ def test_kobo_recipe_still_routes_through_installed_runtime():
     assert calls == ["runtime.kobo-adept", request, "runtime.kobo-adept"]
 
 
-def test_installed_library_service_has_no_legacy_kobo_adapter_dispatcher():
-    # A private, unused provider-selected adapter is not an installed
-    # capability. The recipe bypass tests above retain their hostile fake.
-    assert "_kobo_adapter" not in LibraryService.__dict__
+def test_installed_library_service_legacy_adapter_is_inert():
+    # Historical tests patch this ABI seam; production must never select
+    # a provider runtime from it or query a plugin manager.
+    class PoisonManager:
+        def status(self, *_):
+            pytest.fail("retired adapter requested plugin status")
+
+        def service(self, *_):
+            pytest.fail("retired adapter requested plugin service")
+
+    host = SimpleNamespace(_plugin_manager=PoisonManager())
+    with pytest.raises(ProviderConfigurationError, match="legacy_kobo_runtime_adapter_retired"):
+        LibraryService._kobo_adapter(host)
