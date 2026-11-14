@@ -317,6 +317,92 @@
       ],
       "retirement_pr": "",
       "rationale": "This AST decision is reached by a productive path and controls a SQL UPDATE; classify as outstanding legacy writer rather than as harmless compatibility or already retired code."
+    },
+    {
+      "id": "site-48985b6dd27a2ea911e7026d",
+      "classification": "presentation_only",
+      "journey": "Settings ADEPT profile binding status subtitle",
+      "productive_caller": "GUI Settings build_settings_editors.add_identity_editor renders saved identity's normal_paris_adept_status using LibraryService's read-only local status",
+      "effect": "Sets a descriptive subtitle from the saved ADEPT identity/Paris connection binding; does not enumerate runtime profiles, download, write a grant or authorize Adobe",
+      "authority": "Saved local identity and normal binding status are display evidence only; no supplier entitlement, verified ADEPT licence or UI navigation-derived right",
+      "replacement_contract": "Preserve inert display status and explicit saved identity, later consume a provider-neutral versioned ADEPT binding status read model if available",
+      "tests": [
+        "tests/test_core_ui_p1_1063_runtime_button.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Presentation projection of a local read-only binding status; no supplier GET, publisher or executable permission from this branch.",
+      "decision_group_id": "adept.settings-binding-caption",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-e49e284729574d20512f4033",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Settings explicitly requested ADEPT runtime inspection admission",
+      "productive_caller": "GUI Settings check_adept clicked button checks saved normal_paris_adept_status before submitting TaskRunner operation",
+      "effect": "Prevents runtime probe if saved binding is unready, draft profile/primary connection differs, page is disposed, or a runtime check is already pending",
+      "authority": "Saved identity/profile source provenance only; a positive runtime capability cannot become a new grant or Adobe authorization",
+      "replacement_contract": "Versioned generic ADEPT runtime readiness/admission DTO with explicit identity plus generation lease; retain fail-closed legacy gate until all UI/callers migrate",
+      "tests": [
+        "tests/test_core_ui_p1_1063_runtime_button.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "A productive negative guard before opt-in local runtime inspection; deleting provider-named gating would admit unbound or unsaved context.",
+      "decision_group_id": "adept.settings-explicit-runtime-check",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-6df69f482e5a9d7f97c2be97",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Settings explicitly requested ADEPT runtime inspection execution",
+      "productive_caller": "GUI Settings check_adept click -> TaskRunner.submit -> LibraryService.check_normal_paris_adept_runtime(saved_id)",
+      "effect": "Invokes one user-triggered local runtime observation; no background query on Settings rendering and no grant, protected-file mutation, provider GET or automatic ADEPT selection",
+      "authority": "User-selected saved identity and current binding, not an implicit provider name, supplier loan or runtime success as right",
+      "replacement_contract": "Explicit scoped generic ADEPT runtime-capability observation with bounded non-authoritative result; no access without user click and fresh saved binding",
+      "tests": [
+        "tests/test_core_ui_p1_1063_runtime_button.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Active source-specific runtime diagnostic call still uses named facade; retain click/draft/scope veto pending neutral typed inspection contract.",
+      "decision_group_id": "adept.settings-explicit-runtime-check",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-652521330913780fa6c34776",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Settings ADEPT runtime inspection stale result publication fencing",
+      "productive_caller": "GUI Settings check_adept.current closure re-reads normal_paris_adept_status before rendering result from asynchronous TaskRunner",
+      "effect": "Suppresses positive/status subtitle if page generation, saved profile, primary Paris connection or local binding has changed after click (including A→B→A)",
+      "authority": "Local saved identity and generation lease; a previous runtime status is not authority over the newly displayed identity",
+      "replacement_contract": "Generic typed current-context callback with exact saved binding identity and epochs for every asynchronous runtime result, independent of GTK navigation",
+      "tests": [
+        "tests/test_core_ui_p1_1063_runtime_button.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "A stale-publication veto on a live Settings runtime check; removing it without a revocable replacement could mislabel a different profile.",
+      "decision_group_id": "adept.settings-explicit-runtime-check",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-62d608c21d04153e918b5bb3",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Installed ADEPT diagnostic runtime producer provenance",
+      "productive_caller": "PluginManager._plugin_diag is invoked by installed plugin diagnostic callback and authenticates descriptor/package before Diagnostics.add_core_kobo_adept",
+      "effect": "Only exact registered runtime.kobo-adept package may publish its typed closed Core diagnostic; reserved ID from a foreign package receives generic unverified producer error without leaking the untrusted payload",
+      "authority": "Installed plugin manager record, descriptor identity and exact package manifest—not plugin-supplied body fields or a displayed brand name",
+      "replacement_contract": "Generic versioned diagnostic producer attestations bound to installed descriptor+package, with closed schemas and rejection of impersonation; no passthrough of arbitrary runtime payload",
+      "tests": [
+        "tests/test_adept_shared_diagnostics.py",
+        "tests/test_diagnostic_provider_context.py",
+        "tests/test_core_p0_1120_adept_envelope_validation_diagnostics.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "A security boundary for plugin diagnostic provenance, not a business-right or supplier-routing rule; do not remove hardcoded trusted-producer gate before generic attestation.",
+      "decision_group_id": "diagnostics.runtime-producer-integrity",
+      "reachability": "productive"
     }
   ],
   "retirements": [
