@@ -274,6 +274,14 @@ def inventory(root: Path, *, registry: Path | None = None,
         # AST or asserted to be verified runtime reachability.
         "reviewed_structural_retirements_count": len(retirements),
         "reviewed_structural_retirement_ids": sorted(x["id"] for x in retirements),
+        # Internal evidence feeds the cohort matcher; it is already published
+        # as human-authored ledger data, never as inferred runtime reachability.
+        "retirement_evidence": [
+            {key: row.get(key) for key in (
+                "id", "in_ast_metric", "original_site_id", "retired_at_sha",
+                "pr", "evidence", "tests"
+            )} for row in retirements
+        ],
         "reviewed_structural_retirements_by_class": dict(sorted(
             Counter(x["original_classification"] for x in retirements).items()
         )),
@@ -345,11 +353,107 @@ def compare(baseline: dict, current: dict) -> dict:
     }
 
 
+def compare_cohort(anchor: dict, current: dict) -> dict:
+    """Conservative fixed-anchor cohort across reviewed and missing AST sites.
+
+    Distinct from the per-PR delta. Disappearance is NOT retirement evidence.
+    A site absent on HEAD is reviewed-retired only with a keyed, explicitly
+    audited retirement record; shared fingerprints are potential relocation.
+    This anchor/head comparison cannot see transient sites in intervening
+    commits, so it must not be described as exhaustive historical reachability.
+    """
+    if anchor.get("metric") != METRIC or current.get("metric") != METRIC:
+        raise ValueError("incompatible_business_cohort_anchor")
+    if (type(anchor.get("head_sha")) is not str
+            or type(current.get("head_sha")) is not str
+            or not anchor["head_sha"] or not current["head_sha"]):
+        raise ValueError("business_cohort_requires_exact_sha")
+    before = {site["id"]: site for site in anchor["sites"]}
+    after = {site["id"]: site for site in current["sites"]}
+    introduced = set(after) - set(before)
+    lost = set(before) - set(after)
+    new_by_fingerprint = defaultdict(list)
+    for site_id in introduced:
+        new_by_fingerprint[after[site_id]["fingerprint"]].append(site_id)
+    retirement_evidence = {}
+    for row in current.get("retirement_evidence", []):
+        old = row.get("original_site_id")
+        commit = row.get("retired_at_sha")
+        if (row.get("in_ast_metric") is True and type(old) is str
+                and type(commit) is str and len(commit) == 40
+                and all(char in "0123456789abcdef" for char in commit.lower())
+                and type(row.get("pr")) is str
+                and row["pr"].startswith("#")
+                and row.get("evidence") and row.get("tests")):
+            retirement_evidence.setdefault(old, []).append(row)
+    states = []
+    for site_id in sorted(set(before) | set(after)):
+        site = after.get(site_id) or before[site_id]
+        if site_id in after:
+            state = ("active_reviewed"
+                     if site["classification"] != "unclassified"
+                     else "active_unreviewed")
+        elif new_by_fingerprint.get(site["fingerprint"]):
+            state = "relocated_pending"
+        elif site_id in retirement_evidence:
+            state = "retired_reviewed"
+        else:
+            state = "retired_unreviewed"
+        states.append({
+            "site_id": site_id, "state": state,
+            "from_anchor": site_id in before,
+            "path": site["path"], "function": site["function"],
+            "fingerprint": site["fingerprint"],
+            "possible_relocation_ids": sorted(
+                new_by_fingerprint.get(site["fingerprint"], [])
+            ) if site_id in lost else [],
+            "retirement_prs": sorted(
+                {row["pr"] for row in retirement_evidence.get(site_id, [])}
+            ) if state == "retired_reviewed" else [],
+        })
+    counts = Counter(row["state"] for row in states)
+    total = len(states)
+    reviewed = counts["active_reviewed"] + counts["retired_reviewed"]
+    return {
+        "metric": "core.provider.business-coupling-cohort/1",
+        "anchor_sha": anchor["head_sha"],
+        "head_sha": current["head_sha"],
+        "cohort_site_count": total,
+        "active_reviewed": counts["active_reviewed"],
+        "active_unreviewed": counts["active_unreviewed"],
+        "retired_reviewed": counts["retired_reviewed"],
+        "retired_unreviewed": counts["retired_unreviewed"],
+        "relocated_pending": counts["relocated_pending"],
+        "cohort_review_coverage_pct": round(
+            100 * reviewed / total, 2
+        ) if total else 100.0,
+        "unreviewed_baseline_remaining": sum(
+            row["from_anchor"] and row["state"] in (
+                "active_unreviewed", "retired_unreviewed", "relocated_pending",
+            ) for row in states
+        ),
+        "new_unreviewed_since_baseline": sum(
+            not row["from_anchor"] and row["state"] == "active_unreviewed"
+            for row in states
+        ),
+        "reviewed_retired": counts["retired_reviewed"],
+        "relocations_unresolved": counts["relocated_pending"],
+        "sites": states,
+        "limits": (
+            "Fixed anchor + current HEAD are compared; intermediate transient "
+            "sites are not inventoried. Missing IDs do not prove retirement. "
+            "Unreviewed and relocation-pending sites stay in the denominator. "
+            "Retirement records are human-reviewed evidence, not runtime proof."
+        ),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--registry", type=Path)
     parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--cohort-baseline", type=Path)
     parser.add_argument("--base-sha")
     parser.add_argument("--head-sha")
     parser.add_argument("--json", action="store_true")
@@ -360,6 +464,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.baseline:
             result["comparison"] = compare(json.loads(args.baseline.read_text(encoding="utf-8")),
                                            result)
+        if args.cohort_baseline:
+            result["cohort"] = compare_cohort(
+                json.loads(args.cohort_baseline.read_text(encoding="utf-8")),
+                result,
+            )
     except (ValueError, OSError, KeyError, TypeError, SyntaxError) as exc:
         parser.error(str(exc))
     if args.json:
@@ -377,6 +486,11 @@ def main(argv: list[str] | None = None) -> int:
                     "business_group_review_coverage_pct",
                     "dedicated_candidate_paths_count"):
             print(f"{key}: {result[key]}")
+        if "cohort" in result:
+            c = result["cohort"]
+            print("Cohort anchor:", c["anchor_sha"])
+            print("Cohort reviewed:", c["cohort_review_coverage_pct"])
+            print("Cohort relocation pending:", c["relocations_unresolved"])
         if result["stale_reviews"]:
             print("Stale review IDs:", result["stale_reviews"])
     return int(bool(result["stale_reviews"]))

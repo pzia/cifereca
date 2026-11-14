@@ -4,7 +4,7 @@ import json
 import pytest
 
 from scripts.ci_provider_business_coupling import (
-    METRIC, compare, inventory, main,
+    METRIC, compare, compare_cohort, inventory, main,
 )
 
 
@@ -281,3 +281,84 @@ def test_storage_six_ast_reviews_make_mutations_and_retained_guards_visible():
     assert all(r["effect"] and r["authority"] and r["replacement_contract"]
                and all((root / t).is_file() for t in r["tests"])
                for r in reviews)
+
+
+def test_fixed_anchor_cohort_keeps_unproven_removed_sites_visible():
+    anchor = {
+        "metric": METRIC, "head_sha": "a" * 40,
+        "sites": [
+            {"id": "site-old", "fingerprint": "semantic-a",
+             "path": "src/cifereca/core/a.py", "function": "f",
+             "classification": "safety_guard_pending_contract"},
+            {"id": "site-stays", "fingerprint": "semantic-b",
+             "path": "src/cifereca/core/b.py", "function": "g",
+             "classification": "unclassified"},
+        ],
+    }
+    current = {
+        "metric": METRIC, "head_sha": "b" * 40,
+        "sites": [anchor["sites"][1]], "retirement_evidence": [],
+    }
+    cohort = compare_cohort(anchor, current)
+    assert cohort["anchor_sha"] == "a" * 40
+    assert cohort["cohort_site_count"] == 2
+    assert cohort["retired_unreviewed"] == 1
+    assert cohort["unreviewed_baseline_remaining"] == 2
+    assert cohort["cohort_review_coverage_pct"] == 0
+    # A vanished site gets credit only with exact stable ID and reviewed
+    # physical retirement evidence. Do not use a generic removal assertion.
+    current["retirement_evidence"] = [{
+        "original_site_id": "site-old", "retired_at_sha": "c" * 40,
+        "in_ast_metric": True, "pr": "#999",
+        "evidence": "physical deletion checked against exact tree",
+        "tests": ["tests/test_a.py"],
+    }]
+    revised = compare_cohort(anchor, current)
+    assert revised["retired_reviewed"] == 1
+    assert revised["cohort_review_coverage_pct"] == 50
+    assert next(row for row in revised["sites"]
+                if row["site_id"] == "site-old")["retirement_prs"] == ["#999"]
+
+
+def test_fixed_anchor_cohort_never_credits_semantic_relocation_or_new_site():
+    old = {
+        "id": "site-1", "fingerprint": "same-AST",
+        "path": "src/cifereca/core/old.py", "function": "old",
+        "classification": "safety_guard_pending_contract",
+    }
+    moved = {
+        **old, "id": "site-2",
+        "path": "src/cifereca/core/renamed.py", "function": "renamed",
+        "classification": "unclassified",
+    }
+    anchor = {"metric": METRIC, "head_sha": "a" * 40,
+              "sites": [old]}
+    current = {"metric": METRIC, "head_sha": "b" * 40,
+               "sites": [moved], "retirement_evidence": [{
+                   "original_site_id": "site-1",
+                   "retired_at_sha": "c" * 40,
+                   "in_ast_metric": True, "pr": "#100",
+                   "evidence": "potentially bogus retirement",
+                   "tests": ["tests/test_scope.py"],
+               }]}
+    cohort = compare_cohort(anchor, current)
+    assert cohort["cohort_site_count"] == 2
+    assert cohort["relocations_unresolved"] == 1
+    assert cohort["retired_reviewed"] == 0
+    assert cohort["new_unreviewed_since_baseline"] == 1
+    assert cohort["cohort_review_coverage_pct"] == 0
+    assert next(row for row in cohort["sites"]
+                if row["site_id"] == "site-1")["possible_relocation_ids"] == [
+        "site-2"
+    ]
+
+
+def test_fixed_anchor_cohort_refuses_unknown_revisions_or_missing_sha():
+    anchor = {"metric": METRIC, "head_sha": "a" * 40, "sites": []}
+    current = {"metric": METRIC, "head_sha": "", "sites": []}
+    with pytest.raises(ValueError, match="requires_exact_sha"):
+        compare_cohort(anchor, current)
+    current["head_sha"] = "b" * 40
+    current["metric"] = "not comparable"
+    with pytest.raises(ValueError, match="incompatible_business_cohort_anchor"):
+        compare_cohort(anchor, current)
