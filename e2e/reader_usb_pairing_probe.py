@@ -244,6 +244,49 @@ def main() -> int:
         if not state["geometry_onscreen"]:
             state["checkpoint"] = "widget_geometry"
             raise AssertionError("XTEST target is outside physical Xvfb screen")
+        # Prove that XTEST's physical cursor is over this native X11
+        # surface, not merely inside GTK's *logical* hit test. A compositor
+        # or another toplevel may obscure a geometrically valid target.
+        import ctypes as C
+        from native_capture import pointer
+        gtk = C.CDLL("libgtk-4.so.1")
+        gtk.gdk_x11_surface_get_xid.argtypes = [C.c_void_p]
+        gtk.gdk_x11_surface_get_xid.restype = C.c_ulong
+        xid = gtk.gdk_x11_surface_get_xid(pointer(native.get_surface()))
+        x11 = device.x11
+        x11.XDefaultRootWindow.argtypes = [C.c_void_p]
+        x11.XDefaultRootWindow.restype = C.c_ulong
+        x11.XQueryPointer.argtypes = [
+            C.c_void_p, C.c_ulong, C.POINTER(C.c_ulong),
+            C.POINTER(C.c_ulong), C.POINTER(C.c_int),
+            C.POINTER(C.c_int), C.POINTER(C.c_int),
+            C.POINTER(C.c_int), C.POINTER(C.c_uint),
+        ]
+        x11.XQueryPointer.restype = C.c_int
+        root = x11.XDefaultRootWindow(device.display)
+        def pointer_targets_native():
+            parent, child = C.c_ulong(), C.c_ulong()
+            rx, ry, wx, wy, mask = (
+                C.c_int(), C.c_int(), C.c_int(), C.c_int(), C.c_uint()
+            )
+            ok = x11.XQueryPointer(
+                device.display, root, C.byref(parent), C.byref(child),
+                C.byref(rx), C.byref(ry), C.byref(wx), C.byref(wy),
+                C.byref(mask),
+            )
+            return bool(ok and xid and child.value == xid)
+        device.move(screen_x, screen_y)
+        if not pointer_targets_native():
+            # Only raise this temporary synthetic GTK toplevel within
+            # private Xvfb. This cannot reconfigure or act on physical USB.
+            x11.XRaiseWindow.argtypes = [C.c_void_p, C.c_ulong]
+            x11.XRaiseWindow(device.display, xid)
+            x11.XSync(device.display, False)
+            device.move(screen_x, screen_y)
+        state["x11_target_window"] = pointer_targets_native()
+        if not state["x11_target_window"]:
+            state["checkpoint"] = "x11_hit_mismatch"
+            raise AssertionError("XTEST root hit does not match GTK native")
         device.click(screen_x, screen_y)
 
     def toggle_expert(widget):
@@ -425,19 +468,22 @@ def main() -> int:
             allowed = {
                 "shell", "widget_mapped", "dialog_open", "expert_mode",
                 "chooser_return", "dialog_response", "manual_uuid",
-                "button_not_clicked", "widget_geometry",
+                "button_not_clicked", "widget_geometry", "x11_hit_mismatch",
                 "dialog_build_failed", "expert_keyboard", "setup",
             }
             checkpoint = state["checkpoint"]
             if checkpoint in allowed:
                 print("P1_6041_CLOSED_FAILURE_CHECKPOINT=" + checkpoint, flush=True)
-            if checkpoint in {"button_not_clicked", "widget_geometry"}:
+            if checkpoint in {"button_not_clicked", "widget_geometry", "x11_hit_mismatch"}:
                 # Closed, fixture-independent input-delivery diagnostics.
                 print("P1_6041_GTK_HIT=" + (
                     "yes" if state.get("geometry_hit") else "no"
                 ), flush=True)
                 print("P1_6041_TARGET_ONSCREEN=" + (
                     "yes" if state.get("geometry_onscreen") else "no"
+                ), flush=True)
+                print("P1_6041_X11_TARGET_WINDOW=" + (
+                    "yes" if state.get("x11_target_window") else "no"
                 ), flush=True)
                 pointer = "seen" if state["pointer_seen"] else "absent"
                 keyboard = "seen" if state["key_seen"] else "absent"
