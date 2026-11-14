@@ -291,6 +291,8 @@ def test_storage_remaining_guards_and_retired_w5_writer_are_visible():
     assert len(retirements) == 1
     retirement = retirements[0]
     assert retirement["original_classification"] == "legacy_mutating_cutover"
+    assert retirement["original_site_id"] == removed_writer
+    assert retirement["retired_at_sha"] == "5c81ae0f8914c78eb63860e9436c637d7f6d5b1c"
     assert retirement["in_ast_metric"] is True
     assert retirement["pr"] == "#6118"
     assert retirement["replacement"] and retirement["evidence"]
