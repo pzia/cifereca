@@ -31,7 +31,7 @@ def test_fresh_scan_revokes_on_followup_external_sqlite_commit(scoped):
     assert not session.valid()
     assert session.page().total == 0
     assert session.detail(case.key) is None
-    assert not session._cases and not session._manual_right_proofs
+    assert not session._cases and not session._manual_file_observations
     assert "PRIVATE" not in json.dumps(session.summary())
     second = open_local_inspection(service, identity_id="alice")
     assert isinstance(second, LocalInspection)
