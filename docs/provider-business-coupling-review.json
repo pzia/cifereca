@@ -199,6 +199,22 @@
       ],
       "pr": "#6024",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-core-library-projection-implicit-navigation-worker",
+      "original": "src/cifereca/core/library_projection.py::library_entries derives mutable current_identity when identity_id is None or falsey",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "LibraryService.library_entries pins legacy synchronous selection at facade admission; extracted library worker requires explicit identity_id, rejects invalid scopes before logging/scan/SQLite",
+      "classification": "removed_implicit_navigation_library_worker",
+      "evidence": "The worker implementation contains no reference to current_identity; all installed broker/GTK callers already supply an exact scope. Existing synchronous legacy LibraryService() call ABI remains compatible with identity sampled once before delegation. A queued Core worker cannot be retargeted via GTK navigation after the request is admitted.",
+      "tests": [
+        "tests/test_core_p0_5851_pinned_library_worker.py::test_worker_requires_explicit_identity_before_any_storage_or_scan",
+        "tests/test_core_p0_5851_pinned_library_worker.py::test_legacy_facade_snapshots_identity_before_delegating",
+        "tests/test_core_p0_3196_unscoped_library_fence.py",
+        "tests/test_core_ui_095.py"
+      ],
+      "pr": "#6026",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
