@@ -881,6 +881,26 @@
       ],
       "pr": "#6093",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-cross-profile-lender-claim-copy-headless-lease",
+      "original": "Core lender claim inspection, placement resolution, existing-loan recovery, local transfer preflight, copy executor and send composition read the mutable service.current_identity inside nested Core operations, including after SQLite receipt checks and while copying A-to-B bytes",
+      "original_classification": "navigation_dependent_cross_profile_lender_claim_and_copy",
+      "replacement": "LibraryService captures the requesting identity object and account/source epochs at the public boundary and passes a revocable callback through all six nested workers. No Core worker reads GTK navigation. Missing scope blocks all private claim and placement reads or physical copy. Stale post-copy results are never presented as success.",
+      "classification": "removed_navigation_cross_profile_lender_read_and_copy_workers",
+      "evidence": "Core AST navigation assertions and synthetic poisoned getters; missing scope refuses before private SQLite/copy; facade revocation after account/source epoch change and identity replacement; historical Paris/BnF SQLite and actual independent local-copy regressions preserved. No provider GET/POST or new borrowing authority.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_cross_profile_lender.py",
+        "tests/test_core_p1_4662_lender_claim_progress.py",
+        "tests/test_core_p1_4987_transfer_preflight.py",
+        "tests/test_core_p1_4987_transfer_executor.py",
+        "tests/test_core_p1_4987_placement_resolution.py",
+        "tests/test_core_p1_4987_send_composition.py",
+        "tests/test_core_p1_4988_existing_loan_recovery.py",
+        "tests/test_core_p1_4987_composed_bnf_lender.py"
+      ],
+      "pr": "#TBD",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
