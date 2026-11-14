@@ -1614,7 +1614,17 @@ class LibraryService:
         return search_orchestration._normalized_language_values(value)
 
     def _search_preference_score(self, row: SearchResult) -> int:
-        return search_orchestration._search_preference_score(self, row)
+        # Facade/GUI boundary: capture exactly one selected profile and copy
+        # its preference values. Headless Core never queries navigation state.
+        selected = self.current_identity
+        if selected is None:
+            return 0
+        prefs = selected.preferences
+        return search_orchestration._search_preference_score(
+            row,
+            reading_languages=tuple(prefs.reading_languages),
+            prefer_original_language=prefs.prefer_original_language is True,
+        )
 
     def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> str:
         """Translate provider availability into a user-actionable label."""
