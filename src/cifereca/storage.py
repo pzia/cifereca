@@ -3322,16 +3322,63 @@ class Storage:
             raise ValueError("adept_borrower_grant_scope_invalid")
         return provider, credential_id, account_id
 
+    @staticmethod
+    def _write_attested_adept_grant(
+        db: Any, scope: tuple[str, str, str], *,
+        connection_identity_id: str, borrower_identity_id: str, profile_id: str,
+    ) -> None:
+        """Validate and write in the caller's transaction, never commit here."""
+        now = int(time.time())
+        connection = db.execute(
+            "SELECT identity_id FROM provider_connections "
+            "WHERE provider_id=? AND credential_id=? AND enabled=1",
+            scope[:2],
+        ).fetchone()
+        identity = db.execute(
+            "SELECT 1 FROM identities WHERE identity_id=?",
+            (borrower_identity_id,),
+        ).fetchone()
+        profile = db.execute(
+            "SELECT profile_id FROM adept_profile_bindings "
+            "WHERE scope_type='identity' AND scope_id=?",
+            (borrower_identity_id,),
+        ).fetchone()
+        accounts = db.execute(
+            "SELECT a.provider_account_id FROM provider_accounts AS a "
+            "JOIN provider_connections AS c "
+            "ON a.connection_id=c.connection_id "
+            "AND a.provider_id=c.provider_id "
+            "AND a.credential_id=c.credential_id "
+            "AND a.identity_id=c.identity_id "
+            "WHERE a.provider_id=? AND a.credential_id=? "
+            "AND a.account_id=? AND a.identity_id=?",
+            (*scope, connection_identity_id),
+        ).fetchall()
+        if (connection is None or connection[0] != connection_identity_id
+                or len(accounts) != 1
+                or identity is None or profile is None
+                or profile[0] != profile_id):
+            raise ValueError("adept_borrower_grant_evidence_invalid")
+        db.execute(
+            "INSERT INTO adept_borrower_grants "
+            "(provider_id,credential_id,account_id,connection_identity_id,"
+            "borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,'explicit',?,?) "
+            "ON CONFLICT(provider_id,credential_id,account_id) DO UPDATE SET "
+            "connection_identity_id=excluded.connection_identity_id,"
+            "borrower_identity_id=excluded.borrower_identity_id,"
+            "profile_id=excluded.profile_id,confirmed_by=excluded.confirmed_by,"
+            "confirmed_at=excluded.confirmed_at,updated_at=excluded.updated_at",
+            (*scope, connection_identity_id, borrower_identity_id,
+             profile_id, now, now),
+        )
+
     def adept_borrower_grant_put(
         self, *, provider_id: str, credential_id: str, account_id: str,
         connection_identity_id: str, borrower_identity_id: str,
         profile_id: str, confirmed: bool = False,
     ) -> None:
-        """Commit an explicit, owner-and-profile-attested grant atomically.
-
-        The new generic register is independent of the historical Paris
-        binding table. Only explicit user confirmation may populate it.
-        """
+        """Commit a user-confirmed, source-scoped ADEPT grant atomically."""
         scope = self._adept_grant_scope(
             provider_id=provider_id, credential_id=credential_id,
             account_id=account_id,
@@ -3343,51 +3390,56 @@ class Storage:
                 or not borrower_identity_id
                 or type(profile_id) is not str or not profile_id):
             raise ValueError("adept_borrower_grant_evidence_invalid")
-        now = int(time.time())
         with self._lock, self._connect() as db:
-            connection = db.execute(
-                "SELECT identity_id FROM provider_connections "
-                "WHERE provider_id=? AND credential_id=? AND enabled=1",
-                scope[:2],
-            ).fetchone()
-            identity = db.execute(
-                "SELECT 1 FROM identities WHERE identity_id=?",
-                (borrower_identity_id,),
-            ).fetchone()
-            profile = db.execute(
-                "SELECT profile_id FROM adept_profile_bindings "
-                "WHERE scope_type='identity' AND scope_id=?",
-                (borrower_identity_id,),
-            ).fetchone()
-            accounts = db.execute(
-                "SELECT a.provider_account_id FROM provider_accounts AS a "
-                "JOIN provider_connections AS c "
-                "ON a.connection_id=c.connection_id "
-                "AND a.provider_id=c.provider_id "
-                "AND a.credential_id=c.credential_id "
-                "AND a.identity_id=c.identity_id "
-                "WHERE a.provider_id=? AND a.credential_id=? "
-                "AND a.account_id=? AND a.identity_id=?",
-                (*scope, connection_identity_id),
-            ).fetchall()
-            if (connection is None or connection[0] != connection_identity_id
-                    or len(accounts) != 1
-                    or identity is None or profile is None
-                    or profile[0] != profile_id):
-                raise ValueError("adept_borrower_grant_evidence_invalid")
-            db.execute(
-                "INSERT INTO adept_borrower_grants "
-                "(provider_id,credential_id,account_id,connection_identity_id,"
-                "borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,'explicit',?,?) "
-                "ON CONFLICT(provider_id,credential_id,account_id) DO UPDATE SET "
-                "connection_identity_id=excluded.connection_identity_id,"
-                "borrower_identity_id=excluded.borrower_identity_id,"
-                "profile_id=excluded.profile_id,confirmed_by=excluded.confirmed_by,"
-                "confirmed_at=excluded.confirmed_at,updated_at=excluded.updated_at",
-                (*scope, connection_identity_id, borrower_identity_id,
-                 profile_id, now, now),
+            self._write_attested_adept_grant(
+                db, scope, connection_identity_id=connection_identity_id,
+                borrower_identity_id=borrower_identity_id, profile_id=profile_id,
             )
+
+    def adept_borrower_grant_reconfirm_legacy(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        connection_identity_id: str, borrower_identity_id: str,
+        profile_id: str, confirmed: bool = False,
+    ) -> None:
+        """Explicitly reconfirm and retire one Paris legacy row in one commit.
+
+        Transitional boundary. The historical key lacks a provider ID, so
+        only an exact native Paris scope may retire it. Never infer consent
+        from the old row or migrate rows on database upgrade.
+        """
+        scope = self._adept_grant_scope(
+            provider_id=provider_id, credential_id=credential_id,
+            account_id=account_id,
+        )
+        if (type(confirmed) is not bool or confirmed is not True
+                or any(type(v) is not str or not v for v in (
+                    connection_identity_id, borrower_identity_id, profile_id
+                ))):
+            raise ValueError("adept_borrower_grant_evidence_invalid")
+        with self._lock, self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            legacy = db.execute(
+                "SELECT 1 FROM paris_borrower_adept_bindings AS legacy "
+                "JOIN provider_connections AS connection "
+                "ON connection.provider_id='paris' "
+                "AND connection.credential_id=legacy.credential_id "
+                "WHERE legacy.credential_id=? AND legacy.account_id=? "
+                "AND connection.provider_id=?",
+                (scope[1], scope[2], scope[0]),
+            ).fetchone()
+            if legacy is None:
+                raise ValueError("adept_legacy_grant_not_found")
+            self._write_attested_adept_grant(
+                db, scope, connection_identity_id=connection_identity_id,
+                borrower_identity_id=borrower_identity_id, profile_id=profile_id,
+            )
+            retired = db.execute(
+                "DELETE FROM paris_borrower_adept_bindings "
+                "WHERE credential_id=? AND account_id=?",
+                scope[1:],
+            )
+            if retired.rowcount != 1:
+                raise ValueError("adept_legacy_grant_retirement_failed")
 
     def adept_borrower_grant_get(
         self, *, provider_id: str, credential_id: str, account_id: str,
