@@ -866,6 +866,21 @@
       ],
       "pr": "#6095",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-local-present-copy-headless-requester-lease",
+      "original": "core.present_placement_copy.send_present_placement_copy read mutable service.current_identity before acquiring its process-wide copy lock, again under the lock and after physical A→B materialization",
+      "original_classification": "navigation_dependent_local_placement_copy",
+      "replacement": "LibraryService.send_present_placement_copy captures requester identity object and constructs a revocable scope_current callback with exact account/source context epochs. The headless worker verifies this callback before lock, while locked, and after physical copy, in addition to independent sender/recipient identity objects, placement/bytes/receipt validation; an A→B→A switch revokes success.",
+      "classification": "removed_navigation_from_local_placement_copy_worker",
+      "evidence": "Synthetic Core worker poisons GTK navigation, exercises positive copy exactly once, rejects missing/false scope before lock and revokes post-mutation A-B-A. Existing #4662 real bytes, sender symlink, foreign placement and directory-scoping tests remain required.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_present_copy.py",
+        "tests/test_core_p1_4662_present_placement_copy.py",
+        "tests/test_p1_4291_shared_transfer_placement.py"
+      ],
+      "pr": "#6093",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
