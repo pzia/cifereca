@@ -16,7 +16,7 @@ Le guide canonique est [AGENTS.md](../../AGENTS.md). La politique de réalisatio
 - `cicd` : CI/CD, E2E d'acceptation ciblés, packaging, merges et clôtures ; alias `merger`.
 - `focus` : méta-rôle d'orchestration P0 principal → P-1 via son parent → P1 → P2 ; peut adopter `backlog`, `core`, `plugins` ou `cicd`, **jamais `ux` / `simulation`**, qui demeure un rôle indépendant.
 
-**Priorités :** un unique label parmi `P0` (principal), `P-1` (backlog subordonné au P0 principal), `P1`, `P2`, `P3`. Les `P-1` ne sont ni des P0 supplémentaires ni des tâches libres pour d'autres agents. Le découplage Core est piloté exclusivement par [#5975](https://github.com/pzia/cifereca/issues/5975). Les contrôles `PU` restent applicables.
+**Priorités :** un unique label parmi `P0` (principal), `P-1` (backlog subordonné au P0 principal), `P1`, `P2`, `P3`. Les `P-1` ne sont ni des P0 supplémentaires ni des tâches libres pour d'autres agents. Le découplage Core est piloté exclusivement par [#5975](https://github.com/pzia/cifereca/issues/5975). **Tout pilote d'une issue peut poser `PU` après justification précise du retour utilisateur indispensable ; seul `backlog` le retire.** Un retour facultatif n'empêche pas la clôture. Voir [la politique de livraison](../../docs/AGENT-DELIVERY-POLICY.md#revue-de-clôture--retour-utilisateur-et-pu).
 
 Un rôle actif par étape, avec un livrable vérifiable. En mode classique, le rôle reste celui choisi dans le fil, **y compris après « next », « next max », « go » ou « termine »** ; seul un ordre explicite de l'utilisateur autorise à en sortir. En mode `focus` explicitement demandé, l'orchestrateur réévalue et peut en changer à chaque étape. Aucun rôle ne franchit la frontière d'un autre pour éviter un handoff.
 
