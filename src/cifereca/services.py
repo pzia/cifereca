@@ -95,6 +95,15 @@ def _capture_cross_profile_read_scope(service, requesting_identity_id=None):
     return requesting_identity_id, still_current
 
 
+def _cross_profile_snapshot_read_scope(service, captured_preview):
+    """Capture one lender choice at the public LibraryService boundary."""
+    try:
+        requesting_identity_id = captured_preview.requesting_identity_id
+    except Exception:
+        requesting_identity_id = None
+    return _capture_cross_profile_read_scope(service, requesting_identity_id)
+
+
 def _loan_cache_key(account: Account) -> str:
     """Opaque, unambiguous identity/provider/credential/borrower cache scope.
 
@@ -457,9 +466,11 @@ class LibraryService:
         from .core.borrow_for_identity_live import (
             preview_live_borrow_for_current_identity,
         )
+        requesting_id, scope_current = _capture_cross_profile_read_scope(self)
         return preview_live_borrow_for_current_identity(
             self, expected_edition_id=expected_edition_id,
             observations=observations, now=now,
+            requesting_identity_id=requesting_id, scope_current=scope_current,
         )
 
     def revalidate_borrow_lender_choice(
@@ -475,11 +486,15 @@ class LibraryService:
         from .core.borrow_for_identity_live import (
             revalidate_live_borrow_lender_selection,
         )
+        requesting_id, scope_current = _cross_profile_snapshot_read_scope(
+            self, captured_preview,
+        )
         return revalidate_live_borrow_lender_selection(
             self, captured_preview=captured_preview,
             selected_option_id=selected_option_id,
             expected_edition_id=expected_edition_id,
             observations=observations, now=now,
+            requesting_identity_id=requesting_id, scope_current=scope_current,
         )
 
     def prepare_cross_profile_lender_action_plan(
@@ -495,11 +510,15 @@ class LibraryService:
         from .core.borrow_for_identity_action_plan import (
             prepare_cross_profile_lender_action_plan,
         )
+        requesting_id, scope_current = _cross_profile_snapshot_read_scope(
+            self, captured_preview,
+        )
         return prepare_cross_profile_lender_action_plan(
             self, captured_preview=captured_preview,
             selected_option_id=selected_option_id,
             expected_edition_id=expected_edition_id,
             observations=observations, now=now,
+            requesting_identity_id=requesting_id, scope_current=scope_current,
         )
 
     def execute_cross_profile_borrow(
@@ -511,11 +530,15 @@ class LibraryService:
         from .core.borrow_for_identity_executor import (
             execute_cross_profile_borrow,
         )
+        requesting_id, scope_current = _cross_profile_snapshot_read_scope(
+            self, captured_preview,
+        )
         return execute_cross_profile_borrow(
             self, captured_preview=captured_preview,
             selected_option_id=selected_option_id,
             expected_edition_id=expected_edition_id,
             observations=observations, confirmed=confirmed, now=now,
+            requesting_identity_id=requesting_id, scope_current=scope_current,
         )
 
     def manual_borrow_diagnostic(self, item: SearchResult) -> dict[str, object]:

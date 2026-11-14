@@ -32,6 +32,7 @@ def execute_cross_profile_borrow(
     service, *, captured_preview: BorrowForIdentityPreview,
     selected_option_id: str, expected_edition_id: str,
     observations: object, confirmed: bool = False, now: int | None = None,
+    requesting_identity_id: str | None = None, scope_current=None,
 ) -> dict[str, object]:
     """Admit one explicitly selected lender POST under Core's durable claim.
 
@@ -50,19 +51,24 @@ def execute_cross_profile_borrow(
                 or len(observations) > 64
                 or any(type(row) is not ObservedBorrowOffer for row in observations)):
             return revoked
-        requester = service.current_identity
+        if (type(requesting_identity_id) is not str
+                or requesting_identity_id != captured_preview.requesting_identity_id
+                or not callable(scope_current)
+                or scope_current() is not True):
+            return revoked
         context_epoch = service._account_context_epoch
         source_epoch = service._source_context_epoch
         if (type(context_epoch) is not int or context_epoch < 0
                 or type(source_epoch) is not int or source_epoch < 0
-                or getattr(requester, "identity_id", None)
-                    != captured_preview.requesting_identity_id):
+                or scope_current() is not True):
             return revoked
         selection = revalidate_live_borrow_lender_selection(
             service, captured_preview=captured_preview,
             selected_option_id=selected_option_id,
             expected_edition_id=expected_edition_id,
             observations=observations, now=now,
+            requesting_identity_id=requesting_identity_id,
+            scope_current=scope_current,
         )
         if (selection.status != "current" or selection.executable is not False
                 or not selection.borrowing_identity_id
@@ -80,6 +86,8 @@ def execute_cross_profile_borrow(
         option = options[0]
         matched: list[BorrowForIdentityWitness] = []
         for row in observations:
+            if scope_current() is not True:
+                return revoked
             witness = _witness(
                 service, row, context_epoch=context_epoch,
                 source_epoch=source_epoch,
@@ -111,7 +119,7 @@ def execute_cross_profile_borrow(
         lease = capture_cross_profile_borrow_scope(
             service, requesting_identity_id=captured_preview.requesting_identity_id,
             borrowing_account=account, exact_notice=notice,
-            lender_session=session,
+            lender_session=session, scope_current=scope_current,
         )
         if lease is None:
             return revoked
@@ -149,8 +157,8 @@ def execute_cross_profile_borrow(
                     return False
                 # Lease is last: reject context/source/account changes
                 # caused during plugin manager or identity-status lookup.
-                return (lease.current(service)
-                        and service.current_identity is requester
+                return (scope_current() is True
+                        and lease.current(service)
                         and service._account_context_epoch == context_epoch
                         and service._source_context_epoch == source_epoch)
             except Exception:
