@@ -131,3 +131,34 @@ def test_malformed_selected_account_never_reads_cache_or_session(tmp_path):
         ) == ("default", "error")
     finally:
         service.close()
+
+
+def test_direct_core_requests_use_explicit_accounts_without_navigation(tmp_path):
+    from cifereca.core.library_projection import resolve_history_thumbnail
+
+    service = _library(tmp_path)
+    alice, bob = _accounts()
+    service.current_account = object()  # Deliberately no valid UI selection.
+    seen = []
+
+    def resolve(account):
+        seen.append(account)
+        return _Session(
+            "https://covers.example/ALICE" if account is alice
+            else "https://covers.example/BOB"
+        )
+
+    service._session_for_account = resolve
+    try:
+        for account, expected in (
+            (alice, "https://covers.example/ALICE"),
+            (bob, "https://covers.example/BOB"),
+            (alice, "https://covers.example/ALICE"),
+        ):
+            assert resolve_history_thumbnail(
+                service, "ORIGIN", "123", "Synthetic", account=account,
+            ) == (expected, "matched")
+        assert seen == [alice, bob]
+        assert type(service.current_account) is object
+    finally:
+        service.close()
