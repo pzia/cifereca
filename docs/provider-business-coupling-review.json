@@ -707,7 +707,7 @@
         "tests/test_core_p0_5056_neutral_public_holdings.py",
         "tests/test_core_p0_5073_search_owned_evidence.py"
       ],
-      "pr": "#6057",
+      "pr": "#6058",
       "in_ast_metric": false
     }
   ],
