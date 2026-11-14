@@ -273,9 +273,7 @@ def _render_search_results(self) -> int:
         elif (item.source_collection == "library"
                 and project(item).get("state") == "remote_owned"):
             extras.append("Mes achats · fichier local non présumé")
-        # No vendor-specific catalogue hint is needed here: result_row()
-        # projects unverified ownership as remote_catalog, while the separate
-        # direct-download guard below remains fail-closed for Kobo.
+        # result_row() projects unverified ownership as remote_catalog.
         meta = " · ".join(x for x in [medium, *extras, item.published_at] if x)
         # An offline public result is never evidence of a current entitlement,
         # a download offer or a verified local placement.
@@ -295,7 +293,7 @@ def _render_search_results(self) -> int:
             source_context_epoch=getattr(self.service, "_source_context_epoch", None),
         )
         direct = (
-            False if (stale_known or item.source_provider in {"kobo", "numilog-catalog"}
+            False if (stale_known or item.source_provider == "numilog-catalog"
                       or not private_hint_ok)
             else self.service.can_direct_download(item)
         )
