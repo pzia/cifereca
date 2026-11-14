@@ -84,6 +84,37 @@ def test_refused_context_preserves_public_outcome_and_never_falls_back_to_ui(tmp
         service.close()
 
 
+@pytest.mark.parametrize("hook", [
+    "identity_by_id", "_paris_adept_identity_for_loan",
+    "entitlements", "acquisitions",
+])
+def test_admission_refuses_source_drift_after_each_external_hook(
+    tmp_path, monkeypatch, hook,
+):
+    service, loan = _setup(tmp_path)
+    try:
+        owner = service if hook in {"identity_by_id", "_paris_adept_identity_for_loan"} else service.storage
+        original = getattr(owner, hook)
+
+        def mutate(*args, **kwargs):
+            result = original(*args, **kwargs)
+            loan.source_credential = "source-other"
+            return result
+
+        monkeypatch.setattr(owner, hook, mutate)
+        denied = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert denied.identity is None
+        assert denied.entitlement_id is None
+        assert denied.refusal == {
+            "status": "attention_required", "loan_id": loan.id,
+            "code": "adept_identity_unproven",
+            "reason": "source_scope_changed", "retry": "explicit_only",
+        }
+        assert service.storage.acquisitions(provider_id="paris") == []
+    finally:
+        service.close()
+
+
 class _HostileLoanCoordinate:
     def __str__(self):
         raise AssertionError("untrusted provider coordinate must not be coerced")
