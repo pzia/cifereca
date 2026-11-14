@@ -227,6 +227,10 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
                 connected = (
                     session is not None
                     and getattr_static(session, "connected", None) is True
+                    # A revoked/closed session may retain a stale connected
+                    # flag. Inspect its static marker without invoking
+                    # properties, provider methods or a new network request.
+                    and getattr_static(session, "_closed", False) is False
                     and getattr_static(session, "provider_id", None) == provider
                     and getattr_static(session, "credential_id", None) == credential
                 )
