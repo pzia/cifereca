@@ -1,0 +1,17 @@
+{
+  "schema": "cifereca.test-classification/1",
+  "files": [
+    {
+      "path": "tests/test_public_httpx_transport.py",
+      "owner_architecture": "core",
+      "business_object": "plugin_contracts",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_core_p0_3867_attested_https_delivery.py",
+      "owner_architecture": "core",
+      "business_object": "acquisition",
+      "test_level": "integration"
+    }
+  ]
+}

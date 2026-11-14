@@ -209,3 +209,25 @@ def test_failed_collection_preserves_last_good_output(monkeypatch, tmp_path):
         "--output", str(output),
     ]) == 1
     assert output.read_text(encoding="utf-8") == "prior good report"
+
+
+def test_explicit_audited_accounting_and_security_classifications(pytestconfig):
+    from scripts.ci_test_collection_inventory import MANIFEST
+
+    root = pytestconfig.rootpath
+    main = root / "docs/test-classification-manifest.json"
+    mapping = load_classifications(main, fragments=main.with_suffix(".d"))
+    expected = {
+        "tests/test_ci_test_collection_inventory.py": ("core", "ci_quality", "contract"),
+        "tests/test_ci_test_execution_inventory.py": ("core", "ci_quality", "integration"),
+        "tests/test_ci_test_execution_aggregate.py": ("core", "ci_quality", "contract"),
+        "tests/test_ci_security_mutation_campaign.py": ("core", "ci_quality", "integration"),
+        "tests/test_public_httpx_transport.py": ("core", "plugin_contracts", "integration"),
+        "tests/test_core_p0_3867_attested_https_delivery.py": ("core", "acquisition", "integration"),
+    }
+    for path, expected_values in expected.items():
+        assert (root / path).is_file()
+        record = mapping[path]
+        assert tuple(record[key] for key in (
+            "owner_architecture", "business_object", "test_level"
+        )) == expected_values
