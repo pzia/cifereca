@@ -4365,14 +4365,14 @@ class LibraryService:
         )
 
     def _account_for_loan(self, loan: Loan) -> Account:
-        """Resolve the exact borrower recorded on a loan.
+        """Resolve only the borrower recorded on a loan.
 
-        0.3.2 inferred this from the currently selected account and could pick
-        the primary account for a linked-account loan. New loans carry
-        ``source_account_id``; old cached loans keep a conservative fallback.
+        Old cached loans without exact borrower provenance remain available
+        for descriptive history, but cannot select a connected account to
+        authorize a new acquisition, return or provider request.
         """
         return loan_accounts.account_for_loan(
-            loan, accounts=self.accounts, current_account_get=lambda: self.current_account,
+            loan, accounts=self.accounts,
             configuration_error=ProviderConfigurationError,
         )
 
