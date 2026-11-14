@@ -247,7 +247,11 @@ def request_reader_usb_preview(window, button, *, Gtk, manual: bool = False) -> 
             # Both discovery and every physical read remain in TaskRunner.
             from ..core.device_usb_discovery import MountedUsbVolume
             from ..core.device_usb_dry_run import inspect_usb_dry_run
-            if not current() or not root_current():
+            # Worker thread: never interrogate GTK window/widget state.
+            # Revalidate durable binding + configured library root here;
+            # all UI generations are checked on GTK callbacks via current().
+            if (not root_current()
+                    or not _exact_binding(storage, identity, device, fingerprint)):
                 raise ValueError("reader scope changed")
             if observed is not None:
                 live = _discover_mounted_binding(
@@ -330,9 +334,8 @@ def request_reader_usb_preview(window, button, *, Gtk, manual: bool = False) -> 
         return
 
     def discover():
-        # Never discover/block the GTK event thread.
-        if not current():
-            return None
+        # Worker-only discovery. The already-pinned UI scope is checked
+        # before submit and on callback, never from the TaskRunner thread.
         return _discover_mounted_binding(
             storage=storage, identity_id=identity,
             device_id=device, fingerprint=fingerprint,
