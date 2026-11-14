@@ -183,7 +183,12 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
                 or len(a.unique_id) > 1024
                 or "\x00" in a.unique_id
                 or type(a.is_primary) is not bool
-                for a in matches)):
+                # The empty upstream ID is reserved for the primary borrower.
+                or (a.is_primary is False and not a.unique_id)
+                for a in matches)
+                # One connection must never present two distinct primary
+                # borrowers as independent digital loan capacities.
+                or sum(a.is_primary is True for a in matches) > 1):
             # A malformed or oversized borrower inventory invalidates ONLY
             # this configured connection. Never sort an untrusted identifier,
             # pick the first account, or suppress other independent lenders.

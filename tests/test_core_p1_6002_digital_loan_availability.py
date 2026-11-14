@@ -208,9 +208,14 @@ def test_duplicate_borrower_scope_never_splits_one_observation_twice():
                     [configured("demo", "one")], [spec("demo")],
                     [active_loan(a, "loan")])
     rows = digital_loan_availability(state, "alice")
-    assert len(rows) == 2
-    assert all(r.reason == "scope_ambiguous" and r.observed_loans is None
-               and r.personal_ceiling is None and r.remaining is None for r in rows)
+    # Ambiguous borrower cardinality is now represented once per connection:
+    # never present two apparently separate borrower capacities.
+    assert len(rows) == 1
+    assert rows[0].reason == "scope_ambiguous"
+    assert rows[0].borrower_id is None
+    assert rows[0].observed_loans is None
+    assert rows[0].personal_ceiling is None
+    assert rows[0].remaining is None
 
 
 @pytest.mark.parametrize("identity", ["", None, 1, True, "alice\x00bob"])
