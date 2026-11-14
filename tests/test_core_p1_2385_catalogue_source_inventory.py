@@ -93,7 +93,7 @@ def _rig():
 
 def test_all_active_catalogues_present_even_without_public_accounts():
     service, calls = _rig()
-    sources = catalogue_source_capabilities(service)
+    sources = catalogue_source_capabilities(service, identity_id="alice")
     names = [x.provider_id for x in sources]
     assert names == sorted(names)
     assert names == [
@@ -144,7 +144,7 @@ def test_identity_scope_applies_to_public_plugin_and_private_account_connections
 
 def test_disconnected_provider_is_search_capable_but_not_actually_online():
     service, _ = _rig()
-    values = catalogue_source_capabilities(service)
+    values = catalogue_source_capabilities(service, identity_id="alice")
     paris = next(value for value in values if value.provider_id == "paris")
     assert paris.catalog_search_supported is True
     assert paris.catalog_search_available is False
@@ -183,7 +183,7 @@ def test_core_library_service_facade_additive_without_legacy_broker_change():
 def test_uncanonical_registry_entry_and_forged_caps_are_not_published():
     service, _ = _rig()
     service.registry.register(_plugin("identity.token", search=True))
-    rows = catalogue_source_capabilities(service)
+    rows = catalogue_source_capabilities(service, identity_id="alice")
     assert "identity.token" not in {r.provider_id for r in rows}
     assert "Private reader name" not in repr(rows)
     assert not any("http" in repr(row) or "login" in repr(row)
@@ -207,9 +207,43 @@ def test_account_session_of_other_identity_never_marks_private_source_available(
 
 def test_catalogue_inventory_is_json_serializable_without_sensitive_metadata():
     service, _ = _rig()
-    rows = catalogue_source_capabilities(service)
+    rows = catalogue_source_capabilities(service, identity_id="alice")
     import json
     data = json.dumps([asdict(x) for x in rows])
     for fragment in ("a-kobo", "a-numilog", "b-only", "Private reader", "login",
                      "account_id", "credential_id", "token"):
         assert fragment not in data
+
+
+def test_headless_inventory_requires_explicit_identity_before_any_source_probe():
+    service, calls = _rig()
+
+    class Headless:
+        def __getattr__(self, name):
+            if name == "current_identity":
+                pytest.fail("headless catalogue inventory read GTK navigation")
+            return getattr(service, name)
+
+    worker = Headless()
+    assert catalogue_source_capabilities(worker) == ()
+    assert calls == []
+    bob = catalogue_source_capabilities(worker, identity_id="bob")
+    assert bob
+    assert "kobo" not in {row.provider_id for row in bob}
+    assert ("accounts", "bob") in calls
+
+
+def test_catalogue_facade_preserves_optional_sync_abi_broker_denies_missing_owner():
+    service, calls = _rig()
+    alice = LibraryService.catalogue_source_capabilities(service)
+    assert alice == catalogue_source_capabilities(service, identity_id="alice")
+    service.current_identity = NS(identity_id="bob")
+    bob = LibraryService.catalogue_source_capabilities(service)
+    assert bob == catalogue_source_capabilities(service, identity_id="bob")
+    assert "kobo" not in {row.provider_id for row in bob}
+    assert LibraryService.catalogue_source_capabilities(service, identity_id="alice") == alice
+    service.catalogue_source_capabilities = lambda **_kwargs: pytest.fail(
+        "missing broker scope must not call facade"
+    )
+    assert CatalogBrokerImpl(service).catalogue_source_capabilities() == ()
+    assert CatalogBrokerImpl(service).catalogue_source_capabilities("") == ()
