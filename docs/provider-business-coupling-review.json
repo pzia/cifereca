@@ -1141,7 +1141,7 @@
         "tests/test_core_p0_5975_session_resolver_explicit_account.py",
         "tests/test_loan_reads_selection_independence.py"
       ],
-      "pr": "#PENDING",
+      "pr": "#6112",
       "in_ast_metric": false
     }
   ],
