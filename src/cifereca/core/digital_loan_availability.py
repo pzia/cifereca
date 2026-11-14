@@ -11,7 +11,9 @@ from collections import defaultdict
 from inspect import getattr_static
 
 from ..models import Account, Loan
-from ..plugin_api.digital_loan_availability import DigitalLoanAvailability
+from ..plugin_api.digital_loan_availability import (
+    DigitalLoanAvailability, _public_label,
+)
 from ..plugin_api.loan_inventory import LoanInventoryScope, _loan_matches_scope
 from ..providers.base import ProviderDescriptor
 
@@ -22,15 +24,14 @@ _MAX_LOANS = 10000
 
 
 def _safe_label(value, fallback: str) -> str:
-    if (type(value) is str and 1 <= len(value) <= 80 and value == value.strip()
-            and value.isprintable() and not any(
-                token in value.casefold() for token in (
-                    "http://", "https://", "token=", "password=", "secret=",
-                    "cookie=", "bearer ",
-                )
-            )):
-        return value
-    return fallback
+    # The producer and the public DTO/renderer must apply the *same* privacy
+    # guard. A narrower producer allowlist (e.g. missing "authorization:")
+    # formerly let a single malicious provider/account label raise inside
+    # DigitalLoanAvailability and erase the whole Home projection.
+    return (
+        value if type(value) is str and 1 <= len(value) <= 80
+        and _public_label(value) else fallback
+    )
 
 
 def _ceiling(raw, *, lower: int, upper: int):

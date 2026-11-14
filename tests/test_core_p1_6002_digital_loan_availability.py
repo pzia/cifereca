@@ -270,3 +270,52 @@ def test_borrower_advisory_schema_is_explicit_opt_in_and_append_only():
     state.provider_descriptors = lambda: [linked]
     row, = digital_loan_availability(state, "alice")
     assert row.personal_ceiling == 99 and row.remaining is None
+
+
+@pytest.mark.parametrize("source", ["provider", "connection", "borrower"])
+@pytest.mark.parametrize("payload", [
+    "Authorization: PRIVATE_CREDENTIAL",
+    "HTTP://private.example/token",
+    "Bearer PRIVATE_CREDENTIAL",
+    "cookie=PRIVATE_CREDENTIAL",
+])
+def test_sensitive_home_label_falls_back_without_erasing_other_borrowers(
+    source, payload,
+):
+    """A malformed public label never aborts the all-account projection.
+
+    The DTO's privacy validator and Core's pre-construction label validator
+    must agree: no invalid label is allowed to erase another healthy lender
+    or reveal upstream authentication details on Home.
+    """
+    from dataclasses import replace
+
+    bad = account("sensitive", "card-a", "reader-a")
+    good = account("healthy", "card-b", "reader-b")
+    descriptor = spec("sensitive")
+    stored = [
+        configured("sensitive", "card-a"),
+        configured("healthy", "card-b"),
+    ]
+    if source == "provider":
+        descriptor = replace(descriptor, display_name=payload)
+    elif source == "connection":
+        stored[0]["label"] = payload
+    else:
+        bad.display_name = payload
+    state = runtime(
+        [bad, good], stored, [descriptor, spec("healthy")],
+        [active_loan(good, "good-observation")],
+    )
+    rows = digital_loan_availability(state, "alice")
+    assert len(rows) == 2
+    bad_row, good_row = rows
+    assert bad_row.provider_id == "sensitive"
+    assert good_row.provider_id == "healthy"
+    assert good_row.observed_loans == 1
+    assert all(r.status == "unknown" and r.remaining is None for r in rows)
+    shown = "\n".join(digital_loan_availability_lines(rows, identity_id="alice"))
+    assert "PRIVATE_CREDENTIAL" not in shown
+    assert "private.example" not in shown
+    assert "HEALTHY" in shown and "Reste inconnu" in shown
+    assert "Total non calculable" in shown
