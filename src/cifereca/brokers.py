@@ -1482,9 +1482,23 @@ class AdeptLoanBrokerImpl:
 
     @staticmethod
     def _profiles(profile_ids: tuple[str, ...]) -> list[str] | None:
-        values = [str(value).strip() for value in profile_ids if str(value).strip()]
-        if len(values) != len(set(values)):
-            values = list(dict.fromkeys(values))
+        # Empty scope is the only request for Core's origin-based discovery.
+        # A malformed explicit scope must never collapse to that unscoped path.
+        if type(profile_ids) is not tuple or len(profile_ids) > 2048:
+            raise AttentionRequired(
+                "Références de profils ADEPT invalides.",
+                code="adept_profile_scope_invalid",
+            )
+        values = []
+        for raw in profile_ids:
+            profile_id = AdeptProfileBrokerImpl._profile_token(raw)
+            if not profile_id:
+                raise AttentionRequired(
+                    "Références de profils ADEPT invalides.",
+                    code="adept_profile_scope_invalid",
+                )
+            if profile_id not in values:
+                values.append(profile_id)
         return values or None
 
     def reconcile(self, acquisition_id: str, *, profile_ids: tuple[str, ...] = ()):
