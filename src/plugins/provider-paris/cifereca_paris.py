@@ -257,6 +257,7 @@ DESCRIPTOR = ProviderDescriptor(
         branches=(("digital", "Numérique · DILICOM"),
                   ("physical", "Physique · SYRACUSE")),
         default="4", min_value=0, max_value=99,
+        advisory_loan_limit=True,
         help_text="Indication locale uniquement. Les comptes liés sont séparés "
                   "du principal et les deux branches ne se cumulent pas ; "
                   "aucune incidence sur les droits de prêt ou la synchronisation.",
