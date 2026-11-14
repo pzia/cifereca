@@ -24,6 +24,8 @@ def test_formatting_is_unknown_despite_manual_ceiling_and_positive_cache():
     captions = digital_loan_availability_lines(rows, identity_id="alice")
     assert len(captions) == 3
     assert all("Reste inconnu" in x for x in captions[:2])
+    assert all("Éligibilité à emprunter : non vérifiée" in x
+               for x in captions[:2])
     assert any("plafond personnel 4 (indicatif)" in x for x in captions)
     assert any("plafond personnel 0 (indicatif)" in x for x in captions)
     assert captions[-1].startswith("Total non calculable")
