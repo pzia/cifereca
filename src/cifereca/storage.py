@@ -1592,6 +1592,32 @@ class Storage:
                           AND credential_id=OLD.credential_id;
                     END
                 """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_account_update
+                    AFTER UPDATE OF connection_id,identity_id,provider_id,
+                                    credential_id,account_id ON provider_accounts
+                    WHEN OLD.connection_id IS NOT NEW.connection_id
+                      OR OLD.identity_id IS NOT NEW.identity_id
+                      OR OLD.provider_id IS NOT NEW.provider_id
+                      OR OLD.credential_id IS NOT NEW.credential_id
+                      OR OLD.account_id IS NOT NEW.account_id
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE provider_id=OLD.provider_id
+                          AND credential_id=OLD.credential_id
+                          AND account_id=OLD.account_id;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_account_delete
+                    AFTER DELETE ON provider_accounts
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE provider_id=OLD.provider_id
+                          AND credential_id=OLD.credential_id
+                          AND account_id=OLD.account_id;
+                    END
+                """)
                 cls._write_schema_version(db, 16)
                 db.execute("RELEASE SAVEPOINT migration_v16")
             except Exception:
@@ -3332,7 +3358,19 @@ class Storage:
                 "WHERE scope_type='identity' AND scope_id=?",
                 (borrower_identity_id,),
             ).fetchone()
+            accounts = db.execute(
+                "SELECT a.provider_account_id FROM provider_accounts AS a "
+                "JOIN provider_connections AS c "
+                "ON a.connection_id=c.connection_id "
+                "AND a.provider_id=c.provider_id "
+                "AND a.credential_id=c.credential_id "
+                "AND a.identity_id=c.identity_id "
+                "WHERE a.provider_id=? AND a.credential_id=? "
+                "AND a.account_id=? AND a.identity_id=?",
+                (*scope, connection_identity_id),
+            ).fetchall()
             if (connection is None or connection[0] != connection_identity_id
+                    or len(accounts) != 1
                     or identity is None or profile is None
                     or profile[0] != profile_id):
                 raise ValueError("adept_borrower_grant_evidence_invalid")
@@ -3371,6 +3409,12 @@ class Storage:
                 "ON c.provider_id=g.provider_id "
                 "AND c.credential_id=g.credential_id "
                 "AND c.identity_id=g.connection_identity_id "
+                "JOIN provider_accounts AS a "
+                "ON a.provider_id=g.provider_id "
+                "AND a.credential_id=g.credential_id "
+                "AND a.account_id=g.account_id "
+                "AND a.connection_id=c.connection_id "
+                "AND a.identity_id=g.connection_identity_id "
                 "JOIN identities AS i ON i.identity_id=g.borrower_identity_id "
                 "JOIN adept_profile_bindings AS p "
                 "ON p.scope_type='identity' "
