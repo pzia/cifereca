@@ -29,6 +29,7 @@ class CrossProfileBorrowProgress:
 def observed_cross_profile_borrow_progress(
     service, *, requesting_identity_id: str,
     borrowing_account: Account, exact_notice: SearchResult,
+    scope_current=None,
 ) -> CrossProfileBorrowProgress:
     """Read only an exact lender's existing at-most-once checkpoint.
 
@@ -43,7 +44,6 @@ def observed_cross_profile_borrow_progress(
         a, item = borrowing_account, exact_notice
         reader_epoch = getattr(service, "_account_context_epoch", None)
         source_epoch = getattr(service, "_source_context_epoch", None)
-        reader_context = service.current_identity
         if (type(reader_epoch) is not int or type(source_epoch) is not int
                 or type(requesting_identity_id) is not str
                 or not requesting_identity_id
@@ -51,9 +51,8 @@ def observed_cross_profile_borrow_progress(
                 or type(item) is not SearchResult
                 or not a.identity_id
                 or requesting_identity_id == a.identity_id
-                or getattr(reader_context, "identity_id", None)
-                   != requesting_identity_id
-                or service.current_identity is not reader_context
+                or not callable(scope_current)
+                or scope_current() is not True
                 or item.medium != "digital"
                 or item.source_provider != a.provider_id
                 or item.source_credential != a.credential_id
@@ -77,9 +76,7 @@ def observed_cross_profile_borrow_progress(
                         a.provider_id, a.credential_id,
                     ) != a.identity_id
                     or service.identity_by_id(a.identity_id) is None
-                    or service.current_identity is not reader_context
-                    or getattr(service.current_identity, "identity_id", None)
-                       != requesting_identity_id
+                    or scope_current() is not True
                     or sum(row is a for row in service.accounts) != 1):
                 return False
             bindings = service.storage.provider_connections(
@@ -100,9 +97,7 @@ def observed_cross_profile_borrow_progress(
                 len(exact) == 1 and exact[0].get("enabled") is True
                 and getattr(service, "_account_context_epoch", None) == reader_epoch
                 and getattr(service, "_source_context_epoch", None) == source_epoch
-                and service.current_identity is reader_context
-                and getattr(service.current_identity, "identity_id", None)
-                    == requesting_identity_id
+                and scope_current() is True
             )
 
         # The source may be disabled while an old positive receipt remains

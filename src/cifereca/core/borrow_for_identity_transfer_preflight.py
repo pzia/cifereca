@@ -25,7 +25,7 @@ class CrossProfileTransferPreflight:
 def preflight_cross_profile_loan_transfer(
     service, *, requesting_identity_id: str,
     borrowing_account: Account, exact_notice: SearchResult,
-    lender_placement_id: str,
+    lender_placement_id: str, scope_current=None,
 ) -> CrossProfileTransferPreflight:
     """Inspect only an exact lender-owned local placement after a loan claim.
 
@@ -43,11 +43,14 @@ def preflight_cross_profile_loan_transfer(
                 or type(exact_notice) is not SearchResult
                 or type(lender_placement_id) is not str
                 or not 0 < len(lender_placement_id) <= 256
-                or requesting_identity_id == borrowing_account.identity_id):
+                or requesting_identity_id == borrowing_account.identity_id
+                or not callable(scope_current)
+                or scope_current() is not True):
             return denied
         progress = observed_cross_profile_borrow_progress(
             service, requesting_identity_id=requesting_identity_id,
             borrowing_account=borrowing_account, exact_notice=exact_notice,
+            scope_current=scope_current,
         )
         if (progress.loan != "confirmed"
                 or progress.delivery != "unavailable"
@@ -60,11 +63,14 @@ def preflight_cross_profile_loan_transfer(
             )
         # A claim may be confirmed but not yet delivered; no GET, download,
         # provider or filesystem access is triggered by this projection.
-        current_reader = service.current_identity
         reader_epoch = service._account_context_epoch
         source_epoch = service._source_context_epoch
+        # Never read another profile's placement after the loan inspection
+        # has revoked the requesting identity or its source lease.
+        if scope_current() is not True:
+            return denied
         placement = service.storage.placement_get(lender_placement_id)
-        if (service.current_identity is not current_reader
+        if (scope_current() is not True
                 or service._account_context_epoch != reader_epoch
                 or service._source_context_epoch != source_epoch
                 or type(placement) is not dict

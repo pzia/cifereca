@@ -13,6 +13,25 @@ from cifereca.core.borrow_for_identity_placement_resolution import LenderLocalPl
 from tests.test_core_p1_4662_cross_profile_borrow_preview import witness
 
 
+def scoped_recover(service, *, exact_notice):
+    selected = service.current_identity
+    account_epoch = service._account_context_epoch
+    source_epoch = service._source_context_epoch
+
+    def current():
+        return (
+            service.current_identity is selected
+            and getattr(selected, "identity_id", None) == "bob"
+            and service._account_context_epoch == account_epoch
+            and service._source_context_epoch == source_epoch
+        )
+
+    return recover(
+        service, exact_notice=exact_notice, requesting_identity_id="bob",
+        scope_current=current,
+    )
+
+
 @pytest.fixture
 def case(monkeypatch):
     w = witness()
@@ -47,21 +66,20 @@ def case(monkeypatch):
 
 def test_existing_confirmed_claim_with_local_file_can_resume_without_post(case):
     service, w, loan, placement = case
-    rows = recover(service, exact_notice=w.notice)
+    rows = scoped_recover(service, exact_notice=w.notice)
     assert len(rows) == 1
     assert rows[0]._account is w.account
     assert rows[0].status == "present"
     assert rows[0].loan == "confirmed"
     assert rows[0].executable is rows[0].retry_borrow is False
     assert w.account.credential_id not in repr(rows[0])
-    loan.assert_called_once_with(
-        service, requesting_identity_id="bob",
-        borrowing_account=w.account, exact_notice=w.notice,
-    )
-    placement.assert_called_once_with(
-        service, requesting_identity_id="bob",
-        borrowing_account=w.account, exact_notice=w.notice,
-    )
+    assert loan.call_count == placement.call_count == 1
+    for spy in (loan, placement):
+        assert spy.call_args.args == (service,)
+        assert spy.call_args.kwargs["requesting_identity_id"] == "bob"
+        assert spy.call_args.kwargs["borrowing_account"] is w.account
+        assert spy.call_args.kwargs["exact_notice"] is w.notice
+        assert spy.call_args.kwargs["scope_current"]() is True
     service.execute_cross_profile_borrow.assert_not_called()
     service.materialize_to_identity.assert_not_called()
 
@@ -71,7 +89,7 @@ def test_loan_confirmed_before_local_delivery_can_be_rechecked_later(case):
     placement.return_value = LenderLocalPlacement(
         "unavailable", "lender_delivery_unverified", loan="confirmed",
     )
-    rows = recover(service, exact_notice=w.notice)
+    rows = scoped_recover(service, exact_notice=w.notice)
     assert len(rows) == 1 and rows[0].status == "awaiting_delivery"
     service.execute_cross_profile_borrow.assert_not_called()
 
@@ -82,14 +100,14 @@ def test_no_verified_positive_loan_never_looks_up_placement(case, loan_state):
     loan.return_value = CrossProfileBorrowProgress(
         loan_state, "unavailable", "blocked", "loan_result_not_confirmed",
     )
-    assert recover(service, exact_notice=w.notice) == ()
+    assert scoped_recover(service, exact_notice=w.notice) == ()
     placement.assert_not_called()
 
 
 def test_other_credential_or_item_scope_never_reads_loan_receipt(case):
     service, w, loan, placement = case
     service.accounts = [replace(w.account, credential_id="other")]
-    assert recover(service, exact_notice=w.notice) == ()
+    assert scoped_recover(service, exact_notice=w.notice) == ()
     loan.assert_not_called()
     placement.assert_not_called()
 
@@ -97,7 +115,7 @@ def test_other_credential_or_item_scope_never_reads_loan_receipt(case):
 def test_duplicate_primary_lender_accounts_refuse_to_choose_by_order(case):
     service, w, loan, placement = case
     service.accounts.append(w.account)
-    assert recover(service, exact_notice=w.notice) == ()
+    assert scoped_recover(service, exact_notice=w.notice) == ()
     loan.assert_not_called()
     placement.assert_not_called()
 
@@ -111,7 +129,7 @@ def test_source_rebind_during_placement_read_revokes_all_candidates(case):
         return actual
 
     placement.side_effect = rebind
-    assert recover(service, exact_notice=w.notice) == ()
+    assert scoped_recover(service, exact_notice=w.notice) == ()
     service.execute_cross_profile_borrow.assert_not_called()
 
 
@@ -124,7 +142,7 @@ def test_reader_object_rebind_during_loan_read_revokes_all_candidates(case):
         return result
 
     loan.side_effect = rebind
-    assert recover(service, exact_notice=w.notice) == ()
+    assert scoped_recover(service, exact_notice=w.notice) == ()
 
 
 def test_claim_metadata_is_never_exposed_or_posted(case):
@@ -133,7 +151,7 @@ def test_claim_metadata_is_never_exposed_or_posted(case):
         "present", "lender_exact_local_placement_present",
         _placement_id="/private/secret-acsm", loan="confirmed",
     )
-    rows = recover(service, exact_notice=w.notice)
+    rows = scoped_recover(service, exact_notice=w.notice)
     assert len(rows) == 1
     assert "/private/secret-acsm" not in repr(rows)
     assert not hasattr(rows[0], "_placement_id")
@@ -143,7 +161,7 @@ def test_claim_metadata_is_never_exposed_or_posted(case):
 def test_current_reader_is_not_presented_as_foreign_lender(case):
     service, w, loan, _placement = case
     service.current_identity = NS(identity_id=w.account.identity_id)
-    assert recover(service, exact_notice=w.notice) == ()
+    assert scoped_recover(service, exact_notice=w.notice) == ()
     loan.assert_not_called()
 
 

@@ -13,7 +13,7 @@ from .borrow_for_identity_transfer_preflight import (
 def send_cross_profile_borrowed_placement(
     service, *, requesting_identity_id: str,
     borrowing_account, exact_notice, lender_placement_id: str,
-    confirmed: bool = False,
+    confirmed: bool = False, scope_current=None,
 ) -> dict[str, object]:
     """One explicit A-to-B file copy via existing canonical materialization.
 
@@ -30,10 +30,9 @@ def send_cross_profile_borrowed_placement(
     observed_loan = "unknown"
     observed_delivery = "unavailable"
     try:
-        identity = service.current_identity
         identity_epoch = service._account_context_epoch
         source_epoch = service._source_context_epoch
-        if (getattr(identity, "identity_id", None) != requesting_identity_id
+        if (not callable(scope_current) or scope_current() is not True
                 or type(identity_epoch) is not int
                 or type(source_epoch) is not int):
             return blocked
@@ -41,6 +40,7 @@ def send_cross_profile_borrowed_placement(
             service, requesting_identity_id=requesting_identity_id,
             borrowing_account=borrowing_account, exact_notice=exact_notice,
             lender_placement_id=lender_placement_id,
+            scope_current=scope_current,
         )
         observed_loan = preflight.loan
         observed_delivery = preflight.delivery
@@ -53,7 +53,7 @@ def send_cross_profile_borrowed_placement(
                 **blocked, "loan": preflight.loan,
                 "reason_code": preflight.reason_code,
             }
-        if (service.current_identity is not identity
+        if (scope_current() is not True
                 or service._account_context_epoch != identity_epoch
                 or service._source_context_epoch != source_epoch):
             return {**blocked, "loan": "confirmed",
@@ -64,6 +64,13 @@ def send_cross_profile_borrowed_placement(
         receipt = service.materialize_to_identity(
             lender_placement_id, requesting_identity_id,
         )
+        # A revoked in-flight copy remains a filesystem fact; it must not
+        # be advertised as a successful action for an obsolete requester.
+        if (scope_current() is not True
+                or service._account_context_epoch != identity_epoch
+                or service._source_context_epoch != source_epoch):
+            return {**blocked, "loan": "confirmed", "delivery": "present",
+                    "reason_code": "transfer_context_revoked"}
         if (type(receipt) is not dict
                 or receipt.get("status") not in ("complete", "unchanged")):
             return {

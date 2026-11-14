@@ -61,6 +61,40 @@ from .storage import Storage
 from .core.provider_stream import consume_provider_stream, SearchStreamFailure, SearchStreamCancelled
 from .core.provider_collection_cache import ProviderCollectionSnapshotStore
 
+def _capture_cross_profile_read_scope(service, requesting_identity_id=None):
+    """Revocable navigation lease captured at the public facade boundary.
+
+    Nested Core lender/read/copy workers receive only this callback. A->B->A
+    changes the account epoch and cannot recreate a former positive result.
+    """
+    try:
+        # Capture epochs first; a profile switch during capture invalidates
+        # the lease rather than letting a later epoch mask the old selection.
+        account_epoch = service._account_context_epoch
+        source_epoch = service._source_context_epoch
+        selected = service.current_identity
+    except Exception:
+        return requesting_identity_id, (lambda: False)
+    if requesting_identity_id is None:
+        requesting_identity_id = getattr(selected, "identity_id", None)
+
+    def still_current():
+        try:
+            return (
+                type(requesting_identity_id) is str and bool(requesting_identity_id)
+                and getattr(selected, "identity_id", None) == requesting_identity_id
+                and type(account_epoch) is int and account_epoch >= 0
+                and type(source_epoch) is int and source_epoch >= 0
+                and service.current_identity is selected
+                and service._account_context_epoch == account_epoch
+                and service._source_context_epoch == source_epoch
+            )
+        except Exception:
+            return False
+
+    return requesting_identity_id, still_current
+
+
 def _loan_cache_key(account: Account) -> str:
     """Opaque, unambiguous identity/provider/credential/borrower cache scope.
 
@@ -324,6 +358,7 @@ class LibraryService:
         return resolve_cross_profile_lender_placement(
             self, requesting_identity_id=requesting_identity_id,
             borrowing_account=borrowing_account, exact_notice=exact_notice,
+            scope_current=_capture_cross_profile_read_scope(self, requesting_identity_id)[1],
         )
 
     def send_confirmed_lender_local_copy(
@@ -339,6 +374,7 @@ class LibraryService:
             self, requesting_identity_id=requesting_identity_id,
             borrowing_account=borrowing_account, exact_notice=exact_notice,
             confirmed=confirmed,
+            scope_current=_capture_cross_profile_read_scope(self, requesting_identity_id)[1],
         )
 
     def preflight_cross_profile_loan_transfer(
@@ -354,6 +390,7 @@ class LibraryService:
             self, requesting_identity_id=requesting_identity_id,
             borrowing_account=borrowing_account, exact_notice=exact_notice,
             lender_placement_id=lender_placement_id,
+            scope_current=_capture_cross_profile_read_scope(self, requesting_identity_id)[1],
         )
 
     def send_cross_profile_borrowed_placement(
@@ -369,6 +406,7 @@ class LibraryService:
             self, requesting_identity_id=requesting_identity_id,
             borrowing_account=borrowing_account, exact_notice=exact_notice,
             lender_placement_id=lender_placement_id, confirmed=confirmed,
+            scope_current=_capture_cross_profile_read_scope(self, requesting_identity_id)[1],
         )
 
     def existing_lender_loan_candidates(
@@ -383,7 +421,11 @@ class LibraryService:
         from .core.borrow_for_identity_existing_loan import (
             existing_lender_loan_candidates,
         )
-        return existing_lender_loan_candidates(self, exact_notice=exact_notice)
+        selected_id, scope_current = _capture_cross_profile_read_scope(self)
+        return existing_lender_loan_candidates(
+            self, exact_notice=exact_notice, requesting_identity_id=selected_id,
+            scope_current=scope_current,
+        )
 
     def cross_profile_borrow_progress(
         self, *, requesting_identity_id: str,
@@ -400,6 +442,7 @@ class LibraryService:
         return observed_cross_profile_borrow_progress(
             self, requesting_identity_id=requesting_identity_id,
             borrowing_account=borrowing_account, exact_notice=exact_notice,
+            scope_current=_capture_cross_profile_read_scope(self, requesting_identity_id)[1],
         )
 
     def preview_borrow_for_current_identity(
