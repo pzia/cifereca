@@ -1112,7 +1112,7 @@
         "tests/test_core_p1_4987_composed_bnf_lender.py",
         "tests/test_core_p1_4987_cross_profile_paris_http.py"
       ],
-      "pr": "#PENDING",
+      "pr": "#6109",
       "in_ast_metric": false
     }
   ],
