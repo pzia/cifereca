@@ -71,10 +71,11 @@ def test_private_remote_observation_visible_without_entitlement(tmp_path, monkey
         observed_calls = []
         monkeypatch.setattr(offers, "select_source_offer_target",
             lambda _service, **scope: observed_calls.append(scope) or sentinel)
-        assert offers.select_library_source_offer_target(service, card) is sentinel
+        assert offers.select_library_source_offer_target(service, card, identity_id="default") is sentinel
         assert observed_calls == [{
             "provider_id": "fictional-provider",
             "credential_id": "card-1", "item_id": "edition-1",
+            "identity_id": "default",
         }]
         assert service.storage.acquisitions() == []
         assert service.storage.placements() == []
@@ -153,12 +154,15 @@ def test_ambiguous_library_source_ref_never_selects_provider(monkeypatch):
     }
     assert offers.select_library_source_offer_target(
         service, {**base, "source_refs": [source, source]},
+        identity_id="default",
     ) is None
     assert offers.select_library_source_offer_target(
         service, {**base, "source_refs": [{**source, "identity_id": "foreign"}]},
+        identity_id="default",
     ) is None
     assert offers.select_library_source_offer_target(
         service, {**base, "source": "entitlement"},
+        identity_id="default",
     ) is None
     assert seen == []
 
@@ -179,7 +183,7 @@ def test_private_loan_or_observation_never_fabricates_purchase_origin(
             offers, "select_source_offer_target",
             lambda *_a, **_kw: called.append(True),
         )
-        assert offers.select_library_source_offer_target(service, cards[0]) is None
+        assert offers.select_library_source_offer_target(service, cards[0], identity_id="default") is None
         assert called == []
         assert service.storage.entitlements(provider_id="fictional-provider") == []
     finally:

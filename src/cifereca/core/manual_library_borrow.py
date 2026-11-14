@@ -109,7 +109,8 @@ def _stage_confirmed_initial_loan_acsm(
 
 def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
                             docbase: str, primary_id: str | None = None,
-                            diagnostic: dict[str, str] | None = None) -> bool:
+                            diagnostic: dict[str, str] | None = None,
+                            identity_id: str | None = None) -> bool:
     """Inert local admission, never supplier permission or a provider GET.
 
     Optional diagnostic is a CLOSED-code side channel, not new authorization.
@@ -126,15 +127,19 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
     if (type(item) is not SearchResult or item.source_provider != provider_id
             or item.docbase != docbase or item.medium != "digital"):
         return reject("local_edition_scope_invalid")
+    if (type(identity_id) is not str or not identity_id
+            or len(identity_id) > 1024
+            or any(c in identity_id for c in "\x00\r\n")):
+        return reject("local_provider_or_identity_unavailable")
     try:
         manager = service._plugin_manager
         plugin_id = service._provider_plugin_ids[provider_id]
         plugin = manager.status(plugin_id)
-        identity = service.current_identity
+        # The facade admits exactly one selected owner. Never re-read a
+        # mutable GTK selection while assessing a passive provider scope.
         if (plugin.enabled is not True or plugin.state != "ready"
                 or plugin.descriptor.type != "provider.library"
-                or plugin.descriptor.id != plugin_id
-                or not getattr(identity, "identity_id", None)):
+                or plugin.descriptor.id != plugin_id):
             return reject("local_provider_or_identity_unavailable")
         session = service._session_for_source(
             provider_id, item.source_credential)
@@ -147,7 +152,7 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
         candidates = [
             a for a in service.accounts
             if (type(a) is Account and a.is_primary is True
-                and a.identity_id == identity.identity_id
+                and a.identity_id == identity_id
                 and a.provider_id == provider_id
                 and a.credential_id == item.source_credential
                 and (primary_id is None or a.unique_id == primary_id)
@@ -163,7 +168,7 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
             return reject("local_previous_attempt")
         if capture_borrow_action_scope(
                 service, item, candidates[0], session,
-                expected_identity_id=identity.identity_id) is None:
+                expected_identity_id=identity_id) is None:
             return reject("local_scope_changed")
         fact = assess_lending_operation(
             "loan.borrow",
@@ -188,6 +193,7 @@ def manual_borrow_diagnostic(
     service, item: SearchResult, *, provider_id: str, docbase: str,
     primary_id: str | None, source_current,
     available=manual_borrow_available, result_type=SearchResult,
+    identity_id: str | None = None,
 ) -> dict[str, object]:
     """Provider-neutral read-only admission; NOT a lender eligibility oracle.
 
@@ -198,10 +204,9 @@ def manual_borrow_diagnostic(
     reason = "local_admission_unavailable"
     possible = False
     try:
-        identity_id = getattr(
-            getattr(service, "current_identity", None), "identity_id", None
-        )
-        if type(identity_id) is not str or not identity_id:
+        if (type(identity_id) is not str or not identity_id
+                or len(identity_id) > 1024
+                or any(c in identity_id for c in "\x00\r\n")):
             reason = "identity_not_selected"
         elif (type(item) is not result_type
               or item.source_provider != provider_id
@@ -219,6 +224,7 @@ def manual_borrow_diagnostic(
             possible = available(
                 service, item, provider_id=provider_id, docbase=docbase,
                 primary_id=primary_id, diagnostic=admission,
+                identity_id=identity_id,
             ) is True
             reason = admission.get("reason_code", "local_admission_unavailable")
             # The source must never inject arbitrary strings into diagnostics.
