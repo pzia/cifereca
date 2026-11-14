@@ -118,8 +118,13 @@ def test_manual_preflight_requires_scoped_proof_not_a_provider_name(
     assert refused.attachment_authorized is False
 
 
+@pytest.mark.parametrize("forged_source", [
+    "numilog.authenticated_library",
+    "future-library.authenticated_library",
+    "future-library.personal_manifest",
+])
 def test_foreign_provider_cannot_spoof_numilog_proof_with_metadata(
-    six_numilog,
+    six_numilog, forged_source,
 ):
     root, db = six_numilog
     add_acquisition(root, db)
@@ -131,7 +136,7 @@ def test_foreign_provider_cannot_spoof_numilog_proof_with_metadata(
             "VALUES (?,?,?,?,?,?,?,?,?)",
             ("foreign-right", "future-library", "cred-alice", "account-alice",
              "item-5", "alice", "active", "owned",
-             json.dumps({"source": "numilog.authenticated_library"})),
+             json.dumps({"source": forged_source})),
         )
     _audit, session = session_for(root, db)
     foreign = session.page(provider="future-library").cases
