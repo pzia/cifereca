@@ -477,16 +477,31 @@ class LibraryService:
     def manual_borrow_followup_available(self, item: SearchResult) -> bool:
         """A spent claim may be inspected, never submitted again."""
         from .core.borrow_later_verification import borrow_followup_available
-        return borrow_followup_available(
+        selected = self.current_identity
+        epoch = self._account_context_epoch
+        available = borrow_followup_available(
             self, item, readiness=self.manual_borrow_diagnostic,
+            identity_id=getattr(selected, "identity_id", None),
         )
+        return (available is True and self.current_identity is selected
+                and self._account_context_epoch == epoch)
 
     def verify_manual_borrow_followup(self, item: SearchResult) -> dict[str, object]:
         """Independently observe a spent claim without mutation or entitlement."""
         from .core.borrow_later_verification import verify_pending_borrow_followup
-        return verify_pending_borrow_followup(
+        selected = self.current_identity
+        epoch = self._account_context_epoch
+        result = verify_pending_borrow_followup(
             self, item, readiness=self.manual_borrow_diagnostic,
+            identity_id=getattr(selected, "identity_id", None),
         )
+        if (self.current_identity is not selected
+                or self._account_context_epoch != epoch):
+            return {
+                "status": "blocked", "reason_code": "borrow_verification_claim_mismatch",
+                "retry_borrow": False, "mutated": False,
+            }
+        return result
 
     def verify_borrow_without_submission(
         self, item: SearchResult, *, expected_identity_id: str,

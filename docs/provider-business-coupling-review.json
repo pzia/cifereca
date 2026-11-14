@@ -800,6 +800,22 @@
       ],
       "pr": "#6084",
       "in_ast_metric": true
+    },
+    {
+      "id": "struct-spent-borrow-followup-core-navigation",
+      "original": "core.borrow_later_verification._pending_borrow_followup_scope resolved service.current_identity inside read-only spent manual-borrow claim checks, including a second lookup after provider observation",
+      "original_classification": "navigation_dependent_private_borrow_followup",
+      "replacement": "LibraryService.manual_borrow_followup_available and verify_manual_borrow_followup capture the selected identity at their synchronous facade entrypoints and supply it to the headless worker. Missing scope fails closed. Worker retains exact account/session identity, spent claim operation ID and post-observation checks, with no borrow POST, entitlement or claim reset.",
+      "classification": "removed_navigation_spent_borrow_followup_worker",
+      "evidence": "Headless worker refuses missing scope before touching a provider; synthetic facade captures one identity per call, including profile switch between calls, and fences A-B-A via context epoch. Existing typed rights-observation and one-use claim tests remain required.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_borrow_followup.py",
+        "tests/test_core_p1_5136_paris_borrow_later_verification.py",
+        "tests/test_core_p1_5136_paris_followup_ui.py",
+        "tests/test_core_p0_5048_generic_manual_followup.py"
+      ],
+      "pr": "#6085",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
