@@ -49,3 +49,24 @@ def test_no_selected_identity_exposes_neither_account_and_does_not_scan(
         assert "ALICE_PRIVATE" not in json.dumps(bob)
     finally:
         service.close()
+
+
+def test_selected_identity_does_not_authorize_implicit_core_library_read(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    try:
+        # A GTK-selected profile is not a valid admission token for a
+        # headless/queued Core read, even if it is currently selected.
+        service.current_identity = next(
+            identity for identity in service.identities
+            if identity.identity_id == "alice"
+        )
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError("implicit library read must not scan or query storage")
+        monkeypatch.setattr(service, "catalog_scan", forbidden)
+        for method in ("artifacts", "placements", "catalog_entries", "entitlements"):
+            monkeypatch.setattr(service.storage, method, forbidden)
+        for scope in (None, "", " ", False, 123, [], {}):
+            assert service.library_entries(identity_id=scope, scan=True) == []
+        assert service.library_entries(scan=True) == []
+    finally:
+        service.close()

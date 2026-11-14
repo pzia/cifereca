@@ -986,7 +986,10 @@ def library_entries(self, *, identity_id: str | None=None, scan: bool=False, log
     can bind them to a local Artifact.
     """
     _lib_started = time.monotonic()
-    identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
+    # A canonical library read is private: the caller must pin its identity
+    # before admission. Never infer it from mutable GTK navigation state.
+    if type(identity_id) is not str or not identity_id.strip():
+        return []
     logger.info("TRACE library-entries begin identity=%s filesystem_scan=%s", identity_id, "requested" if scan else "skipped")
     # There is no authorized union-of-profiles Library view. Without an
     # explicit effective identity, the content-hash grouping below would
