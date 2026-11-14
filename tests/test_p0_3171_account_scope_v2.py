@@ -60,15 +60,19 @@ def test_legacy_account_ref_defaults_preserved():
 
 def test_public_broker_v2_distinguishes_same_upstream_id_by_credential_and_identity():
     core = FakeCore()
-    refs = IdentityBrokerImpl(core).accounts()
-    assert len(refs) == 3
+    refs = IdentityBrokerImpl(core).accounts("profile-A")
+    assert len(refs) == 2
     assert {(row.identity_id, row.credential_id) for row in refs} == {
         ("profile-A", "cred-A"), ("profile-A", "cred-B"),
-        ("profile-B", "cred-C"),
     }
     assert {row.account_id for row in refs} == {"same-upstream-id"}
     assert all(row.scope_version == 2 and row.connected for row in refs)
     assert {row.credential_id for row in IdentityBrokerImpl(core).accounts("profile-B")} == {"cred-C"}
+
+    # An omitted identity is not an implicit global inventory or GTK scope.
+    with pytest.raises(TypeError):
+        IdentityBrokerImpl(core).accounts()
+    assert core.account_reads == 2
 
 
 def test_ambiguous_account_id_must_not_choose_first_credential_or_download():
@@ -142,7 +146,7 @@ def test_identity_broker_explicit_empty_scope_never_uses_navigation_selection():
     core = FakeCore()
     broker = IdentityBrokerImpl(core)
 
-    for invalid in ("", " ", "\t"):
+    for invalid in (None, "", " ", "\t", 0):
         with raises(ValueError, match="identity_id_required"):
             broker.accounts(invalid)
 
@@ -174,7 +178,7 @@ def test_acquisition_scoped_identity_ignores_other_profiles_with_same_account_id
 
 
 
-@pytest.mark.parametrize("identity", ["", " ", "\t", 0])
+@pytest.mark.parametrize("identity", [None, "", " ", "\t", 0])
 def test_eligible_account_read_refuses_explicit_invalid_identity(identity):
     core = FakeCore()
     broker = AcquisitionBrokerImpl(core)
@@ -263,3 +267,25 @@ def test_scheduled_inventory_rejects_invalid_identity_before_account_read(identi
     assert result.facts == {"reason": "identity_required"}
     assert core.account_reads == 0
     assert core.acquisitions == []
+
+
+def test_public_account_reads_do_not_consult_gtk_selection_or_cross_profiles():
+    core = FakeCore()
+    core.current_identity = NS(identity_id="profile-B")
+    identity = IdentityBrokerImpl(core)
+    acquisition = AcquisitionBrokerImpl(core)
+
+    before = identity.accounts("profile-A")
+    before_eligible = acquisition.eligible_accounts(item(), identity_id="profile-A")
+    core.current_identity = NS(identity_id="profile-A")
+    assert identity.accounts("profile-A") == before
+    assert acquisition.eligible_accounts(item(), identity_id="profile-A") == before_eligible
+    assert all(ref.identity_id == "profile-A" for ref in (*before, *before_eligible))
+
+    # Missing coordinates fail before touching account storage or provider.
+    observed_reads = core.account_reads
+    with pytest.raises(TypeError):
+        acquisition.eligible_accounts(item())
+    with pytest.raises(TypeError):
+        identity.accounts()
+    assert core.account_reads == observed_reads
