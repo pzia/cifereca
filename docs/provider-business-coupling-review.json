@@ -32,19 +32,20 @@
       "rationale": "This is a live provider-aware veto of replay/cross-borrower staging, not a removable detection heuristic; explicitly blocks zero-brand-decision closure until typed contract migration"
     },
     {
-      "id": "site-105fb5dbf04033ddeb95cc3d",
+      "id": "site-e3fc978e29d69c2c875be9dc",
       "classification": "legacy_mutating_cutover",
-      "journey": "legacy Kobo configuration cardinality repair during Config.load",
-      "productive_caller": "Config.load -> provider_accounts -> legacy per-identity Kobo account splitting and persisted directory identity names",
-      "effect": "May mutate legacy configuration identities/directories; not an entitlement, purchase, provider GET or canonical writer",
+      "journey": "Versioned historical Kobo account-cardinality migration; no runtime repeat after persisted completion marker",
+      "productive_caller": "Config.load -> _migrate_legacy_account_cardinality_once, only before migration_history completion tombstone; normal reloads skip the old supplier-specific repair",
+      "effect": "A never-migrated legacy config may deterministically split historical Kobo identities and directories in memory. Completed configurations cannot be reassigned by this writer; not a provider GET, consent, ADEPT grant, entitlement, or canonical writer.",
       "authority": "Historical Kobo 0.8.1 repair from persisted legacy provider account rows; descriptor-time cardinality is too late for that legacy migration",
-      "replacement_contract": "Idempotent versioned migration with recorded completion/tombstone so normal runtime Config.load no longer branches on Kobo",
+      "replacement_contract": "The versioned one-way migration with persisted tombstone is installed by #6075. The remaining historical supplier AST signal cannot be retired until all old configurations have a proven versioned generic migration path or complete deprecation.",
       "tests": [
         "tests/test_identities_081.py",
-        "tests/test_core_p0_5743_sqlite_cardinality_v15.py"
+        "tests/test_core_p0_5743_sqlite_cardinality_v15.py",
+        "tests/test_core_p0_5975_legacy_cardinality_single_run.py"
       ],
       "retirement_pr": "",
-      "rationale": "This active legacy load-time repair can write and reassign profile/directory configuration; it is a supplier-specific mutating compatibility path. Keep intact until a versioned, descriptor-neutral migration has replay/rollback proof."
+      "rationale": "The site moved from Config.load to a conditional versioned legacy migration and remains reachable on an old configuration without a tombstone. Retain legacy_mutating_cutover, track the new semantic AST site ID, and do not claim a reduction of the raw AST or a complete writer retirement."
     },
     {
       "id": "site-7baf3b4f552b2c895f2c79ae",
