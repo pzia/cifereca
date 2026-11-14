@@ -100,10 +100,18 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
     if (type(configured) is not list or len(configured) > _MAX_CONNECTIONS
             or type(descriptors) not in (list, tuple) or len(descriptors) > 256):
         return ()
-    by_descriptor = {
-        desc.id: desc for desc in descriptors
-        if type(desc) is ProviderDescriptor and type(desc.id) is str
-    }
+    # Never select the last descriptor for a duplicated provider ID:
+    # capability and advisory ceiling declarations would then depend on
+    # registration order. Only this provider becomes unverified.
+    by_descriptor = {}
+    duplicate_descriptors = set()
+    for desc in descriptors:
+        if type(desc) is not ProviderDescriptor or type(desc.id) is not str:
+            continue
+        if desc.id in by_descriptor:
+            duplicate_descriptors.add(desc.id)
+        else:
+            by_descriptor[desc.id] = desc
     live_accounts = getattr(service, "accounts", ())
     if type(live_accounts) not in (list, tuple) or len(live_accounts) > _MAX_BORROWERS:
         live_accounts = ()
@@ -153,7 +161,9 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
             continue
         seen.add(key)
         descriptor = by_descriptor.get(provider)
-        if descriptor is not None and descriptor.capabilities.loans is not True:
+        if (provider not in duplicate_descriptors
+                and descriptor is not None
+                and descriptor.capabilities.loans is not True):
             continue  # not a declared lender, e.g. Kobo/Numilog store
         eligible.append((entry, descriptor))
     if not eligible:
@@ -175,14 +185,21 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
         if configured_label:
             connection_label += " · " + configured_label
         if ((provider, credential) in ambiguous_connections
-                or (provider.lower(), credential) in shared_registry_keys):
-            # A global session key cannot belong to two profiles, regardless
-            # of which cached Account objects happen to survive today.
+                or (provider.lower(), credential) in shared_registry_keys
+                or provider in duplicate_descriptors):
+            # Neither an ambiguous global session key nor an ambiguous
+            # descriptor can qualify an exact borrower's personal limit.
             rows.append(DigitalLoanAvailability(
                 identity_id=identity_id, provider_id=provider,
                 credential_id=credential, borrower_id=None,
-                provider_label=provider_label, connection_label=connection_label,
-                borrower_label="Emprunteur non vérifié", reason="scope_ambiguous",
+                provider_label=(
+                    "Fournisseur non qualifié"
+                    if provider in duplicate_descriptors else provider_label
+                ),
+                connection_label=connection_label,
+                borrower_label="Emprunteur non vérifié",
+                reason=("provider_unverified" if provider in duplicate_descriptors
+                        else "scope_ambiguous"),
             ))
             continue
         matches = [
