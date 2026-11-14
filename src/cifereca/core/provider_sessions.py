@@ -679,11 +679,15 @@ def bind_confirmed_source_account(
             and str(row.get("provider") or "").strip().lower() == provider_id
             and str(row.get("id") or "").strip() == credential_id
         ]
+        # Exact configured owner is an admission proof. A missing binding
+        # cannot inherit whichever GTK profile was selected meanwhile.
+        configured_owner_raw = (
+            configured_rows[0].get("identity_id")
+            if len(configured_rows) == 1 else None
+        )
         configured_owner = (
-            str(configured_rows[0].get("identity_id") or (
-                self.current_identity.identity_id
-                if self.current_identity else "default"
-            )).strip() if len(configured_rows) == 1 else None
+            configured_owner_raw.strip()
+            if type(configured_owner_raw) is str else None
         )
     except Exception:
         configured_owner = None

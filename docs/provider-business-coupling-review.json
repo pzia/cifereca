@@ -559,6 +559,19 @@
       ],
       "pr": "#6037",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-confirmed-source-configured-owner-gtk-fallback",
+      "original": "core.provider_sessions.bind_confirmed_source_account allowed an enabled configured credential without identity_id to inherit mutable GTK current_identity before mutating the Core accounts registry",
+      "original_classification": "navigation_dependent_legacy_write",
+      "replacement": "Require exact nonblank string configured identity_id equal to persisted storage connection owner, with session account/CAS checks unchanged; reject missing or mismatched ownership before account registry mutation",
+      "classification": "removed_implicit_navigation_confirmed_source_binding",
+      "evidence": "A missing, wrong, empty or non-string configuration identity can no longer inherit the selected GTK profile, even when the current GTK identity accidentally matches the SQLite owner. Exact configured/SQLite ownership continues to admit a synthetic provider under both Alice/Bob navigation with no provider I/O.",
+      "tests": [
+        "tests/test_core_p0_5975_confirmed_source_owner.py"
+      ],
+      "pr": "#6040",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
