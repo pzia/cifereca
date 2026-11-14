@@ -24,14 +24,22 @@ class SourceOfferTarget:
     branch: str
     session: object = field(compare=False, repr=False)
     entitlement_id: None = None
+    # Pinned by the synchronous Core facade. A→B→A can restore the same
+    # identity string but cannot restore the account-context generation.
+    selection_epoch: int | None = field(default=None, compare=False)
 
 
 def _resolve(service, target: SourceOfferTarget):
     """Recheck the exact account and live delivery ABI without provider I/O."""
     if type(target) is not SourceOfferTarget:
         raise ValueError("selected_source_target_invalid")
-    if (getattr(getattr(service, "current_identity", None), "identity_id", None)
-            != target.identity_id):
+    # Execution is headless: compare only the captured context generation.
+    # Production LibraryService publishes a monotone epoch on every identity
+    # switch; minimal synthetic facades with no epoch still need all the
+    # independent account/session/ABI binding guards below.
+    current_epoch = getattr(service, "_account_context_epoch", None)
+    if (type(current_epoch) not in (int, type(None))
+            or target.selection_epoch != current_epoch):
         raise ValueError("selected_source_identity_changed")
     accounts = [
         account for account in service.accounts
@@ -63,14 +71,18 @@ def _resolve(service, target: SourceOfferTarget):
 
 def select_source_offer_target(
     service, *, provider_id: str, credential_id: str, item_id: str,
+    identity_id: str | None = None,
 ):
     """Passive target construction: never performs a catalogue or content GET."""
     if (not all(type(x) is str and x and len(x) <= 1024
                 and not any(c in x for c in "\x00\r\n")
-                for x in (provider_id, credential_id, item_id))):
+                for x in (provider_id, credential_id, item_id, identity_id))):
         return None
     try:
-        identity = service.current_identity.identity_id
+        identity = identity_id
+        epoch = getattr(service, "_account_context_epoch", None)
+        if type(epoch) not in (int, type(None)):
+            return None
         accounts = [a for a in service.accounts
                     if a.provider_id == provider_id
                     and a.credential_id == credential_id
@@ -84,7 +96,7 @@ def select_source_offer_target(
             return None
         target = SourceOfferTarget(
             identity, provider_id, credential_id, account.unique_id,
-            item_id, branch, session,
+            item_id, branch, session, selection_epoch=epoch,
         )
         _resolve(service, target)
         return target
@@ -118,7 +130,9 @@ def obtain_source_offer(service, target: SourceOfferTarget):
     )
 
 
-def select_library_source_offer_target(service, entry):
+def select_library_source_offer_target(
+    service, entry, *, identity_id: str | None = None,
+):
     """Select exactly one remote origin from a Library card; never a right.
 
     Historical possession rows may still carry a legacy entitlement ID. That
@@ -128,7 +142,10 @@ def select_library_source_offer_target(service, entry):
     if (type(entry) is not dict or entry.get("local")
             or entry.get("local_path") or entry.get("placement_id")):
         return None
-    identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
+    identity = identity_id
+    if (type(identity) is not str or not identity or len(identity) > 1024
+            or any(c in identity for c in "\x00\r\n")):
+        return None
     candidates = [
         row for row in (entry.get("possessions") or ())
         if type(row) is dict and row.get("identity_id") == identity
@@ -165,5 +182,5 @@ def select_library_source_offer_target(service, entry):
         return None
     return select_source_offer_target(
         service, provider_id=provider, credential_id=accounts[0].credential_id,
-        item_id=item_id,
+        item_id=item_id, identity_id=identity,
     )
