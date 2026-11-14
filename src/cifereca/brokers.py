@@ -1305,9 +1305,11 @@ class AdeptProfileBrokerImpl:
         # coordinate. A runtime may return malformed or hostile field values.
         if type(value) is not str or not 0 < len(value) <= 256:
             return ""
-        token = value.strip()
-        if not token or any(ord(char) < 32 or ord(char) == 127 for char in token):
+        # Reject controls in the original runtime/client value, before strip()
+        # could silently erase a trailing newline or tab from an identity key.
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
             return ""
+        token = value.strip()
         return token
 
     def _ref(self, row: dict[str, Any]) -> AdeptProfileRef:
@@ -1348,7 +1350,9 @@ class AdeptProfileBrokerImpl:
         return tuple(self._ref(row) for row in self._profile_rows())
 
     def _find(self, profile_id: str) -> AdeptProfileRef:
-        wanted = str(profile_id or "").strip()
+        wanted = self._profile_token(profile_id)
+        if not wanted:
+            raise AttentionRequired("Profil ADEPT absent ou ambigu.", code="adept_origin_profile_missing")
         matches = [row for row in self.profiles() if row.profile_id == wanted]
         if len(matches) != 1:
             raise AttentionRequired("Profil ADEPT absent ou ambigu.", code="adept_origin_profile_missing")
