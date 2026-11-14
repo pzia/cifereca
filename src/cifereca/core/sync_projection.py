@@ -125,8 +125,20 @@ def _configured_source_keys_for_identity(service, identity_id: str) -> set[tuple
     return keys
 
 
-def dashboard_state(self) -> list[dict[str, Any]]:
-    """Return dashboard cards without triggering network I/O."""
+def dashboard_state(
+    self, *, selected_identity_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Project dashboard cards for an explicitly admitted presentation scope.
+
+    This read-only Core worker has no GTK-selected identity dependency.
+    Missing/invalid scope selects no card; the synchronous facade alone
+    captures any navigation state before invoking the projection.
+    """
+    selected_identity_id = (
+        selected_identity_id if type(selected_identity_id) is str
+        and bool(selected_identity_id) and selected_identity_id == selected_identity_id.strip()
+        else None
+    )
     cards: list[dict[str, Any]] = []
     for identity in self.identities:
         account_rows = tuple(self.accounts_for_identity(identity.identity_id))
@@ -193,7 +205,7 @@ def dashboard_state(self) -> list[dict[str, Any]]:
             "loan_sources_explicitly_absent": non_lending_proven,
             "sources": sources,
             "statistics": self.identity_statistics(identity.identity_id),
-            "selected": bool(self.current_identity and self.current_identity.identity_id == identity.identity_id),
+            "selected": selected_identity_id == identity.identity_id,
             "capabilities": [{"id": key, "label": labels[key]} for key in labels if key in capabilities],
             "identity_id": identity.identity_id, "label": identity.label, "directory_name": identity.directory_name,
             "providers": providers, "adept_profile_id": profile_id,
