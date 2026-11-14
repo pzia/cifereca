@@ -44,6 +44,10 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     pinned_provider = loan.source_provider
     pinned_credential = loan.source_credential
     pinned_borrower = loan.source_account_id
+    # The upstream loan key and edition are also authorization coordinates:
+    # a conflicting-right veto for one key must not select another later.
+    pinned_loan_id = loan.id
+    pinned_record_id = loan.record_id
     bound_identity_id = self.storage.identity_for_connection(
         pinned_provider, pinned_credential
     )
@@ -55,6 +59,10 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
             and loan.source_credential == pinned_credential
             and type(loan.source_account_id) in (str, type(None))
             and loan.source_account_id == pinned_borrower
+            and type(loan.id) is str
+            and loan.id == pinned_loan_id
+            and type(loan.record_id) in (str, type(None))
+            and loan.record_id == pinned_record_id
         )
 
     def source_changed() -> AutomaticLoanAdmission:
@@ -150,6 +158,8 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
         and row.get("item_id") == str(loan.record_id or loan.id)
         and row.get("entitlement_type") == "loan"
     ]
+    if not source_intact():
+        return source_changed()
     # A duplicate exact right is ambiguous, not a first-row-wins link.
     entitlement_id = (
         entitlement_rows[0]["entitlement_id"]
