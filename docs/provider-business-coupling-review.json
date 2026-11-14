@@ -781,7 +781,7 @@
         "tests/test_core_p0_5975_headless_opening_sync_coverage.py",
         "tests/test_core_p0_1354_exact_source_session.py"
       ],
-      "pr": "#pending",
+      "pr": "#6079",
       "in_ast_metric": false
     }
   ],
