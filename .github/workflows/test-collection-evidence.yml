@@ -1,0 +1,107 @@
+name: P0 test collection evidence
+
+# #5376: manual-only evidence collection. Never run on pull_request/push.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Collect one suite without executing tests"
+        required: true
+        type: choice
+        default: core
+        options:
+          - core
+          - provider-paris
+          - provider-kobo
+          - provider-numilog
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    name: Collect pytest evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install test-only dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -e . "pytest>=8,<9" "Pillow>=10,<12" "cryptography>=42,<48"
+      - name: Select canonical collection scope
+        id: scope
+        shell: bash
+        env:
+          REQUESTED_SUITE: ${{ inputs.suite }}
+        run: |
+          set -euo pipefail
+          case "$REQUESTED_SUITE" in
+            core) suite="tests" ;;
+            provider-paris) suite="src/plugins/provider-paris/tests" ;;
+            provider-kobo) suite="src/plugins/provider-kobo/tests" ;;
+            provider-numilog) suite="src/plugins/provider-numilog/tests" ;;
+            *) echo "Invalid collection scope" >&2; exit 2 ;;
+          esac
+          test -d "$suite"
+          echo "path=$suite" >> "$GITHUB_OUTPUT"
+      - name: Collect and validate evidence
+        shell: bash
+        env:
+          SUITE_PATH: ${{ steps.scope.outputs.path }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/collection-evidence"
+          python scripts/ci_test_collection_inventory.py \
+            --suite "$SUITE_PATH" \
+            --output "$RUNNER_TEMP/collection-evidence/inventory.json"
+          python - "$RUNNER_TEMP/collection-evidence/inventory.json" "$EXPECTED_SHA" "$SUITE_PATH" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          assert report["source_sha"] == sys.argv[2], "SHA mismatch"
+          assert report["suite"] == sys.argv[3], "suite mismatch"
+          assert report["collection_exit_code"] == 0, "incomplete collection"
+          assert report["count_collected"] > 0, "empty collection"
+          assert report["count_collected"] == len(report["items"]), "inconsistent items"
+          assert sum(row["count"] for row in report["matrix"]) == report["count_collected"], "inconsistent matrix"
+          print(f"Verified {report['count_collected']} collected items at {report['source_sha']}")
+          PY
+      - name: Publish report summary
+        if: success()
+        shell: bash
+        env:
+          SUITE_PATH: ${{ steps.scope.outputs.path }}
+        run: |
+          python - "$RUNNER_TEMP/collection-evidence/inventory.json" "$SUITE_PATH" >> "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+          unknown = sum(
+              row["count"] for row in report["matrix"]
+              if "unclassified" in (
+                  row["owner_architecture"], row["business_object"], row["test_level"],
+              )
+          )
+          print("### Pytest collection evidence (#5376)")
+          print(f"- Suite: {sys.argv[2]}")
+          print(f"- Git SHA: {report['source_sha']}")
+          print(f"- Collected cases: {report['count_collected']}")
+          print(f"- Unclassified cases: {unknown}")
+          print("- Executed/passed/failed: not measured (collection only)")
+          PY
