@@ -68,7 +68,9 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
             return
         index = chooser.get_selected()
         ids = getattr(window, "_reader_device_ids", ())
-        if not type(index) is int or index >= len(ids):
+        if type(index) is not int or not 0 <= index < len(ids):
+            # A stale GTK position (or -1 from a test/custom model) cannot
+            # silently select the last configured reader via Python indexing.
             return
         if getattr(window, "_reader_selected_device_id", None) != ids[index]:
             # A→B→A in one route must revoke an earlier in-flight dry-run.
