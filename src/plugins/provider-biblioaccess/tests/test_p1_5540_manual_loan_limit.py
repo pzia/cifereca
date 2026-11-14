@@ -31,6 +31,7 @@ class Widget:
     def set_text(self, text): self.text = text
     def get_text(self): return self.text
     def set_active(self, active): self.active = active
+    def get_active(self): return self.active
     def set_valign(self, _align): pass
     def add(self, item): self.children.append(item)
     def append(self, item): self.children.append(item)
@@ -38,9 +39,16 @@ class Widget:
     def add_css_class(self, _name): pass
 
 
-GTK = NS(Switch=Widget, Button=Widget, Align=NS(CENTER="center"))
+class Combo(Widget):
+    def set_model(self, labels): self.model = tuple(labels)
+    def set_selected(self, index): self.selected = index
+    def get_selected(self): return self.selected
+
+
+GTK = NS(Switch=Widget, Button=Widget, Align=NS(CENTER="center"),
+         StringList=NS(new=lambda labels: tuple(labels)))
 ADW = NS(PreferencesGroup=Widget, ActionRow=Widget,
-         EntryRow=Widget, PasswordEntryRow=Widget)
+         EntryRow=Widget, PasswordEntryRow=Widget, ComboRow=Combo)
 
 
 def saved(credential, identity, *, ceiling=None, sync="off"):
@@ -80,6 +88,8 @@ def test_descriptor_declares_bounded_advisory_not_a_quota_or_sso_grant():
     assert DESCRIPTOR.background_authentication_option_key == "authenticated_sync"
     assert DESCRIPTOR.interactive_authentication is True
     assert options["authenticated_sync"].default == "off"
+    assert options["authenticated_sync"].value_type == "choice"
+    assert tuple(value for value, _label in options["authenticated_sync"].choices) == ("off", "on")
     assert DESCRIPTOR.capabilities.borrow is False
 
 
@@ -93,6 +103,10 @@ def test_generic_editor_defaults_and_isolates_two_credentials_without_io():
     assert editor_b["option_fields"]["manual_loan_limit"].text == "9"
     assert editor_a["option_fields"]["authenticated_sync"].text == "off"
     assert editor_b["option_fields"]["authenticated_sync"].text == "off"
+    assert editor_a["option_fields"]["authenticated_sync"].row.model == (
+        "Désactivée — sans connexion automatique",
+        "Activée — CAS, prêts et acquisitions permises",
+    )
     assert editor_a["identity"].text == "alice"
     assert editor_b["identity"].text == "bob"
     for root in (root_a, root_b):
