@@ -46,13 +46,17 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     bound_identity_id = self.storage.identity_for_connection(
         pinned_provider, pinned_credential
     )
-    if (type(loan.source_provider) is not str
-            or loan.source_provider != pinned_provider
-            or type(loan.source_credential) is not str
-            or loan.source_credential != pinned_credential
-            or (loan.source_account_id is not None
-                and type(loan.source_account_id) is not str)
-            or loan.source_account_id != pinned_borrower):
+    def source_intact() -> bool:
+        return (
+            type(loan.source_provider) is str
+            and loan.source_provider == pinned_provider
+            and type(loan.source_credential) is str
+            and loan.source_credential == pinned_credential
+            and type(loan.source_account_id) in (str, type(None))
+            and loan.source_account_id == pinned_borrower
+        )
+
+    def source_changed() -> AutomaticLoanAdmission:
         _TRACE_LOG.warning(
             "TRACE download loan_auto blocked reason=source_scope_changed request_ref=%s",
             request_ref,
@@ -62,7 +66,14 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
             "code": "adept_identity_unproven",
             "reason": "source_scope_changed", "retry": "explicit_only",
         })
+
+    if not source_intact():
+        return source_changed()
     identity = self.identity_by_id(bound_identity_id)
+    # Identity and borrower hooks may process events that mutate the Loan.
+    # Re-check before selecting a grant, any ledger or an entitlement.
+    if not source_intact():
+        return source_changed()
     if identity is None:
         _TRACE_LOG.warning(
             "TRACE download loan_auto blocked reason=unbound_connection_identity request_ref=%s",
@@ -92,14 +103,21 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
                 "code": public_borrower_refusal_code(borrower_code),
                 "retry": "explicit_only",
             })
+    if not source_intact():
+        return source_changed()
     entitlement_inventory = self.storage.entitlements(
-        provider_id=loan.source_provider, state="active"
+        provider_id=pinned_provider, state="active"
     )
+    if not source_intact():
+        return source_changed()
     # An upstream loan cannot be silently re-used across local identities,
     # regardless of provider. The two inventories are already provider-scoped;
     # this check is only a veto, never proof of a right or an ADEPT grant.
+    acquisition_rows = self.storage.acquisitions(provider_id=pinned_provider)
+    if not source_intact():
+        return source_changed()
     if self._cross_identity_loan_conflict(
-        self.storage.acquisitions(provider_id=loan.source_provider),
+        acquisition_rows,
         provider_loan_id=loan.id, identity_id=identity.identity_id,
         entitlements=entitlement_inventory,
     ):
@@ -112,6 +130,8 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
             "code": "adept_loan_identity_conflict",
             "reason": "cross_identity_loan", "retry": "explicit_only",
         })
+    if not source_intact():
+        return source_changed()
     # A provider-wide active-right inventory can contain another borrower,
     # another connection or a different edition of the SAME upstream loan ID.
     # Loan ID + local identity alone never authorize an entitlement link.
