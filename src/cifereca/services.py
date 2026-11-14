@@ -3758,14 +3758,21 @@ class LibraryService:
                 "status": "attention_required",
                 "code": "bnf_web_explicit_only", "retry": "explicit_only",
             }
-        loan_id = str(loan.id or "").strip()
-        if not loan_id:
+        # This outer entrypoint can be called without the later admission
+        # helper. Never invoke plugin-defined __str__/__bool__/lower while
+        # computing a cross-process lock key or accepting its source scope.
+        if (type(loan.id) is not str or not loan.id.strip()
+                or type(loan.source_provider) is not str
+                or not loan.source_provider
+                or type(loan.source_credential) is not str
+                or not loan.source_credential):
             return {
-                "status": "attention_required", "loan_id": loan.id,
+                "status": "attention_required", "loan_id": None,
                 "code": "adept_loan_identity_unproven", "retry": "explicit_only",
             }
+        loan_id = loan.id.strip()
         loan_key = hashlib.sha256(
-            (str(loan.source_provider).lower() + "\\0" + loan_id).encode("utf-8")
+            (loan.source_provider.casefold() + "\\0" + loan_id).encode("utf-8")
         ).hexdigest()[:32]
         lock_path = acquisition_lock_file().with_name(
             "cifereca-loan-" + loan_key + ".lock"
