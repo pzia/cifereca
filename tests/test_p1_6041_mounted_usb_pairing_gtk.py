@@ -116,11 +116,11 @@ def test_explicit_refresh_requires_new_selection_and_does_not_retain_uuid(
     assert "Kobo" in dialog.volume_choice.model[0]
     assert "ABCD-1234" not in str(dialog.volume_choice.model)
     dialog.volume_choice.set_selected(0)
-    assert dialog.name_field.get_text() == "SanDisk"  # User-controlled name preserved.
+    assert dialog.name_field.get_text() == "Kobo"  # Auto-prefill is refreshed.
     dialog.respond("confirm")
     row = db.device_binding_get(window._reader_selected_device_id)
     assert row["metadata"]["usb_fingerprint"] == "AAAA-9876"
-    assert row["label"] == "SanDisk"  # Never infer ownership from display name.
+    assert row["label"] == "Kobo"  # UUID remains the identity, not the label.
     assert not errors
 
 
