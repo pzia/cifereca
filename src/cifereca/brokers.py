@@ -1305,9 +1305,11 @@ class AdeptProfileBrokerImpl:
         # coordinate. A runtime may return malformed or hostile field values.
         if type(value) is not str or not 0 < len(value) <= 256:
             return ""
-        token = value.strip()
-        if not token or any(ord(char) < 32 or ord(char) == 127 for char in token):
+        # Reject controls in the original runtime/client value, before strip()
+        # could silently erase a trailing newline or tab from an identity key.
+        if any(ord(char) < 32 or ord(char) == 127 for char in value):
             return ""
+        token = value.strip()
         return token
 
     def _ref(self, row: dict[str, Any]) -> AdeptProfileRef:
