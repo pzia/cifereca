@@ -114,14 +114,26 @@ def test_cross_scope_backup_cannot_be_orphaned(tmp_path, provider, identity):
     _assert_unchanged(service, placement_id, old, new)
 
 
-def test_same_scope_backup_is_rewritten_atomically(tmp_path):
+def test_same_scope_backup_is_an_immutable_archive_after_canonical_rename(tmp_path):
     service, placement_id, old, new, broker, plan = _case(tmp_path)
     _backup(service, old, "local", "id1")
+    with service.storage._lock, service.storage._connect() as db:
+        # A successful normalization must not enter the historical writer,
+        # even when a same-profile legacy receipt matches the source path.
+        db.execute(
+            "CREATE TRIGGER deny_backup_path_rewrite BEFORE UPDATE OF local_path "
+            "ON backup_items BEGIN SELECT RAISE(ABORT, 'archive_is_immutable'); END"
+        )
+        before = db.execute(
+            "SELECT local_path,updated_at,identity_id FROM backup_items "
+            "WHERE provider_id='local'"
+        ).fetchone()
     outcome = broker.run(plan, Control())
     assert outcome.ok and outcome.changed == 1
     assert not old.exists() and new.read_bytes() == b"book-data"
     assert service.storage.placement_get(placement_id)["path"] == str(new)
     with service.storage._lock, service.storage._connect() as db:
         assert db.execute(
-            "SELECT local_path FROM backup_items WHERE provider_id='local'"
-        ).fetchone() == (str(new),)
+            "SELECT local_path,updated_at,identity_id FROM backup_items "
+            "WHERE provider_id='local'"
+        ).fetchone() == before == (str(old), 1, "id1")
