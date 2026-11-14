@@ -196,24 +196,26 @@ def loan_local_cover(
                               or type(row.get("entitlement_id")) is not str
                               or not row["entitlement_id"]):
                 continue
-            remote_resolution = None
-            if not local:
-                metadata = row.get("metadata")
-                remote_resolution = (
-                    metadata.get("cover_resolution")
-                    if type(metadata) is dict else None
-                )
-                # Bad metadata from one catalogue must not abort processing
-                # independent exact local/remote proofs in the same snapshot.
-                # A remote entitlement has no physical Placement; an
-                # "embedded" image can be attested only by a local row.
-                if (type(remote_resolution) is not dict
-                        or remote_resolution.get("status") != "selected"
-                        or type(remote_resolution.get("tier")) is not str
-                        or remote_resolution["tier"] not in ("origin", "catalog")
-                        or type(remote_resolution.get("url")) is not str
-                        or remote_resolution["url"] != row.get("thumbnail_url")):
-                    continue
+            metadata = row.get("metadata")
+            resolution = (
+                metadata.get("cover_resolution")
+                if type(metadata) is dict else None
+            )
+            # Both proof families are snapshots of a selected cover on THIS
+            # exact library row. Checking only a local Placement ID would
+            # allow a stale/rebound proof to override a missing or different
+            # current thumbnail (including its higher embedded priority).
+            # Skip malformed rows individually, preserving other evidence.
+            if (type(resolution) is not dict
+                    or resolution.get("status") != "selected"
+                    or type(resolution.get("tier")) is not str
+                    or resolution["tier"] not in (
+                        ("embedded", "origin", "catalog") if local
+                        else ("origin", "catalog")
+                    )
+                    or type(resolution.get("url")) is not str
+                    or resolution["url"] != row.get("thumbnail_url")):
+                continue
             proofs = row.get("_exact_loan_cover_proofs", ())
             if type(proofs) not in (tuple, list) or len(proofs) > 128:
                 continue
@@ -232,11 +234,11 @@ def loan_local_cover(
                         or (not local and (
                             proof.get("kind") != "remote-entitlement"
                             or proof.get("entitlement_id") != row["entitlement_id"]
-                            or type(proof.get("url")) is not str
-                            or proof["url"] != remote_resolution["url"]
-                            or type(proof.get("tier")) is not str
-                            or proof["tier"] != remote_resolution["tier"]
-                        ))):
+                        ))
+                        or type(proof.get("url")) is not str
+                        or proof["url"] != resolution["url"]
+                        or type(proof.get("tier")) is not str
+                        or proof["tier"] != resolution["tier"]):
                     continue
                 tier = proof.get("tier")
                 if (type(tier) is not str
