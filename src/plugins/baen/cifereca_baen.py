@@ -7,6 +7,10 @@ import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession, TemporaryUnavailable, UnsupportedOperation, Conflict, Cancelled
 BASE='https://www.baen.com/'; FREE=BASE+'allbooks/category/index/id/2012'
+FREE_JSON=BASE+'allbooks/category/getBooks'
+FREE_CATEGORY_ID='2012'
+FREE_JSON_PAGE_SIZE=20
+MAX_FREE_JSON_BYTES=256*1024
 MAX_REQUESTED_PAGES = 101  # Pages 0..100, never a silently clamped page.
 UNVERIFIED_SEARCH_WARNING = (
     'partial_results : Baen : recherche et pagination amont non qualifiées'
@@ -59,6 +63,79 @@ def _listing_product_href(href, attrs, page_html):
     return bool(re.search(r'\bFree\s+Library\b', page_html, re.I)
                 and re.search(r'\bShowing\s+\d+\s*-\s*\d+\s+of\s+\d+\b',
                               page_html, re.I))
+
+def _observed_free_library_json(response, credential_id, page):
+    """Parse only Baen's observed Free Library AJAX schema (#2333).
+
+    A category listing is not a general q search or a reader entitlement.
+    Products are public *notices* only. Never interpret isOwned or isFree as
+    proof of an account, a confirmed EPUB offer or a downloadable file.
+    """
+    if (getattr(response, 'status_code', None) != 200
+            or response.headers.get('content-type', '').split(';')[0].strip().lower()
+                != 'application/json'
+            or len(response.content) > MAX_FREE_JSON_BYTES):
+        raise ValueError('unverified_public_json')
+    try:
+        payload=response.json()
+    except (ValueError, UnicodeError):
+        raise ValueError('unverified_public_json') from None
+    if (type(payload) is not dict
+            or payload.get('returnCode') != 'single cat'
+            or str(payload.get('categoryId')) != FREE_CATEGORY_ID
+            or type(payload.get('totalBooks')) is not int
+            or not 0 <= payload['totalBooks'] <= 100000
+            or type(payload.get('numOfBooks')) is not int
+            or not 0 <= payload['numOfBooks'] <= FREE_JSON_PAGE_SIZE
+            or type(payload.get('productData')) is not list
+            or len(payload['productData']) != payload['numOfBooks']):
+        raise ValueError('unverified_public_json')
+    out=[];seen=set();rejected=0
+    for entry in payload['productData']:
+        if type(entry) is not dict or entry.get('isFree') is not True:
+            rejected += 1
+            continue
+        href=entry.get('productUrl')
+        name=entry.get('name')
+        if (type(href) is not str or len(href) > 2048
+                or type(name) is not str or not 0 < len(name) <= 512):
+            rejected += 1
+            continue
+        title=' '.join(html.unescape(name).split())
+        if (not title or len(title) > 256
+                or any(category(ch) in {'Cc','Cf','Cs'} for ch in title)):
+            rejected += 1
+            continue
+        url=urljoin(BASE,href)
+        if not _trusted_baen_url(url):
+            rejected += 1
+            continue
+        parts=urlsplit(url)
+        if (parts.query or not re.fullmatch(
+                r'/[A-Za-z0-9][A-Za-z0-9_-]*\\.html', parts.path)):
+            rejected += 1
+            continue
+        if url in seen:
+            rejected += 1
+            continue
+        seen.add(url)
+        rid=hashlib.sha256(url.encode('utf-8')).hexdigest()[:24]
+        out.append(SearchResult(
+            id='baen:'+rid, record_id=rid, docbase='BAEN',
+            medium='digital', title=title, author=None, type='Livre numérique',
+            format=None, publisher='Baen', published_at=None,
+            description=None, thumbnail_url=None, friendly_url=url,
+            scenario='BAEN_FREE_LIBRARY', source_provider='baen',
+            source_credential=credential_id, download_url=None,
+            content_type='ebook', source_collection='public',
+            owned=False, downloadable=False,
+            metadata={'metadata_evidence':'baen.free_library_category_json'},
+        ))
+    # A caller can never promote this page into an exhaustive q result:
+    # page 1 has no independently verified HTTPX baseline; an omitted row
+    # or publisher-side filtering must be represented as partial.
+    return out, rejected
+
 
 def _baen_explicit_download_offer(html_text, detail_url):
     """Find a trusted download button and whether its EPUB format is proven.
@@ -215,8 +292,21 @@ class BaenSession(ProviderSession):
                 or any(category(ch) in {'Cc', 'Cf', 'Cs'} for ch in query)):
             raise ProviderCapabilityError('Baen : invalid_query')
         if not self.connected: raise ProviderError('Baen : connecter le catalogue')
+        browse_category = not query.strip()
         try:
-            r=self.client.get(FREE,params=self._search_params(query,page,self.page_size))
+            if browse_category:
+                # Observed read-only AJAX navigation request, not a borrow,
+                # account login or purchase. Never attach a query/credential.
+                r=self.client.post(FREE_JSON,data={
+                    'categoryId':FREE_CATEGORY_ID, 'page':page+1,
+                    'pageSize':FREE_JSON_PAGE_SIZE, 'filter':'release_date',
+                    'dir':'DESC', 'hideBundles':0, 'hideEarcs':0,
+                    'showAvailable':'false',
+                })
+            else:
+                # Free-text q is not attested by the captured AJAX schema.
+                # Preserve the legacy unqualified route, marked partial.
+                r=self.client.get(FREE,params=self._search_params(query,page,self.page_size))
             _reject_redirect(r)
             r.raise_for_status()
         except httpx.HTTPStatusError as exc:
@@ -250,6 +340,21 @@ class BaenSession(ProviderSession):
                 failure.retryable = False
             # Redirect loops are not evidence of a technical outage.
             raise failure from None
+        if browse_category:
+            try:
+                out, rejected = _observed_free_library_json(
+                    r, self.credential_id, page,
+                )
+            except ValueError:
+                # Invalid JSON/shape must not be mistaken for a genuine
+                # empty public category, even on HTTP 200.
+                raise ProviderError('Baen : catalogue_schema_unverified') from None
+            self.last_search_warnings.append(UNVERIFIED_SEARCH_WARNING)
+            if rejected:
+                self.last_search_warnings.append(
+                    'partial_results : Baen : lignes de catalogue non qualifiées'
+                )
+            return out
         out=[]; seen=set()
         for attrs,body in re.findall(r'<a\b([^>]*)>(.*?)</a\s*>',r.text,re.I|re.S):
             href_match = re.search(r'(?:^|\s)href\s*=\s*["\']([^"\']+)["\']', attrs, re.I)
