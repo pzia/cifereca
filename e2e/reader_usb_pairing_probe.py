@@ -287,6 +287,24 @@ def main() -> int:
         if not state["x11_target_window"]:
             state["checkpoint"] = "x11_hit_mismatch"
             raise AssertionError("XTEST root hit does not match GTK native")
+        # XTEST can be linked but unavailable on the running X server.
+        # Query its negotiated extension explicitly instead of interpreting
+        # an XSync acknowledgement as GTK input delivery.
+        major, minor, event_base, error_base = (
+            C.c_int(), C.c_int(), C.c_int(), C.c_int()
+        )
+        device.xtst.XTestQueryExtension.argtypes = [
+            C.c_void_p, C.POINTER(C.c_int), C.POINTER(C.c_int),
+            C.POINTER(C.c_int), C.POINTER(C.c_int),
+        ]
+        device.xtst.XTestQueryExtension.restype = C.c_int
+        state["xtest_extension"] = bool(device.xtst.XTestQueryExtension(
+            device.display, C.byref(event_base), C.byref(error_base),
+            C.byref(major), C.byref(minor),
+        ))
+        if not state["xtest_extension"]:
+            state["checkpoint"] = "xtest_unavailable"
+            raise AssertionError("XTEST server extension unavailable")
         device.click(screen_x, screen_y)
 
     def toggle_expert(widget):
@@ -469,6 +487,7 @@ def main() -> int:
                 "shell", "widget_mapped", "dialog_open", "expert_mode",
                 "chooser_return", "dialog_response", "manual_uuid",
                 "button_not_clicked", "widget_geometry", "x11_hit_mismatch",
+                "xtest_unavailable",
                 "dialog_build_failed", "expert_keyboard", "setup",
             }
             checkpoint = state["checkpoint"]
@@ -484,6 +503,9 @@ def main() -> int:
                 ), flush=True)
                 print("P1_6041_X11_TARGET_WINDOW=" + (
                     "yes" if state.get("x11_target_window") else "no"
+                ), flush=True)
+                print("P1_6041_XTEST_EXTENSION=" + (
+                    "yes" if state.get("xtest_extension") else "no"
                 ), flush=True)
                 pointer = "seen" if state["pointer_seen"] else "absent"
                 keyboard = "seen" if state["key_seen"] else "absent"
