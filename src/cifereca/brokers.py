@@ -100,12 +100,10 @@ class AcquisitionBrokerImpl:
     def can_download(self, item: Any) -> bool:
         return bool(self.service.can_direct_download(item))
 
-    def eligible_accounts(self, item: Any, *, identity_id: str | None = None) -> tuple[AccountRef, ...]:
-        # None is retained for read-only ABI compatibility. An explicitly
-        # supplied empty identity must not inherit the UI selection.
-        if identity_id is not None and (
-            type(identity_id) is not str or not identity_id.strip()
-        ):
+    def eligible_accounts(self, item: Any, *, identity_id: str) -> tuple[AccountRef, ...]:
+        # Never enumerate eligible source accounts from a mutable GTK selection.
+        # An anonymous read is not a cross-profile inventory capability.
+        if type(identity_id) is not str or not identity_id.strip():
             raise ValueError("identity_id_required")
         provider = str(getattr(item, "source_provider", "") or "")
         source_credential = str(getattr(item, "source_credential", "") or "")
@@ -1186,12 +1184,10 @@ class IdentityBrokerImpl:
             rows.append({"identity_id": getattr(identity, "identity_id", ""), "name": getattr(identity, "name", ""), "label": getattr(identity, "label", "")})
         return rows
     def select(self, identity_id: str): return self.service.select_identity(identity_id)
-    def accounts(self, identity_id: str | None = None):
-        # None remains the legacy navigation-only read. A supplied but empty
-        # identity is never permission to silently adopt the UI selection.
-        if identity_id is not None and (
-            type(identity_id) is not str or not identity_id.strip()
-        ):
+    def accounts(self, identity_id: str):
+        # Public identity reads must be explicitly pinned even when the
+        # service is simultaneously handling another GTK/HTTP request.
+        if type(identity_id) is not str or not identity_id.strip():
             raise ValueError("identity_id_required")
         return tuple(
             _account_ref(self.service, row)
