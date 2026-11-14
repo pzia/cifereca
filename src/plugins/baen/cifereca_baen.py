@@ -113,7 +113,7 @@ def _observed_free_library_json(response, credential_id, page):
             continue
         parts=urlsplit(url)
         if (parts.query or not re.fullmatch(
-                r'/[A-Za-z0-9][A-Za-z0-9_-]*\\.html', parts.path)):
+                r'/[A-Za-z0-9][A-Za-z0-9_-]*\.html', parts.path)):
             rejected += 1
             continue
         if url in seen:
