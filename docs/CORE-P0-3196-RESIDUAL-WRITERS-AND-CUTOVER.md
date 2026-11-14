@@ -1,6 +1,20 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
 
+> **Delta #6120 (P0 #5975 / #3196, 14/11/2026) :** la migration de
+> répertoire `Storage.commit_directory_migration` ne modifie désormais
+> **aucun** `backup_items.local_path` ni `updated_at`, pour **tous**
+> les fournisseurs. Son `UPDATE` legacy non-Kobo est physiquement retiré,
+> après le retrait du writer de normalisation (#6118). Les contrôles de
+> propriétaire exact et de `SourceReference` sont étendus aux fournisseurs
+> Paris, Numilog et inconnus : tout propriétaire historique étranger/absent
+> ou référence typée sur un chemin déplacé entraîne un refus atomique.
+> Les Placements et métadonnées canoniques sont toujours migrés sous journal
+> et transaction. Ce retrait n'affecte pas les relinks canoniques attestés
+> ni les autres producteurs d'archives.
+
+
+
 > **Delta #6118 (P0 #5975 / #3196, 14/11/2026) :** le chemin actif
 > `Storage.relocate_local_path` de normalisation de fichier ne réalise
 > désormais plus **aucun UPDATE de `backup_items.local_path`**, quel que

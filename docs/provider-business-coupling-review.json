@@ -1205,6 +1205,22 @@
       "in_ast_metric": true,
       "original_site_id": "site-1220521b4d5dc767addb6d29",
       "retired_at_sha": "5c81ae0f8914c78eb63860e9436c637d7f6d5b1c"
+    },
+    {
+      "id": "struct-w5-directory-migration-all-provider-backup-path-writer-retired",
+      "original": "Storage.commit_directory_migration iterated non-Kobo backup_items and rewrote local_path and updated_at when changing an identity directory, treating a legacy receipt as a current file locator. The foreign/unbound archive owner and typed-source vetoes applied only to Kobo.",
+      "original_classification": "legacy_mutating_cutover",
+      "replacement": "Remove the SQL UPDATE and iteration over non-Kobo legacy backup paths entirely. All historical backup_items local_path, timestamps and owner stay immutable across a directory migration. Generalize read-only directory foreign/null-owner veto and the canonical SourceReference source/credential/edition veto to any provider, including unknown providers; canonical scoped Placement/catalogue/JSON migration and rollback remain separate.",
+      "classification": "removed_all_provider_w5_directory_migration_backup_writer_and_generalized_vetoes",
+      "evidence": "The Core directory migration source has no UPDATE backup_items mutation; AST regression guard checks the named method. Parametrized offline SQLite tests poison any UPDATE OF local_path with a trigger while a journaled directory migration succeeds for Kobo, Paris, Numilog and synthetic unknown provider; same-profile archive row is byte-for-byte identical. Foreign, missing and alias owners are rejected atomically for all providers. Typed SourceReference conflicting with a historical locator is refused for all providers; a test still injects a failing canonical Placement writer and checks complete SQLite/disk rollback.",
+      "tests": [
+        "tests/test_identity_directory_099_dev2.py",
+        "tests/test_core_p0_3196_w5_directory_foreign_archive.py",
+        "tests/test_core_p0_3196_residual_writer_surface.py",
+        "tests/test_core_p0_3196_w5_directory_collision_scope.py"
+      ],
+      "pr": "#6120",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
