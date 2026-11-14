@@ -14,27 +14,7 @@ from .library_audit_broker import _run_scoped_audit, _unavailable
 from .library_evidence_scope import _public_provider_group
 from .library_inspection_cache import take_inspection_cache
 from .library_sqlite_freshness import sqlite_source_stamp
-from .library_manual_link_preflight import review_local_pair, review_source_read_only
-
-def _private_edition_collision_counts(rights, identity_id):
-    """Conservative count of same-edition rights across private credentials.
-
-    Scope by identity AND provider; a title, ISBN, account hint, or another
-    provider can never identify the source of a private right. This count is
-    diagnostic/negative evidence only and cannot establish ownership.
-    """
-    counts = Counter()
-    if type(identity_id) is not str or not identity_id:
-        return counts
-    for row in rights:
-        if type(row) is not dict or row.get('identity_id') != identity_id:
-            continue
-        provider, item = row.get('provider_id'), row.get('item_id')
-        if (type(provider) is str and provider
-                and type(item) is str and item):
-            counts[(identity_id, provider, item)] += 1
-    return counts
-
+from .library_manual_link_preflight import ManualLinkPreflight, review_source_read_only
 
 # Generic scopes only. Provider facets are derived from the audited cases,
 # never from a Core-owned list of installed suppliers.
@@ -134,84 +114,6 @@ def _searchable(text):
     return ''.join(ch for ch in unicodedata.normalize('NFKD', text.casefold())
                    if not unicodedata.combining(ch))
 
-
-
-# #2841: only these codes are strictly PER-OBSERVATION failures. They
-# may originate from *other* EPUBs, without invalidating exact, independently
-# verified selected-file bytes or the full SQLite proof graph. Never add
-# traversal, file/row/byte budgets, root changes or cancellation here.
-_PAIR_LOCAL_FILE_REASONS = frozenset({
-    'epub_parser_limit_or_invalid',
-    'structure_limit_or_invalid',
-    'file_byte_budget',  # per-file cap only, not hash/structure global cap
-})
-# The structure umbrella reason also covers an exhausted shared byte budget.
-# A bounded individual invalid ZIP/CRC is non-authoritative for OTHER files,
-# but an exhausted global budget MUST NOT become a pair-write permit.
-_PAIR_STRUCTURE_BUDGET_STATES = frozenset({
-    'structure_byte_or_time_budget',
-    'structure_byte_or_entry_budget',
-    'structure_cancelled',
-})
-
-
-def _pair_evidence_gaps(audit):
-    """Closed reasons for the existing fail-closed pair coverage gate.
-
-    NOT a write authority: Numilog/Kobo engines independently revalidate the
-    entire right/receipt/backup, identity, conflict set and local bytes under
-    the Core transaction lock. Metadata suggestion coverage is not ownership
-    evidence. Uncertain traversal, incomplete SQLite/WAL, an unfinished proof
-    comparison, or unverified path coverage must still block all pairs.
-    """
-    try:
-        inventory = audit.inventory
-        snapshot = audit.snapshot
-        reconciliation = audit.reconciliation
-        if (type(inventory.reasons) is not set
-                or type(snapshot.reasons) is not set
-                or type(reconciliation.reasons) is not set
-                or type(audit.reasons) is not set
-                or type(audit.stored_paths.reasons) is not set):
-            return ('coverage_unavailable',)
-        gaps = set()
-        if audit.reasons:
-            gaps.add('audit_scope_incomplete')
-        if snapshot.reasons:
-            gaps.add('snapshot_incomplete')
-        if audit.stored_paths.reasons:
-            gaps.add('path_coverage_incomplete')
-        if inventory.reasons - _PAIR_LOCAL_FILE_REASONS:
-            gaps.add('inventory_incomplete')
-        if reconciliation.reasons - inventory.reasons:
-            gaps.add('comparison_incomplete')
-        if (type(inventory.files_started) is not int
-                or inventory.files_started != len(inventory.files)):
-            gaps.add('inventory_incomplete')
-        if any(file.structure_validation in _PAIR_STRUCTURE_BUDGET_STATES
-               for file in inventory.files):
-            gaps.add('structure_global_budget')
-        required = (
-            'entitlements', 'acquisition_ledger', 'artifacts',
-            'placements', 'backup_items', 'catalog_entries',
-        )
-        if not all(type(snapshot.tables.get(table)) is list for table in required):
-            gaps.add('snapshot_incomplete')
-        return tuple(sorted(gaps))
-    except (AttributeError, TypeError, ValueError):
-        return ('coverage_unavailable',)
-
-
-def _pair_evidence_complete(audit):
-    return not _pair_evidence_gaps(audit)
-
-
-def _explain_pair_coverage(report, gaps):
-    # No new authority or status. These codes are private explanations for an
-    # already-refused attested preflight, never a public diagnostic payload.
-    if 'audit_incomplete' not in report.codes:
-        return report
-    return replace(report, codes=tuple(sorted(set(report.codes) | set(gaps))))
 
 
 def _right_bibliography(right, matches):
@@ -499,9 +401,8 @@ class LocalInspection:
         # Weaker, separately labelled title-only leads when an author is
         # missing; never use them as ownership/loan/edition evidence.
         self._title_only_file_keys = {}
-        # Revocable, private evidence summaries; no raw account/path exported.
-        self._manual_right_proofs = {}
-        self._manual_file_proofs = {}
+        # Revocable scanned FileObservation for non-legacy local operations.
+        # The retired manual attachment has no per-provider receipt map.
         self._manual_file_observations = {}
         # A declaration is descriptive, never one of the attested strategies.
         self._declared_right_scopes = {}
@@ -509,8 +410,6 @@ class LocalInspection:
         self._declared_last = None
         self._history_withdraw_pending = None
         self._manual_audit_complete = audit.redacted().get('status') == 'complete'
-        self._manual_pair_evidence_complete = _pair_evidence_complete(audit)
-        self._manual_pair_coverage_gaps = _pair_evidence_gaps(audit)
         # Private, same-identity facets for the direct-selection file browser.
         # No file metadata or query is ever exported through summary()/logs.
         self._file_facets = {}
@@ -724,16 +623,9 @@ class LocalInspection:
             }
             self._case_search[f'file:{index}'] = search_text
             if 'confirmed_link' not in states:
-                self._manual_file_proofs[f'file:{index}'] = {
-                    'verified': (
-                        observation.media_format == 'epub'
-                        and observation.validation == 'ok'
-                        and observation.structure_validation == 'epub_structure_crc_ok'
-                    ),
-                    'signature': (observation.sha256, observation.size),
-                }
-                # This FileObservation is a private, scanned capability; a
-                # later preview still performs its own fresh nofollow SHA.
+                # Keep the raw, scoped FileObservation for independent
+                # declaration and missing-placement previews. Neither
+                # inherits authority from the retired manual-link preflight.
                 self._manual_file_observations[f'file:{index}'] = observation
         from .library_descriptive_hints import index_file_descriptions, index_file_titles
         descriptive_index = index_file_descriptions(
@@ -787,13 +679,6 @@ class LocalInspection:
 
         scope_counts = Counter(
             key for right in rights if (key := right_scope(right)) is not None
-        )
-        # A source-specific preflight must reject same-edition ambiguity
-        # across credentials even if its legacy placement omits the borrower.
-        # Count every supplier uniformly; the selected manual transaction
-        # independently checks its supported admission/attested provenance.
-        edition_collision_counts = _private_edition_collision_counts(
-            rights, identity_id,
         )
         # Active unverified rights remain the audit's original universe.
         # Closed/returned/expired typed loans are a distinct READ-ONLY
@@ -853,18 +738,6 @@ class LocalInspection:
                                   if all(acquisition_rows[i].get(key) == right.get(key)
                                          for key in scope_keys)]
             own_ledger = [acquisition_rows[i] for i in own_ledger_indices]
-            right_signature = None
-            ledger_ok = (len(own_ledger) == 1
-                         and own_ledger[0].get('status') == 'complete'
-                         and type(own_ledger[0].get('artifact_id')) is str
-                         and bool(own_ledger[0]['artifact_id']))
-            if ledger_ok:
-                matching_artifacts = by_artifact.get(own_ledger[0]['artifact_id'], ())
-                if len(matching_artifacts) == 1:
-                    right_signature = (
-                        matching_artifacts[0].get('sha256'),
-                        matching_artifacts[0].get('size'),
-                    )
             scope = right_scope(right)
             # BnF's existing Core declaration workflow may only record an
             # active, exact loan. A catalogue entry, an expired entitlement
@@ -879,26 +752,6 @@ class LocalInspection:
                     and (scope[1] != 'bnf-pret' or bnf_exact_loan)
                     and scope_counts[scope] == 1):
                 self._declared_right_scopes[f'right:{index}'] = scope
-            # Only Numilog's diagnostic preflight consumes private receipt
-            # proofs. Other sources use a separate, read-only report.
-            if right_provider == 'numilog':
-                self._manual_right_proofs[f'right:{index}'] = {
-                    'attested': (
-                        right.get('attested_source') == 'numilog.authenticated_library'
-                        and right.get('state') == 'active'
-                        and right.get('entitlement_type') == 'owned'
-                        and scope is not None
-                    ),
-                    'ambiguous': (
-                        scope is None or scope_counts[scope] != 1
-                        or edition_collision_counts.get(
-                            (identity_id, right_provider, right_item), 0) != 1
-                    ),
-                    'ledger_conflict': len(own_ledger_indices) != len(ledger_indices),
-                    'ledger_count': len(own_ledger),
-                    'ledger_complete': ledger_ok,
-                    'signature': right_signature,
-                }
             why = _right_explanation(
                 right, own_ledger, by_edition.get((right_provider, right_item), ()),
                 by_artifact, by_path, incomplete,
@@ -1265,8 +1118,6 @@ class LocalInspection:
         self._descriptive_file_keys.clear()
         self._title_only_file_keys.clear()
         self._file_facets.clear()
-        self._manual_right_proofs.clear()
-        self._manual_file_proofs.clear()
         self._manual_file_observations.clear()
         self._declared_right_scopes.clear()
         self._declared_pending = None
@@ -1276,8 +1127,6 @@ class LocalInspection:
         self._manual_service = None
         self._manual_identity = None
         self._manual_audit_complete = False
-        self._manual_pair_evidence_complete = False
-        self._manual_pair_coverage_gaps = ()
         self._summary = {}
         self._path_missing_by_sqlite_state.clear()
         self._scanned_formats.clear()
@@ -1527,7 +1376,7 @@ class LocalInspection:
         if (not self.valid() or type(right_key) is not str
                 or type(file_key) is not str
                 or len(right_key) > 128 or len(file_key) > 128):
-            return review_local_pair(None, None, audit_complete=False)
+            return ManualLinkPreflight("unavailable", ("selection_unavailable",))
         right = self._cases.get(right_key)
         file = self._cases.get(file_key)
         if (right is None or file is None
@@ -1538,29 +1387,19 @@ class LocalInspection:
                 or 'confirmed_link' in file.states
                 or not right_key.startswith('right:')
                 or not file_key.startswith('file:')):
-            return review_local_pair(None, None, audit_complete=False)
+            return ManualLinkPreflight("unavailable", ("selection_unavailable",))
 
-        # The session builds private proof summaries only for sources whose
-        # attested acquisition contract supports this diagnostic. Dispatch on
-        # that prepared evidence, never on a Core-owned supplier identifier.
-        # Missing evidence must fail closed as a read-only unsupported source.
-        if right_key not in self._manual_right_proofs:
-            return review_source_read_only(
-                audit_complete=self._manual_audit_complete,
-                loan_inactive='loan_inactive' in right.states,
-                bibliographic_hint=(
-                    file_key in self._candidate_file_keys.get(right_key, ())
-                ),
-            )
-        return _explain_pair_coverage(review_local_pair(
-            self._manual_right_proofs.get(right_key),
-            self._manual_file_proofs.get(file_key),
-            audit_complete=self._manual_pair_evidence_complete,
-            global_audit_partial=not self._manual_audit_complete,
-            bibliographic_hint=(
-                file_key in self._candidate_file_keys.get(right_key, ())
+        # No manual right/file attachment writer survives the canonical
+        # provenance cutover. Never convert snapshot receipts or equal bytes
+        # into a source-owned approval in this local diagnostic. Every
+        # provider receives the same closed read-only explanation.
+        return review_source_read_only(
+            audit_complete=self._manual_audit_complete,
+            loan_inactive='loan_inactive' in right.states,
+            bibliographic_hint=file_key in self._candidate_file_keys.get(
+                right_key, (),
             ),
-        ), self._manual_pair_coverage_gaps)
+        )
 
     def revoke_manual_attachment_preview(self):
         """A changed selection invalidates pending and in-flight previews."""
