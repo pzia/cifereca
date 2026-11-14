@@ -343,6 +343,16 @@ SCENARIOS = {
         "description": "P1 #757 : même parcours GTK avec géométrie 1600 px et captures locales privées.",
         "runner": "gtk-modern-light", "width": 1600,
     },
+    "reader-usb-pairing-1024": {
+        "plugin": "ui.page.readers", "fixture": "startup",
+        "description": "P1 #6041 : dialogue Adw/GTK4 et clic XTEST à 1024, USB fictif 0/1/N, expert et révocation.",
+        "runner": "gtk-reader-pairing", "width": 1024,
+    },
+    "reader-usb-pairing-1366": {
+        "plugin": "ui.page.readers", "fixture": "startup",
+        "description": "P1 #6041 : même sélection GTK/XTEST à 1366 sans appareil ni écriture USB.",
+        "runner": "gtk-reader-pairing", "width": 1366,
+    },
 }
 
 
@@ -602,6 +612,13 @@ def main() -> int:
                     xvfb, "-a", "-s", "-screen 0 1366x900x24",
                     args.python, str(ROOT / "e2e/task_busy_settings_probe.py"),
                     "--out", str(scenario_dir), "--width", "1366",
+                ]
+            elif scenario.get("runner") == "gtk-reader-pairing":
+                width = scenario["width"]
+                command = [
+                    xvfb, "-a", "-s", f"-screen 0 {width}x900x24",
+                    args.python, str(ROOT / "e2e/reader_usb_pairing_probe.py"),
+                    "--out", str(scenario_dir), "--width", str(width),
                 ]
             elif scenario.get("runner") == "gtk-capture-session":
                 command = [
@@ -976,7 +993,7 @@ def main() -> int:
                     if type(stage) is str and stage in allowed:
                         print("P1_4664_CLOSED_FAILURE_STAGE=" + stage, flush=True)
                 visual_change_ratio = report_data.get("visual_change_ratio")
-                if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-raw-export", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-bnf-covers", "gtk-optimizer-handoff", "gtk-capture-session", "gtk-modern-light"} and report_data.get("status") != "PASS":
+                if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-raw-export", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-bnf-covers", "gtk-optimizer-handoff", "gtk-capture-session", "gtk-modern-light", "gtk-reader-pairing"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
                     returncode = 1
             minimum_change = scenario.get("min_visual_change_ratio")
