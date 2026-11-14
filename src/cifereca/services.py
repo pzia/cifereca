@@ -477,15 +477,19 @@ class LibraryService:
     def manual_borrow_followup_available(self, item: SearchResult) -> bool:
         """A spent claim may be inspected, never submitted again."""
         from .core.borrow_later_verification import borrow_followup_available
+        selected = self.current_identity
         return borrow_followup_available(
             self, item, readiness=self.manual_borrow_diagnostic,
+            identity_id=getattr(selected, "identity_id", None),
         )
 
     def verify_manual_borrow_followup(self, item: SearchResult) -> dict[str, object]:
         """Independently observe a spent claim without mutation or entitlement."""
         from .core.borrow_later_verification import verify_pending_borrow_followup
+        selected = self.current_identity
         return verify_pending_borrow_followup(
             self, item, readiness=self.manual_borrow_diagnostic,
+            identity_id=getattr(selected, "identity_id", None),
         )
 
     def verify_borrow_without_submission(
