@@ -769,6 +769,20 @@
       ],
       "pr": "#6073",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-opening-sync-readiness-no-gtk-identity",
+      "original": "core.provider_sessions._opening_sync_covers_visible_accounts read the mutable current_identity getter during the startup connect sweep to choose which borrower's loans could be suppressed",
+      "original_classification": "navigation_dependent_initial_loan_refresh_decision",
+      "replacement": "The startup connection sweep passes an exact admitted account/identity scope; the Core worker accepts only explicit selected_identity_id and refuses missing, malformed or accountless scope or indeterminate source Sync consent, instead of re-reading GUI selection.",
+      "classification": "removed_navigation_opening_sync_scope_worker",
+      "evidence": "Synthetic headless service with poison-current_identity proves no worker navigation read; unknown/malformed scope and absent accounts preserve forced refresh; explicit switched profiles and non-affirmative Sync policy never suppress the initial loan read. No supplier GET, consent update, acquisition, SQLite writes or new supplier switch.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_opening_sync_coverage.py",
+        "tests/test_core_p0_1354_exact_source_session.py"
+      ],
+      "pr": "#pending",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
