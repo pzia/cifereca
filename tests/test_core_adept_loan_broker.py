@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+
 from cifereca.brokers import AdeptLoanBrokerImpl, build_public_brokers
-from cifereca.plugin_api import AdeptLoanBroker
+from cifereca.plugin_api import AdeptLoanBroker, AttentionRequired
 
 
 class Service:
@@ -79,4 +81,38 @@ def test_empty_profile_scope_keeps_core_origin_resolution():
     assert service.calls == [
         ("reconcile", "acq-1", None),
         ("choices", "acq-1", None),
+    ]
+
+
+@pytest.mark.parametrize("scope", [
+    (123,), ({"id": "123"},), (["123"],),
+    ("",), ("    ",), ("stable" + chr(10),),
+    ("stable" + chr(0),), ("x" * 257,), ["valid"],
+])
+def test_invalid_explicit_adept_loan_scope_is_never_unscoped(scope):
+    service = Service()
+    broker = AdeptLoanBrokerImpl(service)
+    for method in (broker.reconcile, broker.choices):
+        with pytest.raises(AttentionRequired) as exc:
+            method("acq-1", profile_ids=scope)
+        assert exc.value.code == "adept_profile_scope_invalid"
+    assert service.calls == []
+
+
+def test_adept_loan_scope_rejects_oversized_collection_before_dispatch():
+    service = Service()
+    with pytest.raises(AttentionRequired) as exc:
+        AdeptLoanBrokerImpl(service).reconcile(
+            "acq-1", profile_ids=("stable-reader",) * 2049,
+        )
+    assert exc.value.code == "adept_profile_scope_invalid"
+    assert service.calls == []
+
+
+def test_valid_adept_loan_scope_deduplicates_and_keeps_explicit_target():
+    service = Service()
+    broker = AdeptLoanBrokerImpl(service)
+    broker.reconcile("acq-1", profile_ids=("stable-reader", "stable-reader", "Éloïse"))
+    assert service.calls == [
+        ("reconcile", "acq-1", ["stable-reader", "Éloïse"]),
     ]
