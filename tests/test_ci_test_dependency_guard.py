@@ -185,3 +185,35 @@ def test_chained_namespace_assignments_reach_dynamic_loader(tmp_path):
         'load(two)\n',
     )
     assert has_test_consumers(root, ["tests/test_fixture.py"])
+
+@pytest.mark.parametrize("consumer", [
+    'import pytest\\npytest.importorskip("tests.test_fixture")\\n',
+    'import runpy\\nrunpy.run_module("tests.test_fixture")\\n',
+    'import runpy\\nrunpy.run_path("tests/test_fixture.py")\\n',
+    'from pytest import importorskip as load\\nload("tests.test_fixture")\\n',
+    'from runpy import run_module as execute\\nexecute("tests.test_fixture")\\n',
+    'from runpy import run_path as execute\\nexecute("tests/test_fixture.py")\\n',
+])
+def test_executable_module_loaders_are_test_consumers(tmp_path, consumer):
+    root = _sample(tmp_path, consumer)
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+@pytest.mark.parametrize("consumer", [
+    'pytest.importorskip(f"tests.{name}")\\n',
+    'runpy.run_module("tests." + name)\\n',
+    'runpy.run_path(Path("tests") / filename)\\n',
+])
+def test_computed_executable_module_loaders_fail_closed(tmp_path, consumer):
+    root = _sample(tmp_path, consumer)
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+@pytest.mark.parametrize("consumer", [
+    'pytest.importorskip("pytest_cov")\\n',
+    'runpy.run_module("tests.unrelated")\\n',
+    'runpy.run_path("tests/test_other.py")\\n',
+])
+def test_unrelated_executable_modules_keep_targeted_selection(tmp_path, consumer):
+    root = _sample(tmp_path, consumer)
+    assert not has_test_consumers(root, ["tests/test_fixture.py"])
