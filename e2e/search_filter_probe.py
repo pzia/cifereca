@@ -159,6 +159,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--width", type=int, choices=(1024, 1366, 1600), default=1366)
+    # Absence preserves the original P0 1280x1024 screen exactly.
+    parser.add_argument("--matched-display", action="store_true")
     args = parser.parse_args()
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -196,7 +198,10 @@ def main() -> int:
         })
 
     result = {
-        "scenario": "search-filter-p0", "git_sha": sha,
+        "scenario": (
+            f"search-filter-{args.width}" if args.matched_display
+            else "search-filter-p0"
+        ), "git_sha": sha,
         "backend": "GTK4/X11/Xvfb", "identities": ["camille", "alex"],
         "steps": [], "checks": {"query": True, "rows": True, "count": True,
                                "selection": True, "scroll": True, "search_requests": True},
@@ -385,6 +390,24 @@ def main() -> int:
     def capture_stage(stage: str, *, popup: bool = False):
         nonlocal capture
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
+        if args.matched_display:
+            # #774: Search/Recommendations are exercised independently on
+            # matching *physical* X11 displays, not a requested GTK width
+            # inside the historical P0 1280px Xvfb.
+            expected_height = {1024: 768, 1366: 900, 1600: 1000}[args.width]
+            actual_width, actual_height = window.get_width(), window.get_height()
+            assert image.size == (args.width, expected_height), (
+                "Search comparison Xvfb display is not physically matched"
+            )
+            assert args.width - 150 <= actual_width <= args.width, (
+                "Search comparison GTK window exceeds its display budget"
+            )
+            assert 500 <= actual_height <= expected_height
+            result["p1_774_matched_geometry"] = {
+                "display_width": image.width, "display_height": image.height,
+                "window_width": actual_width, "window_height": actual_height,
+            }
+            result["checks"]["P1_774_search_real_matched_geometry"] = True
         if args.width == 1024:
             result["p1_3687_phase"] = "geometry"
             # An actual 1024x768 Xvfb screen and allocated GTK window, not

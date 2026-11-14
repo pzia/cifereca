@@ -21,7 +21,7 @@ def test_reference_scenario_is_targetable_by_name_and_domain():
     runner = _module()
     assert [name for name, _ in runner.select("startup", None)] == ["startup"]
     assert [name for name, _ in runner.select(None, "core")] == [
-        "search-filter-p0", "search-filter-1024", "book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600", "book-detail-1700",
+        "search-filter-p0", "search-filter-1024", "search-filter-1366", "search-filter-1600", "book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600", "book-detail-1700",
         "plugin-manager-scroll-1024", "plugin-manager-scroll-1366",
         "mainwindow-baseline-1366", "mainwindow-baseline-1600",
         "llm-settings-1366", "llm-settings-1600",
@@ -65,9 +65,19 @@ def test_p1_3687_search_filter_real_1024_and_original_baseline():
     source = RUNNER.read_text(encoding="utf-8")
     assert '-screen 0 1024x768x24' in source
     assert '-screen 0 1280x1024x24' in source
+    for width, height in ((1366, 900), (1600, 1000)):
+        matched = runner.SCENARIOS[f"search-filter-{width}"]
+        recommendation = runner.SCENARIOS[f"recommendations-detail-{width}"]
+        assert matched["runner"] == "gtk-probe"
+        assert matched["fixture"] == recommendation["fixture"] == "search-filters"
+        assert (matched["width"], matched["height"]) == (width, height)
+        assert f"-screen 0 {width}x{height}x24" in source
+    assert '"--matched-display"' in source
     probe = (ROOT / "e2e/search_filter_probe.py").read_text(encoding="utf-8")
     assert 'choices=(1024, 1366, 1600)' in probe
     assert 'P1_3687_search_real_1024_geometry' in probe
+    assert 'P1_774_search_real_matched_geometry' in probe
+    assert 'args.width - 150 <= actual_width <= args.width' in probe
     assert 'device.click_widget(widget)' in probe
 
 
@@ -179,8 +189,8 @@ def test_942_shared_book_detail_uses_real_gtk_and_offline_copy_search():
         assert scenario["fixture"] == "search-filters"
         assert scenario["runner"] == "gtk-detail"
         assert scenario["width"] == width
-    assert [n for n, _ in runner.select(None, "core")][:8] == [
-        "search-filter-p0", "search-filter-1024", "book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600", "book-detail-1700",
+    assert [n for n, _ in runner.select(None, "core")][:10] == [
+        "search-filter-p0", "search-filter-1024", "search-filter-1366", "search-filter-1600", "book-detail-960", "book-detail-1280", "book-detail-1300", "book-detail-1366", "book-detail-1600", "book-detail-1700",
     ]
     source = (ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8")
     for marker in (
