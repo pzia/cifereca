@@ -11,10 +11,12 @@ class OwnedDownloadRejected(ValueError):
     """Fixed public refusal; never include private supplier identifiers."""
 
 
-def owned_library_download_target(service, entry):
+def owned_library_download_target(service, entry, *, identity_id: str | None = None):
     """Passively select one exact source origin, never a stored pseudo-right."""
+    if type(identity_id) is not str or not identity_id:
+        return None
     if type(entry) is dict and type(entry.get("possessions")) in (list, tuple):
-        identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
+        identity = identity_id
         origins = [
             row for row in entry["possessions"]
             if type(row) is dict and row.get("identity_id") == identity
@@ -24,7 +26,7 @@ def owned_library_download_target(service, entry):
         if len(origins) > 1:
             return None
     from .selected_source_offer import select_library_source_offer_target
-    return select_library_source_offer_target(service, entry)
+    return select_library_source_offer_target(service, entry, identity_id=identity_id)
 
 
 def obtain_owned_library_item(service, target):
