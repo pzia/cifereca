@@ -73,7 +73,7 @@
         "tests/test_adept_manual_binding.py",
         "tests/test_adept_attested_historical_return.py"
       ],
-      "pr": "pending",
+      "pr": "#5997",
       "in_ast_metric": false
     }
   ]
