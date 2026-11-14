@@ -275,6 +275,14 @@ def test_diagnostics_test_fixtures_are_package_local_not_core_dependencies():
         encoding="utf-8",
     )
     assert "from tests.test_diagnostics_ai_p0 import" not in consumer
-    assert consumer.count("from .test_diagnostics_ai_p0 import") == 4
-    assert (package / "test_diagnostics_ai_p0.py").is_file()
-    assert (package / "__init__.py").is_file()
+    assert consumer.count("from .diagnostics_test_fixtures import") == 4
+    assert "from .test_diagnostics_ai_p0 import" not in consumer
+    original_suite = (package / "test_diagnostics_ai_p0.py").read_text(
+        encoding="utf-8",
+    )
+    assert "from .diagnostics_test_fixtures import FakeBroker, FakeLLM" in original_suite
+    helper = package / "diagnostics_test_fixtures.py"
+    assert helper.is_file() and (package / "__init__.py").is_file()
+    assert "class FakeBroker:" in helper.read_text(encoding="utf-8")
+    assert "class FakeLLM:" in helper.read_text(encoding="utf-8")
+    assert "def test_" not in helper.read_text(encoding="utf-8")
