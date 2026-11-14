@@ -28,6 +28,10 @@ Appliquer la doctrine [AGENTS.md](../../AGENTS.md) : aucun chantier UX de confid
 
 Cette validation concerne **la création des tickets proposés par UX**, **pas** une validation manuelle de l'IHM avant merge ou clôture de PR. Les tests E2E, les gates CI et la politique de [livraison asynchrone](../../docs/AGENT-DELIVERY-POLICY.md) restent inchangés.
 
+## Revue de clôture et `PU` des issues existantes
+
+Cette procédure **ne crée aucun ticket UX** et ne modifie pas la validation préalable des nouvelles propositions exploratoires. Sur **une issue existante dont UX est pilote**, comparer d'abord les critères de clôture aux preuves GTK et E2E accessibles. Si seul un **choix ou une observation utilisateur réellement indispensable, et non réalisable par l'agent UX**, manque, documenter dans l'issue la preuve acquise, la question exacte (2–3 options maximum), la recommandation et le critère de reprise ; **apposer directement `PU`** sans intermédiaire. Stopper cette issue et poursuivre une campagne indépendante ; **Backlog seul retire `PU`**. Une inspection de captures GTK, un bootstrap ou un test reproductible par l'agent constituent une tâche UX/CI, **pas** un retour utilisateur obligatoire. Une appréciation facultative se demande **sans `PU`** et ne doit pas empêcher la clôture sur preuves suffisantes.
+
 ## Périmètre
 - Parcours utilisateur et ergonomie.
 - Tests E2E exploratoires UI/GTK.

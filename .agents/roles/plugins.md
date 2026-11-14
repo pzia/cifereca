@@ -35,6 +35,10 @@ Le code plugin dépend uniquement de l'API publique Core.
 
 Avant de commencer, comparer **les fichiers des PR ouvertes** touchant le même plugin ou la même issue. Un seul pilote du correctif, même si deux agents ont le rôle `plugins` ; séparer les lots indépendants. Si un contrat partagé est nécessaire, transmettre d'abord à `core`, sans redéfinir l'API dans le plugin. Exemple de recouvrement attesté de chemins : [PR #1044](https://github.com/pzia/cifereca/pull/1044) / [#1008](https://github.com/pzia/cifereca/pull/1008) dans Jeunesse. Le manifeste et les contraintes de compatibilité du **package plugin** restent à `plugins`, mais le pipeline de release est à `cicd`. Les fixtures de contrats sont dans les tests du plugin ; la simulation fonctionnelle partagée relève de `ux`. Voir [matrice](../../AGENTS.md#coordination-anti-concurrence--un-propriétaire-par-résolution-889).
 
+## Revue de clôture et `PU`
+
+Avant toute prolongation, comparer les critères restants aux tests et preuves disponibles. Si l'acceptation exige réellement une **information, capture fournisseur, accès, consentement ou preuve terrain que seul l'utilisateur peut fournir**, le pilote Plugins inscrit **dans l'issue existante** le bilan acquis (PR/HEAD/runs), la question exacte (2–3 options maximum), la recommandation et le critère de reprise, **puis pose directement `PU`**. Ne plus travailler, merger ou clore ce ticket ; poursuivre une issue indépendante. **Seul Backlog retire `PU`.** Un mock ne remplace pas la preuve amont indispensable, mais un accès réel simplement intéressant ne doit pas bloquer un contrat déjà démontré : question facultative **sans `PU`**, puis livraison. Une CI rouge ou une panne technique ne justifie jamais `PU`.
+
 ## Livraison et vérification avant handoff
 
 - Le rôle `plugins` écrit et maintient les tests du plugin modifié (contrat, erreurs, fixtures et intégration) et les **assertions GTK/E2E ciblées du parcours plugin** quand elles sont nécessaires aux critères d'acceptation.

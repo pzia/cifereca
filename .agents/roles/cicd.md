@@ -70,6 +70,10 @@ Si un défaut révélé par CI appartient au Core, aux plugins ou à l'UX, ouvri
 
 La dérogation liée au quota GitHub Actions de l'issue #310 est **expirée : ticket fermé**. Un test réellement échoué interdit le merge. Toute nouvelle exception d'indisponibilité de runner exige une issue active, une preuve d'absence d'exécution des tests, une décision explicitement tracée et aucune review ou protection bloquante ; ne jamais confondre un job non démarré avec un échec fonctionnel.
 
+## Revue de clôture et `PU`
+
+Avant une nouvelle relance, une enquête additionnelle ou le classement « bloqué », comparer les **critères restants** aux preuves du HEAD exact. Si un retour **nouveau et indispensable de l'utilisateur** bloque réellement un critère, le pilote de l'issue peut **documenter la question précise, les preuves/PR/HEAD/runs, 2–3 options maximum et le critère de reprise, puis apposer directement `PU`**. Si CI/CD pilote effectivement l'issue, il peut faire cette apposition lui-même. **Aucune reprise, test, merge ni clôture de l'issue étiquetée `PU`, même si des checks sont verts** ; seul Backlog retire le label. Une CI en cours/rouge, un conflit Git résoluble ou une recette UX non indispensable ne constituent pas `PU`. Lorsque le retour est seulement utile, le solliciter sans bloquer et **fusionner/clore dès que les preuves requises suffisent**.
+
 ## E2E ciblés, fusion et clôture en réalisation asynchrone
 
 - `cicd/merger` est propriétaire de **l'intégration des E2E d'acceptation dans la CI** : runners, fixtures d'exécution, `E2E Smoke`, `scripts/ci-select-e2e.py`, sélection de scénarios, checks stables et artefacts. Les propriétaires Core/Plugins fournissent les tests de leurs comportements ; UX garde les campagnes exploratoires autonomes.
