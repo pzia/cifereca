@@ -20,7 +20,7 @@ from cifereca.identities import AdeptProfileResolutionError
 
 def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
              profiles=None):
-    loan = NS(source_provider=provider, id="loan-1")
+    loan = NS(source_provider=provider, source_credential="reader", id="loan-1")
     borrower = Mock(return_value=("identity-1", borrower_code))
     resolver = Mock(return_value=("reader-a", "explicit_binding"))
     if profile_error is not None:
@@ -266,3 +266,47 @@ def test_scoped_profile_lookup_is_not_an_implicit_ui_selection():
     assert lookup("", "reader-a") == []
     assert lookup("identity-1", "") == []
     assert calls == ["runtime", "runtime"]
+
+
+class _HostilePoststagingSource:
+    def __str__(self):
+        raise AssertionError("private staged provider coordinates must not be coerced")
+
+    def __bool__(self):
+        raise AssertionError("private staged provider coordinates must not be truth-tested")
+
+
+class _HostilePoststagingString(str):
+    def lower(self):
+        raise AssertionError("plugin str subclass must not choose the ADEPT guard")
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("source_provider", _HostilePoststagingSource()),
+    ("source_provider", _HostilePoststagingString("paris")),
+    ("source_provider", None),
+    ("source_provider", ""),
+    ("source_credential", _HostilePoststagingSource()),
+    ("source_credential", _HostilePoststagingString("reader")),
+    ("source_credential", None),
+    ("source_credential", ""),
+])
+def test_poststaging_untrusted_source_fails_closed_with_preserved_acsm(
+    field, bad,
+):
+    invoke, store, borrower, resolver, profiles, loan, opts = _fixture()
+    setattr(loan, field, bad)
+    refusal = invoke()
+    assert refusal == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    receipt = store.call_args.args[0]
+    assert receipt["status"] == "attention_required"
+    assert receipt["attention_code"] == "adept_borrower_ambiguous"
+    assert receipt["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
+    assert receipt["metadata"]["prior"] == "kept"
