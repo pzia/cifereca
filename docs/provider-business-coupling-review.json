@@ -468,6 +468,22 @@
       ],
       "pr": "#6025",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-core-library-projection-navigation-fallback",
+      "original": "src/cifereca/core/library_projection.py::library_entries derives current_identity during worker execution",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "LibraryService.library_entries snapshots legacy synchronous GUI selection at admission; Core worker requires explicit identity_id",
+      "classification": "removed_implicit_navigation_library_worker",
+      "evidence": "Core worker no longer accesses current_identity and rejects omitted, empty or malformed scopes before logging, scan, SQLite and presentation. LibraryService preserves its public optional identity_id ABI by pinning a snapshot at its synchronous entrypoint; explicit invalid identity is never replaced by GTK selection. The public MetadataBrokerImpl already requires explicit scope. GUI library_refresh pins the identity before queue admission.",
+      "tests": [
+        "tests/test_core_p0_5975_library_projection_pinned_scope.py",
+        "tests/test_core_p0_3196_unscoped_library_fence.py",
+        "tests/test_core_library_placement_identity_scope.py",
+        "tests/test_core_p0_5975_metadata_broker_scope.py"
+      ],
+      "pr": "#6023",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
