@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from ..plugin_api.digital_loan_availability import digital_loan_availability_lines
+
 def _dashboard_count(stats: dict, key: str) -> str:
     """In a dashboard snapshot, unknown is not a real count of zero."""
     value = stats.get(key)
@@ -137,6 +139,29 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
                 failed=sum(int(actions.get(key,0) or 0) for key in ('acquisitions_failed','imports_failed','synchronizations_failed','transformations_failed','transfers_failed'))
                 action_label=Gtk.Label(label=f"Actions (30 j) : {ok} réussies · {failed} échouées",xalign=0)
                 action_label.set_wrap(True); add_css(action_label, 'caption', 'dim-label'); box.append(action_label)
+        # Native fallback for a disabled/uninstalled Home plugin. Use the
+        # SAME public identity broker and presentation projection, with a
+        # pinned profile ID. Never ask a provider for loan inventory on render.
+        if card.get("selected") is True:
+            from ..brokers import IdentityBrokerImpl
+            try:
+                availability = IdentityBrokerImpl(
+                    window.service,
+                ).digital_loan_availability(card["identity_id"])
+            except Exception:
+                availability = ()
+            head = Gtk.Label(
+                label="Prêts numériques — disponibles", xalign=0,
+            )
+            add_css(head, "heading")
+            box.append(head)
+            for sentence in digital_loan_availability_lines(
+                availability, identity_id=card["identity_id"],
+            ):
+                detail = Gtk.Label(label=sentence, xalign=0)
+                detail.set_wrap(True)
+                add_css(detail, "caption")
+                box.append(detail)
         providers = ", ".join(
             _dashboard_source_label(source) + (
                 "" if source.get("connected") is True
