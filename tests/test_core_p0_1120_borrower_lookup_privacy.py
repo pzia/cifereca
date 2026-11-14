@@ -26,7 +26,7 @@ class HostileLoanId:
 
 @pytest.mark.parametrize(("borrower", "expected"), [
     (PRIVATE, "Compte emprunteur introuvable pour ce prêt"),
-    (None, "Aucun compte connecté pour ce prêt"),
+    (None, "Compte emprunteur non attesté pour ce prêt"),
 ])
 def test_exact_lookup_error_omits_all_source_and_account_coordinates(borrower, expected):
     loan = NS(
@@ -36,8 +36,7 @@ def test_exact_lookup_error_omits_all_source_and_account_coordinates(borrower, e
     error = ProviderConfigurationError
     with pytest.raises(ProviderConfigurationError) as caught:
         account_for_loan(
-            loan, accounts=[], current_account_get=lambda: None,
-            configuration_error=error,
+            loan, accounts=[], configuration_error=error,
         )
     assert str(caught.value) == expected
     assert "NEVER_LEAK_BORROWER" not in str(caught.value)
@@ -57,9 +56,6 @@ def test_explicit_missing_account_never_falls_back_to_unrelated_selected_borrowe
     with pytest.raises(ProviderConfigurationError) as caught:
         account_for_loan(
             loan, accounts=[unrelated],
-            current_account_get=lambda: pytest.fail(
-                "Explicit borrower must not consult selected account"
-            ),
             configuration_error=ProviderConfigurationError,
         )
     assert str(caught.value) == "Compte emprunteur introuvable pour ce prêt"
@@ -76,6 +72,6 @@ def test_exact_connected_account_success_is_unchanged():
         source_credential=PRIVATE, source_account_id="linked",
     )
     assert account_for_loan(
-        loan, accounts=[account], current_account_get=lambda: None,
+        loan, accounts=[account],
         configuration_error=ProviderConfigurationError,
     ) is account
