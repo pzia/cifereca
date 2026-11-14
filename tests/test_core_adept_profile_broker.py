@@ -339,3 +339,57 @@ def test_bind_keeps_normal_ready_profile_and_stable_identity():
     profile = AdeptProfileBrokerImpl(service).bind("alice", "stable-reader")
     assert profile.profile_id == "stable-reader"
     assert service.storage.bound == {("identity", "alice"): "stable-reader"}
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("profile_id", 123),
+    ("profile_id", {"unexpected": "value"}),
+    ("profile_id", "x" * 257),
+    ("profile_id", "stable\\nmalformed"),
+    ("name", 17),
+    ("name", ["reader"]),
+    ("name", "reader\\x00invalid"),
+])
+def test_profile_runtime_fields_must_be_bounded_text_before_binding(field, value):
+    service = Service()
+    service.runtime.rows = [{
+        "profile_id": "stable-reader", "name": "reader",
+        "complete": True, "fetch_capable": True,
+        "provisioning": {"acsm_fetch_ready": True},
+    }]
+    service.runtime.rows[0][field] = value
+    broker = AdeptProfileBrokerImpl(service)
+    with pytest.raises(AttentionRequired) as exc:
+        broker.bind("alice", "stable-reader")
+    assert exc.value.code == "adept_profile_stable_id_required"
+    assert service.storage.bound == {}
+
+
+def test_provision_rejects_malformed_runtime_acknowledged_stable_id():
+    service = Service()
+    original = service.runtime.provision_profile
+
+    def provision(name, username):
+        response = original(name, username)
+        response["profile"]["profile_id"] = 123
+        return response
+
+    service.runtime.provision_profile = provision
+    with pytest.raises(AttentionRequired) as exc:
+        AdeptProfileBrokerImpl(service).provision(
+            "reader", "reader@example.test", identity_id="alice",
+        )
+    assert exc.value.code == "adept_profile_provisioning_incomplete"
+    assert service.storage.bound == {}
+
+
+def test_profile_reference_unicode_name_remains_accepted():
+    service = Service()
+    service.runtime.rows = [{
+        "profile_id": "stable-reader", "name": "Éloïse",
+        "complete": True, "fetch_capable": True,
+        "provisioning": {"acsm_fetch_ready": True},
+    }]
+    profile = AdeptProfileBrokerImpl(service).bind("alice", "stable-reader")
+    assert profile.name == "Éloïse"
+    assert service.storage.bound == {("identity", "alice"): "stable-reader"}
