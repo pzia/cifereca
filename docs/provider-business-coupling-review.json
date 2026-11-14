@@ -602,6 +602,22 @@
       ],
       "pr": "#6042",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-configured-connect-private-gtk-selected-owner-fallback",
+      "original": "core.provider_sessions.connect_configured read self.current_identity when enabled configured source row lacked identity_id and persisted a provider connection/account under that mutable GTK identity",
+      "original_classification": "navigation_dependent_legacy_write",
+      "replacement": "Enforce exact typed persisted owner before provider session creation and SQL publication; only explicitly generated credential-free anonymous public rows use a fixed neutral default namespace, never GTK selection",
+      "classification": "removed_implicit_navigation_private_source_connection_writer",
+      "evidence": "Unbound private credentials do not connect or write SQLite on a global configured connection sweep; two navigation profiles behave identically. Malformed owners and the anonymous-public carve-out are tested. Config's existing legacy migration is the sole versioned owner assignment prior to admission.",
+      "tests": [
+        "tests/test_core_p0_5975_configured_connect_exact_owner.py",
+        "tests/test_core_p0_3719_scoped_provider_connection.py",
+        "src/plugins/provider-biblioaccess/tests/test_p1_5197_cas_reconnect.py",
+        "tests/test_provider_plugins.py::test_library_service_routes_accounts_and_federates_ready_plugins"
+      ],
+      "pr": "#6045",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [

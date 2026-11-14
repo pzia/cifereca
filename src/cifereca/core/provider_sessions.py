@@ -832,6 +832,26 @@ def _configured_rows_for_source(rows, *, source_scope):
     return matches
 
 
+def _configured_connection_identity(row, descriptor) -> str | None:
+    """Admit a persistent source owner without consulting UI navigation.
+
+    An explicitly synthesized anonymous public source has no personal
+    borrower. Keep its established neutral default namespace, but never
+    interpret an unbound private credential as the GTK-selected reader.
+    """
+    raw = row.get("identity_id") if type(row) is dict else None
+    if (type(raw) is str and raw and raw == raw.strip()
+            and len(raw) <= 256
+            and not any(char in raw for char in "\x00\r\n")):
+        return raw
+    if (type(row) is dict and row.get("anonymous") is True
+            and descriptor is not None
+            and getattr(descriptor, "credential_fields", None) in ((), [])
+            and getattr(descriptor, "interactive_authentication", False) is False):
+        return "default"
+    return None
+
+
 def _opening_sync_covers_visible_accounts(self) -> bool:
     """True only if the next opening Sync will inventory every visible source.
 
@@ -1196,7 +1216,7 @@ def connect_configured(self, *, logger, caller_category: str = "other",
     for row in rows:
         provider_id = str(row.get("provider") or "").strip().lower()
         credential_id = str(row.get("id") or "").strip()
-        identity_id = str(row.get("identity_id") or (self.current_identity.identity_id if self.current_identity else "default")).strip()
+        identity_id = _configured_connection_identity(row, None)
         if not provider_id or not credential_id:
             continue
         item_started = time.monotonic()
@@ -1227,6 +1247,19 @@ def connect_configured(self, *, logger, caller_category: str = "other",
             # Skeletons must never perform I/O, but an enabled configured
             # connection is still unavailable to the opening-sync summary.
             attempt.emit(self.diagnostics, "terminal", "skipped", "plugin_not_ready")
+            errors[key] = "Connexion à la source indisponible"
+            failure = public_connection_failure(self.registry, provider_id)
+            failures.append(failure)
+            _publish_connection_failure(
+                self.diagnostics, failure,
+                duration_ms=int((time.monotonic() - item_started) * 1000),
+            )
+            continue
+        identity_id = _configured_connection_identity(row, plugin.descriptor)
+        if identity_id is None:
+            # Fail closed before create_session/connect, account upserts and
+            # source credentials are ever used for an unproven private owner.
+            attempt.emit(self.diagnostics, "terminal", "skipped", "source_identity_unproven")
             errors[key] = "Connexion à la source indisponible"
             failure = public_connection_failure(self.registry, provider_id)
             failures.append(failure)

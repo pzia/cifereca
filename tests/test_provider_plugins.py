@@ -84,8 +84,8 @@ def test_library_service_routes_accounts_and_federates_ready_plugins():
     with tempfile.TemporaryDirectory() as td:
         cfg = Config(Path(td) / "config.json")
         cfg.set("providers.accounts", [
-            {"id": "a1", "provider": "alpha", "label": "A", "enabled": True, "credentials": {}, "options": {}},
-            {"id": "b1", "provider": "beta", "label": "B", "enabled": True, "credentials": {}, "options": {}},
+            {"id": "a1", "provider": "alpha", "identity_id": "default", "label": "A", "enabled": True, "credentials": {}, "options": {}},
+            {"id": "b1", "provider": "beta", "identity_id": "default", "label": "B", "enabled": True, "credentials": {}, "options": {}},
         ])
         service = LibraryService(cfg, Storage(Path(td) / "cache.sqlite3"), Diagnostics(level="detailed"))
         service.registry.register(FakePlugin("alpha"))
@@ -240,7 +240,7 @@ def test_federated_search_falls_back_and_ranks_title_author_match_first():
         root = Path(td)
         cfg = Config(root / "config.json")
         cfg.set("providers.accounts", [
-            {"id": "flex-1", "provider": "flex", "label": "F", "enabled": True, "credentials": {}, "options": {}},
+            {"id": "flex-1", "provider": "flex", "identity_id": "default", "label": "F", "enabled": True, "credentials": {}, "options": {}},
         ])
         service = LibraryService(cfg, Storage(root / "cache.sqlite3"), Diagnostics(level="detailed"))
         plugin = FlexiblePlugin()
