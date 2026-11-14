@@ -426,7 +426,7 @@ def _provider_enabled_for_identity(self, provider_id: str, identity_id: str | No
     # malformed identity evidence refuses before manager/plugin lookup.
     if (type(identity_id) is not str or not identity_id
             or len(identity_id) > 1024
-            or any(char in identity_id for char in "\\x00\\r\\n")):
+            or any(ord(char) in (0, 10, 13) for char in identity_id)):
         return False
     try:
         if not self._plugin_manager.enabled_for_identity(status.descriptor.id, identity_id):
