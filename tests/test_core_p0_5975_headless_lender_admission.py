@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import textwrap
 
 import pytest
 
@@ -24,7 +25,7 @@ def test_lender_read_plan_and_mutation_workers_have_no_navigation_reads():
         scope.CrossProfileBorrowScopeLease.current,
         executor.execute_cross_profile_borrow,
     ):
-        parsed = ast.parse(inspect.getsource(fn))
+        parsed = ast.parse(textwrap.dedent(inspect.getsource(fn)))
         assert not any(
             isinstance(node, ast.Attribute) and node.attr == "current_identity"
             for node in ast.walk(parsed)
@@ -97,12 +98,11 @@ def test_direct_headless_proxy_reads_exact_lender_with_explicit_scope(harness):
     assert session.calls == 0
 
 
-def test_scope_revoke_before_snapshot_and_plan_does_not_read_lender(harness, monkeypatch):
+def test_scope_revoke_before_snapshot_and_plan_does_not_read_lender(harness):
     service, _account, session = harness
     row = _candidate()
     preview = _preview(service, row)
     clicked = preview.options[0].option_id
-    calls = {"current": True}
     assert live.revalidate_live_borrow_lender_selection(
         service, captured_preview=preview, selected_option_id=clicked,
         expected_edition_id="edition-1", observations=(row,), now=1100,
