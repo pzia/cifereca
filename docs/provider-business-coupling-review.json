@@ -648,6 +648,22 @@
       ],
       "pr": "#6048",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-loan-account-lookup-legacy-gtk-current-borrower",
+      "original": "core.loan_accounts.account_for_loan selected current_account on missing source_account_id, otherwise the first primary or first connected same-provider credential; LibraryService passed mutable GTK current_account_get callback",
+      "original_classification": "navigation_dependent_legacy_read_with_mutating_consumers",
+      "replacement": "Require a native exact source_account_id in the Loan, including the explicit empty/primary historical primary borrower sentinel; unproven or non-string legacy cached borrower refuses without reading GTK, connected sessions or source credentials",
+      "classification": "removed_navigation_borrower_inference",
+      "evidence": "The borrower resolver is shared by exact digital acquisition and return consumers. Missing provenance can no longer direct a GET, ACSM staging or provider mutation to the currently selected or first available borrower. Exact primary and linked borrower selection remains source/credential-constrained. Historical cache rows remain readable as descriptive Loan data and are not deleted.",
+      "tests": [
+        "tests/test_loan_borrower_context.py::test_legacy_cache_without_borrower_never_infers_navigation_or_primary",
+        "tests/test_loan_borrower_context.py::test_untyped_borrower_provenance_does_not_choose_connected_account",
+        "tests/test_core_p0_1120_borrower_lookup_privacy.py",
+        "tests/test_provider_plugins.py::test_loan_borrower_identity_is_not_inferred_from_current_account"
+      ],
+      "pr": "#6052",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
