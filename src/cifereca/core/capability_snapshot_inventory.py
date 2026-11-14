@@ -34,9 +34,8 @@ def capability_matrices_with_precollected_evidence(
     if (type(sync_sources) is not tuple or type(loan_snapshots) is not tuple
             or type(rights_snapshots) is not tuple):
         raise ValueError("capability_invalid_snapshot_collection")
-    if identity_id is None:
-        current = getattr(service, "current_identity", None)
-        identity_id = getattr(current, "identity_id", None)
+    # Precollected evidence must remain bound to its admitted owner: a
+    # late GTK selection cannot supply or replace a missing identity.
     if type(identity_id) is not str or not identity_id or len(identity_id) > 256:
         if sync_sources or loan_snapshots or rights_snapshots:
             raise ValueError("capability_invalid_identity")

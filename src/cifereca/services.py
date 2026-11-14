@@ -1645,6 +1645,10 @@ class LibraryService:
         to borrow, acquire, transfer or refresh a catalogue.
         """
         from .core.capability_inventory import capability_matrices_for_identity
+        # Preserve the synchronous optional UI ABI, but pin navigation once
+        # before entering the headless Core projector.
+        if identity_id is None:
+            identity_id = getattr(self.current_identity, "identity_id", None)
         return capability_matrices_for_identity(self, identity_id=identity_id)
 
     def capability_matrices_with_precollected_evidence(
@@ -1659,6 +1663,8 @@ class LibraryService:
         from .core.capability_snapshot_inventory import (
             capability_matrices_with_precollected_evidence,
         )
+        if identity_id is None:
+            identity_id = getattr(self.current_identity, "identity_id", None)
         return capability_matrices_with_precollected_evidence(
             self, identity_id=identity_id,
             sync_sources=sync_sources, loan_snapshots=loan_snapshots,
