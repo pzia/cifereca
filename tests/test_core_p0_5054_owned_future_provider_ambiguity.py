@@ -57,14 +57,14 @@ def test_unregistered_provider_and_duplicate_accounts_never_become_a_target(monk
                         lambda *_a, **_kw: pytest.fail("not exact"))
     service = _service()
     assert selection.select_library_source_offer_target(
-        service, {"possessions": [_pos("future-library")]},
+        service, {"possessions": [_pos("future-library")]}, identity_id="alice",
     ) is None
     service.accounts.append(Account(
         identity_id="alice", provider_id="numilog",
         credential_id="card-B", unique_id="account-A",
     ))
     assert selection.select_library_source_offer_target(
-        service, {"possessions": [_pos("numilog")]},
+        service, {"possessions": [_pos("numilog")]}, identity_id="alice",
     ) is None
 
 
