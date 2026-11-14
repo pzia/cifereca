@@ -3267,8 +3267,10 @@ class LibraryService:
             # selected-source validator; it must never downgrade to legacy GET.
             from .core.selected_owned_search import obtain_selected_owned
             selected = self.current_identity
+            epoch = self._account_context_epoch
             return obtain_selected_owned(
                 self, item, identity_id=getattr(selected, "identity_id", None),
+                expected_epoch=epoch,
             )
         return MaterializationCoordinator(
             acquire=self.acquire_direct_item,
@@ -3284,6 +3286,7 @@ class LibraryService:
         epoch = self._account_context_epoch
         target = owned_library_download_target(
             self, entry, identity_id=getattr(selected, "identity_id", None),
+            expected_epoch=epoch,
         )
         if (self.current_identity is not selected
                 or self._account_context_epoch != epoch):
