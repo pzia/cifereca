@@ -860,3 +860,28 @@ aucun téléchargement supplémentaire n'est déclenché.
 
 Les tests utilisent uniquement des réponses synthétiques et ne publient pas
 les captures ni les URL signées du 11/11/2026.
+
+
+## P1 #5540 — Plafond personnel indicatif dans Paramètres
+
+Le compte lecteur « Médiathèques de La Rochelle » expose
+`manual_loan_limit` depuis le schéma public existant
+`ProviderDescriptor.account_options` : champ entier décimal **0–99**,
+**4** par défaut si aucun réglage n'a encore été enregistré. La préférence
+est portée par la configuration **de la connexion exacte**
+(identité / provider / credential), sans écraser les autres options
+historiques et sans dériver une valeur depuis le nom du lecteur.
+
+L'écran générique Paramètres rend et valide ce champ, ainsi que
+`authenticated_sync` qui garde sa valeur `off` par défaut et son consentement
+SSO explicite. Enregistrer le plafond ne déclenche aucun SSO ni lecture réseau.
+
+**« Plafond renseigné par vous » n'est pas « quota officiel du fournisseur ».**
+Il ne doit être utilisé ni pour autoriser/refuser un emprunt ni pour conclure
+un inventaire exhaustif ou calculer un nombre de prêts restants. Le nombre
+de prêts localement observés reste un autre signal, qualifié indépendamment
+avec sa couverture et sa fraîcheur.
+
+La présente tranche réutilise le moteur UI de comptes existant ; elle ne
+prétend pas clôturer #5540, qui exige également l'uniformisation des autres
+types de comptes et une recette GTK plus large.
