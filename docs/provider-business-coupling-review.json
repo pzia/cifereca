@@ -816,7 +816,7 @@
         "tests/test_core_p0_2565_private_inspection_sqlite_revoke.py",
         "tests/test_core_ui_p0_5048_neutral_local_placement_copy.py"
       ],
-      "pr": "#pending",
+      "pr": "#6088",
       "in_ast_metric": true
     }
   ],
