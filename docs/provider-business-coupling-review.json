@@ -31,7 +31,7 @@
         "tests/test_core_ui_bnf_acsm_native.py",
         "tests/test_core_ui_bnf_acsm_two_consent.py"
       ],
-      "pr": "to_be_assigned"
+      "pr": "#5980"
     }
   ]
 }
