@@ -6,7 +6,7 @@ External plugins should import from this package only.  Internal modules such as
 
 from cifereca.http_trace import HTTPX_TRANSPORT, TraceHTTPTransport, TraceAsyncHTTPTransport, TraceHTTPClient, TraceAsyncHTTPClient
 from .context import PluginContext
-from .digital_loan_availability import DigitalLoanAvailability
+from .digital_loan_availability import DigitalLoanAvailability, digital_loan_availability_lines
 from .usb_storage import USB_STAGE_CAPABILITY, UsbStorageStageWriter
 from cifereca.document_classification import (
     DOCUMENT_CLASSIFICATION_CONTRACT, ClassificationEvidence,
@@ -122,7 +122,7 @@ __all__ = [
     "DOWNLOADABLE_RESOURCE_CONTRACT", "SourceReference", "DownloadCapability",
     "OptionalRightMetadata", "ResourceObservation", "ResourceSnapshot",
     "DeliveryCandidate", "from_legacy_rights_snapshot", "as_legacy_rights_snapshot",
-    "DigitalLoanAvailability",
+    "DigitalLoanAvailability", "digital_loan_availability_lines",
     "PLUGIN_API_VERSION", "MANIFEST_VERSION", "PluginContext", "PluginApiError",
     "UserFacingError", "AttentionRequired", "UnsupportedOperation", "AuthenticationRequired", "ConfigurationRequired", "TemporaryUnavailable", "NotFound", "Conflict", "Cancelled", "BorrowRequestNotSubmitted", "AcquisitionOffer", "AcquisitionPreferences", "AcquisitionOfferSet", "normalize_acquisition_format", "acquisition_offer_formats", "acquisition_offer_preferred_format", "acquisition_offers_metadata", "ArtifactInput",
     "DrmMutationRequest", "DrmMutationResult", "DrmRuntime",
