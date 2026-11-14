@@ -24,8 +24,8 @@ def test_typed_configured_identity_is_independent_of_gtk_navigation(identity):
 
 
 @pytest.mark.parametrize("invalid", [
-    None, "", " ", "alice ", " bob", False, 0, [], {}, "alice\\x00x",
-    "alice\\r", "alice\\n", "a" * 257,
+    None, "", " ", "alice ", " bob", False, 0, [], {}, "alice\x00x",
+    "alice\r", "alice\n", "a" * 257,
 ])
 def test_private_missing_or_malformed_owner_is_never_implicit(invalid):
     row = {"id": "c", "provider": "synthetic", "identity_id": invalid}
