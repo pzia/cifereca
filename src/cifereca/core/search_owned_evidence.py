@@ -36,15 +36,21 @@ def _coordinate(value: object, *, allow_empty: bool = False) -> bool:
 
 
 
-def snapshot_search_owned_evidence(service: Any) -> SearchOwnedEvidence | None:
-    """Atomically project only known active owned rights, or refuse entirely.
+def snapshot_search_owned_evidence(
+    service: Any, *, identity_id: str | None = None,
+) -> SearchOwnedEvidence | None:
+    """Project active owned rights for one *admitted* identity.
 
-    A missing, malformed or excessive ledger yields unknown, not a partial
-    purchase proof. Caller must not cache snapshots across identity changes.
+    Headless Core never derives the owner from mutable navigation. The GUI
+    captures its identity at synchronous admission; a missing/malformed scope
+    refuses before ledger I/O. Account/source epochs revoke in-flight ABA
+    navigation and reconnects without re-reading GTK state.
     """
-    identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
+    identity = identity_id
+    if not _coordinate(identity):
+        return None
     reader = getattr(getattr(service, "storage", None), "entitlements", None)
-    if not _coordinate(identity) or not callable(reader):
+    if not callable(reader):
         return None
     account_epoch = getattr(service, "_account_context_epoch", None)
     source_epoch = getattr(service, "_source_context_epoch", None)
@@ -73,8 +79,7 @@ def snapshot_search_owned_evidence(service: Any) -> SearchOwnedEvidence | None:
             if revision is not None and not _coordinate(revision):
                 continue
             rights.add((*keys, revision or ""))
-        if (getattr(getattr(service, "current_identity", None), "identity_id", None) != identity
-                or getattr(service, "_account_context_epoch", None) != account_epoch
+        if (getattr(service, "_account_context_epoch", None) != account_epoch
                 or getattr(service, "_source_context_epoch", None) != source_epoch):
             return None
         return SearchOwnedEvidence(identity, frozenset(rights), account_epoch, source_epoch)
