@@ -1,0 +1,88 @@
+name: P0 Test Dependency Inventory
+
+# #5376: source-only evidence on default-branch HEAD, never a PR-wide
+# pytest collection. Scheduled weekly or manually triggered.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p0-test-dependency-inventory
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    name: P0 test dependency inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Audit root/plugin test imports on exact main SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          observed="$(git rev-parse HEAD)"
+          test "$observed" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          out="$RUNNER_TEMP/cifereca-test-dependencies"
+          mkdir -p "$out"
+
+          # AST-only: no pytest, fixture imports, provider sessions,
+          # network calls, user files, or data collection.
+          python3 -m scripts.ci_test_core_consumer_graph --json \
+            > "$out/core-plugin-consumers.json"
+          python3 -m scripts.ci_test_provider_import_inventory --json \
+            > "$out/core-test-provider-imports.json"
+          CIFERECA_INVENTORY_DIR="$out" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["CIFERECA_INVENTORY_DIR"])
+          graph = json.loads((root / "core-plugin-consumers.json").read_text(encoding="utf-8"))
+          providers = json.loads((root / "core-test-provider-imports.json").read_text(encoding="utf-8"))
+          if graph["parse_errors"] or providers["parse_or_io_errors"]:
+              raise SystemExit("refusing incomplete AST test inventory")
+          if not graph["root_test_files"] or not graph["plugin_test_files"]:
+              raise SystemExit("empty root/plugin graph is not a baseline")
+          if not providers["root_test_modules_scanned"] or not providers["provider_modules_indexed"]:
+              raise SystemExit("empty provider index is not a baseline")
+          metadata = {
+              "schema": "cifereca.test-dependency-baseline/1",
+              "source_sha": os.environ["GITHUB_SHA"],
+              "ref": "refs/heads/main",
+              "provenance": "weekly-or-manual-source-only-scan",
+              "runtime_pytest_tests_executed": 0,
+              "graphs": {
+                  "core_plugin_consumer": graph["schema"],
+                  "provider_imports": providers["schema"],
+              },
+              "root_test_modules": graph["root_test_files"],
+              "plugin_test_files": graph["plugin_test_files"],
+              "provider_import_edges": providers["direct_import_edges"],
+              "provider_import_test_modules": providers["root_test_modules_with_direct_provider_imports"],
+              "unresolved_dynamic_imports": len(graph["unresolved_dynamic_or_pytest_plugins"]),
+              "unresolved_provider_loader_calls": len(providers["unresolved_dynamic_import_calls"]),
+          }
+          (root / "provenance.json").write_text(
+              json.dumps(metadata, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print("AST inventory baseline:", json.dumps(metadata, sort_keys=True))
+          PY
+
+      - name: Publish exact-HEAD source-only inventory
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-test-dependency-inventory-${{ github.sha }
+          path: ${{ runner.temp }/cifereca-test-dependencies/*.json
+          if-no-files-found: error
+          retention-days: 30
