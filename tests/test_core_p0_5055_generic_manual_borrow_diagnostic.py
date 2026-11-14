@@ -40,7 +40,7 @@ def _diagnose(provider="synthetic-lender-a", *, scope=True, eligible=True,
     result = manual_borrow_diagnostic(
         service, item, provider_id=provider, docbase="TEST",
         primary_id="", source_current=source_current,
-        available=available, result_type=NS,
+        available=available, result_type=NS, identity_id=identity,
     )
     return result, calls
 
