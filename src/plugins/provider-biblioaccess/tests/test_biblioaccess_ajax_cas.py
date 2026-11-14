@@ -676,10 +676,39 @@ def test_persisted_cas_session_reads_fresh_myloans_without_new_credential_post()
         b = client.read_authenticated_loans()
         assert a.page_loan_row_count == b.page_loan_row_count == 1
         assert a.logout_form_observed and b.logout_form_observed
+        assert not a.pagination_observed and not b.pagination_observed
         assert not a.identity_verified and not a.inventory_verified
         assert [method for method, _, _ in requests] == ["GET", "GET"]
         assert "SESSION" not in repr(a) + repr(b)
         assert "SYNTHETIC-BOOK" not in repr(a) + repr(b)
+    finally:
+        client.close()
+
+
+def test_authenticated_loans_get_propagates_pagination_as_observed():
+    requests = []
+    html = (
+        '<form id="logoutForm" method="post" action="/1409/Account/LogOff"></form>'
+        '<div class="row JSProductRow-10001">'
+        '<a href="/1409/Catalog/Book/20002/a-book">book</a>'
+        '<p class="titleLoans">SYNTHETIC-BOOK</p>'
+        '<span class="jsDateEnd">08/11/2026 12:30:00</span></div>'
+        '<nav class="pagination"><a href="/1409/Catalog/MyLoans?page=2">2</a></nav>'
+    )
+    def handler(request):
+        requests.append(request.method)
+        assert request.url.path == "/1409/Catalog/MyLoans"
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=html)
+    client = client_for(handler)
+    client._ajax_succeeded = True
+    client._cas_landed = True
+    client._loans_attempted = True
+    try:
+        observation = client.read_authenticated_loans()
+        assert observation.logout_form_observed
+        assert observation.pagination_observed is True
+        assert observation.page_loan_row_count == 1
+        assert requests == ["GET"]
     finally:
         client.close()
 
