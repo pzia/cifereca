@@ -22,6 +22,7 @@ manual_bnf_borrow = partial(
 )
 manual_bnf_borrow_available = partial(
     manual_borrow_available, provider_id="bnf-pret", docbase="BNF_PRET",
+    identity_id="default",
 )
 from cifereca.core.borrow_action_scope import borrow_claim_key
 from cifereca.models import Account, Loan, SearchResult
