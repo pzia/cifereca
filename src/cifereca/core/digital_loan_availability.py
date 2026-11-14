@@ -167,8 +167,22 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
                         else "borrower_unverified"),
             ))
             continue
-        if len(matches) > 32:
-            return ()
+        if (len(matches) > 32 or any(
+                type(a.unique_id) is not str
+                or len(a.unique_id) > 1024
+                or "\\x00" in a.unique_id
+                or type(a.is_primary) is not bool
+                for a in matches)):
+            # A malformed or oversized borrower inventory invalidates ONLY
+            # this configured connection. Never sort an untrusted identifier,
+            # pick the first account, or suppress other independent lenders.
+            rows.append(DigitalLoanAvailability(
+                identity_id=identity_id, provider_id=provider,
+                credential_id=credential, borrower_id=None,
+                provider_label=provider_label, connection_label=connection_label,
+                borrower_label="Emprunteur non vérifié", reason="scope_ambiguous",
+            ))
+            continue
         for borrower in sorted(matches, key=lambda a: (
                 a.is_primary is not True, a.unique_id)):
             duplicate = sum(
