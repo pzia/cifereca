@@ -61,7 +61,9 @@ def test_mirror_then_outage_does_not_promote_ambiguous_or_personal_notices(
         if include_public:
             entries.append(replace(template, record_id="public", title="Maritime public",
                                    source_collection="public", owned=False))
-        service._mirror_remote_results(entries)
+        # Pin the configured reader at admission, not from the later worker.
+        mirror_identity = service.current_identity.identity_id
+        service._mirror_remote_results(entries, identity_id=mirror_identity)
         # A non-owned private result can have remote_catalog state: that
         # state alone is not evidence of visibility to the public.
         before = service.storage.catalog_entries()
