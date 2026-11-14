@@ -150,3 +150,76 @@ def test_udev_device_to_uuid_mapping_must_be_unique_and_block(monkeypatch):
             st_mode=stat.S_IFBLK | 0o660, st_rdev=os.makedev(8, 17),
         ))
         assert discovery._uuid_devices() == {(8, 17): UUID}
+
+
+
+@pytest.mark.parametrize("second_fs", ["ext4", "exfat"])
+def test_two_independent_partitions_remain_two_exact_usb_choices(
+    monkeypatch, second_fs,
+):
+    """One physical USB drive with two direct mounted block partitions."""
+    second = Path("/media/alice/Kobo")
+    mountinfo = (
+        entry() +
+        entry(point=second, dev="8:18", mid=190, fs=second_fs,
+              source="/dev/sdb2")
+    )
+    with monkeypatch.context() as ctx:
+        kernel(
+            ctx, mountinfo,
+            uuids={(8, 17): "ABCD-1234", (8, 18): "BCDE-5678"},
+        )
+        def resolve(self, *, strict=False):
+            if self in (MOUNT, second):
+                return self
+            if str(self) == "/sys/dev/block/8:17":
+                return Path(USB_SYSFS)
+            if str(self) == "/sys/dev/block/8:18":
+                return Path(USB_SYSFS.replace("sdb1", "sdb2"))
+            return self
+
+        def stat_path(self):
+            if self in (MOUNT, second):
+                minor = 17 if self == MOUNT else 18
+                return NS(
+                    st_mode=stat.S_IFDIR | 0o755,
+                    st_dev=os.makedev(8, minor), st_ino=42 + minor,
+                )
+            raise OSError("not a qualified mount")
+
+        ctx.setattr(Path, "resolve", resolve)
+        ctx.setattr(Path, "stat", stat_path)
+        ctx.setattr(Path, "lstat", stat_path)
+        volumes = discovery.discover_linux_usb_volumes()
+    assert len(volumes) == 2
+    by_uuid = {v.usb_fingerprint: v for v in volumes}
+    assert set(by_uuid) == {"ABCD-1234", "BCDE-5678"}
+    assert by_uuid["ABCD-1234"].mountpoint == MOUNT
+    assert by_uuid["ABCD-1234"].mount_id == 189
+    assert by_uuid["BCDE-5678"].mountpoint == second
+    assert by_uuid["BCDE-5678"].mount_id == 190
+    assert by_uuid["BCDE-5678"].filesystem == second_fs
+    assert "BCDE-5678" not in by_uuid["BCDE-5678"].display_label()
+    assert by_uuid["ABCD-1234"].selection_key() != (
+        by_uuid["BCDE-5678"].selection_key()
+    )
+
+
+def test_udev_enumeration_stops_at_bound_before_touching_symlinks(monkeypatch):
+    """An unbounded generator must not be fully consumed, even on failure."""
+    base = Path("/dev/disk/by-uuid")
+    yielded = []
+
+    def iterdir(self):
+        assert self == base
+        for i in range(discovery._MAX_UUID_ENTRIES + 2048):
+            yielded.append(i)
+            yield base / f"SYNTHETIC-{i:06d}"
+
+    with monkeypatch.context() as ctx:
+        ctx.setattr(Path, "iterdir", iterdir)
+        ctx.setattr(Path, "is_symlink", lambda self: pytest.fail(
+            "must reject excessive directories before following any symlink"
+        ))
+        assert discovery._uuid_devices() == {}
+    assert len(yielded) == discovery._MAX_UUID_ENTRIES + 1
