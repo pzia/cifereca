@@ -64,6 +64,26 @@ def test_known_and_offline_linked_borrowers_only_in_exact_scope():
     assert "other-credential" not in dict(choices)
 
 
+def test_passive_borrower_settings_never_inspect_untyped_observation_properties():
+    """Provider-supplied lookalikes cannot execute properties in Settings."""
+    class Trap:
+        @property
+        def unique_id(self):
+            raise AssertionError("untyped borrower property executed")
+        @property
+        def is_primary(self):
+            raise AssertionError("untyped borrower property executed")
+
+    stored = {"offline": {"digital": "3", "physical": "5"}}
+    rows = linked_borrower_choices(
+        stored, SPEC, (Trap(), account("live")),
+        provider_id="fixture", credential_id="conn-a", identity_id="alice",
+    )
+    assert set(dict(rows)) == {"offline", "live"}
+    assert dict(rows)["offline"].startswith("Compte lié")
+    assert "Lecteur associé" in dict(rows)["live"]
+
+
 @pytest.mark.parametrize("value", ("", "00", "-1", "1.5", " 4", "4 ",
                                    "100", "999", "true", True, None, 4, {}, []))
 def test_invalid_values_never_coerce(value):
