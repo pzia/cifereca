@@ -2,7 +2,7 @@
 
 Synthetic GTK dropdown and identity broker; no real account, files or network.
 """
-from tests.test_constellations_profile_reload_p1 import view_with_profiles
+from .constellations_test_fixtures import view_with_profiles
 
 
 def test_missing_profile_remains_unselected_after_second_model_change():
