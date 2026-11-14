@@ -45,7 +45,7 @@
         "tests/test_core_p0_5975_public_catalogue_policy.py",
         "tests/test_core_public_book_notice_actions.py"
       ],
-      "pr": "pending"
+      "pr": "#5988"
     },
     {
       "id": "site-23720d5b87c66bdb88f346e6",
@@ -59,7 +59,7 @@
         "tests/test_core0933_public_links.py",
         "tests/test_core_p0_5975_public_catalogue_policy.py"
       ],
-      "pr": "pending"
+      "pr": "#5988"
     }
   ]
 }
