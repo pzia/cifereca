@@ -37,9 +37,31 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
             "code": "adept_identity_unproven",
             "reason": "source_scope_unproven", "retry": "explicit_only",
         })
+    # Pin the exact source coordinates across the storage boundary. A
+    # callback/mutable Loan must not switch provider, credential or borrower
+    # after the initial validation and thereby escape the grant check.
+    pinned_provider = loan.source_provider
+    pinned_credential = loan.source_credential
+    pinned_borrower = loan.source_account_id
     bound_identity_id = self.storage.identity_for_connection(
-        loan.source_provider, loan.source_credential
+        pinned_provider, pinned_credential
     )
+    if (type(loan.source_provider) is not str
+            or loan.source_provider != pinned_provider
+            or type(loan.source_credential) is not str
+            or loan.source_credential != pinned_credential
+            or (loan.source_account_id is not None
+                and type(loan.source_account_id) is not str)
+            or loan.source_account_id != pinned_borrower):
+        _TRACE_LOG.warning(
+            "TRACE download loan_auto blocked reason=source_scope_changed request_ref=%s",
+            request_ref,
+        )
+        return AutomaticLoanAdmission(refusal={
+            "status": "attention_required", "loan_id": loan.id,
+            "code": "adept_identity_unproven",
+            "reason": "source_scope_changed", "retry": "explicit_only",
+        })
     identity = self.identity_by_id(bound_identity_id)
     if identity is None:
         _TRACE_LOG.warning(
