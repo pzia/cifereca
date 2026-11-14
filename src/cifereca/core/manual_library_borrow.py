@@ -129,7 +129,7 @@ def manual_borrow_available(service, item: SearchResult, *, provider_id: str,
         return reject("local_edition_scope_invalid")
     if (type(identity_id) is not str or not identity_id
             or len(identity_id) > 1024
-            or any(c in identity_id for c in "\\x00\\r\\n")):
+            or any(c in identity_id for c in "\x00\r\n")):
         return reject("local_provider_or_identity_unavailable")
     try:
         manager = service._plugin_manager
