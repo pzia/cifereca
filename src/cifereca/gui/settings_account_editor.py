@@ -10,6 +10,30 @@ from typing import Any
 
 from .borrower_scoped_options import linked_borrower_choices
 from .settings_loan_observation import loan_cache_observations
+from ..providers.base import validated_account_option_choices
+
+
+class _AccountChoiceText:
+    """Read a declared ComboRow as a saved opaque value, never its label."""
+
+    def __init__(self, row: Any, values: tuple[str, ...]):
+        self.row = row
+        self.values = values
+
+    def get_text(self) -> str:
+        index = self.row.get_selected()
+        return self.values[index] if type(index) is int and 0 <= index < len(self.values) else ""
+
+    def set_text(self, value: str) -> None:
+        try:
+            index = self.values.index(value)
+        except ValueError:
+            index = 0xFFFFFFFF
+        self.row.set_selected(index)
+
+    @property
+    def text(self) -> str:
+        return self.get_text()
 
 
 def build_provider_account_editor(
@@ -76,7 +100,9 @@ def build_provider_account_editor(
     options = dict(raw_options) if type(raw_options) is dict else {}
     option_fields: dict[str, Any] = {}
     for field in getattr(descriptor, "account_options", ()):
-        entry = Adw.PasswordEntryRow() if field.secret else Adw.EntryRow()
+        choice_mode = getattr(field, "value_type", "text") == "choice"
+        entry = (Adw.ComboRow() if choice_mode else
+                 Adw.PasswordEntryRow() if field.secret else Adw.EntryRow())
         entry.set_title(field.label)
         if field.key in options:
             # Explicitly persisted empty strings are intentional. Never
@@ -110,9 +136,24 @@ def build_provider_account_editor(
                  if type(value) is str and value),
                 "",
             )
-        entry.set_text(selected)
+        if choice_mode:
+            declared = validated_account_option_choices(field)
+            values = tuple(value for value, _label in declared or ())
+            if declared is None or selected not in values:
+                # A stale option or a changed/invalid descriptor cannot be
+                # silently rebound to the first available item.
+                invalid_saved_snapshot = True
+            entry.set_model(Gtk.StringList.new([
+                label for _value, label in declared or ()
+            ]))
+            entry.set_selected(
+                values.index(selected) if selected in values else 0xFFFFFFFF
+            )
+            option_fields[field.key] = _AccountChoiceText(entry, values)
+        else:
+            entry.set_text(selected)
+            option_fields[field.key] = entry
         group.add(entry)
-        option_fields[field.key] = entry
         help_text = getattr(field, 'help_text', '')
         if type(help_text) is str and help_text:
             note = Adw.ActionRow()
