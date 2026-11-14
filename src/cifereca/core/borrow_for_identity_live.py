@@ -320,6 +320,7 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
 def preview_live_borrow_for_current_identity(
     service, *, expected_edition_id: str,
     observations: object, now: int | None = None,
+    requesting_identity_id: str | None = None, scope_current=None,
 ) -> BorrowForIdentityPreview:
     """Project live Core owner/session facts without switching identities.
 
@@ -335,8 +336,12 @@ def preview_live_borrow_for_current_identity(
                    for row in observations)):
         raise ValueError("invalid_cross_profile_borrow_observations")
 
-    identity = service.current_identity
-    requesting = getattr(identity, "identity_id", None)
+    # Workers do not discover mutable UI navigation; the requesting profile
+    # is captured at the public facade and supplied with a revocable lease.
+    if (type(requesting_identity_id) is not str or not requesting_identity_id
+            or not callable(scope_current) or scope_current() is not True):
+        raise ValueError("invalid_cross_profile_borrow_context")
+    requesting = requesting_identity_id
     context = getattr(service, "_account_context_epoch", None)
     if type(context) is not int or context < 0:
         raise ValueError("invalid_cross_profile_borrow_context")
@@ -347,6 +352,8 @@ def preview_live_borrow_for_current_identity(
     scoped, rejected = _noncontradictory_observations(observations)
     witnesses: list[BorrowForIdentityWitness] = []
     for row in scoped:
+        if scope_current() is not True:
+            break
         witness = _witness(
             service, row, context_epoch=context, source_epoch=source,
         )
@@ -360,7 +367,7 @@ def preview_live_borrow_for_current_identity(
         expected_edition_id=expected_edition_id,
         witnesses=witnesses, now=now, context_epoch=context,
     )
-    if (service.current_identity is not identity
+    if (scope_current() is not True
             or getattr(service, "_account_context_epoch", None) != context
             or source_context_epoch(service) != source):
         empty = preview_borrow_for_identity(
@@ -393,6 +400,7 @@ def revalidate_live_borrow_lender_selection(
     service, *, captured_preview: BorrowForIdentityPreview,
     selected_option_id: str, expected_edition_id: str,
     observations: object, now: int | None = None,
+    requesting_identity_id: str | None = None, scope_current=None,
 ) -> BorrowLenderSelection:
     """Re-evaluate the *clicked* option, never pick the first eligible offer.
 
@@ -407,7 +415,10 @@ def revalidate_live_borrow_lender_selection(
             or type(selected_option_id) is not str
             or not selected_option_id.startswith("borrow-profile.v1:")
             or type(expected_edition_id) is not str
-            or type(captured_preview.options) is not tuple):
+            or type(captured_preview.options) is not tuple
+            or type(requesting_identity_id) is not str
+            or requesting_identity_id != captured_preview.requesting_identity_id
+            or not callable(scope_current) or scope_current() is not True):
         return stale
     selected = [
         option for option in captured_preview.options
@@ -421,7 +432,11 @@ def revalidate_live_borrow_lender_selection(
         fresh = preview_live_borrow_for_current_identity(
             service, expected_edition_id=expected_edition_id,
             observations=observations, now=now,
+            requesting_identity_id=requesting_identity_id,
+            scope_current=scope_current,
         )
+        if scope_current() is not True:
+            return stale
         # A held menu is one consent context, not merely the clicked row.
         # If any other lender/collection is added, removed or rebound, the
         # exact selection snapshot is stale even when its clicked row is
@@ -437,6 +452,8 @@ def revalidate_live_borrow_lender_selection(
         if len(matching) != 1 or matching[0] != selected[0]:
             return stale
         option = matching[0]
+        if scope_current() is not True:
+            return stale
         return BorrowLenderSelection(
             "current", "selection_current_unverified",
             borrowing_identity_id=option.borrowing_identity_id,

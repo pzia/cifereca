@@ -1110,6 +1110,25 @@
       ],
       "pr": "#6104",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-cross-profile-lender-preview-and-post-headless-scope",
+      "original": "Nested Core live borrower preview, clicked lender revalidation, inert action plan, one-shot supplier claim executor and durable action scope read service.current_identity to select requester or revoke a held lease, including across SQLite and provider callbacks.",
+      "original_classification": "navigation_dependent_core_lender_preview_and_mutation",
+      "replacement": "Four public LibraryService entry points pin the requester ID and a revocable identity/epoch lease once. Five Core workers and scope evaluation use only explicit requesting_identity_id and the same scope_current callback; direct missing scope is rejected before private reads or supplier claim, no Core navigation getter remains. Lease checked before, during and after provider/SQLite work.",
+      "classification": "removed_core_lender_preview_and_post_navigation",
+      "evidence": "AST assertion excludes current_identity in all Core preview/choice/plan/claim/scope worker bodies; direct poisoned-navigation synthetic service can evaluate preview and plan with an explicit callback; no-scope never reads private SQLite or POSTs; historic A→B→A, rebind, duplicate lender and one-shot claim regressions retained.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_lender_admission.py",
+        "tests/test_core_p1_4662_live_lender_preview.py",
+        "tests/test_core_p1_4987_cross_profile_action_scope.py",
+        "tests/test_core_p1_4987_exact_lender_action_plan.py",
+        "tests/test_core_p1_4987_cross_profile_executor.py",
+        "tests/test_core_p1_4987_composed_bnf_lender.py",
+        "tests/test_core_p1_4987_cross_profile_paris_http.py"
+      ],
+      "pr": "#6110",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [

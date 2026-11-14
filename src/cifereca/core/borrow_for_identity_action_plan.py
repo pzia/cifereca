@@ -36,6 +36,7 @@ def prepare_cross_profile_lender_action_plan(
     service, *, captured_preview: BorrowForIdentityPreview,
     selected_option_id: str, expected_edition_id: str,
     observations: object, now: int | None = None,
+    requesting_identity_id: str | None = None, scope_current=None,
 ) -> CrossProfileLenderActionPlan:
     """Re-resolve *only* the clicked lender's exact account and edition.
 
@@ -52,19 +53,24 @@ def prepare_cross_profile_lender_action_plan(
                 or type(selected_option_id) is not str
                 or type(expected_edition_id) is not str):
             return revoked
-        active_identity = service.current_identity
+        if (type(requesting_identity_id) is not str
+                or requesting_identity_id != captured_preview.requesting_identity_id
+                or not callable(scope_current)
+                or scope_current() is not True):
+            return revoked
         context_epoch = service._account_context_epoch
         source_epoch = source_context_epoch(service)
         if (type(context_epoch) is not int or context_epoch < 0
                 or type(source_epoch) is not int or source_epoch < 0
-                or getattr(active_identity, "identity_id", None)
-                   != captured_preview.requesting_identity_id):
+                or scope_current() is not True):
             return revoked
         selection = revalidate_live_borrow_lender_selection(
             service, captured_preview=captured_preview,
             selected_option_id=selected_option_id,
             expected_edition_id=expected_edition_id,
             observations=observations, now=now,
+            requesting_identity_id=requesting_identity_id,
+            scope_current=scope_current,
         )
         if (selection.status != "current" or selection.executable is not False
                 or not selection.borrowing_identity_id
@@ -79,6 +85,8 @@ def prepare_cross_profile_lender_action_plan(
         expected = clicked[0]._source_coordinates
         exact = []
         for row in observations:
+            if scope_current() is not True:
+                return revoked
             witness = _witness(
                 service, row, context_epoch=context_epoch,
                 source_epoch=source_epoch,
@@ -101,7 +109,7 @@ def prepare_cross_profile_lender_action_plan(
         account, notice = exact[0]
         key = borrow_claim_key(account, notice)
         if (key is None or service.storage.metadata_get(key) is not None
-                or service.current_identity is not active_identity
+                or scope_current() is not True
                 or service._account_context_epoch != context_epoch
                 or source_context_epoch(service) != source_epoch):
             return revoked

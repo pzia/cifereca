@@ -19,7 +19,7 @@ class CrossProfileBorrowScopeLease:
     _account: Account = field(repr=False)
     _notice: SearchResult = field(repr=False)
     _session: object = field(repr=False)
-    _requester: object = field(repr=False)
+    _scope_current: object = field(repr=False)
     _requester_identity_id: str
     _account_fields: tuple[object, ...] = field(repr=False)
     _claim_key: str = field(repr=False)
@@ -35,9 +35,8 @@ class CrossProfileBorrowScopeLease:
                     or type(self._requester_identity_id) is not str
                     or not self._requester_identity_id
                     or account.identity_id == self._requester_identity_id
-                    or service.current_identity is not self._requester
-                    or getattr(self._requester, "identity_id", None)
-                        != self._requester_identity_id
+                    or not callable(self._scope_current)
+                    or self._scope_current() is not True
                     or service.identity_by_id(self._requester_identity_id) is None
                     or service.identity_by_id(account.identity_id) is None
                     or service._account_context_epoch != self._context_epoch
@@ -89,7 +88,7 @@ class CrossProfileBorrowScopeLease:
             fresh_state = _inert_session_state(session)
             fresh_rows = _inert_session_accounts(session)
             return (
-                service.current_identity is self._requester
+                self._scope_current() is True
                 and service._account_context_epoch == self._context_epoch
                 and source_context_epoch(service) == self._source_epoch
                 and _fields(account, notice) == self._account_fields
@@ -113,7 +112,7 @@ class CrossProfileBorrowScopeLease:
 def capture_cross_profile_borrow_scope(
     service: object, *, requesting_identity_id: str,
     borrowing_account: Account, exact_notice: SearchResult,
-    lender_session: object,
+    lender_session: object, scope_current=None,
 ) -> CrossProfileBorrowScopeLease | None:
     """Capture a necessary pre-POST boundary, never authorization or consent."""
     if (type(requesting_identity_id) is not str
@@ -124,15 +123,14 @@ def capture_cross_profile_borrow_scope(
         return None
     state = _inert_session_state(lender_session)
     try:
-        requester = service.current_identity
         fields = _fields(borrowing_account, exact_notice)
         claim = borrow_claim_key(borrowing_account, exact_notice)
         context = service._account_context_epoch
         source = source_context_epoch(service)
         if (state is None or not _valid_fields(fields)
                 or claim is None
-                or getattr(requester, "identity_id", None)
-                    != requesting_identity_id
+                or not callable(scope_current)
+                or scope_current() is not True
                 or type(context) is not int or context < 0
                 or type(source) is not int or source < 0
                 ):
@@ -142,7 +140,7 @@ def capture_cross_profile_borrow_scope(
             return None
         lease = CrossProfileBorrowScopeLease(
             _account=borrowing_account, _notice=exact_notice,
-            _session=lender_session, _requester=requester,
+            _session=lender_session, _scope_current=scope_current,
             _requester_identity_id=requesting_identity_id,
             _account_fields=fields, _claim_key=claim,
             _context_epoch=context, _source_epoch=source,
