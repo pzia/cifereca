@@ -211,22 +211,6 @@
       "rationale": "Supplier whitelist within a read-only audit is a necessary historical safety gate pending a neutral proven substitute; not an active canonical producer."
     },
     {
-      "id": "site-9505ed058db59cf26b03c187",
-      "classification": "must_migrate",
-      "journey": "Kobo-only manual materialization admission before canonical Source Sync",
-      "productive_caller": "SynchronizationBrokerImpl.prepare_materialization/execute_materialization -> core.source_materialization._source -> canonical A-to-B Sync",
-      "effect": "Core routes this generic confirmation surface only to provider_id=kobo. `prepare`/`execute` now require a complete v1/v2 delivery ABI; partial ABI returns canonical_delivery_unavailable and CANNOT execute W2 backup writes",
-      "authority": "Kobo named Core UI routing plus verified session, exact account, live CAS policy and canonical source capability; legacy 0.7 backup is not a permitted executor",
-      "replacement_contract": "Generic provider-declared source-materialization capability, using already installed canonical Sync broker or retire this branded compatibility UI entrypoint",
-      "tests": [
-        "tests/test_source_materialization_confirmation.py",
-        "tests/test_core_p0_3196_residual_writer_surface.py",
-        "tests/test_core_p0_4858_manual_canonical_materialization.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Brand-specific execution routing remains in shared Core, but the old writer is physically absent: classifying it as an active legacy_mutating_cutover would be factually wrong."
-    },
-    {
       "id": "site-dd2ac28f46a8a720315de122",
       "classification": "safety_guard_pending_contract",
       "journey": "Input validation of historical Kobo backup_items writer compatibility API",
@@ -799,6 +783,23 @@
       ],
       "pr": "#6082",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-manual-materialization-source-capability-cutover",
+      "original": "core.source_materialization._source restricted a generic manual confirmation to account.provider_id == 'kobo', imported a Kobo-only backup root selector and included obsolete kobo_backup policy/directory settings in the one-use canonical A-to-B fingerprint",
+      "original_classification": "active_branded_business_decision_must_migrate",
+      "replacement": "Admission now uses the provider-declared local_materialization capability plus backup support and exact source/account/session/canonical consent checks, with Core-neutral canonical library/profile roots. A provider-owned versioned primary-account identity label is the only accepted legacy owner alias; missing declaration fails closed. No W2 backup writer can execute.",
+      "classification": "retired_supplier_specific_manual_confirmation_routing",
+      "evidence": "Exact connected source and storage identity binding still mandatory, duplicate borrower and stale session refused, no implicit GTK selection; full canonical delivery ABI + on-policy required to issue token, one-use confirmation revalidates provider epoch, source epoch, consent and A snapshot, then calls a single canonical Source Sync. Synthetic future provider with local_materialization capability uses the read-only preflight, backup-only provider cannot; no branded source checks or legacy backup roots in shared Core.",
+      "tests": [
+        "tests/test_core_p0_5975_generic_materialization_admission.py",
+        "tests/test_source_materialization_confirmation.py",
+        "tests/test_core_p0_4858_manual_canonical_materialization.py",
+        "tests/test_core_p0_4858_d2_session_borrower_binding.py",
+        "tests/test_core_p0_3196_kobo_profile_path_isolation.py"
+      ],
+      "pr": "#pending",
+      "in_ast_metric": true
     }
   ],
   "guard_installations": [
