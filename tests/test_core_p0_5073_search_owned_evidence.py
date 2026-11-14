@@ -67,7 +67,7 @@ def test_exact_canonical_ownership_works_for_multiple_unrelated_providers():
     for provider in (PROVIDER, "numilog", "kobo"):
         item = replace(_item(), source_provider=provider)
         service = _service([_entitlement(provider_id=provider)])
-        proof = snapshot_search_owned_evidence(service)
+        proof = snapshot_search_owned_evidence(service, identity_id=IDENTITY)
         assert type(proof) is SearchOwnedEvidence
         assert result_row(item, purchase_evidence=proof,
                           identity_id=IDENTITY)["state"] == "remote_owned"
@@ -92,7 +92,7 @@ def test_exact_canonical_ownership_works_for_multiple_unrelated_providers():
 ])
 def test_foreign_or_stale_source_cannot_reuse_private_evidence(change):
     service = _service([_entitlement()])
-    proof = snapshot_search_owned_evidence(service)
+    proof = snapshot_search_owned_evidence(service, identity_id=IDENTITY)
     item = replace(_item(), **change)
     assert result_row(item, purchase_evidence=proof,
                       identity_id=IDENTITY)["state"] == "remote_catalog"
@@ -102,7 +102,7 @@ def test_foreign_or_stale_source_cannot_reuse_private_evidence(change):
 @pytest.mark.parametrize("supplier_owned", [False, None, 1, True])
 def test_provider_owned_hint_cannot_veto_an_exact_canonical_owned_right(supplier_owned):
     item = replace(_item(), owned=supplier_owned)
-    proof = snapshot_search_owned_evidence(_service([_entitlement()]))
+    proof = snapshot_search_owned_evidence(_service([_entitlement()]), identity_id=IDENTITY)
     result = result_row(item, purchase_evidence=proof, identity_id=IDENTITY)
     assert result["state"] == "remote_owned"
     assert result["owned"] is True
@@ -112,12 +112,12 @@ def test_provider_owned_hint_cannot_veto_an_exact_canonical_owned_right(supplier
 
 def test_cross_identity_or_changed_ledger_revokes_the_verdict():
     service = _service([_entitlement()])
-    proof = snapshot_search_owned_evidence(service)
+    proof = snapshot_search_owned_evidence(service, identity_id=IDENTITY)
     assert proof is not None
     assert result_row(_item(), purchase_evidence=proof,
                       identity_id="reader-B")["state"] == "remote_catalog"
     assert snapshot_search_owned_evidence(
-        _service([_entitlement(identity_id="reader-B")])
+        _service([_entitlement(identity_id="reader-B")]), identity_id=IDENTITY,
     ).rights == frozenset()
     service.current_identity = NS(identity_id="reader-B")
     assert result_row(_item(), purchase_evidence=proof,
@@ -128,7 +128,7 @@ def test_account_or_source_rebinding_revokes_old_proof_even_same_identity():
     service = _service([_entitlement()])
     service._account_context_epoch = 17
     service._source_context_epoch = 29
-    proof = snapshot_search_owned_evidence(service)
+    proof = snapshot_search_owned_evidence(service, identity_id=IDENTITY)
     assert proof is not None
     assert result_row(
         _item(), purchase_evidence=proof, identity_id=IDENTITY,
@@ -149,18 +149,18 @@ def test_account_epoch_changed_during_ledger_read_refuses_snapshot():
         service._source_context_epoch += 1
         return [_entitlement()]
     service.storage.entitlements.side_effect = rotate
-    assert snapshot_search_owned_evidence(service) is None
+    assert snapshot_search_owned_evidence(service, identity_id=IDENTITY) is None
 
 
 def test_versioned_proof_or_missing_core_capability_cannot_fabricate_right():
     service = _service([_entitlement()])
-    proof = snapshot_search_owned_evidence(service)
+    proof = snapshot_search_owned_evidence(service, identity_id=IDENTITY)
     assert proof is not None and proof.schema_version == 1
     assert result_row(_item(), purchase_evidence=replace(proof, schema_version=2),
                       identity_id=IDENTITY)["state"] == "remote_catalog"
     assert snapshot_search_owned_evidence(NS(
         current_identity=NS(identity_id=IDENTITY), storage=NS(),
-    )) is None
+    ), identity_id=IDENTITY) is None
 
 
 def test_pending_archived_and_loan_entitlements_are_not_purchase_proofs():
@@ -169,23 +169,30 @@ def test_pending_archived_and_loan_entitlements_are_not_purchase_proofs():
         _entitlement(state="archived"),
         _entitlement(entitlement_type="purchase_request"),
     ]
-    proof = snapshot_search_owned_evidence(_service(rows))
+    proof = snapshot_search_owned_evidence(_service(rows), identity_id=IDENTITY)
     assert result_row(_item(), purchase_evidence=proof,
                       identity_id=IDENTITY)["state"] == "remote_catalog"
 
 
 def test_identity_swap_during_sqlite_projection_fails_closed():
     service = _service([_entitlement()])
+    service._account_context_epoch = 7
+    service._source_context_epoch = 11
+
     def swap(*, state):
+        # A real select_identity increments this monotonic epoch, even on
+        # an Alice→Bob→Alice ABA transition. Core must not inspect GTK state.
         service.current_identity = NS(identity_id="reader-B")
+        service._account_context_epoch += 1
         return [_entitlement()]
+
     service.storage.entitlements.side_effect = swap
-    assert snapshot_search_owned_evidence(service) is None
+    assert snapshot_search_owned_evidence(service, identity_id=IDENTITY) is None
 
 
 @pytest.mark.parametrize("rows", [None, (), "bad", [None], [object()], [1]])
 def test_malformed_entitlements_never_publish_partial_ownership(rows):
-    assert snapshot_search_owned_evidence(_service(rows)) is None
+    assert snapshot_search_owned_evidence(_service(rows), identity_id=IDENTITY) is None
 
 
 def test_raw_provider_metadata_cannot_supply_rights_or_source_coordinates():
@@ -194,6 +201,26 @@ def test_raw_provider_metadata_cannot_supply_rights_or_source_coordinates():
         "entitlement_type": "owned", "identity_id": IDENTITY,
         "right_id": EDITION, "provider_verified": True,
     }, source_account_id=None)
-    proof = snapshot_search_owned_evidence(_service([_entitlement()]))
+    proof = snapshot_search_owned_evidence(_service([_entitlement()]), identity_id=IDENTITY)
     assert result_row(item, purchase_evidence=proof,
                       identity_id=IDENTITY)["state"] == "remote_catalog"
+
+
+def test_headless_scope_never_looks_up_navigation_and_unscoped_is_inert():
+    service = _service([_entitlement()])
+    class Headless:
+        storage = service.storage
+
+        @property
+        def current_identity(self):
+            pytest.fail("Core worker must never read GTK-selected identity")
+
+    worker = Headless()
+    assert snapshot_search_owned_evidence(worker) is None
+    worker.storage.entitlements.assert_not_called()
+    proof = snapshot_search_owned_evidence(worker, identity_id=IDENTITY)
+    assert proof is not None and proof.identity_id == IDENTITY
+    assert len(proof.rights) == 1
+    assert snapshot_search_owned_evidence(worker, identity_id="") is None
+    assert snapshot_search_owned_evidence(worker, identity_id=[]) is None
+    worker.storage.entitlements.assert_called_once_with(state="active")
