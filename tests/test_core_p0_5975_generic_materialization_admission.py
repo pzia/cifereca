@@ -64,7 +64,8 @@ def _harness(tmp_path, *, provider="future-books", enabled=True, backup=True,
     return broker, account, session, root
 
 
-def test_future_provider_with_declared_capability_admitted_read_only(tmp_path):
+def test_future_provider_with_declared_capability_admitted_read_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(materialize, "acquisition_lock_file", lambda: tmp_path / "lock")
     broker, account, session, library = _harness(tmp_path)
     result = materialize._source(broker, "scope-A", allow_canonical=True)
     assert result[0] is account and result[1] is session
