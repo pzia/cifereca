@@ -1022,7 +1022,7 @@
         "src/plugins/diagnostics-page/tests/test_diagnostics_pseudonyms_3135.py",
         "tests/test_diagnostics_missing_placements.py"
       ],
-      "pr": "#PENDING",
+      "pr": "#6103",
       "in_ast_metric": false
     }
   ],
