@@ -141,7 +141,7 @@ def _history_search_queries(cls, title: str) -> list[str]:
     return out[:3]
 
 
-def resolve_history_thumbnail(self, provider: str, record_id: str | None, title: str, author: str | None=None, year: str | None=None, default_url: str | None=None) -> tuple[str | None, str]:
+def resolve_history_thumbnail(self, provider: str, record_id: str | None, title: str, author: str | None=None, year: str | None=None, default_url: str | None=None, *, account: Account | None=None) -> tuple[str | None, str]:
     """Résout une couverture manquante de l'historique via le catalogue.
 
     0.2.6 corrige deux défauts de 0.2.5 : les résultats négatifs ne sont
@@ -153,7 +153,7 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
     # Pin the exact borrower before cache access. Catalogue cover URLs may
     # carry account-specific tokens, so the old provider/title-only cache
     # namespace cannot be shared between independent Core clients.
-    account = self.current_account
+    account = self.current_account if account is None else account
     if (type(account) is not Account
             or type(account.identity_id) is not str or not account.identity_id
             or type(account.provider_id) is not str or not account.provider_id
