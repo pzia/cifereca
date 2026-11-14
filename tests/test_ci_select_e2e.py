@@ -48,7 +48,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(mod.ALL) | set(mod.OPTIONAL_UX), set(runner.SCENARIOS))
         self.assertEqual(set(mod.ALL) & set(mod.OPTIONAL_UX), set())
         self.assertEqual(mod.OPTIONAL_UX, ("book-detail-1700",))
-        self.assertEqual(len(mod.ALL), 45)
+        self.assertEqual(len(mod.ALL), 47)
         self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024"))
         self.assertEqual(mod.PLUGIN_SCROLL, ("plugin-manager-scroll-1024", "plugin-manager-scroll-1366"))
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
@@ -155,6 +155,32 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(mod.OPTIMIZER_GTK), {
             "optimizer-handoff-1366", "optimizer-handoff-1600",
         })
+
+
+    def test_p1_6041_reader_dialog_scenarios_are_selected_and_standalone(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("cifereca_e2e_runner",
+            ROOT / "e2e/run.py")
+        runner = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(runner)
+        self.assertEqual(
+            mod.READER_USB_GTK,
+            ("reader-usb-pairing-1024", "reader-usb-pairing-1366"),
+        )
+        for scenario in mod.READER_USB_GTK:
+            self.assertEqual(runner.SCENARIOS[scenario]["runner"], "gtk-reader-pairing")
+            self.assertEqual(runner.SCENARIOS[scenario]["plugin"], "ui.page.readers")
+        self.assertEqual(
+            mod.select(["e2e/reader_usb_pairing_probe.py"]), mod.READER_USB_GTK,
+        )
+        for owner in (
+            "src/cifereca/gui/reader_pairing_actions.py",
+            "src/cifereca/gui/reader_page_controller.py",
+            "src/cifereca/core/device_usb_discovery.py",
+            "src/cifereca/core/device_usb_binding_proposal.py",
+        ):
+            self.assertEqual(mod.select([owner]), mod.READER_USB_GTK, owner)
 
     def test_1127_settings_actions_select_real_gtk_at_both_widths(self):
         for path in ("src/cifereca/gui/settings_ai_actions.py",
