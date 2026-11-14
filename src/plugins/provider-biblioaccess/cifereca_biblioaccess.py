@@ -82,12 +82,18 @@ DESCRIPTOR = ProviderDescriptor(
     # are intentionally not re-declared as editable production account fields.
     account_options=(
         AccountOptionField(
-            "authenticated_sync", "Synchronisation des prêts (on/off)", default="off",
-            help_text="on : autorise la connexion SSO, la synchronisation de "
-                      "vos prêts numériques et l'acquisition automatique ACSM "
-                      "des prêts disponibles via votre profil Kobo-Adept. "
-                      "off : aucun SSO ni téléchargement automatique. "
-                      "Vous pouvez retélécharger un prêt au besoin.",
+            "authenticated_sync", "Synchronisation des prêts numériques",
+            default="off", value_type="choice",
+            choices=(
+                ("off", "Désactivée — sans connexion automatique"),
+                ("on", "Activée — CAS, prêts et acquisitions permises"),
+            ),
+            help_text="Option locale par compte : activée autorise le SSO CAS "
+                      "et la synchronisation des prêts numériques, ainsi que "
+                      "l'acquisition automatique ACSM des prêts déjà actifs "
+                      "si le profil Kobo-Adept est disponible. "
+                      "Désactivée par défaut. Le test ponctuel explicite "
+                      "du compte est indépendant de ce consentement.",
         ),
         # Advisory preference only. The actual supplier quota, loan coverage
         # and authority to borrow are independent observations; this option

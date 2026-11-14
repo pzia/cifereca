@@ -1,5 +1,26 @@
 # BiblioAccess — La Rochelle (tenant 1409)
 
+## Préférence de synchronisation — bundle 0.4.3 (P1 #5540)
+
+Dans Paramètres, **Synchronisation des prêts numériques** est désormais
+un choix déclaratif (sans champ de texte libre) :
+**Désactivée** ou **Activée**. Les valeurs persistées restent strictement
+`authenticated_sync="off"` (défaut) et `"on"`, par **identité et credential
+exacts**. Un ancien compte conserve son choix enregistré, sans migration ou
+nouvelle autorisation automatique. Les valeurs historiques inconnues et les
+options invalides bloquent la sauvegarde de ce compte au lieu de choisir
+silencieusement « Activée » ou « Désactivée ».
+
+Le choix **Activée** autorise uniquement le chemin de synchronisation CAS
+existant et le traitement conditionnel d'ACSM pour des prêts déjà attestés.
+Il ne prouve ni la disponibilité de prêts supplémentaires ni une permission
+de nouvel emprunt. **Désactivée** n'empêche ni la recherche du catalogue
+public ni l'action séparée et ponctuelle « Tester ce compte ».
+
+Le composant `Adw.ComboRow` et sa validation appartiennent au CoreUI générique
+(lot #6001) ; ce plugin ne fournit que la déclaration et les labels,
+sans accès direct à des classes GTK ni nouvelle requête réseau.
+
 ## Acquisition des prêts numériques — bundle 0.4.0
 
 La synchronisation du lecteur `authenticated_sync=on` relève toujours les
