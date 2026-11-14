@@ -129,7 +129,7 @@ class Core0919(unittest.TestCase):
  def test_loan_detail_displays_adept_binding_without_return_button(self):
   button=Mock();window=NS(service=NS(provider_display_name=lambda _provider:'Paris',can_download_loan=lambda loan:False,adept_return_status_for_loan=lambda loan:{'status':'ready','return_available':True,'acquisition_id':'binding-id','adept_loan_id':'adept-exact','profile_name':'hb'}),action_button=Mock(return_value=button),return_adept_from_detail=Mock(),config=NS(get=lambda key,default=None:default))
   detail=NS(_decorate=Mock(),_clear_actions=Mock(),window=window,content=Mock(),_cancel_meta_request=Mock(),_cover_and_title=Mock(),_group=Mock(),_actions=Mock(),show_presentation=Mock())
-  self.extract('show_loan',{'clear_box':Mock(),'fr_date':lambda value:value,'loan_due_detail_value':loan_due_detail_value,'Gtk':NS(),'add_css':Mock(),'book_detail_presentation':lambda **kwargs:kwargs,'file_format':lambda value:str(value or '').lower(),'detail_language':lambda _raw:'','compact_availability_label':lambda value:value})(detail,self.loan)
+  self.extract('show_loan',{'clear_box':Mock(),'fr_date':lambda value:value,'loan_due_detail_value':loan_due_detail_value,'Gtk':NS(),'add_css':Mock(),'book_detail_presentation':lambda **kwargs:kwargs,'file_format':lambda value:str(value or '').lower(),'detail_language':lambda _raw:'','compact_availability_label':lambda value:value,'explicit_loan_acsm_action_available':lambda _service,_loan:False})(detail,self.loan)
   self.assertEqual(detail._group.call_args.args[0],'État du prêt ADEPT (lecture seule)')
   self.assertIn(('Identifiant ADEPT','adept-exact'),detail._group.call_args.args[1])
   self.assertFalse(any('Restituer' in str(call.args[0]) for call in window.action_button.call_args_list))
