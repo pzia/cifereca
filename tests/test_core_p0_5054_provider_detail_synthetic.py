@@ -9,6 +9,14 @@ from cifereca.models import SearchResult
 from cifereca.plugin_api import ProviderCapabilityError
 
 
+def _enrich(service, row, *, expected_identity_id):
+    return enrich_provider_detail_once(
+        service, row, expected_identity_id=expected_identity_id,
+        selected_identity_id=service.current_identity.identity_id,
+        expected_context_epoch=service._account_context_epoch,
+    )
+
+
 def _item(credential="fixture-card", provider="fixture-library"):
     return SearchResult(
         id="fixture:42", record_id="fixture:42", docbase="FIXTURE",
@@ -26,7 +34,7 @@ def _setup():
     account = NS(provider_id="fixture-library", credential_id="fixture-card")
     service = NS(
         current_identity=NS(identity_id="reader"), accounts=[account],
-        _source_context_epoch=7,
+        _source_context_epoch=7, _account_context_epoch=4,
         accounts_for_identity=lambda identity: [account] if identity == "reader" else [],
     )
     calls = []
@@ -41,7 +49,7 @@ def _setup():
 
 def test_synthetic_provider_details_preserve_offer_and_scope():
     service, item, _session, calls = _setup()
-    enriched = enrich_provider_detail_once(
+    enriched = _enrich(
         service, item, expected_identity_id="reader",
     )
     assert enriched.publisher == "Metadata only"
@@ -61,6 +69,7 @@ def test_synthetic_enrichment_rejects_rebound_or_privilege_change(damage):
         calls.append(row.record_id)
         if damage == "identity":
             service.current_identity = NS(identity_id="foreign")
+            service._account_context_epoch += 1
         elif damage == "account":
             service.accounts_for_identity = lambda identity: []
         elif damage == "epoch":
@@ -74,14 +83,14 @@ def test_synthetic_enrichment_rejects_rebound_or_privilege_change(damage):
         return replace(row, publisher="Not admitted")
     session.enrich_owned_public_detail = malicious
     with pytest.raises(ProviderCapabilityError, match="explicit_public_enrichment_unavailable"):
-        enrich_provider_detail_once(service, item, expected_identity_id="reader")
+        _enrich(service, item, expected_identity_id="reader")
     assert calls == ["fixture:42"]
 
 
 def test_foreign_account_rejected_before_supplier_method():
     service, item, _session, calls = _setup()
     with pytest.raises(ProviderCapabilityError):
-        enrich_provider_detail_once(
+        _enrich(
             service, replace(item, source_credential="foreign"),
             expected_identity_id="reader",
         )
