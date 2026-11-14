@@ -1540,7 +1540,11 @@ class LocalInspection:
                 or not file_key.startswith('file:')):
             return review_local_pair(None, None, audit_complete=False)
 
-        if right.provider != 'numilog':
+        # The session builds private proof summaries only for sources whose
+        # attested acquisition contract supports this diagnostic. Dispatch on
+        # that prepared evidence, never on a Core-owned supplier identifier.
+        # Missing evidence must fail closed as a read-only unsupported source.
+        if right_key not in self._manual_right_proofs:
             return review_source_read_only(
                 audit_complete=self._manual_audit_complete,
                 loan_inactive='loan_inactive' in right.states,
