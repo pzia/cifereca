@@ -93,7 +93,10 @@ def main() -> int:
     Adw.init()
     device = X11Input()
     storage = MemoryBindings()
-    state = {"volumes": (), "reads": 0, "errors": 0, "renders": 0}
+    state = {
+        "volumes": (), "reads": 0, "errors": 0, "renders": 0,
+        "checkpoint": "setup",
+    }
     original_discovery = discovery.discover_linux_usb_volumes
 
     def discover():
@@ -137,6 +140,7 @@ def main() -> int:
             GLib.MainContext.default().iteration(False)
 
     def until(predicate, key, seconds=6):
+        state["checkpoint"] = key
         limit = monotonic() + seconds
         while monotonic() < limit:
             pump()
@@ -290,8 +294,17 @@ def main() -> int:
             checks={key: bool(value) for key, value in report["checks"].items()},
         )
     except Exception as exc:
-        # Never print upstream paths, raw UUIDs or provider exceptions.
+        # Only closed checkpoint names may enter CI; no traceback, URL,
+        # fixture mountpath, UUID or provider-controlled string.
         report.update(status="FAIL", error_code=type(exc).__name__)
+        allowed = {
+            "shell", "widget_mapped", "dialog_open", "expert_mode",
+            "chooser_return", "dialog_response", "manual_uuid",
+            "setup",
+        }
+        checkpoint = state["checkpoint"]
+        if checkpoint in allowed:
+            print("P1_6041_CLOSED_FAILURE_CHECKPOINT=" + checkpoint, flush=True)
     finally:
         discovery.discover_linux_usb_volumes = original_discovery
         window._closed = True
