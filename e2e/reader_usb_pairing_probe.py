@@ -22,7 +22,7 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT / "environnements/openai-chat-debian
 import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gio, GLib, Gtk
 from PIL import ImageGrab
 
 from cifereca.core import device_usb_discovery as discovery
@@ -91,11 +91,18 @@ def main() -> int:
 
     Gtk.init()
     Adw.init()
+    # Match the other Adwaita GTK acceptance probes: a registered desktop
+    # application owns the native toplevel, rather than an unowned Gtk.Window.
+    app = Adw.Application(
+        application_id="org.cifereca.p16041.readerpairing",
+        flags=Gio.ApplicationFlags.NON_UNIQUE,
+    )
+    app.register(None)
     device = X11Input()
     storage = MemoryBindings()
     state = {
         "volumes": (), "reads": 0, "errors": 0, "renders": 0,
-        "button_clicks": 0, "dialog_build_errors": 0,
+        "button_clicks": 0, "pointer_enter": 0, "dialog_build_errors": 0,
         "checkpoint": "setup",
     }
     original_discovery = discovery.discover_linux_usb_volumes
@@ -106,7 +113,8 @@ def main() -> int:
 
     discovery.discover_linux_usb_volumes = discover
 
-    window = Gtk.Window(title="Cifereca — recette USB synthétique")
+    window = Adw.ApplicationWindow(application=app)
+    window.set_title("Cifereca — recette USB synthétique")
     window.set_default_size(args.width - 130, 700)
     window.service = NS(current_identity=NS(identity_id="alice"), storage=storage)
     window._reader_scope_identity = "alice"
@@ -136,6 +144,11 @@ def main() -> int:
             # Keep raw GTK/GObject exception text inside the runner, not CI.
             state["dialog_build_errors"] += 1
     button.connect("clicked", on_pair_clicked)
+    motion = Gtk.EventControllerMotion.new()
+    motion.connect("enter", lambda *_: state.__setitem__(
+        "pointer_enter", state["pointer_enter"] + 1,
+    ))
+    button.add_controller(motion)
     box.append(button)
     box.append(window._reader_status_label)
     window.set_child(box)
@@ -232,7 +245,10 @@ def main() -> int:
             device.key("Return", True)
             device.key("Return", False)
         if not delivered(lambda: state["button_clicks"] > before):
-            state["checkpoint"] = "button_not_clicked"
+            state["checkpoint"] = (
+                "pointer_not_seen" if not state["pointer_enter"]
+                else "button_not_clicked"
+            )
             raise AssertionError("GTK/XTEST pairing button did not activate")
         if state["dialog_build_errors"]:
             state["checkpoint"] = "dialog_build_failed"
@@ -381,7 +397,8 @@ def main() -> int:
         allowed = {
             "shell", "widget_mapped", "dialog_open", "expert_mode",
             "chooser_return", "dialog_response", "manual_uuid",
-            "button_not_clicked", "dialog_build_failed", "expert_keyboard", "setup",
+            "button_not_clicked", "pointer_not_seen",
+            "dialog_build_failed", "expert_keyboard", "setup",
         }
         checkpoint = state["checkpoint"]
         if checkpoint in allowed:
