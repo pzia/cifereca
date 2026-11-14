@@ -1,6 +1,7 @@
 """Resolve source-bound borrower accounts without performing loan mutations.
 
-The legacy cache lookup and the strict return preflight are distinct contracts.
+Historical caches without borrower provenance remain readable as data but
+cannot select an arbitrary connected account for provider mutations.
 Return preflight rejects missing borrower provenance *before* invoking lookup,
 then requires the exact connected provider/credential session. The service
 retains all locks, provider requests, verification and repeated-return guards.
@@ -10,31 +11,27 @@ from inspect import getattr_static
 from types import SimpleNamespace
 
 
-def account_for_loan(loan, *, accounts, current_account_get, configuration_error):
-    """Resolve the exact recorded borrower, preserving legacy-cache fallback."""
+def account_for_loan(loan, *, accounts, configuration_error):
+    """Resolve an explicitly recorded borrower; never guess from navigation."""
+    borrower = getattr(loan, 'source_account_id', None)
+    # Historical missing provenance is descriptive only. In particular,
+    # current_account/primary/first account must never supply a borrower to a
+    # later provider GET, ACSM acquisition or return mutation.
+    if type(borrower) is not str:
+        raise configuration_error('Compte emprunteur non attesté pour ce prêt')
     candidates = [a for a in accounts if a.provider_id == loan.source_provider and a.credential_id == loan.source_credential]
-    if loan.source_account_id is not None:
-        # Paris stores a stable sentinel while the real primary Account has an empty UID.
-        if loan.source_account_id == 'primary':
-            primary = next((a for a in candidates if a.is_primary), None)
-            if primary is not None:
-                return primary
-        for account in candidates:
-            if account.unique_id == loan.source_account_id:
-                return account
-        # The original lookup error interpolated borrower ID, credential,
-        # provider and loan ID directly into a UI-facing exception. This
-        # information may include signed URLs or personal account data.
-        raise configuration_error('Compte emprunteur introuvable pour ce prêt')
-    # Legacy cache compatibility only; strict return preflight rejects missing provenance.
-    if current_account_get() in candidates:
-        return current_account_get()
-    primary = next((a for a in candidates if a.is_primary), None)
-    if primary is not None:
-        return primary
-    if candidates:
-        return candidates[0]
-    raise configuration_error('Aucun compte connecté pour ce prêt')
+    # Paris stores a stable sentinel while the real primary Account has an empty UID.
+    if borrower == 'primary':
+        primary = next((a for a in candidates if a.is_primary), None)
+        if primary is not None:
+            return primary
+    for account in candidates:
+        if account.unique_id == borrower:
+            return account
+    # The original lookup error interpolated borrower ID, credential,
+    # provider and loan ID directly into a UI-facing exception. This
+    # information may include signed URLs or personal account data.
+    raise configuration_error('Compte emprunteur introuvable pour ce prêt')
 
 
 def return_loan_identity(loan, *, resolve_account, session_key, lookup_session, attention_error):
