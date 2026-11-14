@@ -3991,6 +3991,12 @@ class LibraryService:
         legacy_acsm_artifact = local.previous_state.legacy_acsm_artifact
         decision = local.decision
 
+        # Freeze the loan and edition from the same source as the acquiring
+        # receipt. A delivery hook may mutate the Loan before ACSM is staged.
+        # Neither a different loan key nor a different edition may reuse the
+        # staged authorization or change the durable attention receipt.
+        expected_loan_id = loan.id
+        expected_record_id = loan.record_id
         ledger_base = loan_initial_receipt.ledger_base(
             loan, entitlement_id=entitlement_id, identity_id=identity.identity_id,
         )
@@ -4018,7 +4024,8 @@ class LibraryService:
                 preflight = loan_adept_profile_guard.check(
                     self, loan, identity=identity, ledger_base=ledger_base,
                     previous_meta=previous_meta, retained_acsm=retained_acsm,
-                    trace_ref=trace_ref,
+                    trace_ref=trace_ref, expected_loan_id=expected_loan_id,
+                    expected_record_id=expected_record_id,
                     AdeptProfileResolutionError=AdeptProfileResolutionError,
                     adept_acsm_plan=adept_acsm_plan, _TRACE_LOG=_TRACE_LOG,
                 )
