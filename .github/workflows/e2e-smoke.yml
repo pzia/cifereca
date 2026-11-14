@@ -23,6 +23,11 @@ on:
       - 'src/cifereca/core/loan_local_preparation.py'
       - 'src/cifereca/core/provider_loan_renewal.py'
       - 'src/cifereca/core/loan_provider_delivery.py'
+      # P1 #6041: an exact USB mount/UUID discovery or declarative binding
+      # change must run the real reader-pairing GTK/XTEST acceptance scenarios.
+      - 'src/cifereca/core/device_usb_discovery.py'
+      - 'src/cifereca/core/device_usb_mount.py'
+      - 'src/cifereca/core/device_usb_binding_proposal.py'
       - 'src/cifereca/core/manual_acsm_import.py'
       - 'src/cifereca/core/diagnostic_numilog_projection.py'
       - 'src/cifereca/core/sync_coordination.py'
