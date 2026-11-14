@@ -2384,17 +2384,13 @@ class LibraryService:
         return self.acquisition.target_dir("", "ebook")
 
     def _kobo_adapter(self):
-        if self._plugin_manager is not None:
-            try:
-                status = self._plugin_manager.status("runtime.kobo-adept")
-                service = self._plugin_manager.service("runtime.kobo-adept")
-                if status.enabled and status.state == "ready" and service is not None:
-                    return service
-            except Exception:
-                pass
-        raise ProviderConfigurationError(
-            "Le runtime Kobo-Adept n'est pas disponible. Installez/activez le plugin runtime.kobo-adept."
-        )
+        """Inert compatibility seam for legacy ADEPT test injection only.
+
+        The former concrete runtime selector is retired. No product path
+        may obtain a plugin through this method; use the verified plugin
+        service and typed acquisition/inventory contracts instead.
+        """
+        raise ProviderConfigurationError("legacy_kobo_runtime_adapter_retired")
 
     def _required_plugin_service(self, plugin_id: str) -> Any:
         manager = self._plugin_manager

@@ -1131,6 +1131,22 @@
       "in_ast_metric": false
     },
     {
+      "id": "struct-retire-unused-kobo-runtime-adapter",
+      "original": "LibraryService._kobo_adapter was a private provider-name dispatcher selecting runtime.kobo-adept from plugin manager status/service. No production callsite remains, but historical tests monkeypatch its descriptor as an intentional compatibility injection seam.",
+      "original_classification": "dead_provider_named_core_runtime_selector",
+      "replacement": "Delete the concrete selector and replace it with an inert, fail-closed method of the same private name/signature for historical monkeypatch and LibraryService descriptor characterization. The default implementation never consults the plugin manager, network or provider; acquisition remains routed via current typed runtime binding and _required_plugin_service.",
+      "classification": "removed_concrete_provider_selector_with_inert_compatibility_seam",
+      "evidence": "Full Core CI identified a historical descriptor fixture and several ADEPT tests that monkeypatch the method. Preserve this private ABI seam and the original tests, replace provider selection with unconditional refusal; a poison plugin manager verifies zero dispatch. No positive production caller was found and no current GET or borrower permission is introduced.",
+      "tests": [
+        "tests/test_adept_inventory_binding.py",
+        "tests/test_adept_inventory_orchestration.py",
+        "tests/test_core_acquisition_no_injected_runtime_bypass.py",
+        "tests/test_library_service_facade_contract.py"
+      ],
+      "pr": "#6111",
+      "in_ast_metric": false
+    },
+    {
       "id": "struct-pnb-preferences-explicit-account-no-navigation",
       "original": "Public LibraryService.pnb_preferences() selected service.current_account as implicit borrower before a provider digital_preferences() call. A direct headless or concurrent request could choose the GTK account instead of the caller's intended account.",
       "original_classification": "navigation_dependent_provider_preferences_get",
