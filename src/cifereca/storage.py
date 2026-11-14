@@ -53,7 +53,10 @@ CREATE TABLE IF NOT EXISTS backup_items (
 """
 
 
-_LEGACY_ADEPT_BINDING_SOURCE = "paris"  # historical table has no provider column\n\n\nclass Storage:
+_LEGACY_ADEPT_BINDING_SOURCE = "paris"  # historical table has no provider column
+
+
+class Storage:
     def __init__(self, path: Path | None = None):
         self.path = path or database_file()
         self.path.parent.mkdir(parents=True, exist_ok=True)
