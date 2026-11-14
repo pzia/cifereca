@@ -246,3 +246,76 @@ def test_plugin_package_has_explicit_owner_in_execution_matrix():
         "outcome": "passed",
         "count": 1,
     }]
+
+
+def test_missing_teardown_never_passes_off_as_complete():
+    capture = ExecutionCapture()
+    capture.items = [_item("tests/test_a.py::test_a")]
+    capture.phases = {
+        "tests/test_a.py::test_a": {
+            "setup": _phase("passed"), "call": _phase("passed"),
+        },
+    }
+    report = make_execution_report(
+        capture, {}, suite="tests", source_sha="a" * 40,
+        exit_code=0, clean_head=True,
+    )
+    assert not report["complete"]
+
+
+def test_pytest_subprocess_reports_real_pass_skip_xfail_and_xpass(tmp_path):
+    """Exercise real pytest hooks without recursive main-suite collection."""
+    import os
+    import subprocess
+    import sys
+
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_cases.py").write_text(
+        'import pytest\n'
+        'def test_pass():\n    assert True\n'
+        '@pytest.mark.skip(reason="synthetic")\n'
+        'def test_skip():\n    assert False\n'
+        '@pytest.mark.xfail(reason="synthetic")\n'
+        'def test_xfail():\n    assert False\n'
+        '@pytest.mark.xfail(reason="synthetic")\n'
+        'def test_xpass():\n    assert True\n',
+        encoding="utf-8",
+    )
+    root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(root), env.get("PYTHONPATH", "")]
+    )
+    program = (
+        "import json, pytest\n"
+        "from scripts.ci_test_execution_inventory import "
+        "ExecutionCapture, make_execution_report\n"
+        "capture = ExecutionCapture()\n"
+        "code = int(pytest.main(['-q', 'tests/test_cases.py'], "
+        "plugins=[capture]))\n"
+        "report = make_execution_report(capture, {}, suite='tests', "
+        "source_sha='a'*40, exit_code=code, clean_head=True)\n"
+        "print('EXEC_JSON:' + json.dumps({key: report[key] for key in "
+        "('count_selected', 'count_attempted', 'count_executed', "
+        "'outcomes', 'complete')}))\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", program], cwd=tmp_path,
+        env=env, text=True, capture_output=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, result.stdout[-1800:] + result.stderr[-1200:]
+    matches = [
+        line.split("EXEC_JSON:", 1)[1]
+        for line in result.stdout.splitlines() if line.startswith("EXEC_JSON:")
+    ]
+    assert len(matches) == 1
+    report = json.loads(matches[0])
+    assert report == {
+        "count_selected": 4, "count_attempted": 4, "count_executed": 3,
+        "complete": True,
+        "outcomes": {
+            "passed": 1, "failed": 0, "error": 0, "skipped": 1,
+            "xfailed": 1, "xpassed": 1,
+        },
+    }
