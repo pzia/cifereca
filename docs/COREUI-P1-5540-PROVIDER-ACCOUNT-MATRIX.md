@@ -48,10 +48,9 @@ un token non déclaré ou un formulaire périmé ne choisit pas une autre
 valeur ni un autre consentement.
 
 **Preuves déjà intégrées :** #6001 (choice), #6016 (url), #6019
-(choix SSO La Rochelle), #6021 (boolean). **Proposition distincte en
-CI :** #6010 porte `advisory_loan_medium` et la projection de
-disponibilité inconnue en Accueil ; ne pas compter ses capacités comme
-déjà fusionnées.
+(choix SSO La Rochelle), #6021 (boolean). **Également intégré sur `main` :** #6010 porte `advisory_loan_medium`
+et la projection de disponibilité inconnue en Accueil ; ce contrat
+ne prouve aucun quota fournisseur restant.
 
 ## Écarts d'acceptation encore ouverts
 
