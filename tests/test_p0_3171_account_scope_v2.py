@@ -60,15 +60,17 @@ def test_legacy_account_ref_defaults_preserved():
 
 def test_public_broker_v2_distinguishes_same_upstream_id_by_credential_and_identity():
     core = FakeCore()
-    refs = IdentityBrokerImpl(core).accounts()
-    assert len(refs) == 3
+    refs = IdentityBrokerImpl(core).accounts("profile-A")
+    assert len(refs) == 2
     assert {(row.identity_id, row.credential_id) for row in refs} == {
         ("profile-A", "cred-A"), ("profile-A", "cred-B"),
-        ("profile-B", "cred-C"),
     }
     assert {row.account_id for row in refs} == {"same-upstream-id"}
     assert all(row.scope_version == 2 and row.connected for row in refs)
     assert {row.credential_id for row in IdentityBrokerImpl(core).accounts("profile-B")} == {"cred-C"}
+    with pytest.raises(TypeError):
+        IdentityBrokerImpl(core).accounts()
+    assert core.account_reads == 2
 
 
 def test_ambiguous_account_id_must_not_choose_first_credential_or_download():
@@ -142,7 +144,7 @@ def test_identity_broker_explicit_empty_scope_never_uses_navigation_selection():
     core = FakeCore()
     broker = IdentityBrokerImpl(core)
 
-    for invalid in ("", " ", "\t"):
+    for invalid in (None, "", " ", "\t", 0):
         with raises(ValueError, match="identity_id_required"):
             broker.accounts(invalid)
 
@@ -174,7 +176,7 @@ def test_acquisition_scoped_identity_ignores_other_profiles_with_same_account_id
 
 
 
-@pytest.mark.parametrize("identity", ["", " ", "\t", 0])
+@pytest.mark.parametrize("identity", [None, "", " ", "\t", 0])
 def test_eligible_account_read_refuses_explicit_invalid_identity(identity):
     core = FakeCore()
     broker = AcquisitionBrokerImpl(core)
