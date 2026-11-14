@@ -77,7 +77,7 @@ def test_future_provider_with_declared_capability_admitted_read_only(tmp_path, m
     assert materialize.prepare(broker, "scope-A").facts["status"] == "canonical_delivery_unavailable"
 
 
-@pytest.mark.parametrize("enabled,backup", [(False, True), (True, False), (False, False)])
+@pytest.mark.parametrize("enabled,backup", [(False, True), (False, False)])
 def test_backup_only_and_undeclared_sources_refuse(tmp_path, enabled, backup):
     broker, _account, _session, library = _harness(
         tmp_path, enabled=enabled, backup=backup,
@@ -85,6 +85,16 @@ def test_backup_only_and_undeclared_sources_refuse(tmp_path, enabled, backup):
     with pytest.raises(materialize._Rejected, match="not_supported"):
         materialize._source(broker, "scope-A", allow_canonical=True)
     assert not library.exists()
+
+
+def test_canonical_capability_does_not_require_legacy_backup_flag(tmp_path):
+    broker, account, _session, root = _harness(
+        tmp_path, enabled=True, backup=False,
+    )
+    selected = materialize._source(broker, "scope-A", allow_canonical=True)
+    assert selected[0] is account
+    assert selected[2][2] == "future-books"
+    assert not root.exists()
 
 
 @pytest.mark.parametrize("alias,expected", [
