@@ -818,5 +818,21 @@ def test_p1_6041_failed_gtk_probe_exports_only_closed_stage():
     assert 'report.update(status="FAIL", error_code=type(exc).__name__)' in probe
     assert 'print("P1_6041_CLOSED_FAILURE_CHECKPOINT=" + checkpoint' in probe
     assert "def delivered(predicate, *, seconds=1.2):" in probe
-    assert 'if not delivered(lambda: state["button_clicks"] > before):' in probe
-    assert 'if not delivered(lambda: widget.get_active() is not was_active):' in probe
+    assert 'if not (yield from delivered(lambda: state["button_clicks"] > before)):' in probe
+    assert 'if not (yield from delivered(lambda: widget.get_active() is not was_active)):' in probe
+
+
+def test_p1_6041_xtest_callbacks_relinquish_real_glib_main_loop():
+    """Never block GDK event source inside GTK's own idle callback."""
+    probe = (ROOT / "e2e/reader_usb_pairing_probe.py").read_text(
+        encoding="utf-8",
+    )
+    assert "GLib.timeout_add(interval, advance)" in probe
+    assert "checks = run_checks()" in probe
+    assert "yield from click(button)" in probe
+    assert "yield from toggle_expert(expert)" in probe
+    assert "yield from until(" in probe
+    assert "MainContext.default().iteration(" not in probe
+    assert "sleep(0.025)" not in probe
+    assert 'button.connect("clicked", on_pair_clicked)' in probe
+    assert "device.click(screen_x, screen_y)" in probe
