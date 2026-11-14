@@ -75,6 +75,22 @@ def test_w5_filename_normalization_has_no_legacy_backup_path_writer():
     )
 
 
+
+def test_w5_directory_migration_has_no_historical_backup_path_writer():
+    storage = ROOT / "src" / "cifereca" / "storage.py"
+    tree = ast.parse(storage.read_text(encoding="utf-8"), filename=str(storage))
+    migration = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "commit_directory_migration"
+    )
+    assert not any(
+        isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and "update backup_items" in node.value.casefold()
+        for node in ast.walk(migration)
+    )
+
+
 def test_kobo_w4_historical_writer_is_unreachable_from_production():
     """W4 legacy may remain as a test archive, not as a callable production path.
 
