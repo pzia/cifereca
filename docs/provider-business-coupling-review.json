@@ -531,6 +531,34 @@
       ],
       "pr": "#6036",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-local-library-search-navigation-worker",
+      "original": "core.search_orchestration.search_local_library infers self.current_identity if scope omitted",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "public LibraryService captures identity at synchronous admission; worker requires keyword-only identity_id and returns [] on malformed scope",
+      "classification": "removed_implicit_navigation_local_search_worker",
+      "evidence": "No Core worker fallback to current_identity. Explicit identity is retained throughout a search, absent/blank/untyped scope is rejected before library projection, SQL or filesystem. GTK search producers already pin identity.",
+      "tests": [
+        "tests/test_core_p0_5975_offline_search_pinned_scope.py",
+        "tests/test_core_p0_3196_unscoped_library_fence.py"
+      ],
+      "pr": "#6037",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-known-catalog-search-navigation-worker",
+      "original": "core.search_orchestration.search_known_catalog infers self.current_identity if scope omitted",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "public LibraryService captures exact scope, Core known catalog worker requires identity_id and refuses before SQLite reads if invalid",
+      "classification": "removed_implicit_navigation_known_search_worker",
+      "evidence": "No navigation-dependent cached catalogue/rights/local-placements search; known-search GUI consumers already pass identity_id. A/B navigation after admission cannot retarget scope, and invalid inputs touch neither SQL nor logs.",
+      "tests": [
+        "tests/test_core_p0_5975_offline_search_pinned_scope.py",
+        "tests/test_core_p0_1354_mirrored_source_scope.py"
+      ],
+      "pr": "#6037",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [

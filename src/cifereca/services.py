@@ -1727,7 +1727,15 @@ class LibraryService:
     def search_local_library(
         self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        return search_orchestration.search_local_library(self, query, scope, field=field, identity_id=identity_id, logger=_TRACE_LOG)
+        # Legacy no-argument ABI: snapshot selection at this synchronous
+        # boundary. The extracted worker never consults GTK navigation.
+        admitted = (
+            getattr(self.current_identity, "identity_id", None)
+            if identity_id is None else identity_id
+        )
+        return search_orchestration.search_local_library(
+            self, query, scope, field=field, identity_id=admitted, logger=_TRACE_LOG,
+        )
 
     def search_known_catalog(
         self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
@@ -1740,7 +1748,16 @@ class LibraryService:
         rights and progressively mirrored catalogue facts. ``search()`` remains
         the explicit online extension operation.
         """
-        return search_orchestration.search_known_catalog(self, query, scope, field=field, identity_id=identity_id, provider_ids=provider_ids, content_types=content_types, logger=_TRACE_LOG)
+        # The public ABI remains callable without a scope, but the eventual
+        # Core worker may only use the identity captured *here*.
+        admitted = (
+            getattr(self.current_identity, "identity_id", None)
+            if identity_id is None else identity_id
+        )
+        return search_orchestration.search_known_catalog(
+            self, query, scope, field=field, identity_id=admitted,
+            provider_ids=provider_ids, content_types=content_types, logger=_TRACE_LOG,
+        )
 
     @staticmethod
     def filter_loaded_search_results(

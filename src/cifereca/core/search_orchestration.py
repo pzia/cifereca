@@ -1605,10 +1605,14 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     return CatalogSearchSummary(query, len(rows), len(searchable), completed_count, failed, cancelled, tuple(warnings), started_dt.isoformat(timespec="seconds"), completed_at)
 
 
-def search_local_library(self, query: str, scope: str='all', *, field: str='all', identity_id: str | None=None, age: int | None=None, age_kind: str | None=None, logger) -> list[dict[str, Any]]:
+def search_local_library(self, query: str, scope: str='all', *, field: str='all', identity_id: str, age: int | None=None, age_kind: str | None=None, logger) -> list[dict[str, Any]]:
+    # Core workers must not read GTK navigation while resolving private
+    # local placements. Identity is captured by the public facade or caller.
+    if type(identity_id) is not str or not identity_id.strip():
+        return []
     from ..core.search import LocalLibrarySearch
 
-    resolved_identity = identity_id or (self.current_identity.identity_id if self.current_identity else None)
+    resolved_identity = identity_id
     rows = LocalLibrarySearch(self.library_entries).search(
         query, identity_id=resolved_identity, scope=scope, field=field,
         age=age, age_kind=age_kind,
@@ -1620,16 +1624,18 @@ def search_local_library(self, query: str, scope: str='all', *, field: str='all'
     return rows
 
 
-def search_known_catalog(self, query: str, scope: str='all', *, field: str='all', identity_id: str | None=None, provider_ids: list[str] | tuple[str, ...] | None=None, content_types: list[str] | tuple[str, ...] | None=None, age: int | None=None, age_kind: str | None=None, logger) -> list[dict[str, Any]]:
-    """Search the already-known SQLite universe without provider I/O.
+def search_known_catalog(self, query: str, scope: str='all', *, field: str='all', identity_id: str, provider_ids: list[str] | tuple[str, ...] | None=None, content_types: list[str] | tuple[str, ...] | None=None, age: int | None=None, age_kind: str | None=None, logger) -> list[dict[str, Any]]:
+    """Read a known-catalogue snapshot only for a pre-admitted identity.
 
-    This is the first stage of the Search screen: local artifacts, current
-    rights and progressively mirrored catalogue facts. ``search()`` remains
-    the explicit online extension operation.
+    SQLite notices, local placements and remotely observed rights may each
+    disclose private titles. Their scope must not be chosen after enqueue
+    from the mutable GTK current_identity.
     """
+    if type(identity_id) is not str or not identity_id.strip():
+        return []
     from ..core.search import KnownCatalogSearch
 
-    resolved_identity = identity_id or (self.current_identity.identity_id if self.current_identity else None)
+    resolved_identity = identity_id
     rows = KnownCatalogSearch(self.catalog_entries, self.library_entries).search(
         query, identity_id=resolved_identity, scope=scope, field=field,
         providers=provider_ids, content_types=content_types,
