@@ -213,3 +213,97 @@ def test_legacy_untouched_zero_and_99_are_valid_without_claiming_live_quota(tmp_
         row, = result.data["providers"]["accounts"]
         assert row["options"]["manual_loan_limit"] == value
         assert row["options"]["authenticated_sync"] == "off"
+
+
+def test_sync_choice_roundtrip_preserves_each_credentials_consent_and_old_options(tmp_path):
+    # Existing persisted "on"/"off" strings must not be migrated to labels or
+    # bools. The CAS connection code continues to check exact "on" only.
+    rows = [saved("cred-a", "alice", sync="off"),
+            saved("cred-b", "bob", sync="on", ceiling="7")]
+    before = deepcopy(rows)
+    a, _ = render(rows[0])
+    b, _ = render(rows[1])
+    option_a = a["option_fields"]["authenticated_sync"]
+    option_b = b["option_fields"]["authenticated_sync"]
+    assert option_a.get_text() == "off"
+    assert option_a.row.get_selected() == 0
+    assert option_b.get_text() == "on"
+    assert option_b.row.get_selected() == 1
+    assert a["probe_rendered_baseline"]["option_fields"]["authenticated_sync"] == "off"
+    assert b["probe_rendered_baseline"]["option_fields"]["authenticated_sync"] == "on"
+    option_a.row.set_selected(1)
+    option_b.row.set_selected(0)
+    assert option_a.get_text() == "on"
+    assert option_b.get_text() == "off"
+    assert rows == before  # GTK rendering and editing never write Config
+
+    config = Config(tmp_path / "config.json")
+    config.set("identities", [
+        {"id": "alice", "directory_name": "alice"},
+        {"id": "bob", "directory_name": "bob"},
+    ])
+    config.set("providers.accounts", [])
+    form = values(tmp_path, rows)
+    form["accounts"][0]["option_fields"]["authenticated_sync"] = option_a.get_text()
+    form["accounts"][1]["option_fields"]["authenticated_sync"] = option_b.get_text()
+    saved_draft = draft(config, form)
+    per_account = {
+        row["id"]: row for row in saved_draft.data["providers"]["accounts"]
+    }
+    assert per_account["cred-a"]["options"]["authenticated_sync"] == "on"
+    assert per_account["cred-b"]["options"]["authenticated_sync"] == "off"
+    assert per_account["cred-a"]["options"]["retired_option"] == {"opaque": True}
+    assert per_account["cred-b"]["options"]["manual_loan_limit"] == "7"
+    assert per_account["cred-a"]["identity_id"] == "alice"
+    assert per_account["cred-b"]["identity_id"] == "bob"
+
+
+@pytest.mark.parametrize("invalid", [
+    "ON", "true", "1", " Activée", "", "off ", None, True, 1, {"on": True},
+])
+def test_stale_or_invalid_sync_optin_never_silently_selects_first_or_writes(
+    tmp_path, invalid,
+):
+    # The user must resolve stale options deliberately rather than trigger
+    # an unrelated Save that changes a borrower's SSO consent.
+    data = saved("cred-a", "alice", sync=invalid)
+    editor, _ = render(data)
+    option = editor["option_fields"]["authenticated_sync"]
+    assert editor["invalid_saved_snapshot"] is True
+    assert option.row.get_selected() == 0xFFFFFFFF
+    assert option.get_text() == ""
+
+    config = Config(tmp_path / "config.json")
+    config.set("identities", [
+        {"id": "alice", "directory_name": "alice"},
+        {"id": "bob", "directory_name": "bob"},
+    ])
+    config.set("providers.accounts", [])
+    form = values(tmp_path, [data])
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError):
+        draft(config, form)
+    assert config.data == before and not config.path.exists()
+
+
+def test_missing_sync_option_keeps_off_default_without_activating_sso(tmp_path):
+    data = saved("cred-a", "alice")
+    data["options"].pop("authenticated_sync")
+    editor, _ = render(data)
+    assert editor["invalid_saved_snapshot"] is False
+    assert editor["option_fields"]["authenticated_sync"].get_text() == "off"
+    assert editor["probe_rendered_baseline"]["option_fields"]["authenticated_sync"] == "off"
+    config = Config(tmp_path / "config.json")
+    config.set("identities", [
+        {"id": "alice", "directory_name": "alice"},
+        {"id": "bob", "directory_name": "bob"},
+    ])
+    config.set("providers.accounts", [])
+    form = values(tmp_path, [data])
+    # This historical helper indexes the legacy value. A real GTK commit
+    # collects the displayed default from the ComboRow instead.
+    form["accounts"][0]["option_fields"]["authenticated_sync"] = (
+        editor["option_fields"]["authenticated_sync"].get_text()
+    )
+    result = draft(config, form)
+    assert result.data["providers"]["accounts"][0]["options"]["authenticated_sync"] == "off"
