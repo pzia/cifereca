@@ -37,6 +37,7 @@ class CiferecaCore:
         database_path: Path | None = None,
         diagnostics_enabled: bool | None = None,
         diagnostics_level: str | None = None,
+        builtin_ui: bool = True,
         no_plugins: bool = False,
         force_plugins: tuple[str, ...] = (),
         activate_plugins: bool = True,
@@ -63,7 +64,7 @@ class CiferecaCore:
         brokers = build_public_brokers(library)
         llm = optional_llm_service(config)
         plugins = PluginManager(
-            builtin_ui=True,
+            builtin_ui=builtin_ui,
             disable_plugins=no_plugins,
             force_plugins=force_plugins,
             brokers=brokers,
