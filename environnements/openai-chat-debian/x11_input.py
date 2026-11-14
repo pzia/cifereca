@@ -14,6 +14,17 @@ def _gtk_to_x11_offset(value: float, scale: int) -> int:
     return round(value * scale)
 
 
+def _gtk_widget_to_x11_surface_offset(
+    position: float, surface_to_widget: float, scale: int,
+) -> int:
+    """Invert Gtk.Native.get_surface_transform() before hitting XTEST.
+
+    GTK reports a translation from GdkSurface coordinates *into* the
+    GtkNative widget, not widget -> surface. XTEST needs the opposite.
+    """
+    return _gtk_to_x11_offset(position - surface_to_widget, scale)
+
+
 class X11Input:
     def __init__(self):
         self.x11 = C.CDLL("libX11.so.6")
@@ -86,17 +97,15 @@ class X11Input:
         ):
             raise RuntimeError("Could not translate X11 surface coordinates.")
         transform_x, transform_y = native.get_surface_transform()
-        # compute_bounds(native) and the surface transform are logical GTK
-        # coordinates. The X11 root origin is physical pixels, so apply
-        # the surface scale to offsets before sending XTEST pointer input.
-        # Include the render offset inside the surface to avoid missing small
-        # targets on decorated windows.
+        # compute_bounds(native) is in logical widget coordinates; the
+        # native transform maps X11 surface -> GTK widget coordinates.
+        # Invert it *before* applying physical X11 scaling, including CSD.
         scale = int(widget.get_scale_factor())
-        x = origin_x.value + _gtk_to_x11_offset(
-            rect.get_x() + rect.get_width() / 2 + transform_x, scale,
+        x = origin_x.value + _gtk_widget_to_x11_surface_offset(
+            rect.get_x() + rect.get_width() / 2, transform_x, scale,
         )
-        y = origin_y.value + _gtk_to_x11_offset(
-            rect.get_y() + rect.get_height() / 2 + transform_y, scale,
+        y = origin_y.value + _gtk_widget_to_x11_surface_offset(
+            rect.get_y() + rect.get_height() / 2, transform_y, scale,
         )
         return x, y
 

@@ -124,6 +124,10 @@ GLOBAL = {
     "scripts/ci-select-e2e.py", "scripts/ci-select-core-tests.py",
     "scripts/ci-install-gtk-e2e-runtime.sh",
     "environnements/openai-chat-debian/capture_app.py",
+    # Every GTK/XTEST probe uses these widget/screen conversions. Never let
+    # their changes bypass native acceptance via the path router.
+    "environnements/openai-chat-debian/x11_input.py",
+    "tests/test_e2e_x11_hidpi_coordinates.py",
     ".github/workflows/e2e-smoke.yml",
     "tests/test_e2e_runner_contract.py",
     "tests/test_ci_select_e2e.py",
