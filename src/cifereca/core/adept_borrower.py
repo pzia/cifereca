@@ -25,6 +25,26 @@ def public_borrower_refusal_code(value: Any) -> str:
             else "adept_borrower_ambiguous")
 
 
+def borrower_identity_for_loan(
+    self: Any, loan: Loan, *, connection_identity_id: str,
+) -> tuple[str | None, str | None]:
+    """Use the one existing ADEPT borrower policy at both loan boundaries.
+
+    Only the Paris legacy loan path has an exceptional borrower resolver;
+    other source loans retain their proven connection identity. This is
+    routing, never an implicit ADEPT grant or evidence of loan eligibility.
+    """
+    if (type(loan.source_provider) is not str or not loan.source_provider
+            or type(connection_identity_id) is not str
+            or not connection_identity_id):
+        return None, "adept_borrower_ambiguous"
+    if loan.source_provider.casefold() != "paris":
+        return connection_identity_id, None
+    return self._paris_adept_identity_for_loan(
+        loan, connection_identity_id=connection_identity_id,
+    )
+
+
 def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: str) -> tuple[str | None, str | None]:
     """Resolve the Adobe borrower separately from the Paris connection.
 
