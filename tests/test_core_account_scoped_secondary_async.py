@@ -8,6 +8,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.models import Account, Booking, HistoryItem
+from cifereca.providers import ProviderConfigurationError
 from cifereca.services import LibraryService
 from cifereca.core import library_projection
 from cifereca.gui import shell_account_selection_controller
@@ -183,8 +184,8 @@ def test_service_history_fetch_uses_original_account_and_cannot_repopulate_new_a
     assert calls == ["a"]
     assert host.current_account.unique_id == "b"
     assert len(writes) == 1
-    assert "vault-a:a:" in writes[0][1]
-    assert "vault-b" not in writes[0][1]
+    assert writes[0][1] == library_projection._history_cache_key(host.accounts[0])
+    assert writes[0][1] != library_projection._history_cache_key(host.accounts[1])
 
 
 def test_service_history_never_restores_a_b_a_stale_snapshot():
@@ -273,5 +274,86 @@ def test_history_explicit_account_uses_its_cache_and_session_after_switch():
     assert library_projection.refresh_history(host, force=True, account=admitted) == []
     assert seen == [admitted]
     assert len(writes) == 1
-    assert writes[0][1] == "paris:vault-a:a:history-v3"
+    assert writes[0][1] == library_projection._history_cache_key(admitted)
+    assert writes[0][1].startswith("history-v4:")
     assert host.current_account.unique_id == "b"
+
+
+def test_history_worker_requires_admitted_account_before_any_io():
+    host, writes = _service_host()
+    calls = []
+
+    def forbidden(*_args, **_kwargs):
+        calls.append("io")
+        raise AssertionError("unscoped history touched cache or provider")
+
+    host.storage.cache_get = forbidden
+    host.storage.cache_put = forbidden
+    host._session_for_account = forbidden
+    host.config.get = forbidden
+    with pytest.raises(TypeError):
+        library_projection.refresh_history(host)
+    for invalid in (
+        None, NS(identity_id="alice"),
+        Account(unique_id="shared", identity_id=""),
+        Account(unique_id="shared", provider_id=""),
+        Account(unique_id="shared", credential_id=""),
+        Account(unique_id=None),
+    ):
+        with pytest.raises(ProviderConfigurationError):
+            library_projection.refresh_history(host, account=invalid)
+    assert calls == []
+    assert writes == []
+
+
+def test_history_cache_never_reuses_old_or_other_identity_borrower_rows():
+    host, _writes = _service_host()
+    from dataclasses import asdict
+
+    alice = Account(identity_id="alice", provider_id="synthetic",
+                    credential_id="same-credential", unique_id="same-account")
+    bob = Account(identity_id="bob", provider_id="synthetic",
+                  credential_id="same-credential", unique_id="same-account")
+    legacy = HistoryItem(id="old-private", provider="synthetic", medium="digital",
+                         record_id="old", title="Legacy private cache")
+    cache = {"synthetic:same-credential:same-account:history-v3": [asdict(legacy)]}
+    reads, calls = [], []
+
+    def cache_get(kind, key):
+        assert kind == "account"
+        reads.append(key)
+        return cache.get(key)
+
+    def cache_put(kind, key, value, _ttl):
+        assert kind == "account"
+        cache[key] = value
+
+    def session_for_account(account):
+        calls.append(account.identity_id)
+        return NS(
+            capabilities=NS(history=True),
+            history=lambda _account: [HistoryItem(
+                id=account.identity_id, provider="synthetic", medium="digital",
+                record_id=account.identity_id, title=account.identity_id,
+                identity_id=account.identity_id,
+            )],
+        )
+
+    host.storage.cache_get = cache_get
+    host.storage.cache_put = cache_put
+    host._session_for_account = session_for_account
+    assert [r.id for r in library_projection.refresh_history(host, account=alice)] == ["alice"]
+    assert [r.id for r in library_projection.refresh_history(host, account=bob)] == ["bob"]
+    assert [r.id for r in library_projection.refresh_history(host, account=alice)] == ["alice"]
+    assert calls == ["alice", "bob"]
+    assert all(key.startswith("history-v4:") for key in reads)
+    assert len(set(reads)) == 2
+    assert cache["synthetic:same-credential:same-account:history-v3"] == [asdict(legacy)]
+
+
+def test_history_cache_key_does_not_alias_colon_delimited_account_coordinates():
+    first = Account(identity_id="owner", provider_id="synthetic:x",
+                    credential_id="credential", unique_id="borrower")
+    second = Account(identity_id="owner", provider_id="synthetic",
+                     credential_id="x:credential", unique_id="borrower")
+    assert library_projection._history_cache_key(first) != library_projection._history_cache_key(second)
