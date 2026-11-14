@@ -1,0 +1,53 @@
+{
+  "schema": "cifereca.test-classification/1",
+  "files": [
+    {
+      "path": "tests/test_ci_main_path_filters.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "contract"
+    },
+    {
+      "path": "tests/test_ci_plugin_selection.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_ci_required_check_contract.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "contract"
+    },
+    {
+      "path": "tests/test_ci_core_main_selection.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_ci_select_e2e.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "contract"
+    },
+    {
+      "path": "tests/test_ci_gtk_smoke_privacy.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "contract"
+    },
+    {
+      "path": "tests/test_ci_2027_e2e_replay_completeness.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_ci_pr_workflow_scopes.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "integration"
+    }
+  ]
+}
