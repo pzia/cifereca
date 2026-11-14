@@ -111,6 +111,10 @@ def has_test_consumers(
                     ))):
                 continue
             parsed = ast.parse(source, filename=str(candidate))
+            # Relative imports in a plugin's own tests package cannot refer
+            # to a root `tests/test_*.py` fixture, even with the same stem.
+            # Only relative imports inside root tests are Core consumers.
+            is_root_test_consumer = candidate.relative_to(root).parts[0] == "tests"
             # Follow only namespace values assigned to names used by a
             # dynamic import. Looking for "tests/" anywhere in the AST
             # incorrectly treats unrelated test data as import provenance
@@ -164,11 +168,20 @@ def has_test_consumers(
                         return True
                 elif isinstance(node, ast.ImportFrom):
                     module = node.module or ""
+                    if node.level:
+                        if is_root_test_consumer and (
+                            module in stems
+                            or (not module and any(
+                                alias.name in stems for alias in node.names
+                            ))
+                        ):
+                            return True
+                        continue
                     if module in changed_modules:
                         return True
-                    if node.level and module in stems:
-                        return True
-                    if module in {"tests", ""} and any(alias.name in stems for alias in node.names):
+                    if module == "tests" and any(
+                        alias.name in stems for alias in node.names
+                    ):
                         return True
                 elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
