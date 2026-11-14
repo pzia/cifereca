@@ -817,3 +817,6 @@ def test_p1_6041_failed_gtk_probe_exports_only_closed_stage():
     assert 'if checkpoint in allowed:' in probe
     assert 'report.update(status="FAIL", error_code=type(exc).__name__)' in probe
     assert 'print("P1_6041_CLOSED_FAILURE_CHECKPOINT=" + checkpoint' in probe
+    assert "def delivered(predicate, *, seconds=1.2):" in probe
+    assert 'if not delivered(lambda: state["button_clicks"] > before):' in probe
+    assert 'if not delivered(lambda: widget.get_active() is not was_active):' in probe
