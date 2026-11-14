@@ -351,3 +351,33 @@ l'absence de FileChooserNative sur le chemin exact, la relecture du
 mount ID avant le scan, la mise à jour visible du statut et la révocation
 du profil. Aucune opération sur clé USB, SQLite, réseau ou fournisseur.
 La recette matérielle #4983 et la preuve XTEST de #6041 sont distinctes.
+
+## P1 #6041 — impasse explicite sur la recette XTEST du dialogue d'association
+
+**Décision propriétaire du 14 novembre 2026 :** ne pas bloquer le retour à
+un `main` stable sur les deux scénarios exploratoires
+`reader-usb-pairing-1024` et `reader-usb-pairing-1366` de la PR #6074.
+Ces scénarios **ne sont ni enregistrés dans `e2e/run.py` ni dans la
+sélection CI**, et leur sonde expérimentale n'est pas intégrée.
+
+Cette décision ne vaut **pas** validation XTEST. Les essais isolés ont
+réussi les 45 scénarios historiques, mais échoué sur les deux nouveaux
+scénarios : bouton actif, cible GTK correcte, surface X11 sous le pointeur,
+puis aucun événement souris/clavier livré au contrôleur GTK. Aucune
+régression du parcours d'association produit n'a été démontrée.
+
+Les garanties livrées pour #6041 demeurent les tests headless et
+d'intégration synthétique des PR #6043/#6072/#6080/#6081 :
+`tests/test_p1_6041_mounted_usb_pairing_gtk.py`,
+`tests/test_p1_6041_usb_volume_discovery.py` et les contrats existants.
+Elles vérifient la sélection explicite du volume, la relecture à la
+confirmation, le rejet des UUID ambigus, des changements de montage/profil
+et le repli UUID expert. Ces tests ne prétendent pas prouver le clic
+physique XTEST. La recette #6077 garde ses deux scénarios GTK, dont le
+bouton est déclenché programmatiquement, avec cette limite documentée.
+
+Il n'y a aucune modification du code produit, des règles d'activation,
+des droits ni du dispositif USB. La recette sur matériel réel #4983
+reste indépendante. Une éventuelle investigation XTEST devra faire
+l'objet d'un chantier isolé, non bloquant pour les fonctionnalités
+déjà fusionnées.
