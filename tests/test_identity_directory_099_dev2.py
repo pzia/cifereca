@@ -40,17 +40,23 @@ class DirectoryTests(unittest.TestCase):
         file=self.book();data=deepcopy(self.config.data);data['identities'][0]['label']='Hugues'
         self.assertEqual(self.service.save_configuration(data)['migrated'],0);self.assertTrue(file.is_file())
         self.assertEqual(self.service.current_identity.directory_name,'ma-bibliotheque')
-    def test_move_rewrites_disk_db_backup_and_nested_ledger_then_scans(self):
+    def test_move_rewrites_canonical_paths_but_preserves_legacy_archive_then_scans(self):
         file=self.book();self.service.catalog_scan();before=self.storage.placements()[0]
         entry=self.storage.catalog_entries()[0];entry['title']='Titre catalogue';entry['metadata']['description']='Résumé durable';self.storage.catalog_entry_put(entry)
         self.storage.backup_put({'provider_id':'paris','credential_id':'p','item_id':'r','title':'Roman','format':'epub','local_path':str(file),'status':'complete'})
+        archived = self.storage.backup_list('paris')[0].copy()
+        with self.storage._connect() as db:
+            # Directory moves must not write a historical provider locator.
+            db.execute("CREATE TRIGGER immutable_archive BEFORE UPDATE OF local_path "
+                       "ON backup_items BEGIN SELECT RAISE(ABORT, 'archive_moved'); END")
         self.storage.catalog_entry_put(entry) # backup_put also mirrors its title; restore the richer catalog title before migration.
         aid=self.storage.acquisition_put({'provider_id':'paris','credential_id':'p','item_id':'r','identity_id':'stable-id','status':'complete','metadata':{'path':str(file),'nested':{'target_path':str(file)},'title':'ma-bibliotheque/fiction'}})
         result=self.service.change_identity_directory('stable-id','hugues')
         new=self.root/'hugues/paris/roman.epub';self.assertTrue(new.is_file());self.assertFalse((self.root/'ma-bibliotheque').exists())
         self.assertEqual(result['scan']['invalid'],0)
         placement=self.storage.placements()[0];self.assertEqual(placement['placement_id'],before['placement_id']);self.assertEqual(placement['identity_id'],'stable-id');self.assertEqual(placement['path'],str(new));self.assertEqual(placement['metadata']['relative_path'],'hugues/paris/roman.epub')
-        self.assertEqual(self.storage.backup_list('paris')[0]['local_path'],str(new))
+        self.assertEqual(self.storage.backup_list('paris')[0],archived)
+        self.assertEqual(archived['local_path'],str(file))
         meta=self.storage.acquisition_get(aid)['metadata'];self.assertEqual(meta['path'],str(new));self.assertEqual(meta['nested']['target_path'],str(new));self.assertEqual(meta['title'],'ma-bibliotheque/fiction')
         self.assertEqual(self.storage.catalog_entries()[0]['title'],'Titre catalogue');self.assertEqual(self.storage.catalog_entries()[0]['metadata']['description'],'Résumé durable')
         self.service.catalog_scan();self.assertEqual(len(self.storage.placements()),1);self.assertEqual(self.storage.catalog_entries()[0]['placement_id'],before['placement_id'])
@@ -159,11 +165,11 @@ class DirectoryTests(unittest.TestCase):
         with self.assertRaises(DirectoryMigrationError):self.service.save_configuration(data)
         self.assertTrue(file.exists())
 
-    def test_sql_error_rolls_back_paths_and_keeps_planned_journal(self):
+    def test_canonical_sql_error_rolls_back_paths_and_keeps_planned_journal(self):
         file=self.book();self.service.catalog_scan()
         self.storage.backup_put({'provider_id':'paris','credential_id':'p','item_id':'r','title':'Roman','format':'epub','local_path':str(file),'status':'complete'})
         with self.storage._connect() as db:
-            db.execute("CREATE TRIGGER fail_backup BEFORE UPDATE ON backup_items BEGIN SELECT RAISE(ABORT, 'simulated failure'); END")
+            db.execute("CREATE TRIGGER fail_placement BEFORE UPDATE ON placements BEGIN SELECT RAISE(ABORT, 'simulated failure'); END")
         with self.assertRaises(Exception):self.service.change_identity_directory('stable-id','hugues')
         self.assertEqual(self.storage.placements()[0]['path'],str(file));self.assertEqual(self.storage.backup_list('paris')[0]['local_path'],str(file))
         self.assertEqual(self.engine().pending()['state'],'planned');self.assertTrue(file.exists())
