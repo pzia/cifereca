@@ -20,7 +20,8 @@ EXACT_ARTIFACT_ACTIONS = {"e2e-smoke.yml": "v7.0.2"}
 
 EXPECTED = {
     "provider-ast-inventory.yml": (
-        ("provider-ast-responsibilities.json", "provider-core-loc.json"),
+        ("provider-ast-responsibilities.json", "provider-core-loc.json",
+         "provider-business-coupling.json"),
     ),
     "gtk-ubuntu24-cache-asset.yml": (
         (

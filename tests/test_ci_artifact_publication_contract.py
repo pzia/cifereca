@@ -23,6 +23,7 @@ EXACT_ARTIFACT_ACTIONS = {"e2e-smoke.yml": "v7.0.2"}
 PUBLIC_ARTIFACT_PATHS = {
     "provider-ast-inventory.yml": (
         "provider-ast-responsibilities.json", "provider-core-loc.json",
+        "provider-business-coupling.json",
     ),
     "gtk-ubuntu24-cache-asset.yml": (
         ".gtk-publish/gtk4-deb-cache-ubuntu24-noble-amd64.tar.gz",

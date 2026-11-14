@@ -9,6 +9,9 @@ on:
       - "scripts/ci_provider_ast_function_worklist.py"
       - "scripts/ci_provider_core_coupling_inventory.py"
       - "scripts/ci_provider_core_coupling_report.py"
+      - "scripts/ci_provider_business_coupling.py"
+      - "docs/provider-business-coupling-review.json"
+      - "tests/test_core_p0_5975_business_coupling_ledger.py"
   push:
     branches: [main]
   workflow_dispatch:
@@ -32,6 +35,7 @@ jobs:
           base_tree="$RUNNER_TEMP/provider-ast-base"
           git worktree add --detach "$base_tree" "$(git rev-parse HEAD^1)"
           python3 -m scripts.ci_provider_ast_function_worklist --root "$base_tree" --json > "$RUNNER_TEMP/provider-ast-base.json"
+          python3 -m scripts.ci_provider_business_coupling --root "$base_tree" --head-sha "$(git rev-parse HEAD^1)" --json > "$RUNNER_TEMP/provider-business-base.json"
       - name: Report unique AST and provider overlap by function
         run: |
           set -euo pipefail
@@ -53,6 +57,26 @@ jobs:
           python3 -m scripts.ci_provider_ast_function_worklist "${args[@]}" --json > provider-ast-responsibilities.json
           python3 -m scripts.ci_provider_core_coupling_report
           python3 -m scripts.ci_provider_core_coupling_report --json > provider-core-loc.json
+          business_args=(--head-sha "$(git rev-parse HEAD)")
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            business_args+=(--base-sha "$(git rev-parse HEAD^1)" --baseline "$RUNNER_TEMP/provider-business-base.json")
+          fi
+          python3 -m scripts.ci_provider_business_coupling "${business_args[@]}" --json > provider-business-coupling.json
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          r = json.loads(Path("provider-business-coupling.json").read_text())
+          print("### Dette métier Core / fournisseur (advisory)")
+          print(f"- Scan exact: `{r['head_sha']}` ; base: `{r['base_sha']}`")
+          print(f"- AST brut comparable: **{r['raw_ast_unique_lines']}** lignes uniques")
+          print(f"- Sites AST candidats: **{r['candidate_sites']}** ; qualifiés: **{r['review_coverage_pct']} %**")
+          print(f"- Décisions à migrer: **{r['active_business_decisions_to_migrate']}** ; writers à retirer: **{r['active_legacy_writers_to_retire']}**")
+          print(f"- Gardes en attente de contrat: **{r['safety_guards_pending_contract']}** ; justifiés: **{r['justified_retained']}** ; non qualifiés: **{r['unclassified']}**")
+          print(f"- Chemins dédiés suspects non audités: **{r['dedicated_candidate_paths_count']}** (pas une preuve d\'exécution)")
+          if "comparison" in r:
+              d = r["comparison"]
+              print(f"- Delta AST: **{d['raw_ast_delta']:+d}** ; potentiels déplacements: **{len(d['potential_relocations'])}**")
+          PY
       - name: Archive inspectable per-line worklist
         uses: actions/upload-artifact@v4
         with:
@@ -60,5 +84,6 @@ jobs:
           path: |
             provider-ast-responsibilities.json
             provider-core-loc.json
+            provider-business-coupling.json
           retention-days: 2
           if-no-files-found: error
