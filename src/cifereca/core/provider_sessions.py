@@ -842,7 +842,7 @@ def _configured_connection_identity(row, descriptor) -> str | None:
     raw = row.get("identity_id") if type(row) is dict else None
     if (type(raw) is str and raw and raw == raw.strip()
             and len(raw) <= 256
-            and not any(char in raw for char in "\\x00\\r\\n")):
+            and not any(char in raw for char in "\x00\r\n")):
         return raw
     if (type(row) is dict and row.get("anonymous") is True
             and descriptor is not None
