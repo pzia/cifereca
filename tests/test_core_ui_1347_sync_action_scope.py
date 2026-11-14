@@ -271,15 +271,18 @@ def test_global_sync_request_cannot_fall_back_to_all_identities():
     assert ("refresh-library", False) in calls
 
 
-def test_global_sync_is_cancelled_before_worker_if_identity_changes():
+def test_admitted_global_sync_keeps_exact_identity_after_navigation_change():
     window, broker, calls, build, page = _fixture()
-    old_button = window._sync_all_button
-    old_button.click()
-    window.service.current_identity = NS(identity_id="bob")
+    window._sync_all_button.click()
+    assert len(window.runner.tasks) == 1
     task = window.runner.tasks[0]
-    assert task.work() is None
-    task.done(None)
-    assert not any(name == "sync-all" for name, *rest in calls)
+    # A UI-only switch cannot revoke the backend operation authorized for A.
+    window.service.current_identity = NS(identity_id="bob")
+    assert task.work() == "ok"
+    assert ("sync-all", "alice") in calls
+    assert ("sync-all", "bob") not in calls
+    # Late GTK callbacks still reject the no-longer-displayed A snapshot.
+    task.done("ok")
     assert not any(name == "refresh-library" for name, *rest in calls)
 
 
@@ -427,14 +430,32 @@ def test_queued_source_work_rejects_identity_a_b_a_even_when_id_repeats():
     assert not any(name == "refresh-library" for name, *rest in calls)
 
 
-def test_queued_global_sync_rejects_aba_before_broker_execution():
+def test_queued_global_sync_survives_aba_navigation_without_stale_ui_publish():
     window, broker, calls, build, page = _fixture()
     window._identity_context_generation = 11
     window._sync_all_button.click()
     task = window.runner.tasks[0]
+    window.service.current_identity = NS(identity_id="bob")
+    window._identity_context_generation = 12
+    window.service.current_identity = NS(identity_id="alice")
     window._identity_context_generation = 13
-    assert task.work() is None
-    assert not any(name == "sync-all" for name, *rest in calls)
+    assert task.work() == "ok"
+    assert ("sync-all", "alice") in calls
+    task.done("ok")
+    assert not any(name == "refresh-library" for name, *rest in calls)
+
+
+def test_queued_global_sync_survives_page_rebuild_without_retargeting():
+    window, broker, calls, build, page = _fixture()
+    window._sync_all_button.click()
+    task = window.runner.tasks[0]
+    # Rebuilding the page invalidates callbacks, not the consented request.
+    build()
+    window.service.current_identity = NS(identity_id="bob")
+    assert task.work() == "ok"
+    assert ("sync-all", "alice") in calls
+    task.done("ok")
+    assert not any(name == "refresh-library" for name, *rest in calls)
 
 
 def test_source_sync_task_uses_neutral_provider_label_for_unknown_provider():

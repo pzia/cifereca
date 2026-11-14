@@ -151,10 +151,12 @@ def _build_sync_page(self):
             if sync_action_scope_current(self, scope):
                 self.refresh_library(False)
 
+        # Once admitted, GTK navigation changes invalidate UI delivery,
+        # not the exact-identity Core operation. Source-level consent and
+        # binding guards remain enforced by the synchronization broker.
         self.runner.submit(
             "Synchronisation des sources…",
-            lambda: broker.synchronize(request)
-            if sync_action_scope_current(self, scope) else None,
+            lambda: broker.synchronize(request),
             completed,
             control=button,
             priority=TaskPriority.USER_ACTION,
