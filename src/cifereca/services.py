@@ -1994,9 +1994,23 @@ class LibraryService:
     def enrich_provider_search_result(self, item: SearchResult, *, expected_identity_id: str) -> SearchResult:
         """User-triggered metadata-only provider enrichment; never auto-sync."""
         from .core.provider_explicit_enrichment import enrich_provider_detail_once
-        return enrich_provider_detail_once(
+        from .plugin_api import ProviderCapabilityError
+
+        # Capture UI navigation once at the public boundary; the Core worker
+        # must never resolve mutable GTK selection during the provider GET.
+        selected = self.current_identity
+        account_epoch = self._account_context_epoch
+        enriched = enrich_provider_detail_once(
             self, item, expected_identity_id=expected_identity_id,
+            selected_identity_id=getattr(selected, "identity_id", None),
+            expected_context_epoch=account_epoch,
         )
+        # The worker fences account epoch before/after supplier IO. The
+        # facade also checks object identity, including a late re-selection.
+        if (self.current_identity is not selected
+                or self._account_context_epoch != account_epoch):
+            raise ProviderCapabilityError("explicit_public_enrichment_unavailable")
+        return enriched
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
         # Catalogue-only projections do not attest borrower rights. The

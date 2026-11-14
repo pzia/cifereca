@@ -160,7 +160,7 @@ def test_reader_page_wires_separate_inspection_from_ordinary_refresh(tmp_path):
 def test_navigation_never_scans_and_explicit_click_only_opens_chooser(tmp_path):
     db, window, root = rig(tmp_path)
     button = object()
-    request_reader_usb_preview(window, button, Gtk=FAKE_GTK)
+    request_reader_usb_preview(window, button, Gtk=FAKE_GTK, manual=True)
     dialog = window._reader_usb_preview_chooser
     assert dialog.shown is True
     assert window.runner.calls == []
@@ -184,7 +184,7 @@ def test_selected_mountpoint_is_passed_only_to_background_worker(
         return report(rows=(row("upload_candidate"), row("blocked")))
 
     monkeypatch.setattr(worker, "inspect_usb_dry_run", inspect)
-    request_reader_usb_preview(window, button, Gtk=FAKE_GTK)
+    request_reader_usb_preview(window, button, Gtk=FAKE_GTK, manual=True)
     dialog = window._reader_usb_preview_chooser
     selected_mount = tmp_path / "synthetic-reader"
     selected_mount.mkdir()
@@ -220,7 +220,7 @@ def test_selected_mountpoint_is_passed_only_to_background_worker(
 ])
 def test_invalid_chooser_selection_never_enqueues_usb_job(tmp_path, malformed):
     _db, window, root = rig(tmp_path)
-    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK)
+    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK, manual=True)
     window._reader_usb_preview_chooser.respond(malformed)
     assert window.runner.calls == []
     assert "Aucun transfert" in window._reader_status_label.text
@@ -233,7 +233,7 @@ def test_invalid_chooser_selection_never_enqueues_usb_job(tmp_path, malformed):
 ])
 def test_stale_chooser_cannot_enqueue_any_work(tmp_path, change):
     db, window, root = rig(tmp_path)
-    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK)
+    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK, manual=True)
     dialog = window._reader_usb_preview_chooser
     if change == "identity":
         window.service.current_identity = NS(identity_id="bob")
@@ -274,7 +274,7 @@ def test_stale_chooser_cannot_enqueue_any_work(tmp_path, change):
 ])
 def test_stale_worker_completion_never_updates_next_profile(tmp_path, change):
     db, window, root = rig(tmp_path)
-    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK)
+    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK, manual=True)
     window._reader_usb_preview_chooser.respond(str(tmp_path))
     _, fn, ok, err, _ = window.runner.calls[0]
     window._reader_status_label.set_label("Bob utilise la page")
@@ -303,9 +303,9 @@ def test_stale_worker_completion_never_updates_next_profile(tmp_path, change):
 
 def test_only_one_outstanding_chooser_has_the_right_to_submit(tmp_path):
     db, window, root = rig(tmp_path)
-    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK)
+    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK, manual=True)
     first = window._reader_usb_preview_chooser
-    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK)
+    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK, manual=True)
     second = window._reader_usb_preview_chooser
     first.respond(str(tmp_path))
     assert window.runner.calls == []
@@ -319,7 +319,7 @@ def test_disabled_or_unbound_reader_cannot_choose_usb_folder(tmp_path):
         identity_id="alice", device_id="reader-alice",
         label="Reader", usb_fingerprint="uuid-alice-0001", enabled=False,
     )
-    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK)
+    request_reader_usb_preview(window, object(), Gtk=FAKE_GTK, manual=True)
     assert window.runner.calls == []
     assert getattr(window, "_reader_usb_preview_chooser", None) is None
     assert "Aucun scan" in window._reader_status_label.text

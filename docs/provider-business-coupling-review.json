@@ -820,6 +820,21 @@
       "in_ast_metric": true
     },
     {
+      "id": "struct-provider-explicit-enrichment-headless-context",
+      "original": "core.provider_explicit_enrichment._scope read service.current_identity both before and after a user-triggered provider metadata GET, making the headless worker dependent on mutable GTK navigation",
+      "original_classification": "navigation_dependent_provider_metadata_enrichment",
+      "replacement": "LibraryService.enrich_provider_search_result captures selected identity and monotonic account-context epoch on entry. The Core worker accepts only explicit selected_identity_id and expected_context_epoch, rejects missing or stale scopes before GET, and checks account/source generations after the provider response. Facade additionally checks selected object and epoch before returning descriptive metadata.",
+      "classification": "removed_navigation_from_provider_metadata_worker",
+      "evidence": "Headless Core poison getter, public metadata one-call success, missing/foreign identity and stale epoch deny before supplier I/O, A-B-A epoch mutation, source rebind and malicious URL refusals. Existing synthetic private purchase and public catalogue tests adapt to explicit admission.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_provider_enrichment.py",
+        "tests/test_core_generic_explicit_enrichment_p0.py",
+        "tests/test_core_p0_5054_provider_detail_synthetic.py"
+      ],
+      "pr": "#6092",
+      "in_ast_metric": false
+    },
+    {
       "id": "struct-selected-source-offers-headless-owner-and-context-epoch",
       "original": "Shared Core selected_source_offer and owned_library_download read mutable service.current_identity several times while selecting a private owned source, and _resolve checked GTK navigation during canonical execution; an A-to-B-to-A transition could restore the same identity label between operations",
       "original_classification": "navigation_dependent_private_offer_selection_and_delivery_read",

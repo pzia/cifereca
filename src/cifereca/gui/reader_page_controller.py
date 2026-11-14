@@ -102,8 +102,8 @@ def build_readers_page(window, *, Gtk, MasterDetailPage):
     inspect = Gtk.Button.new_from_icon_name("document-properties-symbolic")
     inspect._cifereca_action_id = "reader-usb-dry-run"
     inspect.set_tooltip_text(
-        "Examiner les changements : choisir le volume USB monté. "
-        "Analyse en arrière-plan, sans transfert ni suppression."
+        "Examiner les changements : détecter le volume USB associé. "
+        "Choix manuel si absent ou ambigu ; lecture seule, sans transfert."
     )
     def examine_clicked(button):
         from .reader_usb_preview_actions import request_reader_usb_preview
