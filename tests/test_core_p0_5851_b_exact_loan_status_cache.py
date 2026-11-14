@@ -214,3 +214,24 @@ def test_untrusted_legacy_entitlement_cannot_authorize_foreign_account():
     row["metadata"] = {}
     row["entitlement_id"] = "legacy"
     assert _check(host, row) is False
+
+
+@pytest.mark.parametrize("bad", [None, "", [], (), {"identity_id": "alice"}, {"identity_id": None}])
+def test_unscoped_or_malformed_display_request_reads_no_borrower_cache(bad):
+    alice = _account("alice", "card-A", "reader-A")
+    host, reads = _host([alice], {})
+    assert _check(host, bad) is False
+    assert reads == []
+
+
+def test_legacy_entitlement_read_error_cannot_claim_observed_loan():
+    alice = _account("alice", "card-A", "reader-A")
+    cache = {("account", _loan_cache_key(alice)): [asdict(_loan(alice))]}
+    host, _reads = _host([alice], cache)
+    row = _row(alice)
+    row["metadata"] = {}
+    row["entitlement_id"] = "legacy"
+    def unavailable(**_kwargs):
+        raise ValueError("historical rights no longer readable")
+    host.storage.entitlements = unavailable
+    assert _check(host, row) is False
