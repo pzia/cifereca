@@ -718,3 +718,38 @@ def test_p1_6002_native_fallback_shows_current_profile_only_unknown_capacity(mon
     bob = _descendant_labels(window.dashboard_cards.children[1])
     assert "Prêts numériques — disponibles" not in alice
     assert "Prêts numériques — disponibles" in bob
+
+
+def test_p1_6002_native_fallback_does_not_read_multiple_selected_profiles(monkeypatch):
+    from cifereca.brokers import IdentityBrokerImpl
+    from cifereca.plugin_api import DigitalLoanAvailability
+
+    cards = [_card("alice", selected=True), _card("bob", selected=True)]
+    queries = []
+
+    def project(_broker, identity):
+        queries.append(identity)
+        return (DigitalLoanAvailability(
+            identity_id=identity, provider_id="demo", credential_id="private",
+            provider_label="Bibliothèque", connection_label="Connexion 1",
+            borrower_label="Compte principal", personal_ceiling=4,
+            observed_loans=1,
+        ),)
+
+    monkeypatch.setattr(IdentityBrokerImpl, "digital_loan_availability", project)
+    window, _events, _diagnostics, _styles, render = _window(cards)
+    render()
+    assert queries == []
+    for card_widget in window.dashboard_cards.children:
+        captions = _descendant_labels(card_widget)
+        assert "Prêts numériques — disponibles" in captions
+        assert "Reste inconnu — aucun compte emprunteur vérifié." in captions
+        assert "plafond personnel 4" not in repr(captions)
+
+    cards[0]["selected"] = False
+    render()
+    assert queries == ["bob"]
+    left = _descendant_labels(window.dashboard_cards.children[0])
+    right = _descendant_labels(window.dashboard_cards.children[1])
+    assert "Prêts numériques — disponibles" not in left
+    assert any("plafond personnel 4" in text for text in right)
