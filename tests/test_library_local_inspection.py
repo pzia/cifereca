@@ -127,42 +127,42 @@ def test_projection_budget_and_mid_projection_revocation_are_visible(scoped):
     assert not revoked.valid() and not revoked._cases
 
 
-def test_edition_collision_scope_never_crosses_private_identities_or_providers():
-    from cifereca.core.library_local_inspection import _private_edition_collision_counts
+def test_legacy_edition_collision_proof_counter_is_physically_absent():
+    from cifereca.core import library_local_inspection as module
+    import inspect
 
-    rights = [
-        dict(identity_id="alice", provider_id="synthetic", item_id="same",
-             credential_id="account-a"),
-        dict(identity_id="alice", provider_id="synthetic", item_id="same",
-             credential_id="account-b"),
-        dict(identity_id="alice", provider_id="other-provider", item_id="same"),
-        dict(identity_id="bob", provider_id="synthetic", item_id="same"),
-        dict(identity_id="alice", provider_id="synthetic", item_id=""),
-        dict(identity_id="alice", provider_id="", item_id="same"),
-        dict(identity_id="alice", provider_id="synthetic", item_id=None),
-        dict(identity_id="alice", provider_id="synthetic", item_id=123),
-    ]
-    result = _private_edition_collision_counts(rights, "alice")
-    assert result == {
-        ("alice", "synthetic", "same"): 2,
-        ("alice", "other-provider", "same"): 1,
-    }
-    assert _private_edition_collision_counts(rights, "bob") == {
-        ("bob", "synthetic", "same"): 1,
-    }
-    assert not _private_edition_collision_counts(rights, "")
-    assert not _private_edition_collision_counts(rights, None)
+    assert not hasattr(module, "_private_edition_collision_counts")
+    assert "_manual_right_proofs" not in inspect.getsource(LocalInspection)
+    assert "_manual_file_proofs" not in inspect.getsource(LocalInspection)
 
 
-def test_generic_collision_counter_cannot_create_a_positive_right():
-    from cifereca.core.library_local_inspection import _private_edition_collision_counts
-
-    # The helper observes only cardinality, never a purchase/placement grant.
-    result = _private_edition_collision_counts([
-        dict(identity_id="alice", provider_id="provider-a", item_id="ed1",
-             owned=True, attested_source="untrusted-provider-claim"),
-        dict(identity_id="alice", provider_id="provider-a", item_id="ed1",
-             owned=True, credential_id="second-credential"),
-    ], "alice")
-    assert result[("alice", "provider-a", "ed1")] == 2
-    assert all(len(key) == 3 for key in result)
+def test_same_edition_across_credentials_and_profiles_stays_read_only(scoped):
+    service, path, root = scoped
+    with sqlite3.connect(path) as db:
+        for suffix, identity, provider, credential in (
+            ("a", "alice", "future-store", "cred-a"),
+            ("b", "alice", "future-store", "cred-b"),
+            ("c", "alice", "other-provider", "cred-a"),
+            ("d", "bob", "future-store", "cred-a"),
+        ):
+            db.execute(
+                "INSERT INTO entitlements "
+                "(entitlement_id,identity_id,provider_id,credential_id,"
+                "account_id,item_id,state,entitlement_type) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                ("right-" + suffix, identity, provider, credential,
+                 "account-" + suffix, "same-edition", "active", "owned"),
+            )
+    audit = audit_library(path, {"alice": (root / "a",)})
+    session = LocalInspection(audit, lambda: True, "alice")
+    files = session.unconfirmed_files().cases
+    assert files
+    rights = session.page(state="rights_without_verified_file").cases
+    assert len([r for r in rights if r.provider == "future-store"]) == 2
+    for right in rights:
+        report = session.preflight_manual_link(right.key, files[0].key)
+        assert report.status == "blocked"
+        assert "source_not_supported" in report.codes
+        assert report.read_only and not report.attachment_authorized
+    assert not hasattr(session, "_manual_right_proofs")
+    session.close()
