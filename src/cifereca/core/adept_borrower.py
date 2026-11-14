@@ -106,23 +106,59 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     return owner, None
 
 
-def _cross_identity_loan_conflict(acquisitions: Any, *, provider_loan_id: str, identity_id: str, entitlements: Any=()) -> bool:
-    """Reject a Paris loan recorded under another identity in either ledger.
+def _cross_identity_loan_conflict(
+    acquisitions: Any, *, provider_loan_id: str, identity_id: str,
+    entitlements: Any = (),
+) -> bool:
+    """Veto reuse of one upstream loan by another local identity.
 
-    A currently active entitlement is also a trace of the same upstream
-    loan; it does not prove that identity is the rightful ADEPT owner.
+    Ledger entries are evidence of a *conflict*, never of an entitlement.
+    Malformed plugin or persisted rows cannot coerce identifiers or cause an
+    exception that bypasses the admission guard. Unknown evidence fails closed.
     """
-    loan_key = str(provider_loan_id or "").strip()
-    if not loan_key:
+    if (type(provider_loan_id) is not str or not provider_loan_id.strip()
+            or type(identity_id) is not str or not identity_id):
         return True
-    acquired_elsewhere = any(
-        str((row.get("metadata") or {}).get("provider_loan_id") or "").strip() == loan_key
-        and str(row.get("identity_id") or "") != identity_id
-        and str(row.get("strategy") or "") == "loan_auto"
-        for row in acquisitions
-    )
-    return acquired_elsewhere or any(
-        str(row.get("loan_id") or "").strip() == loan_key
-        and str(row.get("identity_id") or "") != identity_id
-        for row in entitlements
-    )
+    loan_key = provider_loan_id.strip()
+    for row in acquisitions:
+        if type(row) is not dict:
+            return True
+        # An unrelated strategy (including historical None) cannot be used
+        # to authorize ADEPT or to create a loan_auto owner conflict. Inspect
+        # its metadata only if the strategy is the exact native loan_auto.
+        strategy = row.get("strategy")
+        if strategy is None:
+            continue
+        if type(strategy) is not str:
+            return True
+        if strategy != "loan_auto":
+            continue
+        metadata = row.get("metadata")
+        if metadata is None:
+            return True
+        if type(metadata) is not dict:
+            return True
+        value = metadata.get("provider_loan_id")
+        if value is None:
+            continue
+        if type(value) is not str:
+            return True
+        if value.strip() != loan_key:
+            continue
+        owner = row.get("identity_id")
+        if type(owner) is not str or owner != identity_id:
+            return True
+    for row in entitlements:
+        if type(row) is not dict:
+            return True
+        value = row.get("loan_id")
+        if value is None:
+            continue
+        if type(value) is not str:
+            return True
+        if value.strip() != loan_key:
+            continue
+        owner = row.get("identity_id")
+        if type(owner) is not str or owner != identity_id:
+            return True
+    return False
