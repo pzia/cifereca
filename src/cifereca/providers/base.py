@@ -126,6 +126,10 @@ class AccountOptionField:
     min_value: int | None = None
     max_value: int | None = None
     help_text: str = ""
+    # Presentation-only semantic: this bounded local preference concerns
+    # the PRIMARY borrower and ONE medium; it is never an observed provider
+    # quota or a lending/admission rule. None retains historical behaviour.
+    advisory_loan_medium: Literal["digital", "physical"] | None = None
 
 
 @dataclass(frozen=True)
@@ -143,6 +147,9 @@ class BorrowerScopedOptionField:
     min_value: int = 0
     max_value: int = 99
     help_text: str = ""
+    # Presentation-only: the declared per-borrower/per-branch integers
+    # are personal preferences, NEVER verified provider lending quotas.
+    advisory_loan_limit: bool = False
 
 
 @dataclass(frozen=True, slots=True)
