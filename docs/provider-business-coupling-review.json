@@ -1095,6 +1095,21 @@
       ],
       "pr": "#6097",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-plugin-api-diagnostics-pseudonyms-no-gui-import",
+      "original": "cifereca.plugin_api imported cifereca.gui.diagnostics_pseudonyms while constructing the public plugin namespace. Headless plugins and CiferecaCore therefore imported a presentation layer even for non-UI work.",
+      "original_classification": "core_plugin_api_reverse_gui_dependency",
+      "replacement": "Move the exact pseudonym implementation and single process mapping into cifereca.diagnostics_pseudonyms (standard-library-only). Plugin API imports neutral code; the GTK module becomes a compatibility re-export of the same class and singleton. Diagnostics plugin and Settings keep identical mappings without GUI imports from Core.",
+      "classification": "removed_plugin_api_to_gtk_reverse_import",
+      "evidence": "Fresh-process tests poison imports of cifereca.gui during Plugin API bootstrap and assert no GTK module loaded; class/global identity persists across neutral, plugin API and legacy GUI paths, with credential-only masking, idempotence and stable mapping unchanged. Existing Diagnostics page plugin tests remain required.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_diagnostics_pseudonyms.py",
+        "src/plugins/diagnostics-page/tests/test_diagnostics_pseudonyms_3135.py",
+        "tests/test_diagnostics_missing_placements.py"
+      ],
+      "pr": "#6104",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
