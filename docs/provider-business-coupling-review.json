@@ -709,6 +709,21 @@
       ],
       "pr": "#6058",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-private-offer-visibility-worker-navigation",
+      "original": "core.private_inventory_row_scope.selected_private_offer_hint read mutable service.current_identity to decide whether a credential-scoped private provider offer button can be visible, despite the facade having already preflighted the exact owner",
+      "original_classification": "navigation_dependent_private_visibility_read",
+      "replacement": "Private offer hint accepts explicit native identity_id from synchronous LibraryService.can_direct_download admission; headless Core no longer accesses GTK selection. The selected private source still requires exact active configured account and declared typed selected_purchase/private_inventory contract.",
+      "classification": "removed_navigation_private_offer_worker",
+      "evidence": "Headless poison-current_identity accessor stays untouched, exact Alice/Bob synthetic selected-offer visibility is checked, missing/malformed identity refuses, nonselected legacy offer still returns None for display-only policy, never an acquisition grant. No provider I/O or account reassignment.",
+      "tests": [
+        "tests/test_core_p0_5054_selected_private_offer_hint.py",
+        "tests/test_core_p0_5048_private_source_owner_scope.py",
+        "tests/test_core_p0_5054_direct_download_hint_no_projector.py"
+      ],
+      "pr": "#6059",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [

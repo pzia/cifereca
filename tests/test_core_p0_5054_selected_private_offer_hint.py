@@ -52,7 +52,7 @@ def _fixture(*, identity="alice", accounts=None, contract=None, cap=True):
 
 def test_selected_private_provider_visible_without_supplier_request():
     service = _fixture()
-    assert selected_private_offer_hint(service, _row()) is True
+    assert selected_private_offer_hint(service, _row(), identity_id="alice") is True
     assert service.source_calls == []
 
 
@@ -74,7 +74,7 @@ def test_selected_private_provider_visible_without_supplier_request():
 ])
 def test_private_hint_refuses_nonmatching_source_without_provider_call(changes):
     service = _fixture()
-    assert selected_private_offer_hint(service, _row(**changes)) is False
+    assert selected_private_offer_hint(service, _row(**changes), identity_id="alice") is False
     assert service.source_calls == []
 
 
@@ -86,7 +86,7 @@ def test_private_hint_refuses_nonmatching_source_without_provider_call(changes):
 ])
 def test_private_hint_requires_unique_selected_account(identity, accounts):
     service = _fixture(identity=identity, accounts=accounts)
-    assert selected_private_offer_hint(service, _row()) is False
+    assert selected_private_offer_hint(service, _row(), identity_id=identity) is False
 
 
 @pytest.mark.parametrize("contract", [
@@ -97,13 +97,13 @@ def test_private_hint_requires_unique_selected_account(identity, accounts):
 ])
 def test_invalid_contract_fails_closed(contract):
     service = _fixture(contract=contract)
-    assert selected_private_offer_hint(service, _row()) is False
+    assert selected_private_offer_hint(service, _row(), identity_id="alice") is False
 
 
 def test_missing_session_private_row_cannot_enable_a_legacy_direct_get():
     service = _fixture()
     service._sessions.clear()
-    assert selected_private_offer_hint(service, _row()) is False
+    assert selected_private_offer_hint(service, _row(), identity_id="alice") is False
     assert service.source_calls == []
 
 
@@ -114,8 +114,25 @@ def test_non_selected_public_offer_keeps_existing_legacy_visibility():
         source_collection="public_catalog", owned=False,
         download_url="https://example.invalid/a.epub",
     )
-    assert selected_private_offer_hint(service, item) is None
+    assert selected_private_offer_hint(service, item, identity_id="alice") is None
 
 
 def test_private_capability_is_not_an_offer():
-    assert selected_private_offer_hint(_fixture(cap=False), _row()) is False
+    assert selected_private_offer_hint(_fixture(cap=False), _row(), identity_id="alice") is False
+
+
+def test_headless_private_offer_requires_explicit_identity_without_navigation_read():
+    service = _fixture()
+
+    class Headless:
+        def __getattr__(self, name):
+            if name == "current_identity":
+                pytest.fail("Core private offer worker read GTK selection")
+            return getattr(service, name)
+
+    worker = Headless()
+    assert selected_private_offer_hint(worker, _row()) is False
+    assert selected_private_offer_hint(worker, _row(), identity_id=False) is False
+    assert selected_private_offer_hint(worker, _row(), identity_id="bob") is False
+    assert selected_private_offer_hint(worker, _row(), identity_id="alice") is True
+    assert service.source_calls == []
