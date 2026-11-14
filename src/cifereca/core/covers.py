@@ -61,14 +61,30 @@ def _safe_cover_url(value: object) -> str:
             # shared UI loader must not be instructed to access local services
             # or private IP literals by a provider cover candidate.
             hostname = parts.hostname.rstrip(".").casefold()
-            if (not hostname or hostname == "localhost"
-                    or hostname.endswith(".localhost")
-                    or hostname.endswith(".local")):
+            # Local naming zones are not public catalogue origins, even
+            # though they do not necessarily resolve to an IP literal.
+            # In particular these names can trigger a request into a
+            # reader's private network through the GTK thumbnail loader.
+            if (not hostname
+                    or hostname in {
+                        "localhost", "local", "lan", "internal",
+                        "home.arpa", "localdomain",
+                    }
+                    or hostname.endswith((
+                        ".localhost", ".local", ".lan", ".internal",
+                        ".home.arpa", ".localdomain",
+                    ))):
                 return ''
             try:
                 address = ip_address(hostname)
             except ValueError:
-                pass  # Ordinary public DNS name; no DNS resolution here.
+                # A single-label name (printer) and abbreviated numeric IPv4
+                # (127.1, 0177.0.0.1) can resolve via local DNS/NSS or
+                # historical inet_aton behavior. Neither is a public host.
+                if ("." not in hostname
+                        or all(part.isascii() and part.isdecimal()
+                               for part in hostname.split("."))):
+                    return ''
             else:
                 if not address.is_global:
                     return ''
