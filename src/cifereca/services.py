@@ -1567,7 +1567,10 @@ class LibraryService:
         recherche. Une notice fiable sans image est enrichie via ``holdings``
         *avec l'identifiant issu de Search.svc*, qui est exploitable.
         """
-        return library_projection.resolve_history_thumbnail(self, provider, record_id, title, author, year, default_url)
+        return library_projection.resolve_history_thumbnail(
+            self, provider, record_id, title, author, year, default_url,
+            account=self.current_account,
+        )
 
     def refresh_bookings(self, force: bool = False) -> list[Booking]:
         """Retired reservations route (#4147): never consult provider or cache.
