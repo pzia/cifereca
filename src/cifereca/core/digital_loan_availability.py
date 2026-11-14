@@ -188,7 +188,10 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
                 for a in matches)
                 # One connection must never present two distinct primary
                 # borrowers as independent digital loan capacities.
-                or sum(a.is_primary is True for a in matches) > 1):
+                or sum(a.is_primary is True for a in matches) > 1
+                # Distinct borrowers must have distinct exact upstream IDs;
+                # repeat IDs must not create duplicate Home capacity lines.
+                or len({a.unique_id for a in matches}) != len(matches)):
             # A malformed or oversized borrower inventory invalidates ONLY
             # this configured connection. Never sort an untrusted identifier,
             # pick the first account, or suppress other independent lenders.
@@ -201,14 +204,8 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
             continue
         for borrower in sorted(matches, key=lambda a: (
                 a.is_primary is not True, a.unique_id)):
-            duplicate = sum(
-                1 for a in matches if a.unique_id == borrower.unique_id
-            ) != 1
             try:
-                scope = (
-                    LoanInventoryScope.for_account(borrower, descriptor=descriptor)
-                    if not duplicate else None
-                )
+                scope = LoanInventoryScope.for_account(borrower, descriptor=descriptor)
             except ValueError:
                 scope = None
             observed = None
@@ -237,7 +234,7 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
             except Exception:
                 pass
             reason = (
-                "scope_ambiguous" if duplicate or scope is None else
+                "scope_ambiguous" if scope is None else
                 "provider_unverified" if descriptor is None else
                 "account_disabled" if configured_entry.get("enabled", True) is False else
                 "account_disconnected" if not connected else
@@ -254,7 +251,7 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
                 observed_loans=observed,
                 personal_ceiling=(
                     _personal_limit(configured_entry, descriptor, borrower)
-                    if not duplicate and descriptor is not None else None
+                    if scope is not None and descriptor is not None else None
                 ),
                 reason=reason,
             ))
