@@ -58,6 +58,23 @@ def test_storage_still_exposes_the_historical_mutation_surface_for_cutover():
 
 
 
+
+def test_w5_filename_normalization_has_no_legacy_backup_path_writer():
+    # Regression fence: a provider-specific exception cannot silently grow
+    # back into an UPDATE to the historical 0.7 receipt table.
+    storage = ROOT / "src" / "cifereca" / "storage.py"
+    tree = ast.parse(storage.read_text(encoding="utf-8"), filename=str(storage))
+    relocation = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "relocate_local_path"
+    )
+    assert not any(
+        isinstance(node, ast.Constant) and isinstance(node.value, str)
+        and "update backup_items" in node.value.casefold()
+        for node in ast.walk(relocation)
+    )
+
+
 def test_kobo_w4_historical_writer_is_unreachable_from_production():
     """W4 legacy may remain as a test archive, not as a callable production path.
 
