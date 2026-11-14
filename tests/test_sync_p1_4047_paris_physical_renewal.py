@@ -14,7 +14,7 @@ import pytest
 
 from cifereca.models import Account, Loan
 from cifereca.plugin_api import ProviderCapabilityError
-from cifereca.gui.loan_renewal_visibility import paris_physical_renewal_visible
+from cifereca.gui.loan_renewal_visibility import physical_loan_renewal_visible
 from tests.test_core_p1_3121_paris_renewal_one_post import account, loan
 
 
@@ -93,24 +93,24 @@ def test_gtk_visibility_never_offers_unsupported_loan_shape(variant):
         selected = replace(selected, renewable=False)
     else:
         selected = replace(selected, state=variant)
-    assert paris_physical_renewal_visible(selected) is False
-    assert paris_physical_renewal_visible(loan(a)) is True
+    assert physical_loan_renewal_visible(selected) is False
+    assert physical_loan_renewal_visible(loan(a)) is True
 
 
 def test_gtk_visibility_accepts_unknown_source_when_physical_and_renewable():
     selected = replace(loan(account()), source_provider="future.synthetic")
-    assert paris_physical_renewal_visible(selected) is True
+    assert physical_loan_renewal_visible(selected) is True
 
 
 def test_gui_button_guard_is_independent_of_experimental_switch():
     path = ROOT / "src/cifereca/gui/detail_panel.py"
     text = path.read_text(encoding="utf-8")
     section = text.split("def show_loan(", 1)[1].split("def _decorate(", 1)[0]
-    assert "if paris_physical_renewal_visible(loan):" in section
+    assert "if physical_loan_renewal_visible(loan):" in section
     # #3731 / #4048 removed the experimental switch and voluntary return.
-    # Physical Paris renewal is an independent, explicitly guarded action.
+    # Physical loan renewal is an independent, explicitly guarded action.
     assert "experimental_actions" not in section
     assert "confirm_return(" not in section
-    guarded = section.split("if paris_physical_renewal_visible(loan):", 1)[1]
+    guarded = section.split("if physical_loan_renewal_visible(loan):", 1)[1]
     assert 'label="Prolonger"' in guarded
     assert "self.window.confirm_renew(loan, renew)" in guarded

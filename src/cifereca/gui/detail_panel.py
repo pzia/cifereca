@@ -807,11 +807,11 @@ class DetailPanel(Gtk.Box):
                 attach.set_tooltip_text("Choisir un prêt par titre et profil, puis confirmer le rattachement. Aucun téléchargement ni retour.")
                 attach.connect("clicked", lambda _b: self.window.choose_adept_loan(binding["acquisition_id"], loan, attach))
                 buttons.append(attach)
-        # #4047: only physical Paris renewal is offered; no experimental
-        # toggle can grant a digital or cross-provider mutation.
+        # Offer renewal only for eligible physical loans. The Core
+        # verifies the exact loan and account before renewing.
         # Local import also keeps the historical isolated show_loan adapter safe.
-        from cifereca.gui.loan_renewal_visibility import paris_physical_renewal_visible
-        if paris_physical_renewal_visible(loan):
+        from cifereca.gui.loan_renewal_visibility import physical_loan_renewal_visible
+        if physical_loan_renewal_visible(loan):
             renew = Gtk.Button(label="Prolonger")
             renew.connect("clicked", lambda _b: self.window.confirm_renew(loan, renew))
             buttons.append(renew)
