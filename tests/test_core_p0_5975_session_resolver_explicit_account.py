@@ -73,7 +73,9 @@ def test_pnb_preferences_reuses_admitted_account_across_session_resolution():
         ))
 
     host._session_for_account = session_for_account
-    assert host.pnb_preferences(alice) == {"borrower": "alice"}
+    assert host.digital_preferences_for_account(alice) == {"borrower": "alice"}
+    with pytest.raises(ProviderConfigurationError, match="pnb_preferences_explicit_account_required"):
+        host.pnb_preferences()
     assert seen == [("session", alice), ("preferences", alice)]
     assert host.current_account is bob
 
@@ -91,7 +93,7 @@ def test_pnb_preferences_does_not_fallback_to_selected_account():
                 {"borrower": exact.identity_id}
             ))
     host = Host()
-    assert LibraryService.pnb_preferences(host, alice) == {"borrower": "alice"}
+    assert LibraryService.digital_preferences_for_account(host, alice) == {"borrower": "alice"}
 
 
 @pytest.mark.parametrize("invalid", [None, "", 0, {}, [], object(),
@@ -108,4 +110,17 @@ def test_pnb_preferences_rejects_unscoped_or_invalid_account_before_get(invalid)
         def _session_for_account(self, _account):
             pytest.fail("invalid account reached provider session")
     with pytest.raises(ProviderConfigurationError, match="account_session_explicit_owner_required"):
-        LibraryService.pnb_preferences(Host(), invalid)
+        LibraryService.digital_preferences_for_account(Host(), invalid)
+
+
+def test_legacy_pnb_entry_refuses_without_navigation_or_provider_read():
+    class Host:
+        @property
+        def current_account(self):
+            pytest.fail("retired PNB entry read GTK navigation")
+
+        def _session_for_account(self, _account):
+            pytest.fail("retired PNB entry requested a provider session")
+
+    with pytest.raises(ProviderConfigurationError, match="pnb_preferences_explicit_account_required"):
+        LibraryService.pnb_preferences(Host())

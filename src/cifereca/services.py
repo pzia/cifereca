@@ -2358,12 +2358,15 @@ class LibraryService:
             code="loan_return_removed",
         )
 
-    def pnb_preferences(self, account: Account | None = None) -> dict[str, Any]:
-        """Read PNB preferences only for a caller-pinned exact account.
+    def pnb_preferences(self) -> dict[str, Any]:
+        """Retired no-argument GTK account inference, kept for facade ABI."""
+        raise ProviderConfigurationError("pnb_preferences_explicit_account_required")
 
-        No implicit selected GTK borrower may enter a Core request. Legacy
-        no-argument callers fail closed before a session or provider GET.
-        The same admitted Account is sent to both session lookup and reader.
+    def digital_preferences_for_account(self, account: Account) -> dict[str, Any]:
+        """Read preferences for one explicit, exactly scoped provider account.
+
+        No GTK navigation or implicit fallback; the same validated Account
+        is used to resolve the provider session and to issue its read.
         """
         if (type(account) is not Account
                 or type(account.identity_id) is not str or not account.identity_id
