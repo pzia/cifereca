@@ -265,3 +265,42 @@ def test_scheduled_inventory_rejects_invalid_identity_before_account_read(identi
     assert result.facts == {"reason": "identity_required"}
     assert core.account_reads == 0
     assert core.acquisitions == []
+
+
+def test_broker_account_reads_are_pinned_across_gtk_navigation_switch():
+    """Two profiles sharing an upstream ID never exchange their credentials."""
+    core = FakeCore()
+    core.current_identity = NS(identity_id="profile-B")
+    identity = IdentityBrokerImpl(core)
+    acquisition = AcquisitionBrokerImpl(core)
+
+    original = identity.accounts("profile-A")
+    eligible = acquisition.eligible_accounts(item(), identity_id="profile-A")
+    core.current_identity = NS(identity_id="profile-A")
+    assert identity.accounts("profile-A") == original
+    assert acquisition.eligible_accounts(item(), identity_id="profile-A") == eligible
+    assert {ref.credential_id for ref in original} == {"cred-A", "cred-B"}
+    assert all(ref.identity_id == "profile-A" for ref in (*original, *eligible))
+    assert {ref.credential_id for ref in identity.accounts("profile-B")} == {"cred-C"}
+
+    # Fail before the first account lookup, independently of what GTK shows.
+    account_reads = core.account_reads
+    with pytest.raises(TypeError):
+        identity.accounts()
+    with pytest.raises(TypeError):
+        acquisition.eligible_accounts(item())
+    assert core.account_reads == account_reads
+    assert core.acquisitions == []
+
+
+def test_broker_explicit_scope_rejects_wrong_types_without_core_side_effect():
+    core = FakeCore()
+    identity = IdentityBrokerImpl(core)
+    acquisition = AcquisitionBrokerImpl(core)
+    for bad in (None, "", "\t", 0, False, [], object()):
+        with pytest.raises(ValueError, match="identity_id_required"):
+            identity.accounts(bad)
+        with pytest.raises(ValueError, match="identity_id_required"):
+            acquisition.eligible_accounts(item("cred-A"), identity_id=bad)
+    assert core.account_reads == 0
+    assert core.acquisitions == []
