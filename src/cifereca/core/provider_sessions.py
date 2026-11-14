@@ -867,7 +867,7 @@ def _opening_sync_covers_visible_accounts(
             or not selected_identity_id
             or len(selected_identity_id) > 256
             or selected_identity_id != selected_identity_id.strip()
-            or any(c in selected_identity_id for c in "\\x00\\r\\n")):
+            or any(c in selected_identity_id for c in "\x00\r\n")):
         return False
     try:
         accounts = self.accounts_for_identity(selected_identity_id)
