@@ -126,6 +126,51 @@ def _load_reviews(path: Path) -> dict[str, dict]:
     return reviews
 
 
+def _load_reviewed_structural_evidence(path: Path) -> tuple[list[dict], list[dict]]:
+    """Validate the human-authored non-AST ledger; NEVER infer reachability.
+
+    Historical removals and installed guards are independent audit evidence,
+    not a subtractive delta from raw provider AST or a new grant of rights.
+    """
+    if not path.exists():
+        return [], []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("metric") != METRIC:
+        raise ValueError("invalid_business_review_ledger_schema")
+    groups = (
+        ("retirements", frozenset({
+            "id", "original", "original_classification", "replacement",
+            "classification", "evidence", "tests", "pr",
+        })),
+        ("guard_installations", frozenset({
+            "id", "journey", "classification", "effect",
+            "remaining_debt", "tests", "pr",
+        })),
+    )
+    results = []
+    seen: set[str] = set()
+    for name, required in groups:
+        entries = payload.get(name, [])
+        if type(entries) is not list:
+            raise ValueError("invalid_reviewed_structural_evidence")
+        for row in entries:
+            if type(row) is not dict or not required <= row.keys():
+                raise ValueError("incomplete_reviewed_structural_evidence")
+            if (any(type(row[field]) is not str or not row[field].strip()
+                    for field in required - {"tests"})
+                    or type(row["tests"]) is not list or not row["tests"]
+                    or any(type(t) is not str or not t.strip()
+                           for t in row["tests"])):
+                raise ValueError("untraceable_reviewed_structural_evidence")
+            if row["id"] in seen:
+                raise ValueError("duplicate_reviewed_structural_evidence")
+            seen.add(row["id"])
+            if "in_ast_metric" in row and type(row["in_ast_metric"]) is not bool:
+                raise ValueError("invalid_reviewed_ast_scope")
+        results.append(entries)
+    return results[0], results[1]
+
+
 def inventory(root: Path, *, registry: Path | None = None,
               base_sha: str | None = None, head_sha: str | None = None) -> dict:
     root = root.resolve()
@@ -134,6 +179,7 @@ def inventory(root: Path, *, registry: Path | None = None,
         raise ValueError("incomplete_AST_inventory")
     path = registry if registry is not None else root / "docs/provider-business-coupling-review.json"
     reviews = _load_reviews(path)
+    retirements, installed_guards = _load_reviewed_structural_evidence(path)
     sites = _signal_sites(root, raw)
     matched = set()
     for site in sites:
@@ -167,6 +213,15 @@ def inventory(root: Path, *, registry: Path | None = None,
             "legitimate_readonly_compat", "presentation_only", "false_positive")),
         "unclassified": classes["unclassified"],
         "review_coverage_pct": round(100 * classified / total, 2) if total else 100.0,
+        # Non-AST evidence is disclosed separately, never subtracted from raw
+        # AST or asserted to be verified runtime reachability.
+        "reviewed_structural_retirements_count": len(retirements),
+        "reviewed_structural_retirement_ids": sorted(x["id"] for x in retirements),
+        "reviewed_structural_retirements_by_class": dict(sorted(
+            Counter(x["original_classification"] for x in retirements).items()
+        )),
+        "reviewed_guard_installations_count": len(installed_guards),
+        "reviewed_guard_installation_ids": sorted(x["id"] for x in installed_guards),
         "stale_reviews": stale,
         "dedicated_path_candidates": dedicated,
         "dedicated_candidate_paths_count": len(dedicated),
@@ -179,7 +234,9 @@ def inventory(root: Path, *, registry: Path | None = None,
             "AST hits and provider-named modules are candidate evidence only. "
             "Unclassified paths, indirect dispatch and unscanned dedicated-module "
             "functions must be reviewed before claiming 100% business coverage. "
-            "A semantic fingerprint is relocation evidence, not proof of removal."
+            "A semantic fingerprint is relocation evidence, not proof of removal. "
+            "Reviewed structural retirements and installed guards are human-authored "
+            "evidence only: their count is not a proven active-debt delta."
         ),
     }
 
@@ -189,6 +246,10 @@ def compare(baseline: dict, current: dict) -> dict:
         raise ValueError("incompatible_business_baseline")
     before = {s["id"]: s for s in baseline["sites"]}
     after = {s["id"]: s for s in current["sites"]}
+    prior_retirements = set(baseline.get("reviewed_structural_retirement_ids", ()))
+    new_retirements = set(current.get("reviewed_structural_retirement_ids", ()))
+    prior_guards = set(baseline.get("reviewed_guard_installation_ids", ()))
+    new_guards = set(current.get("reviewed_guard_installation_ids", ()))
     lost = set(before) - set(after)
     gained = set(after) - set(before)
     # Potential moved/renamed sites have the same AST shape. No auto credit.
@@ -205,6 +266,10 @@ def compare(baseline: dict, current: dict) -> dict:
         "base_sha": baseline.get("head_sha"),
         "head_sha": current.get("head_sha"),
         "raw_ast_delta": current["raw_ast_unique_lines"] - baseline["raw_ast_unique_lines"],
+        "reviewed_structural_retirements_added": sorted(new_retirements - prior_retirements),
+        "reviewed_structural_retirements_removed": sorted(prior_retirements - new_retirements),
+        "reviewed_guard_installations_added": sorted(new_guards - prior_guards),
+        "reviewed_guard_installations_removed": sorted(prior_guards - new_guards),
         "added_site_ids": sorted(gained), "removed_site_ids": sorted(lost),
         "potential_relocations": moves,
         "reclassifications": [
@@ -244,6 +309,8 @@ def main(argv: list[str] | None = None) -> int:
         for key in ("raw_ast_unique_lines", "active_business_decisions_to_migrate",
                     "active_legacy_writers_to_retire", "safety_guards_pending_contract",
                     "justified_retained", "unclassified", "review_coverage_pct",
+                    "reviewed_structural_retirements_count",
+                    "reviewed_guard_installations_count",
                     "dedicated_candidate_paths_count"):
             print(f"{key}: {result[key]}")
         if result["stale_reviews"]:

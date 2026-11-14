@@ -123,3 +123,79 @@ def test_named_paths_are_candidates_not_proven_runtime(tmp_path):
     assert result["dedicated_candidate_paths_count"] == 1
     assert result["dedicated_runtime_paths_remaining"] is None
     assert result["active_business_decisions_to_migrate"] == 0
+
+
+def _structural_ledger(*, retirements=(), guards=()):
+    return {
+        "metric": METRIC, "reviews": [],
+        "retirements": list(retirements),
+        "guard_installations": list(guards),
+    }
+
+
+def _retirement_evidence():
+    return {
+        "id": "struct-exact-history", "original": "legacy navigation fallback",
+        "original_classification": "navigation_dependent_legacy_read",
+        "replacement": "pinned exact identity", "classification": "removed_scope",
+        "evidence": "no Core worker reads mutable GUI context",
+        "tests": ["tests/test_exact_history.py"], "pr": "#1234",
+        "in_ast_metric": False,
+    }
+
+
+def _guard_evidence():
+    return {
+        "id": "guard-exact-loan", "journey": "loan eligibility",
+        "classification": "safety_guard_pending_contract",
+        "effect": "reject an unbound borrow before GET",
+        "remaining_debt": "new generic policy needed",
+        "tests": ["tests/test_loan.py"], "pr": "#1235",
+    }
+
+
+def test_structural_ledger_counts_are_disjoint_from_unreviewed_ast(tmp_path):
+    write(tmp_path, "src/cifereca/core/router.py",
+          "def route(provider):\n    return provider == 'kobo'\n")
+    before = inventory(tmp_path, head_sha="before")
+    payload = _structural_ledger(
+        retirements=[_retirement_evidence()], guards=[_guard_evidence()],
+    )
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(json.dumps(payload), encoding="utf-8")
+    after = inventory(tmp_path, registry=ledger, head_sha="after")
+    assert after["raw_ast_unique_lines"] == before["raw_ast_unique_lines"] == 1
+    assert after["unclassified"] == 1
+    assert after["review_coverage_pct"] == 0
+    assert after["reviewed_structural_retirements_count"] == 1
+    assert after["reviewed_structural_retirement_ids"] == ["struct-exact-history"]
+    assert after["reviewed_guard_installations_count"] == 1
+    assert after["reviewed_structural_retirements_by_class"] == {
+        "navigation_dependent_legacy_read": 1,
+    }
+    delta = compare(before, after)
+    assert delta["raw_ast_delta"] == 0
+    assert delta["reviewed_structural_retirements_added"] == [
+        "struct-exact-history"
+    ]
+    assert delta["reviewed_guard_installations_added"] == ["guard-exact-loan"]
+    assert delta["removed_site_ids"] == []
+
+
+@pytest.mark.parametrize("invalid", [
+    {"retirements": "not a list"},
+    {"retirements": [{"id": "incomplete"}]},
+    {"retirements": [{**_retirement_evidence(), "tests": []}]},
+    {"retirements": [{**_retirement_evidence(), "in_ast_metric": "no"}]},
+    {"retirements": [_retirement_evidence(), _retirement_evidence()]},
+    {"guard_installations": [{"id": "invalid"}]},
+])
+def test_invalid_structural_review_fails_closed(tmp_path, invalid):
+    write(tmp_path, "src/cifereca/core/router.py",
+          "def route(provider):\n    return provider == 'kobo'\n")
+    payload = _structural_ledger()
+    payload.update(invalid)
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="reviewed|incomplete|duplicate"):
+        inventory(tmp_path, registry=ledger)
