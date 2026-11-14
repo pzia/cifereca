@@ -72,7 +72,11 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
     # Read Core's canonical owned-right ledger once, before GTK projection.
     # No provider transport, session or acquisition is consulted by this view.
     from cifereca.core.search_owned_evidence import snapshot_search_owned_evidence
-    self._search_purchase_evidence = snapshot_search_owned_evidence(self.service)
+    # Use the same identity pinned for this search batch, not a second
+    # selected-identity lookup after search results were admitted.
+    self._search_purchase_evidence = snapshot_search_owned_evidence(
+        self.service, identity_id=identity,
+    )
     self.service.last_search = rows
     self.search_objects = dict(zip(_remote_result_row_keys(rows), rows))
     shown = self._render_search_results()
