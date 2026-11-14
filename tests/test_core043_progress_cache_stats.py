@@ -65,7 +65,7 @@ class _FakeSession:
 
 def test_core043_manifest_and_storage_schema():
     assert MANIFEST_VERSION == 1
-    assert CURRENT_SCHEMA_VERSION == 15
+    assert CURRENT_SCHEMA_VERSION == 16
 
 
 def test_progressive_search_isolates_provider_failure(tmp_path, monkeypatch):
