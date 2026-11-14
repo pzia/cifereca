@@ -119,8 +119,8 @@ def _source(broker, source_id, *, allow_canonical=False):
     _require(getattr(session.capabilities, "local_materialization", None) is True,
              "not_supported")
     _require(bool(getattr(session.capabilities, "backup", False)), "not_supported")
-    # #3196: a fully typed Core provider must never dispatch a second Kobo
-    # acquisition through the legacy, backup_items-authoritative worker.
+    # #3196: a fully typed source can never dispatch a second acquisition
+    # through the retired backup_items-authoritative worker.
     # Check on BOTH preview and execution, including an ABI added after a
     # confirmation token was issued.
     _require(allow_canonical or not has_complete_delivery_abi(session),
