@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+from .digital_loan_availability import DigitalLoanAvailability
 from .models import (
     AccountRef, ActionStatistics, AdeptProfileRef, ArtifactFormat, ArtifactInputLease, ArtifactOutputLease, ArtifactRef, ArtifactRoutePlan,
     ArtifactRouteRequest, ArtifactRouteTarget, ArtifactTransferResult, ArtifactVariant, CacheNamespaceInfo, CachePurgeResult, CatalogSearchBatch, CatalogSearchSummary, CatalogueSourceCapability, LibraryMutationPlan,
@@ -106,7 +107,7 @@ class IdentityBroker(Protocol):
     def statistics(self, identity_id: str, *, window_seconds: int = 2592000) -> Mapping[str, Any]: ...
     # Optional additive read-only projection. Existing identity brokers may
     # omit it; no observed complete inventory => only unknown remaining.
-    def digital_loan_availability(self, identity_id: str) -> tuple[Any, ...]: ...
+    def digital_loan_availability(self, identity_id: str) -> tuple[DigitalLoanAvailability, ...]: ...
 
 @runtime_checkable
 class RuntimeCapabilitiesBroker(Protocol):
