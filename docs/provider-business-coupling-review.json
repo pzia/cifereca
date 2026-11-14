@@ -664,6 +664,21 @@
       ],
       "pr": "#6052",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-search-owned-ownership-projection-gtk-fallback",
+      "original": "core.search_owned_evidence.snapshot_search_owned_evidence derived current_identity for a canonical rights-ledger read and re-read mutable GTK identity after SQL projection",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "Explicit identity_id required at the headless Core boundary; GUI search-results entrypoint passes its already captured exact admitted identity. Monotone account/source epoch checks retain A→B→A and reconnect invalidation without any worker navigation read.",
+      "classification": "removed_navigation_owned_rights_projection",
+      "evidence": "Missing or malformed identity refuses before entitlements SQL and cannot render an owned badge; synthetic headless poison-current_identity getter proves no Core navigation access. Positive owned state still needs exact identity/provider/credential/account/edition/revision matching canonical rights; no provider metadata can grant ownership. In-flight navigation increments _account_context_epoch and rejects stale results.",
+      "tests": [
+        "tests/test_core_p0_5073_search_owned_evidence.py",
+        "tests/test_core_p0_5056_catalogue_owned_attestation.py",
+        "tests/test_search_results_view.py"
+      ],
+      "pr": "#6054",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
