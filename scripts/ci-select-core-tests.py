@@ -29,6 +29,7 @@ FULL_CORE_FILES = {
     "scripts/ci-select-core-tests.py",
     "scripts/ci_select_core_push.py",
     "scripts/ci_test_dependency_guard.py",
+    "scripts/ci_test_core_consumer_graph.py",
     # #2141: the page's actual GTK composition, action grouping and
     # presentation are covered by legacy test_core_p0_* suites, not only
     # the narrow test_core_ui_* subset. Run ALL Core tests before merging

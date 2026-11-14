@@ -254,3 +254,9 @@ def test_changed_core_test_reused_by_plugin_via_pytest_loader_runs_full(tmp_path
         encoding="utf-8",
     )
     assert selector.select(["tests/test_fixture.py"], tmp_path) == ("full", ["tests"])
+
+def test_core_consumer_graph_script_change_requires_full_core_ci():
+    selector = _module()
+    assert selector.select(["scripts/ci_test_core_consumer_graph.py"], ROOT) == (
+        "full", ["tests"]
+    )

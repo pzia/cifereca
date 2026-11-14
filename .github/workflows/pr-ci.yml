@@ -119,14 +119,14 @@ jobs:
           bnf_reader=$(python3 scripts/ci_bnf_reader_gate.py select "$changed_file")
           lending_conformance=$(python3 scripts/ci_lending_conformance_gate.py select "$changed_file")
 
-          if matches '^(src/cifereca/|tests/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_select_core_push\.py$|scripts/ci_test_dependency_guard\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$|scripts/ci_core_release_preflight\.py$)' || e2e_runtime_changes; then
+          if matches '^(src/cifereca/|tests/|environnements/openai-chat-debian/capture_app\.py$|pyproject\.toml$|scripts/ci-select-core-tests\.py$|scripts/ci_select_core_push\.py$|scripts/ci_test_dependency_guard\.py$|scripts/ci_test_core_consumer_graph\.py$|scripts/ci_select_plugin_tests\.py$|scripts/check_release_inventory\.py$|scripts/ci_core_release_preflight\.py$)' || e2e_runtime_changes; then
             core=true
           fi
 
           if plugin_runtime_changes; then
             plugins=true
           fi
-          if matches '^(scripts/ci-run-plugin-tests\.sh$|scripts/ci_select_plugin_tests\.py$|\.github/plugin-test-dependencies\.json$|pyproject\.toml$)'; then
+          if matches '^(scripts/ci-run-plugin-tests\.sh$|scripts/ci_select_plugin_tests\.py$|scripts/ci_test_core_consumer_graph\.py$|scripts/ci_test_dependency_guard\.py$|\.github/plugin-test-dependencies\.json$|pyproject\.toml$)'; then
             plugins=true
             plugin_scope_all=true
           fi
@@ -167,6 +167,23 @@ jobs:
           if matches '^scripts/(ci-plugins-only-runtime-gate\.sh|ci-plugins-only-historical-core-gate\.sh|ci-full-release-install-gate\.py)$'; then
             packaging=true
             install=true
+          fi
+
+          # Root tests can export fixtures into plugin suites; a Core-only
+          # replay is insufficient when a test module changes.
+          if matches '^tests/test_.*\.py$'; then
+            plugin_replay="$(python3 scripts/ci_test_core_consumer_graph.py --plugin-replay-changed "$changed_file")"
+            if [[ "$plugin_replay" != "none" ]]; then
+              plugins=true
+              plugin_scope_all=true
+            fi
+          fi
+          # Deleted root tests cannot be inspected at HEAD; conservatively
+          # replay plugins to detect stale external imports.
+          if git diff --name-status --no-renames "$BASE_SHA...$HEAD_SHA" -- tests/ | \
+             grep -Eq '^D[[:space:]]+tests/test_.*\.py$'; then
+            plugins=true
+            plugin_scope_all=true
           fi
 
           if [[ "$plugins" == true ]]; then

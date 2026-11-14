@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.ci_test_core_consumer_graph import _imports, inventory
+from scripts.ci_test_core_consumer_graph import _imports, inventory, plugin_replay_required
 
 
 def _write(root: Path, path: str, source: str) -> None:
@@ -180,3 +180,66 @@ def test_plugin_package_imports_are_distinct_from_core_dependencies(tmp_path):
         prefix + "test_shared_name.py"
     ]
     assert [e["target_module"] for e in graph["plugin_missing_imports"]] == ["tests.test_missing"]
+
+def test_graph_detects_pytest_and_runpy_loaders_and_aliases():
+    source = (
+        'import pytest\npytest.importorskip("tests.test_a")\n'
+        'from runpy import run_module as execute\nexecute("tests.test_b")\n'
+        'import runpy\nrunpy.run_path("tests/test_c.py")\n'
+    )
+    found, unknown = _imports(source, is_root_test=False)
+    assert [module for module, _, _ in found] == [
+        "tests.test_a", "tests.test_b", "tests.test_c",
+    ]
+    assert unknown == []
+
+
+def test_plugin_replay_follows_root_fixture_chain(tmp_path):
+    _write(tmp_path, "tests/test_a.py", "from tests.test_b import VALUE\n")
+    _write(tmp_path, "tests/test_b.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/p/tests/test_p.py", "from tests.test_a import VALUE\n")
+    assert plugin_replay_required(["tests/test_b.py"], tmp_path)
+    assert not plugin_replay_required(["tests/test_unrelated.py"], tmp_path)
+
+
+def test_plugin_replay_follows_plugin_local_helper(tmp_path):
+    _write(tmp_path, "tests/test_a.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/p/tests/helpers.py", "from tests.test_a import VALUE\n")
+    _write(tmp_path, "src/plugins/p/tests/test_p.py", "from .helpers import VALUE\n")
+    assert plugin_replay_required(["tests/test_a.py"], tmp_path)
+
+
+def test_plugin_replay_detects_dynamic_root_loader_in_plugin(tmp_path):
+    _write(tmp_path, "tests/test_a.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/p/tests/test_p.py",
+           'from pytest import importorskip as load\n'
+           'load(f"tests.{name}")\n')
+    assert plugin_replay_required(["tests/test_a.py"], tmp_path)
+
+
+def test_plugin_replay_fails_closed_for_root_fixture_dynamic_import(tmp_path):
+    _write(tmp_path, "tests/test_a.py",
+           "from importlib import import_module\nimport_module(variable)\n")
+    _write(tmp_path, "tests/test_b.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/p/tests/test_p.py", "from tests.test_a import VALUE\n")
+    assert plugin_replay_required(["tests/test_b.py"], tmp_path)
+
+
+def test_plugin_replay_fails_closed_for_plugin_parse_error(tmp_path):
+    _write(tmp_path, "tests/test_a.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/p/tests/test_p.py", "def broken(:\n")
+    assert plugin_replay_required(["tests/test_a.py"], tmp_path)
+
+
+def test_unrelated_and_non_root_changes_keep_plugins_targeted(tmp_path):
+    _write(tmp_path, "tests/test_a.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/p/tests/test_p.py", "from tests import test_other\n")
+    assert not plugin_replay_required(["tests/test_a.py"], tmp_path)
+    assert not plugin_replay_required(["src/cifereca/services.py"], tmp_path)
+
+
+def test_plugin_replay_flags_ambiguous_local_namespace(tmp_path):
+    _write(tmp_path, "tests/test_shared.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/p/tests/test_shared.py", "VALUE = 2\n")
+    _write(tmp_path, "src/plugins/p/tests/test_p.py", "from tests.test_shared import VALUE\n")
+    assert plugin_replay_required(["tests/test_shared.py"], tmp_path)

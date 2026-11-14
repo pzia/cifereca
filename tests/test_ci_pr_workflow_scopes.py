@@ -222,3 +222,10 @@ def test_specialized_workflow_only_edits_preserve_actual_test_jobs(workflow, req
     assert "\njobs:\n" in source
     for expected in required:
         assert expected in source, (workflow, expected)
+
+def test_changed_root_fixtures_replay_plugin_consumers_in_pr_ci():
+    workflow = (ROOT / ".github/workflows/pr-ci.yml").read_text(encoding="utf-8")
+    assert 'ci_test_core_consumer_graph.py --plugin-replay-changed "$changed_file"' in workflow
+    assert 'plugin_replay" != "none"' in workflow
+    assert 'git diff --name-status --no-renames "$BASE_SHA...$HEAD_SHA" -- tests/' in workflow
+    assert "plugin_scope_all=true" in workflow

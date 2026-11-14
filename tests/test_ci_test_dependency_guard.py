@@ -231,3 +231,11 @@ def test_transitive_plugin_helper_loading_core_test_forces_full(tmp_path):
         encoding="utf-8",
     )
     assert has_test_consumers(root, ["tests/test_fixture.py"])
+
+def test_plugin_only_consumer_scope_does_not_replay_unrelated_root_imports(tmp_path):
+    root = _sample(tmp_path, "from tests.test_fixture import VALUE\n")
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
+    assert not has_test_consumers(
+        root, ["tests/test_fixture.py"],
+        consumer_globs=("src/plugins/*/tests/**/*.py",),
+    )
