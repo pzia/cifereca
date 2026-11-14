@@ -197,9 +197,119 @@ def build_review(
         os.umask(old_umask)
 
 
+
+# Explicit operator observations, not deductions from screenshots or CI.
+# The private checklist stays on the authorized GTK host: only SHA-bound,
+# bounded numeric counts may enter the private receipt.
+REVIEW_COLUMNS = (
+    "width", "stage", "appearance", "readability_contrast",
+    "keyboard_focus", "clipping", "busy_disabled_error_states",
+    "density", "ux_verdict", "notes",
+)
+REVIEW_AXES = REVIEW_COLUMNS[3:8]
+
+
+def verify_completed_review(
+    root: Path, *, sizes: dict[int, tuple[int, int]] = SIZES,
+    stages: tuple[str, ...] = STAGES, expected_sha: str | None = None,
+) -> dict[str, Any]:
+    """Verify an explicitly filled, private UX checklist against original PNGs.
+
+    Never certify a UI from a test PASS or a generated contact sheet. An OK
+    value is an operator's judgment; N/A is always a documented exclusion.
+    Any missing/duplicate row, stale commit or changed image fails closed.
+    """
+    root = root.resolve(strict=True)
+    revisions = set()
+    for width, size in sizes.items():
+        sha, _images = verify_capture_folder(
+            root / f"modern-light-{width}", width=width, size=size,
+            stages=stages,
+        )
+        revisions.add(sha)
+    if len(revisions) != 1:
+        raise ValueError("Captures de HEAD différents")
+    sha = next(iter(revisions))
+    if expected_sha is not None and sha != expected_sha:
+        raise ValueError("HEAD différent des captures privées")
+    output = root / "modern-light-private-review"
+    if output.is_symlink() or not output.is_dir():
+        raise ValueError("Répertoire de revue privée absent ou non sûr")
+    manifest_path = _private_destination(output, "manifest.json")
+    checklist_path = _private_destination(output, "ux-checklist.csv")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (manifest.get("status") != "VISUAL_REVIEW_REQUIRED"
+            or manifest.get("git_sha") != sha
+            or manifest.get("widths") != sorted(sizes)
+            or manifest.get("verified_original_captures") != (
+                2 * len(stages) * len(sizes)
+            )):
+        raise ValueError("Manifeste de revue différent des captures")
+    # Bound the entire CSV before parsing; notes remain private and cannot
+    # contaminate logs, GitHub comments or the verdict receipt.
+    if checklist_path.stat().st_size > 256 * 1024:
+        raise ValueError("Grille de revue trop volumineuse")
+    raw = checklist_path.read_bytes()
+    with checklist_path.open(newline="", encoding="utf-8") as stream:
+        reader = csv.DictReader(stream)
+        if tuple(reader.fieldnames or ()) != REVIEW_COLUMNS:
+            raise ValueError("Colonnes de grille de revue incohérentes")
+        rows = list(reader)
+    expected = {
+        (str(width), stage, mode)
+        for width in sizes for stage in stages for mode in APPEARANCES
+    }
+    seen = set()
+    findings = exclusions = 0
+    for row in rows:
+        key = (row["width"], row["stage"], row["appearance"])
+        if key not in expected or key in seen:
+            raise ValueError("Ligne de revue absente, répétée ou inconnue")
+        seen.add(key)
+        axes = [row[name] for name in REVIEW_AXES]
+        if any(value not in {"OK", "KO", "N/A"} for value in axes):
+            raise ValueError("Revue visuelle incomplète ou valeur non reconnue")
+        if row["ux_verdict"] not in {"OK", "KO"}:
+            raise ValueError("Verdict visuel manquant")
+        if "N/A" in axes:
+            exclusions += 1
+            if not (row["notes"] or "").strip():
+                raise ValueError("Exclusion visuelle sans justification")
+        if "KO" in axes and row["ux_verdict"] != "KO":
+            raise ValueError("Anomalie UX masquée par un verdict OK")
+        if row["ux_verdict"] == "KO":
+            findings += 1
+    if seen != expected:
+        raise ValueError("Revue visuelle incomplète")
+    receipt = {
+        "status": "CHECKLIST_VERIFIED",
+        "git_sha": sha,
+        "checklist_sha256": hashlib.sha256(raw).hexdigest(),
+        "reviewed_rows": len(seen),
+        "findings": findings,
+        "rows_with_exclusions": exclusions,
+        # Explicit operator records may be sufficient for subsequent UX
+        # review, but this receipt itself neither approves GitHub nor closes
+        # the ticket.
+        "ready_for_ux_decision": findings == 0 and exclusions == 0,
+    }
+    destination = _private_destination(output, "visual-review-verdict.json")
+    old_umask = os.umask(0o077)
+    try:
+        destination.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+        destination.chmod(0o600)
+    finally:
+        os.umask(old_umask)
+    return receipt
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("e2e-artifacts"))
+    parser.add_argument(
+        "--verify-checklist", action="store_true",
+        help="Contrôler la grille remplie contre les PNG originaux du HEAD, sans la publier",
+    )
     args = parser.parse_args()
     try:
         current_sha = subprocess.check_output(
@@ -207,8 +317,17 @@ def main() -> int:
             cwd=Path(__file__).resolve().parents[1],
             text=True, stderr=subprocess.DEVNULL,
         ).strip()
+        if args.verify_checklist:
+            verdict = verify_completed_review(args.root, expected_sha=current_sha)
+            print(
+                f"#757 : {verdict['reviewed_rows']} vues relues, "
+                f"{verdict['findings']} anomalies, "
+                f"{verdict['rows_with_exclusions']} exclusions ; "
+                "résultat privé, décision UX finale distincte."
+            )
+            return 0
         report = build_review(args.root, expected_sha=current_sha)
-    except (OSError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
         # No arbitrary source path, screenshot content or private report text
         # is printed into public CI logs.
         print(f"Revue #757 indisponible : {type(exc).__name__}")

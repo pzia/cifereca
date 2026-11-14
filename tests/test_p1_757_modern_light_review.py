@@ -1,6 +1,7 @@
 """Offline privacy-safe contract for P1 #757's private GTK review sheets."""
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 from pathlib import Path
@@ -154,3 +155,135 @@ def test_symlinked_private_sheet_cannot_write_outside_review_directory(tmp_path)
         build_review(tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
                      tile_width=80)
     assert outside.read_bytes() == b"intact"
+
+
+def _fill_private_review(root: Path, *, edit=None):
+    output = root / "modern-light-private-review"
+    path = output / "ux-checklist.csv"
+    with path.open(newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        columns = reader.fieldnames
+        rows = list(reader)
+    for row in rows:
+        for field in module.REVIEW_AXES:
+            row[field] = "OK"
+        row["ux_verdict"] = "OK"
+    if edit is not None:
+        edit(rows)
+    with path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
+def test_unreviewed_checklist_never_creates_verdict(tmp_path):
+    fixture(tmp_path)
+    build_review(tmp_path, sizes={64: (64, 40)}, stages=("dashboard",))
+    with pytest.raises(ValueError, match="incomplète"):
+        module.verify_completed_review(
+            tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
+        )
+    assert not (tmp_path / "modern-light-private-review" / "visual-review-verdict.json").exists()
+
+
+def test_signed_originals_and_complete_human_grid_produce_private_bounded_receipt(tmp_path):
+    fixture(tmp_path)
+    build_review(tmp_path, sizes={64: (64, 40)}, stages=("dashboard",))
+    checklist = _fill_private_review(tmp_path, edit=lambda rows: rows[0].update(
+        notes="Chemin privé /home/operator/token=SECRET never exported",
+    ))
+    receipt = module.verify_completed_review(
+        tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
+        expected_sha="a" * 40,
+    )
+    assert receipt["status"] == "CHECKLIST_VERIFIED"
+    assert receipt["reviewed_rows"] == 2
+    assert receipt["findings"] == receipt["rows_with_exclusions"] == 0
+    assert receipt["ready_for_ux_decision"] is True
+    assert receipt["checklist_sha256"] == hashlib.sha256(checklist.read_bytes()).hexdigest()
+    private = tmp_path / "modern-light-private-review" / "visual-review-verdict.json"
+    assert private.is_file()
+    assert private.stat().st_mode & 0o777 == 0o600
+    assert "SECRET" not in private.read_text(encoding="utf-8")
+    # No automatic ticket closure or false GTK / visual PASS in this receipt.
+    assert "UX_ACCEPTED" not in private.read_text(encoding="utf-8")
+
+
+def test_observed_ux_issue_is_never_accepted_as_clean(tmp_path):
+    fixture(tmp_path)
+    build_review(tmp_path, sizes={64: (64, 40)}, stages=("dashboard",))
+    _fill_private_review(tmp_path, edit=lambda rows: rows[0].update(
+        clipping="KO", ux_verdict="KO", notes="Bouton tronqué",
+    ))
+    verdict = module.verify_completed_review(
+        tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
+    )
+    assert verdict["findings"] == 1
+    assert verdict["ready_for_ux_decision"] is False
+
+
+def test_ko_axis_cannot_be_disguised_by_ok_verdict(tmp_path):
+    fixture(tmp_path)
+    build_review(tmp_path, sizes={64: (64, 40)}, stages=("dashboard",))
+    _fill_private_review(tmp_path, edit=lambda rows: rows[0].update(
+        clipping="KO", ux_verdict="OK",
+    ))
+    with pytest.raises(ValueError, match="masquée"):
+        module.verify_completed_review(
+            tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
+        )
+
+
+def test_unexamined_visual_axis_needs_explicit_documented_exclusion(tmp_path):
+    fixture(tmp_path)
+    build_review(tmp_path, sizes={64: (64, 40)}, stages=("dashboard",))
+    _fill_private_review(tmp_path, edit=lambda rows: rows[1].update(
+        keyboard_focus="N/A",
+    ))
+    with pytest.raises(ValueError, match="sans justification"):
+        module.verify_completed_review(
+            tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
+        )
+    _fill_private_review(tmp_path, edit=lambda rows: rows[1].update(
+        keyboard_focus="N/A", notes="Focus non applicable à cette vue",
+    ))
+    verdict = module.verify_completed_review(
+        tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
+    )
+    assert verdict["rows_with_exclusions"] == 1
+    assert verdict["ready_for_ux_decision"] is False
+
+
+def test_stale_original_or_cross_head_review_is_rejected(tmp_path):
+    folder = fixture(tmp_path)
+    build_review(tmp_path, sizes={64: (64, 40)}, stages=("dashboard",))
+    _fill_private_review(tmp_path)
+    with pytest.raises(ValueError, match="HEAD différent"):
+        module.verify_completed_review(
+            tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
+            expected_sha="b" * 40,
+        )
+    Image.new("RGB", (64, 40), "red").save(folder / "00-dashboard-light.png")
+    with pytest.raises(ValueError, match="empreinte"):
+        module.verify_completed_review(
+            tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
+        )
+
+
+def test_duplicate_ux_row_is_rejected_and_no_receipt_written(tmp_path):
+    fixture(tmp_path)
+    build_review(tmp_path, sizes={64: (64, 40)}, stages=("dashboard",))
+    checklist = _fill_private_review(tmp_path)
+    with checklist.open(newline="", encoding="utf-8") as file:
+        reader = csv.DictReader(file)
+        columns, rows = reader.fieldnames, list(reader)
+    with checklist.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(rows + rows[:1])
+    with pytest.raises(ValueError, match="répétée"):
+        module.verify_completed_review(
+            tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
+        )
+    assert not (tmp_path / "modern-light-private-review" / "visual-review-verdict.json").exists()
