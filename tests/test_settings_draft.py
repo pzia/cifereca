@@ -984,6 +984,30 @@ def test_existing_account_malformed_owner_cannot_rebind_to_first_profile(
 
 
 
+@pytest.mark.parametrize("corrupt_owner", [None, 123, True, [], {"bad": "owner"}])
+def test_p1_5540_corrupt_saved_owner_rejects_explicit_rebinding(
+    editor, corrupt_owner,
+):
+    """A damaged owner is not an unassigned account available to claim."""
+    config, values = editor
+    original = dict(
+        id="legacy", provider="provider.future", identity_id=corrupt_owner,
+        enabled=False, credentials={"username": "private-saved"}, options={},
+    )
+    config.set("providers.accounts", [deepcopy(original)])
+    item = account("provider.future", identity="alice", account_id="legacy")
+    item.update(
+        enabled=False, original_account=deepcopy(original),
+        original_credentials=deepcopy(original["credentials"]),
+        fields={"username": "private-saved"},
+    )
+    values["accounts"] = [item]
+    before = deepcopy(config.data)
+    with pytest.raises(SettingsValidationError, match="Origine du compte fournisseur"):
+        validate(editor, descriptors={"provider.future": descriptor("provider.future")})
+    assert config.data == before and not config.path.exists()
+
+
 def test_p1_existing_account_with_missing_owner_refuses_default_rebind(editor):
     """#3731: missing legacy owner is not consent to move account to Alice."""
     config, values = editor
