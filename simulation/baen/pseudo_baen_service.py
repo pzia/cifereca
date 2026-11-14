@@ -114,6 +114,38 @@ class BaenFakeApp:
         ).encode("utf-8")
         return self.send(h, HTTPStatus.OK, "text/html; charset=utf-8", body)
 
+    def list_books_json(self, h: BaseHTTPRequestHandler, args: dict) -> None:
+        """Synthetic read-only Baen Free Library AJAX POST, never a loan."""
+        if (args.get("categoryId") != ["2012"]
+                or args.get("pageSize") != ["20"]
+                or "q" in args):
+            return self.json(h, HTTPStatus.BAD_REQUEST, {"error": "invalid category"})
+        page = _query_int(args, "page", 1)
+        offset = (page - 1) * 20
+        rows = BOOKS[offset:offset + 20]
+        self.json(h, HTTPStatus.OK, {
+            "returnCode": "single cat", "categoryId": "2012",
+            "totalBooks": len(BOOKS), "numOfBooks": len(rows),
+            "productData": [
+                {"id": offset + i + 1, "name": title,
+                 "productUrl": "https://www.baen.com/" + slug + ".html",
+                 "isFree": True, "isOwned": 0, "price": "Free Library Book"}
+                for i, (slug, title, _, _, _, _) in enumerate(rows)
+            ],
+        })
+
+    def route_post(self, h: BaseHTTPRequestHandler) -> None:
+        if urlsplit(h.path).path != "/allbooks/category/getBooks":
+            return self.json(h, HTTPStatus.NOT_FOUND, {"error": "unknown route"})
+        try:
+            length = int(h.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = -1
+        if not 0 < length <= 4096:
+            return self.json(h, HTTPStatus.BAD_REQUEST, {"error": "invalid body"})
+        args = parse_qs(h.rfile.read(length).decode("ascii"))
+        return self.list_books_json(h, args)
+
     def detail(self, h: BaseHTTPRequestHandler, slug: str) -> None:
         entry = next((b for b in BOOKS if b[0] == slug), None)
         if not entry:
@@ -169,6 +201,14 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
         except (ValueError, TypeError):
+            self.app.json(self, HTTPStatus.BAD_REQUEST, {"error": "bad input"})
+
+    def do_POST(self) -> None:
+        try:
+            self.app.route_post(self)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        except (ValueError, TypeError, UnicodeError):
             self.app.json(self, HTTPStatus.BAD_REQUEST, {"error": "bad input"})
 
     def log_message(self, fmt: str, *args: object) -> None:

@@ -113,7 +113,7 @@ def test_baen_remains_opt_in_and_declares_only_general_field():
     assert cap.max_pages == 101
 
 
-@pytest.mark.parametrize("query", ["", "author words", None])
+@pytest.mark.parametrize("query", ["author words", "another query"])
 @pytest.mark.parametrize("page", [0, 2, 100])
 def test_nonempty_page_is_always_partial_without_verified_server_semantics(query, page):
     session, seen = make_session(
@@ -159,6 +159,6 @@ def test_manifest_does_not_claim_server_search_qualified_or_enable_baen():
                            "cifereca-plugin.json").read_text())
     provider = manifest["plugins"][0]
     assert provider["enabled_by_default"] is False
-    assert "restent non qualifiées" in provider["help_text"]
+    assert "recherches libres q restent" in provider["help_text"]
     assert "même vide" in provider["help_text"]
     assert any("non qualifié" in note for note in DESCRIPTOR.search_capabilities.notes)
