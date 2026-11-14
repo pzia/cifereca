@@ -134,7 +134,8 @@ class BaenImprovements(unittest.TestCase):
                 self.assertEqual(source["url"], "https://www.baen.com/downloads/book.epub")
                 self.assertEqual(source["max_bytes"], 1234)
                 self.assertEqual(source["expected_format"], "epub")
-                self.assertTrue(source["overwrite"])
+                self.assertEqual(source["redirect_policy"], "same_origin")
+                self.assertFalse(source["overwrite"])
                 self.assertEqual(destination, path)
         finally:
             session.close()
