@@ -84,8 +84,8 @@ from cifereca.language import normalize_language_tag
 from cifereca.filename_normalization import sanitize_filename_component
 from cifereca.descriptions import description_text, description_element
 from cifereca.diagnostics import redact_text
-# GTK presentation-only helper; plugins access it solely through the public API.
-from cifereca.gui.diagnostics_pseudonyms import DiagnosticsPseudonyms, DISPLAY_PSEUDONYMS
+# Presentation-only helper shared with GTK; no reverse import into GUI.
+from cifereca.diagnostics_pseudonyms import DiagnosticsPseudonyms, DISPLAY_PSEUDONYMS
 from cifereca.artifact_inspection import ArtifactInspection, detect_artifact_format, inspect_artifact, inspect_artifact_content
 from cifereca.artifact_publication import publish_artifact_content, publish_artifact_file
 from .bundles import (
