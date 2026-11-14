@@ -153,12 +153,20 @@ def test_empty_volume_list_offers_expert_mode_and_preserves_original_path(
     db, window, errors = rig(tmp_path)
     monkeypatch.setattr(discovery, "discover_linux_usb_volumes", lambda: ())
     dialog = open_dialog(window, expert=False)
+    volume_label = dialog.extra.children[0]
     assert dialog.volume_choice.sensitive is False
     assert "Aucun volume" in dialog.volume_status.text
     assert dialog.uuid_field.visible is False
+    assert volume_label.visible is True
     dialog.expert_field.set_active(True)
     assert dialog.uuid_field.visible
     assert not dialog.volume_choice.visible
+    assert volume_label.visible is False
+    dialog.expert_field.set_active(False)
+    assert volume_label.visible is True
+    assert dialog.volume_choice.visible is True
+    dialog.expert_field.set_active(True)
+    assert volume_label.visible is False
     dialog.name_field.set_text("Liseuse hors liste")
     dialog.uuid_field.value = "uuid-alice-6041"
     dialog.respond("confirm")

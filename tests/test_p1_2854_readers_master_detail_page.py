@@ -83,8 +83,8 @@ class FakeButton:
     def set_sensitive(self, value):
         self.sensitive = value
 
-    def set_tooltip_text(self, *_):
-        pass
+    def set_tooltip_text(self, value):
+        self.tooltip = value
 
     def connect(self, name, callback):
         self.callbacks[name] = callback

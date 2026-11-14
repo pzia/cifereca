@@ -56,7 +56,8 @@ def request_reader_pairing(window, *, Gtk, Adw=None) -> None:
         "transfert ou effacement n'est déclenché.",
     )
     fields = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-    fields.append(Gtk.Label(label="Volume USB monté", xalign=0))
+    volume_label = Gtk.Label(label="Volume USB monté", xalign=0)
+    fields.append(volume_label)
     volume_choice = Gtk.DropDown.new_from_strings(["Aucun volume compatible détecté"])
     volume_choice.set_selected(0xFFFFFFFF)  # Explicit choice, no first-device default.
     volume_choice.set_hexpand(True)
@@ -108,7 +109,7 @@ def request_reader_pairing(window, *, Gtk, Adw=None) -> None:
 
     def mode_changed(*_args):
         manual = expert.get_active() is True
-        for widget in (volume_choice, refresh, status):
+        for widget in (volume_label, volume_choice, refresh, status):
             widget.set_visible(not manual)
         for widget in (uuid_label, fingerprint, expert_notice):
             widget.set_visible(manual)
