@@ -60,6 +60,34 @@
         "tests/test_core_p0_5975_public_catalogue_policy.py"
       ],
       "pr": "#5988"
+    },
+    {
+      "id": "struct-broker-identity-accounts-implicit-scope",
+      "original": "src/cifereca/brokers.py::IdentityBrokerImpl.accounts(identity_id=None)",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "IdentityBroker.accounts(identity_id: str), identity-scoped account enumeration",
+      "classification": "removed_implicit_navigation_broker_read",
+      "evidence": "Public identity account enumeration no longer accepts an omitted identity. Blank/invalid identity fails before any storage/account lookup, and a GTK selection switch cannot widen scope.",
+      "tests": [
+        "tests/test_p0_3171_account_scope_v2.py::test_broker_account_reads_are_pinned_across_gtk_navigation_switch",
+        "tests/test_p0_3171_account_scope_v2.py::test_broker_explicit_scope_rejects_wrong_types_without_core_side_effect"
+      ],
+      "pr": "#5995",
+      "in_ast_metric": false
+    },
+    {
+      "id": "struct-broker-acquisition-eligible-implicit-scope",
+      "original": "src/cifereca/brokers.py::AcquisitionBrokerImpl.eligible_accounts(identity_id=None)",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "AcquisitionBroker.eligible_accounts(item, *, identity_id: str), exact provider/credential filtering",
+      "classification": "removed_implicit_navigation_broker_read",
+      "evidence": "No implicit account enumeration from current GTK identity; ambiguous account IDs and credentials remain guarded before acquisition. ABI now requires caller scope.",
+      "tests": [
+        "tests/test_p0_3171_account_scope_v2.py::test_public_broker_v2_distinguishes_same_upstream_id_by_credential_and_identity",
+        "tests/test_p0_3171_account_scope_v2.py::test_broker_account_reads_are_pinned_across_gtk_navigation_switch"
+      ],
+      "pr": "#5995",
+      "in_ast_metric": false
     }
   ]
 }
