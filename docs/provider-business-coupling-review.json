@@ -72,7 +72,7 @@
         "tests/test_p0_3171_account_scope_v2.py::test_broker_account_reads_are_pinned_across_gtk_navigation_switch",
         "tests/test_p0_3171_account_scope_v2.py::test_broker_explicit_scope_rejects_wrong_types_without_core_side_effect"
       ],
-      "pr": "pending",
+      "pr": "#5995",
       "in_ast_metric": false
     },
     {
@@ -86,7 +86,7 @@
         "tests/test_p0_3171_account_scope_v2.py::test_public_broker_v2_distinguishes_same_upstream_id_by_credential_and_identity",
         "tests/test_p0_3171_account_scope_v2.py::test_broker_account_reads_are_pinned_across_gtk_navigation_switch"
       ],
-      "pr": "pending",
+      "pr": "#5995",
       "in_ast_metric": false
     }
   ]
