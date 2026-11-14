@@ -198,3 +198,30 @@ def test_valid_metadata_stream_ignores_nonmetadata_decoy_after_endstream():
     )
     assert names[-1].startswith("Auteure Test - Titre PDF vérifié - ")
     assert names[-1].endswith(digest + ".pdf")
+
+
+def test_pdf_comment_cannot_forge_indirect_metadata_object_header():
+    """A %-comment can contain a convincing object/stream and complete XMP."""
+    digest = "9" * 64
+    forged = XMP.format(
+        title="Faux titre privé", author="Faux auteur",
+    ).encode("utf-8")
+    payload = (
+        b"%PDF-1.7\n"
+        b"% a comment, not a PDF object: 1 0 obj\n"
+        b"<< /Type /Metadata /Subtype /XML >>\n"
+        b"stream\n" + forged + b"\nendstream\nendobj\n"
+        b"%%EOF\n"
+    )
+    assert _readable_pdf_target_names(
+        BytesIO(payload), opaque_name=digest,
+    ) == (digest + ".pdf",)
+
+
+def test_pdf_indirect_metadata_object_may_have_whitespace_before_header():
+    """Allow ordinary PDF indentation, but never mid-comment matches."""
+    digest = "8" * 64
+    payload = pdf().replace(b"1 0 obj\n", b"   1 0 obj\n")
+    names = _readable_pdf_target_names(BytesIO(payload), opaque_name=digest)
+    assert names[-1].startswith("Auteure Test - Titre PDF vérifié - ")
+    assert names[-1].endswith(digest + ".pdf")

@@ -161,7 +161,9 @@ def _readable_pdf_target_names(stream, *, opaque_name: str) -> tuple[str, ...]:
         # allowed if the XMP packet itself is already complete.
         metadata_streams = []
         for obj in re.finditer(
-            rb"\b[0-9]{1,10}\s+[0-9]{1,10}\s+obj\s*<<(.*?)>>\s*"
+            # PDF indirect-object headers must begin on a real line, not
+            # halfway through a %-comment containing a forged object.
+            rb"(?m)^[ \t]*[0-9]{1,10}[ \t]+[0-9]{1,10}[ \t]+obj\s*<<(.*?)>>\s*"
             rb"stream[ \t]*(?:\r\n|\n|\r)",
             sample, flags=re.DOTALL,
         ):
