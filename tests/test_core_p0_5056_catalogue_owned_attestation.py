@@ -80,7 +80,7 @@ def test_legacy_personal_inventory_without_account_or_revision():
         snapshot_search_owned_evidence, search_result_has_verified_purchase,
     )
     service = NS(storage=Storage([right()]), current_identity=NS(identity_id="alice"))
-    proof = snapshot_search_owned_evidence(service)
+    proof = snapshot_search_owned_evidence(service, identity_id="alice")
     assert proof is not None  # strict actionable evidence really evaluated
     assert not search_result_has_verified_purchase(
         row, proof, current_identity_id="alice",
