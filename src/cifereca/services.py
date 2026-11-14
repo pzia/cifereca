@@ -1636,6 +1636,10 @@ class LibraryService:
     def catalogue_source_capabilities(self, identity_id: str | None = None):
         """Read-only inventory; search is not a declaration of catalogue sync."""
         from .core.catalogue_source_inventory import catalogue_source_capabilities
+        # Preserve the optional synchronous UI ABI, but never ask a Core
+        # worker to infer a source owner from mutable GTK navigation.
+        if identity_id is None:
+            identity_id = getattr(self.current_identity, "identity_id", None)
         return catalogue_source_capabilities(self, identity_id=identity_id)
 
     def capability_matrices(self, identity_id: str | None = None):
