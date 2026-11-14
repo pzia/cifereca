@@ -157,7 +157,7 @@
   },
   "_session_for_source": {
     "kind": "method",
-    "signature": "(self, provider_id: 'str', credential_id: 'str | None' = None) -> 'ProviderSession'"
+    "signature": "(self, provider_id: 'str', credential_id: 'str') -> 'ProviderSession'"
   },
   "_key": {
     "kind": "method",
