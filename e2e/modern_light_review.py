@@ -306,6 +306,10 @@ def verify_completed_review(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("e2e-artifacts"))
+    parser.add_argument(
+        "--verify-checklist", action="store_true",
+        help="Contrôler la grille remplie contre les PNG originaux du HEAD, sans la publier",
+    )
     args = parser.parse_args()
     try:
         current_sha = subprocess.check_output(
@@ -313,8 +317,17 @@ def main() -> int:
             cwd=Path(__file__).resolve().parents[1],
             text=True, stderr=subprocess.DEVNULL,
         ).strip()
+        if args.verify_checklist:
+            verdict = verify_completed_review(args.root, expected_sha=current_sha)
+            print(
+                f"#757 : {verdict['reviewed_rows']} vues relues, "
+                f"{verdict['findings']} anomalies, "
+                f"{verdict['rows_with_exclusions']} exclusions ; "
+                "résultat privé, décision UX finale distincte."
+            )
+            return 0
         report = build_review(args.root, expected_sha=current_sha)
-    except (OSError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
         # No arbitrary source path, screenshot content or private report text
         # is printed into public CI logs.
         print(f"Revue #757 indisponible : {type(exc).__name__}")
