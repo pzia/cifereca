@@ -35,7 +35,8 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(mod.THEME, ("modern-light-1366", "modern-light-1600"))
         for path in ("src/cifereca/gui/modern_light_theme.py",
                      "src/cifereca/gui/shell_stylesheet_controller.py",
-                     "e2e/modern_light_theme_probe.py"):
+                     "e2e/modern_light_theme_probe.py",
+                     "e2e/modern_light_review.py"):
             self.assertEqual(mod.select([path]), mod.THEME, path)
         self.assertTrue(set(mod.THEME).issubset(set(mod.MAINWINDOW)))
         self.assertEqual(mod.select(["e2e/constellations_detail_probe.py"]),
