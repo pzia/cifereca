@@ -243,8 +243,9 @@ def test_core_inspection_no_longer_branches_on_numilog_manual_rights():
     import inspect
 
     tree = ast.parse(inspect.getsource(LocalInspection))
+    cls = next(node for node in tree.body if isinstance(node, ast.ClassDef))
     initializer = next(
-        node for node in tree.body if isinstance(node, ast.FunctionDef)
+        node for node in cls.body if isinstance(node, ast.FunctionDef)
         and node.name == "__init__"
     )
     assert not any(
