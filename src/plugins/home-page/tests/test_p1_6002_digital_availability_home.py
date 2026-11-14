@@ -156,3 +156,63 @@ def test_home_ambiguous_selection_never_reads_two_profiles_and_recovers():
     finally:
         controller.close()
     assert callbacks == []
+
+
+def test_reentrant_profile_handoff_does_not_overwrite_newer_home_projection():
+    rows = [
+        {"identity_id": "alice", "label": "Alice", "selected": True},
+        {"identity_id": "bob", "label": "Bob", "selected": False},
+    ]
+    callbacks, queries, rendered = [], [], []
+    host = NS(
+        identity_overview=lambda: list(rows),
+        subscribe_identity_overview=lambda cb: (
+            callbacks.append(cb) or (lambda: callbacks.remove(cb))
+        ),
+    )
+
+    def query(identity):
+        queries.append(identity)
+        if identity == "alice":
+            # A broker read may synchronously cause a selected-profile event.
+            rows[0]["selected"] = False
+            rows[1]["selected"] = True
+            callbacks[0]()  # nested newer refresh before the older returns
+        return (capacity(identity),)
+
+    broker = NS(
+        identities=lambda: [{"identity_id": row["identity_id"]} for row in rows],
+        digital_loan_availability=query,
+    )
+    controller = home.OverviewController(host, rendered.append, broker)
+    try:
+        assert queries == ["alice", "bob"]
+        assert len(rendered) == 1  # only the newest generation may publish
+        assert "digital_loan_availability" not in rendered[0][0]
+        assert rendered[0][1]["digital_loan_availability"][0].identity_id == "bob"
+    finally:
+        controller.close()
+
+
+def test_closing_home_during_broker_read_prevents_dead_render():
+    rows = [{"identity_id": "alice", "label": "Alice", "selected": True}]
+    callbacks, rendered = [], []
+    host = NS(
+        identity_overview=lambda: list(rows),
+        subscribe_identity_overview=lambda cb: (
+            callbacks.append(cb) or (lambda: callbacks.remove(cb))
+        ),
+    )
+    broker = NS(
+        identities=lambda: [{"identity_id": "alice"}],
+        digital_loan_availability=lambda identity: (capacity(identity),),
+    )
+    controller = home.OverviewController(host, rendered.append, broker)
+    assert len(rendered) == 1
+    broker.digital_loan_availability = lambda identity: (
+        controller.close() or (capacity(identity),)
+    )
+    callbacks[0]()
+    assert controller.closed
+    assert len(rendered) == 1
+    assert callbacks == []
