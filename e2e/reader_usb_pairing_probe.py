@@ -103,6 +103,7 @@ def main() -> int:
         "volumes": (), "reads": 0, "errors": 0, "renders": 0,
         "button_clicks": 0, "dialog_build_errors": 0,
         "checkpoint": "setup", "pointer_seen": 0, "key_seen": 0,
+        "native_pointer_seen": 0, "native_key_seen": 0,
     }
     original_discovery = discovery.discover_linux_usb_volumes
 
@@ -157,6 +158,25 @@ def main() -> int:
         )[-1],
     )
     button.add_controller(key_observer)
+    # Capture native GDK delivery on the toplevel as well as on the button.
+    # These observers never activate widgets or intercept their events.
+    native_pointer = Gtk.EventControllerLegacy()
+    native_pointer.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    def observe_native_pointer(_controller, event):
+        if event.get_event_type() == Gdk.EventType.BUTTON_PRESS:
+            state["native_pointer_seen"] += 1
+        return False
+    native_pointer.connect("event", observe_native_pointer)
+    window.add_controller(native_pointer)
+    native_key = Gtk.EventControllerKey()
+    native_key.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+    native_key.connect(
+        "key-pressed", lambda *_: (
+            state.__setitem__("native_key_seen", state["native_key_seen"] + 1),
+            False,
+        )[-1],
+    )
+    window.add_controller(native_key)
     box.append(button)
     box.append(window._reader_status_label)
     window.set_child(box)
@@ -279,7 +299,40 @@ def main() -> int:
         if not state["x11_target_window"]:
             state["checkpoint"] = "x11_hit_mismatch"
             raise AssertionError("XTEST root hit does not match GTK native")
-        device.click(screen_x, screen_y)
+        # Verify the *physical* X11 pointer translated back into the GDK
+        # widget's logical hit-test, rather than checking a predicted GTK
+        # point plus a separate top-level window ID.
+        qroot, qchild = C.c_ulong(), C.c_ulong()
+        qrx, qry, qwx, qwy, qmask = (
+            C.c_int(), C.c_int(), C.c_int(), C.c_int(), C.c_uint()
+        )
+        queried = x11.XQueryPointer(
+            device.display, xid, C.byref(qroot), C.byref(qchild),
+            C.byref(qrx), C.byref(qry), C.byref(qwx), C.byref(qwy),
+            C.byref(qmask),
+        )
+        surface_tx, surface_ty = native.get_surface_transform()
+        scale = int(widget.get_scale_factor())
+        logical_x = qwx.value / scale - surface_tx
+        logical_y = qwy.value / scale - surface_ty
+        native_hit = (
+            native.pick(logical_x, logical_y, Gtk.PickFlags.DEFAULT)
+            if queried else None
+        )
+        while native_hit is not None and native_hit is not widget:
+            native_hit = native_hit.get_parent()
+        state["x11_widget_hit"] = native_hit is widget
+        # Keep the event delivery native, identical to all existing passing
+        # probes; observe XTEST's actual queue acknowledgement in addition.
+        device.move(screen_x, screen_y)
+        queued_press = device.xtst.XTestFakeButtonEvent(
+            device.display, 1, True, 0,
+        )
+        queued_release = device.xtst.XTestFakeButtonEvent(
+            device.display, 1, False, 0,
+        )
+        device.x11.XSync(device.display, False)
+        state["xtest_button_queued"] = bool(queued_press and queued_release)
 
     def toggle_expert(widget):
         was_active = widget.get_active()
@@ -476,6 +529,18 @@ def main() -> int:
                 ), flush=True)
                 print("P1_6041_X11_TARGET_WINDOW=" + (
                     "yes" if state.get("x11_target_window") else "no"
+                ), flush=True)
+                print("P1_6041_X11_WIDGET_HIT=" + (
+                    "yes" if state.get("x11_widget_hit") else "no"
+                ), flush=True)
+                print("P1_6041_XTEST_BUTTON_QUEUED=" + (
+                    "yes" if state.get("xtest_button_queued") else "no"
+                ), flush=True)
+                print("P1_6041_NATIVE_POINTER=" + (
+                    "seen" if state["native_pointer_seen"] else "absent"
+                ), flush=True)
+                print("P1_6041_NATIVE_KEY=" + (
+                    "seen" if state["native_key_seen"] else "absent"
                 ), flush=True)
                 pointer = "seen" if state["pointer_seen"] else "absent"
                 keyboard = "seen" if state["key_seen"] else "absent"
