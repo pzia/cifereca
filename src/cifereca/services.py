@@ -2382,14 +2382,33 @@ class LibraryService:
             }
         if source_type == "acsm":
             return dict(self._required_plugin_service("drm.ade").execute(request))
-        if source_type == "kobo":
-            # source.type=kobo is the Kobo-Adept public DRM recipe, NOT an
-            # HTTP-plain candidate. The installed runtime plugin publishes
-            # download_request (schema v2), not a drm.kobo-kdrm plugin ID.
-            # Core owns the selected destination and independent final SHA.
-            runtime = self._required_plugin_service("runtime.kobo-adept")
-            return dict(runtime.download_request(request))
-        raise ProviderConfigurationError(f"Type de source d'acquisition non supporté: {source_type or 'unknown'}")
+        # Provider runtime recipes are not Core-owned named dispatches.
+        # Select only a reciprocal, installed provider/runtime manifest pair;
+        # source.type is a logical provider ID, NEVER a runtime service ID.
+        # Missing/ambiguous/disabled claims have no fallback to HTTP or a
+        # legacy adapter, and request fields cannot select a runtime directly.
+        runtime_id = self.runtime_acquisition_binding(source_type)
+        if type(runtime_id) is not str or not runtime_id:
+            raise ProviderConfigurationError(
+                f"Type de source d'acquisition non supporté: {source_type or 'unknown'}"
+            )
+        manager = self._plugin_manager
+        generation = getattr(manager, "registry_generation", None)
+        runtime = self._required_plugin_service(runtime_id)
+        execute = getattr(runtime, "download_request", None)
+        if not callable(execute):
+            raise ProviderConfigurationError("Runtime d'acquisition sans contrat de livraison")
+        if self.runtime_acquisition_binding(source_type) != runtime_id:
+            raise ProviderConfigurationError("Runtime d'acquisition révoqué avant exécution")
+        result = dict(execute(request))
+        # An installed service can change during an external GET. A result
+        # from the former producer is not accepted as the current delivery;
+        # the canonical caller still verifies bytes/SHA and the consent lease.
+        if (self.runtime_acquisition_binding(source_type) != runtime_id
+                or self._required_plugin_service(runtime_id) is not runtime
+                or getattr(manager, "registry_generation", None) != generation):
+            raise ProviderConfigurationError("Runtime d'acquisition révoqué pendant exécution")
+        return result
 
     def _originating_adept_profile_id(self, identity_id: str, profile_name: str) -> str | None:
         return adept_profiles.originating_profile_id(
