@@ -73,6 +73,39 @@ def test_pnb_preferences_reuses_admitted_account_across_session_resolution():
         ))
 
     host._session_for_account = session_for_account
-    assert host.pnb_preferences() == {"borrower": "alice"}
+    assert host.pnb_preferences(alice) == {"borrower": "alice"}
     assert seen == [("session", alice), ("preferences", alice)]
     assert host.current_account is bob
+
+
+def test_pnb_preferences_does_not_fallback_to_selected_account():
+    alice = account("alice", "a")
+    class Host:
+        @property
+        def current_account(self):
+            pytest.fail("PNB preferences worker inspected GTK selection")
+
+        def _session_for_account(self, admitted):
+            assert admitted is alice
+            return NS(digital_preferences=lambda exact: (
+                {"borrower": exact.identity_id}
+            ))
+    host = Host()
+    assert LibraryService.pnb_preferences(host, alice) == {"borrower": "alice"}
+
+
+@pytest.mark.parametrize("invalid", [None, "", 0, {}, [], object(),
+                                     NS(identity_id="alice", provider_id="synthetic", credential_id="a"),
+                                     Account(identity_id="", provider_id="synthetic", credential_id="a"),
+                                     Account(identity_id="alice", provider_id="", credential_id="a"),
+                                     Account(identity_id="alice", provider_id="synthetic", credential_id=None)])
+def test_pnb_preferences_rejects_unscoped_or_invalid_account_before_get(invalid):
+    class Host:
+        @property
+        def current_account(self):
+            pytest.fail("invalid account must not read navigation")
+
+        def _session_for_account(self, _account):
+            pytest.fail("invalid account reached provider session")
+    with pytest.raises(ProviderConfigurationError, match="account_session_explicit_owner_required"):
+        LibraryService.pnb_preferences(Host(), invalid)

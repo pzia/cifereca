@@ -2358,11 +2358,21 @@ class LibraryService:
             code="loan_return_removed",
         )
 
-    def pnb_preferences(self) -> dict[str, Any]:
-        # Selection could change during a provider request. Pass the same
-        # borrower to session resolution and the actual preferences reader.
-        admitted = self.current_account
-        return self._session_for_account(admitted).digital_preferences(admitted)
+    def pnb_preferences(self, account: Account | None = None) -> dict[str, Any]:
+        """Read PNB preferences only for a caller-pinned exact account.
+
+        No implicit selected GTK borrower may enter a Core request. Legacy
+        no-argument callers fail closed before a session or provider GET.
+        The same admitted Account is sent to both session lookup and reader.
+        """
+        if (type(account) is not Account
+                or type(account.identity_id) is not str or not account.identity_id
+                or type(account.provider_id) is not str or not account.provider_id
+                or type(account.credential_id) is not str or not account.credential_id
+                or type(account.unique_id) is not str
+                or type(account.is_primary) is not bool):
+            raise ProviderConfigurationError("account_session_explicit_owner_required")
+        return self._session_for_account(account).digital_preferences(account)
 
     def content_type_for(self, item: SearchResult) -> str:
         return self.acquisition.content_type_for(item)

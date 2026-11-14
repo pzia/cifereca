@@ -1129,6 +1129,20 @@
       ],
       "pr": "#6110",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-pnb-preferences-explicit-account-no-navigation",
+      "original": "Public LibraryService.pnb_preferences() selected service.current_account as implicit borrower before a provider digital_preferences() call. A direct headless or concurrent request could choose the GTK account instead of the caller's intended account.",
+      "original_classification": "navigation_dependent_provider_preferences_get",
+      "replacement": "The same public method now accepts an explicit, exactly typed Account and rejects missing/malformed owner credentials before any session/provider I/O. The pinned Account is passed unchanged to both the session resolver and preferences reader; provider-specific call remains inside the selected provider's session.",
+      "classification": "removed_navigation_account_fallback_preferences_read",
+      "evidence": "Static production callsite search identified only the service facade; provider-paris itself implements Session.digital_preferences(account), not a caller of this facade. Tests poison current_account getter, verify no-arg refusal before provider GET and preserve one admitted account across a mid-GET navigation change.",
+      "tests": [
+        "tests/test_core_p0_5975_session_resolver_explicit_account.py",
+        "tests/test_loan_reads_selection_independence.py"
+      ],
+      "pr": "#PENDING",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
