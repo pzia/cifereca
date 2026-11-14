@@ -1045,7 +1045,7 @@ def test_authenticated_sync_does_not_get_stale_experimental_js():
         session.close()
 
 
-def test_live_loan_inventory_diagnostic_reports_only_counts_and_partial_coverage():
+def test_live_loan_inventory_diagnostic_reports_only_counts_and_qualified_coverage():
     from cifereca.plugin_api import read_loan_inventory
 
     class Diagnostics:
@@ -1061,7 +1061,7 @@ def test_live_loan_inventory_diagnostic_reports_only_counts_and_partial_coverage
         account, = session.connect()
         account.identity_id = "identity-a"
         observed = read_loan_inventory(session, account)
-        assert observed.status == "partial"
+        assert observed.status == "success"
         live_events = [
             (status, detail) for _, _, status, detail in diagnostics.events
             if detail.get("phase") == "loan_inventory"
@@ -1071,7 +1071,7 @@ def test_live_loan_inventory_diagnostic_reports_only_counts_and_partial_coverage
         assert status == "observed"
         assert detail["page_loan_row_count"] == 1
         assert detail["page_loan_row_partial_count"] == 0
-        assert detail["completeness"] == "partial"
+        assert detail["completeness"] == "complete"
         assert detail["connected"] is True
         assert detail["session_revoked"] is False
         assert detail["probe"] == "authenticated_sync"
@@ -1157,7 +1157,7 @@ def test_diagnostic_sink_failure_never_leaks_private_traceback(caplog):
             account, = session.connect()
             account.identity_id = "identity-a"
             snapshot = read_loan_inventory(session, account)
-        assert snapshot.status == "partial" and len(snapshot.loans) == 1
+        assert snapshot.status == "success" and len(snapshot.loans) == 1
         assert "biblioaccess_probe_diagnostic_sink_failed" in caplog.text
         assert "PRIVATE-SYNTHETIC-ACSM-TOKEN-NEVER-LOG" not in caplog.text
         assert calls.count("post") == 1
