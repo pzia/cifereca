@@ -239,3 +239,45 @@ def test_plugin_only_consumer_scope_does_not_replay_unrelated_root_imports(tmp_p
         root, ["tests/test_fixture.py"],
         consumer_globs=("src/plugins/*/tests/**/*.py",),
     )
+
+
+def test_plugin_local_relative_fixture_does_not_replay_same_named_core_test(tmp_path):
+    """Package-relative imports have no route to the root tests package."""
+    root = _sample(tmp_path, "def test_unrelated(): pass\n")
+    plugin = root / "src/plugins/diagnostics-page/tests"
+    plugin.mkdir(parents=True, exist_ok=True)
+    (plugin / "test_fixture.py").write_text(
+        "VALUE = 'local'\n", encoding="utf-8",
+    )
+    (plugin / "test_consumer.py").write_text(
+        "from .test_fixture import VALUE\n", encoding="utf-8",
+    )
+    assert not has_test_consumers(
+        root, ["tests/test_fixture.py"],
+        consumer_globs=("src/plugins/*/tests/**/*.py",),
+    )
+    (plugin / "test_consumer.py").write_text(
+        "from . import test_fixture\n", encoding="utf-8",
+    )
+    assert not has_test_consumers(
+        root, ["tests/test_fixture.py"],
+        consumer_globs=("src/plugins/*/tests/**/*.py",),
+    )
+
+
+def test_core_relative_fixture_import_remains_a_real_core_consumer(tmp_path):
+    root = _sample(tmp_path, "from . import test_fixture\n")
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
+
+
+def test_plugin_absolute_root_fixture_still_forces_full(tmp_path):
+    root = _sample(tmp_path, "def test_unrelated(): pass\n")
+    plugin = root / "src/plugins/diagnostics-page/tests"
+    plugin.mkdir(parents=True, exist_ok=True)
+    (plugin / "test_consumer.py").write_text(
+        "from tests.test_fixture import VALUE\n", encoding="utf-8",
+    )
+    assert has_test_consumers(
+        root, ["tests/test_fixture.py"],
+        consumer_globs=("src/plugins/*/tests/**/*.py",),
+    )
