@@ -217,3 +217,17 @@ def test_computed_executable_module_loaders_fail_closed(tmp_path, consumer):
 def test_unrelated_executable_modules_keep_targeted_selection(tmp_path, consumer):
     root = _sample(tmp_path, consumer)
     assert not has_test_consumers(root, ["tests/test_fixture.py"])
+
+def test_transitive_plugin_helper_loading_core_test_forces_full(tmp_path):
+    root = _sample(tmp_path, "def test_unrelated(): pass\n")
+    package = root / "src/plugins/example/tests"
+    package.mkdir(parents=True)
+    (package / "test_plugin.py").write_text(
+        "from .shared_fixture import VALUE\n", encoding="utf-8",
+    )
+    (package / "shared_fixture.py").write_text(
+        'from runpy import run_module as execute\n'
+        'VALUE = execute("tests.test_fixture")\n',
+        encoding="utf-8",
+    )
+    assert has_test_consumers(root, ["tests/test_fixture.py"])
