@@ -36,16 +36,21 @@ def test_unknown_explicit_borrower_cannot_fall_back_to_primary(service):
     with pytest.raises(ProviderConfigurationError): service._account_for_loan(loan('missing'))
 
 
-def test_legacy_cache_fallback_only_considers_exact_provider_and_credential(service):
-    cached=loan(None)
-    assert service._account_for_loan(cached) is service.accounts[0]
-    service.current_account=service.accounts[1]
-    assert service._account_for_loan(cached) is service.accounts[1]
-    service.accounts=[service.accounts[1],service.accounts[2]]
-    service.current_account=service.accounts[1]
-    assert service._account_for_loan(cached) is service.accounts[0]
-    service.accounts=[]
-    with pytest.raises(ProviderConfigurationError): service._account_for_loan(cached)
+def test_legacy_cache_without_borrower_never_infers_navigation_or_primary(service):
+    cached = loan(None)
+    for selected in (service.accounts[2], service.accounts[0], service.accounts[1], None):
+        service.current_account = selected
+        with pytest.raises(ProviderConfigurationError, match='non attesté'):
+            service._account_for_loan(cached)
+    service.accounts = []
+    with pytest.raises(ProviderConfigurationError, match='non attesté'):
+        service._account_for_loan(cached)
+
+
+def test_untyped_borrower_provenance_does_not_choose_connected_account(service):
+    for invalid in (False, 0, [], {}, object()):
+        with pytest.raises(ProviderConfigurationError, match='non attesté'):
+            service._account_for_loan(loan(invalid))
 
 
 @pytest.mark.parametrize('borrower,identifier',[(None,'loan-one'),('linked','')])
