@@ -134,6 +134,23 @@
       ],
       "pr": "#6007",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-history-worker-navigation-and-v3-cache-scope",
+      "original": "core.library_projection.refresh_history(account=None) navigation fallback and identity-less history-v3 cache",
+      "original_classification": "navigation_dependent_legacy_read",
+      "journey": "History refresh admitted from GUI, CLI and Core facade",
+      "replacement": "Pinned Account at facade admission and worker keyword-only; history-v4 hash of unambiguous (identity,provider,credential,account,primary)",
+      "classification": "removed_implicit_navigation_history_worker",
+      "evidence": "Worker no longer reads current_account. Cache v4 excludes unsafe identity-less v3 entries and separates two owners with the same upstream coordinates. Invalid scope fails before I/O.",
+      "tests": [
+        "tests/test_core_account_scoped_secondary_async.py::test_history_worker_requires_admitted_account_before_any_io",
+        "tests/test_core_account_scoped_secondary_async.py::test_history_cache_never_reuses_old_or_other_identity_borrower_rows",
+        "tests/test_core_account_scoped_secondary_async.py::test_history_cache_key_does_not_alias_colon_delimited_account_coordinates",
+        "tests/test_core_account_scoped_secondary_async.py::test_history_explicit_account_uses_its_cache_and_session_after_switch"
+      ],
+      "pr": "#6015",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
