@@ -220,3 +220,26 @@ def test_broken_log_handler_never_changes_the_runtime_callback_result():
     finally:
         logger.removeHandler(handler)
         logger.setLevel(previous)
+
+
+def test_core_adept_diagnostic_producer_is_supplier_neutral(tmp_path):
+    diag = Diagnostics(enabled=True)
+    diag.add_core_kobo_adept(detail(), "error")
+    rows = query_diagnostic_events(
+        diag, source="core_events", log_path=tmp_path / "none",
+    )["events"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["module"] == "ADEPT"
+    assert row["detail"]["operation_kind"] == "kobo_adept"
+    snapshot, = diag.snapshot()
+    assert snapshot["operation"] == "adept runtime"
+    assert snapshot["verified_adept_runtime"] is True
+    assert "verified_kobo_adept" not in snapshot
+    assert "PRIVATE" not in json.dumps(rows)
+    attacker = Diagnostics(enabled=True)
+    attacker.add("ADEPT", "adept runtime", "error", detail=from_runtime(detail(), "error"))
+    unverified = query_diagnostic_events(
+        attacker, source="core_events", log_path=tmp_path / "none",
+    )["events"]
+    assert len(unverified) == 1 and "detail" not in unverified[0]

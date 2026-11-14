@@ -99,8 +99,8 @@ def test_unknown_business_domain_fails_closed(tmp_path, invalid):
         )
 
 
-def test_legacy_paris_pnb_is_readable_but_not_new_producer_category(tmp_path):
-    """Only prior Core-attested Paris records may retain the PNB category."""
+def test_legacy_pnb_remains_readable_but_cannot_claim_loan_domain(tmp_path):
+    """Retired provider category cannot imply typed Core download authority."""
     from dataclasses import replace
 
     diagnostics = Diagnostics(enabled=True)
@@ -120,11 +120,18 @@ def test_legacy_paris_pnb_is_readable_but_not_new_producer_category(tmp_path):
         diagnostics, log_path=tmp_path / "missing.log",
         domain="loan_download", source="core_events",
     )
-    assert report["total"] == 1
-    (event,) = report["events"]
-    assert event["module"] == "PNB"
-    assert event["provider_id"] == "paris"
-    assert event["domain"] == "loan_download"
+    assert report["total"] == 0
+    assert report["events"] == []
+    # The former event is still visible in the general, private-safe feed;
+    # it must not be promoted to the canonical domain or given provider proof.
+    all_events = query_diagnostic_events(
+        diagnostics, log_path=tmp_path / "missing.log", source="core_events",
+    )["events"]
+    assert len(all_events) == 2
+    assert all(row["module"] == "PNB" for row in all_events)
+    assert all("domain" not in row for row in all_events)
+    assert all("detail" not in row for row in all_events)
+    assert all("provider_id" not in row for row in all_events)
 
 
 def test_new_paris_download_is_in_neutral_loan_domain(tmp_path):

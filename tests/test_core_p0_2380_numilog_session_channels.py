@@ -33,12 +33,8 @@ def test_retired_session_log_is_never_core_provenance(tmp_path, body):
     log = tmp_path / "cifereca.log"
     _log(log, body)
     report = query_diagnostic_events(Diagnostics(), log_path=log, source="app_log")
-    assert report["total"] == 1
-    row, = report["events"]
-    assert "provider_id" not in row
-    assert "business_module" not in row
-    assert "detail" not in row
-    assert row["message"] == "[contenu libre masqué : consulter le journal local]"
+    assert report["total"] == 0
+    assert report["events"] == []
     serialized = json.dumps(report)
     assert "DO_NOT_PUBLISH" not in serialized
     assert "PRIVATE_CUSTOMER" not in serialized

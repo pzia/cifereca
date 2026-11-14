@@ -88,7 +88,7 @@ _STRUCTURED_TERMS = frozenset({
     "sync", "source", "opening", "connect", "download", "acquire", "acquisition",
     "return", "verification", "retry", "import", "runtime", "plugin", "parse",
     "catalog", "search", "library", "update", "install", "check", "health",
-    "error", "warning", "state", "fetch", "adept", "pnb", "paris", "kobo",
+    "error", "warning", "state", "fetch", "adept", "pnb",
 })
 _CATEGORIES = frozenset({
     "CORE", "SYNC", "ADEPT", "PNB", "PARIS", "KOBO", "PLUGIN",
@@ -211,7 +211,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         for byte_offset, line in lines:
             match = _LOG_LINE.match(line)
             if not match or not (
-                match["logger"] in {"cifereca", "cifereca_numilog"}
+                match["logger"] == "cifereca"
                 or match["logger"].startswith("cifereca.")
             ):
                 continue
@@ -309,9 +309,7 @@ def _source_logs(log_path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
             # Logger names are not guaranteed to be static: extensions may
             # embed account identifiers. Publish only recognised components.
             logger_parts = match["logger"].split(".")
-            safe_parts = [
-                "cifereca_numilog" if match["logger"] == "cifereca_numilog" else "cifereca"
-            ]
+            safe_parts = ["cifereca"]
             for part in logger_parts[1:]:
                 if part.lower() not in (_STRUCTURED_TERMS | {"core", "diagnostics", "ui", "service", "worker"}):
                     break
@@ -541,8 +539,8 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
         loan_download_detail = {}
         loan_acsm_action_detail = {}
         adept_detail = {}
-        if (category == "ADEPT" and operation == "kobo adept"
-                and type(diagnostics) is Diagnostics and row.get("verified_kobo_adept") is True):
+        if (category == "ADEPT" and operation == "adept runtime"
+                and type(diagnostics) is Diagnostics and row.get("verified_adept_runtime") is True):
             adept_detail = public_adept_fields(row.get("detail"))
             if adept_detail:
                 public_detail = adept_detail
@@ -557,18 +555,15 @@ def _source_diagnostics(diagnostics: Any) -> tuple[list[dict[str, Any]], dict[st
                 message = public_source_sync_message(public_detail)
                 severity = ("error" if public_detail["status"] == "failed" else
                             "warning" if public_detail["status"] == "cancelled" else "info")
-        if (category in {"PNB", "LOAN"} and operation == "download_loan"
+        if (category == "LOAN" and operation == "download_loan"
                 and type(diagnostics) is Diagnostics
                 and row.get("verified_loan_download") is True):
             candidate = public_loan_download_fields(row.get("detail"))
-            # New Core events use LOAN for every provider. Accept the old
-            # Paris-only PNB category solely for previously stored attested
-            # events; a foreign provider cannot claim the legacy exception.
-            if (candidate and (category == "LOAN" or (
-                category == "PNB" and candidate["provider_id"] == "paris"
-            )) and status == (
+            # A terminal loan download must originate from the canonical
+            # Core LOAN producer. Legacy supplier categories are not evidence.
+            if candidate and status == (
                 "ok" if candidate["status"] == "success" else candidate["status"]
-            )):
+            ):
                 loan_download_detail = candidate
                 public_detail = candidate
                 # Only attested Core terminal download operations may enter this domain.
