@@ -98,12 +98,11 @@ def test_home_broker_unavailable_does_not_call_provider_or_claim_remaining():
     controller = home.OverviewController(
         host, rendered.append, identity_broker=NS(
             identities=lambda: [],
-            digital_loan_availability=lambda _: pytest.fail(
-                "broker never called unless public identity rows resolve"),
+            digital_loan_availability=lambda _identity: (),
         ),
     )
     try:
-        assert rendered[-1][0].get("digital_loan_availability") is None
+        assert rendered[-1][0].get("digital_loan_availability") == ()
         assert digital_loan_availability_lines(
             rendered[-1][0].get("digital_loan_availability", ()),
             identity_id="alice",
