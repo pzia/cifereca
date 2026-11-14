@@ -1170,7 +1170,9 @@ def test_production_account_declaration_has_no_stale_ajax_or_manual_diagnostic_f
     assert [field.key for field in descriptor.credential_fields] == [
         "username", "password"]
     assert [field.key for field in descriptor.account_options] == [
-        "authenticated_sync"]
+        "authenticated_sync", "manual_loan_limit"]
+    assert not any(field.key.startswith(("ajax_", "experimental_http_probe"))
+                   for field in descriptor.account_options)
     assert descriptor.account_options[0].default == "off"
     assert descriptor.background_authentication_option_key == "authenticated_sync"
     assert descriptor.interactive_authentication is True
