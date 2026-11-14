@@ -72,3 +72,49 @@ de `remaining_loans` fournisseur n'est revendiqué dans cette tranche.
 
 La question de groupe multi-profils demeure #4747 P2 ; l'ajout de ces
 champs de présentation ne modifie aucun emprunt ni la dette P0 #5975.
+
+
+## Contrat de calcul sans preuve inventée — #6002, clarification du 14/11/2026
+
+La politique métier demandée est désormais encodée dans
+`src/cifereca/core/digital_loan_remaining_policy.py`, **sans brancher**
+la production de valeurs positives au tableau de bord existant :
+
+1. Un **nombre restant fourni directement par le fournisseur** (`kind=remaining`),
+   exact, frais et de même epoch, a priorité absolue. Il peut être présenté
+   même si l'inventaire détaillé des prêts est incomplet.
+2. Sinon, un **quota total fourni par le fournisseur** (`kind=total`) et
+   un inventaire numérique exact, durable, `success`, exhaustif,
+   paginé jusqu'au terme et frais autorisent le calcul
+   `max(0, quota_fournisseur − prêts_actifs_distincts)`.
+3. Sinon, un **plafond personnel** de 0 à 99, sous les mêmes conditions
+   de complétude d'inventaire, donne une **estimation** distincte.
+4. Sinon, le résultat reste **inconnu**. Zéro n'est jamais déduit du manque
+   de prêts observés. Toutes les décisions gardent
+   `eligibility=not_verified`.
+
+Les DTO de preuve demandent **la portée complète**
+`identity/provider/credential/account/borrower/digital`, un instant UTC
+avec fuseau, une epoch de révocation et une fraîcheur explicite ; l'inventaire
+doit être marqué `durably_committed=True` **après** engagement prouvé par
+le producteur, pas au seul terme d'une lecture réseau. Les identifiants
+de prêts sont dédupliqués pour éviter les doubles soustractions. Aucun
+champ de compte ou titre brut ne sert au calcul.
+
+**Frontière de livraison :** ce code est un calculateur **pur**, et le fait
+de construire une instance `ProviderCapacityEvidence` ou
+`DigitalInventoryReceipt` ne prouve pas l'observation fournisseur.
+Aucun producteur durable validé n'est encore connecté ici :
+`DigitalLoanAvailability` et le rendu Accueil continuent donc d'afficher
+`Reste inconnu`, avec l'éligibilité non vérifiée. Ne jamais
+convertir `last_loans`, les statistiques positives ou un simple résultat
+`LoanInventorySnapshot.complete` transitoire en preuve durable. Le
+raccordement futur exige persistance atomique + provenance fournisseur +
+pagination/branche complète + époque/TTL/révocation et tests de lecture
+réelle. **Ce lot ne ferme pas #6002**.
+
+Tests purs : `tests/test_core_p1_6002_remaining_policy.py`, notamment
+direct=2 même sur inventaire partiel, direct=0 malgré plafond manuel=4,
+quota fournisseur 3−2 contre manuel=99, manuel 4−2 si fournisseur absent,
+inventaire incomplet/périmé/cross-account → inconnu, duplication des
+identifiants prêt, epoch erronée et absence de quota.
