@@ -48,11 +48,19 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(mod.ALL) | set(mod.OPTIONAL_UX), set(runner.SCENARIOS))
         self.assertEqual(set(mod.ALL) & set(mod.OPTIONAL_UX), set())
         self.assertEqual(mod.OPTIONAL_UX, ("book-detail-1700",))
-        self.assertEqual(len(mod.ALL), 47)
-        self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024"))
+        self.assertEqual(len(mod.ALL), 49)
+        self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024", "search-filter-1366", "search-filter-1600"))
         self.assertEqual(mod.PLUGIN_SCROLL, ("plugin-manager-scroll-1024", "plugin-manager-scroll-1366"))
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["height"], 768)
+        for width, height in ((1366, 900), (1600, 1000)):
+            scenario = runner.SCENARIOS[f"search-filter-{width}"]
+            self.assertEqual(scenario["runner"], "gtk-probe")
+            self.assertEqual(scenario["fixture"], "search-filters")
+            self.assertEqual((scenario["width"], scenario["height"]), (width, height))
+            self.assertEqual(
+                mod.select(["e2e/search_filter_probe.py"]), mod.SEARCH_GTK
+            )
         self.assertEqual(runner.SCENARIOS["recommendations-detail-1024"]["width"], 1024)
         self.assertEqual(runner.SCENARIOS["recommendations-detail-1024"]["height"], 768)
         hidpi = runner.SCENARIOS["recommendations-detail-1024-hidpi"]
