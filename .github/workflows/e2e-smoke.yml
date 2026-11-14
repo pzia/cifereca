@@ -44,6 +44,9 @@ on:
       - 'scripts/ci-select-e2e.py'
       - 'scripts/ci-select-core-tests.py'
       - 'environnements/openai-chat-debian/capture_app.py'
+      # Shared XTEST widget coordinates affect every native GTK scenario.
+      - 'environnements/openai-chat-debian/x11_input.py'
+      - 'tests/test_e2e_x11_hidpi_coordinates.py'
       - '.github/workflows/e2e-smoke.yml'
       - 'pyproject.toml'
       - 'tests/test_e2e_runner_contract.py'

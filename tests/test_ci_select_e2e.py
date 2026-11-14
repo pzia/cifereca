@@ -11,6 +11,21 @@ mod = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(mod)
 
 class SelectionTests(unittest.TestCase):
+    def test_shared_x11_input_changes_require_full_gtk_e2e(self):
+        for path in (
+            "environnements/openai-chat-debian/x11_input.py",
+            "tests/test_e2e_x11_hidpi_coordinates.py",
+        ):
+            self.assertIn(path, mod.GLOBAL)
+            self.assertEqual(mod.select([path]), mod.ALL, path)
+        workflow = (ROOT / ".github/workflows/e2e-smoke.yml").read_text(
+            encoding="utf-8",
+        )
+        self.assertIn(
+            "'environnements/openai-chat-debian/x11_input.py'", workflow,
+        )
+        self.assertIn("'tests/test_e2e_x11_hidpi_coordinates.py'", workflow)
+
     def test_manual_dispatch_selects_only_the_requested_scenario(self):
         with TemporaryDirectory() as directory:
             output = Path(directory) / "github-output"
