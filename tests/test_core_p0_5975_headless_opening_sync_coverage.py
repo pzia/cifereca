@@ -62,6 +62,18 @@ def test_missing_and_malformed_scope_never_suppresses_forced_refresh(bad):
     assert not host.checked
 
 
+@pytest.mark.parametrize("identity_id", [
+    "alexandre", "xenon", "camille-42", "française",
+])
+def test_normal_profile_names_are_not_confused_with_escape_sequences(identity_id):
+    host = _Headless()
+    host.accounts[identity_id] = ["source-a"]
+    assert _opening_sync_covers_visible_accounts(
+        host, selected_identity_id=identity_id,
+    ) is True
+    assert host.lookups == [identity_id]
+
+
 def test_other_identity_and_missing_accounts_fail_closed():
     host = _Headless()
     host.accounts["bob"] = []
