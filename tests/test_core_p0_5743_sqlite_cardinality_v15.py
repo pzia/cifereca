@@ -19,7 +19,7 @@ def connection(provider, credential, identity="alice"):
 def test_v15_replaces_historic_indexes_only_after_neutral_triggers(tmp_path):
     path = tmp_path / "reader.sqlite3"
     db = Storage(path)
-    assert CURRENT_SCHEMA_VERSION == db.schema_version() == 15
+    assert CURRENT_SCHEMA_VERSION == db.schema_version() == 16
     with sqlite3.connect(path) as sql:
         indexes = {r[1] for r in sql.execute("PRAGMA index_list(provider_connections)")}
         assert "uq_kobo_connection_identity" not in indexes
@@ -153,7 +153,7 @@ def test_v14_upgrade_keeps_existing_bindings_and_removes_old_indexes(tmp_path):
     storage.close()
     _recreate_v14_indexes(path)
     upgraded = Storage(path)
-    assert upgraded.schema_version() == 15
+    assert upgraded.schema_version() == 16
     assert len(upgraded.provider_connections()) == 1
     with sqlite3.connect(path) as sql:
         assert sql.execute(
@@ -198,5 +198,5 @@ def test_v15_migration_failure_rolls_back_indexes_atomically(tmp_path, monkeypat
         ).fetchone() is None
     monkeypatch.setattr(Storage, "_write_schema_version", original)
     recovered = Storage(path)
-    assert recovered.schema_version() == 15
+    assert recovered.schema_version() == 16
     recovered.close()
