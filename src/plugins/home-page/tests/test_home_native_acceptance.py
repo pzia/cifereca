@@ -145,3 +145,71 @@ def test_native_home_comparison_states_geometry_and_actions(width):
         window.destroy()
         device.close()
         pump()
+
+
+def test_p1_6002_gtk_home_availability_only_on_selected_profile():
+    from cifereca.plugin_api import DigitalLoanAvailability
+    import gi
+    gi.require_version('Gtk', '4.0')
+    from gi.repository import Adw, GLib, Gtk
+    Adw.init()
+
+    cards = representative_rows()
+    calls, subscriptions, controllers, queries = [], [], [], []
+    def snapshot(iid):
+        queries.append(iid)
+        return (DigitalLoanAvailability(
+            identity_id=iid, provider_id="paris",
+            credential_id="PRIVATE-CREDENTIAL", borrower_id="upstream-primary",
+            provider_label="Bibliothèques de Paris",
+            connection_label="Connexion 1", borrower_label="Compte principal",
+            personal_ceiling=4, observed_loans=2,
+        ),)
+
+    broker = NS(
+        identities=lambda: [
+            {"identity_id": row["identity_id"], "label": row["label"]}
+            for row in cards
+        ],
+        digital_loan_availability=snapshot,
+    )
+    page = home.build_page(
+        make_host(cards, calls, subscriptions), controllers,
+        identity_broker=broker,
+    )
+    window = Gtk.Window(default_width=1080, default_height=760)
+    window.set_child(page)
+    window.present()
+    def pump():
+        loop = GLib.MainLoop()
+        GLib.timeout_add(140, lambda: (loop.quit(), False)[1])
+        loop.run()
+    try:
+        pump()
+        grid = next(w for w in walk(page) if isinstance(w, Gtk.FlowBox))
+        def panels():
+            return [item.get_child() for item in walk(grid)
+                    if isinstance(item, Gtk.FlowBoxChild) and item.get_parent() is grid]
+        def captions(panel):
+            return [w.get_text() for w in walk(panel) if isinstance(w, Gtk.Label)]
+        assert queries == ["synthetic-a"]
+        first, second = panels()
+        assert "Prêts numériques — disponibles" in captions(first)
+        assert "Prêts numériques — disponibles" not in captions(second)
+        assert any("Reste inconnu" in text and "plafond personnel 4" in text
+                   for text in captions(first))
+        assert not any("2 disponibles" in text for text in captions(first))
+        assert "PRIVATE-CREDENTIAL" not in str(captions(first))
+        cards[0]["selected"], cards[1]["selected"] = False, True
+        subscriptions[0]()
+        pump()
+        assert queries == ["synthetic-a", "synthetic-b"]
+        first, second = panels()
+        assert "Prêts numériques — disponibles" not in captions(first)
+        assert "Prêts numériques — disponibles" in captions(second)
+        assert not calls  # no HTTP/sync/navigation from mere rendering
+    finally:
+        for controller in controllers:
+            controller.close()
+        window.destroy()
+        pump()
