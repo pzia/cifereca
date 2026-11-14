@@ -15,7 +15,9 @@ from .diagnostic_explicit_loan_action import valid_stage_code
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
 
 
-def explicit_loan_acsm_action_available(service, loan: Loan) -> bool:
+def explicit_loan_acsm_action_available(
+    service, loan: Loan, *, selected_identity_id: str | None = None,
+) -> bool:
     """Expose a button only when the exact connected session declares the ABI.
 
     Availability is NOT permission to download and does not perform a GET.
@@ -33,6 +35,11 @@ def explicit_loan_acsm_action_available(service, loan: Loan) -> bool:
             or loan.medium != "digital" or loan.state != "active"):
         return False
     identity_id, provider_id, credential_id, account_id, _, _ = fields
+    # Read-only visibility uses the explicit identity already admitted by
+    # CoreUI. The worker may never consult mutable GTK navigation state;
+    # executable staging rechecks its own durable loan/source identity.
+    if type(selected_identity_id) is not str or selected_identity_id != identity_id:
+        return False
     try:
         # The only registry lookup is an exact pair. Never enumerate a
         # provider's sessions, resolve an omitted credential or call a plugin.
@@ -54,11 +61,6 @@ def explicit_loan_acsm_action_available(service, loan: Loan) -> bool:
                 or state.get("credential_id") != credential_id
                 or state.get("connected") is not True
                 or state.get("_closed") is True):
-            return False
-        # Visibility is scoped to the already selected UI identity. The
-        # executor must still independently validate the durable Core owner.
-        current_identity = getattr(service, "current_identity", None)
-        if getattr(current_identity, "identity_id", None) != identity_id:
             return False
         matched = [
             account for account in accounts
