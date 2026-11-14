@@ -34,7 +34,7 @@ PLUGIN_SCROLL = ("plugin-manager-scroll-1024", "plugin-manager-scroll-1366")
 OPTIONAL_UX = ("book-detail-1700",)
 BNF_COVERS = ("bnf-covers-1366",)
 HOME = ("mainwindow-baseline-1366", "mainwindow-baseline-1600")
-SEARCH_GTK = ("search-filter-p0", "search-filter-1024")
+SEARCH_GTK = ("search-filter-p0", "search-filter-1024", "search-filter-1366", "search-filter-1600")
 CORE = SEARCH_GTK + BOOK_DETAIL + PLUGIN_SCROLL + ("mainwindow-baseline-1366",
         "mainwindow-baseline-1600",) + CAPTURE_GTK + ("startup", "core-navigation") + LLM + MAINT + ("public-fault-search-1366", "kobo-fault-search-1366", "baen-fault-search-1366")
 DIAG = ("diagnostics-1366", "diagnostics-raw-export-1366", "diagnostics-large-1600", "diagnostics-states-1366",
