@@ -224,10 +224,10 @@ class QueryControls(Gtk.Box):
         # Never map them to the last available provider/document facet.
         field = FIELDS[field_index] if (
             type(field_index) is int and 0 <= field_index < len(FIELDS)
-        ) else '\\x00'
+        ) else '\x00'
         scope = self._scope_values[scope_index] if (
             type(scope_index) is int and 0 <= scope_index < len(self._scope_values)
-        ) else '\\x00'
+        ) else '\x00'
         return QueryState(
             self.entry.get_text().strip(), field, scope,
             self.provider.values(), self.types.values(), self.languages.values(),
@@ -405,7 +405,7 @@ class LocalQueryControls(QueryControls):
             self._scope_values[selected_index]
             if type(selected_index) is int
             and 0 <= selected_index < len(self._scope_values)
-            else '\\x00'
+            else '\x00'
         )
         selected_formats = set(self.types.values())
         if provisional:
