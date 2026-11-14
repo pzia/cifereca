@@ -94,6 +94,40 @@ def test_inflight_provider_rebinding_to_getter_cannot_verify_return_or_do_io(
         service.close()
 
 
+@pytest.mark.parametrize("field,value", [
+    ("is_primary", True),
+    ("id", "another-loan"),
+    ("provider", "SYRACUSE"),
+    ("medium", "physical"),
+])
+def test_inventory_get_cannot_change_borrower_or_target_loan(
+    tmp_path, field, value,
+):
+    loan = _loan()
+    touched = []
+
+    class Mutable(Session):
+        def loans(self, account):
+            rows = super().loans(account)
+            target = account if field == "is_primary" else loan
+            setattr(target, field, value)
+            touched.append(field)
+            return rows
+
+    source = Mutable([_loan()])
+    service = _library(tmp_path, session=source)
+    try:
+        with pytest.raises(ValueError, match="return_inventory_scope_changed"):
+            _read_paris_return_presence(
+                service, service.accounts[1], source, loan,
+            )
+        assert touched == [field]
+        assert source.checks == ["linked-b"]
+        assert source.posts == []
+    finally:
+        service.close()
+
+
 def test_plain_legacy_positive_return_presence_is_not_regressed(tmp_path):
     loan = _loan()
     source = Session([loan])
