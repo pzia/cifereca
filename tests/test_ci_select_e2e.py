@@ -178,7 +178,9 @@ class SelectionTests(unittest.TestCase):
             "src/cifereca/core/device_usb_discovery.py",
             "src/cifereca/core/device_usb_binding_proposal.py",
         ):
-            self.assertEqual(set(mod.select([owner])), set(mod.READER_USB_GTK + mod.READER_INSPECTION_GTK), owner)
+            expected = (mod.READER_USB_GTK + mod.READER_INSPECTION_GTK
+                        if owner.endswith("device_usb_discovery.py") else mod.READER_USB_GTK)
+            self.assertEqual(set(mod.select([owner])), set(expected), owner)
 
     def test_p1_6041_reader_page_triggers_pairing_and_inspection_gates(self):
         self.assertEqual(
@@ -465,7 +467,12 @@ class SelectionTests(unittest.TestCase):
             "src/cifereca/gui/reader_page_controller.py",
             "e2e/reader_usb_inspection_probe.py",
         ):
-            self.assertEqual(mod.select([path]), mod.READER_INSPECTION_GTK)
+            expected = (
+                mod.READER_INSPECTION_GTK + mod.READER_USB_GTK
+                if path.endswith("reader_page_controller.py")
+                else mod.READER_INSPECTION_GTK
+            )
+            self.assertEqual(set(mod.select([path])), set(expected), path)
         probe = (ROOT / "e2e/reader_usb_inspection_probe.py").read_text(
             encoding="utf-8",
         )
