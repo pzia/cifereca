@@ -836,3 +836,15 @@ def test_p1_6041_xtest_callbacks_relinquish_real_glib_main_loop():
     assert "sleep(0.025)" not in probe
     assert 'button.connect("clicked", on_pair_clicked)' in probe
     assert "device.click(screen_x, screen_y)" in probe
+
+
+def test_p1_6041_native_probe_timeout_kills_xvfb_session_without_log_leak():
+    """GTK XTEST regressions must terminate with a closed code, not hang CI."""
+    source = RUNNER.read_text(encoding="utf-8")
+    assert 'if scenario.get("runner") == "gtk-reader-pairing":' in source
+    assert 'text=True, start_new_session=True,' in source
+    assert 'process.communicate(timeout=65)' in source
+    assert 'os.killpg(process.pid, signal.SIGKILL)' in source
+    assert 'P1_6041_CLOSED_FAILURE_CHECKPOINT=gtk_timeout' in source
+    assert '"gtk_timeout",' in source
+    assert 'subprocess.CompletedProcess(' in source
