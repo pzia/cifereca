@@ -99,6 +99,11 @@ def build_provider_account_editor(
         type(raw_credentials) is not dict or type(raw_options) is not dict
         or ("enabled" in data and type(data["enabled"]) is not bool)
         or ("label" in data and type(data["label"]) is not str)
+        # Absent legacy ownership remains explicitly repairable. An owner
+        # stored as a non-string is corrupt, not consent to bind this account
+        # and its credentials to a different current profile.
+        or (existing and "identity_id" in data
+            and type(data["identity_id"]) is not str)
     )
     # An existing, declared TEXT value that is not actually text must not be
     # rendered as blank/default and then overwritten by an unrelated Save.

@@ -237,6 +237,11 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 # corrupt-label guard and silently rewrite a saved object.
                 or ('label' in original_account
                     and type(original_account['label']) is not str)
+                # A malformed saved owner cannot be treated as an unassigned
+                # legacy account. Only an *absent* owner can be explicitly
+                # repaired, never silently re-scoped across profiles.
+                or ('identity_id' in original_account
+                    and type(original_account['identity_id']) is not str)
                 or ('provider' in original_account
                     and (type(original_account['provider']) is not str
                          or original_account['provider'].casefold()
