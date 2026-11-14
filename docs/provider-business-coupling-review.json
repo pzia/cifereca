@@ -32,6 +32,34 @@
         "tests/test_core_ui_bnf_acsm_two_consent.py"
       ],
       "pr": "#5980"
+    },
+    {
+      "id": "site-f6ff300858a47ad7637ce45a",
+      "original": "src/cifereca/services.py::LibraryService.public_catalogue_target (provider == 'paris')",
+      "original_classification": "must_migrate",
+      "replacement": "ProviderDescriptor.public_catalogue_base_option_key / provider_sessions.public_catalogue_target",
+      "classification": "removed_from_executable_core_provider_dispatch",
+      "evidence": "Core brand comparison deleted and replaced by an installed provider's explicit, non-secret, read-only public navigation account option; no new per-provider dispatch in generic Core.",
+      "tests": [
+        "tests/test_core_p0_3867_catalogue_endpoints_from_providers.py",
+        "tests/test_core_p0_5975_public_catalogue_policy.py",
+        "tests/test_core_public_book_notice_actions.py"
+      ],
+      "pr": "pending"
+    },
+    {
+      "id": "site-23720d5b87c66bdb88f346e6",
+      "original": "src/cifereca/services.py::LibraryService.public_catalogue_target (paris_base_url)",
+      "original_classification": "must_migrate",
+      "replacement": "ProviderDescriptor account_options[].legacy_config_key declarative fallback",
+      "classification": "removed_from_executable_core_provider_dispatch",
+      "evidence": "The special Core facade config.paris_base_url() call was deleted; the installed Paris plugin declares base_url/legacy_config_key and the provider-neutral resolver reads only configuration and validates public URLs.",
+      "tests": [
+        "tests/test_core_p0_3867_catalogue_endpoints_from_providers.py",
+        "tests/test_core0933_public_links.py",
+        "tests/test_core_p0_5975_public_catalogue_policy.py"
+      ],
+      "pr": "pending"
     }
   ]
 }
