@@ -1449,3 +1449,66 @@ def _session_for_source(self, provider_id: str, credential_id: str | None=None) 
     if len(matches) > 1:
         raise ProviderConfigurationError(f"Provider ambigu: {provider_id}")
     raise ProviderConfigurationError(f"Provider non connecté: {provider_id}")
+
+
+def public_catalogue_target(self, row):
+    """Read-only public navigation; a provider ID never selects a Core branch.
+
+    The installed descriptor may opt into an account option already declared
+    as public navigation data. A legacy top-level value can be read only when
+    that SAME option explicitly declares its old key. Neither value grants a
+    right, authorizes a GET or constitutes a book-specific notice.
+    """
+    from ..catalogue_link import catalogue_notice_url, catalogue_url
+    from ..providers.base import AccountOptionField, ProviderDescriptor
+
+    provider = str(row.get("provider_id") or row.get("source_provider") or "")
+    descriptor = next(
+        (item for item in self.provider_descriptors() if item.id == provider),
+        None,
+    )
+    base = descriptor.homepage if descriptor else None
+    config = getattr(self, "config", None)
+    credential_id = row.get("source_credential")
+    provider_option = getattr(config, "provider_option", None)
+    if callable(provider_option):
+        base = provider_option(
+            provider, "catalogue_url", None, credential_id=credential_id,
+        ) or base
+
+    # Only the trusted, typed installed plugin declaration may select the
+    # source-specific *public* URL setting. No Core provider-name fallback.
+    policy_key = (
+        descriptor.public_catalogue_base_option_key
+        if type(descriptor) is ProviderDescriptor else None
+    )
+    if type(policy_key) is str and 0 < len(policy_key) <= 64:
+        declared = next((
+            option for option in descriptor.account_options
+            if type(option) is AccountOptionField
+            and option.key == policy_key and option.secret is False
+        ), None)
+        if declared is not None:
+            value = (
+                provider_option(
+                    provider, policy_key, None, credential_id=credential_id,
+                )
+                if callable(provider_option) else None
+            )
+            if value is None and type(declared.legacy_config_key) is str:
+                config_get = getattr(config, "get", None)
+                if callable(config_get):
+                    value = config_get(declared.legacy_config_key, "")
+            base = str(value or "").strip() or base
+
+    notice = catalogue_notice_url(row, base=base, provider=provider)
+    if notice:
+        return ("notice", notice)
+
+    catalogue = catalogue_url({"friendly_url": base})
+    if not catalogue:
+        config_get = getattr(config, "get", None)
+        fallback = (config_get("library.public_catalogue_fallback", "")
+                    if callable(config_get) else "")
+        catalogue = catalogue_url({"friendly_url": fallback})
+    return ("catalogue", catalogue) if catalogue else None
