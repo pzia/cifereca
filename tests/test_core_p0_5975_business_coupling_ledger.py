@@ -248,7 +248,7 @@ def test_reviewed_groups_require_explicit_reachability_and_never_merge_unreviewe
         inventory(tmp_path, registry=ledger)
 
 
-def test_storage_six_ast_reviews_make_mutations_and_retained_guards_visible():
+def test_storage_remaining_guards_and_retired_w5_writer_are_visible():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -257,30 +257,46 @@ def test_storage_six_ast_reviews_make_mutations_and_retained_guards_visible():
             encoding="utf-8"
         )
     )
-    ids = {
+    guards = {
         "site-7313c6ad37cfecdb7936e8bc",
         "site-d88574f6e28d059189c71da5",
         "site-5a3051124e11f87bf24ccfb6",
         "site-c668504ada66eace309e3e7f",
         "site-b4a6753e2f0ac2d6b78c0992",
-        "site-1220521b4d5dc767addb6d29",
     }
-    reviews = [r for r in ledger["reviews"] if r["id"] in ids]
-    assert {r["id"] for r in reviews} == ids
-    assert len(reviews) == 6
-    assert {r["decision_group_id"] for r in reviews} == {
+    removed_writer = "site-1220521b4d5dc767addb6d29"
+    reviews = [row for row in ledger["reviews"] if row["id"] in guards]
+    assert {row["id"] for row in reviews} == guards
+    assert all(row["id"] != removed_writer for row in ledger["reviews"])
+    assert len(reviews) == 5
+    assert {row["decision_group_id"] for row in reviews} == {
         "legacy-backup.w1-canonical-publication-veto",
         "legacy-backup.w1-owner-archive-protection",
         "legacy-backup.w5-path-relocation-cutover",
     }
-    assert {r["reachability"] for r in reviews} == {"legacy_only", "productive"}
-    assert sum(r["classification"] == "legacy_mutating_cutover"
-               for r in reviews) == 1
-    assert sum(r["classification"] == "safety_guard_pending_contract"
-               for r in reviews) == 5
-    assert all(r["effect"] and r["authority"] and r["replacement_contract"]
-               and all((root / t).is_file() for t in r["tests"])
-               for r in reviews)
+    assert {row["reachability"] for row in reviews} == {
+        "legacy_only", "productive",
+    }
+    assert all(
+        row["classification"] == "safety_guard_pending_contract"
+        and row["effect"] and row["authority"] and row["replacement_contract"]
+        and all((root / test).is_file() for test in row["tests"])
+        for row in reviews
+    )
+    retirements = [
+        row for row in ledger["retirements"]
+        if row["id"] ==
+        "struct-w5-all-provider-legacy-backup-path-normalization-writer-retired"
+    ]
+    assert len(retirements) == 1
+    retirement = retirements[0]
+    assert retirement["original_classification"] == "legacy_mutating_cutover"
+    assert retirement["original_site_id"] == removed_writer
+    assert retirement["retired_at_sha"] == "5c81ae0f8914c78eb63860e9436c637d7f6d5b1c"
+    assert retirement["in_ast_metric"] is True
+    assert retirement["pr"] == "#6118"
+    assert retirement["replacement"] and retirement["evidence"]
+    assert all((root / test).is_file() for test in retirement["tests"])
 
 
 def test_fixed_anchor_cohort_keeps_unproven_removed_sites_visible():

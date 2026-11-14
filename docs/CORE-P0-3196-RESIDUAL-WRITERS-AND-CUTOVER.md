@@ -1,5 +1,19 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+
+> **Delta #6118 (P0 #5975 / #3196, 14/11/2026) :** le chemin actif
+> `Storage.relocate_local_path` de normalisation de fichier ne réalise
+> désormais plus **aucun UPDATE de `backup_items.local_path`**, quel que
+> soit le fournisseur. Tous les reçus historiques, pas seulement Kobo,
+> conservent leur ancien localisateur, leur horodatage et leur propriétaire
+> comme archive passive. Le Placement et la projection catalogue canoniques
+> de l'utilisateur suivent le renommage admissible ; les gardes d'identité,
+> de collisions et de références historiques bloquantes restent en place.
+> Cette suppression n'archive **ni** `commit_directory_migration`,
+> **ni** les relinks canoniques attestés, **ni** les autres writers historiques.
+> Une ancienne archive ne devient jamais la preuve du nouveau chemin.
+
+
 > **Delta de suppression (#3196, 11/11/2026).** La voie `convergence_execution → legacy_backup_retirement → legacy_backup_publication_review` est supprimée dans une PR dédiée : plus de requête sur `backup_items` ni de retrait automatique d'archives pendant Sync. Les lignes historiques restent sur disque et ne prouvent ni une offre actuelle ni un artefact. Les passages ci-dessous sont un inventaire historique antérieur à ce retrait, pas l'état de la PR ou de `main` tant qu'elle n'est pas fusionnée.
 
 > **Statut : inventaire de code, pas migration.** Analyse de `main` après les
