@@ -1202,7 +1202,9 @@
         "tests/test_core_p0_2789_rename_scope.py"
       ],
       "pr": "#6118",
-      "in_ast_metric": true
+      "in_ast_metric": true,
+      "original_site_id": "site-1220521b4d5dc767addb6d29",
+      "retired_at_sha": "5c81ae0f8914c78eb63860e9436c637d7f6d5b1c"
     }
   ],
   "guard_installations": [
