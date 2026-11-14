@@ -75,7 +75,12 @@ def build_provider_account_editor(
     # historical default, but corrupt truthy values must fail closed.
     saved_enabled = data.get("enabled", bool(data))
     enabled = Gtk.Switch(); enabled.set_active(saved_enabled is True); enabled.set_valign(Gtk.Align.CENTER); enabled_row.add_suffix(enabled); group.add(enabled_row)
-    label_row = Adw.EntryRow(); label_row.set_title("Libellé local"); label_row.set_text(str(data.get("label") or descriptor.display_name)); group.add(label_row)
+    # A malformed persisted label must never be stringified into the GTK
+    # editor and later saved as a plausible account name on an unrelated edit.
+    # Display a safe descriptor fallback while preserving the original row.
+    saved_label = data.get("label")
+    label_text = saved_label if type(saved_label) is str and saved_label else descriptor.display_name
+    label_row = Adw.EntryRow(); label_row.set_title("Libellé local"); label_row.set_text(label_text); group.add(label_row)
     identity_row = Adw.EntryRow(); identity_row.set_title("Identité (ID)")
     default_identity_id = str((configured_identities[0].get("id") if configured_identities else "default") or "default")
     # A persisted account with no valid owner must not look like it belongs
@@ -93,6 +98,7 @@ def build_provider_account_editor(
     invalid_saved_snapshot = (
         type(raw_credentials) is not dict or type(raw_options) is not dict
         or ("enabled" in data and type(data["enabled"]) is not bool)
+        or ("label" in data and type(data["label"]) is not str)
     )
     # An existing, declared TEXT value that is not actually text must not be
     # rendered as blank/default and then overwritten by an unrelated Save.
