@@ -11,8 +11,8 @@ from scripts.ci_security_mutation_campaign import MUTATIONS, campaign
 
 
 def test_mutations_are_independent_and_have_explicit_behavioral_witnesses():
-    assert len(MUTATIONS) == 3
-    assert len({m.name for m in MUTATIONS}) == 3
+    assert len(MUTATIONS) == 4
+    assert len({m.name for m in MUTATIONS}) == 4
     assert all(m.test_node.startswith("tests/test_public_httpx_transport.py::")
                for m in MUTATIONS[:2])
     consent = MUTATIONS[2]
@@ -23,20 +23,32 @@ def test_mutations_are_independent_and_have_explicit_behavioral_witnesses():
     assert consent.additional_test_nodes[0].endswith(
         "test_rejected_final_publish_after_stream_preserves_no_target"
     )
+    integrity = MUTATIONS[3]
+    assert integrity.target_function == "download_attested_https"
+    assert integrity.target_module == "cifereca.core.attested_https_delivery"
+    assert integrity.test_node.endswith(
+        "test_same_inode_overwrite_before_link_never_publishes_stale_digest"
+    )
+    assert integrity.anchor == "if checked.digest() != digest.digest():"
     assert all(m.anchor != m.replacement for m in MUTATIONS)
 
 
 def test_bounded_security_mutants_are_killed_on_real_transport_and_admission_tests():
     report = campaign(timeout=40)
     assert report["passed"], report
-    assert report["distinct_mutation_sites"] == 3
-    assert report["witnesses"] == 4
+    assert report["distinct_mutation_sites"] == 4
+    assert report["witnesses"] == 5
     assert all(p["baseline_exit"] == 0 for p in report["probes"])
     assert all(p["mutant_exit"] == 1 for p in report["probes"])
     assert sum(p["mutation"] == "respect_revoked_delivery_admission"
                for p in report["probes"]) == 2
     assert all("attested_https_delivery.py::_admitted" in p["subject"]
                for p in report["probes"] if p["mutation"] == "respect_revoked_delivery_admission")
+    integrity = [p for p in report["probes"]
+                 if p["mutation"] == "verify_published_candidate_sha"]
+    assert len(integrity) == 1
+    assert integrity[0]["subject"].endswith("::download_attested_https")
+    assert integrity[0]["killed"]
 
 
 def test_mutation_baseline_failure_never_counts_as_killed(monkeypatch, tmp_path):
