@@ -230,3 +230,43 @@ def test_valid_choice_schema_is_bounded_and_backwards_compatible():
     ordinary = AccountOptionField("endpoint", "Portail", default="https://test.invalid")
     assert ordinary.value_type == "text"
     assert ordinary.choices == ()
+
+@pytest.mark.parametrize("corrupt", [None, 7, True, ["secret"], {"private": "DO_NOT_RENDER"}])
+def test_corrupt_saved_account_label_is_not_stringified_or_silently_rewritten(corrupt):
+    """A malformed saved label may render a fallback, never become a Save."""
+    row = stored("cred-one", "alice")
+    row["label"] = corrupt
+    editor, group = render(row)
+    assert editor["invalid_saved_snapshot"] is True
+    assert editor["label"].text == "Fournisseur synthétique"
+    assert editor["original_account"]["label"] is corrupt or (
+        editor["original_account"]["label"] == corrupt
+    )
+    assert "DO_NOT_RENDER" not in str([
+        widget.title for widget in group.children
+    ])
+
+
+def test_headless_settings_draft_rejects_corrupt_original_label_even_with_clean_editor(
+    tmp_path,
+):
+    """Forged editor values cannot bypass persisted-label admission."""
+    row = stored("cred-one", "alice")
+    row["label"] = {"private": "DO_NOT_RENDER"}
+    cfg = Config(tmp_path / "config.json")
+    cfg.set("identities", [
+        {"id": owner, "directory_name": owner} for owner in ("alice", "bob")
+    ])
+    cfg.set("providers.accounts", [])
+    values = form_values(tmp_path, [row])
+    # GTK would have rendered the descriptor's safe fallback; this direct
+    # snapshot deliberately omits its invalid_saved_snapshot flag.
+    values["accounts"][0]["label"] = "Fournisseur synthétique"
+    before = deepcopy(cfg.data)
+    with pytest.raises(SettingsValidationError, match="Origine du compte fournisseur"):
+        build_settings_draft(
+            cfg, values, descriptors={PROVIDER: descriptor()},
+            public_ids=set(), current_dirs={"alice": "alice", "bob": "bob"},
+        )
+    assert cfg.data == before
+    assert not cfg.path.exists()
