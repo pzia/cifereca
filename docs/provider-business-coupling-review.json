@@ -831,7 +831,7 @@
         "tests/test_core_p0_5054_owned_future_provider_ambiguity.py",
         "tests/test_core_p0_5054_owned_library_no_legacy_kobo.py"
       ],
-      "pr": "#pending",
+      "pr": "#6090",
       "in_ast_metric": false
     }
   ],
