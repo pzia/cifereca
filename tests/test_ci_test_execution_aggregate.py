@@ -63,16 +63,21 @@ def test_aggregate_distinguishes_unique_cases_replays_and_disagreement():
     assert report["source_sha"] == SHA
     assert report["gate_count"] == 2
     assert report["count_unique_cases"] == 3
-    assert report["count_case_executions"] == 4
+    assert report["count_selected_observations"] == 4
+    assert report["count_called_executions"] == 3
     assert report["count_replayed_cases"] == 1
-    assert report["count_extra_executions"] == 1
+    assert report["count_extra_selected_observations"] == 1
+    assert report["count_extra_called_executions"] == 0
     assert report["count_discordant_replayed_cases"] == 1
     assert report["execution_outcomes"]["passed"] == 2
     assert report["execution_outcomes"]["skipped"] == 1
     assert report["execution_outcomes"]["failed"] == 1
     assert not report["all_gates_passed"]
     assert report["replayed_cases"][0]["nodeid"] == "tests/test_a.py::test_case[0]"
-    assert report["matrix"] == [{**OWNER, "unique_cases": 3, "case_executions": 4}]
+    assert report["matrix"] == [{
+        **OWNER, "unique_cases": 3, "selected_observations": 4,
+        "called_executions": 3,
+    }]
 
 
 def test_same_case_and_outcome_in_multiple_gates_is_not_semantic_new_coverage():
@@ -83,8 +88,11 @@ def test_same_case_and_outcome_in_multiple_gates_is_not_semantic_new_coverage():
         ("manual", _run([(row, "passed")])),
     ])
     assert report["count_unique_cases"] == 1
-    assert report["count_case_executions"] == 3
-    assert report["count_extra_executions"] == 2
+    assert report["count_selected_observations"] == 3
+    assert report["count_called_executions"] == 3
+    assert report["count_extra_selected_observations"] == 2
+    assert report["count_extra_called_executions"] == 2
+    assert report["count_reexecuted_cases"] == 1
     assert report["count_discordant_replayed_cases"] == 0
     assert report["all_gates_passed"]
 
@@ -169,7 +177,8 @@ def test_cli_writes_complete_failed_gate_with_exit_status_one(tmp_path):
     result = json.loads(output.read_text())
     assert not result["all_gates_passed"]
     assert result["count_unique_cases"] == 2
-    assert result["count_case_executions"] == 2
+    assert result["count_selected_observations"] == 2
+    assert result["count_called_executions"] == 2
 
 
 def test_atomic_output_avoids_temporary_files(tmp_path):
