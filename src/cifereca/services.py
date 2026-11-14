@@ -1215,10 +1215,28 @@ class LibraryService:
         )
 
     def _local_account(self) -> Account:
+        """Bind the bootstrap local account to an exact configured identity.
+
+        No selected profile means no local borrower. In particular, a missing
+        navigation identity must not silently become the historical "default"
+        identity and carry an unrelated profile's local source.
+        """
+        owner = self.current_identity
+        identities = self.identities
+        if (type(owner) is not Identity
+                or type(identities) is not list or len(identities) > 4096
+                or type(owner.identity_id) is not str
+                or not owner.identity_id or len(owner.identity_id) > 1024
+                or owner.identity_id != owner.identity_id.strip()
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in owner.identity_id)
+                or sum(row is owner for row in identities) != 1
+                or sum(type(row) is Identity and row.identity_id == owner.identity_id
+                       for row in identities) != 1):
+            raise ProviderConfigurationError("local_account_identity_required")
         return Account(
             display_name="Bibliothèque locale", unique_id="local", is_primary=True,
             provider_id="local", credential_id="local", provider_label="cifereca",
-            identity_id=self.current_identity.identity_id if self.current_identity else "default",
+            identity_id=owner.identity_id,
         )
 
     @staticmethod
