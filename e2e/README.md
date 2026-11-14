@@ -151,6 +151,31 @@ Aucun appel à un fournisseur réel. La recette parallèle de Recommandations
 `recommendations-detail-1024` rend possible la comparaison des deux vues ;
 elle ne constitue pas à elle seule une validation UX visuelle globale.
 
+### P1 #774 — comparaison Recherche / Recommandations à largeur identique
+
+Les scénarios `search-filter-1024`, `search-filter-1366` et
+`search-filter-1600` utilisent la **vraie MainWindow Recherche** et ses
+cinq filtres cliqués via XTEST sur un écran Xvfb **physique** respectivement
+1024×768, 1366×900 et 1600×1000. Le probe vérifie largeur de la fenêtre,
+36 résultats, compteur, sélection, scroll, réponse tardive et isolation du
+profil, sans GET fournisseur ni emprunt. `search-filter-p0` conserve
+son écran historique 1280×1024 inchangé.
+
+Comparer, pour la même largeur, avec les captures locales issues de
+`recommendations-detail-1024`, `recommendations-detail-1366` et
+`recommendations-detail-1600` (vrais GTK/XTEST, candidats synthétiques).
+Les rapports `screen.json` contiennent le SHA et les tailles d'écran ;
+les PNG sont uniquement des éléments de revue **locale** : ne jamais les
+publier dans les artefacts CI, ni prétendre comparer des notices identiques
+entre les deux fixtures. Une revue visuelle effective des deux surfaces,
+des états partiels et des couvertures reste nécessaire pour fermer #774 ;
+les succès XTEST seuls ne prouvent pas une recette fournisseur réelle.
+
+```bash
+python3 e2e/run.py --scenario search-filter-1366
+python3 e2e/run.py --scenario recommendations-detail-1366
+```
+
 ### P1 #942 — compteur réel et données exclues (GTK 1366)
 
 Le même scénario `book-detail-1366` vérifie après le parcours normal
