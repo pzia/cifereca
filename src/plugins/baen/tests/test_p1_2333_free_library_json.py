@@ -62,7 +62,7 @@ def test_page_two_uses_readonly_post_without_credential_or_inferred_rights():
         assert len(rows) == FREE_JSON_PAGE_SIZE == 20
         assert rows[0].title == "SYNTHETIC TITLE 0"
         assert rows[0].source_collection == "public"
-        assert rows[0].metadata["metadata_evidence"] == "baen.free_library_category_json"
+        assert rows[0].metadata["catalogue_evidence"] == "baen.free_library_category_json"
         assert all(not x.owned and not x.downloadable and x.download_url is None for x in rows)
         assert current.last_search_warnings == [UNVERIFIED_SEARCH_WARNING]
         assert len(seen) == 1
