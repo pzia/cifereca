@@ -1,8 +1,9 @@
 """Explicit source confirmation, isolated from default metadata synchronization.
 
-The temporary Kobo adapter reuses the existing preflight/executor policy. Plans
-are bounded, memory-only and one-use; losing a process requires a new preview.
-Neither advisory previews nor persisted counters are acquisition permissions.
+Any installed provider declaring the local materialization capability may
+use canonical A-to-B source Sync, with a complete delivery ABI and exact CAS
+consent. Plans are bounded, memory-only and one-use. No legacy backup writer
+or receipt authorizes GET, rights or final placement.
 """
 from __future__ import annotations
 
@@ -20,8 +21,9 @@ from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
 from ..plugin_api import SyncResult
 from .canonical_delivery_abi import has_complete_delivery_abi
-from .profile_source_paths import _kobo_preview_paths
-from .local_profile_root_guards import checked_profile_roots, ProfileRootRejected
+from .local_profile_root_guards import (
+    checked_profile_roots, canonical_profile_preview_paths, ProfileRootRejected,
+)
 
 _TTL = 600
 _PROCESS_NONCE = secrets.token_hex(16)
@@ -89,9 +91,8 @@ def _source(broker, source_id, *, allow_canonical=False):
         raise _Rejected("unknown_source") from None
     _require(len(rows) == 1, "ambiguous_source" if rows else "unknown_source")
     account = rows[0]
-    _require(account.provider_id == "kobo", "not_supported")
     scope = (source_id, account.identity_id, account.provider_id, account.credential_id, account.unique_id)
-    # Kobo's exact primary borrower has account_id="" (not None). Only
+    # A declared primary borrower may have account_id="" (not None). Only
     # this explicitly primary account may use the empty upstream ID; every
     # other scope coordinate still has to be a non-empty exact string.
     # This is not entitlement or GET admission: canonical Sync independently
@@ -113,6 +114,10 @@ def _source(broker, source_id, *, allow_canonical=False):
     _require(len(sessions) == 1, "ambiguous_source")
     session = sessions[0]
     _require(session.connected, "source_disconnected")
+    # The supplier advertises its optional manual confirmation surface;
+    # Core never guesses support from a vendor ID or backup-only legacy API.
+    _require(getattr(session.capabilities, "local_materialization", None) is True,
+             "not_supported")
     _require(bool(getattr(session.capabilities, "backup", False)), "not_supported")
     # #3196: a fully typed Core provider must never dispatch a second Kobo
     # acquisition through the legacy, backup_items-authoritative worker.
@@ -133,18 +138,24 @@ def _source(broker, source_id, *, allow_canonical=False):
         and session_accounts[0].provider_id == account.provider_id
         and session_accounts[0].credential_id == account.credential_id
         and session_accounts[0].unique_id == account.unique_id
-        # Empty Kobo borrower is a valid *primary* source only. The
+        # An empty borrower is a valid *primary* source only. The
         # upstream adapter may rebind an empty secondary under the same
         # credential; never issue a manual confirmation on that alias.
         and (account.unique_id != ""
              or session_accounts[0].is_primary is True)
-        # Kobo-Vault's legacy Account model uses "default" as an adapter
-        # identity label even for a named Core profile; the actual owner is
-        # independently pinned by identity_for_connection above. Only this
-        # known adapter label may differ from the selected Core identity.
-        and session_accounts[0].identity_id in {
-            account.identity_id, "default",
-        },
+        # A versioned, provider-declared adapter label is compatibility,
+        # never an implied global identity. An undeclared foreign/default
+        # label cannot borrow another profile's authenticated source.
+        and (
+            session_accounts[0].identity_id == account.identity_id
+            or (
+                account.is_primary is True
+                and session_accounts[0].is_primary is True
+                and session_accounts[0].identity_id == "default"
+                and getattr(type(session), "legacy_account_identity_alias_v1", None)
+                    == "default"
+            )
+        ),
         "ambiguous_account",
     )
     _require(sum(a.provider_id == account.provider_id and a.credential_id == account.credential_id
@@ -163,13 +174,13 @@ def _source(broker, source_id, *, allow_canonical=False):
             legacy_unset = False
         _require(legacy_unset, "canonical_source_policy_configured")
     _require(not service.storage.metadata_get("identity-directory-migration-v1"), "directory_migration_pending")
-    # A canonical preview must not depend on the retired W4 reconciliation
-    # facade. Root selection remains provider-specific until plugin cutover;
-    # owner/overlap validation is Core-neutral and cannot attest A or B.
+    # A canonical preview derives profile roots from the same Core library
+    # root as the canonical writer. Legacy supplier backup directories and
+    # preferences cannot constrain a modern A-to-B confirmation.
     try:
         roots = checked_profile_roots(
             service, account.identity_id,
-            roots_for_identity=_kobo_preview_paths,
+            roots_for_identity=canonical_profile_preview_paths,
         )
     except ProfileRootRejected as exc:
         raise _Rejected(str(exc)) from None
@@ -181,10 +192,7 @@ def _source(broker, source_id, *, allow_canonical=False):
             except FileNotFoundError:
                 continue
             _require(stat.S_ISDIR(mode) and not stat.S_ISLNK(mode), "unsafe_directory")
-    config = {key: service.config.get(key) for key in (
-        "library.directory", "kobo_backup.directory", "kobo_backup.format",
-        "kobo_backup.allow_unlinked_acquisition",
-    )}
+    config = {"library.directory": service.config.get("library.directory")}
     return account, session, scope, _digest({"scope": scope, "roots": list(map(str, roots)), "config": config})
 
 
@@ -327,8 +335,8 @@ def prepare(broker, source_id):
                 broker, source_id, allow_canonical=True,
             )
             if has_complete_delivery_abi(session):
-                # Manual confirmation for a modern Kobo source must reuse the
-                # same Core A->B executor as Sync, never the 0.7 backup writer.
+                # Manual confirmation always reuses Core's single A-to-B
+                # executor; the legacy backup writer is not a fallback.
                 from .source_sync_consent import read_policy, scope_for_account
                 from .source_context import source_context_epoch
                 policy = read_policy(broker.service.storage, scope_for_account(account))
