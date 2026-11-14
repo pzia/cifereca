@@ -1,4 +1,4 @@
-"""#1346: a completed Kobo worker must not be starved by GTK idle traffic."""
+"""#1346/#5821: generic confirmed source receipts outrank GTK idle traffic."""
 from __future__ import annotations
 
 from queue import Queue
@@ -6,7 +6,7 @@ from queue import Queue
 from tests.test_core_p0_981_task_coalescing import session
 
 
-def test_cancelled_kobo_receipt_is_dispatched_before_idle_repaints(session):
+def test_confirmed_source_materialization_receipt_precedes_idle_repaints(session):
     """Exercise the real TaskRunner class with a priority-aware GLib seam."""
     runner = session.runner
     glib = runner.submit.__globals__["GLib"]
@@ -24,8 +24,8 @@ def test_cancelled_kobo_receipt_is_dispatched_before_idle_repaints(session):
     worker, entered, release, calls = session.work()
     outcomes = []
     runner.submit(
-        "Kobo confirmé", worker, ok=outcomes.append,
-        kind="kobo-acquisition", origin="user",
+        "Source confirmée", worker, ok=outcomes.append,
+        kind="source-materialize", origin="user",
     )
     assert entered.wait(3)
 
@@ -55,7 +55,7 @@ def test_legacy_headless_gtk_seam_still_delivers_without_priority_constant(sessi
     worker, entered, release, calls = session.work()
     outcomes = []
     session.runner.submit(
-        "Kobo", worker, ok=outcomes.append, kind="kobo-acquisition",
+        "Source", worker, ok=outcomes.append, kind="source-materialize",
     )
     assert entered.wait(3)
     release.set()
@@ -65,7 +65,7 @@ def test_legacy_headless_gtk_seam_still_delivers_without_priority_constant(sessi
 
 
 def test_unrelated_providers_keep_existing_idle_callback_order(session):
-    """A Kobo cancellation workaround cannot reorder Numilog/Paris events."""
+    """The generic source receipt priority cannot reorder other task kinds."""
     runner = session.runner
     glib = runner.submit.__globals__["GLib"]
     events = []

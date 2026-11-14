@@ -9,6 +9,7 @@ import shlex
 from typing import Any
 
 from ..identities.directory_selection import directory_choice
+from ..providers.base import validated_account_option_choices
 from .llm_settings import LLMSettingsError, normalize_llm_settings
 from .borrower_scoped_options import (
     MAX_BORROWERS, _valid_borrower_id, decimal_limit,
@@ -351,6 +352,20 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 if (type(lower) is not int or type(upper) is not int
                         or lower < 0 or upper < lower or not lower <= number <= upper):
                     raise SettingsValidationError(f'Valeur hors limites : {field.label}')
+                value = raw_value
+            elif value_type == 'choice':
+                declared = validated_account_option_choices(field)
+                if declared is None:
+                    raise SettingsValidationError(
+                        f'Choix fournisseur invalides : {field.label}'
+                    )
+                # Persist only the declared opaque token, not its GTK label;
+                # a removed value or stale ComboRow must never silently
+                # select the first new option or grant SSO consent.
+                if raw_value not in {key for key, _label in declared}:
+                    raise SettingsValidationError(
+                        f'Choix non déclaré : {field.label}'
+                    )
                 value = raw_value
             elif value_type == 'text':
                 # An option explicitly stored on an existing account can be

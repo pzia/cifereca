@@ -7,7 +7,7 @@ import pytest
 
 from recommendation_engine import RankedCandidate
 from recommendations import _public_affinity_score, UxRecommendationsView
-from tests.test_recommendation_detail_projection_contract_p1 import _make_view
+from .recommendations_detail_test_fixtures import _make_view
 
 
 class PoisonScore:

@@ -122,10 +122,46 @@ class AccountOptionField:
     legacy_config_key: str | None = None
     # Declarative validation; existing provider options remain text by default.
     # Numeric values stay decimal strings in the opaque provider account config.
-    value_type: Literal["text", "unsigned_integer"] = "text"
+    value_type: Literal["text", "unsigned_integer", "choice"] = "text"
     min_value: int | None = None
     max_value: int | None = None
     help_text: str = ""
+    # Append-only ABI: choices are opaque persisted values plus visible labels.
+    # A choice is a local preference, never a provider entitlement or consent.
+    choices: tuple[tuple[str, str], ...] = ()
+
+
+def validated_account_option_choices(
+    field: AccountOptionField,
+) -> tuple[tuple[str, str], ...] | None:
+    """Validate one declared choice schema without evaluating provider objects.
+
+    None means an invalid descriptor: the Settings UI and draft must both
+    fail closed rather than pick the first entry or serialize a corrupt value.
+    """
+    rows = getattr(field, "choices", ())
+    # A choice exposes its label and cannot replace a password entry.
+    if getattr(field, "secret", False) is True:
+        return None
+    if type(rows) is not tuple or not 1 <= len(rows) <= 32:
+        return None
+    seen: set[str] = set()
+    result: list[tuple[str, str]] = []
+    for entry in rows:
+        if type(entry) is not tuple or len(entry) != 2:
+            return None
+        value, label = entry
+        if (type(value) is not str or not 0 < len(value) <= 128
+                or value != value.strip() or not value.isprintable()
+                or type(label) is not str or not 0 < len(label) <= 256
+                or label != label.strip() or not label.isprintable()
+                or value in seen):
+            return None
+        seen.add(value)
+        result.append((value, label))
+    if type(field.default) is not str or field.default not in seen:
+        return None
+    return tuple(result)
 
 
 @dataclass(frozen=True)

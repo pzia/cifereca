@@ -6,7 +6,7 @@ from types import SimpleNamespace as NS
 
 from recommendation_engine import CatalogNoticeVariant
 from recommendations import _attested_catalogue_isbns
-from tests.test_recommendation_catalogue_navigation_p1 import _view, _variant
+from .recommendations_catalogue_test_fixtures import _view, _variant
 
 ISBN = "9780306406157"
 

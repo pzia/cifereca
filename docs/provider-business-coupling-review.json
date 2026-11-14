@@ -105,6 +105,22 @@
       "in_ast_metric": false
     },
     {
+      "id": "struct-coreui-kobo-acquisition-task-kind",
+      "original": "src/cifereca/gui/sync_controller.py::confirmed materialization TaskRunner.submit(kind='kobo-acquisition')",
+      "original_classification": "vendor_named_coreui_routing",
+      "replacement": "TaskRunner.submit(kind='source-materialize') with generic terminal GTK priority",
+      "classification": "removed_supplier_named_task_execution",
+      "evidence": "Confirmed manual local-materialization submits a provider-neutral kind, with identical USER_ACTION, origin=user, progress and cancellation contract; TaskRunner gives the same GLib.PRIORITY_DEFAULT final receipt to this kind. Historical kobo-acquisition strings remain only inert bounded telemetry compatibility (no active producer or privileged scheduling).",
+      "tests": [
+        "tests/test_core_p0_1347_kobo_confirmed_per_account.py",
+        "tests/test_core_p0_1346_task_terminal_gtk_priority.py",
+        "tests/test_core_p1_1741_phase_metrics.py",
+        "tests/test_core_p0_981_plugin_task_trace_redaction.py"
+      ],
+      "pr": "#6005",
+      "in_ast_metric": false
+    },
+    {
       "id": "struct-metadata-broker-library-implicit-navigation",
       "original": "src/cifereca/brokers.py::MetadataBrokerImpl.library_entries(**options) may call service.library_entries() without identity",
       "original_classification": "navigation_dependent_legacy_read",
