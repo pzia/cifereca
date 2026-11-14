@@ -249,13 +249,6 @@ def main() -> int:
         if not state["geometry_hit"]:
             state["checkpoint"] = "widget_geometry"
             raise AssertionError("GTK native hit-test misses the intended control")
-        screen_x, screen_y = device.window_point(native, local_x, local_y)
-        state["geometry_onscreen"] = (
-            0 <= screen_x < args.width and 0 <= screen_y < 900
-        )
-        if not state["geometry_onscreen"]:
-            state["checkpoint"] = "widget_geometry"
-            raise AssertionError("XTEST target is outside physical Xvfb screen")
         # Prove that XTEST's physical cursor is over this native X11
         # surface, not merely inside GTK's *logical* hit test. A compositor
         # or another toplevel may obscure a geometrically valid target.
@@ -276,6 +269,35 @@ def main() -> int:
         ]
         x11.XQueryPointer.restype = C.c_int
         root = x11.XDefaultRootWindow(device.display)
+        # Gtk.Native.get_surface_transform() maps *surface -> widget*.
+        # XTEST needs the inverse map, widget -> physical X11 surface.
+        # The shared widget_point helper currently adds this offset; using
+        # that incorrect direction can hit the CSD rather than the button.
+        x11.XTranslateCoordinates.argtypes = [
+            C.c_void_p, C.c_ulong, C.c_ulong, C.c_int, C.c_int,
+            C.POINTER(C.c_int), C.POINTER(C.c_int),
+            C.POINTER(C.c_ulong),
+        ]
+        origin_x, origin_y, origin_child = (
+            C.c_int(), C.c_int(), C.c_ulong()
+        )
+        if not x11.XTranslateCoordinates(
+            device.display, xid, root, 0, 0,
+            C.byref(origin_x), C.byref(origin_y),
+            C.byref(origin_child),
+        ):
+            state["checkpoint"] = "widget_geometry"
+            raise AssertionError("GTK X11 surface origin unavailable")
+        surface_tx, surface_ty = native.get_surface_transform()
+        scale = int(widget.get_scale_factor())
+        screen_x = origin_x.value + round((local_x - surface_tx) * scale)
+        screen_y = origin_y.value + round((local_y - surface_ty) * scale)
+        state["geometry_onscreen"] = (
+            0 <= screen_x < args.width and 0 <= screen_y < 900
+        )
+        if not state["geometry_onscreen"]:
+            state["checkpoint"] = "widget_geometry"
+            raise AssertionError("XTEST target is outside physical Xvfb screen")
         def pointer_targets_native():
             parent, child = C.c_ulong(), C.c_ulong()
             rx, ry, wx, wy, mask = (
@@ -311,10 +333,10 @@ def main() -> int:
             C.byref(qrx), C.byref(qry), C.byref(qwx), C.byref(qwy),
             C.byref(qmask),
         )
-        surface_tx, surface_ty = native.get_surface_transform()
-        scale = int(widget.get_scale_factor())
-        logical_x = qwx.value / scale - surface_tx
-        logical_y = qwy.value / scale - surface_ty
+        # Surface coordinates must receive the transform to become GTK
+        # widget coordinates (the reverse of the XTEST screen conversion).
+        logical_x = qwx.value / scale + surface_tx
+        logical_y = qwy.value / scale + surface_ty
         native_hit = (
             native.pick(logical_x, logical_y, Gtk.PickFlags.DEFAULT)
             if queried else None
