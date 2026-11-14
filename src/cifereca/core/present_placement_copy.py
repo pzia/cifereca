@@ -16,6 +16,7 @@ def send_present_placement_copy(
     source_artifact_id: str, requesting_identity_id: str,
     expected_account_context_epoch: int,
     expected_source_context_epoch: int, confirmed: bool = False,
+    requester_identity: object = None, scope_current=None,
 ) -> dict[str, object]:
     """Copy exactly one locally present placement after explicit consent.
 
@@ -46,8 +47,13 @@ def send_present_placement_copy(
         return blocked
 
     try:
-        identity = service.current_identity
+        # The facade owns mutable profile navigation. This headless executor
+        # only holds its captured requester and a revocable callback, checked
+        # before locking, under the lock, and after final publication.
+        identity = requester_identity
         if (getattr(identity, "identity_id", None) != requesting_identity_id
+                or not callable(scope_current)
+                or scope_current() is not True
                 or service._account_context_epoch
                    != expected_account_context_epoch
                 or service._source_context_epoch
@@ -55,7 +61,7 @@ def send_present_placement_copy(
             return {**blocked, "reason_code": "local_send_context_revoked"}
 
         with InterProcessLock(acquisition_lock_file()) as shared_lock:
-            if (service.current_identity is not identity
+            if (scope_current() is not True
                     or service._account_context_epoch
                        != expected_account_context_epoch
                     or service._source_context_epoch
@@ -92,7 +98,7 @@ def send_present_placement_copy(
 
             # No file paths or provider/account identifiers leave the Core
             # boundary. A transfer does not assert or retry any supplier loan.
-            if (service.current_identity is not identity
+            if (scope_current() is not True
                     or service._account_context_epoch
                        != expected_account_context_epoch
                     or service._source_context_epoch
