@@ -1180,6 +1180,11 @@ class LibraryService:
         return provider_sessions._provider_plugin_status(self, provider_id)
 
     def _provider_enabled_for_identity(self, provider_id: str, identity_id: str | None = None) -> bool:
+        # Historical no-argument callers remain supported at the synchronous
+        # facade boundary only. Core provider policy never reads UI state.
+        if identity_id is None:
+            current = self.current_identity
+            identity_id = getattr(current, "identity_id", None)
         return provider_sessions._provider_enabled_for_identity(self, provider_id, identity_id)
 
     def provider_descriptors(self):
