@@ -398,11 +398,12 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
     canonical entitlement metadata; backup_items is historical only and
     must never be queried to decorate a current placement.
     """
-    identity_id = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-    # A recent-acquisitions view belongs to one profile, never a union.
-    # Unscoped v0.7 local placements belong only to the default identity,
-    # exactly as in library_entries(); SQLite ownership remains unchanged.
-    if not identity_id:
+    # A Core read must be admitted for one exact identity. GTK navigation
+    # cannot supply an implicit profile to a queued or headless consumer.
+    # Historical unscoped v0.7 placements remain visible only through an
+    # explicit request for the default identity (see below); never rewrite
+    # their persisted owner to satisfy an unscoped request.
+    if type(identity_id) is not str or not identity_id.strip():
         return []
     default_identity_id = self.identities[0].identity_id if self.identities else None
     # A catalogue row is descriptive metadata, not a physical ownership

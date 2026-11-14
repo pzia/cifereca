@@ -151,6 +151,22 @@
       ],
       "pr": "#6015",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-core-recent-acquisitions-navigation-fallback",
+      "original": "src/cifereca/core/library_projection.py::recent_acquisitions(identity_id=None) derives selected current_identity at read time",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "exact nonblank identity_id at LibraryService/GUI caller boundary, fail-closed [] otherwise",
+      "classification": "removed_implicit_navigation_recent_read",
+      "evidence": "Deleted read of current_identity from recent-acquisition projection. Omitted/blank/malformed identity returns before invoking SQLite, placements, loan cache or provider metadata; existing GUI caller already passes explicit identity_id. Historical unowned placement remains scoped to the default identity only when explicitly requested.",
+      "tests": [
+        "tests/test_core_p0_5851_recent_explicit_identity.py::test_recent_unscoped_read_never_infers_navigation_or_touches_storage",
+        "tests/test_core_p0_5851_recent_explicit_identity.py::test_recent_requires_valid_explicit_identity_without_navigational_fallback",
+        "tests/test_core_p0_2847_recent_live_placements.py",
+        "tests/test_core_p0_2797_recent_exact_origin_covers.py"
+      ],
+      "pr": "#6019",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
