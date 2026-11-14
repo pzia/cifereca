@@ -161,7 +161,7 @@ def _history_search_queries(cls, title: str) -> list[str]:
     return out[:3]
 
 
-def resolve_history_thumbnail(self, provider: str, record_id: str | None, title: str, author: str | None=None, year: str | None=None, default_url: str | None=None, *, account: Account | None=None) -> tuple[str | None, str]:
+def resolve_history_thumbnail(self, provider: str, record_id: str | None, title: str, author: str | None=None, year: str | None=None, default_url: str | None=None, *, account: Account) -> tuple[str | None, str]:
     """Résout une couverture manquante de l'historique via le catalogue.
 
     0.2.6 corrige deux défauts de 0.2.5 : les résultats négatifs ne sont
@@ -170,10 +170,9 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
     recherche. Une notice fiable sans image est enrichie via ``holdings``
     *avec l'identifiant issu de Search.svc*, qui est exploitable.
     """
-    # Pin the exact borrower before cache access. Catalogue cover URLs may
-    # carry account-specific tokens, so the old provider/title-only cache
-    # namespace cannot be shared between independent Core clients.
-    account = self.current_account if account is None else account
+    # Account admission is performed by the synchronous facade or explicit
+    # Core caller. A worker cannot fall back to mutable GTK-selected state
+    # after TaskRunner dispatch. Catalogue URLs may contain borrower tokens.
     if (type(account) is not Account
             or type(account.identity_id) is not str or not account.identity_id
             or type(account.provider_id) is not str or not account.provider_id

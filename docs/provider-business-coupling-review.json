@@ -499,6 +499,22 @@
       ],
       "pr": "#6028",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-history-cover-worker-navigation-fallback",
+      "original": "core.library_projection.resolve_history_thumbnail(account=None) chose self.current_account after entry, potentially resolving a private cover under a different borrower",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "LibraryService.resolve_history_thumbnail snapshots current_account at synchronous method admission; extracted worker demands pinned Account keyword-only",
+      "classification": "removed_implicit_navigation_history_cover_worker",
+      "evidence": "The extracted Core worker has no current_account fallback. Invalid or absent exact borrower fails before touching cache, session or private cover URL. The original public LibraryService signature remains unchanged; explicit direct-worker requests can run independently of GTK selection.",
+      "tests": [
+        "tests/test_core_p0_5975_history_cover_explicit_account.py",
+        "tests/test_core_p0_5851_history_cover_scope.py",
+        "tests/test_history_covers.py",
+        "tests/test_core_p0_1143_history_cover_error_redaction.py"
+      ],
+      "pr": "#6034",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
