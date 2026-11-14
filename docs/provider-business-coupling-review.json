@@ -835,6 +835,23 @@
       "in_ast_metric": false
     },
     {
+      "id": "struct-selected-source-offers-headless-owner-and-context-epoch",
+      "original": "Shared Core selected_source_offer and owned_library_download read mutable service.current_identity several times while selecting a private owned source, and _resolve checked GTK navigation during canonical execution; an A-to-B-to-A transition could restore the same identity label between operations",
+      "original_classification": "navigation_dependent_private_offer_selection_and_delivery_read",
+      "replacement": "LibraryService.owned_library_download_target and LibraryService.obtain_search_item capture the active owner exactly at their public synchronous boundary. Core selected source, observed catalogue and owned-library workers require that explicit owner and never read GTK navigation. SourceOfferTarget pins the monotone account context epoch; _resolve checks it on every pre-execution/under-lock callback and rejects A-to-B-to-A even if the identity string is restored. Provider/credential/account/session/branch/typed delivery and permission checks remain independently required.",
+      "classification": "removed_selected_source_navigation_reads_after_admission",
+      "evidence": "Synthetic headless unknown provider with a poisoned current_identity getter, exact-identity and duplicate-origin guards, non-lookup refusal for missing identity, A-to-B-to-A epoch revocation and facade post-selection fencing. Existing source-offer and canonical delivery regressions remain gates. No right minted, no legacy direct GET fallback.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_selected_offers.py",
+        "tests/test_core_p0_5054_selected_source_offer_generic.py",
+        "tests/test_core_p0_5054_owned_future_provider_ambiguity.py",
+        "tests/test_core_p0_5054_observed_private_library_origin.py",
+        "tests/test_core_p0_5054_numilog_legacy_writer_retired.py"
+      ],
+      "pr": "#6089",
+      "in_ast_metric": false
+    },
+    {
       "id": "struct-manual-lender-readiness-headless-owner",
       "original": "Core manual_borrow_available and manual_borrow_diagnostic consulted mutable service.current_identity as an implicit borrower selection while assessing a scoped, read-only manual loan. The generic provider policy bridge duplicated that implicit navigation.",
       "original_classification": "navigation_dependent_manual_borrow_readiness",

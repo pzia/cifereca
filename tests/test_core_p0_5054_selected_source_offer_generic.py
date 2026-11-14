@@ -82,7 +82,7 @@ def test_passive_target_scopes_one_exact_account_and_no_supplier_get(monkeypatch
     monkeypatch.setattr(selection, "has_complete_delivery_abi", lambda _session: True)
     target = select_source_offer_target(
         service, provider_id="fictional-books",
-        credential_id="credential-A", item_id="edition-1",
+        credential_id="credential-A", item_id="edition-1", identity_id="reader",
     )
     assert type(target) is SourceOfferTarget
     assert target.entitlement_id is None
@@ -90,7 +90,7 @@ def test_passive_target_scopes_one_exact_account_and_no_supplier_get(monkeypatch
     assert seen and all(row[0] is account and row[1] is session for row in seen)
     assert select_source_offer_target(
         service, provider_id="fictional-books",
-        credential_id="foreign", item_id="edition-1",
+        credential_id="foreign", item_id="edition-1", identity_id="reader",
     ) is None
     service.accounts.append(Account(
         identity_id="reader", provider_id="fictional-books",
@@ -98,7 +98,7 @@ def test_passive_target_scopes_one_exact_account_and_no_supplier_get(monkeypatch
     ))
     assert select_source_offer_target(
         service, provider_id="fictional-books",
-        credential_id="credential-A", item_id="edition-1",
+        credential_id="credential-A", item_id="edition-1", identity_id="reader",
     ) is None
 
 

@@ -3298,7 +3298,12 @@ class LibraryService:
             # Even an invalid or partial declaration fails closed through the
             # selected-source validator; it must never downgrade to legacy GET.
             from .core.selected_owned_search import obtain_selected_owned
-            return obtain_selected_owned(self, item)
+            selected = self.current_identity
+            epoch = self._account_context_epoch
+            return obtain_selected_owned(
+                self, item, identity_id=getattr(selected, "identity_id", None),
+                expected_epoch=epoch,
+            )
         return MaterializationCoordinator(
             acquire=self.acquire_direct_item,
             index_path=self.catalog_index_path,
@@ -3307,10 +3312,31 @@ class LibraryService:
 
     def owned_library_download_target(self, entry):
         from .core.owned_library_download import owned_library_download_target
-        return owned_library_download_target(self, entry)
+        # The facade alone reads navigation. A changed selection, including
+        # A→B→A, cannot publish an action target from an earlier projection.
+        selected = self.current_identity
+        epoch = self._account_context_epoch
+        target = owned_library_download_target(
+            self, entry, identity_id=getattr(selected, "identity_id", None),
+            expected_epoch=epoch,
+        )
+        if (self.current_identity is not selected
+                or self._account_context_epoch != epoch):
+            return None
+        return target
 
     def obtain_owned_library_item(self, target):
-        from .core.owned_library_download import obtain_owned_library_item
+        from .core.owned_library_download import (
+            OwnedDownloadRejected, obtain_owned_library_item,
+        )
+        from .core.selected_source_offer import SourceOfferTarget
+        # A caller-supplied target is not a substitute for the active profile
+        # at this public action boundary. Once admitted, the Core worker
+        # relies only on exact source evidence and the pinned account epoch.
+        if type(target) is SourceOfferTarget:
+            selected = self.current_identity
+            if getattr(selected, "identity_id", None) != target.identity_id:
+                raise OwnedDownloadRejected("owned_download_unavailable")
         return obtain_owned_library_item(self, target)
 
     def prepare_direct_download(self, item: SearchResult) -> tuple[Path, str]:
