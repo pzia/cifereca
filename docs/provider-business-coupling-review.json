@@ -587,6 +587,21 @@
       ],
       "pr": "#6040",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-session-resolver-implicit-current-account-worker",
+      "original": "core.provider_sessions._session_for_account(account=None) silently read self.current_account when called from a Core worker; services.pnb_preferences resolved a session and then reread mutable GTK current_account for the provider call",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "Require a typed exact Account at the worker boundary; LibraryService facade snapshots the selected account at synchronous method entry, and pnb_preferences passes that same admitted account to session resolution and provider preferences",
+      "classification": "removed_implicit_navigation_session_resolution_worker",
+      "evidence": "Core worker rejects missing/untyped borrower before touching the session cache, and two-profile tests demonstrate no GTK navigation substitution. Preferences never pair Alice session with Bob account after a navigation switch.",
+      "tests": [
+        "tests/test_core_p0_5975_session_resolver_explicit_account.py",
+        "tests/test_core_p0_3171_canonical_sync_stage.py",
+        "tests/test_history_covers.py"
+      ],
+      "pr": "#6042",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
