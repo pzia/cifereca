@@ -978,7 +978,7 @@ def test_existing_account_malformed_owner_cannot_rebind_to_first_profile(
     )
     values["accounts"] = [item]
     before = deepcopy(config.data)
-    with pytest.raises(SettingsValidationError, match="Identité du compte fournisseur vide"):
+    with pytest.raises(SettingsValidationError, match="Origine du compte fournisseur incohérente"):
         validate(editor, descriptors={"provider.future": descriptor("provider.future")})
     assert config.data == before and not config.path.exists()
 
