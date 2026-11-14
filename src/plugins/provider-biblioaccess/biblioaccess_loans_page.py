@@ -22,6 +22,11 @@ MAX_CANDIDATES = 128
 MAX_LOAN_ROWS = 128
 _MAX_TEXT = 512
 _ROW_CLASS = re.compile(r"JSProductRow-([0-9]{1,18})")
+_PAGINATION_CLASSES = frozenset({
+    "pagination", "pager", "paging", "load-more", "loadmore",
+    "next-page", "nextpage",
+})
+_PAGE_QUERY = re.compile(r"(?:^|&)(?:page|p|pageindex|offset)=[0-9]+(?:&|$)", re.I)
 
 
 class LoanPageError(ValueError):
@@ -61,6 +66,7 @@ class LoanPageCandidates:
     page_loan_row_count: int = 0
     page_loan_row_partial_count: int = 0
     logout_form_observed: bool = False
+    pagination_observed: bool = False
     _loan_rows: tuple[ObservedLoanRow, ...] = field(
         default=(), repr=False, compare=False,
     )
@@ -122,11 +128,35 @@ class _ObservedRows(HTMLParser):
         self.rows = []
         self.partial_rows = 0
         self.logout_form_observed = False
+        self.pagination_observed = False
         self._seen_refs = set()
 
     def handle_starttag(self, tag, attrs):
         values = dict(attrs)
         classes = values.get("class", "").split()
+        # A visible paginator/load-more means one MyLoans GET cannot prove
+        # the end of the inventory. Never follow these links implicitly.
+        if tag in {"a", "link", "nav", "ul", "button", "div"}:
+            lowered = {value.casefold() for value in classes}
+            if lowered & _PAGINATION_CLASSES:
+                self.pagination_observed = True
+            rel = values.get("rel")
+            if type(rel) is str and "next" in rel.casefold().split():
+                self.pagination_observed = True
+            label = values.get("aria-label")
+            if type(label) is str and label.casefold() in {"next page", "page suivante"}:
+                self.pagination_observed = True
+            href = values.get("href")
+            if type(href) is str:
+                try:
+                    target = urlsplit(urljoin(MY_LOANS_URL, href))
+                    if (target.scheme == "https"
+                            and target.hostname == "www.biblioaccess.com"
+                            and target.path == "/1409/Catalog/MyLoans"
+                            and _PAGE_QUERY.search(target.query)):
+                        self.pagination_observed = True
+                except ValueError:
+                    pass
         if tag == "form" and (
             values.get("id") == "logoutForm"
             and values.get("method", "").lower() == "post"
@@ -271,6 +301,7 @@ def inspect_myloans_html(html: str) -> LoanPageCandidates:
         page_loan_row_count=len(rows.rows),
         page_loan_row_partial_count=rows.partial_rows,
         logout_form_observed=rows.logout_form_observed,
+        pagination_observed=rows.pagination_observed,
         _loan_rows=tuple(rows.rows),
         _book_ids=tuple(parser.urls),
         _book_urls=tuple(parser.urls.items()),
