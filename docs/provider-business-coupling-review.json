@@ -180,21 +180,6 @@
       "rationale": "An active mandatory safety veto; removing provider comparison now would permit a destructive implicit GET and cannot be credited as decoupling"
     },
     {
-      "id": "site-5beae61d97f662122eedd8d8",
-      "classification": "must_migrate",
-      "journey": "Kobo DRM acquisition recipe dispatch",
-      "productive_caller": "LibraryService.execute_acquisition_request -> runtime.kobo-adept.download_request for source.type=kobo",
-      "effect": "Core selects a concrete runtime service from a source brand; can execute DRM download after admission and persistence policy checks elsewhere",
-      "authority": "Hardcoded Core runtime.kobo-adept plugin service ID, not an installed generic DRM recipe capability",
-      "replacement_contract": "Versioned negotiated DRM execution capability/registry bound to active plugin producer, selected by typed recipe without Core supplier switch",
-      "tests": [
-        "tests/test_core_p0_3252_kobo_runtime_dispatch.py",
-        "tests/test_core_acquisition_no_injected_runtime_bypass.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Live provider-named dispatch still executes. Cannot rename to a generic helper and claim removal without migrating actual runtime selection"
-    },
-    {
       "id": "site-dd9fadf5918f4eb2fda40376",
       "classification": "safety_guard_pending_contract",
       "journey": "v3 historical backup import during SQLite schema migration",
@@ -724,6 +709,22 @@
       ],
       "pr": "#6059",
       "in_ast_metric": false
+    },
+    {
+      "id": "site-5beae61d97f662122eedd8d8",
+      "original": "src/cifereca/services.py::LibraryService.execute_acquisition_request `if source_type == 'kobo'` selected hardcoded runtime.kobo-adept.download_request for Kobo KDRM recipe",
+      "original_classification": "must_migrate",
+      "replacement": "Versioned manifest declarations provider.runtime_acquisition_service and runtime.runtime_acquisition_providers, checked by provider_sessions.runtime_acquisition_binding for exact ready provider and runtime. The original source.type is a logical provider ID, never a runtime ID; no HTTP fallback. Runtime instance, reciprocal binding and registry generation rechecked after exactly one download_request.",
+      "classification": "removed_supplier_named_drm_dispatch",
+      "evidence": "Core no longer reads a concrete supplier name or plugin ID when executing a provider DRM acquisition recipe. The source and runtime must claim each other in installed descriptors, missing/foreign/disabled producer fails before any call, synthetic unrelated providers use the same path. Rebinding or same-service ABA during download rejects stale results before canonical publication. Existing physical artifact and SHA admission remains in canonical selected-delivery. Does not retire historical Kobo runtime itself or other supplier code.",
+      "tests": [
+        "tests/test_core_p0_5975_reciprocal_drm_dispatch.py",
+        "tests/test_core_p0_3252_kobo_runtime_dispatch.py",
+        "tests/test_core_acquisition_no_injected_runtime_bypass.py",
+        "tests/test_core_p0_5851_reciprocal_runtime_binding.py"
+      ],
+      "pr": "#6062",
+      "in_ast_metric": true
     }
   ],
   "guard_installations": [
