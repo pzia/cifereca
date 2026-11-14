@@ -59,20 +59,50 @@ def test_public_facade_pins_current_account_at_sync_boundary(monkeypatch):
     assert host.current_account is bob
 
 
-def test_pnb_preferences_reuses_admitted_account_across_session_resolution():
+def test_legacy_pnb_preferences_refuses_before_selected_account_is_used():
     alice, bob = account("alice", "a"), account("bob", "b")
     host = LibraryService.__new__(LibraryService)
     host.current_account = alice
-    seen = []
+    calls = []
 
     def session_for_account(admitted):
-        seen.append(("session", admitted))
+        calls.append(admitted)
         host.current_account = bob
-        return NS(digital_preferences=lambda applied: (
-            seen.append(("preferences", applied)) or {"borrower": applied.identity_id}
-        ))
+        return NS(digital_preferences=lambda applied: {"borrower": applied.identity_id})
 
     host._session_for_account = session_for_account
-    assert host.pnb_preferences() == {"borrower": "alice"}
-    assert seen == [("session", alice), ("preferences", alice)]
-    assert host.current_account is bob
+    with pytest.raises(ProviderConfigurationError, match="pnb_preferences_explicit_account_required"):
+        host.pnb_preferences()
+    assert calls == []
+    assert host.current_account is alice
+
+
+def test_legacy_pnb_preferences_does_not_read_gtk_selection():
+    class Headless:
+        @property
+        def current_account(self):
+            pytest.fail("retired GET inspected mutable GTK selection")
+
+        def _session_for_account(self, _account):
+            pytest.fail("retired GET called provider session")
+
+    with pytest.raises(ProviderConfigurationError, match="pnb_preferences_explicit_account_required"):
+        LibraryService.pnb_preferences(Headless())
+
+
+@pytest.mark.parametrize("selected", [
+    None, "", 0, {}, [], object(),
+    NS(identity_id="alice", provider_id="synthetic", credential_id="a"),
+    Account(identity_id="", provider_id="synthetic", credential_id="a"),
+    Account(identity_id="alice", provider_id="", credential_id="a"),
+    Account(identity_id="alice", provider_id="synthetic", credential_id=None),
+])
+def test_legacy_pnb_preferences_never_infers_any_selected_borrower(selected):
+    class Host:
+        current_account = selected
+
+        def _session_for_account(self, _account):
+            pytest.fail("legacy PNB preferences requested a provider GET")
+
+    with pytest.raises(ProviderConfigurationError, match="pnb_preferences_explicit_account_required"):
+        LibraryService.pnb_preferences(Host())

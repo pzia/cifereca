@@ -2359,10 +2359,8 @@ class LibraryService:
         )
 
     def pnb_preferences(self) -> dict[str, Any]:
-        # Selection could change during a provider request. Pass the same
-        # borrower to session resolution and the actual preferences reader.
-        admitted = self.current_account
-        return self._session_for_account(admitted).digital_preferences(admitted)
+        """Retired no-argument GTK account inference, kept for facade ABI."""
+        raise ProviderConfigurationError("pnb_preferences_explicit_account_required")
 
     def content_type_for(self, item: SearchResult) -> str:
         return self.acquisition.content_type_for(item)

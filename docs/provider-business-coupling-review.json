@@ -1145,6 +1145,21 @@
       ],
       "pr": "#6111",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-pnb-preferences-explicit-account-no-navigation",
+      "original": "LibraryService.pnb_preferences(self) was a no-argument legacy provider preferences GET which used service.current_account to choose the borrower and session. No installed productive caller is known; the frozen facade descriptor requires the old signature.",
+      "original_classification": "navigation_dependent_provider_preferences_get",
+      "replacement": "Retain the exact frozen pnb_preferences(self) signature but remove the entire account-resolution, session and provider GET behavior. The method now unconditionally refuses with pnb_preferences_explicit_account_required. Do not create an additional unscoped or insufficiently attested public GET; the installed provider Session.digital_preferences(Account) contract remains unchanged for properly admitted callers.",
+      "classification": "removed_implicit_navigation_provider_get_with_inert_facade",
+      "evidence": "Static installed callsite search found only the unused facade and legacy characterization. Frozen signature remains byte-for-byte; tests validate unconditional refusal across selected Accounts, a poisoned current_account getter and a session stub, and assert no session/read side effects. No new public GET or right is introduced.",
+      "tests": [
+        "tests/test_core_p0_5975_session_resolver_explicit_account.py",
+        "tests/test_library_service_facade_contract.py",
+        "tests/test_loan_reads_selection_independence.py"
+      ],
+      "pr": "#6112",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
