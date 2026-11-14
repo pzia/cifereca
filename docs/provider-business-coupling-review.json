@@ -211,7 +211,7 @@
         "tests/test_core_p0_3196_unscoped_library_fence.py::test_no_selected_identity_exposes_neither_account_and_does_not_scan",
         "tests/test_core_p0_3196_unscoped_library_fence.py::test_selected_identity_does_not_authorize_implicit_core_library_read"
       ],
-      "pr": "#TBD",
+      "pr": "#6031",
       "in_ast_metric": false
     }
   ],
