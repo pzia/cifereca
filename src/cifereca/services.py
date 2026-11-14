@@ -954,8 +954,15 @@ class LibraryService:
         return describe_adept_runtime(before, selected)
 
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:
-        target = identity_id or (self.current_identity.identity_id if self.current_identity else None)
-        return [account for account in self.accounts if target is None or account.identity_id == target]
+        """Enumerate exactly one requested owner, never all accounts or GTK state.
+
+        Keep the historical optional parameter for internal/ABI consumers,
+        but absence or invalidity is a deny-empty scope, not a wildcard.
+        """
+        if type(identity_id) is not str or not identity_id.strip():
+            return []
+        return [account for account in self.accounts if account.identity_id == identity_id]
+
 
     def sync_source_id(self, account: Account) -> str:
         account_id = str(account.unique_id or "").strip() or f"{account.provider_id}:{account.credential_id}:primary"

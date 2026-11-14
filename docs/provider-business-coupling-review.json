@@ -453,6 +453,21 @@
       ],
       "pr": "#6024",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-facade-accounts-for-identity-implicit-union",
+      "original": "src/cifereca/services.py::accounts_for_identity(identity_id=None) infers current_identity, then returns all accounts if none selected",
+      "original_classification": "navigation_dependent_legacy_read",
+      "replacement": "LibraryService.accounts_for_identity(identity_id) exact string match only, empty on omitted or malformed identity",
+      "classification": "removed_implicit_navigation_account_union",
+      "evidence": "Deleted both mutable GTK current_identity access and target-is-None all-accounts wildcard. Production callers explicitly pass the selected or admitted identity: loan refresh, sync coordination/projection, broker, provider discovery/enrichment. Public method signature remains callable, but omitted scope yields [] without exposing cross-profile account IDs or invoking storage/provider. A→B navigation cannot retarget an explicit request.",
+      "tests": [
+        "tests/test_core_p0_5975_accounts_for_identity_scope.py",
+        "tests/test_p0_3171_account_scope_v2.py",
+        "tests/test_core0933_refresh_navigation.py"
+      ],
+      "pr": "#6025",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
