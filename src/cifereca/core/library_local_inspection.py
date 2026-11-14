@@ -14,7 +14,7 @@ from .library_audit_broker import _run_scoped_audit, _unavailable
 from .library_evidence_scope import _public_provider_group
 from .library_inspection_cache import take_inspection_cache
 from .library_sqlite_freshness import sqlite_source_stamp
-from .library_manual_link_preflight import review_local_pair, review_source_read_only
+from .library_manual_link_preflight import ManualLinkPreflight, review_source_read_only
 
 # Generic scopes only. Provider facets are derived from the audited cases,
 # never from a Core-owned list of installed suppliers.
@@ -1376,7 +1376,7 @@ class LocalInspection:
         if (not self.valid() or type(right_key) is not str
                 or type(file_key) is not str
                 or len(right_key) > 128 or len(file_key) > 128):
-            return review_local_pair(None, None, audit_complete=False)
+            return ManualLinkPreflight("unavailable", ("selection_unavailable",))
         right = self._cases.get(right_key)
         file = self._cases.get(file_key)
         if (right is None or file is None
@@ -1387,7 +1387,7 @@ class LocalInspection:
                 or 'confirmed_link' in file.states
                 or not right_key.startswith('right:')
                 or not file_key.startswith('file:')):
-            return review_local_pair(None, None, audit_complete=False)
+            return ManualLinkPreflight("unavailable", ("selection_unavailable",))
 
         # No manual right/file attachment writer survives the canonical
         # provenance cutover. Never convert snapshot receipts or equal bytes
