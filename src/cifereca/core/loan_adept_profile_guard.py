@@ -26,11 +26,21 @@ def check(
     # The loan may have crossed an external staging boundary since source
     # admission. Do not coerce plugin-owned coordinates, and never interpret
     # malformed provenance as a non-Paris source exempt from the grant guard.
-    if (type(loan.source_provider) is not str or not loan.source_provider
-            or type(loan.source_credential) is not str
-            or not loan.source_credential):
+    source_provider = loan.source_provider
+    source_credential = loan.source_credential
+    source_account_id = loan.source_account_id
+    if (type(source_provider) is not str or not source_provider
+            or type(source_credential) is not str or not source_credential
+            or type(source_account_id) not in (str, type(None))
+            or source_provider != ledger_base.get("provider_id")
+            or source_credential != ledger_base.get("credential_id")
+            or source_account_id != ledger_base.get("account_id")
+            or identity.identity_id != ledger_base.get("identity_id")):
+        # A provider-delivery hook may replace source coordinates between
+        # admission and ACSM staging. The initial ledger is the pinned
+        # transaction scope; a changed source must never skip borrower proof.
         borrower_code = "adept_borrower_ambiguous"
-    elif loan.source_provider.casefold() == "paris":
+    elif source_provider.casefold() == "paris":
         adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
             loan, connection_identity_id=identity.identity_id,
         )
