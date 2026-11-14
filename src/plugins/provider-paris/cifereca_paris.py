@@ -168,6 +168,9 @@ def _paris_loan_branch_coverage(rows, upstream, medium, failed):
 DESCRIPTOR = ProviderDescriptor(
     id="paris",
     existing_primary_loan_account_alias="primary",
+    # Navigation only: the provider, never Core, declares which configured
+    # public portal option takes precedence over catalogue_url/homepage.
+    public_catalogue_base_option_key="base_url",
     manual_borrow_policy=ManualBorrowPolicy(
         docbase="DILICOM", primary_borrower_id="",
         source_selection_key="primary_paris_connection_id",
