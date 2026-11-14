@@ -130,7 +130,7 @@ def _observed_free_library_json(response, credential_id, page):
             source_credential=credential_id, download_url=None,
             content_type='ebook', source_collection='public',
             owned=False, downloadable=False,
-            metadata={'metadata_evidence':'baen.free_library_category_json'},
+            metadata={'catalogue_evidence':'baen.free_library_category_json'},
         ))
     # A caller can never promote this page into an exhaustive q result:
     # page 1 has no independently verified HTTPX baseline; an omitted row
