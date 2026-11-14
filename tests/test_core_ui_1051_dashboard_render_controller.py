@@ -708,6 +708,7 @@ def test_p1_6002_native_fallback_shows_current_profile_only_unknown_capacity(mon
     bob = _descendant_labels(window.dashboard_cards.children[1])
     assert "Prêts numériques — disponibles" in alice
     assert any("Reste inconnu" in text and "plafond personnel 4" in text
+               and "Éligibilité à emprunter : non vérifiée" in text
                for text in alice)
     assert not any("Prêts numériques — disponibles" in text for text in bob)
     assert "PRIVATE-CREDENTIAL" not in str(alice)
