@@ -15,6 +15,142 @@
       ],
       "retirement_pr": "",
       "rationale": "Removal would lose truthful provider filtering in archived 29/10 loan-sync diagnostics; compatibility is restricted, descriptive and covered by negative tests"
+    },
+    {
+      "id": "site-105fb5dbf04033ddeb95cc3d",
+      "classification": "legacy_mutating_cutover",
+      "journey": "Config.load 0.8.1 historical multi-Kobo-account identity split",
+      "productive_caller": "Config initialization for persisted provider accounts, before descriptor attachment",
+      "effect": "Rewrites provider identity ownership and directory names on load for more than one Kobo connection in an identity; not a passive read",
+      "authority": "Legacy hardcoded provider identity heuristic, not an installed descriptor/cardinality attestation",
+      "replacement_contract": "Provider-neutral transactional cardinality migration using installed ProviderDescriptor.max_accounts_per_identity, with durable migration state and no silent borrower rebinding",
+      "tests": [
+        "tests/test_identities_081.py",
+        "tests/test_core_p0_5730_bootstrap_quarantine.py",
+        "tests/test_core_p0_5743_transactional_provider_limits.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Active supplier-specific configuration mutation must be removed only after v0.8.1 recovery fixtures and descriptor-neutral migrations preserve accounts without fabricating ownership."
+    },
+    {
+      "id": "site-9b7a3e896db6ff1e346f2365",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Reuse of initial ACSM staging for one previously admitted loan",
+      "productive_caller": "acsm_cache.reuse_initial during LibraryService.acquire_digital_loan",
+      "effect": "Rejects non-Paris/non-DILICOM/foreign borrower loan provenance before reusing a cached license token",
+      "authority": "Exact loan source, credential, owner, borrower, id and edition; current source literal is a veto, never evidence for a right",
+      "replacement_contract": "Typed current-loan staging provenance and borrower scope, attested by installed provider and Core after admission",
+      "tests": [
+        "tests/test_core_p0_3121_canonical_first_acsm.py",
+        "tests/test_automatic_loan_admission.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Do not remove the Paris-shaped veto while a forged same-account ACSM token could be mistaken for a valid initial staging artifact."
+    },
+    {
+      "id": "site-80fb78a9237ff64b17daf909",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Local inspection declaration of active BnF Web loan",
+      "productive_caller": "LocalInspection.__init__ declared_right_scopes on current entitlement SQLite snapshot",
+      "effect": "Allows a descriptive declaration only for one active loan with native nonempty loan_id; no acquisition or attachment permission",
+      "authority": "SQLite exact loan row, descriptive only; provider-specific exception is stricter than generic catalogue declarations",
+      "replacement_contract": "Provider-neutral typed loan-origin declaration policy in rights observation contract, preserving BnF missing/inactive-ID refusal",
+      "tests": [
+        "tests/test_core_p0_2797_source_aware_preflight.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Converting this veto to a generic rights check without a typed proof would permit non-loan or expired BnF declarations."
+    },
+    {
+      "id": "site-3b2694ab8fb302ff443ce689",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Numilog legacy local manual-pair diagnostic preflight",
+      "productive_caller": "LocalInspection.__init__ _manual_right_proofs for detailed readonly Numilog preflight",
+      "effect": "Builds local attested/ambiguous/ledger signature evidence only for Numilog; preview remains read-only and rejects all other sources",
+      "authority": "Provider-specific legacy receipt attested_source plus exact scope, acquisition ledger and artifact checksum",
+      "replacement_contract": "Versioned provider-owned manual-match evidence ABI or retirement of legacy manual pairing with equivalent no-write refusals",
+      "tests": [
+        "tests/test_core_p0_2797_source_aware_preflight.py",
+        "tests/test_core_p0_2714_manual_pair_preflight.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "The diagnostic proof map is an executable supplier branch, but deleting it before a provider-neutral typed replacement would weaken ambiguity/refusal decisions."
+    },
+    {
+      "id": "site-8734b8047e04eb88d52753f3",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Offline reconciliation of existing purchases, rights and placements",
+      "productive_caller": "core.library_reconciliation.reconcile on a local SQLite/WAL image",
+      "effect": "Only confirms candidate existing rights with complete ledger, bytes and expected historical attested_source for Kobo or Numilog; never grants a new right",
+      "authority": "Canonical exact provider/account/edition/right/Artifact evidence and a bounded whitelist of legacy producer assertions",
+      "replacement_contract": "Versioned source-provenance classification map owned by provider contracts, preserving no-evidence/no-assumption behavior",
+      "tests": [
+        "tests/test_library_reconciliation.py",
+        "tests/test_core_p0_3196_w5_passive_v2_migration.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "The legacy producer whitelist protects private ownership interpretation and cannot be removed by mechanically replacing the literal list."
+    },
+    {
+      "id": "site-9a427643ffc95bcc036e10d7",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Automatic digital-loan admission pre-ADEPT owner and borrower validation",
+      "productive_caller": "core.loan_acquisition_admission.resolve called from LibraryService automatic loan acquisition",
+      "effect": "Invokes Paris ADEPT borrower-binding guard on an exact bound loan before any matching entitlement is selected",
+      "authority": "Durable source identity and borrower provenance plus ADEPT grant; not the current GTK account",
+      "replacement_contract": "Generic installed provider borrower-attestation policy with typed denial and same-source immutable admission lease",
+      "tests": [
+        "tests/test_core_p0_5851_loan_admission_owner_scope.py",
+        "tests/test_automatic_loan_admission.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Removing the guard before a supplier-neutral proof would enable cross-borrower ADEPT staging for Paris."
+    },
+    {
+      "id": "site-fa4141b996ceab0e1bd6be32",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Direct facade admission for automatic acquisition of Web-observed BnF loan",
+      "productive_caller": "LibraryService._acquire_active_loan_automatically, including calls outside opening_sync",
+      "effect": "Default-denies BnF Web ACSM GET before lock, filesystem, session or provider; explicit manual double confirmation remains separate",
+      "authority": "Provider-specific early safety veto in Core, backed independently by BnF ProviderSession.download_digital explicit_user_action contract",
+      "replacement_contract": "Fail-closed explicit-only loan acquisition admission capability enforced generically at facade and per-current plugin session, including synthetic dishonest/unknown adapters",
+      "tests": [
+        "tests/test_core_p0_2055_bnf_opening_guard.py",
+        "src/plugins/provider-bnf-pret/tests/test_explicit_token_success.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Opening-sync capability checks alone do not protect direct callers of the facade; must preserve refusal before any I/O while removing supplier discrimination."
+    },
+    {
+      "id": "site-9505ed058db59cf26b03c187",
+      "classification": "legacy_mutating_cutover",
+      "journey": "Legacy Kobo W2 manual source-materialization preview/execution",
+      "productive_caller": "core.source_materialization._source from SynchronizationBrokerImpl legacy manual materialization route",
+      "effect": "Routes only Kobo accounts to legacy backup_items-based confirmation and writer, with special borrower/session/consent checks",
+      "authority": "Historical Kobo backup manifest and legacy confirmation token, explicitly superseded for complete canonical A-to-B ABI",
+      "replacement_contract": "Canonical typed SourceReference/Offer/Delivery/Placement for exact source; retire remaining W2 writer when all supported scopes are covered",
+      "tests": [
+        "tests/test_source_materialization_confirmation.py",
+        "tests/test_core_p0_3196_residual_writer_surface.py",
+        "tests/test_core_p0_4858_manual_canonical_materialization.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Active supplier-specific legacy writer remains executable for partial ABI. Must physically retire it after cutover, without treating an archive as current ownership."
+    },
+    {
+      "id": "site-dd2ac28f46a8a720315de122",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Schema-v3 migration of historical backup_items into canonical tables",
+      "productive_caller": "Storage._migrate on opening pre-v3 SQLite databases",
+      "effect": "Skips Kobo v0.7 archive rows to avoid synthesizing entitlements/placements during schema migration while other legacy sources retain their historical replay",
+      "authority": "Hardcoded legacy archive-format boundary; no new Kobo right can originate in this migration",
+      "replacement_contract": "Versioned per-row legacy provenance policy or separately retired historical migration with tested old-database reopen/rollback",
+      "tests": [
+        "tests/test_core_p0_3196_w5_passive_v2_migration.py",
+        "tests/test_identities_081.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "This migration branch protects old user databases. It is not a removable active provider GET, but it does still execute on old schema and must be retained until equivalent safe migration exists."
     }
   ],
   "retirements": [
