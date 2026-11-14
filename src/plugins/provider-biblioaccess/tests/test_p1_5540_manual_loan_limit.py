@@ -135,7 +135,7 @@ def values(tmp_path, rows):
                 "original_options": deepcopy(item["options"]),
                 "original_account": deepcopy(item),
                 "option_fields": {
-                    "authenticated_sync": item["options"]["authenticated_sync"],
+                    "authenticated_sync": item["options"].get("authenticated_sync", "off"),
                     "manual_loan_limit": item["options"].get("manual_loan_limit", "4"),
                 },
             }
