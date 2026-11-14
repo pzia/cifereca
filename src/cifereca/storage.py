@@ -1549,6 +1549,46 @@ class Storage:
                         PRIMARY KEY(provider_id,credential_id,account_id)
                     )
                 """)
+                # Revocation is monotonic: a profile rotated away and back
+                # must not resurrect a previously explicit grant.
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_profile_update
+                    AFTER UPDATE OF profile_id ON adept_profile_bindings
+                    WHEN OLD.scope_type='identity'
+                      AND OLD.profile_id IS NOT NEW.profile_id
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE borrower_identity_id=OLD.scope_id;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_profile_delete
+                    AFTER DELETE ON adept_profile_bindings
+                    WHEN OLD.scope_type='identity'
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE borrower_identity_id=OLD.scope_id;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_connection_update
+                    AFTER UPDATE OF identity_id ON provider_connections
+                    WHEN OLD.identity_id IS NOT NEW.identity_id
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE provider_id=OLD.provider_id
+                          AND credential_id=OLD.credential_id;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_adept_grant_connection_delete
+                    AFTER DELETE ON provider_connections
+                    BEGIN
+                        DELETE FROM adept_borrower_grants
+                        WHERE provider_id=OLD.provider_id
+                          AND credential_id=OLD.credential_id;
+                    END
+                """)
                 cls._write_schema_version(db, 16)
                 db.execute("RELEASE SAVEPOINT migration_v16")
             except Exception:
