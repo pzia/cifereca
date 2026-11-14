@@ -268,3 +268,31 @@ def test_worker_closures_never_read_gtk_window_from_task_thread():
     assert re.search(r"(?<![A-Za-z_])current\(\)", discover_worker) is None
     assert "window." not in scan_worker
     assert "window." not in discover_worker
+
+
+def test_foreign_binding_with_duplicate_uuid_blocks_auto_selection(
+    tmp_path, monkeypatch,
+):
+    db, window, root = rig(tmp_path)
+    reads, _proofs = fake_kernel(monkeypatch, lambda: (volume(),))
+    owned = db.device_binding_get("reader-alice")
+
+    class AmbiguousBindings:
+        def device_binding_get(self, device_id):
+            return db.device_binding_get(device_id)
+
+        def device_bindings(self):
+            return [
+                owned,
+                {**owned, "identity_id": "bob", "device_id": "reader-bob"},
+            ]
+
+    assert _discover_mounted_binding(
+        storage=AmbiguousBindings(),
+        identity_id="alice",
+        device_id="reader-alice",
+        fingerprint=UUID,
+    ) is None
+    # A contaminated storage scope must be rejected before reading the
+    # physical kernel, not 'resolved' by one matching mounted volume.
+    assert reads == []
