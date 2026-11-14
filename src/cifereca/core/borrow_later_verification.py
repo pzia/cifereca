@@ -109,7 +109,7 @@ def _followup_readiness(reader, item: SearchResult) -> bool:
         return False
 
 
-def _pending_borrow_followup_scope(service, item: SearchResult, *, readiness):
+def _pending_borrow_followup_scope(service, item: SearchResult, *, readiness, identity_id: str | None = None):
     """Return one private exact claim, never an operation reference to the UI.
 
     This is a read-only lookup of a previously *consumed* borrow attempt.
@@ -118,7 +118,8 @@ def _pending_borrow_followup_scope(service, item: SearchResult, *, readiness):
     from .borrow_action_scope import borrow_claim_key
     from .loan_action_scope import _inert_session_accounts, _inert_session_state
 
-    identity = getattr(getattr(service, "current_identity", None), "identity_id", None)
+    # Only the caller can capture UI selection; this worker is headless.
+    identity = identity_id
     if (type(item) is not SearchResult
             or type(identity) is not str or not identity
             or item.medium != "digital"
@@ -162,12 +163,18 @@ def _pending_borrow_followup_scope(service, item: SearchResult, *, readiness):
         return None
 
 
-def borrow_followup_available(service, item: SearchResult, *, readiness) -> bool:
+def borrow_followup_available(
+    service, item: SearchResult, *, readiness, identity_id: str | None = None,
+) -> bool:
     """Inert local admission for one exact spent loan claim after restart."""
-    return _pending_borrow_followup_scope(service, item, readiness=readiness) is not None
+    return _pending_borrow_followup_scope(
+        service, item, readiness=readiness, identity_id=identity_id,
+    ) is not None
 
 
-def verify_pending_borrow_followup(service, item: SearchResult, *, readiness) -> dict[str, object]:
+def verify_pending_borrow_followup(
+    service, item: SearchResult, *, readiness, identity_id: str | None = None,
+) -> dict[str, object]:
     """Re-read a prior uncertain claim, never initiate or clear a loan request.
 
     The one-use operation ID is resolved internally from the exact durable
@@ -179,7 +186,9 @@ def verify_pending_borrow_followup(service, item: SearchResult, *, readiness) ->
             "retry_borrow": False, "mutated": False,
         }
 
-    pinned = _pending_borrow_followup_scope(service, item, readiness=readiness)
+    pinned = _pending_borrow_followup_scope(
+        service, item, readiness=readiness, identity_id=identity_id,
+    )
     if pinned is None:
         return blocked()
     account, operation_id = pinned
@@ -191,7 +200,9 @@ def verify_pending_borrow_followup(service, item: SearchResult, *, readiness) ->
     # An account can be disabled or replaced during provider I/O, even when
     # the underlying legacy session object remains registered. Never publish
     # a positive result after that change.
-    current = _pending_borrow_followup_scope(service, item, readiness=readiness)
+    current = _pending_borrow_followup_scope(
+        service, item, readiness=readiness, identity_id=identity_id,
+    )
     if (current is None or current[0] is not account
             or current[1] != operation_id
             or not _followup_readiness(readiness, item)):
