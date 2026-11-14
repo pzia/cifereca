@@ -249,7 +249,7 @@ def request_reader_usb_preview(window, button, *, Gtk, manual: bool = False) -> 
             from ..core.device_usb_dry_run import inspect_usb_dry_run
             # Worker thread: never interrogate GTK window/widget state.
             # Revalidate durable binding + configured library root here;
-            # all UI generations are checked on GTK callbacks via current().
+            # UI generations are rechecked on GTK callbacks only.
             if (not root_current()
                     or not _exact_binding(storage, identity, device, fingerprint)):
                 raise ValueError("reader scope changed")
