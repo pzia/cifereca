@@ -63,7 +63,9 @@ def test_facade_pins_one_profile_once_for_read_and_verification(monkeypatch):
     host.selected = bob
     host._account_context_epoch += 1
     assert LibraryService.verify_manual_borrow_followup(host, object())["status"] == "blocked"
-    assert seen == ["selected"] * 4
+    # The unavailable read short-circuits before the post-check, while the
+    # verification result is always checked once after its worker completes.
+    assert seen == ["selected"] * 3
     assert calls == ["alice", "bob"]
 
 
