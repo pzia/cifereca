@@ -18,6 +18,7 @@ from cifereca.providers.base import valid_account_option_url
 
 
 PROVIDER = "synthetic.url"
+_MISSING = object()
 
 
 def field(**kwargs):
@@ -36,7 +37,7 @@ def descriptor(spec=None):
     )
 
 
-def account(credential, identity, *, original=None, entered=None):
+def account(credential, identity, *, original=None, entered=_MISSING):
     original = original if original is not None else {"retired_flag": [True]}
     return {
         "id": credential, "provider": PROVIDER,
@@ -51,7 +52,7 @@ def account(credential, identity, *, original=None, entered=None):
             "options": deepcopy(original),
         },
         "option_fields": {"base_url": (
-            entered if entered is not None else original.get("base_url", "")
+            entered if entered is not _MISSING else original.get("base_url", "")
         )},
     }
 
