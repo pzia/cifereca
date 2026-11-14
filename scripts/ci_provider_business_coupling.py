@@ -26,6 +26,10 @@ REVIEW_FIELDS = frozenset({
     "id", "classification", "journey", "productive_caller", "effect",
     "authority", "replacement_contract", "tests", "retirement_pr", "rationale",
 })
+REACHABILITIES = frozenset({
+    "productive", "legacy_only", "unproven", "unreachable_proven",
+})
+
 DECISION_NODES = (
     ast.Import, ast.ImportFrom, ast.Compare, ast.Call, ast.Dict,
     ast.Match, ast.MatchValue, ast.MatchOr, ast.Subscript,
@@ -120,6 +124,17 @@ def _load_reviews(path: Path) -> dict[str, dict]:
                 or any(not isinstance(t, str) or not t.strip() for t in entry["tests"])
                 or not isinstance(entry["retirement_pr"], str)):
             raise ValueError("business_review_requires_traceable_evidence")
+        has_group = "decision_group_id" in entry
+        has_reachability = "reachability" in entry
+        if has_group != has_reachability:
+            raise ValueError("incomplete_business_decision_group")
+        if has_group:
+            import re
+            if (type(entry["decision_group_id"]) is not str
+                    or re.fullmatch(r"[a-z0-9][a-z0-9_.-]{2,127}",
+                                    entry["decision_group_id"]) is None
+                    or entry["reachability"] not in REACHABILITIES):
+                raise ValueError("invalid_business_decision_group")
         if entry["id"] in reviews:
             raise ValueError("duplicate_business_review_id")
         reviews[entry["id"]] = entry
@@ -171,6 +186,38 @@ def _load_reviewed_structural_evidence(path: Path) -> tuple[list[dict], list[dic
     return results[0], results[1]
 
 
+def _business_candidate_groups(sites: list[dict]) -> list[dict]:
+    """Conservative advisory roll-up, not automated runtime reachability.
+
+    Only a HUMAN-tagged decision_group_id can combine different AST sites;
+    all others have separate candidate buckets. A reviewed AST anchor without
+    a reviewed reachability trace remains group-unproven.
+    """
+    buckets: dict[str, list[dict]] = defaultdict(list)
+    for site in sites:
+        group_id = site.get("decision_group_id")
+        key = group_id if group_id else "unproven:" + site["id"]
+        buckets[key].append(site)
+    result = []
+    for key, rows in sorted(buckets.items()):
+        covered = all(
+            row["classification"] != "unclassified"
+            and row.get("decision_group_id") == key
+            and row.get("reachability") in REACHABILITIES - {"unproven"}
+            for row in rows
+        )
+        result.append({
+            "id": key,
+            "status": "reviewed" if covered else "unproven",
+            "site_ids": sorted(row["id"] for row in rows),
+            "classifications": sorted({row["classification"] for row in rows}),
+            "reachabilities": sorted({row.get("reachability", "unproven")
+                                      for row in rows}),
+            "reviewed_decision_group_id": covered,
+        })
+    return result
+
+
 def inventory(root: Path, *, registry: Path | None = None,
               base_sha: str | None = None, head_sha: str | None = None) -> dict:
     root = root.resolve()
@@ -196,6 +243,8 @@ def inventory(root: Path, *, registry: Path | None = None,
         if _dedicated_provider(path.relative_to(root)) is not None
     } | set(loc["vendor_named_modules_outside_legacy_dedicated_scope"]))
     classes = Counter(site["classification"] for site in sites)
+    groups = _business_candidate_groups(sites)
+    reviewed_groups = sum(g["status"] == "reviewed" for g in groups)
     total = len(sites)
     classified = total - classes["unclassified"]
     return {
@@ -206,6 +255,14 @@ def inventory(root: Path, *, registry: Path | None = None,
         "raw_ast_by_responsibility": raw["unique_lines_by_responsibility"],
         "ast_parse_errors": raw["parse_errors"],
         "candidate_sites": total,
+        "business_candidate_groups": groups,
+        "business_groups_inventoried": len(groups),
+        "business_groups_reviewed": reviewed_groups,
+        "business_groups_unproven": len(groups) - reviewed_groups,
+        "business_group_review_coverage_pct": (
+            round(100 * reviewed_groups / len(groups), 2)
+            if groups else 100.0
+        ),
         "active_business_decisions_to_migrate": classes["must_migrate"],
         "active_legacy_writers_to_retire": classes["legacy_mutating_cutover"],
         "safety_guards_pending_contract": classes["safety_guard_pending_contract"],
@@ -236,7 +293,10 @@ def inventory(root: Path, *, registry: Path | None = None,
             "functions must be reviewed before claiming 100% business coverage. "
             "A semantic fingerprint is relocation evidence, not proof of removal. "
             "Reviewed structural retirements and installed guards are human-authored "
-            "evidence only: their count is not a proven active-debt delta."
+            "evidence only: their count is not a proven active-debt delta. "
+            "Business candidate groups combine only explicitly human-tagged sites; "
+            "an ungrouped candidate or unproven runtime reachability is never credited "
+            "as reviewed, and the group inventory is not a complete call graph."
         ),
     }
 
@@ -311,6 +371,10 @@ def main(argv: list[str] | None = None) -> int:
                     "justified_retained", "unclassified", "review_coverage_pct",
                     "reviewed_structural_retirements_count",
                     "reviewed_guard_installations_count",
+                    "business_groups_inventoried",
+                    "business_groups_reviewed",
+                    "business_groups_unproven",
+                    "business_group_review_coverage_pct",
                     "dedicated_candidate_paths_count"):
             print(f"{key}: {result[key]}")
         if result["stale_reviews"]:
