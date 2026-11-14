@@ -342,9 +342,11 @@ Deux scénarios dédiés :
 - `python3 e2e/run.py --scenario reader-usb-pairing-1024`
 - `python3 e2e/run.py --scenario reader-usb-pairing-1366`
 
-Ils ouvrent le **vrai dialogue Adw.MessageDialog** depuis un **clic XTEST**
-sur le bouton Associer ; les bascules de mode expert sont aussi des clics
-XTEST. La liste utilise les vrais `Gtk.DropDown` et signaux
+Ils ouvrent le **vrai dialogue Adw.MessageDialog** depuis un clic XTEST
+sur le bouton Associer ; sur Xvfb sans gestionnaire de fenêtres, un
+**focus X11 natif** puis une activation clavier XTEST (Retour/Espace) sert
+de repli uniquement si les événements souris XTEST n'ont pas été reçus.
+Aucun signal GTK n'est simulé. La liste utilise les vrais `Gtk.DropDown` et signaux
 `notify::selected` du contrôleur de production. Le probe vérifie :
 0 périphérique (liste inactive, repli expert), 1 périphérique sans sélection
 automatique, plusieurs périphériques avec deuxième sélection, libellés et nom
