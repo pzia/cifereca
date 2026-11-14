@@ -399,3 +399,43 @@ def test_poststaging_stable_loan_and_edition_preserve_profile_selection():
     assert invoke() == ("identity-1", "reader-a")
     borrower.assert_called_once_with(loan, connection_identity_id="identity-1")
     store.assert_not_called()
+
+
+@pytest.mark.parametrize(("field", "replacement"), [
+    ("source_provider", "kobo"),
+    ("source_credential", "other-reader"),
+    ("source_account_id", "other-borrower"),
+    ("id", "other-loan"),
+    ("record_id", "other-edition"),
+])
+def test_poststaging_borrower_callback_cannot_change_source_or_edition(
+    field, replacement,
+):
+    """No staged ACSM can reach profile resolution with a changed Loan."""
+    invoke, store, borrower, resolver, profiles, loan, _opts = _fixture()
+
+    def mutate(*_args, **_kwargs):
+        setattr(loan, field, replacement)
+        return "identity-1", None
+
+    borrower.side_effect = mutate
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_called_once()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    receipt = store.call_args.args[0]
+    assert receipt["attention_code"] == "adept_borrower_ambiguous"
+    assert receipt["metadata"]["provider_loan_id"] == "loan-1"
+    assert receipt["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
+
+
+def test_nonparis_dispatch_never_calls_legacy_borrower_resolver():
+    """ADEPT routing leaves other providers on their connected identity."""
+    invoke, store, borrower, resolver, profiles, *_ = _fixture(provider="kobo")
+    assert invoke() == ("identity-1", "reader-a")
+    borrower.assert_not_called()
+    store.assert_not_called()
