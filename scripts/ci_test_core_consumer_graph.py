@@ -25,12 +25,15 @@ LOADERS = frozenset({
 
 def _root_module(module: str) -> str | None:
     parts = module.split(".")
-    if len(parts) == 2 and parts[0] == "tests" and parts[1].startswith("test_"):
+    if (len(parts) >= 2 and parts[0] == "tests"
+            and all(parts) and parts[-1].startswith("test_")):
         return module
     return None
 
 
-def _imports(source: str, *, is_root_test: bool) -> tuple[list[tuple[str, str, int]], list[int]]:
+def _imports(
+    source: str, *, is_root_test: bool, consumer_module: str | None = None,
+) -> tuple[list[tuple[str, str, int]], list[int]]:
     """Return (root-test module, mechanism, line) plus unresolved loader lines."""
     tree = ast.parse(source)
     edges: set[tuple[str, str, int]] = set()
@@ -51,25 +54,37 @@ def _imports(source: str, *, is_root_test: bool) -> tuple[list[tuple[str, str, i
                 if module:
                     edges.add((module, "import", node.lineno))
         elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                # Only imports in *root* test packages can refer to a
+                # relative Core fixture. A plugin's ".test_x" is local to
+                # that plugin, even if a root test has the same name.
+                if not is_root_test:
+                    continue
+                package = (consumer_module or "tests._unknown").split(".")[:-1]
+                if node.level > len(package):
+                    unknown.add(node.lineno)
+                    continue
+                prefix = ".".join(package[:len(package) - node.level + 1])
+                candidate = prefix + ("." + node.module if node.module else "")
+                module = _root_module(candidate)
+                if module:
+                    edges.add((module, "relative", node.lineno))
+                else:
+                    for alias in node.names:
+                        module = _root_module(candidate + "." + alias.name)
+                        if module:
+                            edges.add((module, "relative", node.lineno))
+                continue
             module = _root_module(node.module or "")
             if module:
                 edges.add((module, "from", node.lineno))
-            elif node.module == "tests":
+            elif node.module and (
+                node.module == "tests" or node.module.startswith("tests.")
+            ):
                 for alias in node.names:
-                    module = _root_module("tests." + alias.name)
+                    module = _root_module(node.module + "." + alias.name)
                     if module:
                         edges.add((module, "from_namespace", node.lineno))
-            elif is_root_test and node.level == 1 and (
-                not node.module or node.module.startswith("test_")
-            ):
-                module = _root_module("tests." + (node.module or ""))
-                if module:
-                    edges.add((module, "relative", node.lineno))
-                elif not node.module:
-                    for alias in node.names:
-                        module = _root_module("tests." + alias.name)
-                        if module:
-                            edges.add((module, "relative", node.lineno))
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if any(isinstance(t, ast.Name) and t.id == "pytest_plugins" for t in targets):
@@ -145,7 +160,7 @@ def _local_plugin_helper_imports(
     return sorted(links)
 
 def inventory(root: Path = ROOT) -> dict:
-    root_tests = sorted((root / "tests").glob("test_*.py"))
+    root_tests = sorted((root / "tests").glob("**/test_*.py"))
     plugin_tests = sorted((root / "src/plugins").glob("*/tests/**/*.py"))
     # Include support modules as well as test_*.py: an imported helper can
     # itself depend on root tests, even if pytest does not collect it.
@@ -157,13 +172,17 @@ def inventory(root: Path = ROOT) -> dict:
     missing_edges: list[dict] = []
     errors: list[dict] = []
     root_modules = {
-        "tests." + p.stem: p.relative_to(root).as_posix() for p in root_tests
+        ".".join(p.relative_to(root).with_suffix("").parts):
+        p.relative_to(root).as_posix() for p in root_tests
     }
     plugin_modules = {}
     for source in plugin_tests:
         path = source.relative_to(root)
-        if len(path.parts) == 5 and path.name.startswith("test_"):
-            plugin_modules[(path.parts[2], "tests." + source.stem)] = path.as_posix()
+        if len(path.parts) >= 5 and path.name.startswith("test_"):
+            module_parts = source.relative_to(
+                root / "src/plugins" / path.parts[2] / "tests"
+            ).with_suffix("").parts
+            plugin_modules[(path.parts[2], "tests." + ".".join(module_parts))] = path.as_posix()
     adjacency: dict[str, set[str]] = {}
     plugin_direct: dict[str, set[str]] = {}
     plugin_helpers: dict[str, set[str]] = {}
@@ -176,6 +195,8 @@ def inventory(root: Path = ROOT) -> dict:
         try:
             found, unknown = _imports(
                 source.read_text(encoding="utf-8"), is_root_test=owner == "root_tests",
+                consumer_module=path.removesuffix(".py").replace("/", ".")
+                if owner == "root_tests" else None,
             )
         except (SyntaxError, UnicodeError, OSError) as exc:
             errors.append({"consumer": path, "reason": type(exc).__name__})
@@ -293,12 +314,18 @@ def plugin_replay_required(changed: list[str], root: Path = ROOT) -> bool:
     """
     tests = {
         path.strip() for path in changed
-        if path.strip().startswith("tests/test_")
+        if path.strip().startswith("tests/")
+        and Path(path.strip()).name.startswith("test_")
         and path.strip().endswith(".py")
     }
     if not tests:
         return False
-    modules = {"tests." + Path(path).stem for path in tests}
+    modules = {path.removesuffix(".py").replace("/", ".") for path in tests}
+    # Non-root test packages may not have a stable import namespace in all
+    # pytest modes. Until exact namespace proof exists, replay plugins for
+    # changes to nested Core tests rather than risk a false green.
+    if any(Path(path).parent != Path("tests") for path in tests):
+        return True
     graph = inventory(root)
     if graph["parse_errors"]:
         return True

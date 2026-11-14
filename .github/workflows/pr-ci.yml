@@ -171,7 +171,7 @@ jobs:
 
           # Root tests can export fixtures into plugin suites; a Core-only
           # replay is insufficient when a test module changes.
-          if matches '^tests/test_.*\.py$'; then
+          if matches '^tests/(.*/)?test_.*\.py$'; then
             plugin_replay="$(python3 scripts/ci_test_core_consumer_graph.py --plugin-replay-changed "$changed_file")"
             if [[ "$plugin_replay" != "none" ]]; then
               plugins=true
@@ -181,7 +181,7 @@ jobs:
           # Deleted root tests cannot be inspected at HEAD; conservatively
           # replay plugins to detect stale external imports.
           if git diff --name-status --no-renames "$BASE_SHA...$HEAD_SHA" -- tests/ | \
-             grep -Eq '^D[[:space:]]+tests/test_.*\.py$'; then
+             grep -Eq '^D[[:space:]]+tests/(.*/)?test_.*\.py$'; then
             plugins=true
             plugin_scope_all=true
           fi
