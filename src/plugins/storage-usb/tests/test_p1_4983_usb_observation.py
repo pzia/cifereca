@@ -262,3 +262,40 @@ def test_unicode_composed_decomposed_usb_aliases_are_rejected_before_io(tmp_path
     assert composed != decomposed
     with pytest.raises(ValueError, match="usb_observation_paths_collide"):
         observe_usb_files(tmp_path / "not-mounted", (composed, decomposed))
+
+@pytest.mark.parametrize("swapped_directory", ["root", "parent"])
+def test_missing_file_after_directory_swap_is_unverified(
+    tmp_path, monkeypatch, swapped_directory,
+):
+    """A detached USB FD must not establish absence at a new mount path."""
+    import cifereca_storage_usb as usb
+
+    root = tmp_path / "selected-usb"
+    root.mkdir()
+    managed = root / "managed"
+    managed.mkdir()
+    old_directory = root if swapped_directory == "root" else managed
+    relative = (
+        "absent.epub" if swapped_directory == "root" else "managed/absent.epub"
+    )
+    original_open = usb.os.open
+    swapped = False
+
+    def swap_before_missing_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if path == "absent.epub" and dir_fd is not None and not swapped:
+            swapped = True
+            old_directory.rename(tmp_path / "detached")
+            old_directory.mkdir()
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(usb.os, "open", swap_before_missing_open)
+    row = usb.observe_usb_files(root, (relative,))[0]
+    assert swapped
+    assert row.relative_path == relative
+    assert row.status == "unverified"
+    assert row.sha256 is None and row.size is None
+    # A replacement root or parent now exists, but was never pinned/attested.
+    assert old_directory.is_dir()
