@@ -14,7 +14,6 @@ import pytest
 from cifereca.core.library_audit import audit_library
 from cifereca.core.library_inventory import InventoryLimits
 from cifereca.core.library_local_inspection import LocalInspection
-from cifereca.core.library_manual_link_preflight import review_local_pair
 from tests.test_core_p0_2657_inspection_cases import six_numilog
 from tests.test_library_reconciliation import filesystem
 
@@ -206,75 +205,37 @@ def test_invalid_confirmed_foreign_selection_and_revocation_return_no_authority(
     assert session.preflight_manual_link(right.key, file.key).status == "unavailable"
 
 
-def test_action_guidance_is_current_but_never_authorizes_a_write():
-    # A fully attested review is STILL non-authorizing. The Core already
-    # implements a separate transaction; telling users to build one is stale.
-    signature = ("a" * 64, 123)
-    proof = {
-        "attested": True, "ambiguous": False,
-        "ledger_conflict": False, "ledger_count": 1,
-        "ledger_complete": True, "signature": signature,
-    }
-    selected = {"verified": True, "signature": signature}
-    eligible = review_local_pair(proof, selected, audit_complete=True)
-    assert eligible.status == "eligible_for_fresh_validation"
-    assert "transaction_unavailable" in eligible.codes
-    assert "Vérifier les preuves actuelles" in eligible.explanation
-    assert "confirmez explicitement" in eligible.explanation
-    assert "à construire" not in eligible.explanation
-    assert eligible.read_only is True
-    assert eligible.attachment_authorized is False
+def test_retired_preflight_has_no_receipt_verifier_or_action_guidance():
+    from cifereca.core import library_manual_link_preflight as boundary
 
-    missing = review_local_pair(
-        {**proof, "ledger_count": 0, "ledger_complete": False},
-        selected, audit_complete=True,
-    )
-    assert missing.status == "insufficient_evidence"
-    assert "acquisition_missing" in missing.codes
-    assert "si la paire est admissible".casefold() in missing.explanation.casefold()
-    assert missing.attachment_authorized is False
+    assert not hasattr(boundary, "review_local_pair")
+    assert not hasattr(boundary, "_strict_signature")
+    report = boundary.review_source_read_only(audit_complete=True)
+    assert report.status == "blocked"
+    assert report.codes == ("source_not_supported",)
+    assert report.read_only and not report.attachment_authorized
+    assert "rattachement manuel" in report.explanation
+    assert "livraison canonique" in report.explanation
+    assert "Vérifier les preuves actuelles" not in report.explanation
 
 
-def test_hostile_preflight_inputs_do_not_echo_values_or_raise():
-    secret = "PRIVATE_PATH /home/secret 9780306406157"
-    result = review_local_pair(
-        {"attested": True, "ledger_count": True, "signature": [secret, secret]},
-        {"verified": True, "signature": (secret, True)},
-        audit_complete=True, bibliographic_hint=True,
-    )
-    assert result.status == "blocked"
-    assert result.attachment_authorized is False
-    assert secret not in result.explanation + repr(result)
-
-
-@pytest.mark.parametrize("incomplete", [
-    {}, {"ambiguous": None}, {"ambiguous": 0}, {"ambiguous": "false"},
-    {"ledger_conflict": None}, {"ledger_conflict": 0},
-    {"ledger_conflict": "false"},
+@pytest.mark.parametrize("audit_complete,loan_inactive,bibliographic_hint", [
+    (True, False, False), (False, False, True),
+    (True, True, True), (False, True, False),
 ])
-def test_missing_or_malformed_private_negative_proof_cannot_be_reviewable(incomplete):
+def test_retired_preflight_never_produces_positive_pair_outcome(
+    audit_complete, loan_inactive, bibliographic_hint,
+):
+    from cifereca.core.library_manual_link_preflight import review_source_read_only
 
-    signature = ("a" * 64, 123)
-    right = {
-        "attested": True, "ambiguous": False,
-        "ledger_conflict": False, "ledger_count": 1,
-        "ledger_complete": True, "signature": signature,
-    }
-    file = {"verified": True, "signature": signature}
-    if not incomplete:
-        right.pop("ambiguous")
-        right.pop("ledger_conflict")
-    else:
-        right.update(incomplete)
-    manual = review_local_pair(right, file, audit_complete=True)
-    assert manual.status == "blocked"
-    assert not manual.attachment_authorized
-    if right.get("ambiguous") is not False:
-        assert "right_scope_ambiguous" in manual.codes
-    if right.get("ledger_conflict") is not False:
-        assert "acquisition_conflict" in manual.codes
-
-
+    report = review_source_read_only(
+        audit_complete=audit_complete, loan_inactive=loan_inactive,
+        bibliographic_hint=bibliographic_hint,
+    )
+    assert report.status == "blocked"
+    assert "source_not_supported" in report.codes
+    assert report.read_only and not report.attachment_authorized
+    assert "PRIVATE_PATH /home/secret" not in report.explanation
 
 
 def test_core_inspection_no_longer_branches_on_numilog_manual_rights():
