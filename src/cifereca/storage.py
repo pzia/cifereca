@@ -2808,19 +2808,11 @@ class Storage:
                         (identity_id, old_text),
                     ).fetchone() is not None:
                         raise ValueError("relocate_canonical_source_requires_core_relink")
-                # #3196 W5: ordinary file renames also must not fabricate
-                # a new current location for an old Kobo v0.7 receipt.
-                # Retain its original locator as passive historical evidence.
-                # A separate, already attested Core B requires its own
-                # exact-source relink. Non-Kobo compatibility providers still
-                # migrate their location as before.
-                # Scope/collision vetoes above remain active for Kobo.
-                if old_text != new_text and provider_id != "kobo":
-                    db.execute(
-                        "UPDATE backup_items SET local_path=? "
-                        "WHERE local_path=? AND provider_id=? AND identity_id=?",
-                        (new_text, old_text, provider_id, identity_id),
-                    )
+                # #3196 W5: backup_items is a passive historical archive
+                # for every provider. A filename normalization changes only
+                # canonical references, never a legacy receipt's unverified
+                # locator. Preserve all scope, collision and typed-source
+                # vetoes above; a separately attested relink owns canonical B.
                 if old_row:
                     old_placement_id = str(old_row[0])
                     placement_id = old_placement_id
