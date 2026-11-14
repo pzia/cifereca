@@ -141,6 +141,10 @@ def digital_loan_availability_lines(
         if record.personal_ceiling is not None:
             facts.append(f"plafond personnel {record.personal_ceiling} (indicatif)")
         facts.append(_UNKNOWN_REASONS.get(record.reason, "preuve absente"))
+        # Quota availability and operational eligibility are independent.
+        # Never let an advisory ceiling or a positive loan cache imply that
+        # this borrower can currently create another digital loan.
+        facts.append("Éligibilité à emprunter : non vérifiée")
         lines.append(name + " · Reste inconnu — " + " · ".join(facts))
     lines.append("Total non calculable · estimation ≠ autorisation d’emprunter.")
     return tuple(lines)
