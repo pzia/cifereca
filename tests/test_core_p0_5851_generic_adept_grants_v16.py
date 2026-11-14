@@ -10,10 +10,26 @@ from cifereca.storage import Storage
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 
 
+def _persist_account(store, *, provider="paris", credential="alice-paris"):
+    with store._lock, store._connect() as db:
+        rows = db.execute(
+            "SELECT connection_id FROM provider_connections "
+            "WHERE provider_id=? AND credential_id=?",
+            (provider, credential),
+        ).fetchall()
+    assert len(rows) == 1
+    store.provider_account_put({
+        "connection_id": rows[0][0], "provider_id": provider,
+        "credential_id": credential, "identity_id": "alice",
+        "account_id": "linked-123", "is_primary": False,
+    })
+
+
 def test_generic_grant_is_new_explicit_proof_not_legacy_projection(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     store = service.storage
     try:
+        _persist_account(store)
         assert store.schema_version() == 16
         service.bind_paris_borrower_adept(
             credential_id="alice-paris", account_id="linked-123",
@@ -54,6 +70,8 @@ def test_generic_grant_isolated_by_provider_with_same_credential_and_account(tmp
             "provider_id": "kobo", "credential_id": "alice-paris",
             "identity_id": "alice", "label": "Synthetic separate provider",
         })
+        _persist_account(store, provider="paris")
+        _persist_account(store, provider="kobo")
         base = dict(credential_id="alice-paris", account_id="linked-123",
                     connection_identity_id="alice",
                     borrower_identity_id="bob", profile_id="bob-profile",
@@ -83,6 +101,7 @@ def test_profile_rotation_and_connection_rebinding_invalidate_generic_grant(tmp_
     coords = dict(provider_id="paris", credential_id="alice-paris",
                   account_id="linked-123")
     try:
+        _persist_account(store)
         store.adept_borrower_grant_put(
             **coords, connection_identity_id="alice",
             borrower_identity_id="bob", profile_id="bob-profile", confirmed=True)
@@ -155,6 +174,7 @@ def test_connection_reassignment_revokes_grant_even_after_owner_restoration(tmp_
     coords = dict(provider_id="paris", credential_id="alice-paris",
                   account_id="linked-123")
     try:
+        _persist_account(store)
         store.adept_borrower_grant_put(
             **coords, connection_identity_id="alice",
             borrower_identity_id="bob", profile_id="bob-profile",
