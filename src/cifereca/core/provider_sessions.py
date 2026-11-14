@@ -1430,8 +1430,17 @@ def select_account(self, unique_id: str, provider_id: str | None=None, credentia
     return self.current_account
 
 
-def _session_for_account(self, account: Account | None=None) -> ProviderSession:
-    account = account or self.current_account
+def _session_for_account(self, account: Account) -> ProviderSession:
+    """Resolve a previously admitted exact borrower, never GTK navigation.
+
+    A delayed Core worker may not fill a missing account from current_account:
+    the latter can change between request admission and execution.
+    """
+    if (type(account) is not Account
+            or type(account.identity_id) is not str or not account.identity_id
+            or type(account.provider_id) is not str or not account.provider_id
+            or type(account.credential_id) is not str):
+        raise ProviderConfigurationError("account_session_explicit_owner_required")
     key = self._session_key(account.provider_id, account.credential_id)
     session = self._sessions.get(key)
     if session is None:
