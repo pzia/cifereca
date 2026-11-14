@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import adept_borrower
 from .adept_borrower import public_borrower_refusal_code
 from .loan_adept_profile_receipt import attention_receipt
 
@@ -49,14 +48,14 @@ def check(
     if not source_intact():
         # The durable acquiring receipt is the pinned transaction scope.
         borrower_code = "adept_borrower_ambiguous"
-    else:
-        adept_borrower_identity_id, borrower_code = adept_borrower.borrower_identity_for_loan(
-            self, loan, connection_identity_id=identity.identity_id,
+    elif loan.source_provider.casefold() == "paris":
+        adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+            loan, connection_identity_id=identity.identity_id,
         )
-        # An account/grant lookup may change the Loan after the first check.
-        # Do not resolve a profile under post-staging provenance drift.
-        if borrower_code is None and not source_intact():
-            borrower_code = "adept_borrower_ambiguous"
+    # The borrower/grant callback may mutate the staged loan after initial
+    # validation. Check the original transaction again before profile lookup.
+    if borrower_code is None and not source_intact():
+        borrower_code = "adept_borrower_ambiguous"
     # Only None means proven: a falsey malformed code must not select ADEPT.
     if borrower_code is not None:
         code = public_borrower_refusal_code(borrower_code)
