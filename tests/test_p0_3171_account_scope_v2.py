@@ -304,3 +304,23 @@ def test_broker_explicit_scope_rejects_wrong_types_without_core_side_effect():
             acquisition.eligible_accounts(item("cred-A"), identity_id=bad)
     assert core.account_reads == 0
     assert core.acquisitions == []
+
+
+def test_public_broker_protocols_and_implementations_have_no_implicit_identity():
+    """A future adapter cannot accidentally reintroduce optional UI scope."""
+    import inspect
+
+    from cifereca.plugin_api.brokers import AcquisitionBroker, IdentityBroker
+
+    for cls, method in (
+        (IdentityBroker, "accounts"),
+        (IdentityBrokerImpl, "accounts"),
+        (AcquisitionBroker, "eligible_accounts"),
+        (AcquisitionBrokerImpl, "eligible_accounts"),
+    ):
+        parameter = inspect.signature(getattr(cls, method)).parameters["identity_id"]
+        assert parameter.default is inspect.Parameter.empty
+        assert parameter.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
