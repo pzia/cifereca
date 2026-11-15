@@ -2,7 +2,7 @@
 
 A missing profile or borrower is not permission to infer A/B from a 0.7
 backup row. The scope-known legacy writer and recovery remain operational
-pending their coordinated cutover, and the other providers are unchanged.
+pending their coordinated cutover, and all providers now use the same archive-only contract.
 """
 from __future__ import annotations
 
@@ -131,15 +131,18 @@ def test_unbound_legacy_row_respects_existing_canonical_owner(tmp_path):
         store.close()
 
 
-def test_non_kobo_legacy_mirror_remains_active(tmp_path):
+def test_non_kobo_live_backup_is_also_archive_only(tmp_path):
     store = Storage(tmp_path / "library.sqlite")
     try:
+        before = _canonical(store)
         store.backup_put({
             **_row(identity="alice", account=None, status="complete"),
             "provider_id": "other",
         })
-        assert len(store.acquisitions(provider_id="other")) == 1
-        assert len(store.entitlements(provider_id="other")) == 1
+        assert store.backup_get("other", "vault", "edition")["status"] == "complete"
+        assert store.acquisitions(provider_id="other") == []
+        assert store.entitlements(provider_id="other") == []
+        assert _canonical(store) == before
     finally:
         store.close()
 
