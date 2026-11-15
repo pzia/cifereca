@@ -390,6 +390,9 @@ class UiBookListEntry:
     meta: str = ""
     badge: str = ""
     thumbnail_url: str | None = None
+    # Opaque Core-owned DocumentRef already furnished by an exact source.
+    # Never infer one from a plugin URL/ISBN/title or grant a permission.
+    cover_document_ref: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,6 +422,8 @@ class UiBookDetailPresentation:
     sections: tuple[DetailSection, ...] = ()
     actions: tuple[UiBookDetailAction, ...] = ()
     links: tuple[DocumentLink, ...] = ()
+    # Same opaque Core N2 association as the list; actions stay separate.
+    cover_document_ref: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
