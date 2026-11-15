@@ -165,10 +165,14 @@ class CoverView(Gtk.Overlay):
         # changing loader, URL or priority retains the normal cancellation.
         if (url and self._loader is loader and self._url == url
                 and self._priority == priority and self.spinner.get_visible()):
-            self.set_texture_applied_observer(on_texture_applied)
+            self._on_texture_applied = (
+                on_texture_applied if callable(on_texture_applied) else None
+            )
             return
         self.reset()
-        self.set_texture_applied_observer(on_texture_applied)
+        self._on_texture_applied = (
+            on_texture_applied if callable(on_texture_applied) else None
+        )
         if not url:
             self._show_missing()
             return
@@ -239,13 +243,12 @@ class CoverView(Gtk.Overlay):
             else:
                 self._show_missing()
         if (applied and generation == self._generation
-                and self._loader is loader and self._url
-                and self.picture.get_paintable() is not None):
+                and self._loader is loader and self._url):
             # A 'resolved' source or cache hit is NOT a GTK paint. Emit only
             # after GDK decoded the bytes and GTK accepted the texture, and
             # never for an obsolete/recycled cover generation. Observer
             # failures must not cause a forced re-download or hide the image.
-            observer = self._on_texture_applied
+            observer = getattr(self, "_on_texture_applied", None)
             if observer is not None:
                 try:
                     observer(self._url, path)
