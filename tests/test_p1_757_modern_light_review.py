@@ -42,6 +42,16 @@ def fixture(tmp_path: Path, *, width=64, height=40, stages=("dashboard",)):
     return folder
 
 
+def _regenerate_same_head_capture(folder: Path) -> None:
+    """A valid new screenshot with fresh screen.json digest but unchanged SHA."""
+    capture = folder / "00-dashboard-light.png"
+    Image.new("RGB", (64, 40), "red").save(capture)
+    index = folder / "screen.json"
+    report = json.loads(index.read_text(encoding="utf-8"))
+    report["screenshots"][0]["sha256"] = hashlib.sha256(capture.read_bytes()).hexdigest()
+    index.write_text(json.dumps(report), encoding="utf-8")
+
+
 def test_verified_synthetic_review_stays_private_and_never_auto_accepts(tmp_path):
     fixture(tmp_path)
     report = build_review(tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
@@ -185,6 +195,34 @@ def test_unreviewed_checklist_never_creates_verdict(tmp_path):
             tmp_path, sizes={64: (64, 40)}, stages=("dashboard",),
         )
     assert not (tmp_path / "modern-light-private-review" / "visual-review-verdict.json").exists()
+
+
+def test_same_head_recapture_cannot_reuse_completed_human_grid(tmp_path):
+    folder = fixture(tmp_path)
+    opts = {"sizes": {64: (64, 40)}, "stages": ("dashboard",)}
+    original = build_review(tmp_path, **opts)
+    checklist = _fill_private_review(tmp_path)
+    private_notes = checklist.read_bytes()
+    _regenerate_same_head_capture(folder)
+    # screen.json and its SHA-256 now agree: this is a fresh, valid GTK run.
+    verify_capture_folder(folder, width=64, size=(64, 40), stages=("dashboard",))
+    with pytest.raises(ValueError, match="même HEAD"):
+        build_review(tmp_path, **opts)
+    assert checklist.read_bytes() == private_notes
+    manifest = json.loads((checklist.parent / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["capture_fingerprint_sha256"] == original["capture_fingerprint_sha256"]
+
+
+def test_same_head_recapture_cannot_validate_stale_private_receipt(tmp_path):
+    folder = fixture(tmp_path)
+    opts = {"sizes": {64: (64, 40)}, "stages": ("dashboard",)}
+    build_review(tmp_path, **opts)
+    _fill_private_review(tmp_path)
+    _regenerate_same_head_capture(folder)
+    with pytest.raises(ValueError, match="même HEAD"):
+        module.verify_completed_review(tmp_path, **opts)
+    assert not (tmp_path / "modern-light-private-review"
+                / "visual-review-verdict.json").exists()
 
 
 def test_signed_originals_and_complete_human_grid_produce_private_bounded_receipt(tmp_path):
