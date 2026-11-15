@@ -1314,6 +1314,14 @@ class MainWindow(Adw.ApplicationWindow):
         # Bind the exact DTO, not just a potentially duplicated supplier ID.
         # An asynchronous cover for a prior homonymous/foreign row is refused.
         row._history_source_item = x
+        from .history_document_cover_bridge import exact_history_document_evidence
+        history_evidence = exact_history_document_evidence(self, x)
+        if history_evidence is not None:
+            # Register in N2 only when the GTK cell becomes visible. The
+            # History occurrence's own provider URL is source evidence;
+            # cached_history_cover() is NOT an authoritative book link.
+            row._cover_document_ref = history_evidence.document
+            row._cover_history_evidence = history_evidence
         self._attach_row_facets([row],{x.id:{'author':x.author,'source_provider':x.source_provider}},self.search_controls)
         # The history refresh may replace the cover or its fallback while
         # keeping the same upstream row ID. MasterDetailPage's append-fast
@@ -1328,6 +1336,10 @@ class MainWindow(Adw.ApplicationWindow):
             x.source_provider, x.source_credential,
             x.source_account_id, x.identity_id,
         )
+        if history_evidence is not None:
+            # A->B->A and history revision changes must force cell rebind
+            # even when the same public image URL remains on disk in N3.
+            row._public_row_content += (history_evidence,)
         return row
 
     def _rerender_history(self) -> None:
@@ -1348,9 +1360,27 @@ class MainWindow(Adw.ApplicationWindow):
             if item:
                 from dataclasses import asdict
                 from .history_cover_decision_bridge import history_cover_presentation
-                self.history_page.detail.show_history(
-                    history_cover_presentation(self, item)
+                from .history_document_cover_bridge import exact_history_document_evidence
+                active = getattr(
+                    getattr(self.service, "current_identity", None),
+                    "identity_id", None,
                 )
+                if (type(item.identity_id) is str and item.identity_id
+                        and item.identity_id != active):
+                    self.history_page.detail.empty(
+                        "Profil modifié",
+                        "Rouvrez l'historique pour le profil actif.",
+                    )
+                    return
+                presented = history_cover_presentation(self, item)
+                proof = exact_history_document_evidence(self, item)
+                renderer = getattr(
+                    self.history_page.detail, "show_history_document", None,
+                )
+                if proof is not None and callable(renderer):
+                    renderer(presented, cover_evidence=proof)
+                else:
+                    self.history_page.detail.show_history(presented)
                 self._add_facets(self.history_page.detail, asdict(item), self.search_controls)
                 self._add_local_book_actions(self.history_page.detail, asdict(item))
 
