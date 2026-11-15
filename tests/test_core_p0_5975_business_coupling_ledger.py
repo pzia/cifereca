@@ -276,9 +276,9 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
         "legacy-backup.w1-canonical-publication-veto",
         "legacy-backup.w1-owner-archive-protection",
     }
-    assert {row["reachability"] for row in reviews} == {
-        "legacy_only", "productive",
-    }
+    # The four remaining W1 anchors are historical-only; the productive
+    # W5 filename guard has been replaced by the neutral SourceReference gate.
+    assert {row["reachability"] for row in reviews} == {"legacy_only"}
     assert all(
         row["classification"] == "safety_guard_pending_contract"
         and row["effect"] and row["authority"] and row["replacement_contract"]
