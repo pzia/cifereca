@@ -31,6 +31,27 @@ SURFACES = {
         "P1_774_real_gtk_logical_hidpi_geometry", "p1_774_geometry",
     ),
 }
+# The primary pair shows ONE exact synthetic book. Supplementary paired
+# sheets show independent workflow states, NOT the same selected book.
+# Every stage is already captured by the real GTK/XTEST probes.
+WORKFLOW_STAGES = {
+    "filters": {
+        "search": ("07-response-facets", "response_facets_descriptive_and_scoped"),
+        "recommendations": (
+            "00b-keyboard-local-filter", "P1_774_real_gtk_xtest_keyboard_local_filter",
+        ),
+    },
+    "states": {
+        "search": (
+            "06-stale-local-reply-ignored", "stale_local_reply_ignored_after_query_edit",
+        ),
+        "recommendations": (
+            "08-exact-in-place-unverified-holdings",
+            "P1_4664_gtk_failure_preserves_core_actions",
+        ),
+    },
+}
+CAPTURES_PER_WIDTH = 2 * (1 + len(WORKFLOW_STAGES))
 REVIEW_AXES = (
     "layout_density", "filter_affordances", "keyboard_focus",
     "book_detail", "cover_consistency", "clipping", "partial_error_states",
@@ -53,10 +74,15 @@ def _regular(path: Path, *, limit: int | None = None) -> None:
 
 def _report_and_image(
     root: Path, width: int, size: tuple[int, int], surface: str,
+    *, workflow: str | None = None,
 ) -> tuple[str, Path, str, str]:
     from PIL import Image
 
     prefix, stage, field, backend, required_check, geometry_key = SURFACES[surface]
+    if workflow is not None:
+        if workflow not in WORKFLOW_STAGES:
+            raise ReviewError("Étape de comparaison UX inconnue")
+        stage, workflow_check = WORKFLOW_STAGES[workflow][surface]
     folder = root / f"{prefix}-{width}"
     if folder.is_symlink() or not folder.is_dir():
         raise ReviewError("Répertoire de capture absent ou lié")
@@ -92,31 +118,35 @@ def _report_and_image(
         report["checks"].get(required_check) is not True
     ):
         raise ReviewError("Preuve de géométrie GTK absente")
-    # Equal SHA/screens do not prove the same book. Both independent real
-    # probes assert the displayed Gtk.ListStore selection against the same
-    # exact *synthetic* source/edition before emitting this fixed receipt.
-    paired_check = (
+    # Only the principal pair certifies the SAME synthetic book. The
+    # additional workflow screens show distinct books/contexts and must
+    # never be conflated with the exact-edition receipt.
+    if workflow is not None:
+        if report["checks"].get(workflow_check) is not True:
+            raise ReviewError("État de parcours GTK non attesté")
+    else:
+        paired_check = (
         "P1_774_search_selected_same_synthetic_book"
         if surface == "search"
         else "P1_774_recommendations_selected_same_synthetic_book"
     )
-    heading_check = (
-        "P1_774_search_mapped_same_book_detail"
-        if surface == "search"
-        else "P1_774_recommendations_mapped_same_book_detail"
-    )
-    subject_check = (
-        "P1_4761_search_public_subject_in_real_gtk_detail"
-        if surface == "search"
-        else "P1_4761_recommendations_public_subject_in_real_gtk_detail"
-    )
-    if (report["checks"].get(paired_check) is not True
-            or report["checks"].get(heading_check) is not True
-            or report["checks"].get(subject_check) is not True
-            or report.get("p1_774_paired_book") != verified_fixture_receipt()):
-        raise ReviewError(
-            "Source/édition, détail GTK ou sujet commun non attesté"
+        heading_check = (
+            "P1_774_search_mapped_same_book_detail"
+            if surface == "search"
+            else "P1_774_recommendations_mapped_same_book_detail"
         )
+        subject_check = (
+            "P1_4761_search_public_subject_in_real_gtk_detail"
+            if surface == "search"
+            else "P1_4761_recommendations_public_subject_in_real_gtk_detail"
+        )
+        if (report["checks"].get(paired_check) is not True
+                or report["checks"].get(heading_check) is not True
+                or report["checks"].get(subject_check) is not True
+                or report.get("p1_774_paired_book") != verified_fixture_receipt()):
+            raise ReviewError(
+                "Source/édition, détail GTK ou sujet commun non attesté"
+            )
     geometry = report.get(geometry_key)
     if (not isinstance(geometry, dict)
             or set(geometry) != {
