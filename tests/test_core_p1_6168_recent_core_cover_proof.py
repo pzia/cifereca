@@ -63,7 +63,7 @@ def test_recent_core_exact_epub_proof_survives_physical_n3_eviction(prepared):
     facts = item["_exact_local_cover_evidence"]
     assert type(facts) is VerifiedLocalCoverEvidence
     assert facts.scope.identity_id == "alice"
-    assert facts.scope.source_key == pid
+    assert facts.scope.source_key == "artifact:" + artifact_id
     assert facts.scope.placement_id == pid
     assert facts.scope.artifact_id == artifact_id
     assert facts.verified_path == source
@@ -73,6 +73,38 @@ def test_recent_core_exact_epub_proof_survives_physical_n3_eviction(prepared):
     assert item["thumbnail_url"] == ORIGIN  # legacy descriptive URL only
     assert facts.candidates[0].url == ORIGIN
     assert not physical.exists()  # no Epub inspection or N3 extraction
+
+
+def test_recent_and_library_same_epub_produce_same_exact_documentref(prepared):
+    service, _, pid, artifact_id, _ = prepared
+    library = service.library_entries(identity_id="alice", scan=False)
+    recents = service.recent_acquisitions(identity_id="alice")
+    assert len(library) == len(recents) == 1
+    book = library[0]
+    acquired = recents[0]
+    assert book["key"] == "artifact:" + artifact_id
+    assert acquired["key"] == pid  # GTK visual identity remains Placement.
+    lib_proof = book["_exact_local_cover_evidence"]
+    recent_proof = acquired["_exact_local_cover_evidence"]
+    assert lib_proof.scope == recent_proof.scope
+    assert lib_proof.scope.placement_id == pid
+    assert lib_proof.scope.artifact_id == artifact_id
+    assert lib_proof.scope.identity_id == "alice"
+
+    from cifereca.gui.local_detail_cover import (
+        exact_local_detail_cover, exact_recent_detail_cover,
+    )
+    assert exact_local_detail_cover(
+        book, active_identity_id="alice",
+    ) is lib_proof
+    assert exact_recent_detail_cover(
+        acquired, active_identity_id="alice",
+    ) is recent_proof
+
+    # The exact source is visible to the common GTK list and detail paths;
+    # there is no ISBN, image URL or shared-SHA-only documentary join.
+    rows, _ = project_recent_rows(recents, row_factory=Row)
+    assert rows[0]._cover_document_ref == lib_proof.scope
 
 
 def test_recent_never_exposes_foreign_placement_or_private_epub_packet(prepared):
