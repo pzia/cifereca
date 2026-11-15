@@ -455,3 +455,32 @@ def test_adept_settings_and_runtime_provenance_ast_review_is_traceable():
         assert row["replacement_contract"] and row["authority"]
         assert all((root / path).is_file() for path in row["tests"])
     assert all(not row["retirement_pr"] for row in records.values())
+
+
+def test_retired_w1_completion_marker_structural_evidence():
+    """A deleted metadata writer is audited, not counted as canonical B cutover."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads(
+        (root / "docs/provider-business-coupling-review.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    rows = [
+        row for row in ledger["retirements"]
+        if row["id"] ==
+        "struct-w1-completed-archive-metadata-marker-writer-retired"
+    ]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["original_classification"] == "legacy_mutating_cutover"
+    assert row["classification"] == (
+        "retired_active_obsolete_w1_metadata_marker_writer"
+    )
+    assert row["pr"] == "#6136"
+    assert all((root / path).is_file() for path in row["tests"])
+    assert row["evidence"] and row["replacement"]
+    # No unverified AST-cohort retirement credit: this is a reviewed SQL
+    # writer removal, with the lexical metric measured separately on CI.
+    assert row.get("in_ast_metric") is not True
