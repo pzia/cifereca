@@ -132,6 +132,69 @@ class ReaderUsbExecutionBrokerImpl:
         except Exception:
             return False
 
+    def completed_copy_operation(
+        self, *, identity_id: str, device_id: str, artifact_id: str,
+    ) -> str | None:
+        """Advisory exact finished-copy ID for a selected withdrawal.
+
+        Only Core reads the canonical operation journal. This method does not
+        probe the filesystem, construct a consent, or attest presence: the
+        separate physical dry-run and the locked executor do that later.
+        Dependency on #6295 is optional until merged; missing resolver is a
+        closed negative, never a guessed operation ID.
+        """
+        from . import device_usb_operation_journal as journal
+        from .device_usb_preview import _relative, _sha
+
+        scope = self._scope(identity_id, device_id)
+        if (scope is None or type(artifact_id) is not str
+                or not artifact_id.startswith("sha256:")
+                or not _sha(artifact_id[7:])):
+            return None
+        resolver = getattr(journal, "completed_usb_managed_copy_operations", None)
+        if not callable(resolver):
+            return None
+
+        def intention():
+            row = self.service.storage.device_placement_get(device_id, artifact_id)
+            return row if (
+                type(row) is dict
+                and row.get("device_id") == device_id
+                and row.get("artifact_id") == artifact_id
+                and row.get("desired_state") == "remove"
+                and type(row.get("metadata")) is dict
+                and row["metadata"].get("intent_identity_id") == identity_id
+                and _relative(row.get("target_relative_path"))
+            ) else None
+
+        try:
+            before = intention()
+            if before is None:
+                return None
+            receipts = journal.completed_usb_managed_receipts(
+                storage=self.service.storage, identity_id=identity_id,
+                device_id=device_id, fingerprint=scope.fingerprint,
+            )
+            receipt = receipts.get(artifact_id) if type(receipts) is dict else None
+            if (receipt is None
+                    or receipt.relative_path != before["target_relative_path"]
+                    or receipt.sha256 != artifact_id[7:]):
+                return None
+            operations = resolver(
+                storage=self.service.storage, identity_id=identity_id,
+                device_id=device_id, fingerprint=scope.fingerprint,
+            )
+            if type(operations) is not dict or len(operations) > 1000:
+                return None
+            operation = operations.get(artifact_id)
+            if (type(operation) is not str or len(operation) != 32
+                    or any(ch not in "0123456789abcdef" for ch in operation)
+                    or intention() != before or not self._current(scope)):
+                return None
+            return operation
+        except Exception:
+            return None
+
     def preview(self, *, identity_id: str, device_id: str,
                 mountpoint: Path) -> UsbDryRun:
         """Explicit read-only worker entry, no implicit device discovery."""
