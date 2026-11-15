@@ -296,9 +296,11 @@ class TaskRunner:
         status = value.get("status")
         target = value.get("target_identity_id")
         placement = value.get("placement_id")
+        path = value.get("path")
         if (type(status) is not str or status not in ("complete", "unchanged")
                 or type(target) is not str or not target
-                or type(placement) is not str or not placement):
+                or type(placement) is not str or not placement
+                or type(path) is not str or not path or chr(0) in path):
             return "failed"
         return "success"
 
