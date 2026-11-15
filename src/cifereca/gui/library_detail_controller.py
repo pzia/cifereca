@@ -100,12 +100,13 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
     )
     if trace is not None:
         trace.record("projection", projection_started)
-    if document is None:
-        detail.show_presentation(presentation, description=description)
-    else:
-        detail.show_presentation(
-            presentation, description=description, cover_document=document,
-        )
+    # Stage the exact N2 ref for ONE header render without changing the
+    # public DetailPanel.show_presentation signature or fetching URL first.
+    if document is not None:
+        prepare = getattr(detail, "prepare_document_cover", None)
+        if callable(prepare):
+            prepare(document)
+    detail.show_presentation(presentation, description=description)
     window._add_local_book_actions(detail,item)
     if not foreign:
         # Preserve original action ordering for current-profile details.
