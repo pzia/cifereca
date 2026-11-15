@@ -406,12 +406,11 @@ def reader_selected(window, row) -> None:
         badges=(),
         section_rows=[("Liseuse", rows)],
     )
-    if cover_document is None:
-        page.detail.show_presentation(presentation)
-    else:
-        page.detail.show_presentation(
-            presentation, cover_document=cover_document,
-        )
+    if cover_document is not None:
+        prepare = getattr(page.detail, "prepare_document_cover", None)
+        if callable(prepare):
+            prepare(cover_document)
+    page.detail.show_presentation(presentation)
     # A dry-run is a temporary observation of an exact list snapshot. It is
     # neither an instruction to deliver/remove nor a persistent presence
     # indicator. Filter/profile/device refresh clears it atomically.
