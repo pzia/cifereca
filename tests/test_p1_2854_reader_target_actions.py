@@ -29,9 +29,10 @@ def prepare(tmp_path):
     host.readers_page.selection = NS(get_selected_item=lambda: host.selected_row)
     host.selected_row = row
     host.readers_page.selected(row)
-    assert len(actions) == 1
-    assert actions[0]._cifereca_action_id == "reader-usb-target-reserve"
-    return db, book, host, actions[0], local_actions
+    assert len(actions) == 2
+    assert actions[0]._cifereca_action_id == "reader-usb-intent:remove"
+    assert actions[1]._cifereca_action_id == "reader-usb-target-reserve"
+    return db, book, host, actions[1], local_actions
 
 
 def test_user_click_pins_sha_path_and_changes_no_usb_or_local_bytes(tmp_path):
@@ -131,7 +132,7 @@ def test_no_intention_no_action_and_no_implicit_reservation(tmp_path):
     actions = []
     host.readers_page.detail.add_actions = lambda buttons: actions.extend(buttons)
     host.readers_page.selected(row)
-    assert actions == []
+    assert [a._cifereca_action_id for a in actions] == ["reader-usb-intent:keep"]
     assert db.device_placements(device_id="reader-alice") == []
 
 
@@ -142,7 +143,7 @@ def test_second_visit_after_reservation_does_not_offer_retarget(tmp_path):
     host.readers_page.detail.add_actions = lambda buttons: actions.extend(buttons)
     host.selected_row = host.readers_page.rows[0]
     host.readers_page.selected(host.selected_row)
-    assert actions == []
+    assert [a._cifereca_action_id for a in actions] == ["reader-usb-intent:remove"]
 
 
 def test_target_action_does_not_replace_existing_library_actions(tmp_path):

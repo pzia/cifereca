@@ -33,7 +33,8 @@ from cifereca.gui.main_window import MainWindow
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = frozenset({
     "preflight", "core", "fixture", "gtk", "reader", "selection",
-    "reservation", "reservation_commit", "repaint", "profile_b", "profile_a", "finish",
+    "reservation", "reservation_commit", "repaint", "intent_cancel",
+    "intent_confirm", "intent_repaint", "profile_b", "profile_a", "finish",
 })
 
 
@@ -168,6 +169,14 @@ def main() -> int:
                 == "reader-usb-target-reserve"
         ]
 
+    def intent_actions(operation):
+        return [
+            widget for widget in walk(state["window"].readers_page.detail)
+            if isinstance(widget, Gtk.Button)
+            and getattr(widget, "_cifereca_action_id", None)
+                == "reader-usb-intent:" + operation
+        ]
+
     def has_target():
         return any(
             isinstance(widget, Adw.ActionRow)
@@ -194,7 +203,9 @@ def main() -> int:
         assert page.selection.get_selected_item().key == "reader-book"
         assert not has_target()
         assert len(actions()) == 1
+        assert len(intent_actions("remove")) == 1
         report["checks"]["real_mainwindow_selected_reader_book"] = True
+        report["checks"]["real_gtk_reader_remove_wish_visible"] = True
         later(150, reserve)
 
     # GTK may finish allocating the real DetailPanel a few frames after
@@ -241,6 +252,7 @@ def main() -> int:
         assert page.store.get_n_items() == 1
         assert has_target(), "Detail has not refreshed after reservation"
         assert not actions(), "Stale reserve action survived a successful write"
+        assert len(intent_actions("remove")) == 1
         assert "Destination USB réservée" in window._reader_status_label.get_text()
         report["checks"]["real_gtk_target_detail_repaint_same_key"] = True
         picture = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
@@ -249,6 +261,75 @@ def main() -> int:
         target = destination / "screen.png"
         picture.save(target)
         report["private_screen_sha256"] = sha256(target.read_bytes()).hexdigest()
+        later(80, cancel_remove)
+
+    intent_deadline = [None]
+
+    def mapped_intent_button():
+        found = intent_actions("remove")
+        if len(found) != 1:
+            return None
+        button = found[0]
+        if not button.get_mapped():
+            bar = state["window"].readers_page.detail.action_scroll
+            if (button.get_parent() is getattr(bar, "overflow_box", None)
+                    and bar.overflow_button.get_mapped()
+                    and not bar.overflow_popover.get_mapped()):
+                bar.overflow_popover.popup()
+        return button if button.get_mapped() else None
+
+    def cancel_remove():
+        phase[0] = "intent_cancel"
+        if intent_deadline[0] is None:
+            intent_deadline[0] = monotonic() + 5.0
+        button = mapped_intent_button()
+        if button is None:
+            if monotonic() < intent_deadline[0]:
+                later(120, cancel_remove)
+                return
+            raise AssertionError("Remove wish action not mapped")
+        before = core.storage.device_placement_get("reader-a", artifact_id)
+        button.emit("clicked")
+        dialog = getattr(state["window"], "_reader_intent_dialog", None)
+        assert isinstance(dialog, Adw.MessageDialog)
+        assert core.storage.device_placement_get("reader-a", artifact_id) == before
+        dialog.emit("response", "cancel")
+        assert core.storage.device_placement_get("reader-a", artifact_id) == before
+        report["checks"]["real_gtk_remove_requires_independent_confirmation"] = True
+        later(140, confirm_remove)
+
+    def confirm_remove():
+        phase[0] = "intent_confirm"
+        button = mapped_intent_button()
+        if button is None:
+            later(120, confirm_remove)
+            return
+        before = core.storage.device_placement_get("reader-a", artifact_id)
+        button.emit("clicked")
+        dialog = getattr(state["window"], "_reader_intent_dialog", None)
+        assert isinstance(dialog, Adw.MessageDialog)
+        assert core.storage.device_placement_get("reader-a", artifact_id) == before
+        dialog.emit("response", "remove")
+        after = core.storage.device_placement_get("reader-a", artifact_id)
+        assert after["desired_state"] == "remove"
+        assert after["target_relative_path"] == before["target_relative_path"]
+        assert after["observed_state"] == "unknown"
+        assert after["last_observed_at"] is None
+        assert local.read_bytes() == payload
+        report["checks"]["real_gtk_confirmed_remove_only_updates_sqlite_wish"] = True
+        later(180, repaint_remove)
+
+    def repaint_remove():
+        phase[0] = "intent_repaint"
+        window = state["window"]
+        assert window.readers_page.selection.get_selected_item() is not None
+        assert window.readers_page.selection.get_selected_item().key == "reader-book"
+        assert len(intent_actions("keep")) == 1
+        assert not intent_actions("remove")
+        assert not actions()
+        assert has_target()
+        assert "Aucun fichier transféré ou supprimé" in window._reader_status_label.get_text()
+        report["checks"]["real_gtk_remove_wish_detail_repaint_same_key"] = True
         later(80, switch_b)
 
     def switch_b():
