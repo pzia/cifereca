@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.historical_adept_seed import seed_historical_adept_binding
+
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.models import Account, Loan
@@ -60,7 +62,7 @@ def test_linked_borrower_requires_explicit_adept_binding(tmp_path):
 def test_explicit_binding_selects_borrower_not_connection_identity(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        saved = service.bind_paris_borrower_adept(
+        saved = seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -82,7 +84,7 @@ def test_binding_survives_storage_reopen_and_is_revocable(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     path = service.storage.path
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -107,7 +109,7 @@ def test_binding_survives_storage_reopen_and_is_revocable(tmp_path):
 def test_profile_change_invalidates_explicit_borrower_confirmation(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -115,7 +117,7 @@ def test_profile_change_invalidates_explicit_borrower_confirmation(tmp_path):
         assert service._paris_adept_identity_for_loan(
             loan, connection_identity_id="alice",
         ) == (None, "adept_borrower_profile_changed")
-        with pytest.raises(ValueError, match="not proven"):
+        with pytest.raises(ValueError, match="retired"):
             service.storage.paris_borrower_adept_binding_put(
                 credential_id="alice-paris", account_id="linked-123",
                 borrower_identity_id="bob", profile_id="bob-profile",
@@ -136,7 +138,7 @@ def test_second_connection_same_linked_borrower_needs_its_own_grant(tmp_path):
             unique_id="linked-123", is_primary=False,
             provider_id="paris", credential_id="bob-paris", identity_id="bob",
         ))
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -147,7 +149,7 @@ def test_second_connection_same_linked_borrower_needs_its_own_grant(tmp_path):
         assert service._paris_adept_identity_for_loan(
             second_loan, connection_identity_id="bob",
         ) == (None, "adept_borrower_binding_required")
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="bob-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -187,7 +189,7 @@ def test_primary_borrower_keeps_proven_connection_profile_without_grant(tmp_path
 def test_connection_identity_transfer_revokes_effective_borrower_grant(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        saved = service.bind_paris_borrower_adept(
+        saved = seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -215,7 +217,7 @@ def test_acsm_fulfillment_uses_borrower_profile_and_persists_return_binding(tmp_
     try:
         from dataclasses import replace
         loan = replace(loan, source_account_id=account_id)
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id=account_id,
             borrower_identity_id="bob", confirmed=True,
         )
@@ -276,7 +278,7 @@ def test_primary_exception_requires_confirmation_and_preserves_normal_profile(tm
                 credential_id="alice-paris", account_id="primary",
                 borrower_identity_id="bob",
             )
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -302,7 +304,7 @@ def test_primary_exception_is_scoped_to_connection_and_rejects_ambiguity(tmp_pat
     from dataclasses import replace
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="primary",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -318,7 +320,7 @@ def test_primary_exception_is_scoped_to_connection_and_rejects_ambiguity(tmp_pat
             second, connection_identity_id="bob"
         ) == ("bob", None)
         service.accounts.append(replace(service.accounts[0]))
-        with pytest.raises(ValueError, match="not uniquely identified"):
+        with pytest.raises(ValueError, match="retired"):
             service.bind_paris_borrower_adept(
                 credential_id="alice-paris", account_id="primary",
                 borrower_identity_id="bob", confirmed=True,

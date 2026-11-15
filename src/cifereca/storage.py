@@ -3207,58 +3207,13 @@ class Storage:
         self, *, credential_id: str, account_id: str, borrower_identity_id: str,
         profile_id: str, confirmed: bool = False,
     ) -> None:
-        """Persist an explicit borrower grant; never infer Adobe ownership.
+        """Retired v15 write API, preserved as a fail-closed ABI stub.
 
-        The grant is scoped to one Paris connection and borrower account, and
-        pins the identity's stable ADEPT profile reference. A later profile
-        change invalidates the grant until an explicit reconfirmation.
+        Historical rows remain readable for provenance, safe return handling,
+        explicit v16 reconfirmation and SQLite upgrade. A new legacy binding
+        is never written through the live Core, even after v16 revocation.
         """
-        credential = str(credential_id or "").strip()
-        borrower = str(account_id or "").strip()
-        owner = str(borrower_identity_id or "").strip()
-        profile = str(profile_id or "").strip()
-        if not confirmed:
-            raise ValueError("explicit borrower/ADEPT confirmation required")
-        if not all((credential, borrower, owner, profile)):
-            raise ValueError("Paris borrower and ADEPT identity/profile required")
-        now = int(time.time())
-        with self._lock, self._connect() as db:
-            # A LibraryService preflight is only a snapshot: another process
-            # may commit the canonical v16 grant between that read and this
-            # legacy UPSERT. Lock the SQLite writer BEFORE checking the raw
-            # v16 row, so even a revoked/unreadable v16 proof cannot be
-            # replaced by an independent historical Paris grant.
-            db.execute("BEGIN IMMEDIATE")
-            v16 = db.execute(
-                "SELECT 1 FROM adept_borrower_grants "
-                "WHERE provider_id='paris' AND credential_id=? AND account_id=?",
-                (credential, borrower),
-            ).fetchone()
-            if v16 is not None:
-                raise ValueError("ADEPT borrower grant requires v16 binding")
-            connection = db.execute(
-                "SELECT identity_id FROM provider_connections WHERE provider_id='paris' AND credential_id=?",
-                (credential,),
-            ).fetchone()
-            binding = db.execute(
-                "SELECT profile_id FROM adept_profile_bindings WHERE scope_type='identity' AND scope_id=?",
-                (owner,),
-            ).fetchone()
-            identity = db.execute(
-                "SELECT 1 FROM identities WHERE identity_id=?", (owner,)
-            ).fetchone()
-            if not connection or not identity or not binding or str(binding[0]) != profile:
-                raise ValueError("Paris connection or identity ADEPT profile is not proven")
-            db.execute(
-                "INSERT INTO paris_borrower_adept_bindings "
-                "(credential_id,account_id,connection_identity_id,borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(credential_id,account_id) DO UPDATE SET "
-                "connection_identity_id=excluded.connection_identity_id,"
-                "borrower_identity_id=excluded.borrower_identity_id,"
-                "profile_id=excluded.profile_id,confirmed_by=excluded.confirmed_by,"
-                "confirmed_at=excluded.confirmed_at,updated_at=excluded.updated_at",
-                (credential, borrower, str(connection[0]), owner, profile, "explicit", now, now),
-            )
+        raise ValueError("Paris ADEPT legacy binding writer retired")
 
     def paris_borrower_adept_binding_get(
         self, *, credential_id: str, account_id: str,

@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from cifereca.models import Account
+from tests.historical_adept_seed import seed_historical_adept_binding
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 
 
@@ -49,7 +50,7 @@ def test_linked_borrower_without_adept_grant_has_no_return_action(tmp_path):
 def test_linked_borrower_uses_confirmed_adobe_profile_not_ui_identity(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -70,7 +71,7 @@ def test_linked_borrower_uses_confirmed_adobe_profile_not_ui_identity(tmp_path):
 def test_wrong_origin_adept_profile_is_not_returnable(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -86,7 +87,7 @@ def test_wrong_origin_adept_profile_is_not_returnable(tmp_path):
 def test_binding_revocation_or_profile_rotation_disables_return(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -123,7 +124,7 @@ def test_unknown_connection_does_not_fallback_to_selected_identity(tmp_path, mon
 def test_duplicate_complete_acquisitions_cannot_choose_arbitrary_license(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -139,7 +140,7 @@ def test_duplicate_complete_acquisitions_cannot_choose_arbitrary_license(tmp_pat
 def test_same_loan_seen_by_another_identity_disables_adobe_return(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -161,7 +162,7 @@ def test_same_loan_seen_by_another_identity_disables_adobe_return(tmp_path):
 def test_wrong_item_or_loan_id_never_matches_acquisition(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )

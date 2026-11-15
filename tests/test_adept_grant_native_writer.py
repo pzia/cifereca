@@ -86,15 +86,32 @@ def test_grant_writer_requires_native_plugin_account_evidence(
         service.close()
 
 
-def test_valid_explicit_writer_still_pins_exact_borrower_and_profile(tmp_path):
+def test_retired_writer_never_creates_legacy_but_canonical_v16_grants_still_work(tmp_path):
+    from tests.test_core_p0_5851_generic_adept_grants_v16 import _persist_account
+
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        grant = service.bind_paris_borrower_adept(
+        with pytest.raises(ValueError, match="retired"):
+            service.bind_paris_borrower_adept(
+                credential_id="alice-paris", account_id="linked-123",
+                borrower_identity_id="bob", confirmed=True,
+            )
+        assert service.storage.paris_borrower_adept_binding_get(
             credential_id="alice-paris", account_id="linked-123",
+        ) is None
+        assert service.storage.adept_borrower_grant_get(
+            provider_id="paris", credential_id="alice-paris", account_id="linked-123",
+        ) is None
+        _persist_account(service.storage)
+        grant = service.bind_adept_borrower_grant(
+            provider_id="paris", credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
         assert grant["borrower_identity_id"] == "bob"
         assert grant["profile_id"] == "bob-profile"
+        assert service.storage.paris_borrower_adept_binding_get(
+            credential_id="alice-paris", account_id="linked-123",
+        ) is None
         assert service._paris_adept_identity_for_loan(
             loan, connection_identity_id="alice",
         ) == ("bob", None)

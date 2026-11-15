@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.historical_adept_seed import seed_historical_adept_binding
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 
 
@@ -91,7 +92,7 @@ def test_untrusted_grant_mapping_getter_is_never_called(tmp_path, monkeypatch):
 def test_untrusted_current_profile_binding_invalidates_grant(tmp_path, monkeypatch, bad):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -112,7 +113,7 @@ def test_valid_explicit_grant_and_unbound_primary_keep_existing_semantics(tmp_pa
         assert service._paris_adept_identity_for_loan(
             loan, connection_identity_id="alice",
         ) == (None, "adept_borrower_binding_required")
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )

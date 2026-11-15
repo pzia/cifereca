@@ -3,6 +3,7 @@
 A legacy Paris binding is never auto-promoted and a deleted v16 grant cannot
 silently fall back to another identity or an entitlement.
 """
+from tests.historical_adept_seed import seed_historical_adept_binding
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 from tests.test_core_p0_5851_generic_adept_grants_v16 import _persist_account
 
@@ -81,7 +82,7 @@ def test_foreign_provider_grant_never_attests_paris_linked_loan(tmp_path):
 def test_existing_legacy_grant_is_preserved_without_silent_v16_migration(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )

@@ -3,6 +3,7 @@ import sqlite3
 
 import pytest
 
+from tests.historical_adept_seed import seed_historical_adept_binding
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 from tests.test_core_p0_5851_generic_adept_grants_v16 import _persist_account
 
@@ -30,7 +31,7 @@ def linked_identity(service, loan):
 def setup_legacy(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     _persist_account(service.storage)
-    service.bind_paris_borrower_adept(
+    seed_historical_adept_binding(service, 
         credential_id="alice-paris", account_id="linked-123",
         borrower_identity_id="bob", confirmed=True,
     )
@@ -95,7 +96,7 @@ def test_reconfirmation_without_native_consent_has_no_side_effects(tmp_path, bad
 def test_reconfirmation_requires_matching_persisted_account(tmp_path):
     service, _ = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )

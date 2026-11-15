@@ -9,6 +9,7 @@ from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
 
 from tests.test_core_0984_adept_first_paris_reconcile import setup, stub_adept
 from tests.test_core_0984_adept_return_status_provenance import _acquisition
+from tests.historical_adept_seed import seed_historical_adept_binding
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 
 
@@ -29,7 +30,7 @@ def _reconfigure(service, change):
     elif change == 'revoke':
         service.storage.paris_borrower_adept_binding_delete(credential_id='alice-paris', account_id='linked-123')
     elif change == 'different_grant':
-        service.bind_paris_borrower_adept(credential_id='alice-paris', account_id='linked-123',
+        seed_historical_adept_binding(service, credential_id='alice-paris', account_id='linked-123',
                                          borrower_identity_id='alice', confirmed=True)
 
 
@@ -37,7 +38,7 @@ def _reconfigure(service, change):
 def test_attested_status_is_read_only_and_origin_wins_after_reconfiguration(tmp_path, change):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
-        service.bind_paris_borrower_adept(credential_id='alice-paris', account_id='linked-123',
+        seed_historical_adept_binding(service, credential_id='alice-paris', account_id='linked-123',
                                          borrower_identity_id='bob', confirmed=True)
         acq = _acquisition(service, loan)
         _attest(service, acq)

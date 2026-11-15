@@ -1,4 +1,5 @@
 """P0 #5851: v16 explicit grant writer and borrower reader must agree."""
+from tests.historical_adept_seed import seed_historical_adept_binding
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 from tests.test_core_p0_5851_generic_adept_grants_v16 import _persist_account
 
@@ -24,7 +25,7 @@ def test_writer_reader_roundtrip_requires_new_explicit_confirmation(tmp_path):
         service.current_identity = service.identity_by_id("bob")
         assert _read(service) == (None, "adept_borrower_binding_required")
         # Even a confirmed legacy row is not a new v16 grant.
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
