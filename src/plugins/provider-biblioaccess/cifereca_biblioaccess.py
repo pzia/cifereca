@@ -522,6 +522,10 @@ class LaRochelleSession(ProviderSession):
                         source_credential=self.credential_id,
                         source_account_id=account.unique_id,
                         identity_id=account.identity_id,
+                        # Same authenticated MyLoans row and same Book anchor
+                        # already attested this public image. Descriptive
+                        # thumbnail only: never a transfer or loan right.
+                        thumbnail_url=getattr(row, "thumbnail_url", None),
                         can_return=False, renewable=False, ebook_url=None,
                         # The Core needs only positive offer presence. Do not
                         # publish a signed link or attest a downloadable book
