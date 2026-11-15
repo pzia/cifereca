@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+import hashlib
 
 import pytest
 
@@ -10,6 +11,9 @@ from cifereca.gui.cover_loader import CoverLoader, CoverMediaState
 from cifereca.gui.cover_preview import preview_path
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
+EMBEDDED_PNG = (b"\x89PNG\r\n\x1a\n" + b"\0" * 8
+                + (2).to_bytes(4, "big") + (3).to_bytes(4, "big")
+                + b"embedded-cover")
 URL = "https://covers.example.org/edition.png"
 
 
@@ -73,9 +77,9 @@ def test_probe_never_downloads_regardless_of_hit_or_miss(loader):
 
 
 def test_embedded_cover_only_from_core_epub_cache_directory(loader):
-    digest = "c" * 64
+    digest = hashlib.sha256(EMBEDDED_PNG).hexdigest()
     local = cover_cache_dir() / (digest + ".png")
-    local.write_bytes(PNG)
+    local.write_bytes(EMBEDDED_PNG)
     uri = local.as_uri()
     physical = loader.probe_media(uri)
     assert physical.source_kind == "embedded"
@@ -142,3 +146,29 @@ def test_same_url_serves_list_and_detail_one_valid_source_cache(loader):
     assert not list_state.preview_cached
     assert detail_state.preview_cached is False
     assert loader.stats()["download_ok"] == 0
+
+
+def test_embedded_image_with_same_signature_but_wrong_digest_is_n3_miss(loader):
+    from cifereca.epub_metadata import cached_cover_url
+
+    name = hashlib.sha256(EMBEDDED_PNG).hexdigest() + ".png"
+    source = cover_cache_dir() / name
+    uri = source.as_uri()
+    metadata = {"epub_cover": {"cache_name": name}}
+    source.write_bytes(EMBEDDED_PNG)
+    assert cached_cover_url(metadata) == uri
+    assert loader.probe_media(uri).source_cached
+
+    # Replacement remains a valid-looking PNG, but no longer matches its SHA.
+    source.write_bytes(EMBEDDED_PNG + b"corrupted")
+    assert cached_cover_url(metadata) is None
+    state = loader.probe_media(uri, width=60, height=90)
+    assert state.source_kind == "embedded"
+    assert not state.source_cached and not state.preview_cached
+
+    returned = []
+    loader.load(uri, returned.append)
+    assert returned == [None]
+    assert loader.stats()["download_ok"] == 0
+    assert loader.stats()["download_failed"] == 0
+    # N3 physical invalidation never invents or revokes a documentary N2 proof.
