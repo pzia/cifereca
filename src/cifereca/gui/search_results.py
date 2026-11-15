@@ -339,6 +339,26 @@ def _render_search_results(self) -> int:
                     getattr(self.service, "_source_context_epoch", None),
                 )):
             cover_url = retained[1]
+        # N2: retain a *same-source* holdings cover when the row object is
+        # rebuilt after metadata enrichment or filter changes. Scope includes
+        # provider, credential, record, docbase, source/account/revision and
+        # all four current query/identity/source generations. A title or ISBN
+        # never joins two Search entries; no provider requests are issued.
+        bridge = getattr(self, "_search_cover_bridge", None)
+        if bridge is not None:
+            from cifereca.gui.search_cover_bridge import SearchCoverBridge
+            if isinstance(bridge, SearchCoverBridge) and type(identity_id) is str:
+                resolved_uri = bridge.selected_url(
+                    item, identity_id=identity_id,
+                    context=(
+                        getattr(self, "_identity_context_generation", None),
+                        getattr(self, "_search_generation", None),
+                        getattr(self.service, "_account_context_epoch", None),
+                        getattr(self.service, "_source_context_epoch", None),
+                    ),
+                )
+                if resolved_uri is not None:
+                    cover_url = resolved_uri
         ui_rows.append(BookListItem(
             key, item.title, item.author or "", meta, source, cover_url,
             action_label="Ouvrir" if placement else (download_action_label(item, check_required=check_required) if direct else None),
