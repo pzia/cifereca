@@ -6,6 +6,7 @@ No duplicate cache, observer or entitlement channel is introduced here.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Literal
 
 from ..core.book_cover_cache import CoverCacheToken, CoverDecisionCache
@@ -42,7 +43,7 @@ def note_loan_cover_token(
 def loan_cover_paint_receipt(
     host: Any, loan: Loan, *, surface: Literal["list", "detail"],
     expected_url: str | None,
-) -> Callable[[], None] | None:
+) -> Callable[[str, Path], None] | None:
     """One current exact Loan, one CAS generation; never a title/URL join."""
     if (type(loan) is not Loan or surface not in ("list", "detail")
             or type(expected_url) is not str or not expected_url):
@@ -72,7 +73,9 @@ def loan_cover_paint_receipt(
         return None
     key = loan_source_key(loan)
 
-    def applied() -> None:
+    def applied(texture_url: str, _texture_path: Path) -> None:
+        if type(texture_url) is not str or texture_url != expected_url:
+            return
         # The CoverView/#6199 callback is emitted only after Gdk accepted a
         # real texture, and its current widget binding generation was checked.
         # Revalidate model/epoch here because callbacks may be reentrant.
@@ -82,6 +85,8 @@ def loan_cover_paint_receipt(
                 or _context(service, identity) != context
                 or getattr(host, "_loan_cover_decision_revision", None) != revision
                 or getattr(host, "loan_objects", {}).get(key) is not loan
+                or (surface == "detail"
+                    and getattr(host, "_displayed_loan", None) is not loan)
                 or cache.peek(scope, revision=revision) is not decision):
             return
         probe = getattr(getattr(host, "covers", None), "probe_media", None)
