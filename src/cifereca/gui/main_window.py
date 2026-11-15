@@ -31,6 +31,7 @@ from ..models import HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from ..services import LibraryService
 from .cover_loader import CoverLoader
 from .document_cover_service import DocumentCoverService
+from .local_cover_adapter import LocalCoverEvidenceAdapter
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
 from .book_actions import identity_has_attested_possession
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
@@ -200,6 +201,8 @@ class MainWindow(Adw.ApplicationWindow):
         # All routes share one N2 document cache + one physical N3 loader.
         # Neither cache is partitioned by the currently displayed profile.
         self.document_covers = DocumentCoverService(self.covers)
+        # N2 revisions follow exact documents, N3 bytes stay shared on desktop.
+        self.local_cover_adapter = LocalCoverEvidenceAdapter()
         self.history_cover_resolver = HistoryCoverResolver(service, diagnostics)
         self.runner = TaskRunner(self)
         _TRACE_LOG.info("TRACE gui init pre-css")
