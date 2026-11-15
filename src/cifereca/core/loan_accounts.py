@@ -40,7 +40,12 @@ def account_for_loan(
                 or type(account_credential) is not str or account_credential != credential
                 or type(account_id) is not str):
             continue
-        exact = account_id == borrower
+        # An empty borrower ID is an exact primary-account convention,
+        # never an authority to select an unlabeled linked account.
+        exact = (
+            account_id == borrower
+            and (borrower != "" or getattr(account, "is_primary", None) is True)
+        )
         aliased = (
             primary_alias is not None and borrower == primary_alias
             and account_id == "" and getattr(account, "is_primary", None) is True
