@@ -387,13 +387,43 @@ def reader_selected(window, row) -> None:
         rows.append(("Chemin réservé", item.target_relative_path))
         if item.target_format is not None:
             rows.append(("Format prévu", item.target_format.upper()))
-    page.detail.show_presentation(book_detail_presentation(
+    # Reader detail consumes the SAME Core-owned local proof as Library.
+    # Neither device intention nor a matching title can mint a cover link.
+    source = getattr(window, "_reader_source_items", {}).get(item.key)
+    facts = (
+        source.get("_exact_local_cover_evidence")
+        if type(source) is dict else None
+    )
+    cover_document = None
+    thumbnail = item.thumbnail_url
+    if facts is not None:
+        if (type(facts) is VerifiedLocalCoverEvidence
+                and facts.scope.identity_id == identity_id
+                and facts.scope.artifact_id == item.artifact_id
+                and facts.scope.placement_id == item.placement_id
+                and facts.scope.source_key == item.key):
+            bridge = getattr(window, "document_covers", None)
+            publisher = getattr(window, "local_cover_adapter", None)
+            if bridge is not None and publisher is not None:
+                try:
+                    cover_document = publisher.register(bridge, facts)
+                except (TypeError, ValueError, RuntimeError):
+                    cover_document = None
+        if cover_document is None:
+            thumbnail = None  # invalid proof: do not silently prefer URL N3.
+    presentation = book_detail_presentation(
         title=item.title,
         subtitle=item.author,
-        thumbnail=item.thumbnail_url,
+        thumbnail=thumbnail,
         badges=(),
         section_rows=[("Liseuse", rows)],
-    ))
+    )
+    if cover_document is None:
+        page.detail.show_presentation(presentation)
+    else:
+        page.detail.show_presentation(
+            presentation, cover_document=cover_document,
+        )
     # A dry-run is a temporary observation of an exact list snapshot. It is
     # neither an instruction to deliver/remove nor a persistent presence
     # indicator. Filter/profile/device refresh clears it atomically.
