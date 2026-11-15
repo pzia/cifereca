@@ -207,8 +207,11 @@ def _css_declared_color(css: str, selector: str, property_name: str) -> str:
         without_comments,
     ))
 
+    # @define-color declarations precede the first CSS rule but do not
+    # belong to its selector; strip them before extracting rule blocks.
+    rules = re.sub(r"@define-color\s+[^;]+;", "", without_comments)
     for selectors, declarations in re.findall(
-        r"([^{}]+)\{([^{}]*)\}", without_comments,
+        r"([^{}]+)\{([^{}]*)\}", rules,
     ):
         if selector not in (part.strip() for part in selectors.split(",")):
             continue
