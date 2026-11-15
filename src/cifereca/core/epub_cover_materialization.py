@@ -6,13 +6,16 @@ restores missing physical image bytes, coalescing list and detail requests.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
+from collections.abc import Callable
 import hashlib
 import os
 from pathlib import Path
 import re
 import stat
+import time
 from threading import Lock
 import zipfile
 
@@ -25,6 +28,12 @@ from ..epub_metadata import (
 _CACHE_NAME = re.compile(r"[0-9a-f]{64}\.(png|jpg|gif|webp|svg)\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_EPUB_BYTES = 2 * 1024 * 1024 * 1024
+# N3 source identity: NEVER key physical work by the N2 book/borrower scope.
+_PhysicalKey = tuple[str, str, str, Path]
+
+
+def _physical_key(source: ExactEpubCoverResource, path: Path) -> _PhysicalKey:
+    return (source.artifact_sha256, source.member, source.cache_name, path)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,26 +85,40 @@ def _finished(value: str | None) -> Future[str | None]:
 
 
 class EpubCoverPhysicalCache:
-    """Bounded worker-side N3 image recovery; never an N2 association cache.
+    """Bounded N3 work keyed by physical source, never by document identity.
 
     source_path MUST come from Core's exact identity and verified Placement.
     Consumers re-check SourceKey/revision/epoch before painting a result.
-    No network, Gtk, catalogue or rights mutation is performed here.
+    Cold failures get a short negative TTL; an independently restored image
+    bypasses this cooldown. No network/GTK/catalogue/rights mutation here.
     """
 
-    def __init__(self, *, max_workers: int = 2, max_inflight: int = 128):
+    def __init__(
+        self, *, max_workers: int = 2, max_inflight: int = 128,
+        negative_ttl: float = 15.0,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         if (type(max_workers) is not int or not 1 <= max_workers <= 8
                 or type(max_inflight) is not int or not 1 <= max_inflight <= 4096):
             raise ValueError("invalid EPUB cover worker limits")
+        if (type(negative_ttl) not in (int, float)
+                or not 0 < negative_ttl <= 300
+                or not float("-inf") < negative_ttl < float("inf")
+                or not callable(clock)):
+            raise ValueError("invalid N3 failed-extraction cooldown")
         self._pool = ThreadPoolExecutor(
             max_workers=max_workers, thread_name_prefix="cifereca-epub-cover",
         )
         self._limit = max_inflight
         self._lock = Lock()
         self._closed = False
-        self._pending: dict[
-            tuple[ExactEpubCoverResource, Path], Future[str | None]
-        ] = {}
+        self._negative_ttl = float(negative_ttl)
+        self._clock = clock
+        # A failure is a TEMPORARY physical-cache miss, never N2 'missing'.
+        # Bound negative memory independently from the in-flight worker cap.
+        self._negative_until: OrderedDict[_PhysicalKey, float] = OrderedDict()
+        self._max_negative = min(4096, max_inflight * 4)
+        self._pending: dict[_PhysicalKey, Future[str | None]] = {}
 
     def request(
         self, source: ExactEpubCoverResource, *, source_path: Path,
@@ -113,10 +136,17 @@ class EpubCoverPhysicalCache:
             if valid_cached_cover_path(target):
                 # Warm N3: no source file open, ZIP parse, hash or GET.
                 return _finished(target.resolve().as_uri())
-            key = (source, source_path)
+            key = _physical_key(source, source_path)
             future = self._pending.get(key)
             if future is not None:
+                # Same bytes from two N2 document refs share ONE N3 read.
                 return future
+            cooldown = self._negative_until.get(key)
+            if cooldown is not None:
+                if self._clock() < cooldown:
+                    self._negative_until.move_to_end(key)
+                    return _finished(None)
+                self._negative_until.pop(key, None)
             if len(self._pending) >= self._limit:
                 return _finished(None)
             future = self._pool.submit(self._restore, source, source_path)
@@ -125,12 +155,24 @@ class EpubCoverPhysicalCache:
         return future
 
     def _release(
-        self, key: tuple[ExactEpubCoverResource, Path],
+        self, key: _PhysicalKey,
         finished: Future[str | None],
     ) -> None:
+        try:
+            result = finished.result()
+        except Exception:
+            result = None
         with self._lock:
-            if self._pending.get(key) is finished:
-                self._pending.pop(key, None)
+            if self._pending.get(key) is not finished:
+                return
+            self._pending.pop(key, None)
+            if result is not None or self._closed:
+                self._negative_until.pop(key, None)
+            else:
+                self._negative_until[key] = self._clock() + self._negative_ttl
+                self._negative_until.move_to_end(key)
+                while len(self._negative_until) > self._max_negative:
+                    self._negative_until.popitem(last=False)
 
     @staticmethod
     def _restore(
@@ -177,6 +219,7 @@ class EpubCoverPhysicalCache:
     def close(self) -> None:
         with self._lock:
             self._closed = True
+            self._negative_until.clear()
         self._pool.shutdown(wait=False, cancel_futures=True)
 
 
