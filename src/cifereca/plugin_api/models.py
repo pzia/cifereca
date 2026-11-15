@@ -390,6 +390,8 @@ class UiBookListEntry:
     meta: str = ""
     badge: str = ""
     thumbnail_url: str | None = None
+    # Core-originated exact DocumentRef; no inferred proof/rights in plugins.
+    cover_document_ref: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,6 +421,8 @@ class UiBookDetailPresentation:
     sections: tuple[DetailSection, ...] = ()
     actions: tuple[UiBookDetailAction, ...] = ()
     links: tuple[DocumentLink, ...] = ()
+    # Matches the list DocumentRef, independent of action permissions.
+    cover_document_ref: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
