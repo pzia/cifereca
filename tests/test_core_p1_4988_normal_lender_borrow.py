@@ -202,3 +202,97 @@ def test_existing_confirmed_loan_never_uses_discovery_as_retry(harness):
         service, requesting_identity_id="default", notices=(item,),
     ) == ()
     assert session.actions == 1
+
+
+def facade_execute(service, option, item, *, confirmed=True, requester=None,
+                   identity_id="default", context_epoch=None, source_epoch=None):
+    return service.execute_normal_lender_borrow_for_current_identity(
+        captured_candidate=option, exact_notice=item,
+        expected_requesting_identity_id=identity_id,
+        expected_requesting_identity=(
+            service.current_identity if requester is None else requester
+        ),
+        expected_context_epoch=(
+            service._account_context_epoch if context_epoch is None
+            else context_epoch
+        ),
+        expected_source_epoch=(
+            service._source_context_epoch if source_epoch is None
+            else source_epoch
+        ),
+        confirmed=confirmed,
+    )
+
+
+def test_facade_confirmed_normal_lender_uses_exact_captured_requester(harness):
+    service, account, session, item, option, _scope = setup(harness)
+    original = service.current_identity
+    result = facade_execute(
+        service, option, item, requester=original,
+    )
+    assert result["status"] == "confirmed"
+    assert result["provider_verified"] is True
+    assert result["transfer"] == "blocked"
+    assert service.current_identity is original
+    assert session.actions == 1
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, item),
+    )["status"] == "confirmed"
+
+
+@pytest.mark.parametrize("invalid", [
+    "wrong_id", "wrong_identity_object", "account_epoch", "source_epoch",
+    "no_confirmation", "replacement_identity", "wrong_notice",
+])
+def test_facade_refuses_stale_requester_and_mutation_without_spending_claim(
+    harness, invalid,
+):
+    service, account, session, item, option, _scope = setup(harness)
+    captured_identity = service.current_identity
+    context_epoch = service._account_context_epoch
+    source_epoch = service._source_context_epoch
+    if invalid == "replacement_identity":
+        service.current_identity = replace(captured_identity)
+    result = service.execute_normal_lender_borrow_for_current_identity(
+        captured_candidate=option,
+        exact_notice=replace(item) if invalid == "wrong_notice" else item,
+        expected_requesting_identity_id=(
+            "foreign" if invalid == "wrong_id" else "default"
+        ),
+        expected_requesting_identity=(
+            replace(captured_identity) if invalid == "wrong_identity_object"
+            else captured_identity
+        ),
+        expected_context_epoch=(
+            context_epoch + 1 if invalid == "account_epoch"
+            else context_epoch
+        ),
+        expected_source_epoch=(
+            source_epoch + 1 if invalid == "source_epoch"
+            else source_epoch
+        ),
+        confirmed=invalid != "no_confirmation",
+    )
+    assert result["status"] == "blocked"
+    assert result["retry_borrow"] is False
+    assert service.storage.loan_borrow_state(borrow_claim_key(account, item)) is None
+    assert session.actions == 0
+
+
+def test_facade_does_not_rebind_to_different_profile_with_same_edition(harness):
+    service, account, session, item, option, _scope = setup(harness)
+    original = service.current_identity
+    source_epoch = service._source_context_epoch
+    context_epoch = service._account_context_epoch
+    service._account_context_epoch += 1
+    service._account_context_epoch += 1
+    result = service.execute_normal_lender_borrow_for_current_identity(
+        captured_candidate=option, exact_notice=item,
+        expected_requesting_identity_id="default",
+        expected_requesting_identity=original,
+        expected_context_epoch=context_epoch,
+        expected_source_epoch=source_epoch,
+        confirmed=True,
+    )
+    assert result["status"] == "blocked"
+    assert session.actions == 0
