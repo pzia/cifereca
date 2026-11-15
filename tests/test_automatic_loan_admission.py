@@ -361,3 +361,103 @@ def test_unchanged_borrower_refusal_preserves_public_code_and_pinned_id(
         }
     finally:
         service.close()
+
+
+@pytest.mark.parametrize(("field", "replacement"), [
+    ("id", "different-loan"),
+    ("id", _HostileLoanCoordinate()),
+    ("source_provider", "different-provider"),
+    ("source_provider", _HostileLoanString("paris")),
+    ("source_credential", "different-credential"),
+    ("source_account_id", "different-borrower"),
+    ("record_id", "different-edition"),
+])
+def test_lock_acquisition_refuses_drift_before_guarded_provider_path(
+    tmp_path, monkeypatch, field, replacement,
+):
+    import cifereca.services as services
+
+    service, loan = _setup(tmp_path)
+    try:
+        class DriftingLock:
+            def __init__(self, _path):
+                pass
+
+            def __enter__(self):
+                setattr(loan, field, replacement)
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+        monkeypatch.setattr(services, "InterProcessLock", DriftingLock)
+        monkeypatch.setattr(services, "acquisition_lock_file", lambda: tmp_path / "acquisition.lock")
+
+        def no_guarded(*_args, **_kwargs):
+            pytest.fail("a changed loan must not run under a stale process lock")
+
+        monkeypatch.setattr(service, "_acquire_active_loan_automatically_guarded", no_guarded)
+        result = service._acquire_active_loan_automatically(loan)
+        assert result == {
+            "status": "attention_required", "loan_id": "loan-0",
+            "code": "adept_identity_unproven",
+            "reason": "source_scope_changed", "retry": "explicit_only",
+        }
+    finally:
+        service.close()
+
+
+def test_busy_automatic_loan_lock_never_echoes_mutated_hostile_id(
+    tmp_path, monkeypatch,
+):
+    import cifereca.services as services
+
+    service, loan = _setup(tmp_path)
+    try:
+        class BusyAfterMutation:
+            def __init__(self, _path):
+                pass
+
+            def __enter__(self):
+                loan.id = _HostileLoanCoordinate()
+                raise services.LockBusyError("locked")
+
+            def __exit__(self, *_args):
+                return False
+
+        monkeypatch.setattr(services, "InterProcessLock", BusyAfterMutation)
+        monkeypatch.setattr(services, "acquisition_lock_file", lambda: tmp_path / "acquisition.lock")
+        monkeypatch.setattr(
+            service, "_acquire_active_loan_automatically_guarded",
+            lambda *_a, **_kw: pytest.fail("busy lock may never reach provider"),
+        )
+        assert service._acquire_active_loan_automatically(loan) == {
+            "status": "attention_required", "loan_id": "loan-0",
+            "code": "acquisition_busy", "retry": "explicit_only",
+        }
+    finally:
+        service.close()
+
+
+def test_outer_loan_lock_rejects_hostile_provider_before_bnf_comparison(
+    tmp_path, monkeypatch,
+):
+    import cifereca.services as services
+
+    class HostileProvider:
+        def __eq__(self, other):
+            raise AssertionError("provider-owned equality must never run")
+
+    service, loan = _setup(tmp_path)
+    try:
+        loan.source_provider = HostileProvider()
+        monkeypatch.setattr(
+            services, "InterProcessLock",
+            lambda *_a, **_kw: pytest.fail("hostile provider must never acquire lock"),
+        )
+        assert service._acquire_active_loan_automatically(loan) == {
+            "status": "attention_required", "loan_id": None,
+            "code": "adept_loan_identity_unproven", "retry": "explicit_only",
+        }
+    finally:
+        service.close()
