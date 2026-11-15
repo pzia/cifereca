@@ -560,6 +560,18 @@ class BookListCell(Gtk.Box):
         decision from cached N3 media. A rejected packet never falls back
         silently to a lower-priority supplier URL.
         """
+        supplier = getattr(item, "_cover_loan_supplier_evidence", None)
+        if supplier is not None:
+            # Supplier proof and EPUB Placement are incompatible owners.
+            if getattr(item, "_cover_local_evidence", None) is not None:
+                return False
+            from .loan_supplier_document_cover_bridge import (
+                register_exact_loan_supplier,
+            )
+            return register_exact_loan_supplier(
+                self.window, getattr(item, "_loan_source_item", None),
+                service, supplier, document,
+            )
         facts = getattr(item, "_cover_local_evidence", None)
         if facts is None:
             # Other producers can pre-register their own exact DocumentRef.
