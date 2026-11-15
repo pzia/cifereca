@@ -565,7 +565,7 @@ class BookListCell(Gtk.Box):
             # Supplier proof and EPUB Placement are incompatible owners.
             if getattr(item, "_cover_local_evidence", None) is not None:
                 return False
-            from .loan_supplier_document_cover_bridge import (
+            from cifereca.gui.loan_supplier_document_cover_bridge import (
                 register_exact_loan_supplier,
             )
             return register_exact_loan_supplier(
