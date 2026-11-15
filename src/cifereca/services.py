@@ -3539,6 +3539,67 @@ class LibraryService:
                                 provider_id=item.source_provider, facts=safe_facts)
             raise
 
+    def capture_admitted_private_search_offer(self, item: SearchResult):
+        """Snapshot an explicit private Search click before TaskRunner enqueue.
+
+        Returns None only for an ordinary public source without a private
+        session declaration. Missing/broken private authority is a refusal,
+        never permission to fall through to a public/legacy downloader.
+        """
+        from inspect import getattr_static
+        from .core.selected_search_admission import (
+            capture_admitted_selected_search_offer,
+        )
+        from .core.source_context import source_context_epoch
+        if (type(item) is not SearchResult
+                or type(item.source_provider) is not str
+                or type(item.source_credential) is not str):
+            return None  # Legacy non-native UI callers; never an admission.
+        session = self._sessions.get(
+            self._session_key(item.source_provider, item.source_credential)
+        )
+        branch = getattr_static(session, "selected_purchase_branch", None)
+        shape = getattr_static(session, "private_inventory_row_contract", None)
+        if branch is None and shape is None:
+            if item.source_collection == "library" and item.owned is True:
+                raise ProviderConfigurationError(
+                    "selected_search_source_unavailable"
+                )
+            return None
+        selected = self.current_identity
+        account_epoch = self._account_context_epoch
+        source_epoch = source_context_epoch(self)
+        try:
+            target = capture_admitted_selected_search_offer(
+                self, item, identity_id=getattr(selected, "identity_id", None),
+                account_epoch=account_epoch, source_epoch=source_epoch,
+            )
+            if (self.current_identity is not selected
+                    or self._account_context_epoch != account_epoch
+                    or source_context_epoch(self) != source_epoch):
+                raise ValueError("selected_search_context_changed")
+            return target
+        except Exception:
+            # No identity/account/credential, source path or provider detail
+            # may leave the Core boundary on a failed admission.
+            raise ProviderConfigurationError(
+                "selected_search_source_unavailable"
+            ) from None
+
+    def obtain_admitted_private_search_offer(self, target):
+        """Execute the previously admitted exact source, never GTK navigation."""
+        from .core.selected_source_offer import (
+            SourceOfferTarget, obtain_source_offer,
+        )
+        if (type(target) is not SourceOfferTarget
+                or type(target.source_epoch) is not int
+                or target.source_epoch < 0
+                or target.selection_epoch is not None):
+            raise ProviderConfigurationError(
+                "selected_search_source_unavailable"
+            )
+        return obtain_source_offer(self, target)
+
     def obtain_search_item(self, item: SearchResult):
         from .core.materialization import MaterializationCoordinator
 

@@ -1851,11 +1851,13 @@ class MainWindow(Adw.ApplicationWindow):
             source_epoch = source_context_epoch(self.service)
         except ValueError:
             return
-        identity_id = getattr(self.service.current_identity, 'identity_id', None)
+        service = self.service
+        identity_id = getattr(service.current_identity, 'identity_id', None)
         generation = self._identity_context_generation
         def current():
             if (getattr(self, '_closed', False)
-                    or identity_id != getattr(self.service.current_identity, 'identity_id', None)
+                    or self.service is not service
+                    or identity_id != getattr(service.current_identity, 'identity_id', None)
                     or generation != self._identity_context_generation
                     or (control is not None and getattr(
                         control, '_cifereca_action_context_revoked', False
@@ -1865,11 +1867,38 @@ class MainWindow(Adw.ApplicationWindow):
                 return source_context_epoch(self.service) == source_epoch
             except ValueError:
                 return False
+        # Core captures an exact private owner/session/SQLite source lease at
+        # this click. No remote GET, acquisition or new permission occurs here.
+        # For ordinary public results the existing legacy submit path remains.
+        try:
+            prepare = getattr(service, "capture_admitted_private_search_offer", None)
+            admitted = prepare(item) if callable(prepare) else None
+            if not current():
+                return
+            execute = (
+                getattr(service, "obtain_admitted_private_search_offer", None)
+                if admitted is not None else None
+            )
+            if admitted is not None and not callable(execute):
+                raise ValueError("selected_search_executor_unavailable")
+        except Exception:
+            self.show_error(
+                "Cette source privée n'est plus admissible. Actualisez la notice.",
+                "Obtention indisponible",
+            )
+            return
+
         def work():
+            if admitted is not None:
+                # An admitted private task cannot be retargeted to the
+                # currently displayed profile even after A→B→A navigation.
+                # Core alone checks source_epoch and exact persisted owner
+                # before provider I/O and again before publication.
+                return execute(admitted)
             if not current():
                 from ..plugin_api import Cancelled
                 raise Cancelled('Le contexte de l’obtention a changé.')
-            return self.service.obtain_search_item(item)
+            return service.obtain_search_item(item)
 
         def ok(result) -> None:
             if not current():

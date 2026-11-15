@@ -27,6 +27,9 @@ class SourceOfferTarget:
     # Pinned by the synchronous Core facade. A→B→A can restore the same
     # identity string but cannot restore the account-context generation.
     selection_epoch: int | None = field(default=None, compare=False)
+    # Only an explicit Core-admitted Search click may use this independent
+    # source lease. Passive/legacy targets retain navigation-epoch semantics.
+    source_epoch: int | None = field(default=None, compare=False)
 
 
 def _resolve(service, target: SourceOfferTarget):
@@ -37,11 +40,20 @@ def _resolve(service, target: SourceOfferTarget):
     # Production LibraryService publishes a monotone epoch on every identity
     # switch; minimal synthetic facades with no epoch still need all the
     # independent account/session/ABI binding guards below.
-    current_epoch = getattr(service, "_account_context_epoch", None)
-    if (type(current_epoch) not in (int, type(None))
-            or (type(current_epoch) is int and current_epoch < 0)
-            or target.selection_epoch != current_epoch):
-        raise ValueError("selected_source_identity_changed")
+    if target.source_epoch is not None:
+        from .source_context import source_context_epoch
+        if (type(target.source_epoch) is not int
+                or target.source_epoch < 0
+                or target.selection_epoch is not None
+                or source_context_epoch(service) != target.source_epoch):
+            raise ValueError("selected_source_binding_changed")
+    else:
+        # Historical/read-only selection targets remain navigation-scoped.
+        current_epoch = getattr(service, "_account_context_epoch", None)
+        if (type(current_epoch) not in (int, type(None))
+                or (type(current_epoch) is int and current_epoch < 0)
+                or target.selection_epoch != current_epoch):
+            raise ValueError("selected_source_identity_changed")
     accounts = [
         account for account in service.accounts
         if type(account) is Account
@@ -67,6 +79,10 @@ def _resolve(service, target: SourceOfferTarget):
                 service, account, session=session, provider_id=target.provider_id,
             )):
         raise ValueError("selected_source_binding_changed")
+    if target.source_epoch is not None:
+        from .source_context import source_context_epoch
+        if source_context_epoch(service) != target.source_epoch:
+            raise ValueError("selected_source_binding_changed")
     return target, account
 
 
