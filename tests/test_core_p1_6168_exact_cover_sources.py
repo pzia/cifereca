@@ -25,10 +25,10 @@ def library(current=None, *, url=None, tier="embedded"):
 def test_local_library_list_and_detail_get_identical_immutable_decisions():
     row = library()
     first = project_verified_local_library_cover(
-        row, revision=10, snapshot_complete=True,
+        row, expected_identity_id="alice", revision=10, snapshot_complete=True,
     )
     detail = project_verified_local_library_cover(
-        deepcopy(row), revision=10, snapshot_complete=True,
+        deepcopy(row), expected_identity_id="alice", revision=10, snapshot_complete=True,
     )
     assert first == detail
     assert first.status == "selected"
@@ -47,7 +47,7 @@ def test_local_row_must_prove_exact_owner_and_placement(fault):
     row = library()
     row[fault[0]] = fault[1]
     assert project_verified_local_library_cover(
-        row, revision=1, snapshot_complete=True,
+        row, expected_identity_id="alice", revision=1, snapshot_complete=True,
     ) is None
 
 
@@ -55,12 +55,12 @@ def test_local_library_source_refuses_stale_or_forged_resolution():
     row = library()
     row["metadata"]["cover_resolution"]["url"] = PUBLIC
     assert project_verified_local_library_cover(
-        row, revision=1, snapshot_complete=True,
+        row, expected_identity_id="alice", revision=1, snapshot_complete=True,
     ) is None
     row = library()
     row["metadata"]["cover_resolution"]["status"] = "ambiguous"
     assert project_verified_local_library_cover(
-        row, revision=1, snapshot_complete=True,
+        row, expected_identity_id="alice", revision=1, snapshot_complete=True,
     ) is None
 
 
@@ -69,12 +69,12 @@ def test_local_missing_only_from_explicit_completed_core_resolution():
     row["thumbnail_url"] = None
     row["metadata"]["cover_resolution"] = {"status": "missing"}
     missing = project_verified_local_library_cover(
-        row, revision=3, snapshot_complete=True,
+        row, expected_identity_id="alice", revision=3, snapshot_complete=True,
     )
     assert missing.status == "missing" and missing.uri == ""
     del row["metadata"]["cover_resolution"]
     assert project_verified_local_library_cover(
-        row, revision=3, snapshot_complete=True,
+        row, expected_identity_id="alice", revision=3, snapshot_complete=True,
     ) is None
 
 
@@ -83,7 +83,7 @@ def test_local_ambiguous_remains_ambiguous_not_missing():
     row["thumbnail_url"] = None
     row["metadata"]["cover_resolution"] = {"status": "ambiguous"}
     ambiguous = project_verified_local_library_cover(
-        row, revision=3, snapshot_complete=True,
+        row, expected_identity_id="alice", revision=3, snapshot_complete=True,
     )
     assert ambiguous.status == "ambiguous"
     assert ambiguous.uri == ""
@@ -92,7 +92,7 @@ def test_local_ambiguous_remains_ambiguous_not_missing():
 def test_partial_snapshot_does_not_claim_selected_or_missing():
     row = library()
     decision = project_verified_local_library_cover(
-        row, revision=3, snapshot_complete=False,
+        row, expected_identity_id="alice", revision=3, snapshot_complete=False,
     )
     assert decision.status == "pending"
     assert decision.uri == ""
@@ -240,3 +240,16 @@ def test_revision_flows_unchanged_to_same_scope():
         current, (local_row(current),), revision=4, snapshot_complete=True,
     )
     assert first.scope == second.scope and first.revision == 3 and second.revision == 4
+
+
+def test_explicit_captured_viewer_blocks_reassigned_local_row():
+    row = library()
+    assert project_verified_local_library_cover(
+        row, expected_identity_id="alice", revision=1,
+        snapshot_complete=True,
+    ).status == "selected"
+    # A new identity cannot replay a stale Core row from the old selection.
+    assert project_verified_local_library_cover(
+        row, expected_identity_id="bob", revision=1,
+        snapshot_complete=True,
+    ) is None
