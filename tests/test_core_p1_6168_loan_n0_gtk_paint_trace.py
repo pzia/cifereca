@@ -45,10 +45,20 @@ def host(*, probe_result=True):
     return window, current, decision, calls
 
 
+def observed_state(window, scope):
+    service = window.service
+    return window._loan_cover_trace_observer.snapshot(
+        scope, context=(
+            service.current_identity.identity_id,
+            service._account_context_epoch,
+            getattr(service, "_source_context_epoch", None),
+        ),
+    )
+
+
 def test_real_n2_event_then_real_texture_marks_list_and_detail_separately():
     window, current, decision, calls = host()
-    trace = window._loan_cover_lifecycle
-    state = trace.snapshot(decision.scope)
+    state = observed_state(window, decision.scope)
     assert state.resolved and state.status == "selected"
     assert not state.media_cached and not state.list_painted
     assert not state.detail_painted
@@ -62,11 +72,11 @@ def test_real_n2_event_then_real_texture_marks_list_and_detail_separately():
     assert calls == []  # Projection and model binding do not probe disk.
     list_receipt()
     assert calls == [decision.uri]
-    state = trace.snapshot(decision.scope)
+    state = observed_state(window, decision.scope)
     assert state.media_cached and state.list_painted
     assert not state.detail_painted
     detail_receipt()
-    state = trace.snapshot(decision.scope)
+    state = observed_state(window, decision.scope)
     assert state.detail_painted and state.list_painted
     assert calls == [decision.uri, decision.uri]
     assert not hasattr(current, "_on_cover_applied")
@@ -79,7 +89,7 @@ def test_invalid_physical_signature_never_counts_as_list_or_detail_paint():
     )
     assert callback is not None
     callback()
-    state = window._loan_cover_lifecycle.snapshot(decision.scope)
+    state = observed_state(window, decision.scope)
     assert state.resolved and not state.media_cached
     assert not state.detail_painted and not state.list_painted
     assert calls == [decision.uri]
@@ -93,7 +103,7 @@ def test_recycled_or_replaced_loan_dto_cannot_acknowledge_other_row():
     window.loan_objects[loan_source_key(current)] = copy(current)
     callback()
     assert calls == []
-    assert not window._loan_cover_lifecycle.snapshot(decision.scope).list_painted
+    assert not observed_state(window, decision.scope).list_painted
 
 
 @pytest.mark.parametrize("dimension", ["identity", "epoch", "revision", "closed"])
@@ -112,9 +122,10 @@ def test_aba_context_change_prevents_late_gtk_paint(dimension):
         window._loan_cover_decision_revision += 1
     else:
         window._closed = True
+    old_status = observed_state(window, decision.scope)
     callback()
     assert calls == []
-    assert not window._loan_cover_lifecycle.snapshot(decision.scope).detail_painted
+    assert old_status is not None and not old_status.detail_painted
 
 
 def test_stronger_new_loan_proof_resets_previous_n0_receipts():
@@ -123,12 +134,12 @@ def test_stronger_new_loan_proof_resets_previous_n0_receipts():
         window, current, surface="list", expected_url=first.uri,
     )
     callback()
-    assert window._loan_cover_lifecycle.snapshot(first.scope).list_painted
+    assert observed_state(window, first.scope).list_painted
     window._loan_cover_decision_revision += 1
     rows = window._loan_cover_projection[2]
     newer = loan_cover_decision(window, current, rows)
     assert newer.revision == first.revision + 1
-    snapshot = window._loan_cover_lifecycle.snapshot(first.scope)
+    snapshot = observed_state(window, first.scope)
     assert snapshot.status == "selected"
     assert snapshot.resolved and not snapshot.list_painted
     callback()
@@ -138,7 +149,7 @@ def test_stronger_new_loan_proof_resets_previous_n0_receipts():
     )
     assert fresh is not None
     fresh()
-    assert window._loan_cover_lifecycle.snapshot(first.scope).list_painted
+    assert observed_state(window, first.scope).list_painted
 
 
 def test_n2_explicit_invalidation_rejects_even_valid_stale_media_receipt():
@@ -151,7 +162,7 @@ def test_n2_explicit_invalidation_rejects_even_valid_stale_media_receipt():
     )
     callback()
     assert calls == []
-    state = window._loan_cover_lifecycle.snapshot(decision.scope)
+    state = observed_state(window, decision.scope)
     assert state.invalidated and not state.detail_painted
 
 
@@ -206,6 +217,7 @@ def test_real_loan_detail_does_not_write_observer_to_business_loan():
         "Loan": Loan,
         "copy": copy,
         "_loan_display_cover": lambda _window, l: l,
+        "loan_cover_paint_receipt": loan_cover_paint_receipt,
     }
     exec(compile(ast.fix_missing_locations(
         ast.Module(body=[
@@ -217,6 +229,11 @@ def test_real_loan_detail_does_not_write_observer_to_business_loan():
         ], type_ignores=[]),
     ), str(LOANS), "exec"), namespace)
     window, current, decision, _calls = host()
+    def present(_window, loan):
+        displayed = copy(loan)
+        displayed.thumbnail_url = decision.uri
+        return displayed
+    namespace["_loan_display_cover"] = present
     shown = []
     window.loan_page = NS(detail=NS(show_loan=shown.append))
     window._add_local_book_actions = lambda *_args: None
@@ -228,7 +245,7 @@ def test_real_loan_detail_does_not_write_observer_to_business_loan():
     assert callable(shown[0]._on_cover_applied)
     assert not hasattr(current, "_on_cover_applied")
     shown[0]._on_cover_applied()
-    assert window._loan_cover_lifecycle.snapshot(decision.scope).detail_painted
+    assert observed_state(window, decision.scope).detail_painted
 
 
 def test_no_extra_network_work_on_lists_or_loan_refreshes():
@@ -238,9 +255,9 @@ def test_no_extra_network_work_on_lists_or_loan_refreshes():
         n.name: ast.unparse(n) for n in tree.body
         if isinstance(n, ast.FunctionDef)
     }
-    assert "item._on_cover_applied = observed" in methods["_render_loans"]
-    assert "displayed._on_cover_applied = observed" in methods["_loan_selected"]
-    assert "displayed._on_cover_applied = observed" in methods["_loans_refreshed"]
+    assert "item._on_cover_applied = observer" in methods["_render_loans"]
+    assert "displayed._on_cover_applied = observer" in methods["_loan_selected"]
+    assert "displayed._on_cover_applied = observer" in methods["_loans_refreshed"]
     for name in ("_render_loans", "_loan_selected", "_loans_refreshed"):
         assert "service.library_entries(" not in methods[name]
         assert "service.holdings(" not in methods[name]
