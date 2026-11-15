@@ -23,7 +23,8 @@ def method(class_name, name, *, namespace=None):
     tree = ast.parse(ROOT.read_text(encoding="utf-8"))
     cls = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == class_name)
     func = next(x for x in cls.body if isinstance(x, ast.FunctionDef) and x.name == name)
-    ns = dict(namespace or {})
+    ns = {"__name__": "cifereca.gui.book_widgets", "__package__": "cifereca.gui"}
+    ns.update(namespace or {})
     exec(compile(ast.fix_missing_locations(ast.Module(body=[
         ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
         func,
@@ -158,9 +159,9 @@ def test_genuine_list_bind_document_path_is_conditional_not_url_inference():
     tree = ast.parse(ROOT.read_text(encoding="utf-8"))
     book = next(x for x in tree.body if isinstance(x, ast.ClassDef) and x.name == "BookListCell")
     method_bind = next(x for x in book.body if isinstance(x, ast.FunctionDef) and x.name == "bind")
-    source = ast.unparse(method_bind)
-    assert 'getattr(item, "_cover_document_ref", None)' in source
-    assert 'getattr(self.window, "document_covers", None)' in source
+    source = ast.unparse(method_bind).replace('"', "'")
+    assert "getattr(item, '_cover_document_ref', None)" in source
+    assert "getattr(self.window, 'document_covers', None)" in source
     assert 'self.cover.bind_document(' in source
     assert 'elif item.thumbnail_url:' in source
     assert 'self.cover.bind_url(' in source
