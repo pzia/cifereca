@@ -438,7 +438,7 @@ def main():
             assert store.get_n_items() == 1
             assert store.get_item(0).title == "Livre A"
             assert "1 sur 3" in view._summary.get_text()
-            assert view._master._page.count_label.get_text() == "1 / 3 éléments"
+            assert view._master._page.count_label.get_text() == "1 / 3 élément(s)"
         report["checks"]["P1_4761_real_gtk_multifield_words"] = True
         query.entry.set_text('"astronomie autrice"')
         query.entry.emit("activate")
