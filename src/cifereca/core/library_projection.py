@@ -20,6 +20,7 @@ from ..models import Account, HistoryItem, Loan, SearchResult
 from ..providers import ProviderConfigurationError
 from ..plugin_api import BundleError, load_bundle_manifest
 from .local_placement_open_guard import scoped_existing_placement_path
+from .local_cover_evidence import project_verified_local_cover_evidence
 
 
 def _history_cache_key(account: Account) -> str:
@@ -1157,6 +1158,25 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
                 base_cover_candidates.append(public_cover)
         base_cover = resolve_cover(base_cover_candidates)
         metadata["cover_resolution"] = base_cover.metadata()
+        # A proved EPUB member is an N1 association even after its image
+        # bytes are evicted from N3. Only the Core-local authorized Placement
+        # and Artifact's own inspection metadata may attest that association.
+        # This private packet is never a provider right or a cross-profile
+        # library projection; the GUI N2 producer will version it.
+        exact_cover_facts = None
+        if (scoped_local_path is not None and sha256
+                and type(artifact.get("metadata")) is dict):
+            exact_cover_facts = project_verified_local_cover_evidence(
+                identity_id=row_identity or default_identity_id,
+                book_key=key, artifact_id=artifact_id,
+                placement_id=placement_id, artifact_sha256=sha256,
+                artifact_metadata=artifact["metadata"],
+                verified_path=scoped_local_path,
+                candidates=tuple(
+                    proof for proof in base_cover_candidates
+                    if proof.tier in ("origin", "catalog")
+                ),
+            )
         if existing is None:
             existing = {
                 "key": key, "book_id": item_id, "title": str(row.get("title") or "Sans titre"),
@@ -1176,8 +1196,16 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
                 "placement_id": row.get("placement_id"), "placements": all_placements, "possessions": [],
                 "metadata": metadata,
             }
+            if exact_cover_facts is not None and exact_cover_facts.embedded is not None:
+                # Private owner-scoped evidence, NOT a public library field.
+                # A global foreign read explicitly excludes this key.
+                existing["_exact_local_cover_evidence"] = exact_cover_facts
             merged[key] = existing
         else:
+            # Multiple catalogue declarations for the same Artifact can
+            # point to different Placements. Do not choose first-wins for N2;
+            # keep legacy visual URL until a unique source is attested.
+            existing.pop("_exact_local_cover_evidence", None)
             add_unique(existing.setdefault("providers", []), provider_id)
             add_unique(existing.setdefault("identity_ids", []), row_identity or default_identity_id)
             if source_ref not in existing.setdefault("source_refs", []): existing["source_refs"].append(source_ref)
