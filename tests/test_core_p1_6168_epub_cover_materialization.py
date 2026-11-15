@@ -134,5 +134,9 @@ def test_unverified_loan_or_different_placement_cannot_be_minted(prepared):
     )
     with pytest.raises(ValueError):
         replace(ref, scope=loan)
-    with pytest.raises(TypeError):
-        EpubCoverPhysicalCache().request(object(), source_path=Path("/tmp/other.epub"))
+    cache = EpubCoverPhysicalCache()
+    try:
+        with pytest.raises(TypeError):
+            cache.request(object(), source_path=Path("/tmp/other.epub"))
+    finally:
+        cache.close()
