@@ -165,6 +165,10 @@ def _service_host():
         cache_put=lambda kind, key, value, ttl: writes.append((kind, key, value, ttl)),
     )
     host.diagnostics = NS(add=lambda *_args, **_kw: None)
+    # These legacy cache/selection tests deliberately use no persisted
+    # connection or registered source session. Isolate their GTK semantics;
+    # the real durable lease is exercised in the separate P0 source tests.
+    host._history_source_lease_current = lambda *_args, **_kw: True
     return host, writes
 
 
