@@ -229,6 +229,13 @@ class DocumentCoverService:
         self._qualified_fallback: dict[CoverDocumentScope, _QualifiedFallbackLease] = {}
         self._lock = RLock()
         self._snapshots: OrderedDict[CoverDocumentScope, CoverSourceSnapshot] = OrderedDict()
+        # N2 performance counters, not document provenance. Never export
+        # SourceKey, profile, credential, URL or private filesystem path.
+        self._stats = {
+            "n2_hit": 0, "n2_miss": 0, "n2_source_unknown": 0,
+            "n2_resolution_miss": 0, "n2_register_new": 0,
+            "n2_register_changed": 0, "n2_register_reused": 0,
+        }
         self._resolving: set[CoverDocumentScope] = set()
         # Optional Core-only read-through on an exact N2 source MISS. The
         # reader must return cached, already-admitted documentary evidence;
@@ -276,7 +283,12 @@ class DocumentCoverService:
                     if snapshot != previous:
                         raise ValueError("changed cover evidence requires revision")
                     self._snapshots.move_to_end(snapshot.scope)
+                    self._stats["n2_register_reused"] += 1
                     return
+            self._stats[
+                "n2_register_changed" if previous is not None
+                else "n2_register_new"
+            ] += 1
             self._snapshots[snapshot.scope] = snapshot
             self._snapshots.move_to_end(snapshot.scope)
             self._qualified_fallback.pop(snapshot.scope, None)
@@ -577,6 +589,8 @@ class DocumentCoverService:
                 raise RuntimeError("cover service is closed")
             snapshot = self._snapshots.get(document)
             if snapshot is None:
+                self._stats["n2_miss"] += 1
+                self._stats["n2_source_unknown"] += 1
                 decision = None
             else:
                 self._snapshots.move_to_end(document)
@@ -605,6 +619,11 @@ class DocumentCoverService:
                             document, cause="materialization_requalified",
                         )
                 decision = self.decisions.peek(document, revision=snapshot.revision)
+                if decision is None:
+                    self._stats["n2_miss"] += 1
+                    self._stats["n2_resolution_miss"] += 1
+                else:
+                    self._stats["n2_hit"] += 1
                 if decision is None and document not in self._resolving:
                     self._resolving.add(document)
                     try:
@@ -726,6 +745,15 @@ class DocumentCoverService:
             return handle
         handle._attach(child)
         return handle
+
+    def stats(self) -> dict[str, int]:
+        """One count per get_cover N2 read, independent of physical N3 I/O."""
+        with self._lock:
+            return {
+                **self._stats,
+                "n2_registered_documents": len(self._snapshots),
+                "n2_source_flights": len(self._read_active),
+            }
 
     def close(self) -> None:
         with self._lock:
