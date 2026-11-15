@@ -13,6 +13,7 @@ from uuid import uuid4
 from ..models import Account, Loan, SearchResult
 from ..plugin_api import BorrowRequestNotSubmitted, LendingActionAdmission
 from ..plugin_api.lending_capabilities import assess_lending_operation
+from .borrow_action_scope import _fields
 from .borrow_for_identity_action_scope import capture_cross_profile_borrow_scope
 from .borrow_for_identity_discovery import (
     PossibleBorrowLender, discover_possible_borrow_lenders,
@@ -64,7 +65,10 @@ def execute_normal_lender_borrow(
         account = captured_candidate._account
         if (type(account) is not Account
                 or account.identity_id == requesting_identity_id
-                or captured_candidate.lender_identity_id != account.identity_id):
+                or captured_candidate.lender_identity_id != account.identity_id
+                or captured_candidate._captured_fields != _fields(
+                    account, exact_notice,
+                )):
             return revoked
         # Never trust the held UI candidate as a permission or lease. Re-run
         # the installed local discovery at the click boundary with the same
@@ -123,6 +127,8 @@ def execute_normal_lender_borrow(
                     and service._account_context_epoch == context_epoch
                     and service._source_context_epoch == source_epoch
                     and scope_current() is True
+                    and _fields(account, exact_notice)
+                        == captured_candidate._captured_fields
                     and runtime.enabled is True
                     and runtime.state == "ready"
                     and descriptor.id == plugin_id
