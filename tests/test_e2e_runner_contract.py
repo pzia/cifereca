@@ -42,7 +42,10 @@ def test_plugin_scroll_contract_is_isolated_from_bibliographic_probe():
     assert 'later(450, start_plugin_scroll)' in probe
     # The real catalogue-cover GTK preflight finishes before entering Search.
     assert 'later(130, verify_catalogue_tie_cover_gtk)' in probe
-    assert 'later(150, search_initial)' in probe
+    assert 'later(450, search_initial)' in probe
+    assert 'probe.destroy()' in probe
+    assert 'window.present()' in probe
+    assert probe.index('probe.destroy()') < probe.index('window.present()')
     assert 'P1_4979_catalogue_tie_real_gtk_cover_rebind' in probe
     assert 'verify_plugin_scroll(' in probe
     assert 'report["checks"]["P0_908_plugin_scroll_independent"] = True' in probe
