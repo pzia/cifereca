@@ -126,10 +126,10 @@ def _report_and_image(
             raise ReviewError("État de parcours GTK non attesté")
     else:
         paired_check = (
-        "P1_774_search_selected_same_synthetic_book"
-        if surface == "search"
-        else "P1_774_recommendations_selected_same_synthetic_book"
-    )
+            "P1_774_search_selected_same_synthetic_book"
+            if surface == "search"
+            else "P1_774_recommendations_selected_same_synthetic_book"
+        )
         heading_check = (
             "P1_774_search_mapped_same_book_detail"
             if surface == "search"
@@ -213,6 +213,20 @@ def verified_pair(
             fingerprint.update(
                 f"{width}:{surface}:{appearance}:{image_sha}\n".encode("ascii")
             )
+        # Supplemental pictures support filter and partial/error UX axes.
+        # They come from the SAME GTK report/HEAD but may show DIFFERENT
+        # books or profiles; no edition identity is claimed for these shots.
+        for workflow in WORKFLOW_STAGES:
+            for surface in ("search", "recommendations"):
+                sha, path, image_sha, mode = _report_and_image(
+                    root, width, size, surface, workflow=workflow,
+                )
+                commits.add(sha)
+                appearances.add(mode)
+                images[f"{workflow}:{surface}"] = path
+                fingerprint.update(
+                    f"{width}:{workflow}:{surface}:{mode}:{image_sha}\n".encode("ascii")
+                )
         all_images[width] = images
     if len(commits) != 1 or (expected_sha is not None
                              and commits != {expected_sha}):
@@ -232,7 +246,10 @@ def _private_file(folder: Path, name: str) -> Path:
     return path
 
 
-def _sheet(images: dict[str, Path], target: Path, width: int, appearance: str) -> None:
+def _sheet(
+    images: dict[str, Path], target: Path, width: int, appearance: str,
+    *, workflow: str | None = None,
+) -> None:
     from PIL import Image, ImageDraw
 
     tile_width, margin, header = 660, 16, 36
@@ -246,7 +263,9 @@ def _sheet(images: dict[str, Path], target: Path, width: int, appearance: str) -
     for index, surface in enumerate(("search", "recommendations")):
         left = margin + index * (tile_width + margin)
         draw.text((left + 4, margin + 8),
-                  f"{width} px - {surface} - GTK X11 - {appearance}", fill=(20, 30, 40))
+                  f"{width} px - {surface} - {appearance} - "
+                  + (workflow + " (fixtures distinctes)" if workflow else "même notice"),
+                  fill=(20, 30, 40))
         with Image.open(images[surface]) as picture:
             tile = picture.convert("RGB").resize(
                 (tile_width, tile_height), Image.Resampling.LANCZOS,
@@ -288,12 +307,23 @@ def build_review(
             raise ReviewError("Grille de revue privée sans manifeste")
         for width, paths in images.items():
             _sheet(paths, _private_file(output, f"pair-{width}.png"), width, appearance)
+            for workflow in WORKFLOW_STAGES:
+                _sheet(
+                    {
+                        surface: paths[f"{workflow}:{surface}"]
+                        for surface in ("search", "recommendations")
+                    },
+                    _private_file(output, f"pair-{width}-{workflow}.png"),
+                    width, appearance, workflow=workflow,
+                )
         receipt: dict[str, object] = {
             "status": "VISUAL_REVIEW_REQUIRED",
             "git_sha": sha, "capture_fingerprint_sha256": fingerprint,
             "appearance": appearance,
             "document_sha256": verified_fixture_receipt()["document_sha256"],
-            "widths": sorted(sizes), "verified_source_captures": 2 * len(sizes),
+            "widths": sorted(sizes),
+            "verified_source_captures": CAPTURES_PER_WIDTH * len(sizes),
+            "workflow_sheets": sorted(WORKFLOW_STAGES),
         }
         manifest.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
         manifest.chmod(0o600)
@@ -333,7 +363,10 @@ def verify_completed_review(
             or manifest.get("document_sha256") !=
                 verified_fixture_receipt()["document_sha256"]
             or manifest.get("widths") != sorted(sizes)
-            or manifest.get("verified_source_captures") != 2 * len(sizes)):
+            or manifest.get("verified_source_captures") != (
+                CAPTURES_PER_WIDTH * len(sizes)
+            )
+            or manifest.get("workflow_sheets") != sorted(WORKFLOW_STAGES)):
         raise ReviewError("Grille et captures ne correspondent plus")
     raw = checklist.read_bytes()
     with checklist.open(newline="", encoding="utf-8") as stream:
