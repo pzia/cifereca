@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from .recent_time import format_recent_timestamp
+from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 
 
 def project_recent_rows(
@@ -24,6 +25,7 @@ def project_recent_rows(
     """
     rows: list[Any] = []
     objects: dict[str, dict[str, Any]] = {}
+    seen_cells: dict[str, Any | None] = {}
     for item in items:
         key = str(item.get("placement_id") or f"recent:{len(rows)}")
         objects[key] = item
@@ -45,12 +47,41 @@ def project_recent_rows(
                 )
             except Exception:
                 label = "Source"
-        rows.append(row_factory(
+        row = row_factory(
             key,
             str(item.get("title") or "Sans titre"),
             str(item.get("author") or ""),
             temporal,
             label,
             item.get("thumbnail_url"),
-        ))
+        )
+        # Two descriptive rows with the same GTK key are not an exact
+        # document binding: revoke any earlier packet, retain both rows.
+        # This is visual only and does not rewrite the Core snapshot.
+        if key in seen_cells:
+            earlier = seen_cells[key]
+            if earlier is not None:
+                for field in ("_cover_local_evidence", "_cover_document_ref"):
+                    if hasattr(earlier, field):
+                        delattr(earlier, field)
+                if hasattr(earlier, "_public_row_content"):
+                    delattr(earlier, "_public_row_content")
+            seen_cells[key] = None
+        else:
+            seen_cells[key] = row
+            facts = item.get("_exact_local_cover_evidence")
+            if (hasattr(row, "__dict__")
+                    and type(facts) is VerifiedLocalCoverEvidence
+                    and facts.scope.identity_id == item.get("identity_id")
+                    and facts.scope.source_key == key
+                    and facts.scope.artifact_id == item.get("artifact_id")
+                    and facts.scope.placement_id == item.get("placement_id")
+                    and item.get("key") == key):
+                row._cover_local_evidence = facts
+                row._cover_document_ref = facts.scope
+                row._public_row_content = (
+                    "recent", key, item.get("title"), item.get("author"),
+                    temporal, label, item.get("thumbnail_url"), facts,
+                )
+        rows.append(row)
     return rows, objects
