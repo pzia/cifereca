@@ -123,6 +123,28 @@ L'agent UX doit inspecter les PNG originaux en pleine résolution : la création
 de planches n'est **pas** une validation visuelle, WCAG ou un droit de fusion.
 Aucune capture réelle ni donnée de compte ne doit être publiée dans les CI.
 
+### Preuve d'apparence GTK au moment de chaque capture
+
+Les 36 entrées `screen.json.screenshots` consignent maintenant séparément
+l'apparence **demandée** et `observed_appearance` lue depuis
+`Adw.StyleManager.get_default().get_dark()` **au moment précis du PNG**.
+La classe CSS `cifereca-modern-light` de la vraie fenêtre GTK doit être
+cohérente avec cette observation avant la capture. La revue privée refuse
+toute discordance ou preuve manquante, **même si le rapport porte PASS et
+que les octets PNG/empreintes SHA sont valides**.
+
+Pour chaque vue, le validateur exige les attestations GTK
+`P1_757_viewport_bounds_*`, `P1_757_dark_transition_*`,
+`P1_757_light_restore_*`, les deux attestations du vrai Détail Recherche,
+ainsi que l'hébergement des vrais plugins Accueil et Constellations lorsqu'ils
+font partie du périmètre. L'ensemble est conditionné par
+`P1_757_all_routes_light_dark_gtk`. Les preuves déjà produites sans
+observation par capture doivent être **recapturées** sous le nouveau HEAD
+dans l'espace privé ; une ancienne grille ne constitue plus une attestation.
+
+Ceci améliore la traçabilité GTK, mais **ne remplace pas** l'inspection
+visuelle en plein format, notamment hover, clipping, focus et contraste réel.
+
 ### Règle d'intégrité des images revues (15/11/2026)
 
 La grille et son manifeste privé sont liés **aux octets des 36 PNG originaux**,
