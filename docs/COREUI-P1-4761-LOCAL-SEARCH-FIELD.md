@@ -92,6 +92,26 @@ la génération sont vérifiés dans **la vraie interface**, sous Xvfb/XTEST.
 Les données restent synthétiques ; ceci ne remplace pas la revue visuelle
 sur les mêmes notices entre pages (#774).
 
+## Focus clavier local Ctrl+F (P1-FINALISATION)
+
+Dans Recommandations, le raccourci **Ctrl+F** doit cibler le champ
+`Gtk.SearchEntry` du `LocalQueryControls` de **cette page**, pas le
+filtre de la vue Recherche hors écran. Le `MasterDetailPage` commun
+expose un branchement optionnel de focus, relayé par la façade publique
+`PublicBookMasterDetailView.bind_local_filter_focus` et par le
+`LocalQueryControls.focus_text_filter` (uniquement si la vue est mappée).
+La page plugin utilise ces deux méthodes par introspection optionnelle
+pour préserver la compatibilité avec les Core plus anciens. L'ancien
+mode sans barre commune conserve le focus de son champ local.
+
+Le raccourci ne modifie **ni** le texte, **ni** les filtres, **ni** le
+calcul de recommandations, **ni** les identités ou droits. Il ne peut
+plus diriger Ctrl+F vers une `window.search_controls` cachée depuis
+une page plugin. Le scénario réel GTK/XTEST envoie les touches
+physiques `Control_L+f` depuis la liste et constate le **focus natif**
+sur le champ de recherche locale, sans requête fournisseur ni
+recalcul, avant de poursuivre le test de saisie clavier existant.
+
 ## Recette et frontières
 
 `e2e/recommendations_detail_probe.py` vérifie le vrai widget GTK aux
