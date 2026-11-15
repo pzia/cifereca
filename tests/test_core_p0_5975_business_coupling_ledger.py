@@ -261,7 +261,7 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
     guards = {
         # The removed middle Kobo predicate shifts the unchanged archive-only
         # third ordinal to the old second-ordinal AST ID: no false retirement.
-        "site-d88574f6e28d059189c71da5",
+        "site-dd2ac28f46a8a720315de122",
         "site-c668504ada66eace309e3e7f",
     }
     removed_writer = "site-1220521b4d5dc767addb6d29"
@@ -597,13 +597,25 @@ def test_w1_sourcekey_preflight_is_provider_neutral_and_physically_reviewed():
     ledger = json.loads((root / "docs/provider-business-coupling-review.json")
                         .read_text(encoding="utf-8"))
     old = "site-dd2ac28f46a8a720315de122"
-    assert all(row["id"] != old for row in ledger["reviews"])
+    # The surviving archive-only Kobo predicate inherits this identical AST
+    # ordinal when the earlier preflight branch is physically removed.
+    reviews = [row for row in ledger["reviews"] if row["id"] == old]
+    assert len(reviews) == 1
+    assert reviews[0]["journey"] == (
+        "W1 historical Kobo backup archive-only return without canonical mirror"
+    )
+    assert all(row["id"] != "site-d88574f6e28d059189c71da5"
+               for row in ledger["reviews"])
     retired = [row for row in ledger["retirements"] if row["id"] ==
                "struct-w1-all-provider-sourcekey-admission-supplier-predicate-retired"]
     assert len(retired) == 1
     assert retired[0]["original_site_id"] == old
     assert retired[0]["original_classification"] == "safety_guard_pending_contract"
-    assert retired[0]["in_ast_metric"] is True
+    assert retired[0]["in_ast_metric"] is False
+    assert retired[0]["rebound_site_id"] == old
+    assert retired[0]["retained_guard_previous_id"] == (
+        "site-d88574f6e28d059189c71da5"
+    )
     assert retired[0]["retired_at_sha"] == (
         "f9efeabf8358e268d7bfcc71e5b9e1358acecd0c"
     )
