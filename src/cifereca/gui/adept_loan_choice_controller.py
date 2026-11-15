@@ -68,12 +68,15 @@ def present_adept_loan_choices(window, acquisition_id, loan, result, *, Gtk, Adw
     dialog.set_response_enabled("attach", False)
     dialog.set_close_response("cancel")
 
+    # A dialog is bound to the Core that supplied its ADEPT candidate list.
+    dialog_core = window.service
     identity_generation = getattr(window, "_identity_context_generation", None)
     account_generation = getattr(window, "_account_context_generation", None)
 
     def context_current() -> bool:
         return (
             not getattr(window, "_closed", False)
+            and window.service is dialog_core
             and getattr(window, "_identity_context_generation", None) == identity_generation
             and getattr(window, "_account_context_generation", None) == account_generation
         )
@@ -104,7 +107,7 @@ def present_adept_loan_choices(window, acquisition_id, loan, result, *, Gtk, Adw
         # Admission is the last point where GTK navigation may choose a Core.
         # Keep the exact Core method and selected ADEPT IDs for the queued job;
         # subsequent account/window changes only gate GTK result delivery.
-        attach_adept_loan = window.service.attach_adept_loan
+        attach_adept_loan = dialog_core.attach_adept_loan
         selected_profile_id = option["profile_id"]
         selected_loan_id = option["loan_id"]
         submitted = True
