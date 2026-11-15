@@ -299,6 +299,7 @@ class ReaderUsbExecutionBrokerImpl:
                 registry_generation=getattr(manager, "registry_generation", -1),
                 confirmations={confirmation.artifact_id: confirmation},
                 rights={}, policy_verifier=None,
+                artifact_id=confirmation.artifact_id,
                 check_cancelled=check_cancelled,
             )
             return result if type(result) is UsbSyncResult else blocked
