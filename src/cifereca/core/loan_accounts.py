@@ -8,6 +8,7 @@ retains all locks, provider requests, verification and repeated-return guards.
 """
 
 from inspect import getattr_static
+from re import fullmatch
 from types import SimpleNamespace
 
 
@@ -28,8 +29,11 @@ def account_for_loan(
         raise configuration_error('Compte emprunteur non attesté pour ce prêt')
     # A malformed optional alias grants no special lookup. An exact upstream
     # account ID can still match, independently of this display convention.
-    if (type(primary_alias) is not str or not primary_alias
-            or len(primary_alias) > 128 or "\x00" in primary_alias):
+    # Keep the same strict grammar as the canonical loan_matches_account
+    # contract; a malformed plugin descriptor cannot invent a borrower alias.
+    if (primary_alias is not None and (
+            type(primary_alias) is not str
+            or fullmatch(r"[a-z][a-z0-9_-]{0,63}", primary_alias) is None)):
         primary_alias = None
     matches = []
     for account in accounts:
