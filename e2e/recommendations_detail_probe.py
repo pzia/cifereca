@@ -1541,6 +1541,21 @@ def main():
         assert selected.title == PAIRED_BOOK["title"]
         assert selected.subtitle == PAIRED_BOOK["author"]
         assert page.detail.get_mapped()
+        # Prove the selected row has really populated the shared GTK
+        # DetailPanel header, not only a mapped empty/stale panel.
+        titles = [
+            child.get_text() for child in walk(page.detail.content)
+            if isinstance(child, Gtk.Label)
+            and child.get_mapped() and child.has_css_class("detail-title")
+        ]
+        authors = [
+            child.get_text() for child in walk(page.detail.content)
+            if isinstance(child, Gtk.Label)
+            and child.get_mapped() and child.has_css_class("detail-subtitle")
+        ]
+        assert titles == [PAIRED_BOOK["title"]]
+        assert authors == [PAIRED_BOOK["author"]]
+        report["checks"]["P1_774_recommendations_mapped_same_book_detail"] = True
         assert view.selected_identity_id() == "alice"
         assert not state["searches"][1:]
         candidate, = view._ranked
