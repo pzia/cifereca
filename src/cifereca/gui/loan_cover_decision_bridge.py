@@ -54,6 +54,10 @@ def loan_cover_decision(
     if type(cache) is not CoverDecisionCache:
         return None
 
+    # Register the trace before the N2 refresh/resolved events. A test
+    # or headless caller without a physical CoverLoader keeps the old path.
+    from .loan_cover_paint_trace import subscribe_loan_cover_trace
+    subscribe_loan_cover_trace(host, cache, scope)
     hit = cache.peek(scope, revision=revision)
     if hit is not None:
         return hit
@@ -68,6 +72,8 @@ def loan_cover_decision(
         # An older worker must not invalidate a newer decision.
         return None
     if cache.publish_resolved(token, decision):
+        from .loan_cover_paint_trace import note_loan_cover_token
+        note_loan_cover_token(host, token, decision)
         return decision
     return cache.peek(scope, revision=revision)
 
