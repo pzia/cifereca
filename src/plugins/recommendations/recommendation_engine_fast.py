@@ -71,6 +71,13 @@ def score_candidate_cached(
     *,
     known_absent: bool = False,
 ) -> tuple[float, tuple[str, ...]]:
+    # The signature below describes *content*, not ISBN/edition identity
+    # or source-scope presence. A cached unowned notice with identical content
+    # must never override an exact ownership check on another edition.
+    # "known_absent" is only granted by the caller's prior possession check.
+    if known_absent is not True and is_already_present(profile, item):
+        return 0.0, ()
+
     # Scores and rationales are functions of the *profile* as well as the
     # candidate. "known_absent" also changes the ownership exclusion rule.
     # Keep these dimensions in the key even if a caller reuses a dict.
@@ -81,11 +88,9 @@ def score_candidate_cached(
     cached = cache.get(signature)
     if cached is not None:
         return cached
-    scored = (
-        _content_score_prevalidated(profile, item)
-        if known_absent
-        else content_score(profile, item)
-    )
+    # The guarded path has already performed its exact ownership check,
+    # so a second check through content_score() is unnecessary.
+    scored = _content_score_prevalidated(profile, item)
     cache[signature] = scored
     return scored
 
