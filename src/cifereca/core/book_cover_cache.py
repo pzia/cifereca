@@ -49,6 +49,7 @@ class CoverDecisionChange:
     kind: CoverChangeKind
     decision: ResolvedBookCover | None = None
     cause: CoverInvalidationCause | None = None
+    sequence: int = 0
 
 
 @dataclass(slots=True)
@@ -114,12 +115,17 @@ class CoverDecisionCache:
             CoverDocumentScope, dict[int, Callable[[CoverDecisionChange], None]]
         ] = {}
         self._generation = 0
+        self._event_sequence = 0
         self._listener_id = 0
         self._subscriber_count = 0
 
     def _bump(self) -> int:
         self._generation += 1
         return self._generation
+
+    def _next_event(self) -> int:
+        self._event_sequence += 1
+        return self._event_sequence
 
     def _record(self, scope: CoverDocumentScope, slot: _Slot) -> None:
         self._slots[scope] = slot
@@ -159,6 +165,7 @@ class CoverDecisionCache:
             callbacks = self._listeners(scope)
             event = CoverDecisionChange(
                 scope, revision, token.generation, "refresh",
+                sequence=self._next_event(),
             )
         self._notify(callbacks, event)
         return token
@@ -215,6 +222,7 @@ class CoverDecisionCache:
             event = CoverDecisionChange(
                 token.scope, token.revision, token.generation,
                 "resolved", decision=decision,
+                sequence=self._next_event(),
             )
         self._notify(callbacks, event)
         return True
@@ -241,6 +249,7 @@ class CoverDecisionCache:
             callbacks = self._listeners(scope)
             event = CoverDecisionChange(
                 scope, revision, generation, "invalidated", cause=cause,
+                sequence=self._next_event(),
             )
         self._notify(callbacks, event)
 
