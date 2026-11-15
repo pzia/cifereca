@@ -383,7 +383,12 @@ def main() -> int:
         manager = window.plugin_manager
         assert manager is not None
         manager._brokers["reader.usb"] = FakeOnlyUsbBroker()
-        window._render_readers()
+        # Refresh only the selected detail: the list-row version is
+        # intentionally unchanged after synthetic test-broker injection.
+        from cifereca.gui.reader_page_controller import reader_selected
+        selected_row = window.readers_page.selection.get_selected_item()
+        assert selected_row is not None and selected_row.key == "reader-book"
+        reader_selected(window, selected_row)
         assert window.readers_page.selection.get_selected_item().key == "reader-book"
         fake_start[0] = monotonic() + 7
         later(150, click_synthetic_execution)
