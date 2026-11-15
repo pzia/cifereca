@@ -1724,6 +1724,22 @@ class LibraryService:
         self.diagnostics.add("ADEPT", "inventory refresh", "warning" if summary["errors"] else "ok", detail=summary, level="normal")
         return summary
 
+    def _history_source_lease_current(
+        self, account: Account, session: ProviderSession, *, scope: tuple, epoch: int,
+    ) -> bool:
+        """Read-only exact borrower lease for a manually requested history GET.
+
+        Unlike automatic inventory Sync, reading a saved account's history
+        does not require opting into the source Sync switch. A real disabled
+        connection, deleted borrower, replaced session or revoked source
+        generation still blocks provider I/O and cache publication.
+        """
+        from .core.private_inventory_binding import private_inventory_binding_current
+        return private_inventory_binding_current(
+            self, account, session, scope=scope, epoch=epoch,
+            require_source_enabled=False,
+        )
+
     def refresh_history(self, force: bool = False) -> list[HistoryItem]:
         return library_projection.refresh_history(self, force, account=self.current_account)
 
@@ -3937,10 +3953,15 @@ class LibraryService:
                     _, borrower_code = self._paris_adept_identity_for_loan(
                         loan, connection_identity_id=identity.identity_id,
                     )
-                    if borrower_code:
+                    # Only None attests successful borrower admission.
+                    # A falsey/malformed external refusal must never bypass
+                    # the veto or enter the public receipt unfiltered.
+                    if borrower_code is not None:
                         return {
                             "status": "attention_required", "loan_id": loan.id,
-                            "code": borrower_code, "retry": "explicit_only",
+                            "code": adept_borrower.public_borrower_refusal_code(
+                                borrower_code
+                            ), "retry": "explicit_only",
                         }
                     if self._cross_identity_loan_conflict(
                         self.storage.acquisitions(provider_id=loan.source_provider),

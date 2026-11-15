@@ -161,6 +161,7 @@ def main() -> int:
     parser.add_argument("--width", type=int, choices=(1024, 1366, 1600), default=1366)
     # Absence preserves the original P0 1280x1024 screen exactly.
     parser.add_argument("--matched-display", action="store_true")
+    parser.add_argument("--appearance", choices=("light", "dark"))
     args = parser.parse_args()
     output = args.out.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -343,6 +344,13 @@ def main() -> int:
 
         def do_activate(self):
             nonlocal window, device
+            # Explicit per-run mode for real #774 light/dark pairing. The
+            # historical P0 probe keeps the host default unless requested.
+            if args.appearance is not None:
+                Adw.StyleManager.get_default().set_color_scheme(
+                    Adw.ColorScheme.FORCE_LIGHT if args.appearance == "light"
+                    else Adw.ColorScheme.FORCE_DARK
+                )
             window = MainWindow(self, core.config, core.library, core.diagnostics)
             window.set_default_size(args.width - 40, {1024: 700, 1366: 780, 1600: 880}[args.width])
             window.present()
@@ -389,6 +397,12 @@ def main() -> int:
 
     def capture_stage(stage: str, *, popup: bool = False):
         nonlocal capture
+        manager = Adw.StyleManager.get_default()
+        # Report GTK's observed appearance at capture time, not a user label.
+        appearance = "dark" if manager.get_dark() else "light"
+        if args.appearance is not None:
+            assert appearance == args.appearance, "GTK appearance mismatch"
+        result["appearance"] = appearance
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])
         if args.matched_display:
             # #774: Search/Recommendations are exercised independently on
@@ -473,7 +487,7 @@ def main() -> int:
         state = snapshot()
         result["steps"].append({
             "stage": stage, "popup_expected": popup,
-            "screenshot": path.name,
+            "appearance": appearance, "screenshot": path.name,
             "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
             **state,
         })

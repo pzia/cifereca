@@ -23,7 +23,7 @@ SIZES = {1024: SIZE}
 SHA = "a" * 40
 
 
-def _one(root: Path, surface: str, sha: str = SHA) -> Path:
+def _one(root: Path, surface: str, sha: str = SHA, appearance: str = "light") -> Path:
     prefix, stage, field, backend, check, geom_key = module.SURFACES[surface]
     folder = root / f"{prefix}-1024"
     folder.mkdir()
@@ -35,6 +35,7 @@ def _one(root: Path, surface: str, sha: str = SHA) -> Path:
             else "recommendations-detail-gtk"
         ),
         "status": "PASS", "backend": backend, "git_sha": sha,
+        "appearance": appearance,
         "checks": {check: True},
         geom_key: {
             "display_width": 1024, "display_height": 768,
@@ -42,6 +43,7 @@ def _one(root: Path, surface: str, sha: str = SHA) -> Path:
         },
         "steps": [{
             "stage": stage, field: image.name,
+            "appearance": appearance,
             "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
         }],
     }
@@ -51,9 +53,10 @@ def _one(root: Path, surface: str, sha: str = SHA) -> Path:
     return folder
 
 
-def _pair(root: Path, *, second_sha: str = SHA) -> None:
-    _one(root, "search")
-    _one(root, "recommendations", second_sha)
+def _pair(root: Path, *, second_sha: str = SHA,
+          first_mode: str = "light", second_mode: str = "light") -> None:
+    _one(root, "search", appearance=first_mode)
+    _one(root, "recommendations", second_sha, appearance=second_mode)
 
 
 def _refresh_image(folder: Path) -> None:
@@ -92,6 +95,7 @@ def test_same_head_real_gtk_pair_generates_private_review_not_ux_acceptance(tmp_
     assert report["status"] == "VISUAL_REVIEW_REQUIRED"
     assert report["verified_source_captures"] == 2
     assert report["git_sha"] == SHA
+    assert report["appearance"] == "light"
     assert len(report["capture_fingerprint_sha256"]) == 64
     assert (private / "pair-1024.png").is_file()
     assert (private / "ux-checklist.csv").is_file()
@@ -168,6 +172,7 @@ def test_completed_human_grid_produces_bounded_private_receipt_only(tmp_path):
     checklist = _human_review(tmp_path)
     result = module.verify_completed_review(tmp_path, sizes=SIZES)
     assert result["status"] == "CHECKLIST_VERIFIED"
+    assert result["appearance"] == "light"
     assert result["ready_for_ux_decision"] is True
     assert result["reviewed_widths"] == 1
     assert result["checklist_sha256"] == hashlib.sha256(checklist.read_bytes()).hexdigest()
@@ -195,3 +200,60 @@ def test_image_symlink_is_never_used(tmp_path):
     image.symlink_to(original.name)
     with pytest.raises(module.ReviewError, match="non sûr"):
         module.build_review(tmp_path, sizes=SIZES)
+
+def test_mixed_light_dark_captures_are_rejected_before_any_review(tmp_path):
+    _pair(tmp_path, second_mode="dark")
+    with pytest.raises(module.ReviewError, match="clair/sombre"):
+        module.build_review(tmp_path, sizes=SIZES)
+    assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+def test_expected_dark_must_be_observed_not_only_declared(tmp_path):
+    _pair(tmp_path)
+    with pytest.raises(module.ReviewError, match="clair/sombre"):
+        module.build_review(tmp_path, sizes=SIZES, expected_appearance="dark")
+
+
+def test_wrong_stage_appearance_is_rejected(tmp_path):
+    _pair(tmp_path)
+    path = tmp_path / "search-filter-1024/screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["steps"][0]["appearance"] = "dark"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="Apparence"):
+        module.build_review(tmp_path, sizes=SIZES)
+
+
+def test_all_dark_capture_pair_is_supported(tmp_path):
+    _pair(tmp_path, first_mode="dark", second_mode="dark")
+    result = module.build_review(
+        tmp_path, sizes=SIZES, expected_sha=SHA, expected_appearance="dark",
+    )
+    assert result["appearance"] == "dark"
+    _human_review(tmp_path)
+    receipt = module.verify_completed_review(
+        tmp_path, sizes=SIZES, expected_appearance="dark",
+    )
+    assert receipt["appearance"] == "dark"
+
+
+def test_same_head_same_pixels_new_mode_cannot_reuse_prior_human_verdict(tmp_path):
+    _pair(tmp_path)
+    module.build_review(tmp_path, sizes=SIZES)
+    checklist = _human_review(tmp_path)
+    original = checklist.read_bytes()
+    # Even if someone relabels both synthetic JSON reports without changing
+    # pixels, a mode switch is not the same UI review. Real probes report
+    # Adwaita's observed state for each capture, never the requested label.
+    for surface in ("search-filter", "recommendations-detail"):
+        path = tmp_path / f"{surface}-1024/screen.json"
+        report = json.loads(path.read_text(encoding="utf-8"))
+        report["appearance"] = "dark"
+        for stage in report["steps"]:
+            stage["appearance"] = "dark"
+        path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="modifiée"):
+        module.build_review(tmp_path, sizes=SIZES)
+    assert checklist.read_bytes() == original
+    with pytest.raises(module.ReviewError, match="correspondent"):
+        module.verify_completed_review(tmp_path, sizes=SIZES)
