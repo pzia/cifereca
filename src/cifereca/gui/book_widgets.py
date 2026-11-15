@@ -157,6 +157,7 @@ class CoverView(Gtk.Overlay):
         self, service, document, *, variant: str = "list",
         priority: int = 10,
         on_texture_applied: Callable[[str, Path], None] | None = None,
+        is_current: Callable[[], bool] | None = None,
     ) -> None:
         """Bind N2 DocumentRef before N3; same GTK generation and decode sink.
 
@@ -206,6 +207,7 @@ class CoverView(Gtk.Overlay):
                 self.bind_document(
                     service, document, variant=variant, priority=priority,
                     on_texture_applied=on_texture_applied,
+                    is_current=is_current,
                 )
             except (RuntimeError, ValueError, TypeError):
                 self._show_missing()
@@ -228,7 +230,9 @@ class CoverView(Gtk.Overlay):
         self._request = request
         # The worker already checked N2, but idle dispatch can run LATER
         # than a Core source revision/identity/placement invalidation.
-        self._document_check = lambda: request.still_current
+        self._document_check = lambda: (
+            request.still_current and (is_current is None or is_current())
+        )
         # This is the N2-selected URI, NOT a reconstructed URL from the
         # thumbnail path. N0 paint receipts retain their exact source.
         self._url = request.source_uri
@@ -560,6 +564,12 @@ class BookListCell(Gtk.Box):
         decision from cached N3 media. A rejected packet never falls back
         silently to a lower-priority supplier URL.
         """
+        search = getattr(item, "_cover_search_evidence", None)
+        if search is not None:
+            from .search_document_cover_bridge import register_exact_search_document
+            return register_exact_search_document(
+                self.window, search.source_item, service, search, document,
+            )
         supplier = getattr(item, "_cover_loan_supplier_evidence", None)
         if supplier is not None:
             # Supplier proof and EPUB Placement are incompatible owners.
@@ -596,6 +606,11 @@ class BookListCell(Gtk.Box):
         except (TypeError, ValueError, RuntimeError):
             return False
 
+    def _search_cover_guard(self, item: BookListItem) -> dict:
+        proof = getattr(item, "_cover_search_evidence", None)
+        from .search_document_cover_bridge import search_document_is_current
+        return {"is_current": lambda: search_document_is_current(self.window, proof)}
+
     def _thumbnail_changed(self, item: BookListItem) -> None:
         if self._thumbnail_item is not item or self._bound_key != item.key:
             return
@@ -608,6 +623,8 @@ class BookListCell(Gtk.Box):
             self.cover.bind_document(
                 service, document, variant="list", priority=10,
                 on_texture_applied=getattr(item, "_cover_paint_observer", None),
+                **(self._search_cover_guard(item)
+                   if getattr(item, "_cover_search_evidence", None) is not None else {}),
             )
             return
         self.cover.bind_url(
@@ -697,6 +714,8 @@ class BookListCell(Gtk.Box):
                 self.cover.bind_document(
                     service, document, variant="list", priority=10,
                     on_texture_applied=getattr(item, "_cover_paint_observer", None),
+                    **(self._search_cover_guard(item)
+                       if getattr(item, "_cover_search_evidence", None) is not None else {}),
                 )
         elif item.thumbnail_url:
             self.cover.bind_url(

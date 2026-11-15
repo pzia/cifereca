@@ -8,7 +8,7 @@ EPUB scan, or N3 physical-cache check occurs on the GTK path.
 from __future__ import annotations
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
 
@@ -24,33 +24,46 @@ from .search_cover_bridge import SearchCoverBridge, _scope
 class VerifiedSearchDocumentCover:
     """One still-live SearchResult object and its exact documentary sources."""
 
-    source_item: SearchResult
+    source_item: SearchResult = field(compare=False)
     row_key: str
     document: CoverDocumentScope
     context: tuple[int, int, int, int]
     candidates: tuple[CoverCandidate, ...]
 
+    @property
+    def row_signature(self) -> tuple[int, VerifiedSearchDocumentCover]:
+        return id(self.source_item), self
 
-def _current(
-    window: Any, item: SearchResult, row_key: str,
-) -> tuple[CoverDocumentScope, tuple[int, int, int, int]] | None:
+
+def search_cover_context(window: Any) -> tuple[int, int, int, int] | None:
     service = getattr(window, "service", None)
-    identity_id = getattr(
-        getattr(service, "current_identity", None), "identity_id", None,
-    )
-    objects = getattr(window, "search_objects", None)
     context = (
         getattr(window, "_identity_context_generation", None),
         getattr(window, "_search_generation", None),
         getattr(service, "_account_context_epoch", None),
         getattr(service, "_source_context_epoch", None),
     )
+    if any(type(epoch) is not int or epoch < 0 for epoch in context):
+        return None
+    return context
+
+
+def _current(
+    window: Any, item: SearchResult, row_key: str,
+) -> tuple[CoverDocumentScope, tuple[int, int, int, int]] | None:
+    identity_id = getattr(
+        getattr(getattr(window, "service", None), "current_identity", None),
+        "identity_id", None,
+    )
+    objects = getattr(window, "search_objects", None)
+    context = search_cover_context(window)
     if (getattr(window, "_closed", False)
             or getattr(window, "_search_mode", None) != "global"
             or type(item) is not SearchResult
             or type(row_key) is not str or not row_key
             or type(objects) is not dict or objects.get(row_key) is not item
-            or any(type(epoch) is not int or epoch < 0 for epoch in context)
+            or context is None
+            or getattr(window, "_online_cover_context", None) != context
             or type(identity_id) is not str or not identity_id):
         return None
     # A rendered result from an old query must not acquire a *fresh*
@@ -65,6 +78,10 @@ def _current(
     except (AttributeError, TypeError, ValueError):
         return None
     if getattr(window, "_loaded_search_context", None) != expected_query:
+        return None
+    metadata = item.metadata
+    if (type(metadata) is not dict
+            or metadata.get("search_provenance") == "known_catalog_stale"):
         return None
     scope = _scope(item, identity_id)
     return (scope, context) if scope is not None else None
@@ -83,10 +100,6 @@ def exact_remote_search_document(
     if admitted is None:
         return None
     scope, context = admitted
-    metadata = item.metadata
-    if (type(metadata) is not dict
-            or metadata.get("search_provenance") == "known_catalog_stale"):
-        return None
     candidates: list[CoverCandidate] = []
     bridge = getattr(window, "_search_cover_bridge", None)
     if type(bridge) is SearchCoverBridge:
@@ -167,6 +180,23 @@ class SearchDocumentCoverRegistry:
         with self._lock:
             self._closed = True
             self._known.clear()
+
+
+def search_document_is_current(window: Any, evidence: VerifiedSearchDocumentCover) -> bool:
+    current = _current(window, evidence.source_item, evidence.row_key)
+    return current == (evidence.document, evidence.context)
+
+
+def selected_search_document(window: Any, item: SearchResult) -> VerifiedSearchDocumentCover | None:
+    page = getattr(window, "search_page", None)
+    selected = getattr(getattr(page, "selection", None), "get_selected_item", None)
+    row = selected() if callable(selected) else None
+    return exact_remote_search_document(window, item, getattr(row, "key", None))
+
+
+def attach_search_document(row: Any, evidence: VerifiedSearchDocumentCover) -> None:
+    row._cover_search_evidence = evidence
+    row._cover_document_ref = evidence.document
 
 
 def register_exact_search_document(

@@ -92,7 +92,8 @@ def test_gtk_idle_keeps_current_selection_and_legacy_url_unchanged():
 def test_cover_view_binding_keeps_paint_gate_after_worker_callback():
     source = (Path(__file__).resolve().parents[1] /
               "src/cifereca/gui/book_widgets.py").read_text(encoding="utf-8")
-    assert "self._document_check = lambda: request.still_current" in source
+    assert "self._document_check = lambda:" in source
+    assert "request.still_current and (is_current is None or is_current())" in source
     assert "self._document_check = None" in source
     assert "check = getattr(self, \"_document_check\", None)" in source
     assert source.index('check = getattr(self, "_document_check", None)') < (

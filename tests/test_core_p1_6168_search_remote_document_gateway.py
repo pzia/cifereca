@@ -12,7 +12,7 @@ from cifereca.gui.document_cover_service import DocumentCoverService
 from cifereca.gui.search_cover_bridge import SearchCoverBridge
 from cifereca.gui.search_document_cover_bridge import (
     SearchDocumentCoverRegistry, exact_remote_search_document,
-    register_exact_search_document,
+    register_exact_search_document, search_document_is_current,
 )
 from tests.test_core_p1_3104_search_detail_cover_live_row import (
     item, detail, COVER,
@@ -27,7 +27,7 @@ def host(source=None, *, context=CONTEXT):
     source = source or replace(item(), thumbnail_url=CATALOG)
     key = "provider:display-1"
     window = NS(
-        _closed=False, _search_mode="global",
+        _closed=False, _search_mode="global", _online_cover_context=context,
         _loaded_search_context=("q", "title", "all", "alice"),
         search_controls=NS(
             state=lambda: NS(text="q", field="title", scope="all"),
@@ -135,6 +135,8 @@ def test_registration_refuses_expired_or_foreign_source(gateway, alter):
         )
     else:
         source.metadata["search_provenance"] = "known_catalog_stale"
+    assert not search_document_is_current(window, proof)
+    assert exact_remote_search_document(window, source, key) is None
     assert not register_exact_search_document(
         window, source, service, proof, proof.document,
     )
@@ -237,3 +239,40 @@ def test_only_visible_or_selected_gtk_binds_register_without_catalogue_scan():
     assert "artifact_get(" not in source
     assert "catalog_entries(" not in source
     assert "get_cover(" not in source
+
+
+def test_same_url_origin_promotion_rebinds_selected_row_before_detail(gateway):
+    from tests.test_core_p1_3104_search_detail_cover_live_row import Row, publisher
+    from cifereca.gui.search_document_cover_bridge import (
+        attach_search_document, selected_search_document,
+    )
+
+    window, source, key = host()
+    service, _ = gateway
+    initial = exact_remote_search_document(window, source, key)
+    row = Row(key)
+    row.thumbnail_url = CATALOG
+    row._public_row_content = ("search", key, initial.row_signature, CATALOG)
+    attach_search_document(row, initial)
+    window.search_page = NS(selection=NS(get_selected_item=lambda: row))
+    assert register_exact_search_document(window, source, service, initial, initial.document)
+    old = service.get_cover(initial.document, "list", lambda path: None)
+
+    def rebind(signal):
+        assert signal == "thumbnail-changed"
+        proof = row._cover_search_evidence
+        assert [candidate.tier for candidate in proof.candidates] == ["origin", "catalog"]
+        assert register_exact_search_document(window, source, service, proof, proof.document)
+
+    row.set_thumbnail_url = lambda url: False
+    row.emit = rebind
+    publisher()(window, source, detail(source, url=CATALOG))
+
+    proof = selected_search_document(window, source)
+    assert proof.document == initial.document
+    assert row._public_row_content[-2] == proof.row_signature
+    assert not old.still_current
+    assert register_exact_search_document(window, source, service, proof, proof.document)
+    current = service.get_cover(proof.document, "detail", lambda path: None)
+    assert current.source_uri == CATALOG
+    assert service.decisions.peek(proof.document, revision=2).tier == "origin"

@@ -201,11 +201,11 @@ def test_real_apply_callback_uses_cached_visual_but_maintains_raw_proof_input():
     raw = detail(source, url=None)
     callback(window, source.id, source, raw, context=(3, 9, 3, "alice"))
     assert [row[0] for row in calls] == [
-        "detail", "publish", "facets", "actions", "cached",
+        "publish", "detail", "facets", "actions", "cached",
     ]
-    assert calls[0][1] is source
-    assert calls[0][2] is not raw and calls[0][2].thumbnail_url == COVER
-    assert calls[1][3] is raw
+    assert calls[0][3] is raw
+    assert calls[1][1] is source
+    assert calls[1][2] is not raw and calls[1][2].thumbnail_url == COVER
     assert raw.thumbnail_url is None and source.thumbnail_url is None
 
 

@@ -157,6 +157,27 @@ class DetailPanel(Gtk.Box):
             VerifiedHistoryCoverEvidence, register_exact_history_document,
         )
 
+        from .search_document_cover_bridge import (
+            VerifiedSearchDocumentCover, register_exact_search_document,
+            search_document_is_current,
+        )
+
+        if type(cover_evidence) is VerifiedSearchDocumentCover:
+            service = getattr(self.window, "document_covers", None)
+            document = cover_evidence.document
+            if (type(service) is DocumentCoverService
+                    and register_exact_search_document(
+                        self.window, cover_evidence.source_item,
+                        service, cover_evidence, document,
+                    )):
+                cover.bind_document(
+                    service, document, variant="detail", priority=0,
+                    is_current=lambda: search_document_is_current(self.window, cover_evidence),
+                )
+            else:
+                cover.bind_url(self.window.covers, None, priority=0)
+            return
+
         if type(cover_evidence) is VerifiedHistoryCoverEvidence:
             service = getattr(self.window, "document_covers", None)
             document = cover_evidence.document
@@ -1040,6 +1061,22 @@ class DetailPanel(Gtk.Box):
             ("Fournisseur", item.provider),
         ])
         self._decorate(item)
+
+    def show_search_document(
+        self, item: SearchResult, *, cover_evidence,
+        loading: bool = False, detail: ItemDetail | None = None,
+    ) -> None:
+        """Use the active Search cover proof for this synchronous presentation."""
+        if self._next_cover_evidence is not None:
+            raise RuntimeError("nested exact Search cover render")
+        self._next_cover_evidence = cover_evidence
+        try:
+            if detail is None:
+                self.show_search(item, loading=loading)
+            else:
+                self.show_item_detail(item, detail)
+        finally:
+            self._next_cover_evidence = None
 
     def show_search(self, item: SearchResult, loading: bool = False) -> None:
         medium = search_detail_support_label(item)

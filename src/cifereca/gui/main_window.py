@@ -32,6 +32,7 @@ from ..services import LibraryService
 from .cover_loader import CoverLoader
 from .document_cover_service import DocumentCoverService
 from .local_cover_adapter import LocalCoverEvidenceAdapter
+from .search_document_cover_bridge import SearchDocumentCoverRegistry
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
 from .book_actions import identity_has_attested_possession
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
@@ -177,6 +178,7 @@ class MainWindow(Adw.ApplicationWindow):
         self._last_search_query = ""
         self._search_mode = "local"
         self._loaded_search_context = None
+        self._online_cover_context = None
         self._search_local_objects: dict[str, dict[str, Any]] = {}
         self.main_shell: Gtk.Widget | None = None
         self.loan_objects: dict[str, Loan] = {}
@@ -203,6 +205,7 @@ class MainWindow(Adw.ApplicationWindow):
         self.document_covers = DocumentCoverService(self.covers)
         # N2 revisions follow exact documents, N3 bytes stay shared on desktop.
         self.local_cover_adapter = LocalCoverEvidenceAdapter()
+        self.search_document_cover_registry = SearchDocumentCoverRegistry()
         self.history_cover_resolver = HistoryCoverResolver(service, diagnostics)
         self.runner = TaskRunner(self)
         _TRACE_LOG.info("TRACE gui init pre-css")

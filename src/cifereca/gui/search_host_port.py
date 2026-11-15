@@ -70,11 +70,11 @@ class SearchDetailHost(Protocol):
 # Only capabilities actually read/written by the async search orchestration.
 SEARCH_RUN_CAPABILITIES = frozenset({
     "_closed", "_reset_search_enter", "search_controls", "service",
-    "_search_generation", "_loaded_search_context", "toast", "_last_search_query", "_search_mode",
+    "_search_generation", "_identity_context_generation", "_loaded_search_context", "toast", "_last_search_query", "_search_mode",
     "_populate_local_search", "runner", "search_button", "search_global_button", "_remote_query_key",
     "_remote_search_results", "_search_local_objects", "_online_pending_key",
     "_online_pending_token", "_online_pending_generation",
-    "_online_source_context", "_online_source_statuses", "_search_response_facets",
+    "_online_source_context", "_online_source_statuses", "_online_cover_context", "_search_response_facets",
     "_populate_search",
     "show_error",
 })
@@ -103,6 +103,7 @@ SEARCH_DETAIL_CAPABILITIES = frozenset({
     "_closed", "_search_detail_request_generation", "_identity_context_generation",
     "_search_generation", "_selected_search_id", "_search_local_objects",
     "_search_mode", "_search_detail_cover_by_key", "_search_cover_bridge",
+    "_loaded_search_context", "_online_cover_context",
     "search_objects", "search_page", "search_controls", "service", "runner",
     "_last_search_query", "_cancel_cached_book_details", "_library_availability_label",
     "_kobo_backup_status_label", "_book_description", "_known_search_result",

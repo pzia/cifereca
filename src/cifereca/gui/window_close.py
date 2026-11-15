@@ -91,6 +91,12 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
     except Exception:
         pass
     try:
+        registry = getattr(window, "search_document_cover_registry", None)
+        if registry is not None:
+            registry.close()
+    except Exception:
+        pass
+    try:
         service = getattr(window, "document_covers", None)
         if service is not None:
             service.close()

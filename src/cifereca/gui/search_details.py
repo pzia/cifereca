@@ -143,7 +143,13 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
     # Re-selection must not drop a previously attested exact-source image
     # while a new holdings lookup runs. Keep the original SearchResult for
     # all authorizations and provider actions.
-    self.search_page.detail.show_search(visual_search_item(self, item), loading=True)
+    from cifereca.gui.search_document_cover_bridge import exact_remote_search_document
+    renderer = getattr(self.search_page.detail, "show_search_document", None)
+    proof = exact_remote_search_document(self, item, row.key)
+    if proof is not None and callable(renderer):
+        renderer(item, loading=True, cover_evidence=proof)
+    else:
+        self.search_page.detail.show_search(visual_search_item(self, item), loading=True)
     self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
                identity_id=getattr(getattr(getattr(self, "service", None),
                                            "current_identity", None), "identity_id", None),
@@ -282,12 +288,8 @@ def _publish_search_detail_cover(
     covers = dict(prior) if type(prior) is dict and len(prior) < 128 else {}
     covers[row.key] = record
     self._search_detail_cover_by_key = covers
-    # BookListCell observes this signal only while bound. Do not splice the
-    # ListStore or cause Gtk.SingleSelection to re-trigger holdings() here.
-    row.set_thumbnail_url(cover.url)
     # N2: the exact same notice can be re-projected into a new GTK row
     # without another holdings request or relying on a mutable DTO.
-    # The legacy selected-row update above remains the immediate paint path.
     identity = getattr(
         getattr(self.service, "current_identity", None), "identity_id", None,
     )
@@ -307,6 +309,24 @@ def _publish_search_detail_cover(
                     getattr(self.service, "_source_context_epoch", None),
                 ),
             )
+    # Attach the new exact decision before notifying a bound GTK cell. An
+    # origin promotion can require a rebind even when the URL stays the same.
+    from cifereca.gui.search_document_cover_bridge import (
+        attach_search_document, exact_remote_search_document,
+    )
+    proof = exact_remote_search_document(self, item, row.key)
+    if proof is not None:
+        previous = getattr(row, "_cover_search_evidence", None)
+        attach_search_document(row, proof)
+        signature = getattr(row, "_public_row_content", None)
+        prior_signature = previous.row_signature if previous is not None else None
+        if (type(signature) is tuple and signature[0] == "search"
+                and signature[-2] == prior_signature):
+            row._public_row_content = (*signature[:-2], proof.row_signature, signature[-1])
+        if not row.set_thumbnail_url(cover.url) and prior_signature != proof.row_signature:
+            row.emit("thumbnail-changed")
+    else:
+        row.set_thumbnail_url(cover.url)
 
 
 def _apply_search_detail(
@@ -319,9 +339,15 @@ def _apply_search_detail(
     # A fresh holdings response may omit a cover even though N2 still owns
     # an admissible, non-expired decision for this precise source and epochs.
     # Use a visual copy only: do NOT publish the old URL as new evidence.
-    presentation = visual_search_detail(self, item, detail)
-    self.search_page.detail.show_item_detail(item, presentation)
     _publish_search_detail_cover(self, item, detail)
+    from cifereca.gui.search_document_cover_bridge import selected_search_document
+    proof = selected_search_document(self, item)
+    renderer = getattr(self.search_page.detail, "show_search_document", None)
+    if proof is not None and callable(renderer):
+        renderer(item, cover_evidence=proof, detail=detail)
+    else:
+        presentation = visual_search_detail(self, item, detail)
+        self.search_page.detail.show_item_detail(item, presentation)
     self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
                identity_id=getattr(getattr(getattr(self, "service", None),
                                            "current_identity", None), "identity_id", None),
@@ -354,7 +380,13 @@ def _search_detail_error(
     if not self._search_detail_context_current(selected_id, context):
         return
     from cifereca.gui.search_detail_cover_reuse import visual_search_item
-    self.search_page.detail.show_search(visual_search_item(self, item), loading=False)
+    from cifereca.gui.search_document_cover_bridge import selected_search_document
+    proof = selected_search_document(self, item)
+    renderer = getattr(self.search_page.detail, "show_search_document", None)
+    if proof is not None and callable(renderer):
+        renderer(item, cover_evidence=proof)
+    else:
+        self.search_page.detail.show_search(visual_search_item(self, item), loading=False)
     self._add_local_book_actions(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
                identity_id=getattr(getattr(getattr(self, "service", None),
                                            "current_identity", None), "identity_id", None),
