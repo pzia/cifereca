@@ -1282,7 +1282,12 @@ class MainWindow(Adw.ApplicationWindow):
 
     def _history_book_row(self, x: HistoryItem) -> BookListItem:
         from .history_cover_presentation import cached_history_cover
-        visual_cover = x.thumbnail_url or cached_history_cover(self, x)
+        from .history_cover_decision_bridge import history_cover_presentation
+        presented = history_cover_presentation(self, x)
+        # Only the exact Core source cover may enter N1. The separately
+        # retained History visual fallback is bound to this SAME DTO and is
+        # never promoted to documentary evidence or a Loan entitlement.
+        visual_cover = presented.thumbnail_url or cached_history_cover(self, x)
         row = BookListItem(
             x.id, x.title, x.author or "",
             f"Emprunté le {fr_date(x.borrowed_at)} · {x.year or x.document_type or ''}",
@@ -1335,7 +1340,10 @@ class MainWindow(Adw.ApplicationWindow):
             item = self.history_objects.get(row.key)
             if item:
                 from dataclasses import asdict
-                self.history_page.detail.show_history(item)
+                from .history_cover_decision_bridge import history_cover_presentation
+                self.history_page.detail.show_history(
+                    history_cover_presentation(self, item)
+                )
                 self._add_facets(self.history_page.detail, asdict(item), self.search_controls)
                 self._add_local_book_actions(self.history_page.detail, asdict(item))
 

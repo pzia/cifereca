@@ -14,6 +14,11 @@ def populate_history(window, rows, preserve_all: bool = False) -> None:
         return
     if not preserve_all:
         window._history_all_rows = list(rows)
+        # A committed History source read advances documentary cover revision;
+        # reapplying filters must not relabel the same occurrence as fresh.
+        window._history_cover_revision = (
+            getattr(window, "_history_cover_revision", 0) + 1
+        )
     wanted_languages = (
         set(window.history_languages.values())
         if hasattr(window, "history_languages") else set()
