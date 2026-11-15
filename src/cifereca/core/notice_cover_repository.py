@@ -76,7 +76,8 @@ def _decode(raw: object, document: CoverDocumentScope) -> PersistedNoticeCover:
         raise ValueError("notice_c_persisted_corrupt")
     try:
         row = json.loads(raw, object_pairs_hook=_unique_object)
-        if type(row) is not dict or set(row) != _ROW_FIELDS or row["schema"] != 1:
+        if (type(row) is not dict or set(row) != _ROW_FIELDS
+                or type(row["schema"]) is not int or row["schema"] != 1):
             raise ValueError
         key_values = row["key"]
         if type(key_values) is not dict or set(key_values) != _SOURCE_FIELDS:
@@ -165,7 +166,13 @@ def persist_notice_cover(
             if (old.source_revision == observation.source_revision
                     and previous.attribute == attribute):
                 return previous
-            if observation.observed_at <= old.observed_at:
+            # Sources may change twice within one timestamp second. An
+            # explicit epoch CAS can order those writes without inventing a
+            # finer provider timestamp; otherwise equal-time changes fail
+            # closed rather than relying on worker completion order.
+            if (observation.observed_at < old.observed_at
+                    or (observation.observed_at == old.observed_at
+                        and expected_epoch is None)):
                 raise ValueError("notice_c_persisted_stale_source")
             if previous_epoch >= _MAX_EPOCH:
                 raise ValueError("notice_c_persisted_epoch_overflow")
