@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from .cover_preview import create_preview, preview_path
 import hashlib
 import itertools
+import os
+import stat
 import queue
 import threading
 import time
@@ -255,10 +257,19 @@ class CoverLoader:
         return data if CoverLoader._supported_image_bytes(data[:1024]) else None
 
     def _valid_cache_file(self, path: Path) -> bool:
+        """N3 media validity, not authority linking a DocumentRef to an URL.
+
+        Refuse leaf symlinks and verify the SAME opened descriptor: a cached
+        thumbnail must not jump to another file between stat and read, even
+        when all profiles share cifereca's physical media store.
+        """
         try:
-            if not path.exists() or not 0 < path.stat().st_size <= MAX_IMAGE:
-                return False
-            with path.open("rb") as fh:
+            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "rb") as fh:
+                info = os.fstat(fh.fileno())
+                if (not stat.S_ISREG(info.st_mode)
+                        or not 0 < info.st_size <= MAX_IMAGE):
+                    return False
                 head = fh.read(1024)
             return self._supported_image_bytes(head)
         except OSError:
