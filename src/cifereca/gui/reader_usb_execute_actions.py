@@ -221,7 +221,12 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
             candidate.target_relative_path, candidate.copy_operation_id,
             secrets.token_hex(16), now, now + 60,
         )
-        return broker.execute_one(confirmation=consent, mountpoint=candidate.mountpoint)
+        # Pin the generation from the original visible selection. The Core
+        # broker rejects A→B→A even if this worker starts after the switch.
+        return broker.execute_one(
+            confirmation=consent, mountpoint=candidate.mountpoint,
+            expected_profile_epoch=account_epoch,
+        )
 
     def clicked(_button) -> None:
         if not current():
