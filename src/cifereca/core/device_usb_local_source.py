@@ -7,7 +7,7 @@ The executor must independently revalidate source, account/rights and target.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 import os
 from pathlib import Path
@@ -49,8 +49,8 @@ def _safe_scope(root: Path, path: Path) -> bool:
 class UsbLocalSourceInspection:
     """Closed advisory diagnosis; never a copy right, path or USB evidence."""
 
-    local: UsbLocalArtifact | None
-    reason: str
+    local: UsbLocalArtifact | None = field(repr=False)
+    reason: str = "owned_source_scope_unverified"
 
 
 def inspect_local_usb_source(
