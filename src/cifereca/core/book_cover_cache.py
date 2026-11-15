@@ -189,6 +189,42 @@ class CoverDecisionCache:
             self._slots.move_to_end(scope)
             return slot.decision
 
+    def selected_token(
+        self, scope: CoverDocumentScope, *,
+        revision: int, uri: str,
+    ) -> CoverCacheToken | None:
+        """Lease for an exact, currently selected N1 image (N0/N4 #6168).
+
+        A GTK texture-applied observer must not reconstruct a generation
+        from the Loan ID, image URI, catalogue ISBN or an expired cache hit.
+        It may only report a physical decode/paint after matching this
+        source scope, producer revision AND the selected URI still present in
+        N2. Returned tokens are immutable; N0 subsequently rejects them if
+        an invalidation or newer observation overtakes the GTK callback.
+
+        Read-only: no publisher callback, URL fetch, preview scan or rights
+        inference. Missing, pending and ambiguous decisions cannot paint.
+        """
+        if type(scope) is not CoverDocumentScope:
+            raise TypeError("expected exact cover scope")
+        if type(revision) is not int or revision < 0:
+            raise ValueError("invalid cover revision")
+        if type(uri) is not str or not uri:
+            return None
+        with self._lock:
+            current = self._slots.get(scope)
+            if (current is None or current.token.revision != revision
+                    or current.decision is None or not current.published):
+                return None
+            if self._clock() >= current.expires_at:
+                current.decision = None
+                return None
+            decision = current.decision
+            if decision.status != "selected" or decision.uri != uri:
+                return None
+            self._slots.move_to_end(scope)
+            return current.token
+
     def resolve_and_publish(
         self, token: CoverCacheToken, candidates: Iterable[CoverCandidate], *,
         snapshot_complete: bool,
