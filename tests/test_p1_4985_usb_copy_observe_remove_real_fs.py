@@ -57,7 +57,8 @@ def cycle(live_args, monkeypatch):
     monkeypatch.setattr(dry_run, "preflight_usb_target", preflight.preflight_usb_target)
     monkeypatch.setattr(observations, "scan_managed_usb",
                         managed_scan.scan_managed_usb)
-    for mod in (managed_scan, dry_run, library_copy, supervisor, removal_review):
+    for mod in (managed_scan, dry_run, library_copy, supervisor, removal_review,
+                observations):
         monkeypatch.setattr(mod, "time", clock)
     monkeypatch.setattr(recovery, "_boot_id",
                         lambda: "15d003bd-94a9-4317-a221-292d3b465fe0")
