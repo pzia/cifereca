@@ -68,6 +68,9 @@ class DetailPanel(Gtk.Box):
         # Exact last rendered remote Search detail; never an authorization cache.
         self._rendered_search_detail = None
         self._pending_action_focus_key = ""
+        # Used only during one synchronous local-detail render. Never a
+        # profile-wide association or secondary documentary cache.
+        self._next_cover_evidence = None
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_vexpand(True)
         self.action_scroll = AdaptiveActionBar(
@@ -155,7 +158,6 @@ class DetailPanel(Gtk.Box):
         badges: Iterable[str] = (),
         *,
         essential=(),
-        cover_evidence=None,
     ) -> CoverView:
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         header.add_css_class("detail-heading")
@@ -164,9 +166,11 @@ class DetailPanel(Gtk.Box):
         cover.set_halign(Gtk.Align.START)
         cover.set_valign(Gtk.Align.START)
         header.append(cover)
-        self._bind_cover(
-            cover, thumbnail, cover_evidence=cover_evidence,
-        )
+        evidence = getattr(self, "_next_cover_evidence", None)
+        if evidence is None:
+            cover.bind_url(self.window.covers, thumbnail, priority=0)
+        else:
+            self._bind_cover(cover, thumbnail, cover_evidence=evidence)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.START)
@@ -600,12 +604,31 @@ class DetailPanel(Gtk.Box):
         if trace is not None:
             trace.record("actions", started)
 
+    def show_local_presentation(
+        self, presentation: UiBookDetailPresentation, *,
+        cover_evidence, description: object | None = None,
+    ) -> None:
+        """Render a Core-attested local book through the unchanged UI facade.
+
+        The temporary packet is consumed synchronously by _cover_and_title;
+        it is cleared on exceptions and never reused by a different book.
+        """
+        if cover_evidence is None:
+            self.show_presentation(presentation, description=description)
+            return
+        if getattr(self, "_next_cover_evidence", None) is not None:
+            raise RuntimeError("nested exact local cover render")
+        self._next_cover_evidence = cover_evidence
+        try:
+            self.show_presentation(presentation, description=description)
+        finally:
+            self._next_cover_evidence = None
+
     def show_presentation(
         self,
         presentation: UiBookDetailPresentation,
         *,
         description: object | None = None,
-        cover_evidence=None,
     ) -> None:
         """Render the shared neutral book-detail projection.
 
@@ -629,7 +652,6 @@ class DetailPanel(Gtk.Box):
             presentation.thumbnail_url,
             presentation.badges,
             essential=essential,
-            cover_evidence=cover_evidence,
         )
         self._show_description(description)
         for section in sections:
@@ -676,7 +698,6 @@ class DetailPanel(Gtk.Box):
         badges: Iterable[str] = (),
         group_title: str | None = None,
         rows: list[tuple[str, str]] | None = None,
-        cover_evidence=None,
     ) -> None:
         """Compatibility helper backed by the shared detail projection."""
         self.show_presentation(book_detail_presentation(
@@ -686,7 +707,7 @@ class DetailPanel(Gtk.Box):
             badges=badges,
             group_title=group_title,
             rows=rows or (),
-        ), cover_evidence=cover_evidence)
+        ))
 
     def update_cached_book_details(self, contributions) -> None:
         """Replace only cached plugin groups/actions; preserve the base detail."""
