@@ -268,6 +268,26 @@ class TaskRunner:
                 return "failed"
         return "success"
 
+    @staticmethod
+    def _borrow_verification_outcome(value: Any) -> str:
+        """Read-only Core loan observation is not a new borrowing success."""
+        if type(value) is not dict:
+            return "failed"
+        status = value.get("status")
+        reason = value.get("reason_code")
+        if (type(status) is not str or type(reason) is not str
+                or value.get("retry_borrow") is not False
+                or value.get("mutated") is not False):
+            return "failed"
+        if (status == "observed_current_loan"
+                and reason == "borrow_verification_current_loan_observed"):
+            return "success"
+        if status == "unavailable":
+            return "pending"
+        if status == "blocked":
+            return "blocked"
+        return "failed"
+
     def is_active_automatic_opening(self) -> bool:
         """Passive GTK-side gate for periodic inventories during opening Sync.
 
@@ -343,7 +363,7 @@ class TaskRunner:
             # Previously these appeared as "other" in local TRACE, making
             # timing samples impossible to attribute (#1741).
             "history", "bookings", "search-known", "detail-cache", "transfer", "acsm-import", "lender-local-send",
-            "adept-inventory", "adept-return", "loan-acquisition", "borrow",
+            "adept-inventory", "adept-return", "loan-acquisition", "borrow", "borrow-verification",
             "obtain", "index", "provider-connect", "sync-audit", "source-consent",
             "identity", "maintenance-inspection",
         } else "other"
@@ -439,6 +459,8 @@ class TaskRunner:
                 value = fn(report) if with_progress else fn()
                 business = (
                     self._borrow_outcome(value) if trace_kind == "borrow"
+                    else self._borrow_verification_outcome(value)
+                    if trace_kind == "borrow-verification"
                     else self._source_sync_outcome(value, trace_kind)
                 )
                 if business != "success":
@@ -520,6 +542,8 @@ class TaskRunner:
                       if trace_kind == "acsm-import"
                       else self._lender_local_send_outcome(outcome[1])
                       if trace_kind == "lender-local-send"
+                      else self._borrow_verification_outcome(outcome[1])
+                      if trace_kind == "borrow-verification"
                       else self._source_sync_outcome(outcome[1], trace_kind))
             )
             # Isolated legacy submit() adapters do not carry the class's
@@ -546,7 +570,7 @@ class TaskRunner:
             # a partial result or a genuine source-sync failure (#2888).
             detail = (
                 f" business_status={business_status}"
-                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "opening-sync", "deep-sync"} else ""
+                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "opening-sync", "deep-sync"} else ""
             )
             # Only Core's explicitly closed BnF reason vocabulary may enter
             # the generic task receipt. Ignore arbitrary provider detail.
@@ -638,6 +662,12 @@ class TaskRunner:
                     if trace_kind == "lender-local-send" and business_status == "blocked"
                     else "Copie du prêteur non confirmée"
                     if trace_kind == "lender-local-send"
+                    else "Prêt non encore vérifié — aucune nouvelle demande envoyée"
+                    if trace_kind == "borrow-verification" and business_status == "pending"
+                    else "Vérification du prêt bloquée"
+                    if trace_kind == "borrow-verification" and business_status == "blocked"
+                    else "Vérification du prêt non confirmée"
+                    if trace_kind == "borrow-verification"
                     else "Synchronisation déjà en cours" if business_status == "busy"
                     else "Synchronisation en attente de livraison" if business_status == "pending"
                     else "Synchronisation bloquée" if business_status == "blocked"
@@ -662,7 +692,7 @@ class TaskRunner:
                     business_status == "success", feedback_error,
                 )
                 if (business_status in {"pending", "partial", "blocked", "busy", "cancelled"}
-                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "opening-sync", "deep-sync"}):
+                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "opening-sync", "deep-sync"}):
                     self.window._task_finished(*finish_args, business_status)
                 else:
                     self.window._task_finished(*finish_args)
