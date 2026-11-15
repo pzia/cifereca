@@ -29,7 +29,17 @@ la liste contient des `UiBookListEntry`, le détail est construit avec
 | Éditions sources distinctes | `CatalogNoticeVariant` coordonnées provider/credential/record attestées, max. 16 dans le détail | Section « Éditions et sources distinctes », ISBN-13 seulement si checksum valide | Identifiants de compte/record restent **privés** |
 | Reformulation LLM (optionnelle) | Résultat optionnel, tagué `non attesté` et fournisseur/modèle | Section distincte « Reformulation générée — à vérifier » | N'est pas un champ bibliographique ni un droit |
 
-**Ordre de sections** (priorités) : « Recommandation » 10,
+**Convergence P1 #4761 (15/11/2026) :** une section publique
+`Essentiel` (priorité 0, non libellée visuellement) projette maintenant
+**dans le bloc couverture/titre CoreUI standard** les deux premières
+sources attestées, le format déclaré s'il existe et les deux premières
+langues explicites. Les champs restent tous consultables séparément dans
+`Catalogue` sous leurs types `copy/language/all`. Cette synthèse
+est volontairement limitée à 5 champs (densité 1024 px) ; ni disponibilité
+catalogue, ni prêt, ni possession ni droit ne sont inférés. Si aucun
+de ces faits n'est attesté, le bloc ne contient aucune section Essentiel.
+
+**Ordre de sections** (priorités) : « Essentiel » 0 (si données), « Recommandation » 10,
 « Catalogue » 20, « Reformulation générée — à vérifier » 25 si activée,
 « Notice » 30 si disponible, « Éditions et sources distinctes » 35 si
 variantes attestées. Le moteur/hôte commun gère la présentation GTK.
