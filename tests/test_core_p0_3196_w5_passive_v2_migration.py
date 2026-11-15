@@ -1,7 +1,7 @@
-"""#3196 W5: old SQLite v2 Kobo archives do not become rights in v3.
+"""#3196 / #5975 W5: old SQLite v2 archives never become rights in v3.
 
 Physical files and provider sessions are intentionally absent. The v2->v3
-migration is an offline import, not a fresh Kobo-owned-right observation.
+migration is a structural upgrade, not a fresh provider-owned-right observation.
 """
 from __future__ import annotations
 
@@ -115,7 +115,9 @@ def test_v2_passive_kobo_backups_survive_without_synthesizing_v3_rights(tmp_path
                 assert ("kobo", "vault", passive) not in selected
             assert ("kobo", "vault", "complete") not in selected
             assert ("kobo", "vault", "interrupted") not in selected
-            assert ("external", "other", "other-provider") in selected
+            # The same archive-only rule now covers unknown suppliers: no
+            # synthetic canonical source or receipt is granted from W1/v2.
+            assert ("external", "other", "other-provider") not in selected
     finally:
         storage.close()
 
@@ -164,3 +166,55 @@ def test_v2_pending_with_interruption_clue_remains_reviewable(tmp_path, clue):
             assert db.execute("SELECT COUNT(*) FROM source_references").fetchone()[0] == 0
     finally:
         storage.close()
+
+
+
+@pytest.mark.parametrize("provider", (
+    "kobo", "paris", "numilog", "unknown-seller",
+))
+@pytest.mark.parametrize("status", (
+    "pending", "acquiring", "complete", "reconcile_required",
+))
+def test_v2_migration_preserves_untrusted_archive_without_any_canonical_proof(
+    tmp_path, provider, status,
+):
+    """Upgrade old v2 safely without granting A/B from a mere 0.7 receipt."""
+    path = tmp_path / "legacy-v2.sqlite"
+    _v2(path, [{
+        "provider_id": provider, "credential_id": "card",
+        "account_id": "buyer", "item_id": "edition",
+        "status": status, "attempt_count": 2,
+        "sha256": "b" * 64, "size": 912,
+        "local_path": "/offline/unverified.epub",
+        "revision_id": "old-revision",
+    }])
+    old_cols = (
+        "provider_id,credential_id,item_id,revision_id,title,"
+        "status,sha256,size,local_path,updated_at,attempt_count"
+    )
+    with sqlite3.connect(path) as db:
+        before = db.execute(
+            "SELECT " + old_cols + " FROM backup_items"
+        ).fetchall()
+    storage = Storage(path)
+    try:
+        assert storage.schema_version() == 17
+        with storage._lock, storage._connect() as db:
+            assert db.execute("SELECT " + old_cols + " FROM backup_items").fetchall() == before
+            assert all(db.execute(
+                "SELECT COUNT(*) FROM " + table
+            ).fetchone()[0] == 0 for table in (
+                "entitlements", "acquisition_ledger", "artifacts", "placements",
+                "catalog_entries", "source_references", "origin_links",
+            ))
+        assert storage.backup_get(provider, "card", "edition")["status"] == status
+    finally:
+        storage.close()
+    reopened = Storage(path)
+    try:
+        assert reopened.schema_version() == 17
+        assert reopened.backup_get(provider, "card", "edition")["sha256"] == "b" * 64
+        assert reopened.entitlements() == []
+        assert reopened.acquisitions() == []
+    finally:
+        reopened.close()

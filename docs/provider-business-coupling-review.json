@@ -150,21 +150,6 @@
       "rationale": "An active mandatory safety veto; removing provider comparison now would permit a destructive implicit GET and cannot be credited as decoupling"
     },
     {
-      "id": "site-dd9fadf5918f4eb2fda40376",
-      "classification": "safety_guard_pending_contract",
-      "journey": "v3 historical backup import during SQLite schema migration",
-      "productive_caller": "Storage._migrate(version<3) enumerates legacy backup_items and refuses Kobo pseudo-right mirroring",
-      "effect": "Skips canonical right/acquisition/catalogue creation from archived Kobo v0.7 backup rows; mutation affects other legacy provider rows only",
-      "authority": "Historical non-attested Kobo checkpoint vs canonical source reference A/B chain; absence of canonical grant proof",
-      "replacement_contract": "Versioned read-only archive/tombstone migration with generic untrusted legacy source policy; do not re-enable Kobo checkpoint-derived rights",
-      "tests": [
-        "tests/test_core_p0_3196_w5_passive_v2_migration.py",
-        "tests/test_core_p0_3196_residual_writer_surface.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Persisted migration safety guard rather than an active Kobo canonical writer; remove only once migration coverage and non-resurrection proof are complete"
-    },
-    {
       "id": "site-8734b8047e04eb88d52753f3",
       "classification": "safety_guard_pending_contract",
       "journey": "Offline reconciliation of historical provider rights and local placements",
@@ -1251,6 +1236,39 @@
       "in_ast_metric": false,
       "original_site_id": "site-c668504ada66eace309e3e7f",
       "retired_at_sha": "d503d0659f5707544828df5dffaa1bdd85815111"
+    },
+    {
+      "id": "struct-v3-all-provider-legacy-backup-import-writer-retired",
+      "original": "SQLite v2->v3 migration copied historical non-Kobo backup_items rows to entitlements, acquisition_ledger, artifacts, placements and catalogue via _mirror_backup_row(migration=True), based on unverified status/SHA/path",
+      "original_classification": "legacy_mutating_cutover",
+      "replacement": "Purely structural schema v3 migration: preserve original backup_items rows and create only empty generic tables and indexes without mirroring historical sources, regardless of supplier",
+      "classification": "removed_executable_historical_canonical_projection_writer",
+      "evidence": "The provider-specific v3 backup_items SELECT/for loop and its call to _mirror_backup_row are physically deleted; synthetic v2 databases test 4 providers x 4 status transitions, exact archive preservation, no canonical rows and restart. An injected schema-version write exception verifies savepoint rollback. This removes the previously retained legacy-sqlite-v3 non-Kobo writer, but NOT the independently active versioned Config 0.8.1 writer, SQLite v5 repair or W1 archive API.",
+      "tests": [
+        "tests/test_core_p0_3196_w5_passive_v2_migration.py",
+        "tests/test_acquisition_engine_080.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6152",
+      "in_ast_metric": false,
+      "retired_at_sha": "e7c8fd4ba28e63ad7688662177a4d2676ea6fc42"
+    },
+    {
+      "id": "struct-v3-kobo-only-import-veto-replaced-universal-archive",
+      "original": "v3 old migration used a Kobo-only skip decision to protect its archived legacy rows while mirroring non-Kobo backup receipts",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "No historical provider rows are imported into canonical state on v2->v3, so every brand has equivalent non-promotion by construction",
+      "classification": "replaced_supplier_guard_by_pure_structural_migration",
+      "evidence": "v3 historical Kobo-vs-others branch and positive import were both deleted. Safety remains through absence of a data projection, not through a new supplier branch. Lexical AST site disappearance is not separately credited as a retired active safety contract.",
+      "tests": [
+        "tests/test_core_p0_3196_w5_passive_v2_migration.py",
+        "tests/test_acquisition_engine_080.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6152",
+      "in_ast_metric": false,
+      "original_site_id": "site-dd9fadf5918f4eb2fda40376",
+      "retired_at_sha": "e7c8fd4ba28e63ad7688662177a4d2676ea6fc42"
     }
   ],
   "guard_installations": [
@@ -1322,6 +1340,19 @@
         "tests/test_core_p0_5975_business_coupling_ledger.py"
       ],
       "pr": "#6149"
+    },
+    {
+      "id": "guard-v3-structural-only-all-provider-archives",
+      "journey": "Schema v2->v3 historical SQLite upgrade for old backup_items rows of any supplier",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Preserve raw archives while creating only empty generic tables, no supplier-derived entitlement/acquisition/artifact/placement/catalogue state",
+      "remaining_debt": "Config 0.8.1 pre-tombstone writer remains active; SQLite v5 historical Kobo cardinality/identity repair remains independent, as does the public W1 archive UPSERT",
+      "tests": [
+        "tests/test_core_p0_3196_w5_passive_v2_migration.py",
+        "tests/test_acquisition_engine_080.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6152"
     }
   ],
   "retained_legacy_migrations": [
@@ -1338,20 +1369,6 @@
         "tests/test_core_p0_5975_business_coupling_ledger.py"
       ],
       "pr": "#6141"
-    },
-    {
-      "id": "legacy-sqlite-v3-non-kobo-backup-import-writer",
-      "classification": "legacy_mutating_cutover",
-      "journey": "Versioned SQLite migration v2->v3 legacy non-Kobo backup projection into generic entitlements/acquisition/artifacts/placements",
-      "productive_caller": "Storage.__init__ -> Storage._migrate, only when schema_version < 3; _mirror_backup_row(db,row,migration=True) for historical non-Kobo rows",
-      "effect": "Reads historical backup_items, writes generic legacy Core entitlement and acquisition records, optional unverified Artifact/Placement and catalogue placeholders, but cannot synthesize canonical SourceReference/OriginLink",
-      "authority": "Historical 0.7 archive data is not fresh provider rights or independently verified bytes; preserved compatibility projection until evidence-based historical migration redesign",
-      "replacement_contract": "Versioned neutral archiving migration for old supported schemas, historical display and rollback; verify old-state data preservation, no fake entitlement/readiness, and install path before retiring this writer",
-      "tests": [
-        "tests/test_core_p0_3196_w5_passive_v2_migration.py",
-        "tests/test_core_p0_5975_w1_provider_neutral_archive_only.py"
-      ],
-      "pr": "#6149"
     }
   ]
 }
