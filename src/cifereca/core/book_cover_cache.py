@@ -23,7 +23,7 @@ from typing import Literal
 from .book_cover_projection import (
     CoverDocumentScope, ResolvedBookCover, resolve_book_cover,
 )
-from .covers import CoverCandidate
+from .covers import CoverCandidate, candidate
 
 CoverChangeKind = Literal["refresh", "resolved", "invalidated"]
 CoverInvalidationCause = Literal[
@@ -212,6 +212,69 @@ class CoverDecisionCache:
             attested_book_identity=attested_book_identity,
             catalog_priorities=catalog_priorities,
         )
+        return self.publish_resolved(token, decision)
+
+    @staticmethod
+    def _validate_resolved_decision(decision: ResolvedBookCover) -> None:
+        """Reject malformed or cross-status decisions at the N1-to-N2 boundary.
+
+        Only a Core-produced exact-source N1 decision is eligible. Structural
+        validation is an additional guard against accidental UI/DTO replay;
+        it does not turn a supplied source coordinate into an attestation.
+        """
+        if (type(decision) is not ResolvedBookCover
+                or decision.schema != "cifereca.resolved-book-cover/1"
+                or type(decision.revision) is not int or decision.revision < 0
+                or type(decision.candidate_count) is not int
+                or not 0 <= decision.candidate_count <= 4096):
+            raise ValueError("invalid cover decision contract")
+        status_reasons = {
+            "selected": ("attested",),
+            "missing": ("complete_no_admissible_cover",),
+            "pending": ("partial_snapshot", "source_failed", "source_overflow"),
+            "ambiguous": ("conflicting_evidence",),
+        }
+        if (type(decision.status) is not str
+                or decision.reason not in status_reasons.get(decision.status, ())):
+            raise ValueError("invalid cover decision status")
+        if decision.status == "selected":
+            if (decision.candidate_count < 1
+                    or type(decision.tier) is not str
+                    or type(decision.uri) is not str
+                    or type(decision.source) is not str
+                    or type(decision.evidence_id) is not str):
+                raise ValueError("invalid selected cover evidence")
+            checked = candidate(
+                decision.uri, tier=decision.tier,
+                source=decision.source, evidence_id=decision.evidence_id,
+            )
+            if checked is None or checked.url != decision.uri:
+                raise ValueError("invalid selected cover URI/provenance")
+        elif (decision.uri != "" or decision.source != ""
+              or decision.evidence_id != ""):
+            raise ValueError("non-selected cover must not have a selected URI")
+        elif decision.status == "ambiguous":
+            if (decision.tier not in ("embedded", "origin", "catalog")
+                    or decision.candidate_count < 2):
+                raise ValueError("invalid ambiguous cover evidence")
+        elif decision.tier != "" or decision.candidate_count != 0:
+            raise ValueError("invalid empty cover decision")
+
+    def publish_resolved(
+        self, token: CoverCacheToken, decision: ResolvedBookCover,
+    ) -> bool:
+        """Publish an already-resolved N1 snapshot once to all consumers.
+
+        The producing Core adapter determines the exact scope and source
+        revision. A mismatched snapshot raises before any cache mutation; a
+        stale or invalidated token returns False without notifying listeners.
+        Does not re-run resolution, read EPUBs, fetch URLs or touch GTK.
+        """
+        if type(token) is not CoverCacheToken:
+            raise TypeError("expected cover cache token")
+        self._validate_resolved_decision(decision)
+        if decision.scope != token.scope or decision.revision != token.revision:
+            raise ValueError("cover decision scope or revision mismatch")
         with self._lock:
             current = self._slots.get(token.scope)
             if current is None or current.token != token or current.published:
