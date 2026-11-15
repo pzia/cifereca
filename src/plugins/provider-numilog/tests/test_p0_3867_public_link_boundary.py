@@ -7,7 +7,10 @@ from __future__ import annotations
 import pytest
 
 from cifereca_numilog_html import public_book_url
-from cifereca.core.search_orchestration import _numilog_public_catalog_url
+from functools import partial
+from cifereca.core.search_orchestration import _public_catalog_url
+
+project_public_url = partial(_public_catalog_url, provider_id="numilog")
 
 
 def qualified(url):
@@ -15,7 +18,7 @@ def qualified(url):
     observed = public_book_url(url)
     if observed is None:
         return None
-    return _numilog_public_catalog_url(
+    return project_public_url(
         observed, evidence="numilog.library_title_link",
     )
 
@@ -44,6 +47,6 @@ def test_signed_private_or_unqualified_book_link_never_gets_provider_marker(url)
 
 
 def test_caller_supplied_link_without_attested_producer_marker_is_not_public():
-    assert _numilog_public_catalog_url(
+    assert project_public_url(
         "https://www.numilog.com/31415/owned-edition.ebook",
     ) is None
