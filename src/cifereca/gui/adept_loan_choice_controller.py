@@ -101,6 +101,12 @@ def present_adept_loan_choices(window, acquisition_id, loan, result, *, Gtk, Adw
         if index is None:
             return
         option = options[index]
+        # Admission is the last point where GTK navigation may choose a Core.
+        # Keep the exact Core method and selected ADEPT IDs for the queued job;
+        # subsequent account/window changes only gate GTK result delivery.
+        attach_adept_loan = window.service.attach_adept_loan
+        selected_profile_id = option["profile_id"]
+        selected_loan_id = option["loan_id"]
         submitted = True
 
         def ok(_result):
@@ -120,8 +126,8 @@ def present_adept_loan_choices(window, acquisition_id, loan, result, *, Gtk, Adw
 
         window.runner.submit(
             "Rattachement du prêt ADEPT…",
-            lambda: window.service.attach_adept_loan(
-                acquisition_id, option["profile_id"], option["loan_id"],
+            lambda: attach_adept_loan(
+                acquisition_id, selected_profile_id, selected_loan_id,
             ),
             ok,
             error,
