@@ -4382,41 +4382,76 @@ class LibraryService:
         Do not reuse the global acquisition lock: opening_sync already holds it.
         The loan-scoped lock also covers other callers running in another process.
         """
-        # A Web-observed BnF loan is not approval to fetch an ACSM. This
-        # second boundary protects other callers of the automatic acquisition
-        # facade even when they do not use opening_sync (#2055).
-        if type(loan) is Loan and loan.source_provider == "bnf-pret":
+        # Snapshot one native transaction *before* deriving its lock key.
+        # A caller or provider callback can edit Loan while the process waits
+        # for that lock. The guarded acquisition must never run under a lock
+        # that was allocated for another provider, borrower, loan or edition.
+        source_loan_id = getattr(loan, "id", None)
+        source_provider = getattr(loan, "source_provider", None)
+        source_credential = getattr(loan, "source_credential", None)
+        source_account = getattr(loan, "source_account_id", None)
+        source_record = getattr(loan, "record_id", None)
+        # Web-observed BnF does not confer permission to stage an ACSM. Test
+        # only exact native strings: plugin-owned __eq__ is not a grant.
+        if type(loan) is Loan and type(source_provider) is str and source_provider == "bnf-pret":
             return {
                 "status": "attention_required",
                 "code": "bnf_web_explicit_only", "retry": "explicit_only",
             }
-        # This outer entrypoint can be called without the later admission
-        # helper. Never invoke plugin-defined __str__/__bool__/lower while
-        # computing a cross-process lock key or accepting its source scope.
-        if (type(loan.id) is not str or not loan.id.strip()
-                or type(loan.source_provider) is not str
-                or not loan.source_provider
-                or type(loan.source_credential) is not str
-                or not loan.source_credential):
+        # The historical facade also accepts lightweight loan-like fixtures;
+        # they can omit account/edition, but no hostile source value may
+        # compute a lock key or change the lock's authorization scope.
+        if (type(source_loan_id) is not str or not source_loan_id.strip()
+                or type(source_provider) is not str or not source_provider
+                or type(source_credential) is not str or not source_credential
+                or type(source_account) not in (str, type(None))
+                or type(source_record) not in (str, type(None))):
             return {
                 "status": "attention_required", "loan_id": None,
                 "code": "adept_loan_identity_unproven", "retry": "explicit_only",
             }
-        loan_id = loan.id.strip()
         loan_key = hashlib.sha256(
-            (loan.source_provider.casefold() + "\\0" + loan_id).encode("utf-8")
+            (source_provider.casefold() + "\\0" + source_loan_id.strip()).encode("utf-8")
         ).hexdigest()[:32]
         lock_path = acquisition_lock_file().with_name(
             "cifereca-loan-" + loan_key + ".lock"
         )
+
+        def lock_source_intact() -> bool:
+            # Each live coordinate is read once. A concurrent mutation must
+            # not swap in a hostile equality object between type checking and
+            # equality; only plain native strings and None are compared.
+            live_id = getattr(loan, "id", None)
+            live_provider = getattr(loan, "source_provider", None)
+            live_credential = getattr(loan, "source_credential", None)
+            live_account = getattr(loan, "source_account_id", None)
+            live_record = getattr(loan, "record_id", None)
+            return bool(
+                type(live_id) is str and live_id == source_loan_id
+                and type(live_provider) is str and live_provider == source_provider
+                and type(live_credential) is str and live_credential == source_credential
+                and type(live_account) in (str, type(None))
+                and live_account == source_account
+                and type(live_record) in (str, type(None))
+                and live_record == source_record
+            )
+
         try:
             with _AUTOMATIC_LOAN_GUARD, InterProcessLock(lock_path):
+                if not lock_source_intact():
+                    return {
+                        "status": "attention_required", "loan_id": source_loan_id,
+                        "code": "adept_identity_unproven",
+                        "reason": "source_scope_changed", "retry": "explicit_only",
+                    }
                 return self._acquire_active_loan_automatically_guarded(
                     loan, force_refresh=force_refresh
                 )
         except LockBusyError:
+            # A busy lock is not evidence about a newly mutated loan. Never
+            # echo a caller-provided object or another loan's ID on refusal.
             return {
-                "status": "attention_required", "loan_id": loan.id,
+                "status": "attention_required", "loan_id": source_loan_id,
                 "code": "acquisition_busy", "retry": "explicit_only",
             }
 

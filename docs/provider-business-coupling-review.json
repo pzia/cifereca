@@ -1923,6 +1923,18 @@
         "tests/test_automatic_loan_admission.py"
       ],
       "pr": "#6222"
+    },
+    {
+      "id": "guard-loan-auto-lock-native-source-lease-after-acquire",
+      "journey": "Automatic loan acquisition between interprocess lock-key derivation and entering the guarded provider path",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Snapshot exact native provider, credential, borrower, loan and edition before deriving the process lock; after obtaining the lock refuse all source drift before ledger/provider work. A busy lock returns only the pinned original native loan ID, and malformed provider equality cannot run before validation.",
+      "remaining_debt": "Automatic source admission still preserves the provider-specific Paris ADEPT borrower guard pending a typed provider-neutral grant contract. No existing migration or AST business site is retired.",
+      "tests": [
+        "tests/test_automatic_loan_admission.py",
+        "tests/test_adept_borrower_identity_guard.py"
+      ],
+      "pr": "#6226"
     }
   ],
   "retained_legacy_migrations": [
