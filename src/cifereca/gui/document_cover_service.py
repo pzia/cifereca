@@ -203,6 +203,7 @@ class DocumentCoverService:
         max_documents: int = 4096,
         fallback_ttl: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
+        cached_source_reader: Callable[[CoverDocumentScope], CoverSourceSnapshot | None] | None = None,
     ):
         if not isinstance(loader, CoverLoader):
             raise TypeError("expected shared CoverLoader")
@@ -215,6 +216,8 @@ class DocumentCoverService:
                 or not float("-inf") < fallback_ttl < float("inf")
                 or not callable(clock)):
             raise ValueError("invalid qualified fallback lifetime")
+        if cached_source_reader is not None and not callable(cached_source_reader):
+            raise TypeError("cached cover source reader must be callable")
         self.loader = loader
         self.decisions = decisions if decisions is not None else CoverDecisionCache()
         self._max_documents = max_documents
@@ -227,6 +230,19 @@ class DocumentCoverService:
         self._lock = RLock()
         self._snapshots: OrderedDict[CoverDocumentScope, CoverSourceSnapshot] = OrderedDict()
         self._resolving: set[CoverDocumentScope] = set()
+        # Optional Core-only read-through on an exact N2 source MISS. The
+        # reader must return cached, already-admitted documentary evidence;
+        # it runs in a bounded worker, never inside a GTK widget or N3.
+        self._cached_source_reader = cached_source_reader
+        self._read_pool = (
+            ThreadPoolExecutor(max_workers=2, thread_name_prefix="cifereca-cover-source")
+            if cached_source_reader is not None else None
+        )
+        self._read_active: set[CoverDocumentScope] = set()
+        self._read_waiters: dict[
+            CoverDocumentScope, list[tuple[CoverReadRequest, Callable[[], None]]]
+        ] = {}
+        self._read_cooldown: OrderedDict[CoverDocumentScope, float] = OrderedDict()
         # A failed N3 materialization is only a request for worker-side
         # physical assessment, NEVER evidence of a missing documentary EPUB.
         # One bounded qualifier per exact (DocumentRef, source revision).
@@ -439,6 +455,82 @@ class DocumentCoverService:
                 self._qualify_active.discard(key)
                 self._qualify_waiters.pop(key, None)
 
+    def _read_source_on_n2_miss(
+        self,
+        document: CoverDocumentScope,
+        handle: CoverReadRequest,
+        source_changed: Callable[[], None] | None,
+    ) -> None:
+        """Bounded, single-flight read of an admitted Core source snapshot.
+
+        This may call a Core *cache reader* but never a provider, scan an EPUB,
+        resolve books by title/ISBN or read a private account from the GUI.
+        List/detail receive separate rebind notices for the same DocumentRef.
+        The reader's None/error is unknown, NOT a 'missing cover' proof.
+        """
+        reader = self._cached_source_reader
+        pool = self._read_pool
+        if reader is None or pool is None:
+            return
+        with self._lock:
+            if (self._closed or document in self._snapshots
+                    or self._clock() < self._read_cooldown.get(document, 0)):
+                return
+            if document in self._read_active:
+                waiters = self._read_waiters.setdefault(document, [])
+                if source_changed is not None and len(waiters) < 32:
+                    waiters.append((handle, source_changed))
+                return
+            # Includes queued work, so rapid virtual-list scrolling cannot
+            # produce an unbounded pending Core-read backlog.
+            if len(self._read_active) >= 16:
+                return
+            self._read_active.add(document)
+            self._read_waiters[document] = (
+                [(handle, source_changed)] if source_changed is not None else []
+            )
+
+        def work() -> None:
+            try:
+                snapshot = reader(document)
+            except Exception:
+                # A failed or revoked producer read has no negative meaning.
+                # In particular, never log provider credentials or URLs.
+                snapshot = None
+            with self._lock:
+                if (not self._closed and document not in self._snapshots
+                        and type(snapshot) is CoverSourceSnapshot
+                        and snapshot.scope == document):
+                    try:
+                        self.register(snapshot)
+                    except (ValueError, TypeError, RuntimeError):
+                        pass
+                live = not self._closed and document in self._snapshots
+                waiters = self._read_waiters.pop(document, [])
+                self._read_active.discard(document)
+                if not live and not self._closed:
+                    self._read_cooldown[document] = self._clock() + 15.0
+                    self._read_cooldown.move_to_end(document)
+                    while len(self._read_cooldown) > self._max_documents:
+                        self._read_cooldown.popitem(last=False)
+                else:
+                    self._read_cooldown.pop(document, None)
+            if live:
+                for waiting_handle, callback in waiters:
+                    if not waiting_handle.active:
+                        continue
+                    try:
+                        callback()  # GTK subscriber queues its own idle rebind.
+                    except Exception:
+                        pass
+
+        try:
+            pool.submit(work)
+        except RuntimeError:
+            with self._lock:
+                self._read_active.discard(document)
+                self._read_waiters.pop(document, None)
+
     def get_cover(
         self,
         document: CoverDocumentScope, variant: CoverVariant,
@@ -543,6 +635,10 @@ class DocumentCoverService:
                     )
 
             handle._is_selected = still_unselected
+            if snapshot is None:
+                self._read_source_on_n2_miss(
+                    document, handle, on_source_changed,
+                )
             callback(None)
             return handle
         # The return handle exposes the N2 source before any synchronous
@@ -625,11 +721,16 @@ class DocumentCoverService:
                 subscription.cancel()
             self._trace_subscriptions.clear()
             self._resolving.clear()
+            self._read_active.clear()
+            self._read_waiters.clear()
+            self._read_cooldown.clear()
             self._qualified_fallback.clear()
             self._qualify_active.clear()
             self._qualify_waiters.clear()
             self._qualify_cooldown.clear()
         self._qualify_pool.shutdown(wait=False, cancel_futures=True)
+        if self._read_pool is not None:
+            self._read_pool.shutdown(wait=False, cancel_futures=True)
 
 
 __all__ = [
