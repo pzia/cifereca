@@ -82,7 +82,7 @@ def test_read_only_foreign_profile_never_uses_exact_local_packet(exact):
     recent_selected(window, NS(key="placement:alice"), Path=Path,
                     format_recent_timestamp=lambda *_a, **_kw: "Date")
     assert events[0][0] == "url"  # No Core admission for foreign profile.
-    assert events[0][1]["thumbnail"] == row["thumbnail_url"]
+    assert events[0][1]["thumbnail"] is None  # No downgrade to foreign origin.
 
 
 @pytest.mark.parametrize("mutation", [
