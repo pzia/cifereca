@@ -142,6 +142,10 @@ def history_cover_presentation(
         # A former row (or duplicate ID replaced in the active model) must
         # never be re-projected using the latest account/revision after ABA.
         return item
+    # Unqualified/unknown source coordinates must not even create a
+    # decision channel for a similarly named catalogue occurrence.
+    if exact_history_cover_scope(item, identity_id=identity_id) is None:
+        return item
     bridge = getattr(window, "_history_cover_decisions", None)
     if bridge is None:
         bridge = HistoryCoverDecisionBridge()
