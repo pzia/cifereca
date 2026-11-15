@@ -16,13 +16,18 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
     intention fails closed. Storage owns the atomic one-time reservation.
     """
     from .reader_intent_actions import append_reader_intent_action
+    from .reader_usb_execute_actions import append_reader_usb_execute_action
     intent_action = append_reader_intent_action(window, detail, book, Gtk=Gtk)
+    execution_action = append_reader_usb_execute_action(
+        window, detail, book, Gtk=Gtk,
+    )
+    any_action = intent_action or execution_action
     if (Gtk is None or not callable(getattr(Gtk, "Button", None))
             or getattr(window, "_closed", False)
             or type(book) is not ReaderLibraryBook
             or book.desired_state != "keep"
             or not callable(getattr(detail, "add_actions", None))):
-        return intent_action
+        return any_action
     service = getattr(window, "service", None)
     storage = getattr(service, "storage", None)
     identity_id = getattr(getattr(service, "current_identity", None), "identity_id", None)
@@ -35,7 +40,7 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
             or getattr(snapshot, "device_id", None) != device_id
             or getattr(window, "_reader_items", {}).get(book.key) is not book
             or storage is None):
-        return intent_action
+        return any_action
     from ..core.device_usb_target_proposal import propose_usb_target
 
     try:
@@ -45,7 +50,7 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
         if (type(binding) is not dict or type(intent) is not dict
                 or type(artifact) is not dict
                 or intent.get("target_relative_path") is not None):
-            return intent_action
+            return any_action
         proposal = propose_usb_target(
             identity_id=identity_id, binding=binding,
             intention=intent, artifact=artifact,
@@ -53,7 +58,7 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
             other_intentions=storage.device_placements(device_id=device_id),
         )
     except (ValueError, OSError, TypeError, KeyError, AttributeError):
-        return intent_action
+        return any_action
 
     generation = (
         getattr(window, "_identity_context_generation", None),
