@@ -136,7 +136,8 @@ def test_real_broker_removes_only_receipted_usb_copy_and_records_absence(live_br
 
 
 @pytest.mark.parametrize("change", ["same_bytes_new_inode", "modified_bytes",
-                                     "remounted", "profile_epoch", "cancelled"])
+                                     "remounted", "profile_epoch", "cancelled",
+                                     "disabled_reader"])
 def test_real_broker_never_unlinks_if_proof_revoked(live_broker, change):
     rig = live_broker
     if change == "same_bytes_new_inode":
@@ -149,6 +150,14 @@ def test_real_broker_never_unlinks_if_proof_revoked(live_broker, change):
         rig.active["mount"] = replace(rig.active["mount"], mount_id=53)
     elif change == "profile_epoch":
         rig.service._account_context_epoch += 1
+    elif change == "disabled_reader":
+        rig.storage.device_usb_binding_declare(
+            identity_id=rig.consent.identity_id,
+            device_id=rig.consent.device_id,
+            label="Reader A",
+            usb_fingerprint=rig.consent.usb_fingerprint,
+            enabled=False,
+        )
     else:
         rig.storage.device_usb_intent_set(
             identity_id=rig.consent.identity_id, device_id=rig.consent.device_id,
@@ -162,4 +171,17 @@ def test_real_broker_never_unlinks_if_proof_revoked(live_broker, change):
     assert result.status != "completed"
     assert rig.final.read_bytes() == actual
     assert rig.source.exists()
+    assert rig.journal.get(rig.consent.operation_id) is None
+
+
+def test_absent_usb_target_never_becomes_a_destructive_permission(live_broker):
+    rig = live_broker
+    rig.final.unlink()
+    original = rig.source.read_bytes()
+    assert rig.facade.execute_one(
+        confirmation=rig.consent, mountpoint=rig.mountpoint,
+        expected_profile_epoch=3,
+    ).status != "completed"
+    assert not rig.final.exists()
+    assert rig.source.read_bytes() == original
     assert rig.journal.get(rig.consent.operation_id) is None
