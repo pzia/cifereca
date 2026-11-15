@@ -133,6 +133,12 @@ def synchronize_usb_reader(
             else:
                 failed += 1
 
+    # An earlier Core removal review may have refused an operation because
+    # the originating GTK selection was revoked *during* inode hashing.
+    # That refusal is not permission to persist a fresh observation under a
+    # now-stale reader selection. Recheck before any SQLite observation write.
+    if check_cancelled is not None:
+        check_cancelled()
     # Even an all-noop delta updates the canonical observed timestamp after
     # a successful physical scan; a copy receipt alone is not presence.
     verification = record_verified_usb_observation(
