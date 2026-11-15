@@ -239,7 +239,8 @@ def test_library_reader_and_shared_detail_have_explicit_evidence_handoff():
     assert "detail.show_local_presentation(" in lib
     assert "page.detail.show_local_presentation(" in reader
     assert "self._bind_cover(" in panel
-    assert "cover_evidence=cover_evidence" in panel
+    # The scope-local variable is named "evidence" in _cover_and_title.
+    assert "cover_evidence=evidence" in panel
     assert 'variant="detail"' in panel
 
 
