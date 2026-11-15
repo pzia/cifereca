@@ -1798,7 +1798,7 @@
       "tests": [
         "tests/test_core_p0_5975_return_receipt_readonly_scope.py"
       ],
-      "pr": "#6211"
+      "pr": "#6213"
     },
     {
       "id": "guard-history-manual-get-exact-source-lease",
