@@ -161,7 +161,7 @@ def offer_cross_profile_local_send(
                 "Envoi du livre au profil demandeur…",
                 work, completed, failed,
                 control=control, priority=TaskPriority.USER_ACTION,
-                kind="borrow",
+                kind="lender-local-send",
             )
         except Exception:
             release()
