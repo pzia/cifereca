@@ -255,10 +255,13 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
                 'UI', 'read known possessions', 'error',
                 detail={'code': 'known_possessions_unavailable'},
             )
+    # The Core source/placement is already verified above. Build an exact
+    # destination list before creating any action widget; do not turn titles
+    # or similar editions into evidence that another profile owns this book.
+    eligible = []
     for target in window.service.identities:
-        if target.identity_id==identity_id:continue
-        # A current Core possession is authoritative even when there is no
-        # local file yet for the target identity.
+        if target.identity_id == identity_id:
+            continue
         if source_item_id and identity_has_attested_possession(
             known_possessions,
             identity_id=target.identity_id,
@@ -267,8 +270,6 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
             credential_id=source_credential,
         ):
             continue
-        # Keep the placement fallback for older/local-only records that are
-        # not represented in the logical possession projection.
         if source_item_id:
             try:
                 already_owned = window.service.local_placement_for_source(
@@ -279,27 +280,100 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
                 already_owned = False
             if already_owned:
                 continue
-        button=window.action_button('Envoyer à '+target.label,'document-send-symbolic')
-        button._cifereca_action_id = 'send-local:'+target.identity_id
-        def send(_button,target_id=target.identity_id):
-            if not action_current(_button, gtk=True):
-                return
-            def work():
-                if not action_current(_button):
-                    raise Cancelled('Contexte du fichier local périmé.')
-                window.service.local_book_path(placement_id,identity_id=identity_id)
-                if not action_current(_button):
-                    raise Cancelled('Contexte du fichier local périmé.')
-                return window.service.materialize_to_identity(placement_id,target_id)
-            def done(_result):
-                if action_current(_button):
-                    window._activity_result('Livre envoyé')
-                    window.refresh_recent()
-                    window.refresh_library(False)
-            window.runner.submit('Envoi du fichier local…',work,
-                done,
-                control=_button,priority=TaskPriority.USER_ACTION,kind='materialize')
-        button.connect('clicked',send);buttons.append(button)
+        eligible.append(target)
+
+    # The selected source and the destination are never reinterpreted from
+    # the global navigation selector when the task eventually executes.
+    # The Core worker revalidates physical bytes, identity and provenance.
+    sending = [False]
+
+    def queue_send(button, target_id, *, parent=None):
+        if sending[0] or not action_current(button, gtk=True):
+            return
+        if parent is not None and not action_current(parent, gtk=True):
+            return
+        sending[0] = True
+
+        def still_current():
+            return (action_current(button)
+                    and (parent is None or action_current(parent)))
+
+        def work():
+            if not still_current():
+                raise Cancelled('Contexte du fichier local périmé.')
+            window.service.local_book_path(placement_id, identity_id=identity_id)
+            if not still_current():
+                raise Cancelled('Contexte du fichier local périmé.')
+            return window.service.materialize_to_identity(placement_id, target_id)
+
+        def done(result):
+            sending[0] = False
+            if still_current():
+                status = result.get('status') if type(result) is dict else None
+                window._activity_result(
+                    'Livre déjà présent dans ce profil' if status == 'unchanged'
+                    else 'Livre envoyé'
+                )
+                window.refresh_recent()
+                window.refresh_library(False)
+
+        def failed(exc):
+            sending[0] = False
+            if still_current() and not isinstance(exc, Cancelled):
+                # Do not reflect a potentially private exception/path into UI.
+                window.show_error(
+                    'Envoi local indisponible ; vérifiez les fichiers et le profil.',
+                    'Envoi du livre impossible',
+                )
+
+        try:
+            window.runner.submit(
+                'Envoi du fichier local…', work, done, failed,
+                control=button, priority=TaskPriority.USER_ACTION,
+                kind='materialize',
+            )
+        except Exception:
+            sending[0] = False
+            raise
+
+    if len(eligible) == 1:
+        target = eligible[0]
+        button = window.action_button(
+            'Envoyer à ' + target.label, 'document-send-symbolic',
+        )
+        button._cifereca_action_id = 'send-local:' + target.identity_id
+        button.connect(
+            'clicked',
+            lambda clicked, target_id=target.identity_id:
+                queue_send(clicked, target_id),
+        )
+        buttons.append(button)
+    elif len(eligible) > 1:
+        # Exactly ONE action in the Detail toolbar. Choices live in a GTK
+        # popover so keyboard/assistive technology can enumerate recipients.
+        menu = Gtk.MenuButton(label='Envoyer à')
+        menu._cifereca_action_id = 'send-local-menu'
+        menu.set_tooltip_text('Choisir le profil auquel envoyer ce livre')
+        popover = Gtk.Popover()
+        choices = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        choices.set_margin_top(8)
+        choices.set_margin_bottom(8)
+        choices.set_margin_start(8)
+        choices.set_margin_end(8)
+        for target in eligible:
+            choice = Gtk.Button(label=str(target.label))
+            choice.add_css_class('flat')
+            choice._cifereca_action_id = 'send-local:' + target.identity_id
+            choice.set_tooltip_text('Envoyer à ' + str(target.label))
+            choice.connect(
+                'clicked',
+                lambda clicked, target_id=target.identity_id:
+                    queue_send(clicked, target_id, parent=menu),
+            )
+            choices.append(choice)
+        popover.set_child(choices)
+        menu.set_popover(popover)
+        buttons.append(menu)
     routing = manager.broker('artifact.routing') if manager else None
     context = window._book_action_context(item) if routing is not None else None
     if routing is not None and context is not None and context.artifact is not None:
