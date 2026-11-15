@@ -235,3 +235,29 @@ def test_notice_source_rejects_signed_gcs_and_cloudfront_query_keys(url):
 def test_notice_source_keeps_public_non_auth_google_image_query():
     raw = {"cover": "https://storage.googleapis.com/public/cover.jpg?size=large"}
     assert admit(raw=raw).fields_copy() == raw
+
+
+
+@pytest.mark.parametrize("url", [
+    "https://cdn.example/c.jpg?size=medium;token=PRIVATE",
+    "HTTPS://cdn.example/c.jpg?size=medium%3Btoken=PRIVATE",
+    "https://cdn.example/c.jpg?size=medium%253Btoken=PRIVATE",
+    "//cdn.example/c.jpg?size=small;X-Amz-Signature=PRIVATE",
+    "https://cdn.example/c.jpg?%2574oken=PRIVATE",
+    "https://cdn.example/c.jpg?%2561ccess%2Dtoken=PRIVATE",
+    "https://cdn.example/c.jpg?%2558-Amz-Signature=PRIVATE",
+    "https://cdn.example/c.jpg?%2558-Goog-Credential=PRIVATE",
+])
+def test_notice_cover_rejects_obfuscated_auth_query_before_source_revision(url):
+    # The Core raw observation is the shared Notice C truth: neither a
+    # descriptive source revision nor N2 may persist bearer/image links.
+    with pytest.raises(ValueError, match="invalid_source_notice_observation"):
+        admit(raw={"media": {"cover": [url]}})
+
+
+def test_normal_bibliographic_semicolon_and_public_query_are_preserved():
+    raw = {
+        "Title": "Une histoire; suivi d'une autre",
+        "Cover": "https://covers.example.org/book.jpg?size=medium&lang=fr",
+    }
+    assert admit(raw=raw).fields_copy() == raw
