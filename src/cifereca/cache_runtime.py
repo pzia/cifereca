@@ -34,6 +34,9 @@ def _tree_stats(root: Path) -> tuple[int, int]:
 
 
 def _purge_tree(root: Path) -> tuple[int, int, tuple[str, ...]]:
+    # Never traverse a replaced cache root symlink (including a plugin root).
+    if root.is_symlink():
+        return 0, 0, ("cache_namespace_invalid",)
     entries, size = _tree_stats(root)
     warnings: list[str] = []
     if not root.exists():
@@ -226,13 +229,21 @@ class ScopedCacheBroker:
         }
 
     def purge(self, namespace_id: str = "", *, expired_only: bool = False) -> CachePurgeResult:
-        requested = [namespace_id] if namespace_id else [row.namespace_id for row in self.namespaces()]
+        current = {row.namespace_id: row for row in self.namespaces()}
+        requested = [namespace_id] if namespace_id else list(current)
         removed = freed = 0
         done: list[str] = []
         warnings: list[str] = []
         for ns in requested:
             if not self._allowed(ns):
                 warnings.append("cache_namespace_forbidden")
+                continue
+            row = current.get(ns)
+            if row is None:
+                warnings.append("cache_namespace_stale")
+                continue
+            if not row.purgeable:
+                warnings.append("cache_namespace_not_purgeable")
                 continue
             if ns.startswith("db:"):
                 count, size = self.service.storage.cache_delete_namespace_counted(ns[3:], expired_only=expired_only)

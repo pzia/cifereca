@@ -103,9 +103,15 @@ def test_cache_purge_progress_does_not_claim_completion_before_backend_success(m
     class Backend:
         calls = 0
 
-        def purge(self):
+        def namespaces(self):
+            return (NS(namespace_id="core:test", owner="core", scope="core",
+                       entries=1, size_bytes=7, purgeable=True),)
+
+        def purge(self, namespace_id):
+            assert namespace_id == "core:test"
             self.calls += 1
             return CachePurgeResult(
+                namespaces=(namespace_id,) if mode == "success" else (),
                 ok=mode == "success",
                 entries_removed=1 if mode == "success" else 0,
                 bytes_freed=7 if mode == "success" else 0,
@@ -121,7 +127,9 @@ def test_cache_purge_progress_does_not_claim_completion_before_backend_success(m
             (current, total, message),
         ),
     )
-    plan = MaintenancePlan(tool_id="core.cache.cleanup", summary="Fixture")
+    plan = MaintenancePlan(tool_id="core.cache.cleanup", summary="Fixture",
+                           facts={"namespaces": ("core:test",),
+                                  "namespace_snapshots": (("core:test", "core", "core", 1, 7),)})
     result = tool.run(plan, control)
     assert result.ok is (mode == "success")
     assert events[0][:2] == (0, 1)
