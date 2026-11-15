@@ -295,6 +295,18 @@ ou d'erreur sur le même commit invalide la grille UX antérieure. Les
 anciens reçus fondés uniquement sur les deux vues stables doivent être
 repris sur le nouveau HEAD ; aucun PNG n'est publié dans GitHub Actions.
 
+**Liaison supplémentaire aux probes complets (P1 #774) :** outre les
+18 empreintes PNG par thème, le manifeste conserve désormais le
+`probe_evidence_sha256` des **six rapports `screen.json` exacts**
+(2 vues × 3 largeurs). Les octets de chaque rapport sont vérifiés sans
+publication, et doivent être identiques entre les trois étapes d'une
+même vue. Modifier un constat GTK tout en conservant le même HEAD, le
+même livre, la même apparence, les mêmes contrôles obligatoires et les
+mêmes pixels invalide donc l'ancienne revue. Tout ancien manifeste sans
+cette empreinte est refusé **sans écraser les notes UX privées** : refaire
+la revue sur les nouvelles preuves. Le SHA du rapport n'est pas une
+validation visuelle et ne contient aucun texte privé.
+
 Les dossiers `e2e-artifacts/light/search-recommendations-private-review/`
 et `e2e-artifacts/dark/search-recommendations-private-review/` sont
 **séparés et privés** (0700 pour les dossiers, 0600 pour planches, manifestes
