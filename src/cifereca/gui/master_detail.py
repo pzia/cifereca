@@ -180,8 +180,24 @@ class MasterDetailPage(Gtk.Box):
                     self.listview.grab_focus()
                 return True
             if state & Gdk.ModifierType.CONTROL_MASK and keyval in (Gdk.KEY_f, Gdk.KEY_F):
-                controls = getattr(window, "library_controls" if title == "Bibliothèque" else "search_controls", None)
-                if controls: controls.entry.grab_focus(); return True
+                # Plugins use this same MasterDetailPage, but their local
+                # filter is not window.search_controls. Never steal Ctrl+F
+                # from a plugin and focus the hidden Core Search field.
+                focus = getattr(self, "_local_filter_focus", None)
+                if callable(focus):
+                    try:
+                        return bool(focus())
+                    except Exception:
+                        return False
+                if title not in ("Recherche", "Bibliothèque"):
+                    return False
+                controls = getattr(
+                    window, "library_controls" if title == "Bibliothèque"
+                    else "search_controls", None,
+                )
+                entry = getattr(controls, "entry", None)
+                if entry is not None and entry.get_mapped():
+                    return bool(entry.grab_focus())
             return False
         keys.connect("key-pressed", key_pressed); self.add_controller(keys)
         self.list_stack.set_visible_child_name("empty")
@@ -203,6 +219,10 @@ class MasterDetailPage(Gtk.Box):
         cell = list_item.get_child()
         if isinstance(cell, BookListCell):
             cell.unbind()
+
+    def bind_local_filter_focus(self, callback: Callable[[], bool] | None) -> None:
+        """Optional page-local Ctrl+F target, independent of global Search."""
+        self._local_filter_focus = callback if callable(callback) else None
 
     def connect_selected(self, callback: Callable[[BookListItem | None], None]) -> None:
         self._selected_callbacks.append(callback)
