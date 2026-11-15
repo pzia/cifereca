@@ -1,5 +1,22 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+> **Delta P0 #6152 (15/11/2026) — retraite du dernier import SQLite v3
+> de droits depuis 0.7.** La migration de base v2→v3 est désormais
+> structurelle pour **tous** les fournisseurs : elle crée tables et index,
+> garde intacte chaque archive `backup_items` (statut, révision, chemin,
+> SHA, compte), mais ne produit **aucun** entitlement, acquisition, Artifact,
+> Placement ni catalogue à partir d'une entrée pré-canonique.
+> Les tables v14 `SourceReference`/`OriginLink` restent vides sans preuves A/B.
+> La sélection historique « Kobo non importé / autres importés » et son
+> writer SQL de recopie ont été physiquement retirés. Une batterie de bases
+> v2 réelles synthétiques vérifie 4 fournisseurs × 4 statuts, préservation
+> des archives, redémarrage idempotent et rollback complet du savepoint v3.
+> Le registre retire `legacy-sqlite-v3-non-kobo-backup-import-writer` du
+> compteur **après** retrait physique, sans prétendre que la migration
+> de configuration 0.8.1 pré-tombstone ou SQLite v5 est supprimée.
+> Aucune migration destructive, aucun téléchargement ni release.
+
+
 > **Delta P0 #6149 (15/11/2026) — retrait du writer canonique W1 actif.**
 > `Storage.backup_put` n'est appelé directement par aucun module Core/plugin
 > de production (garde AST source dans les tests). L'API historique reste
