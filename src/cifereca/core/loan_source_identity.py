@@ -34,6 +34,27 @@ def loan_source_key(loan: Any) -> str:
     return "loan-source:" + hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
+def _has_native_action_source(loan: Any) -> bool:
+    """An actionable loan must have native, exact provenance coordinates.
+
+    A plugin may populate a Loan dataclass with non-native attributes despite
+    its annotations. Stringifying those fields in a GTK SourceKey can invoke
+    plugin code or alias a foreign borrower/backend to a valid row. None is a
+    permitted *unknown* account or edition, never a guessed primary account.
+    """
+    return (
+        type(loan) is Loan
+        and type(loan.id) is str and bool(loan.id)
+        and type(loan.source_provider) is str and bool(loan.source_provider)
+        and type(loan.source_credential) is str and bool(loan.source_credential)
+        and type(loan.source_account_id) in (str, type(None))
+        and type(loan.record_id) in (str, type(None))
+        and type(loan.identity_id) is str and bool(loan.identity_id)
+        and type(loan.provider) is str and bool(loan.provider)
+        and type(loan.medium) is str and bool(loan.medium)
+    )
+
+
 def unambiguous_loan_rows(loans: Iterable[Any]) -> tuple[Loan, ...]:
     """Return only well-formed, source-unique loans suitable for GTK actions.
 
@@ -50,7 +71,7 @@ def unambiguous_loan_rows(loans: Iterable[Any]) -> tuple[Loan, ...]:
                 # A truncated inventory cannot establish that any source key
                 # is unique; the missing tail may contradict an earlier card.
                 return ()
-            if type(loan) is not Loan:
+            if not _has_native_action_source(loan):
                 continue
             key = loan_source_key(loan)
             if key in conflicting:
@@ -97,7 +118,7 @@ def unique_library_loan(
                 # Not a complete inventory: a later conflicting borrower
                 # could carry the same loan ID. No partial match is safe.
                 return None
-            if type(loan) is Loan and loan.id == loan_id:
+            if _has_native_action_source(loan) and loan.id == loan_id:
                 candidates.append(loan)
     except Exception:
         return None

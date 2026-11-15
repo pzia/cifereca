@@ -71,7 +71,9 @@ def _populate_loans(self, rows: list[Loan]) -> None:
     # service snapshot must not be rendered under the selected identity.
     identity_id = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
     rows = [row for row in rows if type(row) is Loan
-            and identity_id is not None and row.identity_id == identity_id]
+            and type(identity_id) is str and bool(identity_id)
+            and type(row.identity_id) is str
+            and row.identity_id == identity_id]
     # A duplicated exact SourceKey cannot render two actionable rows backed
     # by a dict holding only the last card. Identical replays display once;
     # conflicting cards are not promoted into the click/renew/download model.
