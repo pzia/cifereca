@@ -141,14 +141,14 @@ def _load_reviews(path: Path) -> dict[str, dict]:
     return reviews
 
 
-def _load_reviewed_structural_evidence(path: Path) -> tuple[list[dict], list[dict]]:
+def _load_reviewed_structural_evidence(path: Path) -> tuple[list[dict], list[dict], list[dict]]:
     """Validate the human-authored non-AST ledger; NEVER infer reachability.
 
     Historical removals and installed guards are independent audit evidence,
     not a subtractive delta from raw provider AST or a new grant of rights.
     """
     if not path.exists():
-        return [], []
+        return [], [], []
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("metric") != METRIC:
         raise ValueError("invalid_business_review_ledger_schema")
