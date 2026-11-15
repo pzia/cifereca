@@ -47,23 +47,23 @@ def send_present_placement_copy(
         return blocked
 
     try:
-        # The facade owns mutable profile navigation. This headless executor
-        # only holds its captured requester and a revocable callback, checked
-        # before locking, under the lock, and after final publication.
+        # An admitted operation has a captured, exact requester and a
+        # revocable Core authority callback. Account context epoch is only
+        # a *navigation* token, not a physical-copy authorization lease.
+        # The legacy facade can still fence it inside scope_current().
+        # Check the real source epoch, identity registry and physical bytes
+        # before locking, under the lock and after final publication.
         identity = requester_identity
-        if (getattr(identity, "identity_id", None) != requesting_identity_id
+        if (type(getattr(identity, "identity_id", None)) is not str
+                or identity.identity_id != requesting_identity_id
                 or not callable(scope_current)
                 or scope_current() is not True
-                or service._account_context_epoch
-                   != expected_account_context_epoch
                 or service._source_context_epoch
                    != expected_source_context_epoch):
             return {**blocked, "reason_code": "local_send_context_revoked"}
 
         with InterProcessLock(acquisition_lock_file()) as shared_lock:
             if (scope_current() is not True
-                    or service._account_context_epoch
-                       != expected_account_context_epoch
                     or service._source_context_epoch
                        != expected_source_context_epoch
                     or service.identity_by_id(source_identity_id) is None
@@ -99,8 +99,6 @@ def send_present_placement_copy(
             # No file paths or provider/account identifiers leave the Core
             # boundary. A transfer does not assert or retry any supplier loan.
             if (scope_current() is not True
-                    or service._account_context_epoch
-                       != expected_account_context_epoch
                     or service._source_context_epoch
                        != expected_source_context_epoch):
                 return {
