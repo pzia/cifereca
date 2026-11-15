@@ -68,10 +68,9 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
             or not callable(getattr(broker, "execute_one", None))
             or not callable(getattr(getattr(window, "runner", None), "submit", None))):
         return False
-    # The read-only Core journal resolver is an integration dependency
-    # (#6295): absence must hide execution, not fall back to a guessed ID.
-    from ..core import device_usb_operation_journal as journal
-    if not callable(getattr(journal, "completed_usb_managed_copy_operations", None)):
+    # The Core broker owns journal access. Its optional read-only facet
+    # needs #6295 on main; missing integrations hide this action entirely.
+    if not callable(getattr(broker, "completed_copy_operation", None)):
         return False
     try:
         binding = storage.device_binding_get(device_id)
@@ -156,13 +155,10 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
     def copy_id() -> str | None:
         if not exact_intent():
             return None
-        operations = journal.completed_usb_managed_copy_operations(
-            storage=storage, identity_id=identity_id,
-            device_id=device_id, fingerprint=fingerprint,
+        operation_id = broker.completed_copy_operation(
+            identity_id=identity_id, device_id=device_id,
+            artifact_id=book.artifact_id,
         )
-        if type(operations) is not dict or len(operations) > 1000:
-            return None
-        operation_id = operations.get(book.artifact_id)
         return (
             operation_id if type(operation_id) is str
             and _OPERATION.fullmatch(operation_id) else None
