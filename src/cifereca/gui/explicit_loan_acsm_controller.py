@@ -133,8 +133,11 @@ def prepare_explicit_loan_acsm(
             submitted = True
 
             def work():
-                if not current():
-                    return {"status": "cancelled"}
+                # The separate ADEPT consent already captured the exact
+                # source loan and borrower. GTK navigation may only suppress
+                # an obsolete dialog/result, never cancel admitted Core work.
+                # The importer independently rechecks the live loan,
+                # persisted connection owner and staged path before DRM I/O.
                 return importer(
                     Path(path), expected_identity_id=identity_id,
                     loan=selected, title=selected.title,
@@ -192,8 +195,9 @@ def prepare_explicit_loan_acsm(
         submitted = True
 
         def work():
-            if not current():
-                return {"status": "cancelled"}
+            # Confirmation pins the loan/borrower; do not query the active
+            # GTK identity or window in a queued HTTP worker. Core stage
+            # revalidates the exact source/loan/consent under its own lease.
             return stage(selected, confirmed=True, expected_identity_id=identity_id)
 
         def done(result):
