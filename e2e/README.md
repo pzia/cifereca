@@ -223,6 +223,20 @@ bibliographique, le row GTK sélectionné et le détail mappé ; elle ne
 remplace aucun scénario précédent. Le comparateur refuse un rapport sans
 les deux attestations GTK, ou une source, un record ou une empreinte
 documentaire différents, **même si HEAD, thème et PNG sont conformes**.
+Les deux probes exigent également que le **panneau DetailPanel réellement
+mappé** comporte le titre et l'auteur attendus dans les **widgets
+réellement utilisés** : `Gtk.Label.detail-title` pour les deux vues,
+`Gtk.Label.detail-subtitle` pour Recommandations, et dans Recherche
+`Gtk.FlowBox.detail-subtitle` avec son **vrai bouton de facette auteur**
+(`Gtk.Button.facet-value`, libellé et champ `author`) ; le libellé
+auteur original est volontairement masqué par le Core pour rendre la
+facette accessible au clavier. Une ligne sélectionnée avec un détail
+encore vide ou périmé ne suffit plus
+à rendre la planche recevable. Les deux codes
+`P1_774_*_mapped_same_book_detail` sont obligatoires pour fabriquer
+ou valider la grille privée. Cela prouve les valeurs des en-têtes GTK,
+pas l'absence de clipping ou leur lisibilité : les PNG originaux doivent
+toujours être inspectés.
 Le manifeste privé retient l'empreinte du livre synthétique. Cette
 égalité de fixture **ne certifie aucune jointure réelle de fournisseur**,
 couverture empruntée, ni appariement documentaire d'un compte utilisateur.

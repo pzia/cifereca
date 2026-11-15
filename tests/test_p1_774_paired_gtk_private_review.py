@@ -43,6 +43,11 @@ def _one(root: Path, surface: str, sha: str = SHA, appearance: str = "light") ->
                 if surface == "search" else
                 "P1_774_recommendations_selected_same_synthetic_book"
             ): True,
+            (
+                "P1_774_search_mapped_same_book_detail"
+                if surface == "search" else
+                "P1_774_recommendations_mapped_same_book_detail"
+            ): True,
         },
         "p1_774_paired_book": module.verified_fixture_receipt(),
         geom_key: {
@@ -120,6 +125,38 @@ def test_absent_shared_gtk_selection_proof_fails_closed(tmp_path):
     with pytest.raises(module.ReviewError, match="Source/édition"):
         module.build_review(tmp_path, sizes=SIZES)
     assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+@pytest.mark.parametrize("surface", ["search", "recommendations"])
+def test_missing_real_gtk_detail_heading_cannot_be_accepted(tmp_path, surface):
+    _pair(tmp_path)
+    prefix = "search-filter" if surface == "search" else "recommendations-detail"
+    path = tmp_path / f"{prefix}-1024/screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    check = (
+        "P1_774_search_mapped_same_book_detail"
+        if surface == "search" else
+        "P1_774_recommendations_mapped_same_book_detail"
+    )
+    del report["checks"][check]
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="détail GTK"):
+        module.build_review(tmp_path, sizes=SIZES)
+    assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+def test_stale_detail_assertion_must_not_reuse_completed_human_review(tmp_path):
+    _pair(tmp_path)
+    module.build_review(tmp_path, sizes=SIZES)
+    checklist = _human_review(tmp_path)
+    previous = checklist.read_bytes()
+    path = tmp_path / "recommendations-detail-1024/screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["checks"]["P1_774_recommendations_mapped_same_book_detail"] = False
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="détail GTK"):
+        module.verify_completed_review(tmp_path, sizes=SIZES)
+    assert checklist.read_bytes() == previous
 
 
 def test_different_document_fingerprint_cannot_be_compared(tmp_path):

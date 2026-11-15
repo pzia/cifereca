@@ -611,6 +611,53 @@ def main() -> int:
         assert exact.get("provider_id") == PAIRED_BOOK["source_provider"]
         assert exact.get("metadata", {}).get("isbn") == PAIRED_BOOK["isbn"]
         assert PAIRED_BOOK["subject"] in exact["metadata"]["subjects"]
+        # A selected row alone is insufficient for a visual comparison:
+        # the real Core DetailPanel must have rendered the SAME book.
+        # Read only mapped GTK labels, not backing DTOs or screenshot OCR.
+        def mapped_heading(widget, style):
+            found = []
+            stack = [widget]
+            while stack:
+                current = stack.pop()
+                if (isinstance(current, Gtk.Label)
+                        and current.get_mapped()
+                        and current.has_css_class(style)):
+                    found.append(current.get_text())
+                child = current.get_first_child()
+                while child is not None:
+                    stack.append(child)
+                    child = child.get_next_sibling()
+            return found
+        assert page.detail.get_mapped()
+        assert mapped_heading(page.detail.content, "detail-title") == [
+            PAIRED_BOOK["title"],
+        ]
+        # Search's production facet adapter turns the plain author label
+        # into a keyboard-accessible Gtk.FlowBox of author chips. The
+        # original Gtk.Label is intentionally hidden, not missing/stale.
+        subtitle = page.detail._subtitle_label
+        assert subtitle is not None and not subtitle.get_visible()
+        author_group = getattr(subtitle, "_cifereca_author_facets", None)
+        assert isinstance(author_group, Gtk.FlowBox)
+        assert author_group.get_mapped()
+        assert author_group.has_css_class("detail-subtitle")
+        author_buttons = []
+        stack = [author_group]
+        while stack:
+            current = stack.pop()
+            if (isinstance(current, Gtk.Button)
+                    and current.get_mapped()
+                    and current.has_css_class("facet-value")
+                    and getattr(current, "_cifereca_facet_field", None) == "author"):
+                child = current.get_child()
+                assert isinstance(child, Gtk.Label) and child.get_mapped()
+                author_buttons.append(child.get_text())
+            child = current.get_first_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_next_sibling()
+        assert author_buttons == [PAIRED_BOOK["author"]]
+        result["checks"]["P1_774_search_mapped_same_book_detail"] = True
         result["p1_774_paired_book"] = verified_fixture_receipt()
         result["checks"]["P1_774_search_selected_same_synthetic_book"] = True
         capture_stage("00-before")
