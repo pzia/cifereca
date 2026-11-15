@@ -132,6 +132,8 @@ def test_cached_public_coordinate_replay_rejects_stale_private_and_signed_rows()
         {"downloadable": True},
         {"thumbnail_url": URL + "?token=private"},
         {"metadata": {"search_provenance": "known_catalog_stale"}},
+        {"source_provider": "invalid provider id"},
+        {"record_id": "invalid source record with spaces"},
     ):
         row = replace(clean, **mutation)
         search_orchestration._stamp_cached_public_notice_refs(
