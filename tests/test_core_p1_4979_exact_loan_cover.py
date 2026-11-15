@@ -404,3 +404,106 @@ def test_remote_cover_projection_requires_exact_entitlement_helper():
               "src/cifereca/core/library_projection.py").read_text(encoding="utf-8")
     assert "attested_remote_loan_cover_proof(" in source
     assert 'if entitlement_type == "loan" and loan is not None:' in source
+
+
+def test_mixed_local_and_remote_provenance_precedence_is_order_independent():
+    """One loan may have a local placement and a public remote entitlement."""
+    current = loan()
+    remote_catalog, _ = remote_row(
+        current, url="https://public.example/catalog.jpg", tier="catalog",
+    )
+    remote_origin, _ = remote_row(
+        current, url="https://public.example/origin.jpg",
+        entitlement_id="entitlement-origin", tier="origin",
+    )
+    local_catalog = local_row(
+        current, "https://public.example/local-catalog.jpg", tier="catalog",
+        artifact="artifact-c", placement="placement-c",
+    )
+    local_origin = local_row(
+        current, "https://public.example/local-origin.jpg", tier="origin",
+        artifact="artifact-o", placement="placement-o",
+    )
+    embedded = local_row(
+        current, "file:///home/alice/.cache/cifereca/embedded.jpg",
+        tier="embedded", artifact="artifact-e", placement="placement-e",
+    )
+    for rows, expected_tier, expected_url in (
+        ((remote_catalog, local_origin), "origin", local_origin["thumbnail_url"]),
+        ((local_catalog, remote_origin), "origin", remote_origin["thumbnail_url"]),
+        ((remote_origin, embedded), "embedded", embedded["thumbnail_url"]),
+        ((remote_catalog, embedded), "embedded", embedded["thumbnail_url"]),
+    ):
+        for ordered in (rows, tuple(reversed(rows))):
+            resolution = loan_local_cover(current, ordered)
+            assert resolution.status == "selected"
+            assert resolution.tier == expected_tier
+            assert resolution.url == expected_url
+
+
+def test_equal_tier_conflict_across_local_and_remote_stays_ambiguous():
+    current = loan()
+    remote, _ = remote_row(
+        current, url="https://public.example/remote.jpg", tier="origin",
+    )
+    local = local_row(
+        current, "https://public.example/local.jpg", tier="origin",
+    )
+    for rows in ((local, remote), (remote, local)):
+        result = loan_local_cover(current, rows)
+        assert result.status == "ambiguous"
+        assert not result.url
+
+
+def test_foreign_remote_proof_does_not_poison_valid_embedded_local_cover():
+    current = loan()
+    foreign, _ = remote_row(
+        loan(identity="bob"), url="https://public.example/foreign.jpg",
+    )
+    embedded = local_row(current)
+    for rows in ((foreign, embedded), (embedded, foreign)):
+        result = loan_local_cover(current, rows)
+        assert result.status == "selected"
+        assert result.tier == "embedded"
+        assert result.url == embedded["thumbnail_url"]
+
+
+def test_same_loan_after_identity_switch_never_inherits_other_identity_cover():
+    alice = loan(identity="alice")
+    bob = loan(identity="bob")
+    alice_local = local_row(alice)
+    bob_remote, _ = remote_row(
+        bob, url="https://public.example/bob.jpg",
+    )
+    for who, expected in (
+        (alice, alice_local["thumbnail_url"]),
+        (bob, bob_remote["thumbnail_url"]),
+        (alice, alice_local["thumbnail_url"]),
+    ):
+        result = loan_local_cover(who, (alice_local, bob_remote))
+        assert result.status == "selected"
+        assert result.url == expected
+    assert loan_local_cover(loan(identity="carol"), (alice_local, bob_remote)).status == "missing"
+
+
+def test_offline_resolution_has_no_provider_or_filesystem_side_effect(monkeypatch):
+    """Resolving an attested URL is selection, never downloading it."""
+    import builtins
+    import urllib.request
+    from pathlib import Path as P
+
+    current = loan()
+    rows = (
+        local_row(current),
+        remote_row(current, url="https://public.example/catalog.jpg",
+                   tier="catalog")[0],
+    )
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("No file/network access is permitted by cover resolver")
+    with monkeypatch.context() as m:
+        m.setattr(builtins, "open", forbidden)
+        m.setattr(P, "open", forbidden)
+        m.setattr(urllib.request, "urlopen", forbidden)
+        result = loan_local_cover(current, rows)
+    assert result.status == "selected"
+    assert result.tier == "embedded"
