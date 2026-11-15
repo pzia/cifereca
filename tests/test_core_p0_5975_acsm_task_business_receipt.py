@@ -39,7 +39,7 @@ class HostileResult(dict):
       "acquisition_id": HostileStatus(ACQ)}, "failed", "Import ACSM non confirmé"),
     ({"status": "complete", "path": "/tmp/book.epub",
       "acquisition_id": "manual-acsm:invalid"}, "failed", "Import ACSM non confirmé"),
-    ({"status": "complete", "path": "/tmp/\\x00.epub",
+    ({"status": "complete", "path": "/tmp/" + chr(0) + ".epub",
       "acquisition_id": ACQ}, "failed", "Import ACSM non confirmé"),
     ({"status": HostileStatus("complete")}, "failed", "Import ACSM non confirmé"),
     (HostileResult(status="complete"), "failed", "Import ACSM non confirmé"),
