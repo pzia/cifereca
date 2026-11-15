@@ -1605,6 +1605,45 @@ def main():
         report["p1_774_paired_book"] = verified_fixture_receipt()
         report["checks"]["P1_774_recommendations_selected_same_synthetic_book"] = True
         capture("09-paired-public-book")
+        # P1 #4761: the Catalogue public field kind=author must survive the
+        # neutral plugin->Core renderer. Test the real mapped widget and
+        # explicit click routing, not just the Python DetailField metadata.
+        # The fake Search host only records the request; zero provider I/O.
+        groups = [
+            child for child in walk(page.detail.content)
+            if isinstance(child, Adw.PreferencesGroup)
+            and child.get_title() == "Catalogue"
+        ]
+        assert len(groups) == 1
+        author_rows = [
+            child for child in walk(groups[0])
+            if isinstance(child, Adw.ActionRow) and child.get_mapped()
+            and child.get_title() == "Auteur"
+            and child.get_subtitle() == PAIRED_BOOK["author"]
+        ]
+        assert len(author_rows) == 1
+        author_buttons = [
+            child for child in walk(author_rows[0])
+            if isinstance(child, Gtk.Button) and child.get_mapped()
+        ]
+        copy_buttons = [
+            child for child in author_buttons
+            if (child.get_tooltip_text() or "").startswith("Copier Auteur :")
+        ]
+        search_buttons = [
+            child for child in author_buttons
+            if (child.get_tooltip_text() or "").startswith(
+                "Rechercher en ligne : Auteur :"
+            )
+        ]
+        assert len(copy_buttons) == len(search_buttons) == 1
+        searches_before = list(state["searches"])
+        assert len(searches_before) == 1  # earlier explicit ISBN lookup
+        search_buttons[0].emit("clicked")
+        assert state["searches"] == searches_before + [
+            (PAIRED_BOOK["author"], "author", True, "alice")
+        ]
+        report["checks"]["P1_4761_recommendations_typed_catalogue_author_gtk"] = True
         state["plugin"].deactivate()
         report["status"] = "PASS"
         save()
