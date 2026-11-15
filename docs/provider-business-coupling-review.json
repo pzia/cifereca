@@ -249,6 +249,383 @@
       "rationale": "A security boundary for plugin diagnostic provenance, not a business-right or supplier-routing rule; do not remove hardcoded trusted-producer gate before generic attestation.",
       "decision_group_id": "diagnostics.runtime-producer-integrity",
       "reachability": "productive"
+    },
+    {
+      "id": "site-f88e71da661d3b1a600e8071",
+      "classification": "false_positive",
+      "journey": "ADEPT profile selection from the Kobo-ADEPT runtime, not the Kobo commercial bookstore",
+      "productive_caller": "LibraryService.adept_profile_choices -> LibraryService.kobo_profiles",
+      "effect": "The AST call merely enumerates a local ADEPT DRM runtime's profiles; it neither routes Kobo provider purchases nor confirms borrower rights.",
+      "authority": "Installed DRM runtime adapter with identity-profile binding; no Kobo provider entitlement or acquisition decision is inferred.",
+      "replacement_contract": "Retain the ADEPT runtime adapter API. A future neutral DRM runtime capability can replace the technical name without changing borrower grants.",
+      "tests": [
+        "tests/test_core_p1_1063_adept_runtime_check.py",
+        "tests/test_kobo_adept_state.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "The provider-name signal originates from a Kobo-ADEPT technical runtime method; classification applies only to this AST call, not the complete caller.",
+      "decision_group_id": "adept.runtime-profile-choice",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-54af4692ddc81b0f2dfa9fac",
+      "classification": "false_positive",
+      "journey": "Inspect ADEPT DRM loan inventory for one already-complete local acquisition",
+      "productive_caller": "LibraryService.adept_loan_choices -> kobo_profiles and _kobo_adapter().loan_inventories",
+      "effect": "Reads local DRM profile/loan states to build choices; no Kobo bookstore acquisition, provider consent or canonical right is conferred.",
+      "authority": "Previously persisted acquisition and DRM profile references; read-only inventory is an observation, not permission.",
+      "replacement_contract": "Retain explicit profile/loan selection; a typed generic DRM inventory contract can replace technical runtime method names.",
+      "tests": [
+        "tests/test_kobo_adept_state.py",
+        "tests/test_adept_manual_binding.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Two AST anchors in the same ADEPT runtime inspection, not two separate commercial Kobo business decisions.",
+      "decision_group_id": "adept.runtime-loan-inventory",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-ae1253291ec72751637cce03",
+      "classification": "false_positive",
+      "journey": "Inspect ADEPT DRM loan inventory for one already-complete local acquisition",
+      "productive_caller": "LibraryService.adept_loan_choices -> kobo_profiles and _kobo_adapter().loan_inventories",
+      "effect": "Reads local DRM profile/loan states to build choices; no Kobo bookstore acquisition, provider consent or canonical right is conferred.",
+      "authority": "Previously persisted acquisition and DRM profile references; read-only inventory is an observation, not permission.",
+      "replacement_contract": "Retain explicit profile/loan selection; a typed generic DRM inventory contract can replace technical runtime method names.",
+      "tests": [
+        "tests/test_kobo_adept_state.py",
+        "tests/test_adept_manual_binding.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Two AST anchors in the same ADEPT runtime inspection, not two separate commercial Kobo business decisions.",
+      "decision_group_id": "adept.runtime-loan-inventory",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-8e3e2911b26117134a9d9eea",
+      "classification": "false_positive",
+      "journey": "Explicit manual association of one local acquisition with an ADEPT runtime loan",
+      "productive_caller": "LibraryService.attach_adept_loan -> kobo_profiles and _kobo_adapter().loans",
+      "effect": "The AST anchors read runtime profile/loan evidence. The enclosing explicit association DOES write an acquisition metadata receipt under a lock, but the observed calls are not Kobo bookstore provider policy.",
+      "authority": "User-selected exact ADEPT profile/loan and existing complete local acquisition; no automatic provider purchase grant.",
+      "replacement_contract": "Maintain verified explicit association, lock, identity scope and metadata persistence; a generic DRM loan-reader adapter may replace technical calls.",
+      "tests": [
+        "tests/test_kobo_adept_state.py",
+        "tests/test_adept_manual_binding.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "False-positive is limited to the runtime calls: it does not classify or retire the enclosing acquisition metadata writer.",
+      "decision_group_id": "adept.runtime-manual-loan-association",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-6e5b2d09c5eda526457fb977",
+      "classification": "false_positive",
+      "journey": "Explicit manual association of one local acquisition with an ADEPT runtime loan",
+      "productive_caller": "LibraryService.attach_adept_loan -> kobo_profiles and _kobo_adapter().loans",
+      "effect": "The AST anchors read runtime profile/loan evidence. The enclosing explicit association DOES write an acquisition metadata receipt under a lock, but the observed calls are not Kobo bookstore provider policy.",
+      "authority": "User-selected exact ADEPT profile/loan and existing complete local acquisition; no automatic provider purchase grant.",
+      "replacement_contract": "Maintain verified explicit association, lock, identity scope and metadata persistence; a generic DRM loan-reader adapter may replace technical calls.",
+      "tests": [
+        "tests/test_kobo_adept_state.py",
+        "tests/test_adept_manual_binding.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "False-positive is limited to the runtime calls: it does not classify or retire the enclosing acquisition metadata writer.",
+      "decision_group_id": "adept.runtime-manual-loan-association",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-10c7380b69f3ae55dce5dab6",
+      "classification": "false_positive",
+      "journey": "Explicitly requested ADEPT runtime diagnostic in the saved Paris binding context",
+      "productive_caller": "LibraryService.check_normal_paris_adept_runtime -> _kobo_adapter",
+      "effect": "Obtains technical ADEPT runtime readiness only; the separate Paris source-ownership checks remain live safety vetoes.",
+      "authority": "Saved identity and profile binding gate this inspection; runtime availability never authorizes loan delivery.",
+      "replacement_contract": "Retain the user-triggered profile check and saved-binding fences, independent of future runtime adapter naming.",
+      "tests": [
+        "tests/test_core_1063_normal_paris_adept_status.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py",
+        "tests/test_core_p0_5048_adept_source_binding_status.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "The Kobo token denotes Kobo-ADEPT runtime discovery, not a Kobo provider rights or acquisition branch.",
+      "decision_group_id": "adept.runtime-explicit-readiness-probe",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-2337f2c628b0365c1fe6ff68",
+      "classification": "false_positive",
+      "journey": "Technical Kobo-ADEPT runtime feature/state discovery",
+      "productive_caller": "LibraryService.kobo_adept_state -> _kobo_adapter",
+      "effect": "Observes version/capability readiness of the DRM runtime; no provider stock, purchase, right or download is authorized.",
+      "authority": "Runtime adapter's installed technical contract; supplier-level provenance and consent are assessed elsewhere.",
+      "replacement_contract": "Retain bounded technical runtime state reporting until a generic DRM runtime registration replaces the brand-named adapter.",
+      "tests": [
+        "tests/test_kobo_adept_state.py",
+        "tests/test_core_p0_1143_kobo_runtime_discovery_privacy.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "The AST source-name match is a technical DRM runtime dependency, not a Kobo commercial-provider business decision.",
+      "decision_group_id": "adept.runtime-state-discovery",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-e2bee4d7c10ce6d0c39e85f5",
+      "classification": "false_positive",
+      "journey": "Technical ADEPT profile enumeration",
+      "productive_caller": "LibraryService.kobo_profiles -> _kobo_adapter().profiles",
+      "effect": "Lists DRM profiles for local resolution, without accessing Kobo bookstore inventory or assigning an ADEPT borrower grant.",
+      "authority": "Installed DRM profile adapter; a matching profile is not evidence of ownership, consent or an entitlement.",
+      "replacement_contract": "Preserve exact borrower grant checks and runtime profile enumeration; a neutral DRM profile inventory API may later replace this call.",
+      "tests": [
+        "tests/test_core_p1_1063_adept_runtime_check.py",
+        "tests/test_kobo_adept_state.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Kobo-ADEPT is the technical DRM runtime. The AST anchor does not implement Kobo provider routing.",
+      "decision_group_id": "adept.runtime-profile-enumeration",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-9ecded54fd870f959d2c8fb3",
+      "classification": "false_positive",
+      "journey": "Resolve the locally persisted ADEPT profile of an explicit identity",
+      "productive_caller": "LibraryService.resolve_adept_profile_for_identity -> kobo_profiles",
+      "effect": "Reads DRM runtime profile candidates for identity-scoped resolution; the associated binding writer/owner controls are outside this AST call.",
+      "authority": "Persisted local ADEPT identity binding, not Kobo provider account state or a supplier entitlement.",
+      "replacement_contract": "Maintain identity-specific profile resolution and borrower grants; consider generic DRM profile inventory once available.",
+      "tests": [
+        "tests/test_core_p1_1063_adept_runtime_check.py",
+        "tests/test_kobo_adept_state.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "This call concerns the Kobo-ADEPT technical runtime, not provider-specific business authority.",
+      "decision_group_id": "adept.runtime-identity-profile-resolution",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-7874908d12d351ccb80742b1",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Resolve exact Paris loan borrower against legacy/v16 ADEPT grants",
+      "productive_caller": "core.adept_borrower._paris_adept_identity_for_loan through LibraryService._paris_adept_identity_for_loan, used by auto and explicit acquisition admission",
+      "effect": "Cross-checks historical Paris binding, canonical v16 owner, connection identity and pinned ADEPT profile. Disagreement or malformed proof refuses; the facade wrapper creates no second grant.",
+      "authority": "Persisted source credential/account, explicit v16 borrower grant, legacy binding consistency and current profile; never GTK selection or title.",
+      "replacement_contract": "Versioned source-neutral borrower/profile grant attestation with exact connection/borrower and revocation; do not drop the Paris legacy conflict veto until migration is proved.",
+      "tests": [
+        "tests/test_core_p0_5851_dual_grant_conflict.py",
+        "tests/test_automatic_loan_admission.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Active security safeguard, not a removable supplier branch. The two AST anchors represent one underlying borrower-resolution path.",
+      "decision_group_id": "adept.borrower-paris-legacy-v16-grant",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-7587067dd7068ebdaad80ad9",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Resolve exact Paris loan borrower against legacy/v16 ADEPT grants",
+      "productive_caller": "core.adept_borrower._paris_adept_identity_for_loan through LibraryService._paris_adept_identity_for_loan, used by auto and explicit acquisition admission",
+      "effect": "Cross-checks historical Paris binding, canonical v16 owner, connection identity and pinned ADEPT profile. Disagreement or malformed proof refuses; the facade wrapper creates no second grant.",
+      "authority": "Persisted source credential/account, explicit v16 borrower grant, legacy binding consistency and current profile; never GTK selection or title.",
+      "replacement_contract": "Versioned source-neutral borrower/profile grant attestation with exact connection/borrower and revocation; do not drop the Paris legacy conflict veto until migration is proved.",
+      "tests": [
+        "tests/test_core_p0_5851_dual_grant_conflict.py",
+        "tests/test_automatic_loan_admission.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Active security safeguard, not a removable supplier branch. The two AST anchors represent one underlying borrower-resolution path.",
+      "decision_group_id": "adept.borrower-paris-legacy-v16-grant",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-af9a4882484f55e85f232552",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Exact primary Paris lender preflight for cross-identity manual borrow",
+      "productive_caller": "core.borrow_for_identity_live._witness -> configured_primary_source_current in admitted lender choice calculation",
+      "effect": "Rejects a lender whose saved primary Paris connection no longer matches the observed exact account; does not itself authorize borrowing.",
+      "authority": "Installed explicit lender identity, source/credential/account coordinates and saved primary connection option.",
+      "replacement_contract": "Typed versioned primary-source lender witness from the installed provider, rechecked with Core owner/session lease before action.",
+      "tests": [
+        "tests/test_core_p0_5975_headless_lender_admission.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "The Paris predicate guards a live source selection; eliminating it without a neutral witness would admit a stale or foreign lender.",
+      "decision_group_id": "lending.borrower-paris-primary-witness",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-8a3bfdc2f84626252dc83278",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Explicit reacquisition of a protected Paris digital loan",
+      "productive_caller": "LibraryService.reacquire_digital_loan -> _reacquire_digital_loan_impl under acquisition lock",
+      "effect": "Calls exact Paris ADEPT borrower resolver and blocks any non-None refusal BEFORE ledger inspection, rights update or automatic acquisition; codes are allowlisted.",
+      "authority": "Source-bound connection owner, existing borrower grant and cross-identity ledger conflict; user intent alone cannot choose ADEPT identity.",
+      "replacement_contract": "Source-neutral typed borrower/profile admission whose refusal is mandatory before protected reacquisition; preserve one-shot/retry guards.",
+      "tests": [
+        "tests/test_core_p0_5975_explicit_reacquire_borrower_refusal.py",
+        "tests/test_core_p0_5851_dual_grant_conflict.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto.",
+      "decision_group_id": "loan.explicit-reacquire-adept-borrower",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-49e03148fdc5ed80a1610367",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Explicit reacquisition of a protected Paris digital loan",
+      "productive_caller": "LibraryService.reacquire_digital_loan -> _reacquire_digital_loan_impl under acquisition lock",
+      "effect": "Calls exact Paris ADEPT borrower resolver and blocks any non-None refusal BEFORE ledger inspection, rights update or automatic acquisition; codes are allowlisted.",
+      "authority": "Source-bound connection owner, existing borrower grant and cross-identity ledger conflict; user intent alone cannot choose ADEPT identity.",
+      "replacement_contract": "Source-neutral typed borrower/profile admission whose refusal is mandatory before protected reacquisition; preserve one-shot/retry guards.",
+      "tests": [
+        "tests/test_core_p0_5975_explicit_reacquire_borrower_refusal.py",
+        "tests/test_core_p0_5851_dual_grant_conflict.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto.",
+      "decision_group_id": "loan.explicit-reacquire-adept-borrower",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-16f7682c2e46693e6c3dab00",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Read-only ADEPT return availability status from exact Paris loan provenance",
+      "productive_caller": "LibraryService.adept_return_status_for_loan -> _paris_adept_identity_for_loan before historical acquisitions/rights status projection",
+      "effect": "Inspects exact borrower profile and cross-identity conflicts before deriving historical return-origin status; a malformed/foreign provenance cannot imply action availability.",
+      "authority": "Source credential, stored borrower grant, identity and original acquisition binding; no selected GTK profile.",
+      "replacement_contract": "Versioned generic historical DRM-origin status projection with source exactness and recorded fulfillment provenance; voluntary return remains removed.",
+      "tests": [
+        "tests/test_core_0984_adept_return_status_provenance.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Provider check and borrower callback belong to one source-specific status fence. Direct productive reachability is not established from an exported facade alone.",
+      "decision_group_id": "adept.return-source-provenance-status",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-e6a2a73748c726a5f5a9267c",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Read-only ADEPT return availability status from exact Paris loan provenance",
+      "productive_caller": "LibraryService.adept_return_status_for_loan -> _paris_adept_identity_for_loan before historical acquisitions/rights status projection",
+      "effect": "Inspects exact borrower profile and cross-identity conflicts before deriving historical return-origin status; a malformed/foreign provenance cannot imply action availability.",
+      "authority": "Source credential, stored borrower grant, identity and original acquisition binding; no selected GTK profile.",
+      "replacement_contract": "Versioned generic historical DRM-origin status projection with source exactness and recorded fulfillment provenance; voluntary return remains removed.",
+      "tests": [
+        "tests/test_core_0984_adept_return_status_provenance.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Provider check and borrower callback belong to one source-specific status fence. Direct productive reachability is not established from an exported facade alone.",
+      "decision_group_id": "adept.return-source-provenance-status",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-2e131a36740d4dc492a02de3",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Historical exact-borrower inventory absence verification after ADEPT observation",
+      "productive_caller": "core.loan_return_verification._paris_inventory_exact_borrower and LibraryService.verify_paris_return_inventory -> verify_paris_return_inventory",
+      "effect": "Rejects mixed/partial/non-exhaustive or foreign borrower inventories as proof of returned loan; the facade delegates a bounded exact-account read, NEVER issues ReturnDigitalLoan POST.",
+      "authority": "Exact provider/credential/borrower/identity, branch completeness and connected session proof, not empty rows or a different credential.",
+      "replacement_contract": "Provider-neutral complete typed loan-inventory snapshot with exact borrower/branch coverage and pre/post-read lease. Keep historical refusal until independently proven.",
+      "tests": [
+        "tests/test_core_p0_2975_return_borrower_scope.py",
+        "tests/test_core_p0_1120_paris_inventory_completeness.py",
+        "tests/test_core_p0_2975_typed_return_inventory_absence.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "These are a guarded historical read and its delegate, not a current return mutation. Public API reachability alone is unproven.",
+      "decision_group_id": "loan.return-exact-inventory-absence",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-b2c28295eb915336e054f6f1",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Historical exact-borrower inventory absence verification after ADEPT observation",
+      "productive_caller": "core.loan_return_verification._paris_inventory_exact_borrower and LibraryService.verify_paris_return_inventory -> verify_paris_return_inventory",
+      "effect": "Rejects mixed/partial/non-exhaustive or foreign borrower inventories as proof of returned loan; the facade delegates a bounded exact-account read, NEVER issues ReturnDigitalLoan POST.",
+      "authority": "Exact provider/credential/borrower/identity, branch completeness and connected session proof, not empty rows or a different credential.",
+      "replacement_contract": "Provider-neutral complete typed loan-inventory snapshot with exact borrower/branch coverage and pre/post-read lease. Keep historical refusal until independently proven.",
+      "tests": [
+        "tests/test_core_p0_2975_return_borrower_scope.py",
+        "tests/test_core_p0_1120_paris_inventory_completeness.py",
+        "tests/test_core_p0_2975_typed_return_inventory_absence.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "These are a guarded historical read and its delegate, not a current return mutation. Public API reachability alone is unproven.",
+      "decision_group_id": "loan.return-exact-inventory-absence",
+      "reachability": "unproven"
+    },
+    {
+      "id": "site-a99f3f4da32247a6a6efec04",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Saved Paris primary connection / ADEPT identity readiness and explicit runtime check",
+      "productive_caller": "LibraryService.normal_paris_adept_status -> check_normal_paris_adept_runtime; Settings reads normal status and user-triggered runtime probe rechecks binding before/after",
+      "effect": "Checks active configured primary Paris source, saved identity and binding freshness. An explicit ADEPT runtime probe cannot use a stale or foreign profile; status is read-only.",
+      "authority": "Persisted source identity/credential and exact ADEPT profile binding; runtime successful probe is not a grant.",
+      "replacement_contract": "Typed source-neutral primary DRM binding status and revocable explicit diagnostic lease, preserving refusal after ABA changes.",
+      "tests": [
+        "tests/test_core_1063_normal_paris_adept_status.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py",
+        "tests/test_core_p0_5048_adept_source_binding_status.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Three anchors form one readiness/freshness context at read and diagnostic boundaries, not three independent acquisition decisions.",
+      "decision_group_id": "adept.normal-paris-primary-binding-readiness",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-ad1126c55bb2a396a4efeaf8",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Saved Paris primary connection / ADEPT identity readiness and explicit runtime check",
+      "productive_caller": "LibraryService.normal_paris_adept_status -> check_normal_paris_adept_runtime; Settings reads normal status and user-triggered runtime probe rechecks binding before/after",
+      "effect": "Checks active configured primary Paris source, saved identity and binding freshness. An explicit ADEPT runtime probe cannot use a stale or foreign profile; status is read-only.",
+      "authority": "Persisted source identity/credential and exact ADEPT profile binding; runtime successful probe is not a grant.",
+      "replacement_contract": "Typed source-neutral primary DRM binding status and revocable explicit diagnostic lease, preserving refusal after ABA changes.",
+      "tests": [
+        "tests/test_core_1063_normal_paris_adept_status.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py",
+        "tests/test_core_p0_5048_adept_source_binding_status.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Three anchors form one readiness/freshness context at read and diagnostic boundaries, not three independent acquisition decisions.",
+      "decision_group_id": "adept.normal-paris-primary-binding-readiness",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-27ca4e2cb71815ea92df3fd2",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Saved Paris primary connection / ADEPT identity readiness and explicit runtime check",
+      "productive_caller": "LibraryService.normal_paris_adept_status -> check_normal_paris_adept_runtime; Settings reads normal status and user-triggered runtime probe rechecks binding before/after",
+      "effect": "Checks active configured primary Paris source, saved identity and binding freshness. An explicit ADEPT runtime probe cannot use a stale or foreign profile; status is read-only.",
+      "authority": "Persisted source identity/credential and exact ADEPT profile binding; runtime successful probe is not a grant.",
+      "replacement_contract": "Typed source-neutral primary DRM binding status and revocable explicit diagnostic lease, preserving refusal after ABA changes.",
+      "tests": [
+        "tests/test_core_1063_normal_paris_adept_status.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py",
+        "tests/test_core_p0_5048_adept_source_binding_status.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Three anchors form one readiness/freshness context at read and diagnostic boundaries, not three independent acquisition decisions.",
+      "decision_group_id": "adept.normal-paris-primary-binding-readiness",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-36d7d98c0b5939ee21e6d5cd",
+      "classification": "legitimate_readonly_compat",
+      "journey": "Read historical voluntary return receipts with obsolete Paris-specific format",
+      "productive_caller": "LibraryService.verify_loan_return -> storage.loan_return_state and return_adept_orchestrator.public_state",
+      "effect": "Reads only historical receipt state for an old Paris digital loan; no provider GET, voluntary return POST, ADEPT mutation or resumed return action.",
+      "authority": "Previously persisted return receipt and borrower source checks are descriptive; old status cannot create a right.",
+      "replacement_contract": "Keep bounded reader for old receipts while voluntary return is disabled; remove only with a proven historical data/ABI migration.",
+      "tests": [
+        "tests/test_p1_4048_legacy_return_seams_closed.py",
+        "tests/test_core_p0_1120_closure_gate.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Compatibility reader is not an active user-return permission or a new migration writer; the Paris filter remains a real read-only technical dependency.",
+      "decision_group_id": "loan.historical-return-receipt",
+      "reachability": "legacy_only"
     }
   ],
   "retirements": [
