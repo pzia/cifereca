@@ -87,17 +87,21 @@ def project_exact_loan_cover(
 
 
 def project_verified_local_library_cover(
-    row: Mapping[str, object], *, revision: int, snapshot_complete: bool,
+    row: Mapping[str, object], *, expected_identity_id: str,
+    revision: int, snapshot_complete: bool,
 ) -> ResolvedBookCover | None:
     """Only an already projected, exact local Core Artifact/Placement.
 
     A bare book_id, local_path, title, ISBN or common hash cannot substitute
-    for both Artifact and Placement. No plugin-supplied arbitrary URL is
+    for both Artifact and Placement. The producer must pass the explicit
+    owner identity captured before its read; a reused row cannot reassign it.
+    No plugin-supplied arbitrary URL is
     upgraded to evidence without an admitted Core cover_resolution matching
     the row's selected thumbnail.
     """
     if (type(row) is not dict or row.get("local") is not True
-            or not _exact(row.get("identity_id"))
+            or not _exact(expected_identity_id)
+            or row.get("identity_id") != expected_identity_id
             or not _exact(row.get("key"))
             or not _exact(row.get("artifact_id"))
             or not _exact(row.get("placement_id"))):
