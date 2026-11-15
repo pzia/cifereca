@@ -172,20 +172,24 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
     # session *without changing the selected book ID or GTK generation*.
     # Gate worker entry AND delivery under that same exact active session
     # activation; old callbacks must not republish a foreign thumbnail.
+    holdings_core = self.service
+    holdings_query = self._last_search_query
     source_epochs = (
         getattr(self.service, "_account_context_epoch", None),
         getattr(self.service, "_source_context_epoch", None),
     )
 
     def epochs_current() -> bool:
-        return (not getattr(self, "_closed", False) and source_epochs == (
+        return (not getattr(self, "_closed", False)
+                and self.service is holdings_core
+                and source_epochs == (
             getattr(self.service, "_account_context_epoch", None),
             getattr(self.service, "_source_context_epoch", None),
         ))
 
     self.runner.submit(
         "Chargement des disponibilités…",
-        lambda: self.service.holdings(item, self._last_search_query, force=False)
+        lambda: holdings_core.holdings(item, holdings_query, force=False)
         if epochs_current() else None,
         lambda detail: self._apply_search_detail(selected_id, item, detail, context=context)
         if epochs_current() else None,
@@ -421,20 +425,24 @@ def _load_known_detail(self: SearchDetailHost, item):
     self._search_detail_request_generation += 1
     selected = self._selected_search_id
     context = self._search_detail_request_context()
+    holdings_core = self.service
+    holdings_query = self._last_search_query
     source_epochs = (
         getattr(self.service, "_account_context_epoch", None),
         getattr(self.service, "_source_context_epoch", None),
     )
 
     def epochs_current() -> bool:
-        return (not getattr(self, "_closed", False) and source_epochs == (
+        return (not getattr(self, "_closed", False)
+                and self.service is holdings_core
+                and source_epochs == (
             getattr(self.service, "_account_context_epoch", None),
             getattr(self.service, "_source_context_epoch", None),
         ))
 
     self.runner.submit(
         "Disponibilités…",
-        lambda: self.service.holdings(item, self._last_search_query, force=False)
+        lambda: holdings_core.holdings(item, holdings_query, force=False)
         if epochs_current() else None,
         lambda detail: self._apply_search_detail(selected, item, detail, context=context)
         if epochs_current() else None,
