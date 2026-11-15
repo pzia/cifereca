@@ -73,6 +73,15 @@ def test_invalid_descriptor_does_not_allow_any_provider_alias():
         service._account_for_loan(_loan("reader-main"))
 
 
+def test_empty_borrower_never_selects_linked_account_without_primary_proof():
+    linked_empty = _account("", primary=False)
+    service = _service([linked_empty])
+    with pytest.raises(ProviderConfigurationError, match="introuvable"):
+        service._account_for_loan(_loan(""))
+    with pytest.raises(ProviderConfigurationError, match="introuvable"):
+        service._account_for_loan(_loan("reader-main"))
+
+
 def test_same_literal_upstream_account_and_primary_alias_is_ambiguous():
     primary = _account()
     literal = _account("reader-main", primary=False)
