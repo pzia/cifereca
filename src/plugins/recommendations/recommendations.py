@@ -2499,6 +2499,17 @@ class UxRecommendationsView:
             if key in mapping and (
                 selection["ranked"] is not mapping[key]
                 or selection.get("catalogue_sources") != catalogue_sources
+                # A progressive/public metadata update may mutate an
+                # already-selected ranked item in place: same Python object,
+                # key and generation, but a newly attested cover/title/author.
+                # The list is rebuilt from the new projection above; refresh
+                # its detail from that same UiBookListEntry rather than
+                # leaving an older thumbnail or bibliography on screen.
+                or selection.get("row_presentation") != (
+                    next(row for row in rows if row.key == key).title,
+                    next(row for row in rows if row.key == key).subtitle,
+                    next(row for row in rows if row.key == key).thumbnail_url,
+                )
                 or (not self._busy and (
                     selection["generation"] != self._generation
                     or selection["provisional"] != self._provisional_active
@@ -2575,6 +2586,7 @@ class UxRecommendationsView:
             }
             self._exact_notice_state = state
         state["provisional"] = self._provisional_active
+        state["row_presentation"] = (row.title, row.subtitle, row.thumbnail_url)
         self._llm_selected_row = row
         if self._llm_button is not None:
             self._llm_button.set_sensitive(not self._busy and self._llm_handle is None)
