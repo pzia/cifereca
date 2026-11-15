@@ -599,7 +599,7 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         cover = resolve_cover(cover_candidates)
         thumbnail_url = cover.url or None
         metadata["cover_resolution"] = cover.metadata()
-        rows.append({
+        recent_row = {
             "placement_id": placement.get("placement_id"), "artifact_id": placement.get("artifact_id"),
             "title": entry.get("title") or Path(str(placement.get("path") or "")).stem, "author": entry.get("author"),
             "identity_id": row_identity, "provider_id": provider_id, "item_id": item_id or None,
@@ -607,7 +607,45 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
             "metadata": metadata,
             "acquired_at": placement.get("created_at") or placement.get("updated_at"),
             "updated_at": placement.get("updated_at"),
-        })
+        }
+        # Keep N1 documentary EPUB evidence in Récents independently from
+        # N3 image bytes, using the SAME Artifact+Placement scope as Library.
+        # A catalogue row's metadata is merely descriptive: the ZIP member
+        # proof belongs exclusively to this Artifact's inspection metadata.
+        artifact_id = str(placement.get("artifact_id") or "")
+        placement_id = str(placement.get("placement_id") or "")
+        if (artifact_id and placement_id and row_identity
+                and str(placement.get("path") or "").lower().endswith((
+                    ".epub", ".kepub",
+                ))):
+            artifact = self.storage.artifact_get(artifact_id)
+            sha = str((artifact or {}).get("sha256") or "")
+            if not sha and artifact_id.startswith("sha256:"):
+                sha = artifact_id[7:]
+            if sha and type((artifact or {}).get("metadata")) is dict:
+                try:
+                    verified_path = self.local_book_path(
+                        placement_id, identity_id=row_identity,
+                    )
+                except (ProviderConfigurationError, OSError, ValueError):
+                    # Stale file/foreign Placement cannot mint source evidence.
+                    verified_path = None
+                if verified_path is not None:
+                    packet = project_verified_local_cover_evidence(
+                        identity_id=row_identity,
+                        book_key="artifact:sha256:" + sha,
+                        artifact_id=artifact_id, placement_id=placement_id,
+                        artifact_sha256=sha,
+                        artifact_metadata=artifact["metadata"],
+                        verified_path=verified_path,
+                        candidates=tuple(
+                            candidate for candidate in cover_candidates
+                            if candidate.tier in ("origin", "catalog")
+                        ),
+                    )
+                    if packet is not None and packet.embedded is not None:
+                        recent_row["_exact_local_cover_evidence"] = packet
+        rows.append(recent_row)
         if len(rows) >= max(1, limit):
             break
     return rows
