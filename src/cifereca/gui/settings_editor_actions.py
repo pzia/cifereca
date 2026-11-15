@@ -198,8 +198,11 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 return
             # A runtime check concerns the SAVED binding, not an unsaved
             # draft. A save/reopen is required before testing changed inputs.
+            # Pin the Core as soon as the user admits the explicit probe.
+            # The queued worker must never inspect a replacement window Core.
+            admitted_core = self.service
             saved = self.config.identity(saved_id) or {}
-            stored_profile = self.service.storage.adept_profile_binding_get(
+            stored_profile = admitted_core.storage.adept_profile_binding_get(
                 "identity", saved_id,
             ) or ""
             stored_primary = saved.get("primary_paris_connection_id") or ""
@@ -210,12 +213,13 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     "À vérifier · enregistrez les modifications avant le contrôle ADEPT."
                 )
                 return
-            start_status = self.service.normal_paris_adept_status(saved_id)
+            start_status = admitted_core.normal_paris_adept_status(saved_id)
             if start_status.get("status") != "ready":
                 e["normal_adept_status"].set_subtitle(
                     _local_adept_binding_caption(start_status)
                 )
                 return
+            runtime_probe = admitted_core.check_normal_paris_adept_runtime
             generations = (
                 getattr(self, "_identity_context_generation", None),
                 getattr(self, "_account_context_generation", None),
@@ -227,6 +231,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             def current():
                 return (
                     not getattr(self, "_closed", False)
+                    and self.service is admitted_core
                     and not e.get("deleted")
                     and (page_lifetime is None or page_lifetime.alive)
                     and generations == (
@@ -236,7 +241,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     and e["adept_profile"].get_text() == stored_profile
                     and e["primary_paris_connection_id"].get_text()
                         == stored_primary
-                    and self.service.normal_paris_adept_status(saved_id)
+                    and admitted_core.normal_paris_adept_status(saved_id)
                         == start_status
                 )
 
@@ -264,7 +269,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             try:
                 self.runner.submit(
                     "Vérification ADEPT…",
-                    lambda: self.service.check_normal_paris_adept_runtime(saved_id),
+                    lambda: runtime_probe(saved_id),
                     done, error, control=button,
                 )
             except Exception:
