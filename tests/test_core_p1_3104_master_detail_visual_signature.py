@@ -152,3 +152,108 @@ def test_unchanged_book_and_progressive_append_keep_fast_path_and_selection():
     assert selection.get_selected_item() is old
     assert perf[-1][0] == "list.append-fast"
     assert states == ["list"] and counts == [4]
+
+
+
+def test_documentref_change_with_identical_url_forces_rebind_and_keeps_selection():
+    from dataclasses import replace
+    from cifereca.core.book_cover_projection import CoverDocumentScope
+
+    equal, show = production_methods()
+    book_a = CoverDocumentScope(
+        kind="public_catalogue", identity_id=None,
+        source_key="notice:exact-edition-a", provider_id="bnf",
+        credential_id="__public__",
+    )
+    book_b = replace(book_a, source_key="notice:exact-edition-b")
+    old = BookRow(cover="https://covers.example.org/identical.jpg")
+    new = BookRow(cover=old.thumbnail_url)
+    old._cover_document_ref = book_a
+    new._cover_document_ref = book_b
+    old._public_row_content = new._public_row_content = ("search", "exact")
+    assert not equal(old, new)
+
+    page, store, selection, perf, _, _ = page_with(old)
+    show(page, [new], total_count=1)
+    assert store.items[0] is new
+    assert selection.get_selected_item() is new
+    assert perf[-1][0] == "list.replace"
+
+
+def test_cover_provenance_change_rebinds_when_other_fields_remain_equal():
+    from dataclasses import dataclass, field
+
+    @dataclass(frozen=True)
+    class SourcePacket:
+        # Search's source_item is intentionally excluded from equality,
+        # yet registration requires original SearchResult object identity.
+        source_item: object = field(compare=False)
+        context: tuple[int, int, int, int] = (1, 2, 3, 4)
+        source_uri: str = "https://covers.example.org/same.jpg"
+
+    equal, show = production_methods()
+    source_a, source_b = object(), object()
+    old = BookRow(cover="https://covers.example.org/same.jpg")
+    new = BookRow(cover=old.thumbnail_url)
+    old._cover_search_evidence = SourcePacket(source_a)
+    new._cover_search_evidence = SourcePacket(source_b)
+    old._public_row_content = new._public_row_content = ("search", "same")
+    assert not equal(old, new)
+
+    page, store, _, perf, _, _ = page_with(old)
+    show(page, [new])
+    assert store.items[0] is new
+    assert perf[-1][0] == "list.replace"
+
+    later = BookRow(cover=old.thumbnail_url)
+    later._cover_search_evidence = SourcePacket(
+        source_a, context=(1, 2, 3, 5),
+    )
+    assert not equal(old, later)
+
+
+def test_identical_core_proof_keeps_progressive_append_fast_path():
+    from dataclasses import dataclass
+    from cifereca.core.book_cover_projection import CoverDocumentScope
+
+    @dataclass(frozen=True)
+    class ImmutableSource:
+        evidence_id: str
+        candidates: tuple[str, ...]
+
+    equal, show = production_methods()
+    ref = CoverDocumentScope(
+        kind="public_catalogue", identity_id=None,
+        source_key="notice:exact-edition-a", provider_id="bnf",
+        credential_id="__public__",
+    )
+    old, equivalent = BookRow(), BookRow()
+    old._cover_document_ref = equivalent._cover_document_ref = ref
+    old._cover_local_evidence = ImmutableSource("exact", ("public-cover-a",))
+    equivalent._cover_local_evidence = ImmutableSource("exact", ("public-cover-a",))
+    assert equal(old, equivalent)
+
+    page, store, selection, perf, _, _ = page_with(old)
+    show(page, [equivalent, BookRow("exact:2")])
+    assert store.items[0] is old
+    assert store.splice_count == 1
+    assert selection.get_selected_item() is old
+    assert perf[-1][0] == "list.append-fast"
+
+    changed = BookRow()
+    changed._cover_document_ref = ref
+    changed._cover_local_evidence = ImmutableSource("exact", ("public-cover-b",))
+    assert not equal(old, changed)
+
+
+def test_removing_documentary_proof_forces_rebind_before_legacy_url_fallback():
+    equal, show = production_methods()
+    old, fresh = BookRow(cover="https://covers.example.org/cached.png"), BookRow(
+        cover="https://covers.example.org/cached.png",
+    )
+    old._cover_history_evidence = object()
+    assert not equal(old, fresh)
+    page, store, _, perf, _, _ = page_with(old)
+    show(page, [fresh])
+    assert store.items[0] is fresh
+    assert perf[-1][0] == "list.replace"

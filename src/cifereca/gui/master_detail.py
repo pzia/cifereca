@@ -25,6 +25,9 @@ _BOOK_ROW_VISIBLE_FIELDS = (
     "default_thumbnail_url", "cover_provider", "cover_record_id",
     "cover_title", "cover_author", "cover_year",
     "action_label", "action_icon_name",
+    # The source's N2 association is part of the row's visual contract even
+    # when an old supplier thumbnail URL remains textually unchanged.
+    "_cover_document_ref",
 )
 
 
@@ -37,10 +40,30 @@ def _same_book_row_presentation(old: BookListItem, new: BookListItem) -> bool:
     # content. Compare ordinary book fields too, for *every* surface.
     if old_revision != new_revision:
         return False
-    return all(
+    if not all(
         getattr(old, field, None) == getattr(new, field, None)
         for field in _BOOK_ROW_VISIBLE_FIELDS
-    )
+    ):
+        return False
+    # Exact Core evidence, not just its displayed source URL, determines
+    # the N2 cache token. A progressive batch with the same key/title/URL
+    # must not retain a cell bound to an older edition, Placement or proof.
+    # The ordinary equal (immutable) packet remains on the fast path.
+    for field in (
+        "_cover_local_evidence", "_cover_search_evidence",
+        "_cover_history_evidence", "_cover_loan_supplier_evidence",
+    ):
+        previous = getattr(old, field, None)
+        incoming = getattr(new, field, None)
+        if previous != incoming:
+            return False
+        if (previous is not None and field != "_cover_local_evidence"
+                and getattr(previous, "source_item", None)
+                    is not getattr(incoming, "source_item", None)):
+            # Source-owned widgets use the *original object* as a live
+            # admission witness; equal DTO values cannot replace its epoch.
+            return False
+    return True
 
 
 class MasterDetailPage(Gtk.Box):
