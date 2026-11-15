@@ -34,7 +34,9 @@ ROOT = Path(__file__).resolve().parents[1]
 STAGES = frozenset({
     "preflight", "core", "fixture", "gtk", "reader", "selection",
     "reservation", "reservation_commit", "repaint", "intent_cancel",
-    "intent_confirm", "intent_repaint", "profile_b", "profile_a", "finish",
+    "intent_confirm", "intent_repaint", "execute_prepare",
+    "execute_cancel", "execute_confirm", "execute_result",
+    "profile_b", "profile_a", "finish",
 })
 
 
@@ -330,6 +332,162 @@ def main() -> int:
         assert has_target()
         assert "Aucun fichier transféré ou supprimé" in window._reader_status_label.get_text()
         report["checks"]["real_gtk_remove_wish_detail_repaint_same_key"] = True
+        later(80, install_synthetic_executor)
+
+    fake_execution = []
+    fake_start = [None]
+    fake_volume = [None]
+    fake_epoch = [None]
+
+    def install_synthetic_executor():
+        # This is a synthetic GTK/UI integration test ONLY. The fake broker
+        # never touches the volume; production Core independently attests a
+        # real USB block mount and its managed-copy receipt under a lock.
+        phase[0] = "execute_prepare"
+        from cifereca.core.device_usb_discovery import MountedUsbVolume
+        from cifereca.core.device_usb_dry_run import UsbDryRun
+        from cifereca.core.device_usb_preview import UsbPreviewRow
+        from cifereca.core.device_usb_sync_engine import UsbSyncResult
+        from cifereca.gui import reader_usb_preview_actions as preview_actions
+        fake_volume[0] = MountedUsbVolume(
+            "uuid-alice-0001", work / "synthetic-unmounted-volume",
+            "vfat", "Synthetic (not hardware)", 100_000_000, 8, 5, 71,
+        )
+        preview_actions._discover_mounted_binding = lambda **_: fake_volume[0]
+        class FakeOnlyUsbBroker:
+            def completed_copy_operation(self, **kwargs):
+                assert kwargs == {
+                    "identity_id": "alice", "device_id": "reader-a",
+                    "artifact_id": artifact_id,
+                }
+                return "a" * 32
+
+            def preview(self, **kwargs):
+                assert kwargs["identity_id"] == "alice"
+                assert kwargs["device_id"] == "reader-a"
+                assert kwargs["mountpoint"] == fake_volume[0].mountpoint
+                return UsbDryRun(
+                    "alice", "reader-a", "scanned", True, 1,
+                    (UsbPreviewRow(
+                        artifact_id, "remove", "present", "unknown", None,
+                        "remove_candidate",
+                        "managed_removal_requires_confirmation",
+                    ),),
+                )
+            def execute_one(
+                self, *, confirmation, mountpoint, expected_profile_epoch,
+                check_cancelled,
+            ):
+                assert callable(check_cancelled)
+                check_cancelled()
+                assert expected_profile_epoch == fake_epoch[0]
+                assert confirmation.artifact_id == artifact_id
+                assert confirmation.copy_operation_id == "a" * 32
+                assert confirmation.target_relative_path == (
+                    "Books/Cifereca/" + digest + ".epub"
+                )
+                assert mountpoint == fake_volume[0].mountpoint
+                fake_execution.append(confirmation)
+                return UsbSyncResult("completed", removed=1, observed=True)
+        window = state["window"]
+        manager = window.plugin_manager
+        assert manager is not None
+        fake_epoch[0] = window.service._account_context_epoch
+        manager._brokers["reader.usb"] = FakeOnlyUsbBroker()
+        # Refresh only the selected detail: the list-row version is
+        # intentionally unchanged after synthetic test-broker injection.
+        from cifereca.gui.reader_page_controller import reader_selected
+        selected_row = window.readers_page.selection.get_selected_item()
+        assert selected_row is not None and selected_row.key == "reader-book"
+        reader_selected(window, selected_row)
+        assert window.readers_page.selection.get_selected_item().key == "reader-book"
+        fake_start[0] = monotonic() + 7
+        later(150, click_synthetic_execution)
+
+    def mapped_execution_button():
+        found = [
+            widget for widget in walk(state["window"].readers_page.detail)
+            if isinstance(widget, Gtk.Button)
+            and getattr(widget, "_cifereca_action_id", None)
+                == "reader-usb-execute-remove"
+        ]
+        if len(found) != 1:
+            return None
+        button = found[0]
+        if not button.get_mapped():
+            bar = state["window"].readers_page.detail.action_scroll
+            if (button.get_parent() is getattr(bar, "overflow_box", None)
+                    and bar.overflow_button.get_mapped()
+                    and not bar.overflow_popover.get_mapped()):
+                bar.overflow_popover.popup()
+        return button if button.get_mapped() else None
+
+    def click_synthetic_execution():
+        phase[0] = "execute_prepare"
+        button = mapped_execution_button()
+        if button is None:
+            if monotonic() < fake_start[0]:
+                later(120, click_synthetic_execution)
+                return
+            raise AssertionError("Synthetic execute action not mapped")
+        button.emit("clicked")
+        assert not fake_execution
+        assert local.read_bytes() == payload
+        later(150, cancel_synthetic_execution)
+
+    def cancel_synthetic_execution():
+        phase[0] = "execute_cancel"
+        dialog = getattr(state["window"], "_reader_usb_execute_dialog", None)
+        if dialog is None:
+            if monotonic() < fake_start[0]:
+                later(120, cancel_synthetic_execution)
+                return
+            raise AssertionError("Synthetic execution dialog unavailable")
+        assert isinstance(dialog, Adw.MessageDialog)
+        assert not fake_execution
+        dialog.emit("response", "cancel")
+        report["checks"]["real_gtk_second_destructive_confirmation_cancelled"] = True
+        later(160, start_synthetic_confirmation)
+
+    def start_synthetic_confirmation():
+        phase[0] = "execute_confirm"
+        button = mapped_execution_button()
+        if button is None:
+            if monotonic() < fake_start[0]:
+                later(120, start_synthetic_confirmation)
+                return
+            raise AssertionError("Synthetic execution action not mapped again")
+        button.emit("clicked")
+        later(120, confirm_synthetic_execution)
+
+    def confirm_synthetic_execution():
+        phase[0] = "execute_confirm"
+        dialog = getattr(state["window"], "_reader_usb_execute_dialog", None)
+        if dialog is None:
+            if monotonic() < fake_start[0]:
+                later(120, confirm_synthetic_execution)
+                return
+            raise AssertionError("Second confirmation not displayed")
+        assert not fake_execution
+        dialog.emit("response", "delete")
+        later(150, synthetic_execution_result)
+
+    def synthetic_execution_result():
+        phase[0] = "execute_result"
+        if len(fake_execution) != 1:
+            if monotonic() < fake_start[0]:
+                later(120, synthetic_execution_result)
+                return
+            raise AssertionError("Synthetic single-book broker not called once")
+        assert local.read_bytes() == payload
+        assert core.storage.device_placement_get(
+            "reader-a", artifact_id,
+        )["observed_state"] == "unknown"
+        assert "Retrait USB supervisé terminé" in (
+            state["window"]._reader_status_label.get_text()
+        )
+        report["checks"]["real_gtk_core_broker_only_after_distinct_confirmation"] = True
+        report["checks"]["synthetic_broker_never_claims_usb_hardware"] = True
         later(80, switch_b)
 
     def switch_b():
