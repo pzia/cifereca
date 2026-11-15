@@ -1043,8 +1043,8 @@ def main() -> int:
                     # CI logs; never its traceback, labels, paths or snapshots.
                     closed_phases = frozenset({
                         "preflight", "core", "fixture", "gtk", "reader",
-                        "selection", "reservation", "repaint",
-                        "profile_b", "profile_a", "finish",
+                        "selection", "reservation", "reservation_commit",
+                        "repaint", "profile_b", "profile_a", "finish",
                     })
                     phase = report_data.get("closed_failure_phase")
                     if type(phase) is str and phase in closed_phases:
