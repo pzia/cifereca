@@ -254,6 +254,10 @@ class QueryControls(Gtk.Box):
 class LocalQueryControls(QueryControls):
     """Reuse the Search controls for local filtering of an existing list."""
 
+    def focus_text_filter(self) -> bool:
+        """Optional public affordance: keyboard focus, never a new query."""
+        return bool(self.entry.get_mapped() and self.entry.grab_focus())
+
     def __init__(self, changed, placeholder):
         super().__init__((), changed, self._changed, library=True)
         self.entry.set_placeholder_text(placeholder)
