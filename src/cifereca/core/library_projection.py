@@ -599,7 +599,46 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         cover = resolve_cover(cover_candidates)
         thumbnail_url = cover.url or None
         metadata["cover_resolution"] = cover.metadata()
-        rows.append({
+        # Recent's exact Placement, not the catalogue title/ISBN or an N3
+        # image hit, authorizes this book->EPUB-source association. Read
+        # the Artifact's own recorded inspection; the catalogue is only
+        # descriptive and is not trusted to mint an embedded source.
+        recent_cover_facts = None
+        recent_placement_id = placement.get("placement_id")
+        recent_artifact_id = placement.get("artifact_id")
+        if (type(recent_placement_id) is str and recent_placement_id
+                and type(recent_artifact_id) is str and recent_artifact_id):
+            source_artifact = self.storage.artifact_get(recent_artifact_id)
+            if (type(source_artifact) is dict
+                    and type(source_artifact.get("metadata")) is dict
+                    and source_artifact["metadata"].get("epub_cover_status") == "extracted"):
+                digest = source_artifact.get("sha256")
+                if (type(digest) is not str
+                        and recent_artifact_id.startswith("sha256:")):
+                    digest = recent_artifact_id[7:]
+                try:
+                    verified_source = scoped_existing_placement_path(
+                        self, placement, identity_id=identity_id,
+                    )
+                    if verified_source.is_file():
+                        recent_cover_facts = project_verified_local_cover_evidence(
+                            identity_id=row_identity,
+                            book_key=recent_placement_id,
+                            artifact_id=recent_artifact_id,
+                            placement_id=recent_placement_id,
+                            artifact_sha256=digest,
+                            artifact_metadata=source_artifact["metadata"],
+                            verified_path=verified_source,
+                            candidates=tuple(
+                                proof for proof in cover_candidates
+                                if proof.tier in ("origin", "catalog")
+                            ),
+                        )
+                except (ProviderConfigurationError, OSError, ValueError, RuntimeError):
+                    # Physical provenance failed: do not forge EPUB evidence
+                    # or silently join the book via a hot cache URL.
+                    pass
+        entry_view = {
             "placement_id": placement.get("placement_id"), "artifact_id": placement.get("artifact_id"),
             "title": entry.get("title") or Path(str(placement.get("path") or "")).stem, "author": entry.get("author"),
             "identity_id": row_identity, "provider_id": provider_id, "item_id": item_id or None,
@@ -607,7 +646,14 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
             "metadata": metadata,
             "acquired_at": placement.get("created_at") or placement.get("updated_at"),
             "updated_at": placement.get("updated_at"),
-        })
+        }
+        if recent_cover_facts is not None and recent_cover_facts.embedded is not None:
+            # A verified local EPUB is still N1-priority when its N3
+            # extracted image has been evicted. Consumer registers this
+            # private packet in N2 only when the GTK row/detail is visible.
+            entry_view["key"] = recent_placement_id
+            entry_view["_exact_local_cover_evidence"] = recent_cover_facts
+        rows.append(entry_view)
         if len(rows) >= max(1, limit):
             break
     return rows
