@@ -29,6 +29,9 @@ def host(source=None, *, context=CONTEXT):
     window = NS(
         _closed=False, _search_mode="global",
         _loaded_search_context=("q", "title", "all", "alice"),
+        search_controls=NS(
+            state=lambda: NS(text="q", field="title", scope="all"),
+        ),
         _identity_context_generation=context[0],
         _search_generation=context[1],
         service=NS(
@@ -105,7 +108,7 @@ def test_existing_exact_holdings_origin_outranks_hot_catalogue(gateway):
 
 @pytest.mark.parametrize("alter", [
     "identity", "query_epoch", "account_epoch", "source_epoch",
-    "search_mode", "source_object", "source_key", "stale",
+    "search_mode", "source_object", "source_key", "stale", "query_state",
 ])
 def test_registration_refuses_expired_or_foreign_source(gateway, alter):
     window, source, key = host()
@@ -126,6 +129,10 @@ def test_registration_refuses_expired_or_foreign_source(gateway, alter):
         window.search_objects[key] = replace(source)
     elif alter == "source_key":
         window.search_objects = {"other": source}
+    elif alter == "query_state":
+        window.search_controls.state = lambda: NS(
+            text="other query", field="title", scope="all",
+        )
     else:
         source.metadata["search_provenance"] = "known_catalog_stale"
     assert not register_exact_search_document(
