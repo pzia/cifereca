@@ -1681,6 +1681,22 @@ class Storage:
                 raise
             version = 17
 
+        # Forward-compatible strengthening of v17: add this idempotent
+        # trigger even to already upgraded databases. The tombstone is an
+        # invariant of the v16 grant row's physical deletion, not a policy
+        # branch in a caller. Historical v15 rows remain readable.
+        db.execute("""
+            CREATE TRIGGER IF NOT EXISTS trg_adept_grant_paris_retire_on_delete
+            AFTER DELETE ON adept_borrower_grants
+            WHEN OLD.provider_id='paris'
+            BEGIN
+                INSERT OR IGNORE INTO paris_adept_grant_retirements
+                    (credential_id, account_id, retired_at)
+                VALUES (OLD.credential_id, OLD.account_id,
+                        CAST(strftime('%s','now') AS INTEGER));
+            END
+        """)
+
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
         raw = "\x1f".join(str(part or "") for part in parts).encode("utf-8", "surrogatepass")
@@ -3196,6 +3212,9 @@ class Storage:
             provider_id=provider_id, credential_id=credential_id,
             account_id=account_id,
         )
+        # The v17 SQL trigger handles the Paris tombstone atomically for
+        # *all* deletion paths, including indirect connection/profile cleanup
+        # and external SQLite callers, not only this public API.
         with self._lock, self._connect() as db:
             db.execute(
                 "DELETE FROM adept_borrower_grants WHERE provider_id=? "
@@ -3224,16 +3243,23 @@ class Storage:
             return None
         with self._lock, self._connect() as db:
             row = db.execute(
-                "SELECT connection_identity_id,borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at "
-                "FROM paris_borrower_adept_bindings WHERE credential_id=? AND account_id=?",
+                "SELECT b.connection_identity_id,b.borrower_identity_id,"
+                "b.profile_id,b.confirmed_by,b.confirmed_at,b.updated_at,"
+                "EXISTS(SELECT 1 FROM paris_adept_grant_retirements AS r "
+                "WHERE r.credential_id=b.credential_id AND r.account_id=b.account_id) "
+                "FROM paris_borrower_adept_bindings AS b "
+                "WHERE b.credential_id=? AND b.account_id=?",
                 (credential, borrower),
             ).fetchone()
         if row is None:
             return None
-        return dict(zip(
-            ("connection_identity_id", "borrower_identity_id", "profile_id", "confirmed_by", "confirmed_at", "updated_at"),
-            row,
-        ))
+        return {
+            **dict(zip(
+                ("connection_identity_id", "borrower_identity_id", "profile_id",
+                 "confirmed_by", "confirmed_at", "updated_at"), row[:6],
+            )),
+            "retired_for_authority": bool(row[6]),
+        }
 
     def paris_borrower_adept_bindings(
         self, *, credential_id: str | None = None,

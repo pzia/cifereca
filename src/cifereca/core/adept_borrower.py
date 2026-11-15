@@ -80,6 +80,15 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     binding = self.storage.paris_borrower_adept_binding_get(
         credential_id=credential, account_id=borrower,
     )
+    # v16 revocation and explicit reconfirmation leave the historical row
+    # available for provenance, but its old owner must no longer authorize
+    # an ADEPT operation (even after revoke/restore or A→B→A).
+    legacy_retired = (
+        type(binding) is dict
+        and binding.get("retired_for_authority") is True
+    )
+    if legacy_retired:
+        binding = None
     if binding is not None:
         # During the explicit reconfirmation transition, a concurrent or
         # historically reintroduced legacy row must not silently override a
@@ -133,7 +142,7 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
             return owner, None
         if reason != "adept_borrower_binding_required":
             return None, public_borrower_refusal_code(reason)
-        if matches[0].is_primary:
+        if matches[0].is_primary and not legacy_retired:
             return connection_identity_id, None
         return None, "adept_borrower_binding_required"
     # This is a stored *grant*, not an arbitrary provider projection. Never
