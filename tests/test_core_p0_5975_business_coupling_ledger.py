@@ -306,9 +306,15 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
     assert "site-5a3051124e11f87bf24ccfb6" not in {
         row["id"] for row in ledger["reviews"]
     }
+    # #6138 had rebound this Kobo archive-only guard to the old second
+    # ordinal. #6145 removes the earlier W1 admission predicate and rebinds
+    # the same *surviving* guard to the first ordinal: neither is retirement.
     moved_review = next(row for row in ledger["reviews"]
-                        if row["id"] == "site-d88574f6e28d059189c71da5")
+                        if row["id"] == "site-dd2ac28f46a8a720315de122")
     assert "archive-only" in moved_review["journey"]
+    assert "site-d88574f6e28d059189c71da5" not in {
+        row["id"] for row in ledger["reviews"]
+    }
     new_guard = [
         row for row in ledger["guard_installations"]
         if row["id"] ==
