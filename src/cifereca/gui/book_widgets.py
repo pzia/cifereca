@@ -151,6 +151,56 @@ class CoverView(Gtk.Overlay):
         """
         self._on_texture_applied = callback if callable(callback) else None
 
+    def bind_document(
+        self, service, document, *, variant: str = "list",
+        priority: int = 10,
+        on_texture_applied: Callable[[str, Path], None] | None = None,
+    ) -> None:
+        """Bind N2 DocumentRef before N3; same GTK generation and decode sink.
+
+        This path is enabled ONLY when an upstream Core producer registered
+        a versioned, exact book/source snapshot in DocumentCoverService.
+        The returned physical Path does not prove a document association.
+        """
+        from .document_cover_service import DocumentCoverService
+        from ..core.book_cover_projection import CoverDocumentScope
+
+        if not isinstance(service, DocumentCoverService):
+            raise TypeError("expected shared document cover service")
+        if type(document) is not CoverDocumentScope:
+            raise TypeError("expected exact cover DocumentRef")
+        if variant not in ("list", "detail"):
+            raise ValueError("invalid cover variant")
+
+        self.reset()
+        self._loader = service.loader
+        self._priority = priority
+        self._on_texture_applied = (
+            on_texture_applied if callable(on_texture_applied) else None
+        )
+        generation = self._generation
+        loader = service.loader
+        self.show_loading()
+
+        def received(path: Path | None) -> None:
+            # An N3 Future may finish on any worker. Keep ALL texture decoding
+            # on the GTK main context; recycled cells have a newer generation.
+            GLib.idle_add(
+                self._apply_result, generation, loader, path,
+                priority=GLib.PRIORITY_DEFAULT,
+            )
+
+        scale = max(3, int(self.get_scale_factor()))
+        request = service.get_cover(
+            document, variant, received,
+            width=self._width * scale if variant == "list" else self._width,
+            height=self._height * scale if variant == "list" else self._height,
+        )
+        self._request = request
+        # This is the N2-selected URI, NOT a reconstructed URL from the
+        # thumbnail path. N0 paint receipts retain their exact source.
+        self._url = request.source_uri
+
     def bind_url(
         self, loader: CoverLoader, url: str | None, *,
         priority: int = 10,
@@ -446,6 +496,14 @@ class BookListCell(Gtk.Box):
     def _thumbnail_changed(self, item: BookListItem) -> None:
         if self._thumbnail_item is not item or self._bound_key != item.key:
             return
+        document = getattr(item, "_cover_document_ref", None)
+        service = getattr(self.window, "document_covers", None)
+        if document is not None and service is not None:
+            self.cover.bind_document(
+                service, document, variant="list", priority=10,
+                on_texture_applied=getattr(item, "_cover_paint_observer", None),
+            )
+            return
         self.cover.bind_url(
             self.cover_loader, item.thumbnail_url or item.default_thumbnail_url,
             priority=10,
@@ -522,7 +580,17 @@ class BookListCell(Gtk.Box):
             except Exception:
                 pass
             self._meta_request = None
-        if item.thumbnail_url:
+        document = getattr(item, "_cover_document_ref", None)
+        service = getattr(self.window, "document_covers", None)
+        if document is not None and service is not None:
+            # A source selected by N1/N2 is resolved ONCE; a warm URL cache
+            # cannot displace a proved EPUB, nor can a recycled row reuse a
+            # stale DocumentRef from a different account/Placement.
+            self.cover.bind_document(
+                service, document, variant="list", priority=10,
+                on_texture_applied=getattr(item, "_cover_paint_observer", None),
+            )
+        elif item.thumbnail_url:
             self.cover.bind_url(
                 self.cover_loader, item.thumbnail_url, priority=10,
                 on_texture_applied=getattr(item, "_cover_paint_observer", None),
