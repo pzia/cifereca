@@ -224,6 +224,7 @@ def test_actual_global_search_renderer_uses_core_decision_after_row_rebuild():
             self.thumbnail_url = thumbnail
 
     window = _host()
+    window._search_mode = "global"
     window._identity_context_generation = CONTEXT[0]
     window._search_generation = CONTEXT[1]
     window.service._account_context_epoch = CONTEXT[2]
