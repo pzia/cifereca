@@ -239,7 +239,7 @@ class TaskRunner:
             path = value.get("path")
             acquisition = value.get("acquisition_id")
             if (type(path) is str and 0 < len(path) <= 4096
-                    and "\\x00" not in path
+                    and chr(0) not in path
                     and type(acquisition) is str
                     and acquisition.startswith("manual-acsm:")
                     and len(acquisition) == len("manual-acsm:") + 32
