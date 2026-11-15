@@ -1,5 +1,20 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+> **Delta P0 #6162 (15/11/2026) — cohorte historique v5 en donnée.**
+> Les sélecteurs SQL de réparation des anciennes connexions/comptes
+> `provider_id='kobo'` ne sont plus dans la boucle mutatrice v4→v5 :
+> elle fonctionne par `legacy_provider_id` issu d'une cohorte **figée**
+> `('kobo',)`, sans politique déduite des descripteurs runtime.
+> Les identités dérivées, archives, droits historiques et ADEPT gardent
+> la même réparation déterministe. Base réelle v4 (PR #6159), collision
+> d'identité et cohorte synthétique testées. Les deux index Kobo
+> nommés en v5 restent des **artefacts de DDL historiques**, retirés
+> par v15 au profit des policies/triggers SQL génériques.
+> **Aucun writer v5 retiré** : le registre conserve et compte ce
+> chemin pré-v5 avec celui de Config 0.8.1 pré-tombstone. Voir
+> `docs/CORE-P0-5975-SQLITE-V5-HISTORICAL-COHORT.md`.
+
+
 > **Delta P0 #6154 (15/11/2026) — retrait physique du code positif
 > W1/v3 devenu inaccessible.** Après la coupure runtime universelle #6149
 > et la migration v3 structurelle #6152, la moitié SQL `INSERT/UPDATE`

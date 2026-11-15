@@ -177,3 +177,84 @@ def test_v4_historical_kobo_scope_repair_preserves_archives_and_rights(tmp_path)
         assert reopened.backup_get("kobo", "vault-b", "edition")["sha256"] == "b" * 64
     finally:
         reopened.close()
+
+
+
+def test_v5_repair_algorithm_handles_frozen_synthetic_historical_cohort(
+    tmp_path, monkeypatch,
+):
+    """The migration algorithm is generic; the deployed historic cohort is not."""
+    import cifereca.storage as module
+
+    assert module._LEGACY_V5_SINGLE_CONNECTION_PROVIDERS == ("kobo",)
+    # Test-only alternate historical cohort; not a live provider descriptor,
+    # not a policy change, and not authority to mint canonical rights.
+    monkeypatch.setattr(
+        module, "_LEGACY_V5_SINGLE_CONNECTION_PROVIDERS",
+        ("kobo", "synthetic-provider"),
+    )
+    path = tmp_path / "historic-synthetic.sqlite"
+    created = Storage(path)
+    created.close()
+    with sqlite3.connect(path) as db:
+        for trigger in (
+            "trg_provider_connection_limit_insert",
+            "trg_provider_connection_limit_update",
+            "trg_provider_account_limit_insert",
+            "trg_provider_account_limit_update",
+        ):
+            db.execute("DROP TRIGGER IF EXISTS " + trigger)
+        db.execute("DROP TABLE IF EXISTS provider_cardinality_policies")
+        db.execute("DROP INDEX IF EXISTS uq_ade_profile_identity")
+        db.execute("UPDATE metadata SET value='4' WHERE key='schema_version'")
+        db.execute(
+            "INSERT INTO identities(identity_id,label,directory_name,"
+            "prefer_original_language,reading_languages_json,metadata_json,"
+            "created_at,updated_at) VALUES('alice','Alice','alice',0,'[]','{}',1,1)"
+        )
+        for credential, created_at in (("card-a", 10), ("card-b", 20)):
+            db.execute(
+                "INSERT INTO provider_connections(connection_id,identity_id,"
+                "provider_id,credential_id,label,enabled,metadata_json,"
+                "created_at,updated_at)"
+                " VALUES(?, 'alice', 'synthetic-provider',?, ?,1,'{}',?,?)",
+                ("con-" + credential, credential, credential,
+                 created_at, created_at),
+            )
+            db.execute(
+                "INSERT INTO provider_accounts(provider_account_id,connection_id,"
+                "identity_id,provider_id,credential_id,account_id,label,is_primary,"
+                "metadata_json,created_at,updated_at)"
+                " VALUES(?,?,'alice','synthetic-provider',?,?,'Reader',1,'{}',?,?)",
+                ("acc-" + credential, "con-" + credential, credential,
+                 "account-" + credential, created_at, created_at),
+            )
+            db.execute(
+                "INSERT INTO backup_items(provider_id,credential_id,item_id,"
+                "title,status,identity_id,account_id,updated_at)"
+                " VALUES('synthetic-provider',?,'edition','Historical','complete',"
+                "'alice',?,?)",
+                (credential, "account-" + credential, created_at),
+            )
+    migrated = Storage(path)
+    try:
+        assert migrated.schema_version() == 17
+        derived = "alice-synthetic-provider-" + hashlib.sha256(b"card-b").hexdigest()[:8]
+        con = {r["credential_id"]: r["identity_id"]
+               for r in migrated.provider_connections()}
+        assert con == {"card-a": "alice", "card-b": derived}
+        accounts = {r["credential_id"]: r["identity_id"]
+                    for r in migrated.provider_accounts()}
+        assert accounts == con
+        archive = {r["credential_id"]: r["identity_id"]
+                   for r in migrated.backup_list("synthetic-provider")}
+        assert archive == con
+        assert migrated.entitlements() == []
+        assert migrated.acquisitions() == []
+        with migrated._lock, migrated._connect() as db:
+            assert db.execute(
+                "SELECT connection_limit FROM provider_cardinality_policies"
+                " WHERE provider_id='synthetic-provider'"
+            ).fetchone() is None
+    finally:
+        migrated.close()

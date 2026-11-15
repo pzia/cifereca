@@ -765,3 +765,42 @@ def test_sqlite_v5_historical_data_repair_is_counted_separately_from_v3():
     assert any("update provider_connections set identity_id" in s for s in sql_literals)
     assert any("delete from provider_accounts" in s for s in sql_literals)
     assert inventory(root)["active_legacy_writers_to_retire"] >= 2
+
+
+def test_v5_supplier_selector_neutralized_without_legacy_writer_retirement():
+    import inspect
+    from pathlib import Path
+    import cifereca.storage as storage_module
+    from cifereca.storage import Storage
+
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads((root / "docs/provider-business-coupling-review.json")
+                        .read_text(encoding="utf-8"))
+    row = [entry for entry in ledger["retirements"] if entry["id"] ==
+           "struct-v5-historical-cardinality-supplier-sql-selector-neutralized"]
+    assert len(row) == 1
+    assert row[0]["in_ast_metric"] is False
+    assert row[0]["original_classification"] == "legacy_mutating_cutover"
+    assert row[0]["pr"] == "#6162"
+    assert row[0]["retired_at_sha"] == (
+        "a97375df5d8b60465862238ca5f3a8841ee768e3"
+    )
+    assert all((root / test).is_file() for test in row[0]["tests"])
+
+    assert storage_module._LEGACY_V5_SINGLE_CONNECTION_PROVIDERS == ("kobo",)
+    migrate = inspect.getsource(Storage._migrate)
+    data_repair = migrate.split(
+        "# Fixed historical source cohort controls ONLY the v4->v5", 1
+    )[1].split("# A legacy global ADE profile", 1)[0]
+    assert "for legacy_provider_id in _LEGACY_V5_SINGLE_CONNECTION_PROVIDERS" in data_repair
+    assert "WHERE provider_id='kobo'" not in data_repair
+    assert "WHERE provider_id=?" in data_repair
+    # v5's historical partial indexes remain until v15 converts them to
+    # generic persistent SQL policy: this PR is NOT full writer retirement.
+    assert "uq_kobo_connection_identity" in migrate
+    live = [entry for entry in ledger["retained_legacy_migrations"]
+            if entry["id"] == "legacy-sqlite-v5-kobo-cardinality-identity-repair"]
+    assert len(live) == 1
+    assert live[0]["classification"] == "legacy_mutating_cutover"
+    assert len(ledger["retained_legacy_migrations"]) == 2
+    assert inventory(root)["retained_non_ast_legacy_migration_writers"] == 2
