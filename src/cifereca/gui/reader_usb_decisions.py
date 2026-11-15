@@ -30,8 +30,8 @@ _REASON_LABELS = {
     "identical_sha_observed": "Empreintes identiques lors de cet examen",
     "already_missing": "Absence observée à la destination prévue",
     "managed_removal_requires_confirmation": (
-        "Copie gérée par Cifereca, observée sur le volume ; "
-        "retrait non autorisé par ce seul examen"
+        "Reçu historique de copie Cifereca et fichier de même empreinte "
+        "observé ; propriété actuelle et retrait à revalider"
     ),
     "device_observation_required": "Support non attesté ; présence inconnue",
     "target_path_unqualified": "Destination à définir avant tout envoi",
