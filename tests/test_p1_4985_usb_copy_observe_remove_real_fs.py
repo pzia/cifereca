@@ -82,13 +82,17 @@ def cycle(live_args, monkeypatch):
     )
 
     journal = SqliteUsbOperationJournal(storage)
+    # Core intentionally pins service *identity* across the whole write.
+    # Returning a freshly constructed service on each registry read would
+    # correctly revoke the pending transfer before the first staged byte.
+    transport = NS(
+        plugin_id="storage.usb", registry_generation=5,
+        capabilities=(USB_STAGE_CAPABILITY,),
+        service=NS(write_usb_stage=lambda payload, append: append(payload)),
+    )
     manager = NS(
         registry_generation=5,
-        services=lambda category: (NS(
-            plugin_id="storage.usb", registry_generation=5,
-            capabilities=(USB_STAGE_CAPABILITY,),
-            service=NS(write_usb_stage=lambda payload, append: append(payload)),
-        ),) if category == "storage.target" else (),
+        services=lambda category: (transport,) if category == "storage.target" else (),
     )
     service = NS(
         current_identity=NS(identity_id="alice"), _account_context_epoch=3,
