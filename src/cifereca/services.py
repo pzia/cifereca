@@ -4705,21 +4705,37 @@ class LibraryService:
         # Unregistered legacy callers still use the historical primary
         # convention for descriptive compatibility; no provider can obtain
         # a mutable action lease from an unregistered source.
-        primary_alias = "primary"
-        try:
-            plugin = self.registry.maybe_get(loan.source_provider)
-        except (AttributeError, TypeError, ValueError):
-            plugin = None
-        if plugin is not None:
-            from .providers.base import ProviderDescriptor
-            descriptor = inspect.getattr_static(plugin, "descriptor", None)
-            primary_alias = (
-                descriptor.existing_primary_loan_account_alias
-                if type(descriptor) is ProviderDescriptor
-                and type(descriptor.id) is str
-                and descriptor.id == loan.source_provider
-                else None
-            )
+        # Validate plugin-supplied coordinates BEFORE using a provider ID as
+        # a registry key. A hostile __hash__ or str subclass must never reach
+        # registry/plugin code or influence the fallback alias.
+        source_provider = loan.source_provider
+        primary_alias = None
+        if type(source_provider) is str and source_provider:
+            try:
+                registry = self.registry
+            except AttributeError:
+                # Historical in-memory LibraryService.__new__ adapters.
+                primary_alias = "primary"
+            else:
+                try:
+                    plugin = registry.maybe_get(source_provider)
+                except Exception:
+                    # A corrupt registry lookup is not an absent descriptor
+                    # and cannot revive the legacy primary alias.
+                    plugin = object()
+                if plugin is None:
+                    # No provider is installed yet; preserve inert old lookups.
+                    primary_alias = "primary"
+                else:
+                    from .providers.base import ProviderDescriptor
+                    descriptor = inspect.getattr_static(plugin, "descriptor", None)
+                    primary_alias = (
+                        descriptor.existing_primary_loan_account_alias
+                        if type(descriptor) is ProviderDescriptor
+                        and type(descriptor.id) is str
+                        and descriptor.id == source_provider
+                        else None
+                    )
         return loan_accounts.account_for_loan(
             loan, accounts=self.accounts,
             configuration_error=ProviderConfigurationError,
