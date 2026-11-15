@@ -187,9 +187,12 @@ def _render_search_results(self) -> int:
         self._attach_row_facets(local_rows, self._search_local_objects, self.search_controls)
         for row in local_rows:
             row._public_row_content = (
-                "search", row.key, row.title, row.subtitle, row.meta,
-                row.badge, row.action_label, row.action_icon_name,
-                bool(row.action_callback), row.thumbnail_url,
+                "search", row.key, getattr(row, "title", ""),
+                getattr(row, "subtitle", ""), getattr(row, "meta", ""),
+                getattr(row, "badge", ""), getattr(row, "action_label", ""),
+                getattr(row, "action_icon_name", ""),
+                bool(getattr(row, "action_callback", None)),
+                getattr(row, "thumbnail_url", None),
             )
         self.search_page.show_rows(local_rows)
         self._search_local_snapshot_dirty = False
@@ -351,9 +354,12 @@ def _render_search_results(self) -> int:
     # must replace a row when its title, action context or cover changed.
     for row in ui_rows:
         row._public_row_content = (
-            "search", row.key, row.title, row.subtitle, row.meta,
-            row.badge, row.action_label, row.action_icon_name,
-            bool(row.action_callback), row.thumbnail_url,
+            "search", row.key, getattr(row, "title", ""),
+            getattr(row, "subtitle", ""), getattr(row, "meta", ""),
+            getattr(row, "badge", ""), getattr(row, "action_label", ""),
+            getattr(row, "action_icon_name", ""),
+            bool(getattr(row, "action_callback", None)),
+            getattr(row, "thumbnail_url", None),
         )
     self.search_page.show_rows(ui_rows)
     self._search_local_snapshot_dirty = False
