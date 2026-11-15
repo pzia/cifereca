@@ -130,7 +130,7 @@ def cycle(live_args, monkeypatch):
         storage=storage, journal=journal, copy=copy_with, consent=consent,
         rights=args["rights"], checked=checked, entitled=entitled,
         source=source, final=final, mountpoint=target, facade=facade,
-        service=service,
+        service=service, active=active,
     )
 
 
