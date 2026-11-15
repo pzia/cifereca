@@ -172,6 +172,30 @@ def test_source_revision_aba_keeps_monotone_n2_tokens(gateway):
     assert service.decisions.peek(first.document, revision=3).uri == CATALOG
 
 
+def test_source_revision_never_compares_untrusted_metadata_objects(gateway):
+    class ExplodingValue:
+        def __eq__(self, _other):
+            raise AssertionError("provider-owned metadata equality forbidden")
+
+    window, source, key = host()
+    service, _ = gateway
+    source.metadata["opaque"] = ExplodingValue()
+    first = exact_remote_search_document(window, source, key)
+    assert first is not None
+    assert register_exact_search_document(
+        window, source, service, first, first.document,
+    )
+    old = service.get_cover(first.document, "detail", lambda _value: None)
+    newer = replace(source, metadata={"opaque": ExplodingValue()})
+    window.search_objects[key] = newer
+    second = exact_remote_search_document(window, newer, key)
+    assert second is not None
+    assert register_exact_search_document(
+        window, newer, service, second, second.document,
+    )
+    assert not old.still_current
+
+
 def test_replaced_source_can_never_borrow_registered_provenance(gateway):
     window, source, key = host()
     service, _ = gateway
