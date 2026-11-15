@@ -246,3 +246,49 @@ def test_no_reader_preserves_existing_lazy_manual_registration(gateway):
         assert calls == [("detail", URL)]
     finally:
         service.close()
+
+
+def test_registration_in_gap_between_n2_miss_and_worker_notifies_view(gateway):
+    loader, calls = gateway
+    reader_calls = []
+    service = DocumentCoverService(
+        loader, cached_source_reader=lambda ref: reader_calls.append(ref),
+    )
+    original = service._read_source_on_n2_miss
+
+    def admit_concurrent_source(document, handle, notify):
+        # Deterministic interleaving after the N2 MISS has been observed,
+        # before its asynchronous reader could be scheduled.
+        service.register(proof(document, revision=5))
+        original(document, handle, notify)
+
+    service._read_source_on_n2_miss = admit_concurrent_source
+    try:
+        callbacks = []
+        old = service.get_cover(
+            REF, "detail", lambda path: callbacks.append(("neutral", path)),
+            on_source_changed=lambda: callbacks.append(("source", "rebind")),
+        )
+        assert callbacks == [("source", "rebind"), ("neutral", None)]
+        assert not old.still_current
+        assert not reader_calls
+        assert service.get_cover(REF, "detail", lambda _: None).source_uri == URL
+        assert calls == [("detail", URL)]
+    finally:
+        service.close()
+
+
+def test_reader_is_not_used_on_registered_n2_hit(gateway):
+    loader, calls = gateway
+    reader_calls = []
+    service = DocumentCoverService(
+        loader, cached_source_reader=lambda ref: reader_calls.append(ref),
+    )
+    try:
+        service.register(proof())
+        request = service.get_cover(REF, "detail", lambda _: None)
+        assert request.source_uri == URL
+        assert reader_calls == []
+        assert calls == [("detail", URL)]
+    finally:
+        service.close()
