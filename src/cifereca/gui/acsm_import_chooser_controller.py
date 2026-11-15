@@ -18,7 +18,10 @@ def choose_acsm(window, *, Gtk):
     if existing is not None:
         existing.present()
         return
-    identity = window.service.current_identity
+    # Capture the Core instance when the chooser is created. A window may
+    # replace its service while a file dialog or TaskRunner job is pending.
+    service = window.service
+    identity = service.current_identity
     identity_id = getattr(identity, "identity_id", None)
     identity_generation = getattr(window, "_identity_context_generation", None)
     account_generation = getattr(window, "_account_context_generation", None)
@@ -31,9 +34,8 @@ def choose_acsm(window, *, Gtk):
         return
 
     def current() -> bool:
-        current_identity = getattr(
-            getattr(window.service, "current_identity", None), "identity_id", None,
-        )
+        active_identity = getattr(service, "current_identity", None)
+        current_identity = getattr(active_identity, "identity_id", None)
         current_identity_generation = getattr(
             window, "_identity_context_generation", None,
         )
@@ -42,6 +44,8 @@ def choose_acsm(window, *, Gtk):
         )
         return (
             not getattr(window, "_closed", False)
+            and getattr(window, "service", None) is service
+            and active_identity is identity
             and type(current_identity) is str and current_identity == identity_id
             and type(current_identity_generation) is int
             and current_identity_generation == identity_generation
@@ -119,9 +123,12 @@ def choose_acsm(window, *, Gtk):
                     "Résultat de l’import ACSM indisponible.", "Import ACSM impossible",
                 )
 
+        # Admit the exact Core importer *before* queuing. The worker must
+        # never resolve a different LibraryService through MainWindow.
+        importer = service.import_acsm
         window.runner.submit(
             "Import ACSM…",
-            lambda: window.service.import_acsm(Path(path), identity_id=identity_id),
+            lambda: importer(Path(path), identity_id=identity_id),
             done,
             priority=TaskPriority.USER_ACTION,
             kind="acsm-import",
