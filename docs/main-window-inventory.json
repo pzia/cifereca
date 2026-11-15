@@ -5239,7 +5239,7 @@
           "assertions": [
             "'SCHEMA = 2' in epub_source",
             "\"cached.get('epub_metadata_schema') == EPUB_METADATA_SCHEMA and (not force)\" in catalog_source",
-            "\"if cached.get('epub_cover') and (not cached_cover_url(cached)):\" in catalog_source",
+            "\"if cached.get('epub_cover') and (not cached_cover_url(cached)):\" not in catalog_source",
             "'inspected = inspect_epub(path)' in catalog_source",
             "\"cached.pop('epub_cover', None)\" in catalog_source"
           ]

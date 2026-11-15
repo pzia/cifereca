@@ -144,6 +144,10 @@ def test_booklistcell_thumbnail_change_prioritizes_registered_documentref():
     host = NS(
         _thumbnail_item=item, _bound_key=item.key,
         window=NS(document_covers=bridge), cover=cover, cover_loader=object(),
+        # Production cells own the lazy Core-proof admission gate. This
+        # legacy no-packet fixture already has a registered DocumentRef;
+        # its fake must expose that method to the replayed GTK binder.
+        _admit_core_local_cover=lambda *_args: True,
     )
     changed = method("BookListCell", "_thumbnail_changed")
     changed(host, item)
