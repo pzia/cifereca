@@ -72,6 +72,10 @@ def project_recent_rows(
             label,
             legacy_url,
         )
+        if occurrences[key] > 1 and hasattr(row, "__dict__"):
+            # A selection of either duplicate must not open the other row's
+            # detail (including a wrongly attributed physical cover).
+            row._recent_ambiguous_key = True
         if occurrences[key] == 1:
             facts = packet
             if (hasattr(row, "__dict__")
