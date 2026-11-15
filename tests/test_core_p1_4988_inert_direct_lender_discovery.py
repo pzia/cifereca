@@ -94,14 +94,15 @@ def test_nonqualifying_or_spent_lender_never_becomes_local_candidate(
     assert session.calls == 0
 
 
+@pytest.mark.parametrize("second_label", ["Second", "Réseau municipal"])
 def test_two_distinct_lender_accounts_are_not_assumed_one_edition_or_one_right(
-    harness,
+    harness, second_label,
 ):
     service, account, first = harness
     second_account = Account(
         identity_id="alex", provider_id="paris",
         credential_id="card-second", unique_id="",
-        display_name="Second", is_primary=True,
+        display_name=second_label, is_primary=True,
     )
     second = ParisOffline(second_account)
     service.accounts.append(second_account)
@@ -122,6 +123,12 @@ def test_two_distinct_lender_accounts_are_not_assumed_one_edition_or_one_right(
     ]
     assert all(not choice.executable and
                choice.supplier_eligibility == "not_verified" for choice in choices)
+    assert len({choice.label for choice in choices}) == 2
+    assert all("card-alex" not in choice.label and
+               "card-second" not in choice.label for choice in choices)
+    if second_label == "Réseau municipal":
+        assert "choix 1/2" in choices[0].label
+        assert "choix 2/2" in choices[1].label
     assert first.calls == second.calls == 0
     assert service.current_identity.identity_id == "default"
 
