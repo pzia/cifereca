@@ -211,6 +211,12 @@ class DocumentCoverService:
             max_workers=1, thread_name_prefix="cifereca-cover-qualifier",
         )
         self._qualify_active: set[tuple[CoverDocumentScope, int]] = set()
+        # Physical single-flight is shared, but EACH current list/detail
+        # consumer needs its own GTK rebind after the exact N2 transition.
+        self._qualify_waiters: dict[
+            tuple[CoverDocumentScope, int],
+            list[tuple[CoverReadRequest, Callable[[], None]]],
+        ] = {}
         self._qualify_cooldown: OrderedDict[
             tuple[CoverDocumentScope, int], float
         ] = OrderedDict()
@@ -338,11 +344,6 @@ class DocumentCoverService:
         key = (document, snapshot.revision)
         with self._lock:
             if (self._closed or self._snapshots.get(document) is not snapshot
-                    or key in self._qualify_active
-                    # Bound queued SHA/ZIP jobs as well as live workers.
-                    # A fast scroll must not queue hundreds of large EPUB
-                    # full-file validations behind one worker.
-                    or len(self._qualify_active) >= 16
                     or self._clock() < self._qualify_cooldown.get(key, 0)):
                 return
             if self.decisions.selected_token(
@@ -350,7 +351,19 @@ class DocumentCoverService:
                 uri=snapshot.embedded.candidate.url,
             ) != token:
                 return
+            if key in self._qualify_active:
+                # List and detail must BOTH receive the new N2 token. A
+                # single-flight physical verifier does not imply one viewer.
+                waiters = self._qualify_waiters.setdefault(key, [])
+                if len(waiters) < 32:
+                    waiters.append((handle, source_changed))
+                return
+            # Bound queued SHA/ZIP jobs as well as live workers. A fast
+            # scroll must not enqueue hundreds of full-file validations.
+            if len(self._qualify_active) >= 16:
+                return
             self._qualify_active.add(key)
+            self._qualify_waiters[key] = [(handle, source_changed)]
 
         def work() -> None:
             changed = False
@@ -368,24 +381,30 @@ class DocumentCoverService:
                 pass
             finally:
                 with self._lock:
+                    waiters = self._qualify_waiters.pop(key, [])
                     self._qualify_active.discard(key)
                     if not changed and not self._closed:
                         self._qualify_cooldown[key] = self._clock() + 15.0
                         self._qualify_cooldown.move_to_end(key)
                         while len(self._qualify_cooldown) > self._max_documents:
                             self._qualify_cooldown.popitem(last=False)
-            if changed and handle.active:
-                try:
-                    source_changed()
-                except Exception:
-                    # The UI may have closed while the worker was running.
-                    pass
+            if changed:
+                for waiting_handle, waiting_callback in waiters:
+                    if not waiting_handle.active:
+                        continue
+                    try:
+                        waiting_callback()
+                    except Exception:
+                        # A viewer may have closed while work was running.
+                        # Never strand the other independent subscribers.
+                        pass
 
         try:
             self._qualify_pool.submit(work)
         except RuntimeError:
             with self._lock:
                 self._qualify_active.discard(key)
+                self._qualify_waiters.pop(key, None)
 
     def get_cover(
         self,
@@ -543,6 +562,7 @@ class DocumentCoverService:
             self._resolving.clear()
             self._qualified_fallback.clear()
             self._qualify_active.clear()
+            self._qualify_waiters.clear()
             self._qualify_cooldown.clear()
         self._qualify_pool.shutdown(wait=False, cancel_futures=True)
 
