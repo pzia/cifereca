@@ -609,13 +609,14 @@ def test_w1_sourcekey_preflight_is_provider_neutral_and_physically_reviewed():
     ledger = json.loads((root / "docs/provider-business-coupling-review.json")
                         .read_text(encoding="utf-8"))
     old = "site-dd2ac28f46a8a720315de122"
-    # The surviving archive-only Kobo predicate inherits this identical AST
-    # ordinal when the earlier preflight branch is physically removed.
-    reviews = [row for row in ledger["reviews"] if row["id"] == old]
-    assert len(reviews) == 1
-    assert reviews[0]["journey"] == (
-        "W1 historical Kobo backup archive-only return without canonical mirror"
-    )
+    # #6149 physically replaced the last Kobo-only archive guard with the
+    # neutral W1 path. The old AST ordinal is no longer a reviewed live site:
+    # it is not evidence that the safety contract itself was retired.
+    assert all(row["id"] != old for row in ledger["reviews"])
+    neutral = [row for row in ledger["guard_installations"] if row["id"] ==
+               "guard-w1-universal-archive-only-and-owner-validation"]
+    assert len(neutral) == 1
+    assert neutral[0]["pr"] == "#6149"
     assert all(row["id"] != "site-d88574f6e28d059189c71da5"
                for row in ledger["reviews"])
     retired = [row for row in ledger["retirements"] if row["id"] ==
@@ -636,5 +637,5 @@ def test_w1_sourcekey_preflight_is_provider_neutral_and_physically_reviewed():
               "guard-w1-all-provider-legacy-sourcekey-path-admission"]
     assert len(guards) == 1
     assert guards[0]["classification"] == "safety_guard_pending_contract"
-    assert "non-Kobo" in guards[0]["remaining_debt"]
+    assert "migration" in guards[0]["remaining_debt"] or "archive" in guards[0]["remaining_debt"]
     assert all((root / test).is_file() for test in retired[0]["tests"])
