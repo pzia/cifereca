@@ -997,6 +997,21 @@ def main():
             # can be discarded during that layout tick. Retry the *real*
             # focus request; the XTEST key is sent only once focus is proven.
             def acquired_focus():
+                # Capture a closed, synthetic GTK focus snapshot *before*
+                # entering the native grab_focus() call. A GI exception in
+                # that call bypasses on_timeout; the prior report then had
+                # wait_line=1004 but no privacy-safe evidence explaining it.
+                # The CI exporter already restricts these five booleans to
+                # the failing diagnostics-large-1600 bulk-fixture stage.
+                # No labels, event text, GTK reprs or screenshots are exported.
+                if report.get("stage") == "P0_2140_bulk_fixture":
+                    report["bulk_focus_observation"] = {
+                        "button_mapped": bool(button.get_mapped()),
+                        "button_sensitive": bool(button.get_sensitive()),
+                        "toplevel_active": bool(window[0].is_active()),
+                        "button_focused": bool(button.has_focus()),
+                        "toplevel_focus_is_button": window[0].get_focus() is button,
+                    }
                 if not button.get_mapped():
                     return False
                 button.grab_focus()
