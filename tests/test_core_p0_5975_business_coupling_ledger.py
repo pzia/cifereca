@@ -582,8 +582,14 @@ def test_real_081_migration_is_explicitly_retained_after_genericization():
     assert physical[0]["in_ast_metric"] is False
     assert physical[0]["original_site_id"] == "site-e3fc978e29d69c2c875be9dc"
     actual = inventory(root)
-    assert actual["retained_non_ast_legacy_migration_writers"] == 1
-    assert actual["active_legacy_writers_to_retire"] >= 1
+    # The Config 0.8.1 repair is retained AND the SQLite v2->v3
+    # non-Kobo importer remains a separate executable legacy writer.
+    assert actual["retained_non_ast_legacy_migration_writers"] >= 2
+    assert actual["active_legacy_writers_to_retire"] >= 2
+    assert {
+        "legacy-config-081-cardinality-versioned-writer",
+        "legacy-sqlite-v3-non-kobo-backup-import-writer",
+    } <= set(actual["retained_non_ast_legacy_migration_ids"])
     assert not actual["stale_reviews"]
 
 
