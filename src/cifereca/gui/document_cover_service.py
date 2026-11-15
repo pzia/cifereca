@@ -22,6 +22,7 @@ from ..core.book_cover_cache import CoverDecisionCache
 from ..core.book_cover_projection import CoverDocumentScope
 from ..core.covers import CoverCandidate, candidate
 from ..core.epub_cover_source import AttestedEmbeddedCover
+from ..epub_metadata import cover_cache_dir
 from .cover_loader import CoverLoader, CoverRequest
 
 
@@ -53,6 +54,11 @@ class CoverSourceSnapshot:
         for raw in self.candidates:
             if type(raw) is not CoverCandidate:
                 raise TypeError("invalid source candidate")
+            # A public/provisional URL cannot assert embedded. Only an
+            # Artifact+Placement attested by Core may supply this tier in
+            # the separate immutable embedded field below.
+            if raw.tier not in ("origin", "catalog"):
+                raise ValueError("embedded cover requires exact Core proof")
             checked = candidate(
                 raw.url, tier=raw.tier, source=raw.source,
                 evidence_id=raw.evidence_id,
@@ -73,6 +79,24 @@ class CoverSourceSnapshot:
             if (not isinstance(source, Path) or not source.is_absolute()
                     or source.suffix.lower() not in (".epub", ".kepub")):
                 raise ValueError("expected exact verified EPUB Placement path")
+            # A cache filename is just physical bytes: it must not allow
+            # an untrusted file URI, another cache directory or a
+            # catalogue URL to masquerade as Core's selected embedded
+            # source. No image bytes are read during this N1 validation.
+            proof = self.embedded.candidate
+            resource = self.embedded.resource
+            if (type(proof) is not CoverCandidate
+                    or proof.source != "epub"
+                    or proof.evidence_id != self.scope.artifact_id
+                    or proof.url != (
+                        cover_cache_dir() / resource.cache_name
+                    ).resolve().as_uri()
+                    or candidate(
+                        proof.url, tier="embedded", source=proof.source,
+                        evidence_id=proof.evidence_id,
+                        evidence_strength=proof.evidence_strength,
+                    ) != proof):
+                raise ValueError("unmatched embedded EPUB provenance")
         elif self.verified_epub_path is not None:
             raise ValueError("unattached EPUB path")
 
