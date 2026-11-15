@@ -819,9 +819,57 @@ def main():
         report["checks"]["retained_selection_refreshes_detail"] = True
         assert not state["plugin"]._view._disposed
         report["checks"]["reactivation_fresh_detail_and_identity"] = True
-        # A post-selection Gtk allocation may need an extra frame. Probe
-        # the actual shared body scroller after layout, bounded to <1.2 s.
-        assert isinstance(view._master._page.detail.body_scroll, Gtk.ScrolledWindow)
+        # #3104: a cached/progressive candidate can be enriched IN PLACE,
+        # without replacing its RankedCandidate, key or ranking generation.
+        # The list and selected detail must use the SAME new public cover.
+        initial_generation = view._generation
+        updated.item["thumbnail_url"] = COVER_URL
+        view._render(preserve_summary=True)
+        assert view._master._page.store.get_n_items() == 1
+        assert view._master._page.store.get_item(0).thumbnail_url == COVER_URL
+        assert view._master._page.selection.get_selected() == 0
+        assert view._exact_notice_state["ranked"] is updated
+        assert view._exact_notice_state["row_presentation"][2] == COVER_URL
+        assert view._generation == initial_generation
+        assert len(state["searches"]) == 1
+        later(120, lambda: verify_inplace_recommendation_cover(0))
+
+    def verify_inplace_recommendation_cover(attempt):
+        view = state["view"]
+        page = view._master._page
+        row_covers = [
+            cell.cover for cell in walk(page.list_stack)
+            if isinstance(cell, BookListCell) and cell.get_mapped()
+            and cell.title_label.get_text() == "Livre Réactivé"
+        ]
+        detail_covers = [
+            cover for cover in walk(page.detail)
+            if isinstance(cover, CoverView) and cover.get_mapped()
+        ]
+        if not (
+            len(row_covers) == len(detail_covers) == 1
+            and all(cover._url == COVER_URL
+                    and cover.picture.get_paintable() is not None
+                    and not cover.placeholder.get_visible()
+                    for cover in row_covers + detail_covers)
+        ):
+            assert attempt < 20, "Stale recommendation list/detail image"
+            later(100, lambda: verify_inplace_recommendation_cover(attempt + 1))
+            return
+        assert len(state["searches"]) == 1
+        report["checks"]["P1_3104_inplace_recommendation_cover_list_detail_gtk"] = True
+        capture("05a-inplace-recommendation-cover")
+        # Restoring missing evidence must also clear the selected detail,
+        # not just the row model. No provider search or ranking recalculation.
+        view._ranked[0].item["thumbnail_url"] = None
+        view._render(preserve_summary=True)
+        assert view._master._page.store.get_item(0).thumbnail_url is None
+        assert view._exact_notice_state["row_presentation"][2] is None
+        assert len(state["searches"]) == 1
+        report["checks"]["P1_3104_inplace_recommendation_cover_revocation_gtk"] = True
+        # A post-selection GTK allocation may need an extra frame. Probe the
+        # real shared scroller after its detail has been re-rendered.
+        assert isinstance(page.detail.body_scroll, Gtk.ScrolledWindow)
         later(120, lambda: verify_scrolling(0))
 
     def verify_scrolling(attempt):

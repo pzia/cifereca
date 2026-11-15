@@ -2496,17 +2496,28 @@ class UxRecommendationsView:
         if (selection is not None and self._exact_notice_state is selection
                 and selection["identity"] == self.selected_identity_id()):
             key = selection["key"]
-            if key in mapping and (
-                selection["ranked"] is not mapping[key]
-                or selection.get("catalogue_sources") != catalogue_sources
-                or (not self._busy and (
-                    selection["generation"] != self._generation
-                    or selection["provisional"] != self._provisional_active
-                ))
-            ):
+            if key in mapping:
                 row = next(row for row in rows if row.key == key)
-                self._reset_llm_selection(None)
-                self._selected_row(row)
+                # Even when the ranked object, SourceKey and generation stay
+                # constant, a progressive enrichment may mutate its public
+                # cover/title/author. Keep detail and list on the same view
+                # projection; do not request another supplier search.
+                presentation = (row.title, row.subtitle, row.thumbnail_url)
+                if (
+                    selection["ranked"] is not mapping[key]
+                    or selection.get("catalogue_sources") != catalogue_sources
+                    or (not self._busy and (
+                        # While a newer ranking generation is loading, the
+                        # previous selection's callbacks stay revoked. Do
+                        # not reopen that detail solely because public row
+                        # metadata was enriched on the same ranked object.
+                        selection.get("row_presentation") != presentation
+                        or selection["generation"] != self._generation
+                        or selection["provisional"] != self._provisional_active
+                    ))
+                ):
+                    self._reset_llm_selection(None)
+                    self._selected_row(row)
 
         if not rows:
             self._exact_notice_state = None
@@ -2575,6 +2586,7 @@ class UxRecommendationsView:
             }
             self._exact_notice_state = state
         state["provisional"] = self._provisional_active
+        state["row_presentation"] = (row.title, row.subtitle, row.thumbnail_url)
         self._llm_selected_row = row
         if self._llm_button is not None:
             self._llm_button.set_sensitive(not self._busy and self._llm_handle is None)
