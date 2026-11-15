@@ -49,7 +49,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(mod.ALL) | set(mod.OPTIONAL_UX), set(runner.SCENARIOS))
         self.assertEqual(set(mod.ALL) & set(mod.OPTIONAL_UX), set())
         self.assertEqual(mod.OPTIONAL_UX, ("book-detail-1700",))
-        self.assertEqual(len(mod.ALL), 49)
+        self.assertEqual(len(mod.ALL), 51)
         self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024", "search-filter-1366", "search-filter-1600"))
         self.assertEqual(mod.PLUGIN_SCROLL, ("plugin-manager-scroll-1024", "plugin-manager-scroll-1366"))
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
@@ -468,7 +468,12 @@ class SelectionTests(unittest.TestCase):
             "src/cifereca/gui/reader_page_controller.py",
             "e2e/reader_usb_inspection_probe.py",
         ):
-            self.assertEqual(mod.select([path]), mod.READER_INSPECTION_GTK)
+            self.assertEqual(
+                mod.select([path]),
+                mod.READER_INSPECTION_GTK + mod.READER_TARGET_GTK
+                if path.endswith("reader_page_controller.py")
+                else mod.READER_INSPECTION_GTK,
+            )
         probe = (ROOT / "e2e/reader_usb_inspection_probe.py").read_text(
             encoding="utf-8",
         )
