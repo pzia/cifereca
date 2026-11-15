@@ -150,6 +150,29 @@ def test_hostile_provider_key_is_rejected_before_registry_lookup():
         service._account_for_loan(loan)
 
 
+@pytest.mark.parametrize("field,value", [
+    ("source_provider", "foreign"),
+    ("source_credential", "other"),
+    ("source_account_id", "other-reader"),
+])
+def test_registry_cannot_retarget_loan_scope_before_account_selection(
+    field, value,
+):
+    loan = _loan("reader-main")
+    service = _service([
+        _account(),
+        _account("", provider="foreign"),
+        _account("", credential="other"),
+        _account("other-reader", primary=False),
+    ])
+    def mutate_during_lookup(_key):
+        setattr(loan, field, value)
+        return None
+    service.registry = NS(maybe_get=mutate_during_lookup)
+    with pytest.raises(ProviderConfigurationError, match="non attesté"):
+        service._account_for_loan(loan)
+
+
 def test_malformed_borrower_is_rejected_before_registry_lookup():
     service = _service([_account()])
     service.registry = NS(maybe_get=lambda _key: pytest.fail(
