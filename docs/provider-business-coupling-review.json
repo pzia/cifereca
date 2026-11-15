@@ -1315,7 +1315,7 @@
       ],
       "pr": "#6170",
       "in_ast_metric": false,
-      "retired_at_sha": "PENDING-NEW-COMMIT"
+      "retired_at_sha": "31724a9ed64ff2ee8999fddce5e5ed5598cda5e2"
     }
   ],
   "guard_installations": [
