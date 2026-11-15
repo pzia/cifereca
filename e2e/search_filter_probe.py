@@ -675,16 +675,46 @@ def main() -> int:
                 stack.append(child)
                 child = child.get_next_sibling()
         assert len(compact_heads) == 1
+        # The real Search facet adapter replaces ActionRow subtitles with
+        # keyboard-accessible, mapped Gtk.Button chips for Source, Format
+        # and Langue. Assert the *rendered* text in either representation,
+        # not only the intentionally emptied ActionRow.get_subtitle().
+        # A detached or hidden button does not count as visual evidence.
+        def rendered_compact_values(row, field):
+            subtitle = row.get_subtitle()
+            if subtitle:
+                return [subtitle]
+            values = []
+            stack = [row]
+            while stack:
+                current = stack.pop()
+                if (isinstance(current, Gtk.Button)
+                        and current.get_mapped()
+                        and current.has_css_class("facet-value")
+                        and getattr(current, "_cifereca_facet_field", None) == field):
+                    label = current.get_child()
+                    if isinstance(label, Gtk.Label) and label.get_mapped():
+                        values.append(label.get_text())
+                child = current.get_first_child()
+                while child is not None:
+                    stack.append(child)
+                    child = child.get_next_sibling()
+            return values
+
         compact_rows = []
+        field_names = {"Source": "source", "Format": "format",
+                       "Langue": "language"}
         stack = [compact_heads[0]]
         while stack:
             current = stack.pop()
             if (isinstance(current, Adw.ActionRow)
                     and current.get_mapped()
                     and current.has_css_class("detail-compact-value")):
-                compact_rows.append(
-                    (current.get_title(), current.get_subtitle())
-                )
+                title = current.get_title()
+                if title in field_names:
+                    compact_rows.append(
+                        (title, rendered_compact_values(current, field_names[title]))
+                    )
             child = current.get_first_child()
             while child is not None:
                 stack.append(child)
@@ -692,46 +722,21 @@ def main() -> int:
         expected_source = window.service.provider_display_name(
             PAIRED_BOOK["source_provider"]
         )
-        actual_sources = [value for label, value in compact_rows
-                          if label == "Source"]
+        actual_sources = [value for label, values in compact_rows
+                          if label == "Source" for value in values]
         if actual_sources != [expected_source]:
-            # Offline E2E book is synthetic; log only closed, boolean
-            # observables, never provider labels, subtitles or user data.
-            all_compact = []
-            stack = [compact_heads[0]]
-            while stack:
-                current = stack.pop()
-                if (isinstance(current, Adw.ActionRow)
-                        and current.has_css_class("detail-compact-value")):
-                    all_compact.append(current)
-                child = current.get_first_child()
-                while child is not None:
-                    stack.append(child)
-                    child = child.get_next_sibling()
-            source_widgets = [
-                widget for widget in all_compact
-                if widget.get_title() == "Source"
-            ]
+            # Closed diagnostic counts/booleans only, never private labels.
             print("P1_4761_SAFE_SOURCE_DIAG=" + json.dumps({
-                "essential_rows": len(all_compact),
-                "source_widgets": len(source_widgets),
-                "source_visible": sum(widget.get_visible()
-                                      for widget in source_widgets),
-                "source_mapped": sum(widget.get_mapped()
-                                     for widget in source_widgets),
-                "source_value_equal": any(
-                    widget.get_subtitle() == expected_source
-                    for widget in source_widgets
-                ),
+                "compact_rows": len(compact_rows),
+                "source_values_count": len(actual_sources),
+                "source_value_equal": expected_source in actual_sources,
                 "expected_source_nonempty": bool(expected_source),
             }, sort_keys=True), flush=True)
         assert actual_sources == [expected_source]
-        assert [value for label, value in compact_rows if label == "Format"] == [
-            "EPUB",
-        ]
-        assert [value for label, value in compact_rows if label == "Langue"] == [
-            "Français",
-        ]
+        assert [value for label, values in compact_rows
+                if label == "Format" for value in values] == ["EPUB"]
+        assert [value for label, values in compact_rows
+                if label == "Langue" for value in values] == ["Français"]
         result["checks"]["P1_4761_search_shared_compact_essential_gtk"] = True
         # The same public Subject is already rendered in the canonical
         # Search DetailPanel metadata. Verify its actual GTK ActionRow
