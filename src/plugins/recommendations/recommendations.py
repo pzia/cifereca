@@ -1080,6 +1080,19 @@ class UxRecommendationsView:
 
         if self._query_controls is None:
             self._append_legacy_filters(controls, Gtk)
+        # Bind the actual page-local text filter to the shared Ctrl+F
+        # shortcut. Recommandations must never focus the shell's hidden
+        # global Search field from this plugin. The optional public methods
+        # keep older Core hosts usable without private GUI imports.
+        bind_focus = getattr(self._master, "bind_local_filter_focus", None)
+        if callable(bind_focus):
+            focus_text = (
+                getattr(self._query_controls, "focus_text_filter", None)
+                if self._query_controls is not None else
+                getattr(self._text, "grab_focus", None)
+            )
+            if callable(focus_text):
+                bind_focus(focus_text)
 
         self._exclude_owned = Gtk.CheckButton(label="Exclure les possédés")
         self._exclude_owned.set_active(self._config_bool("exclude_owned", True))
