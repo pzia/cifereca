@@ -4,6 +4,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gtk
 from ..catalogue_link import safe_document_link_url
+from ..core.book_cover_projection import CoverDocumentScope
 from .master_detail import MasterDetailPage
 from .book_widgets import BookListItem
 from .action_widgets import action_button
@@ -73,6 +74,15 @@ class PublicBookMasterDetailView:
                 getattr(row, "thumbnail_url", None),
             )
             item = BookListItem(presented_key, *presentation)
+            # Only a Core-provided exact DocumentRef can direct the common
+            # N2/N3 cache. A fabricated/invalid plugin reference does NOT
+            # authorize fallback to the same row's raw thumbnail URL.
+            declared = getattr(row, "cover_document_ref", None)
+            if declared is not None:
+                if type(declared) is CoverDocumentScope:
+                    item._cover_document_ref = declared
+                else:
+                    item.thumbnail_url = None
             item._public_row_content = presentation
             ui_rows.append(item)
         # Publish mapping before GTK selection notifications during show_rows.
