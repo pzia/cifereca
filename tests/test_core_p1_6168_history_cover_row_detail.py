@@ -14,7 +14,8 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.gui.history_cover_presentation import (
-    cached_history_cover, history_cover_context, publish_history_cover,
+    cached_history_cover, history_cover_context,
+    history_cover_request_scope, publish_history_cover,
 )
 from cifereca.models import HistoryItem
 
@@ -255,3 +256,59 @@ def test_history_cell_and_detail_both_reuse_the_exact_bound_model_and_signal():
     assert "cached_history_cover(self.window, item)" in detail
     assert "publish_history_cover(" in detail
     assert "not item.thumbnail_url and not present_cover" in detail
+
+
+def test_lazy_history_resolver_does_not_share_memory_between_identity_epochs():
+    from tests.test_history_cover_resolver_coordination import _resolver_types
+
+    resolver_type, workers, idle = _resolver_types()
+    observed = []
+    resolver = resolver_type(
+        NS(resolve_history_thumbnail=lambda *_: (IMAGE, "matched")),
+        NS(add=lambda *_args, **_kwargs: None),
+    )
+    one = window(item(owner="alice"))
+    scope_a = history_cover_request_scope(history_cover_context(one))
+    one.service._account_context_epoch += 1
+    scope_b = history_cover_request_scope(history_cover_context(one))
+    assert scope_a and scope_b and scope_a != scope_b
+    args = ("paris", "same-record", "Same title", "Author", "2020", None)
+    resolver.request(*args, observed.append, scope=scope_a)
+    resolver.request(*args, observed.append, scope=scope_a)
+    assert len(workers) == 1  # same activation: deduplicated
+    resolver.request(*args, observed.append, scope=scope_b)
+    assert len(workers) == 2  # new activation: no cross-account cache
+    future, fn, arguments = workers.pop(0)
+    future.set_result(fn(*arguments))
+    assert resolver.stats()["matched"] == 1
+    # A cached A value cannot fulfil the pending B request.
+    assert len(workers) == 1 and resolver.stats()["pending"] == 1
+    future, fn, arguments = workers.pop(0)
+    future.set_result(fn(*arguments))
+    assert resolver.stats()["matched"] == 2
+    assert resolver.stats()["pending"] == 0
+    resolver.close()
+
+
+def test_scope_is_strongly_sensitive_to_profile_source_and_generation():
+    owner = window(item())
+    a = history_cover_context(owner)
+    stable = history_cover_request_scope(a)
+    assert len(stable) == 64
+    assert history_cover_request_scope(a) == stable
+    assert history_cover_request_scope(None) == ""
+    owner.service._source_context_epoch += 1
+    assert history_cover_request_scope(history_cover_context(owner)) != stable
+    owner.service._source_context_epoch -= 1
+    owner._identity_context_generation += 1
+    assert history_cover_request_scope(history_cover_context(owner)) != stable
+
+
+def test_only_scoped_history_resolver_is_called_in_mapped_cell_and_detail():
+    widgets = (ROOT / "book_widgets.py").read_text(encoding="utf-8")
+    panel = (ROOT / "detail_panel.py").read_text(encoding="utf-8")
+    resolver = (ROOT / "history_cover_resolver.py").read_text(encoding="utf-8")
+    assert "scope=history_cover_request_scope(context)" in widgets
+    assert "scope=history_cover_request_scope(context)" in panel
+    assert "self._key(provider, record_id, title, author, year, scope)" in resolver
+    assert "if len(self._memory) > 2048" in resolver
