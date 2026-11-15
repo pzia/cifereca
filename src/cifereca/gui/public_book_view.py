@@ -73,6 +73,13 @@ class PublicBookMasterDetailView:
                 getattr(row, "thumbnail_url", None),
             )
             item = BookListItem(presented_key, *presentation)
+            # The common GTK cell owns N2 lookup by exact DocumentRef. Only
+            # an already attested Core scope may cross this UI boundary:
+            # plugin URL, title, ISBN and public row key cannot create one.
+            from ..core.book_cover_projection import CoverDocumentScope
+            document = getattr(row, "_cover_document_ref", None)
+            if type(document) is CoverDocumentScope:
+                item._cover_document_ref = document
             item._public_row_content = presentation
             ui_rows.append(item)
         # Publish mapping before GTK selection notifications during show_rows.
