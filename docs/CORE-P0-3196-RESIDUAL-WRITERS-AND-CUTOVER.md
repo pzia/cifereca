@@ -1,5 +1,19 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+> **Delta P0 #6154 (15/11/2026) — retrait physique du code positif
+> W1/v3 devenu inaccessible.** Après la coupure runtime universelle #6149
+> et la migration v3 structurelle #6152, la moitié SQL `INSERT/UPDATE`
+> vers Entitlement, Acquisition, Artifact, Placement et catalogue de
+> `Storage._mirror_backup_row` était désormais **inaccessible**.
+> Elle est supprimée physiquement (~17 Ko), sans effet sur les archives
+> `backup_items` ni les gardes existants de propriétaire exact, scope
+> et reçu canonique borné. Un appel direct en ancien mode positif
+> `archive_only=False` échoue explicitement et n'écrit rien.
+> Cette suppression **n'est pas un troisième writer actif retiré** :
+> les deux retraits exécutables ont été tracés séparément dans #6149
+> et #6152. La migration Config 0.8.1 pré-tombstone et SQLite v5 restent.
+
+
 > **Delta P0 #6152 (15/11/2026) — retraite du dernier import SQLite v3
 > de droits depuis 0.7.** La migration de base v2→v3 est désormais
 > structurelle pour **tous** les fournisseurs : elle crée tables et index,
