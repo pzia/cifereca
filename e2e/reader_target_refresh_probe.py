@@ -376,7 +376,10 @@ def main() -> int:
                 )
             def execute_one(
                 self, *, confirmation, mountpoint, expected_profile_epoch,
+                check_cancelled,
             ):
+                assert callable(check_cancelled)
+                check_cancelled()
                 assert expected_profile_epoch == fake_epoch[0]
                 assert confirmation.artifact_id == artifact_id
                 assert confirmation.copy_operation_id == "a" * 32
