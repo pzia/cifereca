@@ -11,6 +11,7 @@ from collections.abc import Mapping
 
 from ..models import Loan
 from .book_cover_source_projection import exact_loan_cover_scope
+from .covers import candidate
 from .local_cover_evidence import VerifiedLocalCoverEvidence
 
 
@@ -45,14 +46,10 @@ def exact_attested_loan_epub_cover(
                 or facts.scope.artifact_id != row.get("artifact_id")
                 or facts.scope.placement_id != row.get("placement_id")):
             continue
-        metadata = row.get("metadata")
-        resolution = (metadata.get("cover_resolution")
-                      if type(metadata) is dict else None)
-        if (type(resolution) is not dict
-                or resolution.get("status") != "selected"
-                or resolution.get("tier") not in ("embedded", "origin", "catalog")
-                or resolution.get("url") != row.get("thumbnail_url")):
-            continue
+        # The final merged Library row may have a newer descriptive
+        # thumbnail from another entitlement. Its mutable current URL is
+        # *not* the loan->Placement authorization. Core emitted the private
+        # immutable proof when the exact entitlement was resolved.
         proofs = row.get("_exact_loan_cover_proofs")
         if type(proofs) not in (tuple, list) or len(proofs) > 128:
             continue
@@ -67,8 +64,11 @@ def exact_attested_loan_epub_cover(
             and proof.get("record_id") == loan.record_id
             and proof.get("artifact_id") == facts.scope.artifact_id
             and proof.get("placement_id") == facts.scope.placement_id
-            and proof.get("url") == resolution.get("url")
-            and proof.get("tier") == resolution.get("tier")
+            and proof.get("tier") in ("embedded", "origin", "catalog")
+            and candidate(
+                proof.get("url"), tier=proof.get("tier"),
+                source="verified-local-placement",
+            ) is not None
             for proof in proofs
         )
         if not admitted:
