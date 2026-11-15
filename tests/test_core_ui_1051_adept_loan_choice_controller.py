@@ -413,3 +413,80 @@ def test_binding_public_userfacing_message_preserves_only_safe_text():
     )
     assert events[-1] == ("error", "Choisissez un profil actif", "Rattachement impossible")
     assert "SECRET_ADEPT" not in repr(events)
+
+
+def test_queued_binding_targets_original_core_after_a_b_a_navigation():
+    """Changing the displayed service after submit cannot redirect a mutation."""
+    window, adw, events, dialogs = _window()
+    options = [_option("loan-A", profile="profile-A")]
+    _open(window, adw, options)
+    _dropdown(dialogs[0]).select(0)
+    dialogs[0].respond("attach")
+    task = window.runner.submissions[0]
+
+    other_calls = []
+    window.service = NS(
+        attach_adept_loan=lambda *args: other_calls.append(args),
+    )
+    window._account_context_generation += 1
+    window._identity_context_generation += 1
+    # Even returning to an A-labelled view does not authorize a stale GTK
+    # callback; the captured operation itself still belongs to the old Core.
+    assert task.work() == {"status": "resolved"}
+    assert other_calls == []
+    assert [event for event in events if event[0] == "attach"] == [
+        ("attach", "acq-1", "profile-A", "loan-A"),
+    ]
+    before_callback = list(events)
+    task.done({"status": "resolved"})
+    task.error(RuntimeError("private credentials"))
+    assert events == before_callback
+
+
+def test_queued_binding_pins_selected_ids_despite_option_mutation():
+    """A mutable dialog option must not change an already admitted operation."""
+    window, adw, events, dialogs = _window()
+    option = _option("exact-loan", profile="exact-profile")
+    _open(window, adw, [option])
+    _dropdown(dialogs[0]).select(0)
+    dialogs[0].respond("attach")
+    option["loan_id"] = "different-loan"
+    option["profile_id"] = "different-profile"
+
+    assert window.runner.submissions[0].work() == {"status": "resolved"}
+    assert [event for event in events if event[0] == "attach"] == [
+        ("attach", "acq-1", "exact-profile", "exact-loan"),
+    ]
+
+
+def test_adept_dialog_from_replaced_core_cannot_submit_without_generation_change():
+    window, adw, events, dialogs = _window()
+    _open(window, adw)
+    _dropdown(dialogs[0]).select(0)
+    foreign_calls = []
+    window.service = NS(
+        attach_adept_loan=lambda *args: foreign_calls.append(args),
+    )
+    dialogs[0].respond("attach")
+    assert window.runner.submissions == [] and foreign_calls == []
+
+
+def test_adept_binding_result_from_old_core_cannot_refresh_replaced_window():
+    window, adw, events, dialogs = _window()
+    _open(window, adw)
+    _dropdown(dialogs[0]).select(0)
+    dialogs[0].respond("attach")
+    task = window.runner.submissions[0]
+    events.clear()
+    window.service = NS(
+        attach_adept_loan=lambda *a: (_ for _ in ()).throw(
+            AssertionError("wrong Core"),
+        ),
+    )
+    assert task.work() == {"status": "resolved"}
+    # GTK generations intentionally remain unchanged: Core identity alone
+    # must make every old-window completion callback inert.
+    events.clear()
+    task.done({"status": "resolved"})
+    task.error(RuntimeError("private path"))
+    assert events == []
