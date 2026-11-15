@@ -51,7 +51,10 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
         ],
     )
     if evidence is None:
-        # Historical/non-EPUB Recent rows keep the exact existing renderer.
+        # A stale/foreign private proof does NOT authorize a legacy origin
+        # URL. Only rows without any Core packet keep their old URL path.
+        if item.get("_exact_local_cover_evidence") is not None:
+            summary["thumbnail"] = None
         detail.show_summary(**summary)
     else:
         render = getattr(detail, "show_local_presentation", None)
