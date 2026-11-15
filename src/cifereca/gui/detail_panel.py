@@ -864,6 +864,10 @@ class DetailPanel(Gtk.Box):
                 if (context is not None
                         and history_cover_context(self.window) != context):
                     return  # A prior account/identity epoch is no longer UI.
+                sources = getattr(self.window, "history_objects", None)
+                if (context is not None and type(sources) is dict
+                        and sources.get(item.id) is not item):
+                    return  # The exact HistoryItem was superseded.
                 if url:
                     page = getattr(self.window, "history_page", None)
                     selection = getattr(page, "selection", None)
