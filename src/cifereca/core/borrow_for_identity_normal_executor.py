@@ -21,12 +21,6 @@ from .borrow_for_identity_discovery import (
 from .borrow_for_identity_executor import _result
 
 
-_CLOSED_STATES = frozenset({
-    "returned", "expired", "inactive", "cancelled", "canceled", "refused",
-    "rejected", "failed", "pending", "unknown", "closed",
-})
-
-
 def execute_normal_lender_borrow(
     service, *, captured_candidate: PossibleBorrowLender,
     exact_notice: SearchResult, requesting_identity_id: str,
@@ -191,8 +185,10 @@ def execute_normal_lender_borrow(
                 or loan.record_id != exact_notice.record_id
                 or loan.provider != exact_notice.docbase
                 or loan.medium != "digital"
-                or (type(loan.state) is str
-                    and loan.state.strip().casefold() in _CLOSED_STATES)
+                # The normal Paris/BnF providers both attest "active".
+                # Testing only a blacklist allowed None, booleans and
+                # unknown success-looking states to be confirmed.
+                or type(loan.state) is not str or loan.state != "active"
                 or type(loan.id) is not str or not loan.id):
             raise ValueError("unverified_lender_loan")
         finished = service.storage.loan_borrow_finish(
