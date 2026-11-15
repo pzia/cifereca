@@ -124,7 +124,7 @@ def _safe_scalar(text: str) -> bool:
                           else candidate)
             u = urlsplit(source_url)
             if (not u.hostname or u.username is not None or u.password is not None
-                    or u.fragment or ";" in u.query or
+                    or u.fragment or ";" in unquote(unquote(u.query)) or
                     any(_restricted_query_key(k)
                         for k, _ in parse_qsl(u.query, keep_blank_values=True))):
                 return False
