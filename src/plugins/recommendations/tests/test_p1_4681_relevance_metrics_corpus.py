@@ -188,16 +188,23 @@ def test_shared_score_cache_cannot_replay_another_profile_rationale():
 def test_shared_score_cache_revokes_explicit_preference_after_feedback_change():
     """Liked -> not_interested -> liked are distinct immutable snapshots."""
     book = _library("reading-key", "Autrice Rouge", "robotique")
+    # Two neutral books from another author keep the normalization stable
+    # while the explicit weight of the target book changes.
+    books = [
+        book,
+        _library("blue-1", "Auteur Bleu", "astronomie"),
+        _library("blue-2", "Auteur Bleu", "astronomie"),
+    ]
     candidate = _offer("another-edition", "Autrice Rouge", "robotique")
     liked = build_profile(
-        [book], identity_id="alice",
+        books, identity_id="alice",
         explicit_signals=(ExplicitReadingSignal("alice", "reading-key", "liked"),),
     )
     disliked = build_profile(
-        [book], identity_id="alice",
+        books, identity_id="alice",
         explicit_signals=(ExplicitReadingSignal("alice", "reading-key", "not_interested"),),
     )
-    baseline = build_profile([book], identity_id="alice")
+    baseline = build_profile(books, identity_id="alice")
     shared = {}
     liked_result = score_candidate_cached(liked, candidate, shared)
     disliked_result = score_candidate_cached(disliked, candidate, shared)
