@@ -182,13 +182,11 @@ def test_broker_refuses_nonpurgeable_and_symlink_root(tmp_path, monkeypatch):
     ordinary.mkdir()
     (ordinary / "cache.bin").write_bytes(b"data")
     scoped = broker.for_plugin("ordinary", trusted=False)
-    original = type(scoped).namespaces
-    def unavailable(self):
-        return tuple(
-            replace(row, purgeable=False) if row.namespace_id == "plugin:ordinary" else row
-            for row in original(self)
-        )
-    monkeypatch.setattr(type(scoped), "namespaces", unavailable)
+    original = type(scoped)._plugin_namespace
+    def unavailable(self, plugin_id):
+        row = original(self, plugin_id)
+        return replace(row, purgeable=False) if row.namespace_id == "plugin:ordinary" else row
+    monkeypatch.setattr(type(scoped), "_plugin_namespace", unavailable)
     result = scoped.purge("plugin:ordinary")
     assert not result.ok and "cache_namespace_not_purgeable" in result.warnings
     assert (ordinary / "cache.bin").exists()
