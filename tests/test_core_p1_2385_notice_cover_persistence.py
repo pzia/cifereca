@@ -240,3 +240,21 @@ def test_core_reader_source_miss_asynchronous_and_single_n2_ref(tmp_path, monkey
         service.close()
         loader.close()
         storage.close()
+
+
+
+def test_same_second_revision_change_requires_exact_cas_not_fake_time_resolution(
+    tmp_path,
+):
+    db = Storage(tmp_path / "same-second.sqlite")
+    try:
+        one = store(db, notice(URL, observed_at=1))
+        with pytest.raises(ValueError, match="stale_source"):
+            store(db, notice(OTHER, observed_at=1))
+        updated = store(db, notice(OTHER, observed_at=1), epoch=one.epoch)
+        assert updated.epoch == one.epoch + 1
+        assert updated.attribute.candidates[0].url == OTHER
+        with pytest.raises(ValueError, match="epoch_changed"):
+            store(db, notice(URL, observed_at=1), epoch=one.epoch)
+    finally:
+        db.close()
