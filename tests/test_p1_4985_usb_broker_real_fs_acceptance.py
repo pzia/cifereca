@@ -74,10 +74,9 @@ def live_broker(completed_copy, monkeypatch):
         _plugin_manager=NS(registry_generation=5),
     )
     facade = broker_module.ReaderUsbExecutionBrokerImpl(service)
-    consent = replace(
-        args["consent"], confirmed_at=int(time.time()) - 1,
-        expires_at=int(time.time()) + 60,
-    )
+    # The existing test fixture deliberately uses a deterministic injected
+    # review clock (NOW). Preserve its matching short-lived confirmation.
+    consent = args["consent"]
     data = NS(
         storage=storage, facade=facade, service=service,
         consent=consent, final=final, source=source,
