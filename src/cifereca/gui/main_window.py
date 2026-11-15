@@ -1463,6 +1463,10 @@ class MainWindow(Adw.ApplicationWindow):
     def _show_library_entries(self, entries: list[dict[str, Any]]) -> None:
         self._library_entries_cache = list(entries)
         self._render_library(entries)
+        # The independently refreshed Library may now attest a local loan
+        # Placement that was unavailable when the loan list first rendered.
+        # Rebind that same SourceKey's cover, not only its on-click detail.
+        loans_controller._library_loan_covers_updated(self, entries)
         if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
 
     def open_book_detail(self, book: BookRef, *, identity_id: str | None = None) -> bool:
