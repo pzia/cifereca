@@ -1767,7 +1767,7 @@ class UxRecommendationsView:
                         for value in _local_recommendation_field_values(item, category)[:32]
                         if "://" not in value
                         and not (("?" in value or "&" in value) and "=" in value)
-                        and not value.startswith(("/", "\\\\"))
+                        and not value.startswith(("/", "\\"))
                     )
                 values.extend(_local_ranked_isbns(ranked, sources))
                 publisher = _candidate_public_field(item, "publisher", limit=512)
