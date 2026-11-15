@@ -2375,15 +2375,20 @@ class LibraryService:
     def loan_return_state(self, loan: Loan) -> dict[str, Any] | None:
         """Persistent status for UI; no verification or provider side effect."""
         from .core.loan_return_guard import (
-            public_return_state, read_only_return_receipt_key,
+            public_return_state, read_only_return_receipt_lease,
+            return_receipt_lease_intact,
         )
-        # Historical checkpoints are private read models, not proof of
-        # borrower authorization. Never coerce a plugin-owned field to str,
-        # nor use a missing borrower to address another account's receipt.
-        key = read_only_return_receipt_key(loan)
-        if key is None:
+        # A historical checkpoint is private and read-only. Capture native
+        # borrower coordinates before storage, then reject source drift
+        # before and after that potentially external callback. A casefolded
+        # provider or frozen empty/primary alias can hash to the same key
+        # while belonging to a different live loan source.
+        lease = read_only_return_receipt_lease(loan)
+        if lease is None or not return_receipt_lease_intact(loan, lease):
             return None
-        row = self.storage.loan_return_state(key)
+        row = self.storage.loan_return_state(lease.key)
+        if not return_receipt_lease_intact(loan, lease):
+            return None
         return public_return_state(row) if row is not None else None
 
     def verify_return_digital(self, loan: Loan) -> dict[str, Any]:

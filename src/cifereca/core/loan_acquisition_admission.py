@@ -29,14 +29,21 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     if (type(loan.source_provider) is not str or not loan.source_provider
             or type(loan.source_credential) is not str
             or not loan.source_credential
-            or type(loan.source_account_id) not in (str, type(None))):
+            or type(loan.source_account_id) not in (str, type(None))
+            or type(loan.id) is not str or not loan.id
+            or type(loan.record_id) not in (str, type(None))):
         _TRACE_LOG.warning(
             "TRACE download loan_auto blocked reason=source_scope_unproven request_ref=%s",
             request_ref,
         )
+        # The legacy empty-loan conflict code is public API. Retain it
+        # without allowing an absent/foreign loan key into the owner lookup.
+        safe_loan_id = loan.id if type(loan.id) is str else None
         return AutomaticLoanAdmission(refusal={
-            "status": "attention_required", "loan_id": loan.id,
-            "code": "adept_identity_unproven",
+            "status": "attention_required",
+            "loan_id": safe_loan_id,
+            "code": ("adept_loan_identity_conflict" if safe_loan_id == ""
+                     else "adept_identity_unproven"),
             "reason": "source_scope_unproven", "retry": "explicit_only",
         })
     # Pin the exact source coordinates across the storage boundary. A
@@ -72,7 +79,8 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
             request_ref,
         )
         return AutomaticLoanAdmission(refusal={
-            "status": "attention_required", "loan_id": loan.id,
+            "status": "attention_required",
+            "loan_id": loan.id if type(loan.id) is str else pinned_loan_id,
             "code": "adept_identity_unproven",
             "reason": "source_scope_changed", "retry": "explicit_only",
         })

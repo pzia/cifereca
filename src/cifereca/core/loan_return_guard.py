@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 
@@ -24,13 +25,15 @@ def return_key(provider_id: str, credential_id: str, borrower_id: str,
     return "loan.return.v1:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def read_only_return_receipt_key(loan: object) -> str | None:
-    """Locate an existing v1 receipt only from exact native loan coordinates.
+@dataclass(frozen=True, slots=True, repr=False)
+class ReadOnlyReturnReceiptLease:
+    """Ephemeral exact borrower scope for one historical read, never a right."""
 
-    The empty borrower sentinel is a frozen historical receipt convention,
-    not an installed-provider alias, account selector or return permission.
-    This helper never inspects accounts, invokes providers or writes storage.
-    """
+    key: str
+    source: tuple[str, str, str, str]
+
+
+def _native_return_receipt_source(loan: object) -> tuple[str, str, str, str] | None:
     try:
         provider = getattr(loan, "source_provider", None)
         credential = getattr(loan, "source_credential", None)
@@ -43,12 +46,42 @@ def read_only_return_receipt_key(loan: object) -> str | None:
             or type(borrower) is not str
             or type(loan_id) is not str or not loan_id):
         return None
+    return provider, credential, borrower, loan_id
+
+
+def read_only_return_receipt_lease(loan: object) -> ReadOnlyReturnReceiptLease | None:
+    """Pin exact native loan coordinates before an external storage reader.
+
+    The empty borrower sentinel is a frozen v1 receipt convention, never a
+    runtime account selector or provider authorization. No provider I/O.
+    """
+    source = _native_return_receipt_source(loan)
+    if source is None:
+        return None
+    provider, credential, borrower, loan_id = source
     try:
-        return return_key(
+        key = return_key(
             provider, credential, borrower if borrower else "primary", loan_id,
         )
     except (ValueError, UnicodeError):
         return None
+    return ReadOnlyReturnReceiptLease(key=key, source=source)
+
+
+def return_receipt_lease_intact(
+    loan: object, lease: ReadOnlyReturnReceiptLease,
+) -> bool:
+    """A v1 key collision from casefold/primary alias is not borrower proof."""
+    return (
+        type(lease) is ReadOnlyReturnReceiptLease
+        and _native_return_receipt_source(loan) == lease.source
+    )
+
+
+def read_only_return_receipt_key(loan: object) -> str | None:
+    """Compatibility key projection; a read caller must also pin its lease."""
+    lease = read_only_return_receipt_lease(loan)
+    return lease.key if lease is not None else None
 
 
 def return_ref(key: str) -> str:

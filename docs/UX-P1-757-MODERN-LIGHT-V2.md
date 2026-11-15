@@ -160,6 +160,17 @@ La valeur `capture_fingerprint_sha256` ne certifie pas l'accessibilité ni
 l'absence d'écarts visuels. Elle lie uniquement les observations humaines à
 la collection exacte des PNG vérifiés.
 
+La lecture des entrées privées est également **fail-closed** :
+les deux dossiers de captures doivent être de vrais répertoires (pas de
+lien symbolique) ; les `screen.json` et les PNG ne peuvent être ni des
+liens symboliques, ni des fichiers à plusieurs liens matériels, ni
+dépasser respectivement 4 Mio et 40 Mio. Ces exigences s'appliquent à
+la génération des planches **et** à la validation d'une grille déjà remplie.
+Un fichier extérieur, même si ses octets et son SHA semblent conformes,
+ne peut servir de preuve UX.
+
+
+
 ### Verdict de la grille privée (P1 #757)
 
 Le script **ne remplit pas** les observations UX à la place du reviewer.
