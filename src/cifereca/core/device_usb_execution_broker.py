@@ -282,8 +282,16 @@ class ReaderUsbExecutionBrokerImpl:
                 return UsbSyncResult("unavailable")
 
             def current_profile() -> tuple[str, Path, int]:
+                # The locked removal review calls this callback before and
+                # after physical inode verification. It must also recheck
+                # the originating GTK selection/cancellation, not merely
+                # the profile epoch, before the journal commits a deletion.
+                if check_cancelled is not None:
+                    check_cancelled()
                 if not self._current(scope):
                     raise ValueError("usb_reader_scope_revoked")
+                if check_cancelled is not None:
+                    check_cancelled()
                 return scope.identity_id, scope.identity_root, scope.epoch
 
             if check_cancelled is not None:
