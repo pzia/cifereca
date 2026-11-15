@@ -1,0 +1,204 @@
+"""P1 #4988 — normal lender attempt without fabricated positive evidence.
+
+An explicit click may attempt the same claimed provider borrow for A while B
+remains selected. The synthetic supplier is exercised without network I/O,
+delivery, copy or profile switching; the claim is the actual SQLite one.
+"""
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from cifereca.core.borrow_action_scope import borrow_claim_key
+from cifereca.core.borrow_for_identity_discovery import (
+    discover_possible_borrow_lenders,
+)
+from cifereca.core.borrow_for_identity_normal_executor import (
+    execute_normal_lender_borrow,
+)
+from tests.test_core_p1_4987_cross_profile_executor import BorrowingOffline
+from tests.test_core_p1_4662_live_lender_preview import _candidate, harness
+
+
+def setup(harness, outcome="confirmed"):
+    service, account, _ = harness
+    session = BorrowingOffline(account, service, outcome)
+    service._sessions[service._session_key(
+        account.provider_id, account.credential_id,
+    )] = session
+    item = _candidate().notice
+    requester = service.current_identity
+    account_epoch = service._account_context_epoch
+    source_epoch = service._source_context_epoch
+    scope = lambda: (
+        service.current_identity is requester
+        and service._account_context_epoch == account_epoch
+        and service._source_context_epoch == source_epoch
+    )
+    options = discover_possible_borrow_lenders(
+        service, requesting_identity_id="default", notices=(item,),
+    )
+    assert len(options) == 1
+    return service, account, session, item, options[0], scope
+
+
+def execute(service, option, item, scope, *, confirmed=True):
+    return execute_normal_lender_borrow(
+        service, captured_candidate=option, exact_notice=item,
+        requesting_identity_id="default", scope_current=scope,
+        confirmed=confirmed,
+    )
+
+
+def test_normal_lender_borrow_uses_one_claim_without_positive_evidence(harness):
+    service, account, session, item, option, scope = setup(harness)
+    requester = service.current_identity
+    assert option.executable is False
+    assert option.supplier_eligibility == "not_verified"
+    assert execute(service, option, item, scope)["status"] == "confirmed"
+    assert session.actions == 1 and session.callbacks == [True]
+    assert service.current_identity is requester
+    receipt = service.storage.loan_borrow_state(
+        borrow_claim_key(account, item),
+    )
+    assert receipt["status"] == "confirmed"
+    assert receipt["verified_loan_id"] == "loan-synthetic"
+    assert execute(service, option, item, scope)["status"] == "blocked"
+    assert session.actions == 1
+    assert service.cross_profile_borrow_progress(
+        requesting_identity_id="default", borrowing_account=account,
+        exact_notice=item,
+    ).loan == "confirmed"
+
+
+def test_confirmed_flag_is_necessary_and_does_not_grant_a_permission(harness):
+    service, account, session, item, option, scope = setup(harness)
+    result = execute(service, option, item, scope, confirmed=False)
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "borrow_confirmation_required"
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, item),
+    ) is None
+    assert session.actions == 0
+
+
+@pytest.mark.parametrize("outcome", [
+    "unknown", "wrong_lender", "rebind", "inactive", "state:pending",
+    "state:returned", "state:refused", "state:unknown",
+])
+def test_supplier_error_or_unverified_loan_consumes_claim_not_a_second_post(
+    harness, outcome,
+):
+    service, account, session, item, option, scope = setup(harness, outcome)
+    result = execute(service, option, item, scope)
+    assert result["status"] == "verification_unavailable"
+    assert result["retry_borrow"] is False
+    assert result["delivery"] == "unavailable"
+    assert result["transfer"] == "blocked"
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, item),
+    )["status"] == "verification_unavailable"
+    assert execute(service, option, item, scope)["status"] == "blocked"
+    assert session.actions == 1
+
+
+def test_explicit_provider_unsent_receipt_releases_only_unsent_claim(harness):
+    service, account, session, item, option, scope = setup(harness, "unsent")
+    result = execute(service, option, item, scope)
+    assert result["status"] == "blocked"
+    assert result["reason_code"] == "borrow_not_submitted"
+    assert result["retry_borrow"] is False
+    assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
+    assert session.actions == 1
+
+
+@pytest.mark.parametrize("revoke", [
+    "requester", "source_epoch", "account_epoch", "disabled_connection",
+    "plugin_disabled", "session_rebind", "edition_changed",
+])
+def test_stale_or_rebound_choice_does_not_spend_claim_or_send_provider_post(
+    harness, revoke,
+):
+    service, account, session, item, option, scope = setup(harness)
+    original_key = borrow_claim_key(account, item)
+    if revoke == "requester":
+        service.current_identity = replace(service.current_identity)
+    elif revoke == "source_epoch":
+        service._source_context_epoch += 1
+    elif revoke == "account_epoch":
+        service._account_context_epoch += 1
+    elif revoke == "disabled_connection":
+        service.storage.provider_connection_put({
+            "identity_id": "alex", "provider_id": "paris",
+            "credential_id": "card-alex", "label": "Disabled",
+            "enabled": False, "metadata": {},
+        })
+    elif revoke == "plugin_disabled":
+        original = service._plugin_manager.status
+        service._plugin_manager.status = lambda plugin_id: replace_dummy(
+            original(plugin_id), enabled=False,
+        )
+    elif revoke == "session_rebind":
+        service._sessions[service._session_key(
+            account.provider_id, account.credential_id,
+        )] = object()
+    else:
+        item.record_id = "another-edition"
+    result = execute(service, option, item, scope)
+    assert result["status"] == "blocked"
+    assert result["retry_borrow"] is False
+    assert session.actions == 0
+    assert service.storage.loan_borrow_state(original_key) is None
+
+
+def replace_dummy(value, **changes):
+    from types import SimpleNamespace as NS
+    return NS(**{**vars(value), **changes})
+
+
+def test_atomic_claim_rebind_prevents_supplier_dispatch_and_spends_claim(
+    harness, monkeypatch,
+):
+    service, account, session, item, option, scope = setup(harness)
+    original = service.storage.loan_borrow_claim_once
+
+    def after_claim(key, op):
+        receipt = original(key, op)
+        service._source_context_epoch += 1
+        return receipt
+
+    monkeypatch.setattr(service.storage, "loan_borrow_claim_once", after_claim)
+    result = execute(service, option, item, scope)
+    assert result["status"] == "blocked"
+    assert session.actions == 0
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, item),
+    )["status"] == "blocked"
+
+
+def test_loan_edition_changed_by_provider_is_not_a_positive_receipt(
+    harness, monkeypatch,
+):
+    service, account, session, item, option, scope = setup(harness)
+    actual = session.borrow_explicit_with_claim
+
+    def source_changes_item(*args, **kwargs):
+        loan = actual(*args, **kwargs)
+        item.record_id = "rebound-during-provider"
+        return loan
+
+    monkeypatch.setattr(session, "borrow_explicit_with_claim", source_changes_item)
+    result = execute(service, option, item, scope)
+    assert result["status"] == "verification_unavailable"
+    assert session.actions == 1
+    assert result["retry_borrow"] is False
+
+
+def test_existing_confirmed_loan_never_uses_discovery_as_retry(harness):
+    service, account, session, item, option, scope = setup(harness)
+    assert execute(service, option, item, scope)["status"] == "confirmed"
+    assert discover_possible_borrow_lenders(
+        service, requesting_identity_id="default", notices=(item,),
+    ) == ()
+    assert session.actions == 1
