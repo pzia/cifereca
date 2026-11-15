@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from ipaddress import ip_address
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Mapping
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 
@@ -148,8 +148,45 @@ def _validated_cover_candidate(raw: object) -> CoverCandidate | None:
     return CoverCandidate(url, raw.tier, source, evidence_id, strength)
 
 
-def resolve_cover(candidates: Iterable[CoverCandidate]) -> CoverResolution:
-    """Resolve covers independently, rejecting malformed or private inputs."""
+def _catalogue_ranks(priorities: Mapping[str, int] | None) -> dict[str, int]:
+    """Only an explicit bounded catalogue rank map can affect precedence.
+
+    Higher integer means higher configured preference. No rank or catalogue
+    preference is inferred from evidence strength, network order, or labels.
+    """
+    if priorities is None:
+        return {}
+    if (not isinstance(priorities, Mapping) or len(priorities) > 128):
+        return {}
+    if any(
+        type(key) is not str or not key or len(key) > 128
+        or not key.isprintable() or type(rank) is not int
+        or not 0 <= rank <= 10000
+        for key, rank in priorities.items()
+    ):
+        return {}
+    return dict(priorities)
+
+
+def resolve_cover(
+    candidates: Iterable[CoverCandidate], *,
+    attested_book_identity: str = '',
+    catalog_priorities: Mapping[str, int] | None = None,
+) -> CoverResolution:
+    """Pick a proven cover; break catalog ties only for an attested same-book scope.
+
+    Existing callers remain fail-closed on ambiguous conflicting URLs. A caller
+    must attest the *same book* using an exact canonical Artifact/OriginLink or
+    scoped entitlement key; title, ISBN or the returned order are insufficient.
+    'source' is the stable catalogue identifier for catalog-tier candidates.
+    """
+    priorities = _catalogue_ranks(catalog_priorities)
+    attested = (
+        type(attested_book_identity) is str
+        and bool(attested_book_identity)
+        and len(attested_book_identity) <= 160
+        and attested_book_identity.isprintable()
+    )
     dedup: dict[str, CoverCandidate] = {}
     for raw in candidates:
         normalized = _validated_cover_candidate(raw)
@@ -157,10 +194,21 @@ def resolve_cover(candidates: Iterable[CoverCandidate]) -> CoverResolution:
             continue
         url = normalized.url
         current = dedup.get(url)
-        if current is None or (
-            _TIER_PRIORITY[normalized.tier], normalized.evidence_strength
-        ) > (_TIER_PRIORITY[current.tier], current.evidence_strength):
+        if current is None:
             dedup[url] = normalized
+            continue
+        new_rank = (_TIER_PRIORITY[normalized.tier], normalized.evidence_strength)
+        old_rank = (_TIER_PRIORITY[current.tier], current.evidence_strength)
+        if new_rank > old_rank:
+            dedup[url] = normalized
+        elif new_rank == old_rank and normalized.tier == 'catalog':
+            # One URL is one image, but provenance must not depend on response
+            # order. Keep a reproducible catalogue/evidence identity for it.
+            def key(row: CoverCandidate) -> tuple[int, str, str]:
+                return (-priorities.get(row.source, 0) if attested else 0,
+                        row.source.casefold(), row.evidence_id)
+            if key(normalized) < key(current):
+                dedup[url] = normalized
 
     rows = tuple(dedup.values())
     if not rows:
@@ -171,11 +219,31 @@ def resolve_cover(candidates: Iterable[CoverCandidate]) -> CoverResolution:
     best_strength = max(row.evidence_strength for row in tier_rows)
     finalists = tuple(row for row in tier_rows if row.evidence_strength == best_strength)
 
+    if len(finalists) != 1 and attested and finalists[0].tier == 'catalog':
+        # A catalogue may supply conflicting URLs for the *same* book. If
+        # the highest-priority catalogue itself is ambiguous, do not choose
+        # by URL; only distinct stable catalogue IDs can break the tie.
+        highest = max(priorities.get(row.source, 0) for row in finalists)
+        preferred = [row for row in finalists
+                     if priorities.get(row.source, 0) == highest]
+        best_id = min(row.source.casefold() for row in preferred)
+        selected_catalog = [row for row in preferred
+                            if row.source.casefold() == best_id]
+        if len(selected_catalog) == 1:
+            selected = selected_catalog[0]
+            return CoverResolution(
+                'selected', url=selected.url, tier=selected.tier,
+                source=selected.source, evidence_id=selected.evidence_id,
+                candidates=rows,
+            )
+
     if len(finalists) != 1:
         return CoverResolution(
             'ambiguous',
             tier=finalists[0].tier if finalists else '',
-            candidates=finalists,
+            candidates=tuple(sorted(finalists, key=lambda row: (
+                row.source.casefold(), row.evidence_id, row.url
+            ))),
         )
     selected = finalists[0]
     return CoverResolution(

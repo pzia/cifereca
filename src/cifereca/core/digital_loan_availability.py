@@ -120,26 +120,25 @@ def digital_loan_availability(service, identity_id: str) -> tuple[DigitalLoanAva
     if type(cache) not in (list, tuple) or len(cache) > _MAX_LOANS:
         cache = ()
 
-    # Session registry keys are global (provider lowercased + credential),
-    # even when a saved connection claims a different profile. Such a reused
-    # key cannot safely identify a single owner's connected session. Inspect
-    # only bounded configuration metadata; never resolve provider credentials.
-    first_owners = {}
+    # The session registry key has no identity dimension. A second saved
+    # provider/credential row is ambiguous even when its identity owner is
+    # missing or malformed: omitting that row would improperly attest the
+    # first owner's account/borrower and manual ceiling. Inspect only bounded
+    # configuration metadata; never resolve provider credentials.
+    seen_registry_keys = set()
     shared_registry_keys = set()
     for entry in configured:
         if type(entry) is not dict:
             continue
-        owner = entry.get("identity_id")
         provider, credential = entry.get("provider"), entry.get("id")
-        if (type(owner) is not str or not owner
-                or type(provider) is not str or not provider
+        if (type(provider) is not str or not provider
                 or type(credential) is not str or not credential
                 or len(provider) > 128 or len(credential) > 128):
             continue
         registry_key = (provider.lower(), credential)
-        first = first_owners.setdefault(registry_key, owner)
-        if first != owner:
+        if registry_key in seen_registry_keys:
             shared_registry_keys.add(registry_key)
+        seen_registry_keys.add(registry_key)
 
     eligible = []
     seen = set()

@@ -162,18 +162,20 @@ def _render_loans(self) -> None:
             subtitle = loan.author.strip() + " · " + subtitle
         meta = loan_row_metadata(loan.due_at, due, document_type=loan.document_type, provider=loan.provider)
         display = _loan_display_cover(self, loan)
-        ranked_rows.append((
-            due.sort_key,
-            BookListItem(
-                loan_source_key(loan),
-                loan.title,
-                subtitle,
-                meta,
-                due.label,
-                display.thumbnail_url,
-                badge_style=due.style,
-            ),
-        ))
+        source_key = loan_source_key(loan)
+        item = BookListItem(
+            source_key, loan.title, subtitle, meta, due.label,
+            display.thumbnail_url, badge_style=due.style,
+        )
+        # MasterDetailPage.show_rows has an append-only fast path when keys
+        # stay identical. A new exact local cover for the same loan must
+        # invalidate that presentation (and repaint the mapped Gtk.ListView),
+        # without changing the loan SourceKey or mutating its original rights.
+        item._public_row_content = (
+            "loan", source_key, loan.title, subtitle, meta, due.label,
+            display.thumbnail_url, due.style,
+        )
+        ranked_rows.append((due.sort_key, item))
     ranked_rows.sort(key=lambda item: item[0])
     rows = [row for _rank, row in ranked_rows]
     if hasattr(self, "loan_scope_count"):

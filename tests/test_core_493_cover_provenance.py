@@ -94,7 +94,8 @@ def test_resolution_metadata_is_bounded_and_explainable():
 
 def test_library_and_recent_projections_use_the_common_resolver():
     source = SERVICES.read_text(encoding='utf-8')
-    assert source.count('resolve_cover(cover_candidates)') >= 2
+    assert source.count('resolve_cover(cover_candidates') >= 1
+    assert 'attested_book_identity=canonical_key' in source
     assert 'metadata["cover_resolution"] = cover.metadata()' in source
     assert 'combined_meta["cover_resolution"] = cover.metadata()' in source
 

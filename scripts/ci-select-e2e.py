@@ -73,7 +73,8 @@ LOCAL_GUI = {
     "action_layout.py": BOOK_DETAIL,
     "action_widgets.py": BOOK_DETAIL + RECOMMENDATIONS_GTK,
     "book_facets.py": SEARCH_GTK + BOOK_DETAIL,
-    "book_widgets.py": SEARCH_GTK + BOOK_DETAIL + RECOMMENDATIONS_GTK + BNF_COVERS,
+    # book_detail_probe imports CoverView directly and also runs plugin-manager-scroll.
+    "book_widgets.py": SEARCH_GTK + BOOK_DETAIL + PLUGIN_SCROLL + RECOMMENDATIONS_GTK + BNF_COVERS,
     "cover_loader.py": BOOK_DETAIL + RECOMMENDATIONS_GTK + BNF_COVERS,
     "cover_preview.py": BOOK_DETAIL,
     "plugin_manager_page.py": PLUGIN_SCROLL,

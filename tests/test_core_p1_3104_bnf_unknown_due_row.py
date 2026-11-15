@@ -147,3 +147,20 @@ def test_author_byline_keeps_existing_library_and_unknown_author_fallback():
     )
     assert rows["BnF sans auteur"].subtitle == "Prêt numérique"
     assert rows["BnF auteur non qualifié"].subtitle == "Prêt numérique"
+
+
+def test_loan_row_version_replaces_stale_cover_when_same_exact_key_changes():
+    """#4979: the unchanged SourceKey must not keep a stale GTK image."""
+    first = _loan("bnf-one")
+    first.thumbnail_url = "https://pret.bnf.fr/images/remote.png"
+    refreshed = copy(first)
+    refreshed.thumbnail_url = "https://pret.bnf.fr/images/local-after-refresh.png"
+    before = _render_actual([first])["bnf-one"]
+    after = _render_actual([refreshed])["bnf-one"]
+    assert before.key == after.key
+    assert before.thumbnail_url != after.thumbnail_url
+    assert before._public_row_content != after._public_row_content
+    assert after.thumbnail_url in after._public_row_content
+    # An identical redraw remains eligible for MasterDetailPage's fast path.
+    unchanged = _render_actual([refreshed])["bnf-one"]
+    assert after._public_row_content == unchanged._public_row_content
