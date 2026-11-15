@@ -1724,6 +1724,22 @@ class LibraryService:
         self.diagnostics.add("ADEPT", "inventory refresh", "warning" if summary["errors"] else "ok", detail=summary, level="normal")
         return summary
 
+    def _history_source_lease_current(
+        self, account: Account, session: ProviderSession, *, scope: tuple, epoch: int,
+    ) -> bool:
+        """Read-only exact borrower lease for a manually requested history GET.
+
+        Unlike automatic inventory Sync, reading a saved account's history
+        does not require opting into the source Sync switch. A real disabled
+        connection, deleted borrower, replaced session or revoked source
+        generation still blocks provider I/O and cache publication.
+        """
+        from .core.private_inventory_binding import private_inventory_binding_current
+        return private_inventory_binding_current(
+            self, account, session, scope=scope, epoch=epoch,
+            require_source_enabled=False,
+        )
+
     def refresh_history(self, force: bool = False) -> list[HistoryItem]:
         return library_projection.refresh_history(self, force, account=self.current_account)
 

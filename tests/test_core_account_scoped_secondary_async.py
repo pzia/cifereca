@@ -44,7 +44,10 @@ def _ui_host():
         ],
         type_ignores=[],
     )
-    namespace = {"TaskPriority": NS(USER_ACTION="user", NORMAL="normal"),
+    # AST-executed GUI methods retain their real package for relative imports.
+    namespace = {"__name__": "cifereca.gui.main_window",
+                 "__package__": "cifereca.gui",
+                 "TaskPriority": NS(USER_ACTION="user", NORMAL="normal"),
                  "shell_account_selection_controller": shell_account_selection_controller,
                  "library_projection": library_projection}
     exec(compile(ast.fix_missing_locations(module), str(MAIN), "exec"), namespace)
@@ -165,6 +168,10 @@ def _service_host():
         cache_put=lambda kind, key, value, ttl: writes.append((kind, key, value, ttl)),
     )
     host.diagnostics = NS(add=lambda *_args, **_kw: None)
+    # These legacy cache/selection tests deliberately use no persisted
+    # connection or registered source session. Isolate their GTK semantics;
+    # the real durable lease is exercised in the separate P0 source tests.
+    host._history_source_lease_current = lambda *_args, **_kw: True
     return host, writes
 
 
@@ -246,8 +253,8 @@ def test_queued_history_worker_uses_admitted_account_after_ui_switch(monkeypatch
     admitted = host.service.current_account
     calls = []
 
-    def read(_service, *, force=False, account=None):
-        calls.append((force, account))
+    def read(_service, *, force=False, account=None, expected_source_epoch=None):
+        calls.append((force, account, expected_source_epoch))
         return ["history for A"]
 
     monkeypatch.setattr(library_projection, "refresh_history", read)
@@ -256,7 +263,7 @@ def test_queued_history_worker_uses_admitted_account_after_ui_switch(monkeypatch
     host._account_changed(NS(get_selected=lambda: 1), None)
     assert host.service.current_account.unique_id == "b"
     assert pending.work() == ["history for A"]
-    assert calls == [(True, admitted)]
+    assert calls == [(True, admitted, 0)]
     pending.done(["history for A"])
     assert host.history_displayed == []
 
