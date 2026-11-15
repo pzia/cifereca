@@ -255,7 +255,7 @@ def _render_loans(self) -> None:
         else:
             # The Loan DTO itself may attest its direct supplier image. A
             # stronger origin/EPUB from Library never gets downgraded to it.
-            from .loan_supplier_document_cover_bridge import exact_supplier_loan_cover
+            from cifereca.gui.loan_supplier_document_cover_bridge import exact_supplier_loan_cover
             supplier = exact_supplier_loan_cover(self, loan, displayed=display)
             if supplier is not None:
                 item._cover_document_ref = supplier.document
@@ -326,7 +326,7 @@ def _render_loans(self) -> None:
             if not show_attested_loan_cover(
                 self, fresh, lambda: _loan_display_cover(self, fresh),
             ):
-                from .loan_supplier_document_cover_bridge import show_supplier_loan_cover
+                from cifereca.gui.loan_supplier_document_cover_bridge import show_supplier_loan_cover
                 if not show_supplier_loan_cover(
                     self, fresh, lambda: _loan_display_cover(self, fresh),
                 ):
@@ -342,7 +342,7 @@ def _loan_selected(self, row: BookListItem | None) -> None:
         if not show_attested_loan_cover(
             self, loan, lambda: _loan_display_cover(self, loan),
         ):
-            from .loan_supplier_document_cover_bridge import show_supplier_loan_cover
+            from cifereca.gui.loan_supplier_document_cover_bridge import show_supplier_loan_cover
             if not show_supplier_loan_cover(
                 self, loan, lambda: _loan_display_cover(self, loan),
             ):
@@ -421,7 +421,7 @@ def _loans_refreshed(self, rows):
             if not show_attested_loan_cover(
                 self, fresh, lambda: _loan_display_cover(self, fresh),
             ):
-                from .loan_supplier_document_cover_bridge import show_supplier_loan_cover
+                from cifereca.gui.loan_supplier_document_cover_bridge import show_supplier_loan_cover
                 if not show_supplier_loan_cover(
                     self, fresh, lambda: _loan_display_cover(self, fresh),
                 ):
