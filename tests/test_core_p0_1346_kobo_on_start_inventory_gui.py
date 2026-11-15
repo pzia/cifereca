@@ -87,6 +87,33 @@ def test_bad_identity_or_phase_never_authorizes_startup_inventory(change):
     assert r.jobs == []
 
 
+
+def test_queued_startup_inventory_uses_admitted_identity_after_ui_core_switch():
+    r = _rig()
+    assert startup.dispatch_after_opening(r.window)
+    # A separate account selection replaces the GUI service, but no source
+    # policy, Core broker or account binding was revoked for Alice.
+    r.window.service = NS(identities=[NS(identity_id="bob")],
+                          current_identity=NS(identity_id="bob"))
+    r.jobs[0].work()
+    assert [c for c in r.records["calls"] if c[0] == "dispatch"] == [
+        ("dispatch", "alice", "startup"),
+    ]
+
+
+def test_queued_startup_inventory_still_blocks_real_policy_revocation_after_switch():
+    r = _rig()
+    assert startup.dispatch_after_opening(r.window)
+    r.window.service = NS(identities=[NS(identity_id="bob")],
+                          current_identity=NS(identity_id="bob"))
+    # Unlike a GUI-only change, an OFF policy revokes the actual broker
+    # authority, even though the original task was admitted under Alice.
+    r.policies[SOURCE_ID] = {"mode": "manual", "interval_minutes": 60}
+    assert r.jobs[0].work() is None
+    assert not any(c[0] == "dispatch" for c in r.records["calls"])
+
+
+
 def test_stale_queued_startup_work_is_dropped_after_window_close_or_broker_change():
     r = _rig()
     assert startup.dispatch_after_opening(r.window)
