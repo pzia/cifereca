@@ -512,11 +512,20 @@ def retryable_x11_startup_failure(returncode: int, output: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Runner E2E GTK reproductible CIFERECA")
     parser.add_argument("--scenario", choices=sorted(SCENARIOS))
+    # Private #774 review can explicitly capture the SAME GTK appearance
+    # in Search and Recommendations without changing CI's default mode.
+    parser.add_argument("--appearance", choices=("light", "dark"))
     parser.add_argument("--plugin", help="Ne lancer que les scénarios associés à ce plugin/domaine")
     parser.add_argument("--out", type=Path, default=ROOT / "e2e-artifacts")
     parser.add_argument("--python", default=os.environ.get("CIFERECA_E2E_PYTHON", sys.executable))
     parser.add_argument("--startup-timeout", type=float, default=12.0)
     args = parser.parse_args()
+
+    if args.appearance is not None and (
+        args.scenario is None
+        or SCENARIOS[args.scenario]["runner"] not in ("gtk-probe", "gtk-recommendations")
+    ):
+        parser.error("--appearance requires a Search/Recommendations GTK scenario")
 
     xvfb = shutil.which("xvfb-run")
     if not xvfb:
@@ -562,6 +571,7 @@ def main() -> int:
                     args.python, str(ROOT / "e2e/recommendations_detail_probe.py"),
                     "--out", str(scenario_dir), "--width", str(width),
                     "--scale", str(scale),
+                    *([] if args.appearance is None else ["--appearance", args.appearance]),
                 ]
             elif scenario.get("runner") == "gtk-constellations":
                 width = scenario["width"]
@@ -708,6 +718,7 @@ def main() -> int:
                     "--out", str(scenario_dir),
                     *(["--width", str(width), "--matched-display"]
                       if width is not None else []),
+                    *([] if args.appearance is None else ["--appearance", args.appearance]),
                 ]
             else:
                 command = [
