@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from ..core.search import local_match_explanation
+from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 
 
 def _received_local_file_label(item: dict[str, Any]) -> str | None:
@@ -172,5 +173,23 @@ def project_library_rows(
                 item.get("identity_id"), item.get("_library_view_owner"),
                 item.get("provider_id"), item.get("item_id"),
             )
+            # Attach ONLY the private, owner-scoped Core proof created after
+            # local_book_path() validated the exact Artifact+Placement. Never
+            # infer a document association from image URL/title/ISBN/SHA.
+            facts = item.get("_exact_local_cover_evidence")
+            if (type(facts) is VerifiedLocalCoverEvidence
+                    and facts.scope.identity_id == item.get("identity_id")
+                    and facts.scope.artifact_id == item.get("artifact_id")
+                    and facts.scope.placement_id == item.get("placement_id")
+                    and facts.scope.source_key == item.get("key")
+                    and not (
+                        item.get("_library_view_owner") is not None
+                        and item.get("_library_view_owner") != item.get("identity_id")
+                    )):
+                row._cover_local_evidence = facts
+                row._cover_document_ref = facts.scope
+                # A changed exact source must rebind an existing GTK row even
+                # if the visible thumbnail_url is unchanged (N3 still hot).
+                row._public_row_content = (*row._public_row_content, facts)
         rows.append(row)
     return rows, objects
