@@ -219,6 +219,7 @@ def test_confirmed_removal_has_distinct_worker_and_exact_consent(rig):
     assert len(consent.operation_id) == 32
     assert consent.expires_at - consent.confirmed_at == 60
     assert invocation["mountpoint"] == rig.volume.mountpoint
+    assert invocation["expected_profile_epoch"] == 1
     assert "Retrait USB supervisé terminé" in rig.host._reader_status_label.label
     assert rig.db.device_placement_get(
         "reader-alice", rig.book["artifact_id"],
@@ -353,3 +354,19 @@ def test_broker_refusal_is_not_reported_as_device_success(rig):
     assert len(rig.backend.execution) == 1
     assert "Retrait USB non confirmé" in rig.host._reader_status_label.label
     assert "terminé" not in rig.host._reader_status_label.label
+
+
+def test_profile_aba_after_user_confirmed_is_pinned_in_core_worker(rig):
+    click(rig)
+    rig.host.runner.advance()
+    assert len(rig.dialogs) == 1
+    rig.dialogs[0].answer("delete")
+    # Directly executing a previously queued worker after A→B→A must not
+    # re-issue fresh permission: the broker receives original epoch=1.
+    rig.host.service._account_context_epoch = 3
+    rig.host.runner.advance()
+    if rig.backend.execution:
+        assert rig.backend.execution[0]["expected_profile_epoch"] == 1
+    assert rig.db.device_placement_get(
+        "reader-alice", rig.book["artifact_id"],
+    )["desired_state"] == "remove"
