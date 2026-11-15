@@ -112,6 +112,8 @@ def test_aba_context_change_prevents_late_gtk_paint(dimension):
     callback = loan_cover_paint_receipt(
         window, current, surface="detail", expected_url=decision.uri,
     )
+    old_status = observed_state(window, decision.scope)
+    assert old_status is not None and not old_status.detail_painted
     if dimension == "identity":
         window.service.current_identity.identity_id = "bob"
         window.service.current_identity.identity_id = "alice"
@@ -122,10 +124,9 @@ def test_aba_context_change_prevents_late_gtk_paint(dimension):
         window._loan_cover_decision_revision += 1
     else:
         window._closed = True
-    old_status = observed_state(window, decision.scope)
     callback()
     assert calls == []
-    assert old_status is not None and not old_status.detail_painted
+    assert not old_status.detail_painted
 
 
 def test_stronger_new_loan_proof_resets_previous_n0_receipts():
