@@ -14,6 +14,7 @@ from cifereca.core.loan_cover_evidence import exact_attested_loan_epub_cover
 from cifereca.core.loan_cover_fallback import attested_local_loan_cover_proof
 from cifereca.core.local_cover_evidence import project_verified_local_cover_evidence
 from cifereca.gui.loan_cover_repaint import repaint_exact_loan_cover_rows
+from cifereca.gui.loan_cover_n2_bridge import loan_embedded_cover_for_host, show_attested_loan_cover
 from tests.test_epub_cover_contract import _write_epub
 
 
@@ -143,17 +144,7 @@ def test_no_guess_from_shared_sha_or_title(linked):
 
 def test_active_account_epoch_guards_production_loan_gtk_admission(linked):
     loan, row, facts = linked
-    source = ROOT / "src/cifereca/gui/loans_controller.py"
-    node = next(n for n in ast.parse(source.read_text()).body
-                if isinstance(n, ast.FunctionDef)
-                and n.name == "_loan_embedded_cover_evidence")
-    scope = dict(Loan=Loan, exact_attested_loan_epub_cover=exact_attested_loan_epub_cover)
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[
-        ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")],
-                       level=0),
-        node,
-    ], type_ignores=[])), str(source), "exec"), scope)
-    admit = scope["_loan_embedded_cover_evidence"]
+    admit = loan_embedded_cover_for_host
     host = NS(
         service=NS(current_identity=NS(identity_id="alice"),
                    _account_context_epoch=4),
@@ -173,9 +164,13 @@ def test_list_and_detail_use_same_local_documentref_without_abi_change():
     assert "item._cover_document_ref = evidence.scope" in loans
     assert "item._cover_local_evidence = evidence" in loans
     assert "item._public_row_content += (evidence,)" in loans
-    assert "present(displayed, cover_evidence=evidence)" in loans
+    assert "show_attested_loan_cover(" in loans
+    bridge = (ROOT / "src/cifereca/gui/loan_cover_n2_bridge.py").read_text()
+    assert "panel.show_loan_local(presentation, cover_evidence=evidence)" in bridge
     assert "def show_loan_local(self, loan: Loan, *, cover_evidence)" in detail
     assert "self.show_loan(loan)" in detail
+    assert "self.loan_page.detail.show_loan(_loan_display_cover(self, loan))" in loans
+    assert "self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))" in loans
     assert "self._next_cover_evidence = None" in detail
     assert "def show_loan(self, loan: Loan, include_pnb_action: bool = True)" in detail
 
