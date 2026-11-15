@@ -473,12 +473,21 @@ class TaskRunner:
             outcome_status = "success"
             try:
                 value = fn(report) if with_progress else fn()
+                # Worker-phase telemetry must use the same exact Core
+                # receipt as GTK delivery. A normal-returning blocked or
+                # unverified operation is not a successful worker.
                 business = (
                     self._borrow_outcome(value) if trace_kind == "borrow"
-                    else self._borrow_verification_outcome(value)
-                    if trace_kind == "borrow-verification"
+                    else self._local_transfer_outcome(value)
+                    if trace_kind == "transfer"
+                    else self._manual_acsm_outcome(value)
+                    if trace_kind == "acsm-import"
+                    else self._lender_local_send_outcome(value)
+                    if trace_kind == "lender-local-send"
                     else self._materialize_outcome(value)
                     if trace_kind == "materialize"
+                    else self._borrow_verification_outcome(value)
+                    if trace_kind == "borrow-verification"
                     else self._source_sync_outcome(value, trace_kind)
                 )
                 if business != "success":
