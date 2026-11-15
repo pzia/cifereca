@@ -132,3 +132,31 @@ def test_new_default_fields_do_not_weaken_explicit_filter_field():
     assert not matches(item, "prix etoiles", field="title")
     assert not matches(item, "brume", field="subject")
     assert matches(item, "cartes", field="title")
+
+
+@pytest.mark.parametrize("title,should_match", [
+    ("Livre A", False),
+    ("Livre B", True),
+    ("Livre C", False),
+])
+def test_single_letter_edition_qualifier_is_not_found_inside_public_description(
+    title, should_match,
+):
+    # With description now indexed, the letter b in "publique" must not
+    # make all three books match "Livre B". Core's explicit Sujet filter
+    # already has this exact whole-word guard for single-character tokens.
+    item = {
+        "title": title, "author": "Autrice fictive",
+        "source_provider": "fixture",
+        "description": "Description publique, sans donnée de compte.",
+    }
+    assert matches(item, "Livre B") is should_match
+    assert matches(item, '"Livre B"') is should_match
+
+
+def test_single_letter_standalone_subject_and_other_full_words_remain_searchable():
+    item = book()
+    item["metadata"]["description"] = "Plan B pour la traversée"
+    assert matches(item, "plan b")
+    assert matches(item, "B plan")
+    assert not matches(item, "plan z")
