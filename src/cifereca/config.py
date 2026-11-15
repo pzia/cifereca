@@ -68,6 +68,9 @@ def _archive_legacy_kobo_globals_once(data: dict[str, Any]) -> None:
 
 # Persistent data-upgrade marker. This cannot grant source consent or rights.
 _LEGACY_CARDINALITY_V1 = "legacy_account_cardinality_v1"
+# Frozen 0.8.1 *historical data cohort*, not a runtime provider policy or a
+# descriptor-derived permission. The repair algorithm below is provider-neutral.
+_LEGACY_081_SINGLE_CONNECTION_SOURCES = frozenset({"kobo"})
 
 
 def _migrate_legacy_account_cardinality_once(
@@ -90,26 +93,28 @@ def _migrate_legacy_account_cardinality_once(
     split_count = 0
     # Historical source-specific repair is deliberately quarantined in this
     # versioned data migration. No plugin I/O, ADEPT binding or file mutation.
-    seen_kobo: dict[str, str] = {}
+    seen_by_provider_identity: dict[tuple[str, str], str] = {}
     identity_by_id = {str(item.get("id") or ""): item for item in identities if isinstance(item, dict)}
     for row in rows:
-        if str(row.get("provider") or "").strip().lower() != "kobo":
+        provider_id = str(row.get("provider") or "").strip().lower()
+        if provider_id not in _LEGACY_081_SINGLE_CONNECTION_SOURCES:
             continue
         credential_id = str(row.get("id") or "").strip()
         identity_id = str(row.get("identity_id") or default_identity).strip() or default_identity
-        previous = seen_kobo.get(identity_id)
+        scope = (provider_id, identity_id)
+        previous = seen_by_provider_identity.get(scope)
         if not previous or previous == credential_id:
-            seen_kobo[identity_id] = credential_id
+            seen_by_provider_identity[scope] = credential_id
             continue
         suffix = hashlib.sha256(credential_id.encode("utf-8", "surrogatepass")).hexdigest()[:8]
-        base_id = f"{identity_id}-kobo-{suffix}"
+        base_id = f"{identity_id}-{provider_id}-{suffix}"
         derived_id = base_id
         serial = 2
         while derived_id in identity_by_id:
             derived_id = f"{base_id}-{serial}"
             serial += 1
         source = identity_by_id.get(identity_id, {})
-        derived_label = str(row.get("label") or f"{source.get('label') or identity_id} Kobo")
+        derived_label = str(row.get("label") or f"{source.get('label') or identity_id} {provider_id.title()}")
         directory_base = _identity_directory_slug(derived_label, derived_id)
         directory_name = directory_base
         serial_dir = 2
@@ -128,7 +133,7 @@ def _migrate_legacy_account_cardinality_once(
         identities.append(derived)
         identity_by_id[derived_id] = derived
         row["identity_id"] = derived_id
-        seen_kobo[derived_id] = credential_id
+        seen_by_provider_identity[(provider_id, derived_id)] = credential_id
         split_count += 1
     if history is None:
         history = {}

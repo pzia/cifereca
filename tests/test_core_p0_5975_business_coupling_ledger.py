@@ -518,3 +518,63 @@ def test_retired_w1_completion_marker_structural_evidence():
     # No unverified AST-cohort retirement credit: this is a reviewed SQL
     # writer removal, with the lexical metric measured separately on CI.
     assert row.get("in_ast_metric") is not True
+
+
+def test_versioned_historical_writer_survives_vendor_ast_selector_removal(tmp_path):
+    """An AST reduction must not silently turn an active legacy writer into zero debt."""
+    path = "src/cifereca/core/legacy.py"
+    write(tmp_path, path, "def repair(provider):\n    return provider == 'kobo'\n")
+    before = inventory(tmp_path, head_sha="old")
+    assert before["raw_ast_unique_lines"] == 1
+    write(tmp_path, path, "def repair(provider, historic_cohort):\n    return provider in historic_cohort\n")
+    retained = {
+        "id": "legacy-v1-repair", "classification": "legacy_mutating_cutover",
+        "journey": "historical upgrade", "productive_caller": "Config.load",
+        "effect": "still mutates old rows", "authority": "frozen persisted cohort",
+        "replacement_contract": "sunset only after evidence",
+        "tests": ["tests/test_legacy.py"], "pr": "#6141",
+    }
+    registry = tmp_path / "ledger.json"
+    registry.write_text(json.dumps({
+        "metric": METRIC, "reviews": [], "retained_legacy_migrations": [retained],
+    }), encoding="utf-8")
+    after = inventory(tmp_path, registry=registry, head_sha="new")
+    assert after["raw_ast_unique_lines"] == 0
+    assert after["active_legacy_writers_to_retire"] == 1
+    assert after["retained_non_ast_legacy_migration_writers"] == 1
+    assert after["retained_non_ast_legacy_migration_ids"] == ["legacy-v1-repair"]
+    assert compare(before, after)["retained_non_ast_legacy_migrations_added"] == [
+        "legacy-v1-repair",
+    ]
+    assert compare_cohort(before, after)["retired_reviewed"] == 0
+
+    retained["classification"] = "legitimate_readonly_compat"
+    registry.write_text(json.dumps({
+        "metric": METRIC, "reviews": [], "retained_legacy_migrations": [retained],
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid_retained_legacy_migration_classification"):
+        inventory(tmp_path, registry=registry)
+
+
+def test_real_081_migration_is_explicitly_retained_after_genericization():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads((root / "docs/provider-business-coupling-review.json")
+                        .read_text(encoding="utf-8"))
+    assert all(row["id"] != "site-e3fc978e29d69c2c875be9dc"
+               for row in ledger["reviews"])
+    paths = [row for row in ledger["retained_legacy_migrations"]
+             if row["id"] == "legacy-config-081-cardinality-versioned-writer"]
+    assert len(paths) == 1
+    assert paths[0]["classification"] == "legacy_mutating_cutover"
+    assert all((root / path).is_file() for path in paths[0]["tests"])
+    physical = [row for row in ledger["retirements"]
+                if row["id"] == "struct-config-081-cardinality-supplier-predicate-neutralized"]
+    assert len(physical) == 1
+    assert physical[0]["in_ast_metric"] is False
+    assert physical[0]["original_site_id"] == "site-e3fc978e29d69c2c875be9dc"
+    actual = inventory(root)
+    assert actual["retained_non_ast_legacy_migration_writers"] == 1
+    assert actual["active_legacy_writers_to_retire"] >= 1
+    assert not actual["stale_reviews"]
