@@ -384,17 +384,17 @@ class CoverLoader:
             root = parent.resolve(strict=True)
             if (root == self.root.resolve()
                     and not self.root.is_symlink()
-                    and re.fullmatch(r"[a-f0-9]{64}\\.img", path.name)):
+                    and re.fullmatch(r"[a-f0-9]{64}\.img", path.name)):
                 return True
             if (root == self.preview_root.resolve()
                     and not self.preview_root.is_symlink()
-                    and re.fullmatch(r"[a-f0-9]{64}\\.png", path.name)):
+                    and re.fullmatch(r"[a-f0-9]{64}\.png", path.name)):
                 return True
             epub_root = cover_cache_dir()
             if (root == epub_root.resolve()
                     and not epub_root.is_symlink()
                     and re.fullmatch(
-                        r"[a-f0-9]{64}\\.(?:png|jpg|gif|webp|svg)", path.name,
+                        r"[a-f0-9]{64}\.(?:png|jpg|gif|webp|svg)", path.name,
                     )):
                 return True
         except (OSError, ValueError):
