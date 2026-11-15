@@ -20,13 +20,15 @@ from .source_inventory_timer import (
 _MAX_STARTUP_IDENTITIES = 64
 
 
-def due_startup_identities(window: Any, broker: Any) -> tuple[str, ...]:
-    """Passive admission only. The Core broker revalidates on worker I/O."""
-    if getattr(window, "_closed", False):
-        return ()
+def _due_startup_identities(identities: tuple[str, ...], broker: Any) -> tuple[str, ...]:
+    """Recheck exact admitted identities against live broker policies.
+
+    Worker-side policy validation must not inspect MainWindow.service:
+    switching the displayed account is not cancellation of a queued job.
+    """
     now = datetime.now(timezone.utc)
     due: list[str] = []
-    for identity in _configured_identity_ids(window):
+    for identity in identities:
         try:
             sources = broker.sources(identity)
             if not isinstance(sources, (tuple, list)) or len(sources) > _MAX_SOURCES:
@@ -89,6 +91,13 @@ def due_startup_identities(window: Any, broker: Any) -> tuple[str, ...]:
     return tuple(due[:_MAX_STARTUP_IDENTITIES])
 
 
+def due_startup_identities(window: Any, broker: Any) -> tuple[str, ...]:
+    """Passive GTK admission only; the Core broker revalidates before I/O."""
+    if getattr(window, "_closed", False):
+        return ()
+    return _due_startup_identities(_configured_identity_ids(window), broker)
+
+
 def dispatch_after_opening(window: Any) -> bool:
     """Queue the bounded inventory refresh; no provider-specific GET worker."""
     if getattr(window, "_closed", False):
@@ -115,7 +124,7 @@ def dispatch_after_opening(window: Any) -> bool:
             # The user may have revoked a source policy while this worker
             # was queued. Re-probe the read-only opt-in before delegating;
             # the broker then revalidates exact rights/bindings at I/O.
-            if identity_id not in due_startup_identities(window, broker):
+            if identity_id not in _due_startup_identities((identity_id,), broker):
                 continue
             try:
                 receipt = broker.synchronize_scheduled_inventory(
