@@ -121,6 +121,44 @@ def test_stale_remote_worker_and_both_callbacks_never_act_on_old_session(changed
     assert owner._selected_search_id == source.id
 
 
+
+@pytest.mark.parametrize("method", ["_search_selected", "_load_known_detail"])
+def test_queued_holdings_never_runs_on_replaced_core_even_with_same_epochs(method):
+    owner, row, source, requests, commands, shown = host()
+    if method == "_load_known_detail":
+        owner._selected_search_id = source.id
+        controller(method)(owner, source)
+    else:
+        controller(method)(owner, row)
+    positional, _options = requests[0]
+    work, done = positional[1:3]
+    wrong_requests = []
+    owner.service = NS(
+        current_identity=NS(identity_id="alice"),
+        _account_context_epoch=3,
+        _source_context_epoch=7,
+        holdings=lambda *a, **kw: wrong_requests.append((a, kw)),
+    )
+    assert work() is None
+    done(detail(source))
+    assert commands == [] and wrong_requests == [] and shown == []
+
+
+@pytest.mark.parametrize("method", ["_search_selected", "_load_known_detail"])
+def test_queued_holdings_uses_admitted_search_text_not_live_input(method):
+    owner, row, source, requests, commands, shown = host()
+    if method == "_load_known_detail":
+        owner._selected_search_id = source.id
+        controller(method)(owner, source)
+    else:
+        controller(method)(owner, row)
+    work = requests[0][0][1]
+    owner._last_search_query = "Autre livre"
+    assert work().record_id == source.record_id
+    assert commands == [("GET", (source, "Titre"))]
+
+
+
 def test_prior_session_result_is_rejected_even_if_work_already_ran():
     owner, row, source, requests, commands, shown = host()
     controller("_search_selected")(owner, row)
@@ -171,7 +209,8 @@ def test_epoch_guard_is_worker_only_not_authority_on_loan_or_entitlement():
         assert "getattr(self.service, '_account_context_epoch', None)" in code
         assert "getattr(self.service, '_source_context_epoch', None)" in code
         assert "if epochs_current() else None" in code
-        assert "self.service.holdings(item, self._last_search_query, force=False)" in code
+        assert "holdings_core.holdings(item, holdings_query, force=False)" in code
+        assert "self.service is holdings_core" in code
         assert "self._apply_search_detail(" in code
         assert "borrow(" not in code
         assert "acquire(" not in code
