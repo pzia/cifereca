@@ -33,11 +33,19 @@ def fixture(tmp_path: Path, *, width=64, height=40, stages=("dashboard",)):
         Image.new("RGB", (width, height), "white" if mode == "light" else "black").save(path)
         rows.append({
             "stage": "dashboard", "appearance": mode,
+            "observed_appearance": mode,
             "file": name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         })
     (folder / "screen.json").write_text(json.dumps({
         "status": "PASS", "width": width, "backend": "GTK4/X11",
         "git_sha": "a" * 40, "screenshots": rows,
+        "checks": {
+            "P1_757_all_routes_light_dark_gtk": True,
+            "P1_757_real_installed_home_plugin": True,
+            "P1_757_viewport_bounds_dashboard": True,
+            "P1_757_dark_transition_dashboard": True,
+            "P1_757_light_restore_dashboard": True,
+        },
     }), encoding="utf-8")
     return folder
 
@@ -64,6 +72,61 @@ def test_verified_synthetic_review_stays_private_and_never_auto_accepts(tmp_path
     assert "ux_verdict" in (output / "ux-checklist.csv").read_text(encoding="utf-8")
     assert output.stat().st_mode & 0o777 == 0o700
     assert (output / "ux-checklist.csv").stat().st_mode & 0o777 == 0o600
+
+
+def test_missing_observed_gtk_appearance_refuses_a_pass_report(tmp_path):
+    folder = fixture(tmp_path)
+    path = folder / "screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    del report["screenshots"][0]["observed_appearance"]
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="Apparence Adwaita"):
+        verify_capture_folder(folder, width=64, size=(64, 40),
+                              stages=("dashboard",))
+
+
+def test_mislabeled_dark_frame_cannot_be_verified_even_with_valid_png(tmp_path):
+    folder = fixture(tmp_path)
+    path = folder / "screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["screenshots"][1]["observed_appearance"] = "light"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="Apparence Adwaita"):
+        verify_capture_folder(folder, width=64, size=(64, 40),
+                              stages=("dashboard",))
+
+
+@pytest.mark.parametrize("check", [
+    "P1_757_all_routes_light_dark_gtk",
+    "P1_757_real_installed_home_plugin",
+    "P1_757_viewport_bounds_dashboard",
+    "P1_757_dark_transition_dashboard",
+    "P1_757_light_restore_dashboard",
+])
+def test_missing_real_gtk_check_prevents_private_review(tmp_path, check):
+    folder = fixture(tmp_path)
+    path = folder / "screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["checks"][check] = False
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="Preuves du thème GTK"):
+        build_review(tmp_path, sizes={64: (64, 40)}, stages=("dashboard",))
+    assert not (tmp_path / "modern-light-private-review").exists()
+
+
+def test_missing_theme_observation_invalidates_old_completed_grid(tmp_path):
+    folder = fixture(tmp_path)
+    opts = {"sizes": {64: (64, 40)}, "stages": ("dashboard",)}
+    build_review(tmp_path, **opts)
+    checklist = _fill_private_review(tmp_path)
+    previous = checklist.read_bytes()
+    report_path = folder / "screen.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    del report["screenshots"][0]["observed_appearance"]
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(ValueError, match="Apparence Adwaita"):
+        module.verify_completed_review(tmp_path, **opts)
+    assert checklist.read_bytes() == previous
 
 
 def test_tampered_capture_is_rejected(tmp_path):

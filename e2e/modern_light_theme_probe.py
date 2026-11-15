@@ -155,6 +155,15 @@ def main() -> int:
         )
 
     def capture(route: str, appearance: str):
+        # Capture evidence must reflect Adwaita's *observed* state at the
+        # actual PNG frame, not only the requested label or an earlier
+        # check_appearance() before the GTK event-loop transition.
+        observed = "dark" if manager.get_dark() else "light"
+        assert observed == appearance, "Apparence GTK différente de la capture"
+        w = active["window"]
+        assert w.get_mapped() and (
+            w.has_css_class(MODERN_LIGHT_CLASS) is (observed == "light")
+        ), "Classe thème V2 incohérente à la capture"
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).convert("RGB")
         assert image.size == (args.width, 1000 if args.width == 1600 else 900)
         assert image.getbbox() is not None, "Capture GTK vide"
@@ -163,7 +172,8 @@ def main() -> int:
         image.save(target)
         shutil.copyfile(target, out / "screen.png")
         report["screenshots"].append({
-            "stage": route, "appearance": appearance, "file": name,
+            "stage": route, "appearance": appearance,
+            "observed_appearance": observed, "file": name,
             "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
         })
         return image
