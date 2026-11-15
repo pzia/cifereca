@@ -79,7 +79,18 @@ class PublicBookMasterDetailView:
             from cifereca.core.book_cover_projection import CoverDocumentScope
             document = getattr(row, "_cover_document_ref", None)
             if type(document) is CoverDocumentScope:
+                # Preserve #6362: an already admitted Core proof wins over
+                # an optional, possibly contradictory plugin declaration.
                 item._cover_document_ref = document
+            else:
+                declared = getattr(row, "cover_document_ref", None)
+                if declared is not None:
+                    if type(declared) is CoverDocumentScope:
+                        item._cover_document_ref = declared
+                    else:
+                        # A malformed declared proof can never trigger a
+                        # fallback fetch of the raw, unqualified plugin URL.
+                        item.thumbnail_url = None
             item._public_row_content = presentation
             ui_rows.append(item)
         # Publish mapping before GTK selection notifications during show_rows.
