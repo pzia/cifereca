@@ -64,8 +64,9 @@ def test_recent_refresh_scopes_work_and_restarts_after_identity_change():
     host.refresh_recent()
     alice = host.runner.requests[-1]
     _change_identity(host, "bob")
-    # A queued task must not fetch an identity already left behind.
-    assert alice.work() == []
+    # A queued *read-only Core* task is still admitted for Alice, even
+    # when the visible GTK identity is Bob. Only rendering is discarded.
+    assert alice.work() == [{"identity_id": "alice"}]
     alice.ok(alice.work())
     assert host.recent_shown == []
     assert len(host.runner.requests) == 2
@@ -132,3 +133,40 @@ def test_identity_change_clears_recent_list_and_selected_detail_immediately():
     assert "window._recent_objects = {}" in body
     assert "window.recent_page.clear_rows()" in body
     assert 'window.recent_page.detail.empty(' in body
+
+
+def test_queued_recent_read_stays_on_original_service_after_rebind_and_aba():
+    host = _harness()
+    first = host.service
+    called = []
+    first.recent_acquisitions = lambda *, identity_id: (
+        called.append(identity_id) or [{"identity_id": identity_id}]
+    )
+    host.refresh_recent()
+    queued = host.runner.requests[-1]
+    _change_identity(host, "bob")
+    _change_identity(host, "alice")
+    host.service = NS(
+        current_identity=NS(identity_id="alice"),
+        recent_acquisitions=lambda *, identity_id: (_ for _ in ()).throw(
+            AssertionError("worker used rebound Core service")
+        ),
+    )
+    assert queued.work() == [{"identity_id": "alice"}]
+    assert called == ["alice"]
+    # With the same displayed identity and generations, a different Core
+    # instance still cannot consume the first task's GTK publication.
+    host.recent_shown.clear()
+    queued.ok([{"identity_id": "alice", "private": True}])
+    assert host.recent_shown == []
+
+
+def test_queued_recent_read_survives_window_close_without_retargeting():
+    host = _harness()
+    host.refresh_recent()
+    pending = host.runner.requests[-1]
+    host._closed = True
+    assert pending.work() == [{"identity_id": "alice"}]
+    pending.ok([{"identity_id": "alice"}])
+    assert host.recent_shown == []
+    assert len(host.runner.requests) == 1

@@ -1,4 +1,4 @@
-"""P0 #981: queued refreshes must not issue stale profile I/O.
+"""P0 #981/#5833: delayed Core reads stay scoped; GTK avoids stale results.
 
 Use the production MainWindow adapter callbacks with a controlled TaskRunner.
 No GTK runtime, remote service, timer, or actual book file is required.
@@ -26,15 +26,16 @@ def test_queued_old_identity_is_skipped_and_current_retried_once(
     stale = host.runner.requests[-1]
 
     _change_identity(host, "bob")
-    assert stale.work() == []
-    source.assert_not_called()
-    stale.ok([])
+    expected_old = [] if method == "refresh_library" else [{"identity_id": "alice"}]
+    assert stale.work() == expected_old
+    assert source.call_count == (0 if method == "refresh_library" else 1)
+    stale.ok(expected_old)
     assert len(host.runner.requests) == 2
     assert getattr(host, shown) == []
 
     current = host.runner.requests[-1]
     assert current.work() == [{"identity_id": "bob"}]
-    source.assert_called_once()
+    assert source.call_count == (1 if method == "refresh_library" else 2)
     assert source.call_args.kwargs["identity_id"] == "bob"
     current.ok([{"identity_id": "bob"}])
     assert getattr(host, shown) == [[{"identity_id": "bob"}]]
@@ -42,7 +43,7 @@ def test_queued_old_identity_is_skipped_and_current_retried_once(
     # A callback delivered twice may not trigger another source read.
     stale.ok([])
     assert len(host.runner.requests) == 2
-    assert source.call_count == 1
+    assert source.call_count == (1 if method == "refresh_library" else 2)
 
 
 @pytest.mark.parametrize("method,service_method", [
@@ -60,12 +61,12 @@ def test_a_to_b_to_a_queued_work_does_not_reuse_wrong_generation(
     _change_identity(host, "bob")
     _change_identity(host, "alice")
     assert original.work() == []  # same ID, but a new identity generation
-    source.assert_not_called()
+    assert source.call_count == (0 if method == "refresh_library" else 1)
     original.ok([])
     assert len(host.runner.requests) == 2
     active = host.runner.requests[-1]
     active.work()
-    source.assert_called_once()
+    assert source.call_count == (1 if method == "refresh_library" else 2)
     assert source.call_args.kwargs["identity_id"] == "alice"
 
 
@@ -84,13 +85,13 @@ def test_newer_user_refresh_supersedes_background_worker_without_service_io(
     getattr(host, method)(control=object())
     new = host.runner.requests[-1]
     assert len(host.runner.requests) == 2
-    assert old.work() == []
-    source.assert_not_called()
+    assert old.work() == ([] if method == "refresh_library" else [{"current": True}])
+    assert source.call_count == (0 if method == "refresh_library" else 1)
     # The superseded callback must not clear the new pending flag.
     old.ok([])
     assert host._library_refresh_pending if method == "refresh_library" else host._recent_refresh_pending
     assert new.work() == [{"current": True}]
-    assert source.call_count == 1
+    assert source.call_count == (1 if method == "refresh_library" else 2)
     new.ok([{"current": True}])
     assert len(host.runner.requests) == 2
 
@@ -130,10 +131,18 @@ def test_disposed_owner_does_not_execute_already_queued_source_io(
     getattr(host, method)()
     request = host.runner.requests[-1]
     host._closed = True
-    assert request.work() == []
+    if method == "refresh_recent":
+        # Pure Core read remains admitted; a detached GTK window cannot
+        # redirect it or publish the result.
+        source.return_value = [{"identity_id": "alice"}]
+        assert request.work() == [{"identity_id": "alice"}]
+        source.assert_called_once_with(identity_id="alice")
+    else:
+        # A costly scan is still skipped when its GTK owner is disposed.
+        assert request.work() == []
+        source.assert_not_called()
     request.ok([])
     request.err(RuntimeError("PRIVATE_STALE_ERROR"))
-    source.assert_not_called()
     assert len(host.runner.requests) == 1
 
 
@@ -161,7 +170,9 @@ def test_successful_empty_response_records_current_generation_only(
     getattr(host, method)()
     old = host.runner.requests[-1]
     _change_identity(host, "bob")
-    assert old.work() == []
+    assert old.work() == (
+        [] if method == "refresh_library" else [{"identity_id": "alice"}]
+    )
     old.ok([])
     assert getattr(host, marker, None) is None
     fresh = host.runner.requests[-1]
