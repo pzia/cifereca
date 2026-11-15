@@ -143,7 +143,7 @@ def test_real_bytes_copy_observe_reject_second_copy_then_confirm_remove(cycle):
     assert rig.journal.get(rig.consent.operation_id) is None
 
     copied = rig.copy(rig.consent)
-    assert copied.status == "completed"
+    assert copied.status == "completed", (copied.status, copied.reason)
     assert rig.checked, "source copy policy must independently attest"
     assert rig.final.read_bytes() == payload
     assert rig.source.read_bytes() == payload
