@@ -127,6 +127,22 @@ def contact_sheets(
     return names
 
 
+def _capture_fingerprint(
+    verified: dict[int, dict[tuple[str, str], Path]],
+) -> str:
+    """Bind a private review to the *actual PNG bytes*, not just Git HEAD.
+
+    Re-running the GTK scenario on the same commit may produce different
+    pixels. A completed UX checklist must not silently certify that rerun.
+    """
+    digest = hashlib.sha256()
+    for width, images in sorted(verified.items()):
+        for (stage, mode), path in sorted(images.items()):
+            digest.update(f"{width}\\0{stage}\\0{mode}\\0".encode("utf-8"))
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
 def build_review(
     root: Path, *, sizes: dict[int, tuple[int, int]] = SIZES,
     stages: tuple[str, ...] = STAGES, tile_width: int = 850,
@@ -145,6 +161,7 @@ def build_review(
         raise ValueError("Les deux résolutions proviennent de HEAD différents")
     if expected_sha is not None and revisions != {expected_sha}:
         raise ValueError("Captures réalisées sur un HEAD différent du checkout")
+    capture_fingerprint = _capture_fingerprint(verified)
     # Never place private screenshots in a public CI artifact destination.
     output = root / "modern-light-private-review"
     if output.is_symlink():
@@ -162,6 +179,8 @@ def build_review(
             stored = json.loads(prior_manifest.read_text(encoding="utf-8"))
             if stored.get("git_sha") != next(iter(revisions)):
                 raise ValueError("Revue privée existante issue d'un autre HEAD")
+            if stored.get("capture_fingerprint_sha256") != capture_fingerprint:
+                raise ValueError("Captures différentes sur le même HEAD : nouvelle revue UX requise")
         elif checklist.exists():
             raise ValueError("Grille UX préexistante sans manifeste vérifiable")
         sheets = {}
@@ -172,6 +191,7 @@ def build_review(
         manifest: dict[str, Any] = {
             "status": "VISUAL_REVIEW_REQUIRED",
             "git_sha": next(iter(revisions)),
+            "capture_fingerprint_sha256": capture_fingerprint,
             "widths": sorted(sizes),
             "verified_original_captures": sum(len(x) for x in verified.values()),
             "contact_sheets": sheets,
@@ -221,12 +241,14 @@ def verify_completed_review(
     """
     root = root.resolve(strict=True)
     revisions = set()
+    verified = {}
     for width, size in sizes.items():
         sha, _images = verify_capture_folder(
             root / f"modern-light-{width}", width=width, size=size,
             stages=stages,
         )
         revisions.add(sha)
+        verified[width] = _images
     if len(revisions) != 1:
         raise ValueError("Captures de HEAD différents")
     sha = next(iter(revisions))
@@ -245,6 +267,8 @@ def verify_completed_review(
                 2 * len(stages) * len(sizes)
             )):
         raise ValueError("Manifeste de revue différent des captures")
+    if manifest.get("capture_fingerprint_sha256") != _capture_fingerprint(verified):
+        raise ValueError("Captures différentes sur le même HEAD : grille UX périmée")
     # Bound the entire CSV before parsing; notes remain private and cannot
     # contaminate logs, GitHub comments or the verdict receipt.
     if checklist_path.stat().st_size > 256 * 1024:
@@ -284,6 +308,7 @@ def verify_completed_review(
     receipt = {
         "status": "CHECKLIST_VERIFIED",
         "git_sha": sha,
+        "capture_fingerprint_sha256": manifest["capture_fingerprint_sha256"],
         "checklist_sha256": hashlib.sha256(raw).hexdigest(),
         "reviewed_rows": len(seen),
         "findings": findings,
