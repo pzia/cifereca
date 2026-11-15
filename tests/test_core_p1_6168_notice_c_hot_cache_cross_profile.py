@@ -101,6 +101,10 @@ def test_public_cross_profile_same_n2_and_n3_without_get_or_reparse(
         # A's view has attested the exact document; same service/view cache is
         # shared with B without involving the active viewer identity.
         a = hit(initial, first.document)
+        # The list widget asks the SAME DocumentRef; a physical warm source
+        # yields a preview or the validated original after decode fallback.
+        list_image = hit(initial, first.document, variant="list")
+        assert list_image == cache or list_image.parent == loader.preview_root
         source_reads = initial.stats()["n2_miss"]
         b = hit(initial, first.document)
         assert a == b == cache
