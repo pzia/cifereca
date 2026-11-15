@@ -15,7 +15,7 @@ def _method(name):
     fn = next(x for x in cls.body if isinstance(x, ast.FunctionDef)
               and x.name == name)
     scope = {}
-    exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0), fn],
              type_ignores=[])), str(ROOT / "book_widgets.py"), "exec"), scope)
     return scope[name]
 
