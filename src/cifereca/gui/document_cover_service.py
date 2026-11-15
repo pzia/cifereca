@@ -851,7 +851,23 @@ class DocumentCoverService:
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
             self._closed = True
+            # The widget's CoverReadRequest must be canceled as well as its
+            # service-side observer removed. Otherwise a worker that captured
+            # callbacks before close can post a late GTK rebind to a disposed
+            # window, even though _closed revoked the N2 selection.
+            handles = {handle for bucket in self._source_subscriptions.values()
+                       for handle, _callback in bucket.values()}
+            handles.update(
+                handle for waiters in self._read_waiters.values()
+                for handle, _callback in waiters
+            )
+            handles.update(
+                handle for waiters in self._qualify_waiters.values()
+                for handle, _callback in waiters
+            )
             self._snapshots.clear()
             self._source_subscriptions.clear()
             self._source_subscription_count = 0
@@ -866,6 +882,10 @@ class DocumentCoverService:
             self._qualify_active.clear()
             self._qualify_waiters.clear()
             self._qualify_cooldown.clear()
+        # Cancellation may touch N3 or unsubscribe from this service. Do not
+        # hold the service lock while calling foreign request implementations.
+        for handle in handles:
+            handle.cancel()
         self._qualify_pool.shutdown(wait=False, cancel_futures=True)
         if self._read_pool is not None:
             self._read_pool.shutdown(wait=False, cancel_futures=True)
