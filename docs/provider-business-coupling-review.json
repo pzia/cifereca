@@ -1396,6 +1396,21 @@
         "tests/test_core_p0_5975_business_coupling_ledger.py"
       ],
       "pr": "#6141"
+    },
+    {
+      "id": "legacy-sqlite-v5-kobo-cardinality-identity-repair",
+      "classification": "legacy_mutating_cutover",
+      "journey": "Historical SQLite schema v4->v5 one-time repair of duplicated Kobo connections/accounts and identity ADEPT bindings",
+      "productive_caller": "Storage.__init__ -> Storage._migrate(db) when persisted schema_version < 5, after v4 identity tables exist; v15 replaces the historic supplier-specific unique indexes with provider-neutral policy triggers",
+      "effect": "Splits duplicate old Kobo connections into deterministic derived identities; reassigns matching account, backup, entitlement and receipt identity_id; deletes surplus cached provider_accounts and obsolete ADEPT account-scope bindings, deduplicates ADEPT identity profiles. Existing schema v5+ never replays.",
+      "authority": "Exact pre-v5 persisted provider/credential/identity rows and historical Kobo one-connection cardinality. Not inferred from plugin descriptors, HTTP, filesystem path, or from any new entitlement/consent proof.",
+      "replacement_contract": "Retain old v4 database repair until a versioned, provider-neutral historical migration has tests for multiple credentials, account scopes, archives, ADEPT, duplicate identity collisions and atomic rollback; no data loss or silent change of existing v5+ stores.",
+      "tests": [
+        "tests/test_identities_081.py",
+        "tests/test_core_p0_5743_sqlite_cardinality_v15.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6154"
     }
   ]
 }
