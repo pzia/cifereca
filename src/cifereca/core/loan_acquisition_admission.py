@@ -39,7 +39,9 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
         return AutomaticLoanAdmission(refusal={
             "status": "attention_required",
             "loan_id": loan.id if type(loan.id) is str else None,
-            "code": "adept_identity_unproven",
+            "code": ("adept_loan_identity_conflict" if loan.id == ""
+                     else "adept_identity_unproven")
+            if type(loan.id) is str else "adept_identity_unproven",
             "reason": "source_scope_unproven", "retry": "explicit_only",
         })
     # Pin the exact source coordinates across the storage boundary. A
