@@ -97,3 +97,30 @@ def test_unrelated_kind_cannot_infer_new_book_from_acsm():
         assert [args[3] for event, args in displayed if event == "finished"] == [True]
     finally:
         runner.close()
+
+
+def test_isolated_submit_adapter_never_mints_typed_acquisition_receipt():
+    """Legacy AST-only submit() hosts cannot bypass a missing Core classifier."""
+    from tests.test_core_ui_1132_task_runner_shutdown_race import (
+        _submit, _runner as isolated_runner,
+    )
+    submit, pending = _submit()
+    runner, window, events = isolated_runner()
+    window._activity_result = Mock()
+    window.show_error = Mock()
+
+    class Finished:
+        def result(self):
+            return {"status": "complete"}
+        def add_done_callback(self, callback):
+            callback(self)
+
+    runner.pool = NS(submit=lambda _priority, _fn: Finished())
+    submit(runner, "Livre privé", lambda: {"status": "complete"},
+           kind="loan-acquisition")
+    for callback, args in pending:
+        callback(*args)
+    finished = [values for event, values in events if event == "finished"]
+    assert len(finished) == 1
+    assert finished[0][3] is False
+    assert finished[0][4] == "Récupération du livre non confirmée"
