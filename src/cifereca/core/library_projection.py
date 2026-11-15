@@ -91,6 +91,13 @@ def refresh_history(
     ):
         raise ProviderConfigurationError("history_source_binding_unavailable")
     rows = session.history(account)
+    # A lazy/malicious iterable could begin its provider I/O only after
+    # this post-read fence. The legacy history ABI promises a materialized
+    # list of native HistoryItem rows; reject generators and custom objects
+    # before any presentation, cache write or row-property access.
+    if (type(rows) is not list or len(rows) > 100_000
+            or any(type(row) is not HistoryItem for row in rows)):
+        raise ProviderConfigurationError("history_inventory_invalid")
     if not self._history_source_lease_current(
         account, session, scope=source_scope, epoch=source_epoch,
     ):
