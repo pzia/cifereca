@@ -337,7 +337,10 @@ def test_gui_renewal_never_proclaims_success_from_unverified_post():
     ).read_text(encoding="utf-8")
     block = src.split("def _renew_result(", 1)[1]
     assert "loan_renewal_feedback(result)" in block
-    assert "self.service.renew(loan, confirmed=True)" in block
+    # The worker now captures the original Core service before scheduling;
+    # it must NOT reread self.service after a view/account rebind (P0 #5833).
+    assert "service = self.service" in block
+    assert "lambda: service.renew(loan, confirmed=True)" in block
     assert "success_toast=" not in block
     assert "Prêt prolongé" not in block
 
