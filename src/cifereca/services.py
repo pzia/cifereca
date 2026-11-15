@@ -4418,17 +4418,22 @@ class LibraryService:
         )
 
         def lock_source_intact() -> bool:
+            # Each live coordinate is read once. A concurrent mutation must
+            # not swap in a hostile equality object between type checking and
+            # equality; only plain native strings and None are compared.
+            live_id = getattr(loan, "id", None)
+            live_provider = getattr(loan, "source_provider", None)
+            live_credential = getattr(loan, "source_credential", None)
+            live_account = getattr(loan, "source_account_id", None)
+            live_record = getattr(loan, "record_id", None)
             return bool(
-                type(getattr(loan, "id", None)) is str
-                and loan.id == source_loan_id
-                and type(getattr(loan, "source_provider", None)) is str
-                and loan.source_provider == source_provider
-                and type(getattr(loan, "source_credential", None)) is str
-                and loan.source_credential == source_credential
-                and type(getattr(loan, "source_account_id", None)) in (str, type(None))
-                and getattr(loan, "source_account_id", None) == source_account
-                and type(getattr(loan, "record_id", None)) in (str, type(None))
-                and getattr(loan, "record_id", None) == source_record
+                type(live_id) is str and live_id == source_loan_id
+                and type(live_provider) is str and live_provider == source_provider
+                and type(live_credential) is str and live_credential == source_credential
+                and type(live_account) in (str, type(None))
+                and live_account == source_account
+                and type(live_record) in (str, type(None))
+                and live_record == source_record
             )
 
         try:
