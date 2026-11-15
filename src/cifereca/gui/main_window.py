@@ -30,6 +30,7 @@ from ..book_detail_metadata import detail_metadata_items, canonical_book_isbn, s
 from ..models import HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from ..services import LibraryService
 from .cover_loader import CoverLoader
+from .document_cover_service import DocumentCoverService
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
 from .book_actions import identity_has_attested_possession
 from .layout import MASTER_DETAIL_NARROW_WINDOW_WIDTH, master_detail_is_narrow
@@ -196,6 +197,9 @@ class MainWindow(Adw.ApplicationWindow):
         self.activity_feedback = ActivityFeedback(limit=20)
         self.ui_perf = ui_perf if ui_perf is not None else UiPerfMonitor()
         self.covers = CoverLoader(diagnostics=diagnostics, max_workers=6)
+        # All routes share one N2 document cache + one physical N3 loader.
+        # Neither cache is partitioned by the currently displayed profile.
+        self.document_covers = DocumentCoverService(self.covers)
         self.history_cover_resolver = HistoryCoverResolver(service, diagnostics)
         self.runner = TaskRunner(self)
         _TRACE_LOG.info("TRACE gui init pre-css")
