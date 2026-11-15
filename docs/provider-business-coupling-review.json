@@ -283,24 +283,6 @@
       "rationale": "Specific safety validation call is invoked before an archive return. It cannot be marked false positive, nor deleted without equivalent cross-owner collision guards."
     },
     {
-      "id": "site-b4a6753e2f0ac2d6b78c0992",
-      "classification": "safety_guard_pending_contract",
-      "journey": "W5 local filename relocation refuses typed Kobo SourceReference relink from historical backup",
-      "decision_group_id": "legacy-backup.w5-path-relocation-cutover",
-      "reachability": "productive",
-      "productive_caller": "artifact_runtime filename normalization calls Storage.relocate_local_path when moving an explicitly scoped user file",
-      "effect": "Before any mutation, refuses old-path relink if a matching typed Kobo SourceReference exists; prevents a mutable 0.7 locator from reassigning a canonical source",
-      "authority": "Canonical SourceReference A and placement provenance B are distinct from backup_items.local_path and user-visible filename",
-      "replacement_contract": "Scoped canonical OriginLink/Placement path relink with transactional exact proof; retire Kobo-specific relocation decision only after reviewed neutral condition",
-      "tests": [
-        "tests/test_core_p0_3185_relative_metadata_relocation.py",
-        "tests/test_core_p0_2789_rename_scope.py",
-        "tests/test_core_p0_3196_w5_directory_foreign_archive.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "An active veto around filesystem/SQLite rename is a safety requirement; not a right creation. It requires a tested generic replacement before removal."
-    },
-    {
       "id": "site-48985b6dd27a2ea911e7026d",
       "classification": "presentation_only",
       "journey": "Settings ADEPT profile binding status subtitle",
@@ -1221,6 +1203,24 @@
       ],
       "pr": "#6120",
       "in_ast_metric": false
+    },
+    {
+      "id": "struct-w5-neutral-typed-source-filename-veto",
+      "original": "Storage.relocate_local_path refused a canonical SourceReference matched to backup_items only for literal Kobo; identical historical-to-typed-source collision risks remained unguarded for Paris, Numilog and unknown providers.",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "At the same pre-mutation transaction point, join backup_items to source_references by exact provider_id, credential_id and edition_id for every provider, refusing a real filename change regardless of the typed source's account/identity. Preserve the fail-closed path collision and exact-owner checks and the user-scoped canonical Placement rename; never update the historical archive.",
+      "classification": "replaced_supplier_specific_w5_veto_with_provider_neutral_exact_source_guard",
+      "evidence": "The source-brand if provider_id == 'kobo' and provider-specific SQL predicate are physically removed from Storage.relocate_local_path. Synthetic SQLite tests cover four provider IDs (Kobo, Paris, Numilog and unregistered), different source borrower and profile, byte-for-byte rollback of all rows and original local file, independent provider/credential/edition non-collision, no-op compatibility and immutable archive path. The safety veto is strengthened, not removed; other W1 guards and the versioned cardinality migration remain outstanding.",
+      "tests": [
+        "tests/test_core_p0_5975_w5_neutral_source_relocation.py",
+        "tests/test_core_p0_3196_w5_directory_foreign_archive.py",
+        "tests/test_core_p0_3185_relocation_checkpoint_isolation.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6122",
+      "in_ast_metric": true,
+      "original_site_id": "site-b4a6753e2f0ac2d6b78c0992",
+      "retired_at_sha": "a4807403f58faf4911a706d71d6453595021af2f"
     }
   ],
   "guard_installations": [
@@ -1239,6 +1239,21 @@
       ],
       "pr": "#6003",
       "rationale": "old authority cannot resurrect after explicit cutover; no automatic migration, rights, or supplier I/O"
+    },
+    {
+      "id": "guard-w5-neutral-typed-source-old-path-veto",
+      "journey": "All-provider local filename normalization of a historical archive with typed SourceReference",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Reject a rename before canonical SQL changes if exact provider/credential/edition of a scoped historical locator has any typed SourceReference, including a different borrower/profile",
+      "authority": "Exact-source Core SourceReference already in SQLite, not archive path or the user-selected provider name",
+      "remaining_debt": "Explicit canonical OriginLink/Placement attested relink is separate; historical archive remains immutable and other W1 compatibility guards remain",
+      "replacement_contract": "Generic exact SourceReference relation checked within Storage.relocate_local_path savepoint without any supplier-specific branch",
+      "tests": [
+        "tests/test_core_p0_5975_w5_neutral_source_relocation.py",
+        "tests/test_core_p0_3196_w5_directory_foreign_archive.py"
+      ],
+      "pr": "#6122",
+      "rationale": "Cross-provider safety guard is intentionally retained, making removal of the former Kobo-specific gate an actual strengthened contract rather than cosmetic AST renaming"
     }
   ]
 }
