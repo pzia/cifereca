@@ -72,6 +72,13 @@ def test_search_cache_sync_and_progressive_replay_after_process_restart(tmp_path
         assert len(rows) == 1
         assert new_session.calls == 0  # No supplier fetch or reparsing.
         assert rows[0]._core_notice_cover_document_ref == ref
+        from cifereca.gui.search_document_cover_bridge import exact_remote_search_document
+        from tests.test_core_p1_6168_search_remote_document_gateway import host
+        # The actual Search list/detail bridge must consume this cached Core
+        # stamp, not create another search-exact N2 source after restart.
+        window, _, row_key = host(rows[0])
+        packet = exact_remote_search_document(window, rows[0], row_key)
+        assert packet is not None and packet.document == ref
         batches = []
         result = reopened.search_progressive(
             "Progressive Book", provider_id=new_session.provider_id,
