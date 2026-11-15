@@ -19,6 +19,11 @@ filtrable différemment.
   projetées. Les champs explicites déjà disponibles sont inchangés.
 - Conserver la sémantique de recherche multi-termes et des phrases de
   #6184, l'ordre diversifié du classement, et le garde ISBN source-exact.
+  **Un terme d'un seul caractère doit constituer un mot entier** : indexer
+  un résumé « Description publique » ne doit pas faire correspondre
+  `Livre B` à `Livre A` simplement grâce au « b » intérieur de
+  « publique ». C'est le garde déjà pratiqué par le champ `Sujet` ;
+  les expressions entre guillemets restent strictes dans un seul champ.
 - Les champs proviennent des clés publiques connues et de valeurs
   scalaires attestées. Ne jamais convertir un objet fournisseur, un
   dictionnaire arbitraire, un chemin ou une URL d'acquisition en texte
