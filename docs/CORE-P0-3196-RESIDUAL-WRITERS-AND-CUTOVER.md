@@ -10,6 +10,13 @@
 > échec atomique et préservation du registre canonique. Cette tranche retire
 > un **branchement fournisseur de sûreté**, non le miroir W1 non-Kobo pour
 > les sources encore non typées ; son retrait reste un chantier distinct.
+> **Précision AST :** après suppression du premier prédicat Kobo, le second
+> prédicat Kobo (archive-only toujours actif) hérite du même identifiant
+> ordinal `site-dd2ac28f46a8a720315de122` et la revue de son ancien
+> identifiant `site-d88574f6e28d059189c71da5` est réaffectée ; ni
+> disparition de ce dernier ni baisse brute AST ne prouvent un retrait de
+> garde ou de writer. Le retrait du préflight de marque est compté comme
+> **remplacement structurel**, sans crédit de retraite AST.
 
 
 > **Delta P0 #6138 (15/11/2026) — SourceReference neutralisée à l'entrée W1.**
