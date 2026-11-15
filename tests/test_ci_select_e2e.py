@@ -271,7 +271,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_local_widget(self):
         self.assertEqual(mod.select(["src/cifereca/gui/book_widgets.py"]),
-                         mod.SEARCH_GTK + mod.BOOK_DETAIL + mod.RECOMMENDATIONS_GTK + mod.BNF_COVERS)
+                         mod.SEARCH_GTK + mod.BOOK_DETAIL + mod.PLUGIN_SCROLL + mod.RECOMMENDATIONS_GTK + mod.BNF_COVERS)
         self.assertEqual(mod.select(["src/cifereca/gui/cover_loader.py"]),
                          mod.BOOK_DETAIL + mod.RECOMMENDATIONS_GTK + mod.BNF_COVERS)
 

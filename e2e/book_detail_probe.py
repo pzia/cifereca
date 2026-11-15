@@ -993,6 +993,80 @@ def main():
             checkpoint=closed_checkpoint,
         )
 
+    def verify_catalogue_tie_cover_gtk():
+        """#3680: real Gtk.Picture, offline image, no provider or network fetch."""
+        from types import SimpleNamespace
+        from PIL import Image
+        from cifereca.core.covers import CoverCandidate, resolve_cover
+        from cifereca.gui.book_widgets import CoverView
+
+        a = "https://public.example.org/catalogue-a.png"
+        b = "https://public.example.org/catalogue-b.png"
+        candidates = (
+            CoverCandidate(b, "catalog", "cat.b", "edition:verified", 80),
+            CoverCandidate(a, "catalog", "cat.a", "edition:verified", 80),
+        )
+        chosen = resolve_cover(
+            candidates, attested_book_identity="source:scoped:verified",
+        )
+        assert chosen.status == "selected" and chosen.url == a
+        assert resolve_cover(candidates).status == "ambiguous"
+
+        image_path = out / "synthetic-catalogue-cover.png"
+        Image.new("RGB", (16, 24), (84, 118, 149)).save(image_path)
+        expected_bytes = image_path.read_bytes()
+        calls = []
+
+        class OfflineLoader:
+            diagnostics = None
+
+            def load(self, url, callback, *, priority=10, force=False):
+                assert url == chosen.url and not force
+                calls.append(url)
+                callback(image_path)
+                return SimpleNamespace(cancel=lambda: None)
+
+            def note_ui_applied(self):
+                return None
+
+            def note_ui_decode(self, duration_ms):
+                assert duration_ms >= 0
+
+            def note_ui_stale(self):
+                raise AssertionError("Catalogue cover callback became stale")
+
+            def note_ui_failed(self):
+                raise AssertionError("Real GTK cover decode failed")
+
+        loader = OfflineLoader()
+        # Gtk.Picture and Gdk.Texture are real; only byte delivery is offline.
+        probe = Gtk.Window(transient_for=window, title="Couverture catalogue — témoin")
+        probe.set_default_size(184, 246)
+        image = CoverView(width=124, height=188)
+        probe.set_child(image)
+        probe.present()
+        image.bind_url(loader, chosen.url)
+
+        def verify_first():
+            assert image.get_mapped()
+            assert image.picture.get_paintable() is not None
+            assert not image.placeholder.get_visible()
+            assert calls == [a]
+            image.bind_url(loader, chosen.url)
+            later(110, verify_second)
+
+        def verify_second():
+            assert image.picture.get_paintable() is not None
+            assert not image.placeholder.get_visible()
+            assert calls == [a, a]
+            assert image_path.read_bytes() == expected_bytes
+            report["checks"]["P1_4979_catalogue_tie_real_gtk_cover_rebind"] = True
+            probe.destroy()
+            image_path.unlink()
+            later(150, search_initial)
+
+        later(110, verify_first)
+
     class Application(Adw.Application):
         def __init__(self):
             super().__init__(application_id="org.cifereca.BookDetailUXE2E")
@@ -1012,7 +1086,7 @@ def main():
             if args.plugin_scroll_only:
                 later(450, start_plugin_scroll)
             else:
-                later(450, search_initial)
+                later(130, verify_catalogue_tie_cover_gtk)
         def do_shutdown(self):
             if window is not None:
                 if original_search_books[0] is not None:
