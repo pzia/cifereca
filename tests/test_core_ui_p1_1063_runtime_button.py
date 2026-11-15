@@ -144,3 +144,43 @@ def test_runtime_presentation_never_translates_unknown_into_adobe_ready():
         "status": "observed", "reason": "adept_acsm_capability_reported",
         "acsm_ready": True,
     })
+
+
+def test_queued_adept_probe_uses_original_core_after_window_replacement(monkeypatch):
+    host, editor, button, submits, reads, _ = _harness(monkeypatch)
+    original_core = host.service
+    button.emit("clicked")
+    args, _ = submits[-1]
+
+    def wrong_probe(_identity_id):
+        raise AssertionError("queued ADEPT inspection ran against rebound Core")
+
+    # Same visible identity and unchanged UI generations still must not
+    # authorize publishing an old Core's private runtime observation.
+    host.service = NS(
+        storage=original_core.storage,
+        normal_paris_adept_status=original_core.normal_paris_adept_status,
+        check_normal_paris_adept_runtime=wrong_probe,
+    )
+    result = args[1]()
+    assert result["identity_id"] == "alice"
+    assert reads == ["alice"]
+    args[2](result)
+    assert not hasattr(editor["normal_adept_status"], "subtitle")
+    assert button.sensitive is True
+
+
+def test_queued_adept_probe_keeps_method_bound_at_click(monkeypatch):
+    host, editor, button, submits, reads, _ = _harness(monkeypatch)
+    button.emit("clicked")
+    args, _ = submits[-1]
+    host.service.check_normal_paris_adept_runtime = (
+        lambda _identity_id: (_ for _ in ()).throw(
+            AssertionError("live method was rebound after admission")
+        )
+    )
+    assert args[1]()["reason"] == "adept_acsm_capability_reported"
+    assert reads == ["alice"]
+    args[2]({"status": "observed", "reason": "adept_acsm_capability_reported",
+             "acsm_ready": True})
+    assert "Autorisation Adobe" in editor["normal_adept_status"].subtitle

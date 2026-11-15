@@ -474,7 +474,7 @@ def test_fixed_anchor_cohort_refuses_unknown_revisions_or_missing_sha():
 
 
 def test_adept_settings_and_runtime_provenance_ast_review_is_traceable():
-    """Five previously unknown signals remain protected, not counted as deletions."""
+    """Four live AST signals plus a bound-method call remain protected, not deleted."""
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -485,9 +485,9 @@ def test_adept_settings_and_runtime_provenance_ast_review_is_traceable():
     )
     expected = {
         "site-48985b6dd27a2ea911e7026d": "presentation_only",
-        "site-e49e284729574d20512f4033": "safety_guard_pending_contract",
-        "site-6df69f482e5a9d7f97c2be97": "safety_guard_pending_contract",
-        "site-652521330913780fa6c34776": "safety_guard_pending_contract",
+        "site-0d55ea2282fddc404d954e89": "safety_guard_pending_contract",
+        
+        "site-1e0a66caf63d7b19feef68dd": "safety_guard_pending_contract",
         "site-62d608c21d04153e918b5bb3": "safety_guard_pending_contract",
     }
     records = {
@@ -502,6 +502,22 @@ def test_adept_settings_and_runtime_provenance_ast_review_is_traceable():
         assert row["replacement_contract"] and row["authority"]
         assert all((root / path).is_file() for path in row["tests"])
     assert all(not row["retirement_pr"] for row in records.values())
+    # The old lexical TaskRunner lambda vanished after pinning the bound
+    # method, but its named runtime operation is still live: no fake
+    # provider-specific business retirement is credited to this AST delta.
+    old_call = "site-6df69f482e5a9d7f97c2be97"
+    assert old_call not in {row["id"] for row in payload["reviews"]}
+    guard = next(
+        row for row in payload["guard_installations"]
+        if row["id"] == "guard-settings-adept-click-bound-runtime-probe-6364"
+    )
+    assert guard["classification"] == "safety_guard_pending_contract"
+    assert old_call in guard["remaining_debt"]
+    assert "probe_method" in guard["effect"]
+    assert guard["pr"] == "#6364"
+    assert all((root / path).is_file() for path in guard["tests"])
+    assert not any(row.get("original_site_id") == old_call
+                   for row in payload["retirements"])
 
 
 def test_retired_w1_completion_marker_structural_evidence():

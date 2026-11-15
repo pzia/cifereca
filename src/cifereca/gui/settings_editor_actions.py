@@ -198,8 +198,11 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 return
             # A runtime check concerns the SAVED binding, not an unsaved
             # draft. A save/reopen is required before testing changed inputs.
+            # Pin the Core as soon as the user admits the explicit probe.
+            # The queued worker must never inspect a replacement window Core.
+            admitted_core = self.service
             saved = self.config.identity(saved_id) or {}
-            stored_profile = self.service.storage.adept_profile_binding_get(
+            stored_profile = admitted_core.storage.adept_profile_binding_get(
                 "identity", saved_id,
             ) or ""
             stored_primary = saved.get("primary_paris_connection_id") or ""
@@ -210,12 +213,13 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     "À vérifier · enregistrez les modifications avant le contrôle ADEPT."
                 )
                 return
-            start_status = self.service.normal_paris_adept_status(saved_id)
+            start_status = admitted_core.normal_paris_adept_status(saved_id)
             if start_status.get("status") != "ready":
                 e["normal_adept_status"].set_subtitle(
                     _local_adept_binding_caption(start_status)
                 )
                 return
+            runtime_probe = admitted_core.check_normal_paris_adept_runtime
             generations = (
                 getattr(self, "_identity_context_generation", None),
                 getattr(self, "_account_context_generation", None),
@@ -227,6 +231,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             def current():
                 return (
                     not getattr(self, "_closed", False)
+                    and self.service is admitted_core
                     and not e.get("deleted")
                     and (page_lifetime is None or page_lifetime.alive)
                     and generations == (
@@ -236,7 +241,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     and e["adept_profile"].get_text() == stored_profile
                     and e["primary_paris_connection_id"].get_text()
                         == stored_primary
-                    and self.service.normal_paris_adept_status(saved_id)
+                    and admitted_core.normal_paris_adept_status(saved_id)
                         == start_status
                 )
 
@@ -264,7 +269,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             try:
                 self.runner.submit(
                     "Vérification ADEPT…",
-                    lambda: self.service.check_normal_paris_adept_runtime(saved_id),
+                    lambda: runtime_probe(saved_id),
                     done, error, control=button,
                 )
             except Exception:
@@ -333,12 +338,19 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
 
             def explicit_probe(_button, *, e=editor, saved=dict(data),
                                pid=provider_id):
+                # Admission belongs to the Core at the explicit click, not to
+                # a later MainWindow binding while TaskRunner waits.
+                admitted_core = self.service
+                generations = (
+                    getattr(self, "_identity_context_generation", None),
+                    getattr(self, "_account_context_generation", None),
+                )
                 # Closed, value-free diagnostic for the repeated field case
                 # where no provider HTTP request follows an attempted test.
                 # No credential, account ID, draft or exception is logged.
                 def record(phase, status="ok"):
                     try:
-                        self.service.diagnostics.add(
+                        admitted_core.diagnostics.add(
                             "PLUGIN", "explicit provider probe UI", status,
                             detail={"provider_id": pid, "phase": phase})
                     except Exception:
@@ -371,6 +383,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         "Enregistrer les modifications avant de tester le compte.")
                     record("blocked_unsaved", "warning")
                     return
+                probe_method = admitted_core.explicit_provider_diagnostic
                 e["_probe_pending"] = True
                 button = e["explicit_probe_button"]
                 button.set_sensitive(False)
@@ -382,6 +395,18 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     if page_lifetime is None or page_lifetime.alive:
                         button.set_sensitive(True)
 
+                def callback_current():
+                    return (
+                        self.service is admitted_core
+                        and not getattr(self, "_closed", False)
+                        and not e.get("deleted")
+                        and (page_lifetime is None or page_lifetime.alive)
+                        and generations == (
+                            getattr(self, "_identity_context_generation", None),
+                            getattr(self, "_account_context_generation", None),
+                        )
+                    )
+
                 def done(result):
                     release()
                     status = getattr(result, "status", None)
@@ -392,7 +417,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         "completed_unverified" if observed else "unavailable",
                         "ok" if (live or observed) else "warning",
                     )
-                    if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
+                    if callback_current():
                         e["explicit_probe_status"].set_subtitle(
                             "Connexion vérifiée pour ce test. "
                             "Session temporaire refermée ; aucune modification du compte."
@@ -404,7 +429,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 def error(_exc):
                     release()
                     record("failed", "warning")
-                    if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
+                    if callback_current():
                         e["explicit_probe_status"].set_subtitle(
                             "Diagnostic refusé. Enregistrer, activer le compte "
                             "et vérifier l’option de recette.")
@@ -412,7 +437,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 try:
                     self.runner.submit(
                         "Recette HTTP fournisseur…",
-                        lambda: self.service.explicit_provider_diagnostic(
+                        lambda: probe_method(
                             identity_id=current["identity_id"], provider_id=pid,
                             credential_id=current["id"], user_consent=True,
                         ),
