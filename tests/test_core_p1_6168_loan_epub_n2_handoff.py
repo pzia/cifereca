@@ -90,14 +90,6 @@ def test_no_cross_profile_or_unproven_placement_join(linked, mutation):
     assert exact_attested_loan_epub_cover(loan, ({**row, **mutation},)) is None
 
 
-@pytest.mark.parametrize("change", [
-    {"id": "other-loan"},
-    {"record_id": "other-item"},
-    {"identity_id": "bob"},
-    {"source_credential": "credential-b"},
-    {"source_account_id": "borrower-b"},
-    {"source_provider": "different-provider"},
-])
 def test_later_library_descriptive_thumbnail_must_not_revoke_core_loan_link(linked):
     loan, row, facts = linked
     # The Core loan entitlement proof was validated on the original local
@@ -111,6 +103,14 @@ def test_later_library_descriptive_thumbnail_must_not_revoke_core_loan_link(link
     assert exact_attested_loan_epub_cover(loan, (later,)) is facts
 
 
+@pytest.mark.parametrize("change", [
+    {"id": "other-loan"},
+    {"record_id": "other-item"},
+    {"identity_id": "bob"},
+    {"source_credential": "credential-b"},
+    {"source_account_id": "borrower-b"},
+    {"source_provider": "different-provider"},
+])
 def test_borrower_and_loan_coordinates_must_match(linked, change):
     from dataclasses import replace
     loan, row, _facts = linked
