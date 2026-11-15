@@ -277,3 +277,32 @@ def test_projection_never_changes_inputs_or_calls_storage():
     assert r.rows[0].action == "upload_candidate"
     assert result.books[0].executable is False
     assert all(not hasattr(x, "execute") for x in result.books)
+
+def test_remove_with_exact_completed_receipt_is_only_a_review_label():
+    l = library(books=(book(desired="remove"),))
+    r = report(rows=(decision(
+        action="remove_candidate", desired="remove", observed="present",
+        reason="managed_removal_requires_confirmation",
+    ),))
+    result = project(r, l)
+    assert result.status == "scanned"
+    assert len(result.books) == 1
+    assert "Retrait à examiner" in result.books[0].state_label
+    assert "confirmation distincte" in result.books[0].state_label
+    assert "Copie gérée par Cifereca" in result.books[0].reason_label
+    assert result.books[0].executable is False
+    assert result.executable is False
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"desired": "keep"}, {"observed": "missing"},
+    {"reason": "unmanaged_or_changed_file"},
+])
+def test_malformed_removal_candidate_never_reaches_book_detail(kwargs):
+    candidate = dict(
+        action="remove_candidate", desired="remove", observed="present",
+        reason="managed_removal_requires_confirmation",
+    )
+    candidate.update(kwargs)
+    l = library(books=(book(desired="remove"),))
+    assert project(report(rows=(decision(**candidate),)), l).status == "unverified"
