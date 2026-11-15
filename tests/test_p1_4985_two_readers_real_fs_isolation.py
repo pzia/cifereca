@@ -18,6 +18,9 @@ from cifereca.core import device_usb_removal_execute as removal_execute
 from cifereca.core import device_usb_removal_review as removal_review
 from cifereca.core.device_usb_sync_engine import UsbSyncResult
 from tests.test_p1_4985_usb_broker_real_fs_acceptance import live_broker
+from tests.test_p1_2854_usb_removal_review import completed_copy
+from tests.test_p1_2854_usb_live_source import live_args
+from tests.test_p1_2854_usb_copy_preparation import copy_review
 
 
 @pytest.fixture
