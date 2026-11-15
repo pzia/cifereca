@@ -17,7 +17,11 @@ _TRACE_LOG = logging.getLogger("cifereca")
 def activate_identity(window, identity_id: str) -> None:
     if getattr(window, '_closed', False):
         return
-    identity = window.service.identity_by_id(identity_id)
+    # Pin the Core instance before changing the selected identity. Once
+    # queued, its explicit identity read must not rebound to a newer GTK
+    # window service, even when that service uses the same identity ID.
+    service = window.service
+    identity = service.identity_by_id(identity_id)
     if identity is None:
         raise ValueError("Identité inconnue")
     current = window.service.current_identity
@@ -98,9 +102,9 @@ def activate_identity(window, identity_id: str) -> None:
         window._render_library([])
         window.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")
     def identity_loaded(rows: list[Loan]) -> None:
-        if getattr(window, '_closed', False):
+        if getattr(window, '_closed', False) or window.service is not service:
             return
-        if not window.service.current_identity or window.service.current_identity.identity_id != identity.identity_id:
+        if not service.current_identity or service.current_identity.identity_id != identity.identity_id:
             return
         if not window._identity_request_current(identity.identity_id, identity_generation):
             return
@@ -113,7 +117,7 @@ def activate_identity(window, identity_id: str) -> None:
         window._activity_result(f"Identité chargée : {identity.label}")
     window.runner.submit(
         f"Chargement de {identity.label}…",
-        lambda: window.service.refresh_identity_loans(force=False, identity_id=identity.identity_id),
+        lambda: service.refresh_identity_loans(force=False, identity_id=identity.identity_id),
         identity_loaded,
         priority=TaskPriority.USER_ACTION,
         kind="identity",
