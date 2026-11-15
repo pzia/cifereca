@@ -519,6 +519,11 @@ class BookListCell(Gtk.Box):
             return
         document = getattr(item, "_cover_document_ref", None)
         service = getattr(self.window, "document_covers", None)
+        if document is not None and service is None:
+            # A proved EPUB cannot silently lose N1 priority because the
+            # N2 gateway is unavailable. Neutral placeholder, never URL.
+            self.cover.bind_url(self.cover_loader, None, priority=10)
+            return
         if document is not None and service is not None:
             if (getattr(item, "_cover_local_evidence", None) is not None
                     and not self._admit_core_local_cover(item, service, document)):
@@ -607,7 +612,9 @@ class BookListCell(Gtk.Box):
             self._meta_request = None
         document = getattr(item, "_cover_document_ref", None)
         service = getattr(self.window, "document_covers", None)
-        if document is not None and service is not None:
+        if document is not None and service is None:
+            self.cover.bind_url(self.cover_loader, None, priority=10)
+        elif document is not None and service is not None:
             # A source selected by N1/N2 is resolved ONCE; a warm URL cache
             # cannot displace a proved EPUB, nor can a recycled row reuse a
             # stale DocumentRef from a different account/Placement.
