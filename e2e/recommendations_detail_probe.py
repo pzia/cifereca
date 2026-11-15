@@ -325,6 +325,50 @@ def main():
         assert query.widget.get_parent() is not parameters
         assert query.widget.get_mapped() and store.get_n_items() == 3
         report["checks"]["P1_4761_gtk_single_row_calculation_strip"] = True
+
+        # #4761: exercise the *actual* Gtk.ListView sort selector. The
+        # diversified engine rank is intentionally not alphabetical. A view
+        # sort may change row positions but NEVER the exact edition keys,
+        # selected catalogue scope, ranking generation or provider requests.
+        sort_widget = query._local_sort
+        assert isinstance(sort_widget, Gtk.DropDown)
+        ranked_original = list(view._ranked)
+        view._ranked = [ranked_original[2], ranked_original[0], ranked_original[1]]
+        view._render()
+        def titles_and_keys():
+            return [
+                (store.get_item(i).title, store.get_item(i).key)
+                for i in range(store.get_n_items())
+            ]
+        baseline = titles_and_keys()
+        assert [title for title, _ in baseline] == [
+            "Livre C", "Livre A", "Livre B",
+        ]
+        exact_keys = dict(baseline)
+        sort_widget.set_selected(2)  # Tri · Titre A–Z
+        assert query.local_sort_key() == "title"
+        assert [title for title, _ in titles_and_keys()] == [
+            "Livre A", "Livre B", "Livre C",
+        ]
+        assert dict(titles_and_keys()) == exact_keys
+        assert "Tri : titre A–Z" in view._summary.get_text()
+        sort_widget.set_selected(1)  # Tri · Affinité décroissante
+        assert query.local_sort_key() == "affinity"
+        assert [title for title, _ in titles_and_keys()] == [
+            "Livre A", "Livre B", "Livre C",
+        ]
+        sort_widget.set_selected(0)  # Tri · Ordre recommandé
+        assert query.local_sort_key() == "rank"
+        assert titles_and_keys() == baseline
+        assert "Tri :" not in view._summary.get_text()
+        view._ranked = ranked_original
+        view._render()
+        assert [title for title, _ in titles_and_keys()] == [
+            "Livre A", "Livre B", "Livre C",
+        ]
+        assert view._generation == generation and not state["searches"]
+        report["checks"]["P1_4761_real_gtk_local_sort_stable_exact_keys"] = True
+
         query.provider.buttons["fixture"].set_active(True)
         assert store.get_n_items() == 1
         query.provider.buttons["second"].set_active(True)
