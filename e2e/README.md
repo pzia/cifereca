@@ -190,7 +190,9 @@ python3 e2e/run.py --scenario recommendations-detail-1366
 Les scénarios Search/Recommandations 1024, 1366 et 1600 px, exécutés sur
 **le même HEAD, le même livre synthétique attesté et dans le même thème GTK
 réellement observé**, alimentent
-trois planches privées côte à côte **par thème**. Après passage des recettes
+**neuf planches privées côte à côte par thème** (trois largeurs,
+chacune en comparaison documentaire + filtres + états) à partir de
+**18 PNG originaux vérifiés par thème**. Après passage des recettes
 sur l'hôte GTK/X11 habilité :
 
     for mode in light dark; do
@@ -240,6 +242,31 @@ toujours être inspectés.
 Le manifeste privé retient l'empreinte du livre synthétique. Cette
 égalité de fixture **ne certifie aucune jointure réelle de fournisseur**,
 couverture empruntée, ni appariement documentaire d'un compte utilisateur.
+
+#### Trois preuves distinctes par largeur (sans jointure artificielle)
+
+- **`pair-<largeur>.png`** : seules ces deux captures comparent
+  **la même notice synthétique** réellement sélectionnée, avec titre,
+  auteur, sujet, source et édition attestés dans les deux panneaux GTK.
+- **`pair-<largeur>-filters.png`** : vraies étapes déjà capturées
+  `07-response-facets` (Recherche, popover des facettes) et
+  `00b-keyboard-local-filter` (Recommandations, filtre clavier XTEST).
+  **Les livres et contextes sont distincts** ; comparer l'affordance et
+  le focus, pas une édition.
+- **`pair-<largeur>-states.png`** : vraies étapes
+  `06-stale-local-reply-ignored` (Recherche, réponse locale périmée)
+  et `08-exact-in-place-unverified-holdings` (Recommandations,
+  disponibilités non actualisées). Les états sont différents mais
+  **réels et explicitement qualifiés** pour l'axe partiel/erreur.
+
+Les reçus `screen.json` doivent confirmer les contrôles GTK/XTEST
+propres à chaque étape. Une capture absente, substituée, altérée, d'un
+autre HEAD, d'un autre thème ou un contrôle d'état manquant **empêche
+de créer ou de revérifier la grille**. Toutes les **18 empreintes par thème**
+sont intégrées au fingerprint privé : modifier un simple état de filtre
+ou d'erreur sur le même commit invalide la grille UX antérieure. Les
+anciens reçus fondés uniquement sur les deux vues stables doivent être
+repris sur le nouveau HEAD ; aucun PNG n'est publié dans GitHub Actions.
 
 Les dossiers `e2e-artifacts/light/search-recommendations-private-review/`
 et `e2e-artifacts/dark/search-recommendations-private-review/` sont
