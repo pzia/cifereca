@@ -1063,7 +1063,12 @@ def main():
             report["checks"]["P1_4979_catalogue_tie_real_gtk_cover_rebind"] = True
             probe.destroy()
             image_path.unlink()
-            later(150, search_initial)
+            # A transient GTK witness can steal X11 keyboard focus from
+            # MainWindow. Restore the main toplevel before the pre-existing
+            # XTEST Tab/Shift-Tab detail recipe; never leave the focus on a
+            # destroyed GTK probe when checking native keyboard navigation.
+            window.present()
+            later(450, search_initial)
 
         later(110, verify_first)
 
