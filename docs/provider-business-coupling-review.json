@@ -455,7 +455,7 @@
       "reachability": "productive"
     },
     {
-      "id": "site-8a3bfdc2f84626252dc83278",
+      "id": "site-5b14691c1f64b70cd9f27da5",
       "classification": "safety_guard_pending_contract",
       "journey": "Explicit reacquisition of a protected Paris digital loan",
       "productive_caller": "LibraryService.reacquire_digital_loan -> _reacquire_digital_loan_impl under acquisition lock",
@@ -467,12 +467,12 @@
         "tests/test_core_p0_5851_dual_grant_conflict.py"
       ],
       "retirement_pr": "",
-      "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto.",
+      "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto. Revue réancrée après la garde native de réacquisition explicite #6245 : exigence d'admission Paris conservée, aucun retrait AST ni permission nouvelle.",
       "decision_group_id": "loan.explicit-reacquire-adept-borrower",
       "reachability": "productive"
     },
     {
-      "id": "site-49e03148fdc5ed80a1610367",
+      "id": "site-6eb4621cd5425b09c6a9cee5",
       "classification": "safety_guard_pending_contract",
       "journey": "Explicit reacquisition of a protected Paris digital loan",
       "productive_caller": "LibraryService.reacquire_digital_loan -> _reacquire_digital_loan_impl under acquisition lock",
@@ -484,7 +484,7 @@
         "tests/test_core_p0_5851_dual_grant_conflict.py"
       ],
       "retirement_pr": "",
-      "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto.",
+      "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto. Revue réancrée après la garde native de réacquisition explicite #6245 : exigence d'admission Paris conservée, aucun retrait AST ni permission nouvelle.",
       "decision_group_id": "loan.explicit-reacquire-adept-borrower",
       "reachability": "productive"
     },
