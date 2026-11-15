@@ -1740,15 +1740,6 @@ def _public_catalog_url(
         return None
 
 
-def _numilog_public_catalog_url(
-    value: Any, *, cover: bool = False, evidence: str | None = None,
-) -> str | None:
-    """Compatibility for existing plugin callers; no supplier policy here."""
-    return _public_catalog_url(
-        value, cover=cover, evidence=evidence, provider_id="numilog",
-    )
-
-
 _PUBLIC_SEARCH_TEXT_FIELDS = (
     "awards", "prizes", "literary_prizes", "keywords", "themes", "tags",
     "summary", "synopsis",
