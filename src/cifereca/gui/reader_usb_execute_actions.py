@@ -205,7 +205,8 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
             operation_id, book.artifact_id, book.target_relative_path,
         )
 
-    def execute(candidate: _RemovalCandidate) -> UsbSyncResult:
+    def execute(candidate: _RemovalCandidate, check_scope) -> UsbSyncResult:
+        check_scope()
         if not exact_intent():
             return UsbSyncResult("blocked")
         live = mounted()
@@ -214,6 +215,7 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
                 or copy_id() != candidate.copy_operation_id
                 or not exact_intent()):
             return UsbSyncResult("blocked")
+        check_scope()
         now = int(time.time())
         consent = UsbRemovalConsent(
             identity_id, device_id, fingerprint, candidate.artifact_id,
@@ -226,6 +228,7 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
         return broker.execute_one(
             confirmation=consent, mountpoint=candidate.mountpoint,
             expected_profile_epoch=account_epoch,
+            check_cancelled=check_scope,
         )
 
     def clicked(_button) -> None:
@@ -238,6 +241,33 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
             return
         nonce = object()
         window._reader_usb_execute_nonce = nonce
+        window._reader_usb_execute_control = button
+
+        def worker_scope_current() -> None:
+            # Worker-thread check: read only atomic Python scope tokens, no
+            # GTK widgets, models, signals or visual state. The originating
+            # button's unroot signal revokes the token on detail replacement.
+            if (getattr(window, "_closed", False)
+                    or getattr(window, "_reader_usb_execute_nonce", None) is not nonce
+                    or getattr(window, "_reader_usb_execute_control", None) is not button
+                    or getattr(getattr(service, "current_identity", None),
+                               "identity_id", None) != identity_id
+                    or getattr(service, "_account_context_epoch", None) != account_epoch
+                    or getattr(window, "_reader_scope_identity", None) != identity_id
+                    or getattr(window, "_reader_selected_device_id", None) != device_id
+                    or getattr(window, "_reader_library_snapshot", None) is not snapshot
+                    or getattr(window, "_reader_items", {}).get(book.key) is not book
+                    or (getattr(window, "_identity_context_generation", None),
+                        getattr(window, "_account_context_generation", None),
+                        getattr(window, "_reader_selection_generation", None)) != generation
+                    or getattr(window, "_route_display_token", None) is not route):
+                raise RuntimeError("reader_usb_selection_scope_revoked")
+
+        def prepare_work():
+            worker_scope_current()
+            candidate = prepare()
+            worker_scope_current()
+            return candidate
 
         def active() -> bool:
             return (current()
@@ -302,7 +332,8 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
                     )
                     window.runner.submit(
                         "Retirer la copie USB gérée…",
-                        lambda: execute(candidate), ok=finished, err=rejected,
+                        lambda: execute(candidate, worker_scope_current),
+                        ok=finished, err=rejected,
                         control=button, priority=TaskPriority.USER_ACTION,
                         kind="maintenance", origin="user",
                     )
@@ -317,11 +348,18 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
             "aucun fichier supprimé."
         )
         window.runner.submit(
-            "Vérifier un retrait USB géré…", prepare, ok=ready, err=rejected,
+            "Vérifier un retrait USB géré…", prepare_work, ok=ready, err=rejected,
             control=button, priority=TaskPriority.USER_ACTION,
             kind="maintenance-inspection", origin="user",
         )
 
+    def unrooted(_button):
+        # GTK main thread: replacing or leaving the selected detail revokes
+        # the exact clicked control. Closing a modal does not unroot it.
+        if getattr(window, "_reader_usb_execute_control", None) is button:
+            window._reader_usb_execute_nonce = None
+
+    button.connect("unroot", unrooted)
     button.connect("clicked", clicked)
     detail.add_actions([button])
     return True
