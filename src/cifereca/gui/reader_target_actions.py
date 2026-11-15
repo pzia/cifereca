@@ -1,4 +1,4 @@
-"""P1 #2854: explicit GTK action for a declarative USB target reservation.
+"""P1 #2854/#4985: selected-reader intentions and target reservation.
 
 Reserves a SHA-named path for the selected local book and chosen reader
 through Storage.device_usb_target_set. No scan, copy, remove, DRM decision,
@@ -10,17 +10,19 @@ from .reader_library_projection import ReaderLibraryBook
 
 
 def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk) -> bool:
-    """Show one explicit, non-executable destination choice in Liseuses detail.
+    """Offer a selected-reader wish and, when qualified, target reservation.
 
     A stale selection, identity/device switch, changed target or forged
     intention fails closed. Storage owns the atomic one-time reservation.
     """
+    from .reader_intent_actions import append_reader_intent_action
+    intent_action = append_reader_intent_action(window, detail, book, Gtk=Gtk)
     if (Gtk is None or not callable(getattr(Gtk, "Button", None))
             or getattr(window, "_closed", False)
             or type(book) is not ReaderLibraryBook
             or book.desired_state != "keep"
             or not callable(getattr(detail, "add_actions", None))):
-        return False
+        return intent_action
     service = getattr(window, "service", None)
     storage = getattr(service, "storage", None)
     identity_id = getattr(getattr(service, "current_identity", None), "identity_id", None)
@@ -33,7 +35,7 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
             or getattr(snapshot, "device_id", None) != device_id
             or getattr(window, "_reader_items", {}).get(book.key) is not book
             or storage is None):
-        return False
+        return intent_action
     from ..core.device_usb_target_proposal import propose_usb_target
 
     try:
@@ -43,7 +45,7 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
         if (type(binding) is not dict or type(intent) is not dict
                 or type(artifact) is not dict
                 or intent.get("target_relative_path") is not None):
-            return False
+            return intent_action
         proposal = propose_usb_target(
             identity_id=identity_id, binding=binding,
             intention=intent, artifact=artifact,
@@ -51,7 +53,7 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
             other_intentions=storage.device_placements(device_id=device_id),
         )
     except (ValueError, OSError, TypeError, KeyError, AttributeError):
-        return False
+        return intent_action
 
     generation = (
         getattr(window, "_identity_context_generation", None),
@@ -81,19 +83,19 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
                     getattr(window, "_route_display_token", None),
                     getattr(window, "_reader_selection_generation", None))
                    != generation):
-            return False
+            return intent_action
         page = getattr(window, "readers_page", None)
         selection = getattr(page, "selection", None)
         get = getattr(selection, "get_selected_item", None)
         selected = get() if callable(get) else None
         if selected is None or getattr(selected, "key", None) != book.key:
-            return False
+            return intent_action
         root = getattr(button, "get_root", None)
         if callable(root) and root() is None:
-            return False
+            return intent_action
         mapped = getattr(button, "get_mapped", None)
         if callable(mapped) and not mapped():
-            return False
+            return intent_action
         return True
 
     def commit(_button) -> None:
