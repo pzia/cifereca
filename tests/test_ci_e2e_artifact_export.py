@@ -973,8 +973,12 @@ def test_bnf_covers_failure_exports_only_closed_synthetic_stage():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         scenario = "bnf-covers-1366"
-        report = root / scenario / "screen.json"
-        report.parent.mkdir()
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        # The workflow passes --out e2e-artifacts/<scenario> to run.py,
+        # and run.py appends <scenario>. Never read a one-level decoy.
+        shallow = root / scenario / "screen.json"
+        shallow.write_text(json.dumps({"last_stage": "startup"}))
         source = root / "summary.json"
         source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
         for value, accepted in (
