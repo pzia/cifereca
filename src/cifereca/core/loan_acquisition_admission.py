@@ -75,7 +75,8 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
             request_ref,
         )
         return AutomaticLoanAdmission(refusal={
-            "status": "attention_required", "loan_id": pinned_loan_id,
+            "status": "attention_required",
+            "loan_id": loan.id if type(loan.id) is str else pinned_loan_id,
             "code": "adept_identity_unproven",
             "reason": "source_scope_changed", "retry": "explicit_only",
         })
