@@ -41,4 +41,33 @@ def exact_local_detail_cover(
     return facts
 
 
-__all__ = ["exact_local_detail_cover"]
+def exact_recent_detail_cover(
+    source: object, *, active_identity_id: object,
+) -> VerifiedLocalCoverEvidence | None:
+    """Admit only a Core-originated Recent Artifact+Placement packet.
+
+    The Recent display key is the Placement ID, unlike Library's canonical
+    source key. Never use this display key, title, ISBN, URL or an N3 image
+    to fabricate a documentary association. The source key and EPUB digest
+    must both be the canonical Core Artifact form already on the packet.
+    """
+    if (type(source) is not dict
+            or type(active_identity_id) is not str or not active_identity_id
+            or source.get("identity_id") != active_identity_id
+            or source.get("_library_view_owner") not in (None, active_identity_id)):
+        return None
+    facts = source.get("_exact_local_cover_evidence")
+    if type(facts) is not VerifiedLocalCoverEvidence:
+        return None
+    scope = facts.scope
+    if (scope.kind != "placement"
+            or scope.identity_id != active_identity_id
+            or scope.artifact_id != source.get("artifact_id")
+            or scope.placement_id != source.get("placement_id")
+            or scope.source_key != "artifact:sha256:" + facts.artifact_sha256
+            or scope.artifact_id != "sha256:" + facts.artifact_sha256):
+        return None
+    return facts
+
+
+__all__ = ["exact_local_detail_cover", "exact_recent_detail_cover"]
