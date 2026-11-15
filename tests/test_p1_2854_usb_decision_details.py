@@ -289,7 +289,8 @@ def test_remove_with_exact_completed_receipt_is_only_a_review_label():
     assert len(result.books) == 1
     assert "Retrait à examiner" in result.books[0].state_label
     assert "confirmation distincte" in result.books[0].state_label
-    assert "Copie gérée par Cifereca" in result.books[0].reason_label
+    assert "Reçu historique de copie Cifereca" in result.books[0].reason_label
+    assert "propriété actuelle et retrait à revalider" in result.books[0].reason_label
     assert result.books[0].executable is False
     assert result.executable is False
 
