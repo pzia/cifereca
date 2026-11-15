@@ -160,6 +160,8 @@ def test_single_flight_for_two_list_detail_failed_epub_requests(prepared, monkey
     import cifereca.gui.document_cover_service as module
     state = prepared
     _, scope, embedded, origin, loader, svc = state
+    image = epub_metadata.cover_cache_dir() / embedded.resource.cache_name
+    image.unlink(missing_ok=True)
     _register(state, member="OPS/no-such-cover.png")
     started, release, notified = Event(), Event(), Event()
     calls = []
