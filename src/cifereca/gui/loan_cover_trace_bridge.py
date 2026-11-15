@@ -92,6 +92,54 @@ class LoanCoverTraceSubscriptions:
             return None
         return self._trace.snapshot(scope)
 
+    def record_applied_texture(
+        self, cache: CoverDecisionCache, scope: CoverDocumentScope, *,
+        context: tuple[object, object, object], revision: int,
+        uri: str, surface: str, loader: object,
+    ) -> bool:
+        """Record N3 physical bytes + N4 real GTK paint for a live N2 lease.
+
+        ONLY call from CoverView's post-Gdk.Texture.set_paintable callback;
+        a cache hit, resolved decision or a loader callback is not proof of
+        actual painting. This method rechecks source, revision, URI,
+        observation generation and GTK host epochs independently. A stale
+        callback never borrows another profile's image or makes a network
+        request. The N3 probe observes *existing* validated cache files.
+        """
+        if surface not in ("list", "detail"):
+            raise ValueError("invalid cover surface")
+        if (self._disposed or self._cache is not cache
+                or self._context != context
+                or not self._valid_context(scope, context)
+                or scope not in self._subscriptions
+                or type(revision) is not int or revision < 0
+                or type(uri) is not str or not uri):
+            return False
+        trace = self._trace
+        state = trace.snapshot(scope)
+        if (state is None or state.status != "selected"
+                or not state.resolved or state.revision != revision
+                or state.invalidated):
+            return False
+        token = cache.selected_token(scope, revision=revision, uri=uri)
+        if token is None or state.generation != token.generation:
+            return False
+        from .cover_loader import CoverMediaState
+        probe = getattr(loader, "probe_media", None)
+        if not callable(probe):
+            return False
+        try:
+            media = probe(uri)
+        except (OSError, TypeError, ValueError):
+            return False
+        if type(media) is not CoverMediaState or not media.source_cached:
+            return False
+        if not trace.note_media(
+            token, source_cached=True, preview_cached=media.preview_cached,
+        ):
+            return False
+        return trace.note_painted(token, surface=surface)
+
     def stats(self) -> dict[str, int]:
         return {
             "subscriptions": len(self._subscriptions),
