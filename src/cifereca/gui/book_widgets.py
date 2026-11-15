@@ -288,6 +288,13 @@ class BookListItem(GObject.Object):
         if (type(content) is tuple and len(content) >= 2
                 and content[0] == "search" and content[-1] == previous):
             self._public_row_content = (*content[:-1], url)
+        elif (type(content) is tuple and len(content) >= 7
+              and content[0] == "history" and content[6] == previous):
+            # The History signature includes its cover at offset six, not
+            # at the tail as for Search. Preserve stable selection on repaint.
+            self._public_row_content = (
+                *content[:6], url, *content[7:],
+            )
         self.emit("thumbnail-changed")
         return True
 
@@ -483,11 +490,38 @@ class BookListCell(Gtk.Box):
             self.cover.reset()
             self.cover.show_loading()
             bound_key = item.key
+            from .history_cover_presentation import (
+                history_cover_context, history_cover_request_scope,
+                publish_history_cover,
+            )
+            context = history_cover_context(self.window)
+            source_item = getattr(item, "_history_source_item", None)
 
             def resolved(url: str | None) -> None:
                 if self._bound_key != bound_key or self._bind_epoch != binding_epoch:
                     return
-                self.cover.bind_url(self.cover_loader, url or item.default_thumbnail_url, priority=10)
+                if (context is not None
+                        and history_cover_context(self.window) != context):
+                    return  # A→B→A stale async UI result.
+                sources = getattr(self.window, "history_objects", None)
+                if (context is not None and type(sources) is dict
+                        and sources.get(bound_key) is not source_item):
+                    return  # Same ID, different HistoryItem after refresh.
+                # Only the same HistoryItem, profile and Core source/account
+                # epochs may update its row. The BookListItem signal rebinds
+                # every mapped cell; no list splice or duplicate holdings call.
+                if url and context is not None and source_item is not None:
+                    admitted = publish_history_cover(
+                        self.window, source_item, item, url, context=context,
+                    )
+                    if admitted and self._thumbnail_item is item:
+                        return
+                    if not admitted:
+                        url = None  # Never bind an unadmitted cross-row image.
+                self.cover.bind_url(
+                    self.cover_loader, url or item.default_thumbnail_url,
+                    priority=10,
+                )
 
             self._meta_request = self.window.history_cover_resolver.request(
                 item.cover_provider,
@@ -496,7 +530,7 @@ class BookListCell(Gtk.Box):
                 item.cover_author,
                 item.cover_year,
                 item.default_thumbnail_url,
-                resolved,
+                resolved, scope=history_cover_request_scope(context),
             )
         else:
             self.cover.bind_url(self.cover_loader, item.default_thumbnail_url, priority=10)

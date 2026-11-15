@@ -29,6 +29,7 @@ from gi.repository import Adw, GLib, Gio, Gtk
 
 from PIL import ImageGrab
 from x11_input import X11Input
+from paired_book_review_fixture import BOOK as PAIRED_BOOK, verified_fixture_receipt
 from cifereca.core import CiferecaCore
 from cifereca.gui.main_window import MainWindow
 from cifereca.models import Account, SearchResult, ItemDetail
@@ -187,7 +188,13 @@ def main() -> int:
             "item_id": f"camille-{i:03d}",
             "local_state": "remote_catalog",
             "media_format": "epub" if i % 3 else "pdf",
-            "metadata": {"medium": "digital", "language": "fr"},
+            "metadata": {
+                "medium": "digital", "language": "fr",
+                **({
+                    "isbn": PAIRED_BOOK["isbn"],
+                    "subjects": [PAIRED_BOOK["subject"]],
+                } if i == 3 else {}),
+            },
         })
     for i in range(4):
         core.storage.catalog_entry_put({
@@ -589,6 +596,23 @@ def main() -> int:
                 or baseline["search_requests"] != 1
                 or baseline["scroll"] < 5):
             raise AssertionError(f"Avant filtre non probant : {baseline}")
+        page = window.search_page
+        # #774: the paired review must show an ACTUALLY selected real
+        # GTK row whose Core source/record and public bibliography are
+        # the same deterministic fixture used by the Recommendations view.
+        # No ISBN/title-only merge or user account is involved.
+        selected_row = page.selection.get_selected_item()
+        assert selected_row is not None
+        assert selected_row.title == PAIRED_BOOK["title"]
+        assert selected_row.subtitle == PAIRED_BOOK["author"]
+        exact = window._search_local_objects.get(selected_row.key)
+        assert isinstance(exact, dict)
+        assert exact.get("item_id") == PAIRED_BOOK["record_id"]
+        assert exact.get("provider_id") == PAIRED_BOOK["source_provider"]
+        assert exact.get("metadata", {}).get("isbn") == PAIRED_BOOK["isbn"]
+        assert PAIRED_BOOK["subject"] in exact["metadata"]["subjects"]
+        result["p1_774_paired_book"] = verified_fixture_receipt()
+        result["checks"]["P1_774_search_selected_same_synthetic_book"] = True
         capture_stage("00-before")
         next_filter(0)
 

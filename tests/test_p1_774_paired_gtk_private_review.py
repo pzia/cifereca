@@ -36,7 +36,15 @@ def _one(root: Path, surface: str, sha: str = SHA, appearance: str = "light") ->
         ),
         "status": "PASS", "backend": backend, "git_sha": sha,
         "appearance": appearance,
-        "checks": {check: True},
+        "checks": {
+            check: True,
+            (
+                "P1_774_search_selected_same_synthetic_book"
+                if surface == "search" else
+                "P1_774_recommendations_selected_same_synthetic_book"
+            ): True,
+        },
+        "p1_774_paired_book": module.verified_fixture_receipt(),
         geom_key: {
             "display_width": 1024, "display_height": 768,
             "window_width": 984, "window_height": 700,
@@ -101,6 +109,52 @@ def test_same_head_real_gtk_pair_generates_private_review_not_ux_acceptance(tmp_
     assert (private / "ux-checklist.csv").is_file()
     assert private.stat().st_mode & 0o777 == 0o700
     assert (private / "pair-1024.png").stat().st_mode & 0o777 == 0o600
+
+
+def test_absent_shared_gtk_selection_proof_fails_closed(tmp_path):
+    _pair(tmp_path)
+    report_path = tmp_path / "search-filter-1024/screen.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    del report["checks"]["P1_774_search_selected_same_synthetic_book"]
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="Source/édition"):
+        module.build_review(tmp_path, sizes=SIZES)
+    assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+def test_different_document_fingerprint_cannot_be_compared(tmp_path):
+    _pair(tmp_path)
+    path = tmp_path / "recommendations-detail-1024/screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["p1_774_paired_book"]["document_sha256"] = "b" * 64
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="Source/édition"):
+        module.build_review(tmp_path, sizes=SIZES)
+
+
+def test_different_public_source_or_record_is_not_same_book(tmp_path):
+    _pair(tmp_path)
+    path = tmp_path / "recommendations-detail-1024/screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["p1_774_paired_book"]["source_provider"] = "another-source"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="Source/édition"):
+        module.build_review(tmp_path, sizes=SIZES)
+
+
+def test_same_head_and_same_pixels_cannot_reuse_review_for_other_document(tmp_path):
+    _pair(tmp_path)
+    receipt = module.build_review(tmp_path, sizes=SIZES)
+    assert receipt["document_sha256"] == module.verified_fixture_receipt()["document_sha256"]
+    checklist = _human_review(tmp_path)
+    original = checklist.read_bytes()
+    path = tmp_path / "search-filter-1024/screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["p1_774_paired_book"]["record_id"] = "other-book"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="Source/édition"):
+        module.verify_completed_review(tmp_path, sizes=SIZES)
+    assert original == checklist.read_bytes()
 
 
 def test_different_commits_cannot_be_compared(tmp_path):
