@@ -1289,6 +1289,19 @@ class MainWindow(Adw.ApplicationWindow):
             default_thumbnail_url=x.default_thumbnail_url,
         )
         self._attach_row_facets([row],{x.id:{'author':x.author,'source_provider':x.source_provider}},self.search_controls)
+        # The history refresh may replace the cover or its fallback while
+        # keeping the same upstream row ID. MasterDetailPage's append-fast
+        # path must not retain an outdated BookListCell in that case.
+        # Only presentation and its provenance are compared: never infer
+        # a different book by title or borrow a foreign account's image.
+        row._public_row_content = (
+            "history", row.key, row.title, row.subtitle, row.meta, row.badge,
+            row.thumbnail_url, row.default_thumbnail_url,
+            row.cover_provider, row.cover_record_id,
+            row.cover_title, row.cover_author, row.cover_year,
+            x.source_provider, x.source_credential,
+            x.source_account_id, x.identity_id,
+        )
         return row
 
     def _rerender_history(self) -> None:
