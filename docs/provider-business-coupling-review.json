@@ -180,21 +180,6 @@
       "rationale": "Supplier whitelist within a read-only audit is a necessary historical safety gate pending a neutral proven substitute; not an active canonical producer."
     },
     {
-      "id": "site-dd2ac28f46a8a720315de122",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Input validation of historical Kobo backup_items writer compatibility API",
-      "productive_caller": "Storage.backup_put is an installed historical method (tests/legacy invocations); no current installed direct production caller of backup_put per static residual-writer fence",
-      "effect": "Rejects blank, ambiguous, oversized or control-character Kobo edition IDs and NUL paths before any historical backup_items UPSERT",
-      "authority": "Historical archive key validity only; this path does not attest provider ownership, rights or current A/B delivery",
-      "replacement_contract": "Physically retire the remaining backup_put legacy Storage surface after archival reads/migrations are proven and callers updated; retain malformed-input refusals as required for any archive reader",
-      "tests": [
-        "tests/test_core_p0_3196_legacy_kobo_item_write_admission.py",
-        "tests/test_core_p0_3196_residual_writer_surface.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "This AST anchor is inside backup_put, not Storage._migrate. It is a necessary input veto on a residual, non-productively called legacy writer surface, not an active Core acquisition producer."
-    },
-    {
       "id": "site-d88574f6e28d059189c71da5",
       "classification": "safety_guard_pending_contract",
       "journey": "W1 historical Kobo backup archive-only return without canonical mirror",
@@ -1234,6 +1219,22 @@
       "in_ast_metric": false,
       "original_site_id": "site-e3fc978e29d69c2c875be9dc",
       "retired_at_sha": "ac0a39c84d85e2ae41a9fef53d1d6958dedd5838"
+    },
+    {
+      "id": "struct-w1-all-provider-sourcekey-admission-supplier-predicate-retired",
+      "original": "Storage.backup_put rejected unqualifiable new W1 item_id and NUL paths only for Kobo, leaving non-Kobo compatibility SQL and canonical mirror with weaker input admission",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Provider-independent early item_id SourceKey qualification and NUL path rejection before opening SQLite transaction, with unchanged error codes and no modification of any historical archive row",
+      "classification": "replaced_with_generic_fail_closed_input_admission",
+      "evidence": "The provider_id == Kobo conditional is deleted from W1 preflight rather than renamed; all providers now refuse the same invalid edition IDs and poisoned paths, without altering pre-existing bad SQLite keys. Four-provider trigger/snapshot regression verifies no archive, entitlement, acquisition, placement, artifact or source write on denial. The still-active non-Kobo mirror is explicitly not retired.",
+      "tests": [
+        "tests/test_core_p0_3196_legacy_kobo_item_write_admission.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6142",
+      "in_ast_metric": true,
+      "original_site_id": "site-dd2ac28f46a8a720315de122",
+      "retired_at_sha": "f9efeabf8358e268d7bfcc71e5b9e1358acecd0c"
     }
   ],
   "guard_installations": [
@@ -1281,6 +1282,17 @@
         "tests/test_core_p0_3196_w1_archive_only_cutover.py"
       ],
       "pr": "#6138"
+    },
+    {
+      "id": "guard-w1-all-provider-legacy-sourcekey-path-admission",
+      "journey": "W1 public compatibility backup_put input validation for any provider",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Reject empty/padded/non-string/oversized/control-character edition ID and NUL path before SQLite for all providers; existing archive rows are unaffected",
+      "remaining_debt": "The compatibility archive remains writable and the non-Kobo canonical mirror is still active for untyped sources; this installed generic veto is a safety guard, not retirement of the mirror",
+      "tests": [
+        "tests/test_core_p0_3196_legacy_kobo_item_write_admission.py"
+      ],
+      "pr": "#6142"
     }
   ],
   "retained_legacy_migrations": [
