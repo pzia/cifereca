@@ -153,6 +153,25 @@ class DetailPanel(Gtk.Box):
         from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
         from .local_cover_adapter import LocalCoverEvidenceAdapter
         from .document_cover_service import DocumentCoverService
+        from .history_document_cover_bridge import (
+            VerifiedHistoryCoverEvidence, register_exact_history_document,
+        )
+
+        if type(cover_evidence) is VerifiedHistoryCoverEvidence:
+            service = getattr(self.window, "document_covers", None)
+            document = cover_evidence.document
+            if (type(service) is DocumentCoverService
+                    and register_exact_history_document(
+                        self.window, cover_evidence.source_item,
+                        service, cover_evidence, document,
+                    )):
+                cover.bind_document(
+                    service, document, variant="detail", priority=0,
+                )
+            else:
+                # Never paint a cached URL for a stale/foreign occurrence.
+                cover.bind_url(self.window.covers, None, priority=0)
+            return
 
         adapter = getattr(self.window, "local_cover_adapter", None)
         service = getattr(self.window, "document_covers", None)
@@ -945,6 +964,23 @@ class DetailPanel(Gtk.Box):
         from dataclasses import asdict
         decorate = getattr(self.window, '_decorate_book_detail', None)
         if callable(decorate): decorate(self, asdict(item))
+
+    def show_history_document(
+        self, item: HistoryItem, *, cover_evidence,
+    ) -> None:
+        """Render the same History detail through its exact source N2.
+
+        Keep the public show_history signature, source fields and actions
+        unchanged. The attested occurrence is staged only synchronously;
+        a later selection cannot inherit its document reference.
+        """
+        if getattr(self, "_next_cover_evidence", None) is not None:
+            raise RuntimeError("nested exact History cover render")
+        self._next_cover_evidence = cover_evidence
+        try:
+            self.show_history(item)
+        finally:
+            self._next_cover_evidence = None
 
     def show_history(self, item: HistoryItem) -> None:
         self._cancel_meta_request()
