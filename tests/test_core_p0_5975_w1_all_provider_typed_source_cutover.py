@@ -108,7 +108,12 @@ def test_source_fence_matches_all_three_coordinates_only(
         # and cannot synthesize a right, a completed delivery or local bytes.
         assert store.entitlements(provider_id=row["provider_id"]) == []
         assert store.acquisitions(provider_id=row["provider_id"]) == []
-        assert _snapshot(store) == old
+        after = _snapshot(store)
+        # A new historical backup_items row is allowed for a DIFFERENT
+        # SourceKey. No canonical table is changed by that archive insert.
+        assert len(after["backup_items"]) == len(old["backup_items"]) + 1
+        assert all(after[name] == rows for name, rows in old.items()
+                   if name != "backup_items")
     finally:
         store.close()
 
