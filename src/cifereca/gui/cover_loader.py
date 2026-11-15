@@ -16,6 +16,9 @@ from typing import Callable
 from urllib.parse import urljoin, urlsplit, unquote
 import re
 from ..epub_metadata import cover_cache_dir, MAX_IMAGE, valid_cached_cover_path
+from ..core.epub_cover_materialization import (
+    EpubCoverPhysicalCache, ExactEpubCoverResource,
+)
 
 import httpx
 from ..http_trace import HTTPX_TRANSPORT
@@ -147,6 +150,7 @@ class CoverLoader:
         }
         self.preview_root=self.root/"previews-v1";self.preview_root.mkdir(exist_ok=True)
         self._preview_pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix="cifereca-preview")
+        self._epub_physical = EpubCoverPhysicalCache(max_workers=2)
         self._preview_jobs={}
         # Bounded, key-scoped subscribers let queued preview work skip
         # expensive image decoding after rapid GTK cell recycling.
@@ -164,6 +168,7 @@ class CoverLoader:
         for thread in self._threads:
             thread.join(timeout=0.35)
         self._preview_pool.shutdown(wait=False,cancel_futures=True)
+        self._epub_physical.close()
         self.client.close()
 
     def stats(self) -> dict[str, int | float | str]:
@@ -462,6 +467,73 @@ class CoverLoader:
             callback(None)
             return request
         self._queue.put((max(0, int(priority)), next(self._sequence), absolute))
+        return request
+
+    def load_exact_epub(
+        self,
+        source: ExactEpubCoverResource,
+        *,
+        source_path: Path,
+        callback: Callable[[Path | None], None],
+        width: int | None = None,
+        height: int | None = None,
+        priority: int = 10,
+    ) -> CoverRequest:
+        """N3 only: restore one already selected exact EPUB cover for GTK.
+
+        Core MUST have verified the Artifact+Placement/rights before supplying
+        this source and path. This method never chooses a book/cover, contacts
+        suppliers, publishes N2 or falls back to a catalogue URL. The caller
+        must recheck its N2 selected token and GTK bind epoch when applying a
+        callback; a physical cache hit is not a documentary association.
+        """
+        if type(source) is not ExactEpubCoverResource:
+            raise TypeError("expected exact EPUB cover resource")
+        if not callable(callback):
+            raise TypeError("expected EPUB cover callback")
+        if ((width is None) != (height is None)
+                or width is not None and (
+                    type(width) is not int or type(height) is not int
+                    or not 1 <= width <= 2048 or not 1 <= height <= 2048)):
+            raise ValueError("invalid EPUB preview dimensions")
+        holder = _Callback(callback)
+        request = CoverRequest(holder)
+        if self._stop.is_set():
+            callback(None)
+            return request
+
+        # Same Core-owned N3 cache and single-flight used by all list/detail
+        # requests. SourcePath is authorized by Core, not discovered by GTK.
+        future = self._epub_physical.request(source, source_path=source_path)
+
+        def physical_ready(done):
+            if not holder.active or self._stop.is_set():
+                return
+            try:
+                uri = done.result()
+            except Exception:
+                uri = None
+            if uri is None:
+                if holder.active and not self._stop.is_set():
+                    callback(None)
+                return
+
+            def deliver(path):
+                if holder.active and not self._stop.is_set():
+                    callback(path)
+
+            if width is None:
+                child = self.load(uri, deliver, priority=priority)
+            else:
+                child = self.load_preview(
+                    uri, deliver, width=width, height=height,
+                    priority=priority,
+                )
+            request._source_request = child
+            if not holder.active:
+                child.cancel()
+
+        future.add_done_callback(physical_ready)
         return request
 
     def load_preview(self, url, callback, *, width, height, priority=10, force=False):
