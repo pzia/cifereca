@@ -6,6 +6,7 @@ adapter. No GTK, provider network, DRM or filesystem transfer is simulated.
 from __future__ import annotations
 
 import logging
+from unittest.mock import Mock
 
 import pytest
 
@@ -61,6 +62,8 @@ def test_exact_core_local_send_business_receipt_determines_task_status(
 ):
     runner, displayed, flush, logger = _runner()
     callbacks, exceptions = [], []
+    reporter = Mock()
+    runner.window._activity_result = reporter
     try:
         with caplog.at_level(logging.INFO, logger=logger.name):
             runner.submit(
@@ -76,6 +79,10 @@ def test_exact_core_local_send_business_receipt_determines_task_status(
         assert finishes[0][4] == message
         assert callbacks == [result]  # Business failure stays in the GTK success callback.
         assert exceptions == []
+        if status == "success":
+            reporter.assert_called_once()
+        else:
+            reporter.assert_not_called()
         terminals = [
             row.getMessage() for row in caplog.records
             if "TRACE task outcome id=" in row.getMessage()
