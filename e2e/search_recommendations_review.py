@@ -161,10 +161,27 @@ def _report_and_image(
                 "P1_4761_filter_preserves_exact_edition_real_gtk"
             ) is True
         )
+        # #4761: the shared compact Core header and an obsolete typed
+        # author action must both have been exercised in real GTK before
+        # a paired human review can be accepted for this exact build.
+        compact_header_ok = (
+            surface != "recommendations"
+            or report["checks"].get(
+                "P1_4761_recommendations_shared_compact_essential_gtk"
+            ) is True
+        )
+        stale_action_inert_ok = (
+            surface != "recommendations"
+            or report["checks"].get(
+                "P1_4761_stale_metadata_search_button_inert_gtk"
+            ) is True
+        )
         if (report["checks"].get(paired_check) is not True
                 or report["checks"].get(heading_check) is not True
                 or report["checks"].get(subject_check) is not True
                 or not catalogue_actions_ok
+                or not compact_header_ok
+                or not stale_action_inert_ok
                 or not filter_selection_ok
                 or report.get("p1_774_paired_book") != verified_fixture_receipt()):
             raise ReviewError(
