@@ -325,10 +325,13 @@ def _failed_bnf_cover_checkpoint(source: Path, scenario: str) -> dict:
         return {}
     # This probe saves directly into --out, unlike the nested book-detail
     # report. Do not follow symlinks or export provider-owned arbitrary text.
-    folder = source.resolve().parent / scenario
+    # CI invokes e2e/run.py with --out e2e-artifacts/<scenario>;
+    # the runner itself appends its scenario name once more.
+    outer = source.resolve().parent / scenario
+    folder = outer / scenario
     report = folder / "screen.json"
     try:
-        if folder.is_symlink() or report.is_symlink():
+        if outer.is_symlink() or folder.is_symlink() or report.is_symlink():
             return {}
         if not report.is_file() or report.stat().st_size > MAX_BYTES:
             return {}
