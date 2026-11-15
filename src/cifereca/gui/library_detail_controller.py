@@ -82,9 +82,12 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         exact_local_detail_cover(item, active_identity_id=active)
         if not foreign else None
     )
-    detail.show_presentation(
-        presentation, description=description, cover_evidence=cover_evidence,
-    )
+    if cover_evidence is None:
+        detail.show_presentation(presentation, description=description)
+    else:
+        detail.show_local_presentation(
+            presentation, description=description, cover_evidence=cover_evidence,
+        )
     window._add_local_book_actions(detail,item)
     if not foreign:
         # Preserve original action ordering for current-profile details.
