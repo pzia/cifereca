@@ -75,7 +75,7 @@ def _regular(path: Path, *, limit: int | None = None) -> None:
 def _report_and_image(
     root: Path, width: int, size: tuple[int, int], surface: str,
     *, workflow: str | None = None,
-) -> tuple[str, Path, str, str]:
+) -> tuple[str, Path, str, str, str]:
     from PIL import Image
 
     prefix, stage, field, backend, required_check, geometry_key = SURFACES[surface]
@@ -89,7 +89,10 @@ def _report_and_image(
     report_path = folder / "screen.json"
     _regular(report_path, limit=4 * 1024 * 1024)
     try:
-        report = json.loads(report_path.read_text(encoding="utf-8"))
+        # Parse and fingerprint the EXACT bytes that the GTK probe wrote.
+        # The complete report (not only selected PASS flags) is evidence.
+        report_bytes = report_path.read_bytes()
+        report = json.loads(report_bytes.decode("utf-8"))
     except (ValueError, UnicodeError) as exc:
         raise ReviewError("Rapport de capture illisible") from exc
     if not isinstance(report, dict) or report.get("status") != "PASS":
@@ -207,29 +210,39 @@ def _report_and_image(
             image.verify()
     except (OSError, ValueError) as exc:
         raise ReviewError("Image de capture illisible") from exc
-    return sha, image_path, actual, appearance
+    return sha, image_path, actual, appearance, hashlib.sha256(report_bytes).hexdigest()
 
 
 def verified_pair(
     root: Path, *, sizes: dict[int, tuple[int, int]] = SIZES,
     expected_sha: str | None = None,
     expected_appearance: str | None = None,
-) -> tuple[str, str, str, dict[int, dict[str, Path]]]:
+) -> tuple[str, str, str, dict[int, dict[str, Path]], str]:
     root = root.resolve(strict=True)
     all_images: dict[int, dict[str, Path]] = {}
     commits: set[str] = set()
     appearances: set[str] = set()
     fingerprint = hashlib.sha256()
+    report_fingerprint = hashlib.sha256()
     fingerprint.update(
         ("book:" + verified_fixture_receipt()["document_sha256"] + "\n").encode("ascii")
     )
     for width, size in sorted(sizes.items()):
         images = {}
+        report_digests = {}
         for surface in ("search", "recommendations"):
-            sha, path, image_sha, appearance = _report_and_image(root, width, size, surface)
+            sha, path, image_sha, appearance, report_sha = _report_and_image(
+                root, width, size, surface,
+            )
             commits.add(sha)
             appearances.add(appearance)
             images[surface] = path
+            report_digests[surface] = report_sha
+            # One full probe report per width/surface. The three images of
+            # each surface come from the same report; do not hash it 3 times.
+            report_fingerprint.update(
+                f"{width}:{surface}:{report_sha}\n".encode("ascii")
+            )
             fingerprint.update(
                 f"{width}:{surface}:{appearance}:{image_sha}\n".encode("ascii")
             )
@@ -238,9 +251,11 @@ def verified_pair(
         # books or profiles; no edition identity is claimed for these shots.
         for workflow in WORKFLOW_STAGES:
             for surface in ("search", "recommendations"):
-                sha, path, image_sha, mode = _report_and_image(
+                sha, path, image_sha, mode, report_sha = _report_and_image(
                     root, width, size, surface, workflow=workflow,
                 )
+                if report_sha != report_digests[surface]:
+                    raise ReviewError("Rapport GTK changé pendant la vérification")
                 commits.add(sha)
                 appearances.add(mode)
                 images[f"{workflow}:{surface}"] = path
@@ -254,7 +269,10 @@ def verified_pair(
     if len(appearances) != 1 or (expected_appearance is not None
                                  and appearances != {expected_appearance}):
         raise ReviewError("Captures GTK clair/sombre incompatibles")
-    return next(iter(commits)), fingerprint.hexdigest(), next(iter(appearances)), all_images
+    return (
+        next(iter(commits)), fingerprint.hexdigest(),
+        next(iter(appearances)), all_images, report_fingerprint.hexdigest(),
+    )
 
 
 def _private_file(folder: Path, name: str) -> Path:
@@ -300,7 +318,7 @@ def build_review(
     expected_sha: str | None = None,
     expected_appearance: str | None = None,
 ) -> dict[str, object]:
-    sha, fingerprint, appearance, images = verified_pair(
+    sha, fingerprint, appearance, images, probe_fingerprint = verified_pair(
         root, sizes=sizes, expected_sha=expected_sha,
         expected_appearance=expected_appearance,
     )
@@ -318,6 +336,7 @@ def build_review(
             recorded = json.loads(manifest.read_text(encoding="utf-8"))
             if (recorded.get("git_sha") != sha
                     or recorded.get("capture_fingerprint_sha256") != fingerprint
+                    or recorded.get("probe_evidence_sha256") != probe_fingerprint
                     or recorded.get("appearance") != appearance
                     or recorded.get("document_sha256") !=
                         verified_fixture_receipt()["document_sha256"]
@@ -339,6 +358,7 @@ def build_review(
         receipt: dict[str, object] = {
             "status": "VISUAL_REVIEW_REQUIRED",
             "git_sha": sha, "capture_fingerprint_sha256": fingerprint,
+            "probe_evidence_sha256": probe_fingerprint,
             "appearance": appearance,
             "document_sha256": verified_fixture_receipt()["document_sha256"],
             "widths": sorted(sizes),
@@ -364,7 +384,7 @@ def verify_completed_review(
     expected_sha: str | None = None,
     expected_appearance: str | None = None,
 ) -> dict[str, object]:
-    sha, fingerprint, appearance, _images = verified_pair(
+    sha, fingerprint, appearance, _images, probe_fingerprint = verified_pair(
         root, sizes=sizes, expected_sha=expected_sha,
         expected_appearance=expected_appearance,
     )
@@ -379,6 +399,7 @@ def verify_completed_review(
     if (manifest.get("status") != "VISUAL_REVIEW_REQUIRED"
             or manifest.get("git_sha") != sha
             or manifest.get("capture_fingerprint_sha256") != fingerprint
+            or manifest.get("probe_evidence_sha256") != probe_fingerprint
             or manifest.get("appearance") != appearance
             or manifest.get("document_sha256") !=
                 verified_fixture_receipt()["document_sha256"]
@@ -426,6 +447,7 @@ def verify_completed_review(
         "appearance": appearance,
         "document_sha256": verified_fixture_receipt()["document_sha256"],
         "capture_fingerprint_sha256": fingerprint,
+        "probe_evidence_sha256": probe_fingerprint,
         "checklist_sha256": hashlib.sha256(raw).hexdigest(),
         "reviewed_widths": len(seen), "findings": failures,
         "widths_with_exclusions": exclusions,

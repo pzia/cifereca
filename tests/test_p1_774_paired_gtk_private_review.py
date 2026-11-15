@@ -136,6 +136,7 @@ def test_same_head_real_gtk_pair_generates_private_review_not_ux_acceptance(tmp_
     assert report["git_sha"] == SHA
     assert report["appearance"] == "light"
     assert len(report["capture_fingerprint_sha256"]) == 64
+    assert len(report["probe_evidence_sha256"]) == 64
     assert (private / "pair-1024.png").is_file()
     assert (private / "pair-1024-filters.png").is_file()
     assert (private / "pair-1024-states.png").is_file()
@@ -170,6 +171,56 @@ def test_missing_workflow_png_is_not_equivalent_to_a_baseline_pair(tmp_path, wor
     with pytest.raises(module.ReviewError, match="non sûr"):
         module.build_review(tmp_path, sizes=SIZES)
     assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+@pytest.mark.parametrize("surface", ["search", "recommendations"])
+def test_same_images_but_changed_complete_gtk_report_invalidates_review(
+    tmp_path, surface,
+):
+    _pair(tmp_path)
+    initial = module.build_review(tmp_path, sizes=SIZES)
+    assert len(initial["probe_evidence_sha256"]) == 64
+    checklist = _human_review(tmp_path)
+    previous_notes = checklist.read_bytes()
+    # The new observation is NOT a required check, and all six PNG hashes,
+    # their pixels, the source/edition, theme and git SHA remain identical.
+    # Nevertheless the completed review describes the PREVIOUS GTK run.
+    prefix = "search-filter" if surface == "search" else "recommendations-detail"
+    path = tmp_path / f"{prefix}-1024/screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["additional_private_probe_observation"] = (
+        "NO_VISUAL_CHANGE PRIVATE_TOKEN must not appear in the receipt"
+    )
+    path.write_text(json.dumps(report), encoding="utf-8")
+    module._report_and_image(tmp_path, 1024, SIZE, surface)
+    with pytest.raises(module.ReviewError, match="modifiée"):
+        module.build_review(tmp_path, sizes=SIZES)
+    with pytest.raises(module.ReviewError, match="correspondent"):
+        module.verify_completed_review(tmp_path, sizes=SIZES)
+    assert checklist.read_bytes() == previous_notes
+    assert not (checklist.parent / "visual-review-verdict.json").exists()
+    manifest = json.loads((checklist.parent / "manifest.json").read_text(
+        encoding="utf-8",
+    ))
+    assert manifest["probe_evidence_sha256"] == initial["probe_evidence_sha256"]
+    assert "PRIVATE_TOKEN" not in str(manifest)
+
+
+def test_legacy_manifest_without_probe_fingerprint_cannot_reuse_ux_grid(tmp_path):
+    _pair(tmp_path)
+    module.build_review(tmp_path, sizes=SIZES)
+    checklist = _human_review(tmp_path)
+    previous_notes = checklist.read_bytes()
+    path = checklist.parent / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    del manifest["probe_evidence_sha256"]
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="modifiée"):
+        module.build_review(tmp_path, sizes=SIZES)
+    with pytest.raises(module.ReviewError, match="correspondent"):
+        module.verify_completed_review(tmp_path, sizes=SIZES)
+    assert checklist.read_bytes() == previous_notes
+    assert not (checklist.parent / "visual-review-verdict.json").exists()
 
 
 def test_completed_review_is_invalidated_by_changed_supplementary_pixels(tmp_path):
@@ -409,6 +460,7 @@ def test_completed_human_grid_produces_bounded_private_receipt_only(tmp_path):
     assert result["appearance"] == "light"
     assert result["ready_for_ux_decision"] is True
     assert result["reviewed_widths"] == 1
+    assert len(result["probe_evidence_sha256"]) == 64
     assert result["checklist_sha256"] == hashlib.sha256(checklist.read_bytes()).hexdigest()
     receipt = checklist.parent / "visual-review-verdict.json"
     assert receipt.stat().st_mode & 0o777 == 0o600
