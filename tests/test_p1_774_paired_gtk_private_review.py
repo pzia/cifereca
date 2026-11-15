@@ -99,7 +99,10 @@ def _refresh_image(folder: Path) -> None:
     report_path.write_text(json.dumps(report), encoding="utf-8")
 
 
-def _human_review(root: Path, *, problem: str | None = None) -> Path:
+def _human_review(
+    root: Path, *, problem: str | None = None,
+    note: str = "Contenu privé local secret à ne pas publier",
+) -> Path:
     checklist = root / "search-recommendations-private-review/ux-checklist.csv"
     with checklist.open(newline="", encoding="utf-8") as stream:
         reader = csv.DictReader(stream)
@@ -111,7 +114,7 @@ def _human_review(root: Path, *, problem: str | None = None) -> Path:
     if problem is not None:
         rows[0][problem] = "KO"
         rows[0]["ux_verdict"] = "KO"
-    rows[0]["notes"] = "Contenu privé local secret à ne pas publier"
+    rows[0]["notes"] = note
     with checklist.open("w", newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=names)
         writer.writeheader()
@@ -357,6 +360,51 @@ def test_completed_human_grid_produces_bounded_private_receipt_only(tmp_path):
     assert receipt.stat().st_mode & 0o777 == 0o600
     assert "Contenu privé" not in receipt.read_text(encoding="utf-8")
     assert "UX_ACCEPTED" not in receipt.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("note", ["", "   "])
+def test_private_ux_failure_without_diagnostic_is_rejected(tmp_path, note):
+    _pair(tmp_path)
+    module.build_review(tmp_path, sizes=SIZES)
+    checklist = _human_review(tmp_path, problem="clipping", note=note)
+    original = checklist.read_bytes()
+    with pytest.raises(module.ReviewError, match="diagnostic privé"):
+        module.verify_completed_review(tmp_path, sizes=SIZES)
+    assert checklist.read_bytes() == original
+    assert not (checklist.parent / "visual-review-verdict.json").exists()
+
+
+def test_global_ux_failure_without_axis_ko_still_requires_a_diagnostic(tmp_path):
+    _pair(tmp_path)
+    module.build_review(tmp_path, sizes=SIZES)
+    checklist = _human_review(tmp_path, note="")
+    with checklist.open(newline="", encoding="utf-8") as stream:
+        reader = csv.DictReader(stream)
+        headers, rows = reader.fieldnames, list(reader)
+    rows[0]["ux_verdict"] = "KO"
+    with checklist.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(rows)
+    with pytest.raises(module.ReviewError, match="diagnostic privé"):
+        module.verify_completed_review(tmp_path, sizes=SIZES)
+    assert not (checklist.parent / "visual-review-verdict.json").exists()
+
+
+def test_ko_diagnostic_is_never_exposed_in_aggregate_receipt(tmp_path):
+    _pair(tmp_path)
+    module.build_review(tmp_path, sizes=SIZES)
+    checklist = _human_review(
+        tmp_path, problem="clipping",
+        note="Diagnostic local /home/operator/token=PRIVATE_TOKEN",
+    )
+    receipt = module.verify_completed_review(tmp_path, sizes=SIZES)
+    assert receipt["findings"] == 1
+    assert receipt["ready_for_ux_decision"] is False
+    assert "PRIVATE_TOKEN" not in str(receipt)
+    assert "PRIVATE_TOKEN" not in (
+        checklist.parent / "visual-review-verdict.json"
+    ).read_text(encoding="utf-8")
 
 
 def test_real_human_ko_cannot_be_accepted(tmp_path):
