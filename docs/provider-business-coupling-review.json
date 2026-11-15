@@ -1348,8 +1348,8 @@
       "authority": "Historical 0.7 archive data is not fresh provider rights or independently verified bytes; preserved compatibility projection until evidence-based historical migration redesign",
       "replacement_contract": "Versioned neutral archiving migration for old supported schemas, historical display and rollback; verify old-state data preservation, no fake entitlement/readiness, and install path before retiring this writer",
       "tests": [
-        "tests/test_core_p0_5975_w1_provider_neutral_archive_only.py",
-        "tests/test_core_p0_3196_residual_writer_surface.py"
+        "tests/test_core_p0_3196_w5_passive_v2_migration.py",
+        "tests/test_core_p0_5975_w1_provider_neutral_archive_only.py"
       ],
       "pr": "#6149"
     }
