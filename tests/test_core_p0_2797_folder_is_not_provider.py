@@ -92,7 +92,7 @@ def test_explicit_indexed_source_in_other_folder_survives_passive_rescan(tmp_pat
         store.close()
 
 
-def test_exact_historical_receipt_still_attests_provider_in_other_folder(tmp_path):
+def test_exact_historical_receipt_alone_cannot_attest_provider_in_other_folder(tmp_path):
     store, root = _environment(tmp_path)
     path = _file(root, "other", "historical.pdf")
     try:
@@ -108,16 +108,19 @@ def test_exact_historical_receipt_still_attests_provider_in_other_folder(tmp_pat
             "title": "Historical exact receipt",
             "format": "pdf",
         })
+        archived = store.backup_get("legacy-attested-seller", "account-a", "edition-opaque")
+        assert archived["local_path"] == str(path)
+        assert archived["status"] == "complete"
         for _ in range(2):
             result = LocalCatalog(store, root).scan()
             assert result.invalid == 0
             placement = store.placement_for_path(path)
-            assert placement["provider_id"] == "legacy-attested-seller"
-            assert placement["source_item_id"] == "edition-opaque"
+            assert placement["provider_id"] is None
+            assert placement["source_item_id"] is None
             assert placement["identity_id"] == "reader"
-        assert len(store.entitlements()) == 1
-        assert store.entitlements()[0]["provider_id"] == "legacy-attested-seller"
-        assert len(store.acquisitions()) == 1
+        assert store.entitlements() == []
+        assert store.acquisitions() == []
+        assert store.backup_get("legacy-attested-seller", "account-a", "edition-opaque") == archived
     finally:
         store.close()
 
