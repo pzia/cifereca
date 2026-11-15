@@ -1934,7 +1934,7 @@
         "tests/test_automatic_loan_admission.py",
         "tests/test_adept_borrower_identity_guard.py"
       ],
-      "pr": "#TBD"
+      "pr": "#6226"
     }
   ],
   "retained_legacy_migrations": [
