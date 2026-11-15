@@ -313,3 +313,30 @@ def test_old_owned_button_is_not_rebound_to_replacement_core_before_click():
     )
     actions[0].click()
     assert submissions == [] and calls == [] and wrong == []
+
+
+def test_queued_owned_download_pins_method_even_if_core_method_is_replaced():
+    window, actions, calls, submissions, target = setup_action()
+    actions[0].click()
+    wrong = []
+    window.service.obtain_owned_library_item = lambda t: wrong.append(t)
+    result = submissions[0][0][1]()
+    assert result.path == "fake-path"
+    assert calls == [target] and wrong == []
+
+
+def test_late_owned_download_callbacks_ignore_replaced_window_core():
+    window, actions, calls, submissions, _target = setup_action()
+    actions[0].click()
+    ui = []
+    window._activity_result = lambda message: ui.append(("activity", message))
+    window.refresh_library = lambda *_args: ui.append(("refresh",))
+    window.show_error = lambda *_args: ui.append(("error",))
+    window.service = NS(
+        current_identity=NS(identity_id="alice"),
+        _source_context_epoch=0,
+    )
+    args, _kwargs = submissions[0]
+    args[2](NS(path="untrusted-file-path"))
+    args[3](RuntimeError("PRIVATE_BEARER"))
+    assert ui == [] and calls == []
