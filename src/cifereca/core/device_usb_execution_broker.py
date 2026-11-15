@@ -275,6 +275,11 @@ class ReaderUsbExecutionBrokerImpl:
                 return UsbSyncResult("unavailable")
 
             def current_profile() -> tuple[str, Path, int]:
+                # Core's removal supervisor calls this repeatedly while
+                # holding its reader lock, including immediately before
+                # commit. A revoked GTK selection must not authorize unlink.
+                if check_cancelled is not None:
+                    check_cancelled()
                 if not self._current(scope):
                     raise ValueError("usb_reader_scope_revoked")
                 return scope.identity_id, scope.identity_root, scope.epoch
