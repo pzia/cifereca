@@ -516,6 +516,11 @@ def main(argv: list[str] | None = None) -> int:
     # semantic site must still name its offending IDs on the failure console.
     if result["stale_reviews"]:
         print("Stale business-review IDs:", result["stale_reviews"], file=sys.stderr)
+        print("P0_DEBUG_SETTINGS_NEW_SITES", json.dumps([
+            {k: s[k] for k in ("id", "function", "first_line", "signal_lines", "fingerprint")}
+            for s in result["sites"]
+            if s["path"] == "src/cifereca/gui/settings_editor_actions.py"
+        ], ensure_ascii=False), file=sys.stderr)
     return int(bool(result["stale_reviews"]))
 
 
