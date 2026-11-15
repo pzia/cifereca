@@ -24,6 +24,33 @@ def return_key(provider_id: str, credential_id: str, borrower_id: str,
     return "loan.return.v1:" + hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def read_only_return_receipt_key(loan: object) -> str | None:
+    """Locate an existing v1 receipt only from exact native loan coordinates.
+
+    The empty borrower sentinel is a frozen historical receipt convention,
+    not an installed-provider alias, account selector or return permission.
+    This helper never inspects accounts, invokes providers or writes storage.
+    """
+    try:
+        provider = getattr(loan, "source_provider", None)
+        credential = getattr(loan, "source_credential", None)
+        borrower = getattr(loan, "source_account_id", None)
+        loan_id = getattr(loan, "id", None)
+    except Exception:
+        return None
+    if (type(provider) is not str or not provider
+            or type(credential) is not str or not credential
+            or type(borrower) is not str
+            or type(loan_id) is not str or not loan_id):
+        return None
+    try:
+        return return_key(
+            provider, credential, borrower if borrower else "primary", loan_id,
+        )
+    except (ValueError, UnicodeError):
+        return None
+
+
 def return_ref(key: str) -> str:
     return key.rsplit(":", 1)[-1][:12]
 

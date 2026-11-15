@@ -1826,6 +1826,18 @@
         "tests/test_core_p0_5851_monotone_legacy_retirement_v17.py"
       ],
       "pr": "#6196"
+    },
+    {
+      "id": "guard-historical-return-receipt-native-borrower-scope",
+      "journey": "Read-only lookup of persisted voluntary-return checkpoints in LibraryService.loan_return_state",
+      "classification": "legitimate_readonly_compat",
+      "effect": "Only native nonempty provider/credential/loan ID and an explicitly typed borrower (including the frozen empty-primary sentinel) may address a historical return checkpoint. No arbitrary __str__, bool coercion, missing-borrower primary fallback, provider GET or storage write.",
+      "remaining_debt": "Historical return receipt key v1 still uses the frozen primary sentinel; the retired return mutation and other ADEPT provider-specific admission remain separate. This is a read-only hardening, not an active AST coupling or historical writer retirement.",
+      "tests": [
+        "tests/test_core_p0_5975_return_receipt_readonly_scope.py",
+        "tests/test_core_p0_1120_public_return_projection.py"
+      ],
+      "pr": "#6197"
     }
   ],
   "retained_legacy_migrations": [
