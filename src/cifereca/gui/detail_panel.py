@@ -845,7 +845,8 @@ class DetailPanel(Gtk.Box):
         clear_box(self.content)
         self._clear_actions()
         from .history_cover_presentation import (
-            cached_history_cover, history_cover_context, publish_history_cover,
+            cached_history_cover, history_cover_context,
+            history_cover_request_scope, publish_history_cover,
         )
         present_cover = cached_history_cover(self.window, item)
         medium = "Numérique" if item.medium == "digital" else "Physique"
@@ -881,6 +882,7 @@ class DetailPanel(Gtk.Box):
             self._meta_request = self.window.history_cover_resolver.request(
                 item.provider, item.record_id, item.title, item.author, item.year,
                 item.default_thumbnail_url, resolved,
+                scope=history_cover_request_scope(context),
             )
         elif not item.thumbnail_url and not present_cover:
             # Compte lié : pas de requêtes de reconstruction automatiques.
