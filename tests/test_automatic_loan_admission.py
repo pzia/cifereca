@@ -236,3 +236,68 @@ def test_admission_refuses_non_native_source_before_storage_or_provider(
         assert result.refusal["retry"] == "explicit_only"
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("field,bad", [
+    ("id", None),
+    ("id", ""),
+    ("id", False),
+    ("id", 0),
+    ("id", _HostileLoanCoordinate()),
+    ("id", _HostileLoanString("loan-0")),
+    ("record_id", False),
+    ("record_id", 0),
+    ("record_id", _HostileLoanCoordinate()),
+    ("record_id", _HostileLoanString("edition-0")),
+])
+def test_admission_rejects_untrusted_loan_keys_before_owner_lookup(
+    tmp_path, monkeypatch, field, bad,
+):
+    service, loan = _setup(tmp_path)
+    try:
+        malformed = replace(loan, **{field: bad})
+
+        def forbidden(*_args, **_kwargs):
+            pytest.fail("malformed loan key reached storage, grants or rights")
+
+        monkeypatch.setattr(service.storage, "identity_for_connection", forbidden)
+        monkeypatch.setattr(service.storage, "entitlements", forbidden)
+        monkeypatch.setattr(service.storage, "acquisitions", forbidden)
+        monkeypatch.setattr(service, "_paris_adept_identity_for_loan", forbidden)
+        result = resolve(service, malformed, _TRACE_LOG=LOGGER)
+        assert result.identity is None and result.entitlement_id is None
+        assert result.refusal["status"] == "attention_required"
+        assert result.refusal["reason"] == "source_scope_unproven"
+        assert result.refusal["code"] == "adept_identity_unproven"
+        assert result.refusal["retry"] == "explicit_only"
+        if field == "id":
+            assert result.refusal["loan_id"] == (bad if type(bad) is str else None)
+    finally:
+        service.close()
+
+
+def test_admission_rejects_mutated_hostile_loan_key_after_owner_lookup(
+    tmp_path, monkeypatch,
+):
+    service, loan = _setup(tmp_path)
+    try:
+        original = service.storage.identity_for_connection
+
+        def mutate(provider_id, credential_id):
+            owner = original(provider_id, credential_id)
+            loan.id = _HostileLoanCoordinate()
+            return owner
+
+        monkeypatch.setattr(service.storage, "identity_for_connection", mutate)
+        monkeypatch.setattr(service.storage, "entitlements", lambda *_a, **_kw: pytest.fail(
+            "hostile loan key cannot reach rights"
+        ))
+        result = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert result.identity is None and result.entitlement_id is None
+        assert result.refusal == {
+            "status": "attention_required", "loan_id": "loan-0",
+            "code": "adept_identity_unproven",
+            "reason": "source_scope_changed", "retry": "explicit_only",
+        }
+    finally:
+        service.close()
