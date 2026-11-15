@@ -164,9 +164,15 @@ def persist_notice_cover(
         if previous is not None:
             old = previous.observation
             if (previous.attribute.state != "pending"
-                    and observation.status == "partial"):
-                # An incomplete refresh is NOT a tombstone: retain the
-                # complete source even if its refresh timestamp is newer.
+                    and (observation.status == "partial"
+                         or (attribute.state == "pending"
+                             and attribute.field_path == previous.attribute.field_path))):
+                # 'Complete' describes the source observation; a parser may
+                # still declare its cover-field inventory incomplete, or
+                # produce a malformed image. Neither proves the prior cover
+                # absent. Retain last attested cover/absence and its N2 epoch.
+                # A changed field mapping (new contract) is different: it
+                # may intentionally invalidate the old selected source.
                 return previous
             if (old.source_revision == observation.source_revision
                     and previous.attribute == attribute):
