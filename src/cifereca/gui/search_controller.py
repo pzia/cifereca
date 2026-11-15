@@ -183,6 +183,8 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     self._online_source_context = (
         (state.text, state.field, state.scope, identity_id) if force else None
     )
+    from cifereca.gui.search_document_cover_bridge import search_cover_context
+    self._online_cover_context = search_cover_context(self) if force else None
     response_facets = getattr(self, "_search_response_facets", None)
     if response_facets is not None:
         response_facets.begin(self._online_source_context)

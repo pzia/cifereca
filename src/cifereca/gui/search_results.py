@@ -315,6 +315,9 @@ def _render_search_results(self) -> int:
             {**project(item), "key": key} for key, item in remote_rows
         ])
     }
+    from cifereca.gui.search_document_cover_bridge import (
+        attach_search_document, exact_remote_search_document,
+    )
     for key, item in remote_rows:
         if key not in filtered: continue
         # #4276: the versioned documentary evidence takes precedence over
@@ -418,12 +421,16 @@ def _render_search_results(self) -> int:
                 )
                 if resolved_uri is not None:
                     cover_url = resolved_uri
-        ui_rows.append(BookListItem(
+        row = BookListItem(
             key, item.title, item.author or "", meta, source, cover_url,
             action_label="Ouvrir" if placement else (download_action_label(item, check_required=check_required) if direct else None),
             action_callback=callback,
             action_icon_name="document-open-symbolic" if placement else ("document-save-symbolic" if direct else None),
-        ))
+        )
+        proof = exact_remote_search_document(self, item, key)
+        if proof is not None:
+            attach_search_document(row, proof)
+        ui_rows.append(row)
     objects = {
         **self._search_local_objects,
         **{key: project(item) for key, item in remote_rows},
@@ -432,12 +439,14 @@ def _render_search_results(self) -> int:
     # MasterDetailPage may preserve same SourceKeys in append-fast mode; it
     # must replace a row when its title, action context or cover changed.
     for row in ui_rows:
+        proof = getattr(row, "_cover_search_evidence", None)
         row._public_row_content = (
             "search", row.key, getattr(row, "title", ""),
             getattr(row, "subtitle", ""), getattr(row, "meta", ""),
             getattr(row, "badge", ""), getattr(row, "action_label", ""),
             getattr(row, "action_icon_name", ""),
             bool(getattr(row, "action_callback", None)),
+            proof.row_signature if proof is not None else None,
             getattr(row, "thumbnail_url", None),
         )
     self.search_page.show_rows(ui_rows)
