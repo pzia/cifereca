@@ -125,6 +125,7 @@ class DetailPanel(Gtk.Box):
         badges: Iterable[str] = (),
         *,
         essential=(),
+        cover_document=None,
     ) -> CoverView:
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         header.add_css_class("detail-heading")
@@ -133,7 +134,16 @@ class DetailPanel(Gtk.Box):
         cover.set_halign(Gtk.Align.START)
         cover.set_valign(Gtk.Align.START)
         header.append(cover)
-        cover.bind_url(self.window.covers, thumbnail, priority=0)
+        if cover_document is not None:
+            # N2 exact admission happens BEFORE any physical image request.
+            # A warm legacy URL cannot outvote an attested EPUB, even for
+            # the first GTK frame or when its extracted N3 image is absent.
+            cover.bind_document(
+                cover_document[0], cover_document[1],
+                variant="detail", priority=0,
+            )
+        else:
+            cover.bind_url(self.window.covers, thumbnail, priority=0)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.START)
@@ -572,6 +582,7 @@ class DetailPanel(Gtk.Box):
         presentation: UiBookDetailPresentation,
         *,
         description: object | None = None,
+        cover_document=None,
     ) -> None:
         """Render the shared neutral book-detail projection.
 
@@ -595,6 +606,7 @@ class DetailPanel(Gtk.Box):
             presentation.thumbnail_url,
             presentation.badges,
             essential=essential,
+            cover_document=cover_document,
         )
         self._show_description(description)
         for section in sections:
@@ -641,6 +653,7 @@ class DetailPanel(Gtk.Box):
         badges: Iterable[str] = (),
         group_title: str | None = None,
         rows: list[tuple[str, str]] | None = None,
+        cover_document=None,
     ) -> None:
         """Compatibility helper backed by the shared detail projection."""
         self.show_presentation(book_detail_presentation(
@@ -650,7 +663,7 @@ class DetailPanel(Gtk.Box):
             badges=badges,
             group_title=group_title,
             rows=rows or (),
-        ))
+        ), **({"cover_document": cover_document} if cover_document is not None else {}))
 
     def update_cached_book_details(self, contributions) -> None:
         """Replace only cached plugin groups/actions; preserve the base detail."""
