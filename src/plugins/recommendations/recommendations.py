@@ -361,7 +361,7 @@ _LOCAL_SEARCH_STOPWORDS = frozenset({
 
 _LOCAL_SEARCH_SECRET_MARKER = re.compile(
     r"(?i)(?:^|[^a-z0-9_])(?:bearer|token|access_token|refresh_token|"
-    r"password|secret|cookie|authorization|signature|api_key)\\s*[:=]"
+    r"password|secret|cookie|authorization|signature|api_key)\s*[:=]"
 )
 
 
@@ -374,7 +374,7 @@ def _safe_local_bibliography_value(raw: Any, *, limit: int = 512) -> str:
     """
     if type(raw) is not str or not raw:
         return ""
-    if ("://" in raw or raw.startswith(("/", "\\\\"))
+    if ("://" in raw or raw.startswith(("/", "\\"))
             or (("?" in raw or "&" in raw) and "=" in raw)
             or _LOCAL_SEARCH_SECRET_MARKER.search(raw)):
         return ""
