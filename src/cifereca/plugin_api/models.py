@@ -390,6 +390,8 @@ class UiBookListEntry:
     meta: str = ""
     badge: str = ""
     thumbnail_url: str | None = None
+    # Core-admitted exact reference; never inferred from a plugin image URL.
+    cover_document_ref: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,6 +421,8 @@ class UiBookDetailPresentation:
     sections: tuple[DetailSection, ...] = ()
     actions: tuple[UiBookDetailAction, ...] = ()
     links: tuple[DocumentLink, ...] = ()
+    # Matches the list's exact N2 reference; does not grant any action.
+    cover_document_ref: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
