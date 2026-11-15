@@ -369,6 +369,11 @@ def verify_completed_review(
         if "KO" in axes and row["ux_verdict"] != "KO":
             raise ValueError("Anomalie UX masquée par un verdict OK")
         if row["ux_verdict"] == "KO":
+            # A failed visual receipt must include an actionable local
+            # observation. The content stays solely in the private CSV:
+            # the public-facing receipt still carries numeric counts only.
+            if not (row["notes"] or "").strip():
+                raise ValueError("Anomalie UX KO sans diagnostic privé")
             findings += 1
     if seen != expected:
         raise ValueError("Revue visuelle incomplète")
