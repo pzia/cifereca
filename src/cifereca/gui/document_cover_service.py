@@ -14,14 +14,18 @@ from __future__ import annotations
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
+import time
 from pathlib import Path
 from threading import Lock, RLock
 from typing import Literal
 
-from ..core.book_cover_cache import CoverDecisionCache
-from ..core.book_cover_projection import CoverDocumentScope
+from ..core.book_cover_cache import CoverDecisionCache, CoverCacheToken
+from ..core.book_cover_projection import (
+    CoverDocumentScope, ResolvedBookCover, resolve_book_cover,
+)
 from ..core.covers import CoverCandidate, candidate
 from ..core.epub_cover_source import AttestedEmbeddedCover
+from ..core.epub_cover_failure_qualification import EpubCoverPhysicalAssessment
 from ..epub_metadata import cover_cache_dir
 from .cover_loader import CoverLoader, CoverRequest
 
@@ -101,6 +105,14 @@ class CoverSourceSnapshot:
             raise ValueError("unattached EPUB path")
 
 
+@dataclass(frozen=True, slots=True)
+class _QualifiedFallbackLease:
+    revision: int
+    url: str
+    token: CoverCacheToken
+    expires_at: float
+
+
 class CoverReadRequest:
     """Cancelable read with no extra network work after a recycled GTK bind."""
 
@@ -147,6 +159,8 @@ class DocumentCoverService:
         self, loader: CoverLoader, *,
         decisions: CoverDecisionCache | None = None,
         max_documents: int = 4096,
+        fallback_ttl: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
     ):
         if not isinstance(loader, CoverLoader):
             raise TypeError("expected shared CoverLoader")
@@ -154,9 +168,18 @@ class DocumentCoverService:
             raise TypeError("expected exact N2 decision cache")
         if type(max_documents) is not int or not 1 <= max_documents <= 20000:
             raise ValueError("invalid book cover cache bound")
+        if (type(fallback_ttl) not in (int, float)
+                or not 0 < fallback_ttl <= 300
+                or not float("-inf") < fallback_ttl < float("inf")
+                or not callable(clock)):
+            raise ValueError("invalid qualified fallback lifetime")
         self.loader = loader
         self.decisions = decisions if decisions is not None else CoverDecisionCache()
         self._max_documents = max_documents
+        self._fallback_ttl = float(fallback_ttl)
+        self._clock = clock
+        # Temporary N2 requalification, never a physical N3 media cache.
+        self._qualified_fallback: dict[CoverDocumentScope, _QualifiedFallbackLease] = {}
         self._lock = RLock()
         self._snapshots: OrderedDict[CoverDocumentScope, CoverSourceSnapshot] = OrderedDict()
         self._resolving: set[CoverDocumentScope] = set()
@@ -180,11 +203,78 @@ class DocumentCoverService:
                     return
             self._snapshots[snapshot.scope] = snapshot
             self._snapshots.move_to_end(snapshot.scope)
+            self._qualified_fallback.pop(snapshot.scope, None)
             if previous is not None:
                 self.decisions.invalidate(snapshot.scope, cause="evidence_changed")
             while len(self._snapshots) > self._max_documents:
                 old_scope, _ = self._snapshots.popitem(last=False)
+                self._qualified_fallback.pop(old_scope, None)
                 self.decisions.invalidate(old_scope, cause="evidence_changed")
+
+    def apply_qualified_epub_fallback(
+        self,
+        document: CoverDocumentScope,
+        assessment: EpubCoverPhysicalAssessment,
+        *,
+        expected_token: CoverCacheToken,
+    ) -> ResolvedBookCover | None:
+        """CAS N2 to an admitted URL after a verified, definitive N3 failure.
+
+        This is an explicit Core-to-N2 transition. The caller MUST run the
+        bounded EPUB physical qualifier in a WORKER after N3 failed. Neither
+        an absent cache image nor a N3 Future(None) is sufficient evidence.
+        N2 source identity is checked before any new decision is published.
+
+        If no *unique* admitted origin/catalogue candidate exists, leave
+        embedded N2 unchanged. An ambiguous fallback never downloads.
+        """
+        if (type(document) is not CoverDocumentScope
+                or type(assessment) is not EpubCoverPhysicalAssessment
+                or type(expected_token) is not CoverCacheToken):
+            raise TypeError("expected exact cover scope, failure and token")
+        if (assessment.state != "definitive_unusable"
+                or assessment.code not in (
+                    "member_missing_or_ambiguous", "member_unusable",
+                    "image_digest_mismatch",
+                )):
+            return None
+        with self._lock:
+            if self._closed:
+                return None
+            snapshot = self._snapshots.get(document)
+            if (snapshot is None or not snapshot.snapshot_complete
+                    or snapshot.embedded is None
+                    or assessment.resource != snapshot.embedded.resource
+                    or snapshot.revision != expected_token.revision
+                    or document != expected_token.scope):
+                return None
+            source_uri = snapshot.embedded.candidate.url
+            if self.decisions.selected_token(
+                document, revision=snapshot.revision, uri=source_uri,
+            ) != expected_token:
+                return None
+
+            fallback = resolve_book_cover(
+                document, snapshot.candidates,
+                revision=snapshot.revision, snapshot_complete=True,
+            )
+            if (fallback.status != "selected"
+                    or fallback.tier not in ("origin", "catalog")):
+                return None
+
+            # N2 CAS revokes the old selected EPUB generation and publishes
+            # the separately attested fallback URL. Cached URL bytes in N3
+            # do not participate in this choice or prove a book identity.
+            token = self.decisions.begin(
+                document, revision=snapshot.revision,
+            )
+            if not self.decisions.publish_resolved(token, fallback):
+                return None
+            self._qualified_fallback[document] = _QualifiedFallbackLease(
+                snapshot.revision, fallback.uri, token,
+                self._clock() + self._fallback_ttl,
+            )
+            return fallback
 
     def get_cover(
         self,
@@ -218,6 +308,22 @@ class DocumentCoverService:
                 decision = None
             else:
                 self._snapshots.move_to_end(document)
+                lease = self._qualified_fallback.get(document)
+                if lease is not None:
+                    live = self.decisions.selected_token(
+                        document, revision=lease.revision, uri=lease.url,
+                    )
+                    if (snapshot.revision != lease.revision
+                            or live != lease.token):
+                        self._qualified_fallback.pop(document, None)
+                    elif self._clock() >= lease.expires_at:
+                        # Reconsider the original EPUB N1 priority after a
+                        # bounded lease. Repair of N3 can restore the image;
+                        # no public URL may permanently displace it.
+                        self._qualified_fallback.pop(document, None)
+                        self.decisions.invalidate(
+                            document, cause="evidence_changed",
+                        )
                 decision = self.decisions.peek(document, revision=snapshot.revision)
                 if decision is None and document not in self._resolving:
                     self._resolving.add(document)
@@ -296,6 +402,7 @@ class DocumentCoverService:
             self._closed = True
             self._snapshots.clear()
             self._resolving.clear()
+            self._qualified_fallback.clear()
 
 
 __all__ = [
