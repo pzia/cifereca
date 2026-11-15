@@ -1,0 +1,75 @@
+"""GTK-free loan list/detail bridge to the shared N1/N2 cover decision (#6168).
+
+Use ONLY the same fully materialised, current-account Library snapshot that
+the Loans GTK controller already admitted. A loan refresh and a Library
+refresh each advance one window-local producer revision; the old decision
+cannot outlive that revision. The Core N1 producer validates every exact
+borrower, Entitlement, Artifact and Placement proof before N2 publication.
+
+No network, GTK, EPUB scan, title/ISBN matching or loan DTO mutation here.
+"""
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
+
+from ..models import Loan
+from ..core.book_cover_cache import CoverDecisionCache
+from ..core.book_cover_projection import ResolvedBookCover
+from ..core.book_cover_source_projection import (
+    exact_loan_cover_scope, project_exact_loan_cover,
+)
+
+
+def loan_cover_decision(
+    host: Any, loan: Loan, library_rows: tuple[Mapping[str, object], ...],
+) -> ResolvedBookCover | None:
+    """One Core decision per exact Loan+producer revision, shared by two views."""
+    if type(loan) is not Loan:
+        return None
+    active = getattr(
+        getattr(getattr(host, "service", None), "current_identity", None),
+        "identity_id", None,
+    )
+    epoch = getattr(getattr(host, "service", None), "_account_context_epoch", None)
+    projection = getattr(host, "_loan_cover_projection", None)
+    if (type(active) is not str or loan.identity_id != active
+            or type(projection) is not tuple or len(projection) != 3
+            or projection[0] != epoch or projection[1] != active
+            or projection[2] is not library_rows):
+        return None
+    revision = getattr(host, "_loan_cover_decision_revision", 0)
+    if (type(revision) is not int or revision < 1
+            or type(library_rows) is not tuple or not library_rows):
+        # A failed Library read and an authoritative empty snapshot look the
+        # same in the legacy worker; do not memoize a negative proof here.
+        return None
+    scope = exact_loan_cover_scope(loan)
+    if scope is None:
+        return None
+    cache = getattr(host, "_loan_cover_decision_cache", None)
+    if cache is None:
+        cache = CoverDecisionCache(max_scopes=1024)
+        host._loan_cover_decision_cache = cache
+    if type(cache) is not CoverDecisionCache:
+        return None
+
+    hit = cache.peek(scope, revision=revision)
+    if hit is not None:
+        return hit
+    decision = project_exact_loan_cover(
+        loan, library_rows, revision=revision, snapshot_complete=True,
+    )
+    if decision is None:
+        return None
+    try:
+        token = cache.begin(scope, revision=revision)
+    except ValueError:
+        # An older worker must not invalidate a newer decision.
+        return None
+    if cache.publish_resolved(token, decision):
+        return decision
+    return cache.peek(scope, revision=revision)
+
+
+__all__ = ["loan_cover_decision"]
