@@ -203,8 +203,19 @@ Le script de revue refuse : rapport non PASS, contrôle géométrique absent,
 PNG lié ou altéré, résolution physique incohérente, substitution HiDPI,
 différence de HEAD, mode clair/sombre absent ou différent entre les deux
 vues **ou entre largeurs**, ou mode différent de `--appearance`. Les
-fixtures restent différentes : **aucune comparaison bibliographique du
-même livre ou validation d'un fournisseur réel n'est revendiquée**.
+captures à comparer portent **une même notice synthétique attestée** :
+`e2e/paired_book_review_fixture.py` contient un jeu de faits bibliographiques
+publics fixe (titre, auteur, source `gallica`, record `camille-003`, ISBN,
+sujet). Dans la vraie Recherche, la capture `00-before.png` exige sa ligne
+sélectionnée et sa projection Core exacte. Dans les vraies Recommandations,
+la capture finale `09-paired-public-book.png` exige la même source/édition
+bibliographique, le row GTK sélectionné et le détail mappé ; elle ne
+remplace aucun scénario précédent. Le comparateur refuse un rapport sans
+les deux attestations GTK, ou une source, un record ou une empreinte
+documentaire différents, **même si HEAD, thème et PNG sont conformes**.
+Le manifeste privé retient l'empreinte du livre synthétique. Cette
+égalité de fixture **ne certifie aucune jointure réelle de fournisseur**,
+couverture empruntée, ni appariement documentaire d'un compte utilisateur.
 
 Les dossiers `e2e-artifacts/light/search-recommendations-private-review/`
 et `e2e-artifacts/dark/search-recommendations-private-review/` sont
@@ -218,10 +229,11 @@ remplir `OK/KO/N/A` avec justifications locales :
     python3 e2e/search_recommendations_review.py --root e2e-artifacts/dark --appearance dark --verify-checklist
 
 Même si le commit et les octets PNG sont inchangés, une divergence de
-thème invalide l'ancienne grille. `CHECKLIST_VERIFIED` n'est **pas** une
-approbation UX ; des observations humaines/agent concrètes, sur le même
-objet bibliographique quand cette fixture sera disponible, sont
-nécessaires pour clore #774/#4761. **Ne jamais publier** captures, notes,
+thème ou de source/édition invalide l'ancienne grille.
+`CHECKLIST_VERIFIED` n'est **pas** une approbation UX : l'inspection
+effective des deux captures sur **la notice synthétique commune** reste
+nécessaire, de même que la recette des vraies couvertures/provenances
+fournisseurs pour fermer #774/#4761/#3104. **Ne jamais publier** captures, notes,
 identifiants, URL ni données de compte dans un artefact CI public.
 
 ### P1 #942 — compteur réel et données exclues (GTK 1366)
