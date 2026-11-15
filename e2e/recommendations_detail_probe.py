@@ -411,6 +411,14 @@ def main():
         assert store.get_n_items() == 1
         assert store.get_item(0).title == "Livre A"
         assert "Champ · Sujet" in view._summary.get_text()
+        # Search-style all-fields scope must now find the *same attested*
+        # subject as Sujet, without recalculating or querying a provider.
+        query.field.set_selected(0)  # Champ · Tous les champs
+        assert store.get_n_items() == 1
+        assert store.get_item(0).title == "Livre A"
+        assert "1 sur 3" in view._summary.get_text()
+        assert view._generation == generation and not state["searches"]
+        report["checks"]["P1_4761_all_fields_public_bibliography_gtk"] = True
         query.field.set_selected(1)  # Champ · Titre
         assert store.get_n_items() == 0
         assert "0 sur 3" in view._summary.get_text()
@@ -431,7 +439,7 @@ def main():
         report["checks"]["P1_3687_shared_empty_count_and_reset_gtk"] = True
         query.entry.set_text("")
         query.entry.emit("activate")
-        query.field.set_selected(0)  # Tous les champs (legacy title/author)
+        query.field.set_selected(0)  # Tous les champs (bibliographie attestée)
         assert store.get_n_items() == 3
         assert query.active_document_labels() == ()
         assert view._generation == generation and not state["searches"]
