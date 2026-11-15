@@ -102,6 +102,7 @@ class SearchRunPort:
 SEARCH_DETAIL_CAPABILITIES = frozenset({
     "_closed", "_search_detail_request_generation", "_identity_context_generation",
     "_search_generation", "_selected_search_id", "_search_local_objects",
+    "_search_mode", "_search_detail_cover_by_key",
     "search_objects", "search_page", "search_controls", "service", "runner",
     "_last_search_query", "_cancel_cached_book_details", "_library_availability_label",
     "_kobo_backup_status_label", "_book_description", "_known_search_result",
