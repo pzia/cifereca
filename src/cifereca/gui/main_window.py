@@ -1765,6 +1765,25 @@ class MainWindow(Adw.ApplicationWindow):
             getattr(admitted_core, "current_identity", None), "identity_id", None,
         )
         selected_loan_identity = getattr(loan, "identity_id", None)
+        # Never let a mutable Loan retarget a queued reacquisition to another
+        # source, borrower or upstream loan before Core starts its own checks.
+        source_keys = (
+            "id", "identity_id", "source_provider", "source_credential",
+            "source_account_id", "record_id",
+        )
+        admitted_source = tuple(getattr(loan, key, None) for key in source_keys)
+
+        def source_intact():
+            try:
+                current = tuple(getattr(loan, key, None) for key in source_keys)
+                return all(
+                    type(old) in (str, type(None)) and type(now) is type(old)
+                    and now == old
+                    for old, now in zip(admitted_source, current)
+                )
+            except Exception:
+                return False
+
         identity_generation = getattr(self, "_identity_context_generation", None)
         account_epoch = getattr(admitted_core, "_account_context_epoch", None)
 
@@ -1790,6 +1809,8 @@ class MainWindow(Adw.ApplicationWindow):
         def work():
             if send:
                 raise RuntimeError("L’envoi vers une liseuse nécessite un plugin storage.target.")
+            if not source_intact():
+                raise ValueError("loan_reacquisition_source_changed")
             return reacquire(loan)
         def ok(result):
             if not ui_current():
