@@ -150,3 +150,79 @@ def test_target_action_does_not_replace_existing_library_actions(tmp_path):
     assert local_actions
     assert local_actions[-1]["artifact_id"] == book["artifact_id"]
     assert button._cifereca_action_id == "reader-usb-target-reserve"
+
+
+def test_reserving_target_repaints_selected_detail_without_navigation_or_usb_io(tmp_path):
+    """Regression: same book key must not preserve stale no-target detail.
+
+    This headless page facade follows MasterDetailPage.show_rows's identical
+    keys/content fast path. A changed reader presentation forces its normal
+    selection callback, without a second implicit USB scan.
+    """
+    db, book, host, button, _actions = prepare(tmp_path)
+    page = host.readers_page
+    before_row = page.rows[0]
+    before = repr(page.detail.presentation)
+    assert "Chemin réservé" not in before
+    assert before_row._public_row_content is not None
+    changes = []
+
+    def show_rows(rows, total_count=None):
+        previous = page.rows[0] if page.rows else None
+        if (previous is not None and len(rows) == 1
+                and previous.key == rows[0].key
+                and previous._public_row_content == rows[0]._public_row_content):
+            return  # GTK's existing append-only fast path
+        page.rows = list(rows)
+        changes.append(rows[0]._public_row_content)
+        # Real MasterDetailPage restores selection and calls reader_selected.
+        host.selected_row = rows[0]
+        page.selected(rows[0])
+
+    page.show_rows = show_rows
+    button.callbacks["clicked"](button)
+    assert len(changes) == 1
+    assert page.rows[0].key == before_row.key
+    assert changes[0] != before_row._public_row_content
+    actual = db.device_placement_get("reader-alice", book["artifact_id"])
+    detail = repr(page.detail.presentation)
+    assert actual["target_relative_path"] in detail
+    assert "Chemin réservé" in detail
+    assert "Format prévu" in detail
+    assert "Présence actuelle" in detail
+    assert "Non confirmée" in detail
+    assert not host.errors
+    # Merely rendering details neither copies nor deletes on the USB device.
+    assert actual["observed_state"] == "unknown"
+
+
+def test_reader_row_version_changes_on_intent_target_and_profile_not_redundant_refresh(tmp_path):
+    db, entries, host, _actions = environment(tmp_path)
+    host._render_readers()
+    initial = host.readers_page.rows[0]._public_row_content
+    host._render_readers()
+    assert host.readers_page.rows[0]._public_row_content == initial
+    book = entries[0]
+    db.device_usb_intent_set(
+        identity_id="alice", device_id="reader-alice",
+        artifact_id=book["artifact_id"], desired_state="keep",
+    )
+    host._render_readers()
+    desired = host.readers_page.rows[0]._public_row_content
+    assert desired != initial
+    db.device_usb_target_set(
+        identity_id="alice", device_id="reader-alice",
+        artifact_id=book["artifact_id"],
+        target_relative_path="Books/Cifereca/"
+        + book["artifact_id"].removeprefix("sha256:") + ".epub",
+    )
+    host._render_readers()
+    reserved = host.readers_page.rows[0]._public_row_content
+    assert reserved != desired
+    host._render_readers()
+    assert host.readers_page.rows[0]._public_row_content == reserved
+    host.service.current_identity.identity_id = "bob"
+    host._identity_context_generation += 1
+    host._render_readers()
+    assert host.readers_page.rows[0]._public_row_content != reserved
+    assert host.readers_page.rows[0].key == "bob-book"
