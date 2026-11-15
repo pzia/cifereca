@@ -187,7 +187,7 @@ def main() -> int:
             "provider_id": "gallica" if i % 2 else "local",
             "item_id": f"camille-{i:03d}",
             "local_state": "remote_catalog",
-            "media_format": "epub" if i % 3 else "pdf",
+            # The exact #774 paired book (index 003) is EPUB in both\n            # Search and Recommendations; keep the other PDF/EPUB variety.\n            "media_format": "epub" if i == 3 or i % 3 else "pdf",
             "metadata": {
                 "medium": "digital", "language": "fr",
                 **({
