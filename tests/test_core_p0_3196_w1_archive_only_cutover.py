@@ -1,4 +1,4 @@
-"""#3196 W1: Kobo 0.7 storage writes are archive-only after #4858 cutover."""
+"""#3196/#5975 W1: all live 0.7 checkpoints are now archive-only."""
 from __future__ import annotations
 
 import ast
@@ -77,14 +77,16 @@ def test_foreign_borrower_rebind_aborts_atomically_without_positive_right(tmp_pa
         store.close()
 
 
-def test_non_kobo_legacy_provider_keeps_existing_compatibility_behavior(tmp_path):
+def test_non_kobo_legacy_provider_is_archive_only_too(tmp_path):
     store = Storage(tmp_path / "state.db")
     try:
         row = _archive("card", "alice", "buyer", "pending")
+        before = _snapshot(store)
         store.backup_put({**row, "provider_id": "other"})
-        assert len(store.entitlements(provider_id="other")) == 1
-        assert len(store.acquisitions(provider_id="other")) == 1
+        assert store.entitlements(provider_id="other") == []
+        assert store.acquisitions(provider_id="other") == []
         assert store.backup_get("other", "card", "book") is not None
+        assert _snapshot(store) == before
     finally:
         store.close()
 
@@ -92,9 +94,9 @@ def test_non_kobo_legacy_provider_keeps_existing_compatibility_behavior(tmp_path
 def test_w1_generic_mirror_contains_no_supplier_literal():
     """The inactive typed Kobo veto must not return to the publication path.
 
-    Kobo v2 archives skip the v3 importer and Kobo backup_put always passes
-    archive_only=True; those runtime contracts are covered by the SQLite
-    archive and migration tests, including unknown/non-Kobo compatibility.
+    Kobo v2 archives skip the v3 importer. The public backup_put always
+    passes archive_only=True for every provider; the historical v3 importer
+    is a separate retained migration writer, not a live W1 source.
     """
     tree = ast.parse(textwrap.dedent(inspect.getsource(Storage._mirror_backup_row)))
     assert not any(
