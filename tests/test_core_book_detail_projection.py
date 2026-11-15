@@ -56,22 +56,28 @@ def test_core_search_and_library_use_same_projection_before_render():
         method = _method("MainWindow", method_name)
         calls = _calls(method, "show_presentation")
         assert calls, method_name
-        if method_name == "_library_selected":
-            # #4524 timestamps the pure projection separately from GTK render.
-            # It is still the SAME builder, bound immediately before presentation.
-            assert any(
-                isinstance(node, ast.Assign)
-                and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Name)
-                and node.value.func.id == "book_detail_presentation"
-                for node in ast.walk(method)
+        if any(_uses_projection_builder(call) for call in calls):
+            continue  # Direct adapter invocation is still supported.
+        # The shared projection may be built ONCE before branching between
+        # the legacy URL renderer and the exact-N2 local detail renderer.
+        # Require both an actual builder assignment and that the result is
+        # passed to the neutral DetailPanel, rather than accepting any
+        # alternate/duplicated provider-specific projection.
+        assert any(
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "book_detail_presentation"
+            and any(
+                isinstance(target, ast.Name) and target.id == "presentation"
+                for target in node.targets
             )
-            assert any(
-                isinstance(arg, ast.Name) and arg.id == "presentation"
-                for call in calls for arg in call.args
-            )
-        else:
-            assert any(_uses_projection_builder(call) for call in calls), method_name
+            for node in ast.walk(method)
+        ), method_name
+        assert any(
+            isinstance(arg, ast.Name) and arg.id == "presentation"
+            for call in calls for arg in call.args
+        ), method_name
 
 
 def test_plugin_master_detail_uses_same_detail_panel_renderer():
