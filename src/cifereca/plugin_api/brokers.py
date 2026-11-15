@@ -30,6 +30,7 @@ class ReaderUsbExecutionBroker(Protocol):
 
     def execute_one(
         self, *, confirmation: Any, mountpoint: Path,
+        expected_profile_epoch: int,
         check_cancelled: Callable[[], None] | None = None,
     ) -> Any: ...
 
