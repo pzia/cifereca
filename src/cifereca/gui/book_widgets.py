@@ -493,12 +493,37 @@ class BookListCell(Gtk.Box):
         self._thumbnail_item = None
         self._thumbnail_handler_id = None
 
+    def _admit_core_local_cover(self, item: BookListItem, service, document) -> bool:
+        """Publish attested Core N1 facts into N2 only for a visible row.
+
+        Never scan the whole Library or look up Artifact by title/ISBN/path.
+        The packet was already formed after Core verified the Placement.
+        """
+        facts = getattr(item, "_cover_local_evidence", None)
+        if facts is None:
+            # Other N2 producers (Search/loan) may already have registered
+            # this exact reference. The gateway itself will reject misses.
+            return True
+        adapter = getattr(self.window, "local_cover_adapter", None)
+        if adapter is None:
+            return False
+        try:
+            return adapter.register(service, facts) == document
+        except (TypeError, ValueError, RuntimeError):
+            # A malformed/stale source may not fall back to a cached URL and
+            # silently bypass the authoritative EPUB priority.
+            return False
+
     def _thumbnail_changed(self, item: BookListItem) -> None:
         if self._thumbnail_item is not item or self._bound_key != item.key:
             return
         document = getattr(item, "_cover_document_ref", None)
         service = getattr(self.window, "document_covers", None)
         if document is not None and service is not None:
+            if (getattr(item, "_cover_local_evidence", None) is not None
+                    and not self._admit_core_local_cover(item, service, document)):
+                self.cover.bind_url(self.cover_loader, None, priority=10)
+                return
             self.cover.bind_document(
                 service, document, variant="list", priority=10,
                 on_texture_applied=getattr(item, "_cover_paint_observer", None),
@@ -586,10 +611,14 @@ class BookListCell(Gtk.Box):
             # A source selected by N1/N2 is resolved ONCE; a warm URL cache
             # cannot displace a proved EPUB, nor can a recycled row reuse a
             # stale DocumentRef from a different account/Placement.
-            self.cover.bind_document(
-                service, document, variant="list", priority=10,
-                on_texture_applied=getattr(item, "_cover_paint_observer", None),
-            )
+            if (getattr(item, "_cover_local_evidence", None) is not None
+                    and not self._admit_core_local_cover(item, service, document)):
+                self.cover.bind_url(self.cover_loader, None, priority=10)
+            else:
+                self.cover.bind_document(
+                    service, document, variant="list", priority=10,
+                    on_texture_applied=getattr(item, "_cover_paint_observer", None),
+                )
         elif item.thumbnail_url:
             self.cover.bind_url(
                 self.cover_loader, item.thumbnail_url, priority=10,
