@@ -115,7 +115,7 @@ def _report_and_image(
             or report["checks"].get(subject_check) is not True
             or report.get("p1_774_paired_book") != verified_fixture_receipt()):
         raise ReviewError(
-            "Source/édition, titre, auteur ou sujet GTK commun non attesté"
+            "Source/édition, détail GTK ou sujet commun non attesté"
         )
     geometry = report.get(geometry_key)
     if (not isinstance(geometry, dict)
