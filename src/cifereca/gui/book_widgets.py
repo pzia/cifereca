@@ -278,7 +278,16 @@ class BookListItem(GObject.Object):
         """
         if self.thumbnail_url == url:
             return False
+        previous = self.thumbnail_url
         self.thumbnail_url = url
+        # The common MasterDetailPage append-fast path compares presentation
+        # signatures, not mutable BookListItem fields. Keep the Search
+        # signature coherent with an in-place image update so a later
+        # no-op filter render does not accidentally reset selected detail.
+        content = getattr(self, "_public_row_content", None)
+        if (type(content) is tuple and len(content) >= 2
+                and content[0] == "search" and content[-1] == previous):
+            self._public_row_content = (*content[:-1], url)
         self.emit("thumbnail-changed")
         return True
 
