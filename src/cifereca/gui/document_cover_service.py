@@ -322,7 +322,7 @@ class DocumentCoverService:
                         # no public URL may permanently displace it.
                         self._qualified_fallback.pop(document, None)
                         self.decisions.invalidate(
-                            document, cause="evidence_changed",
+                            document, cause="materialization_requalified",
                         )
                 decision = self.decisions.peek(document, revision=snapshot.revision)
                 if decision is None and document not in self._resolving:
