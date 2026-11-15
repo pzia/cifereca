@@ -551,8 +551,8 @@ class Storage:
 
         if version < 3:
             # One transaction/savepoint creates the complete generic 0.8 model.
-            # No filesystem access occurs during migration: paths from 0.7 are
-            # imported as unverified placements and reconciled by a later scan.
+            # No filesystem access occurs during migration: historical 0.7
+            # archive paths remain unverified and are never projected into B.
             db.execute("SAVEPOINT migration_v3")
             try:
                 schema_sql = """
@@ -651,26 +651,14 @@ class Storage:
                     statement = statement.strip()
                     if statement:
                         db.execute(statement)
-                now = int(time.time())
-                keys = [
-                    "provider_id", "credential_id", "item_id", "revision_id", "title", "author",
-                    "format", "local_path", "status", "size", "sha256", "updated_at", "error",
-                    "job_id", "adept_profile", "account_id", "entitlement_type", "loan_id",
-                    "expires_at", "acquisition_strategy", "executor", "attempt_count",
-                    "last_attempt_at", "attention_code",
-                ]
-                rows = db.execute("SELECT " + ",".join(keys) + " FROM backup_items").fetchall()
-                for values in rows:
-                    row = dict(zip(keys, values))
-                    # #3196 W5 cutover: a Kobo v0.7 checkpoint is an
-                    # archive, not a provider-attested SourceReference or
-                    # proof of canonical A/B delivery. The historical
-                    # SQLite import must never synthesize a generic right,
-                    # acquisition, Artifact, Placement or catalogue row.
-                    # Other providers retain their own legacy migrations.
-                    if row["provider_id"] == "kobo":
-                        continue
-                    cls._mirror_backup_row(db, row, now=now, migration=True)
+                # W5 / #5975: v2->v3 is a STRUCTURAL schema migration for
+                # every historical provider. A v0.7 backup_items snapshot
+                # is not an independently attested right or verified B,
+                # regardless of supplier, status, SHA, path or attempt count.
+                # Keep the original backup_items rows byte-for-byte for
+                # offline recovery/rollback, but do not import them into
+                # entitlements, acquisition_ledger, artifacts, placements
+                # or catalogue on the basis of those declarations alone.
                 cls._write_schema_version(db, 3)
                 db.execute("RELEASE SAVEPOINT migration_v3")
             except Exception:
