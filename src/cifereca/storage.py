@@ -2309,8 +2309,8 @@ class Storage:
             # BEGIN IMMEDIATE pins the typed-source decision to the same
             # SQLite write transaction as the legacy UPSERT below. A typed
             # source cannot be inserted between this check and that UPSERT.
-            # Other providers, and Kobo editions with no typed source,
-            # retain the historical writer until their recovery is migrated.
+            # Other providers retain their legacy mirror; untyped Kobo
+            # editions may update only their 0.7 archive and negative vetoes.
             if item.get("provider_id") == "kobo":
                 db.execute("BEGIN IMMEDIATE")
                 # A typed SourceReference owns this exact source: the 0.7
