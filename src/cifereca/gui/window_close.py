@@ -20,6 +20,16 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
         except Exception:
             # No asynchronous GDK callback may survive window teardown.
             pass
+    # Drop N0 subscriptions before the scoped cache and GTK window vanish.
+    # This is observation-only: a failing trace cannot prevent teardown of
+    # worker pool, service or plugin resources.
+    loan_cover_trace = getattr(window, "_loan_cover_trace_observer", None)
+    window._loan_cover_trace_observer = None
+    if loan_cover_trace is not None:
+        try:
+            loan_cover_trace.dispose()
+        except Exception:
+            pass
     for name in ("_settings_main_lifetime", "_settings_standalone_lifetime"):
         lifetime = getattr(window, name, None)
         if lifetime is None:

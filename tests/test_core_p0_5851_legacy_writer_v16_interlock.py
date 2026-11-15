@@ -79,3 +79,62 @@ def test_legacy_writer_fails_closed_if_v16_evidence_lookup_fails(tmp_path, monke
         assert "PRIVATE" not in str(exc.value)
     finally:
         service.close()
+
+
+def test_storage_legacy_writer_rechecks_raw_v16_inside_its_transaction(tmp_path):
+    """A direct old Storage API must not recreate a second grant after v16."""
+    service, _loan = service_with_linked_borrower(tmp_path)
+    try:
+        _persist_account(service.storage)
+        proof = service.bind_adept_borrower_grant(
+            **SOURCE, borrower_identity_id="bob", confirmed=True,
+        )
+        with pytest.raises(ValueError, match="requires v16 binding"):
+            service.storage.paris_borrower_adept_binding_put(
+                credential_id="alice-paris", account_id="linked-123",
+                borrower_identity_id="bob", profile_id="bob-profile",
+                confirmed=True,
+            )
+        assert service.storage.paris_borrower_adept_binding_get(
+            credential_id="alice-paris", account_id="linked-123",
+        ) is None
+        assert service.storage.adept_borrower_grant_get(**SOURCE) == proof
+    finally:
+        service.close()
+
+
+def test_v16_created_after_facade_preflight_blocks_legacy_upsert(tmp_path, monkeypatch):
+    """Another writer can commit v16 after the facade reads its absence.
+
+    The historical SQLite writer must veto that fresh v16 row under its own
+    BEGIN IMMEDIATE lease, rather than trust a stale service-level preflight.
+    """
+    service, _loan = service_with_linked_borrower(tmp_path)
+    try:
+        _persist_account(service.storage)
+        original_get = service.storage.adept_borrower_grant_get
+        injected = []
+
+        def race_after_read(**coordinates):
+            before = original_get(**coordinates)
+            if before is None and not injected:
+                service.storage.adept_borrower_grant_put(
+                    **SOURCE, connection_identity_id="alice",
+                    borrower_identity_id="bob", profile_id="bob-profile",
+                    confirmed=True,
+                )
+                injected.append(True)
+            return before
+
+        monkeypatch.setattr(
+            service.storage, "adept_borrower_grant_get", race_after_read,
+        )
+        with pytest.raises(ValueError, match="requires v16 binding"):
+            _write_old(service)
+        assert injected == [True]
+        assert service.storage.paris_borrower_adept_binding_get(
+            credential_id="alice-paris", account_id="linked-123",
+        ) is None
+        assert original_get(**SOURCE)["borrower_identity_id"] == "bob"
+    finally:
+        service.close()

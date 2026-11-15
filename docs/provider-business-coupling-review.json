@@ -1814,6 +1814,30 @@
         "tests/test_provider_plugins.py"
       ],
       "pr": "#6187"
+    },
+    {
+      "id": "guard-paris-legacy-writer-v16-immediate-sql-veto",
+      "journey": "Legacy Paris ADEPT borrower binding UPSERT after service-level v16 preflight",
+      "classification": "safety_guard_pending_contract",
+      "effect": "The live Storage.paris_borrower_adept_binding_put takes SQLite BEGIN IMMEDIATE, checks the raw canonical v16 row for the exact Paris credential/account in the same transaction, and refuses any newer legacy UPSERT when v16 is present, including an intervening v16 write after the facade preflight.",
+      "remaining_debt": "Historical public bind_paris_borrower_adept remains executable on never-migrated scopes; the three unclassified AST anchors on that method are NOT retired, and a preexisting legacy row followed by canonical v16 still needs an explicit safe cutover/nonloss proof. SQL v17 retirement tombstone is unchanged. The 3 historical Config/SQLite migration writers remain separately active.",
+      "tests": [
+        "tests/test_core_p0_5851_legacy_writer_v16_interlock.py",
+        "tests/test_core_p0_5851_monotone_legacy_retirement_v17.py"
+      ],
+      "pr": "#6196"
+    },
+    {
+      "id": "guard-historical-return-receipt-native-borrower-scope",
+      "journey": "Read-only lookup of persisted voluntary-return checkpoints in LibraryService.loan_return_state",
+      "classification": "legitimate_readonly_compat",
+      "effect": "Only native nonempty provider/credential/loan ID and an explicitly typed borrower (including the frozen empty-primary sentinel) may address a historical return checkpoint. No arbitrary __str__, bool coercion, missing-borrower primary fallback, provider GET or storage write.",
+      "remaining_debt": "Historical return receipt key v1 still uses the frozen primary sentinel; the retired return mutation and other ADEPT provider-specific admission remain separate. This is a read-only hardening, not an active AST coupling or historical writer retirement.",
+      "tests": [
+        "tests/test_core_p0_5975_return_receipt_readonly_scope.py",
+        "tests/test_core_p0_1120_public_return_projection.py"
+      ],
+      "pr": "#6197"
     }
   ],
   "retained_legacy_migrations": [
