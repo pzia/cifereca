@@ -52,7 +52,8 @@ def test_cover_metadata_schema_is_versioned_and_negative_cache_can_be_reinspecte
 
     assert "SCHEMA = 2" in epub_source
     assert "cached.get('epub_metadata_schema') == EPUB_METADATA_SCHEMA and (not force)" in catalog_source
-    assert "if cached.get('epub_cover') and (not cached_cover_url(cached)):" in catalog_source
+    # An N3 physical-image MISS must NOT trigger N1 EPUB reinspection.
+    assert "if cached.get('epub_cover') and (not cached_cover_url(cached)):" not in catalog_source
     assert "inspected = inspect_epub(path)" in catalog_source
     assert "cached.pop('epub_cover', None)" in catalog_source
 
