@@ -15,6 +15,34 @@ if TYPE_CHECKING:
     from .main_window import MainWindow
 
 
+# A producer may omit its private _public_row_content revision token. In
+# that case identical SourceKeys alone are not sufficient to reuse a GTK cell:
+# the same verified book can acquire a thumbnail, title, author or fallback
+# cover in a later snapshot. Compare only bounded, already-built UI fields;
+# never fetch suppliers or inspect business rights from this common widget.
+_BOOK_ROW_VISIBLE_FIELDS = (
+    "title", "subtitle", "meta", "badge", "badge_style", "thumbnail_url",
+    "default_thumbnail_url", "cover_provider", "cover_record_id",
+    "cover_title", "cover_author", "cover_year",
+    "action_label", "action_icon_name",
+)
+
+
+def _same_book_row_presentation(old: BookListItem, new: BookListItem) -> bool:
+    """Preserve append-fast only for unchanged on-screen book presentation."""
+    old_revision = getattr(old, "_public_row_content", None)
+    new_revision = getattr(new, "_public_row_content", None)
+    # Rich adapters may encode additional action/source context, but a
+    # mistakenly incomplete revision must never authorize stale visual
+    # content. Compare ordinary book fields too, for *every* surface.
+    if old_revision != new_revision:
+        return False
+    return all(
+        getattr(old, field, None) == getattr(new, field, None)
+        for field in _BOOK_ROW_VISIBLE_FIELDS
+    )
+
+
 class MasterDetailPage(Gtk.Box):
     """Page maître/détail basée sur Gtk.ListView virtualisé."""
 
@@ -309,7 +337,7 @@ class MasterDetailPage(Gtk.Box):
         # complete ListStore on every batch. Public plugin rows can also
         # update their presentation while keeping the same selection key.
         if (existing_count and existing_keys == new_keys[:existing_count] and len(rows) >= existing_count
-                and all(getattr(old, "_public_row_content", None) == getattr(new, "_public_row_content", None)
+                and all(_same_book_row_presentation(old, new)
                         for old, new in zip(existing_rows, rows))
                 and not (self is getattr(self.window, "search_page", None)
                          and getattr(self.window, "_search_local_snapshot_dirty", False))):
