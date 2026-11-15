@@ -133,7 +133,7 @@ class DetailPanel(Gtk.Box):
         if cover_evidence is None:
             cover.bind_url(self.window.covers, thumbnail, priority=0)
             return
-        from .loan_supplier_document_cover_bridge import (
+        from cifereca.gui.loan_supplier_document_cover_bridge import (
             VerifiedLoanSupplierCover, register_exact_loan_supplier,
         )
         if type(cover_evidence) is VerifiedLoanSupplierCover:
