@@ -70,4 +70,4 @@ def test_recommendations_catalogue_keeps_typed_per_value_affordances():
     assert "self._add_metadata_actions(row, label, safe_value, field.kind)" in group
     actions = _method("_add_metadata_actions")
     assert "kind in {'title', 'author', 'subject', 'series', 'collection', 'language', 'isbn', 'all'}" in actions
-    assert "lambda _button" in actions
+    assert "lookup.connect('clicked', search_one)" in actions
