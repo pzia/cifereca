@@ -1812,6 +1812,7 @@ def build_public_brokers(service: Any) -> dict[str, object]:
     from .http_trace import HTTPX_TRANSPORT
     from .core.release_update_read import ReleaseUpdateReadBrokerImpl
     from .core.library_audit_broker import LibraryReconciliationReadBrokerImpl
+    from .core.device_usb_execution_broker import ReaderUsbExecutionBrokerImpl
     artifact_execution = ArtifactExecutionBrokerImpl(service)
     return {
         # Deliberately read-only: the trusted updater transaction has no
@@ -1834,6 +1835,8 @@ def build_public_brokers(service: Any) -> dict[str, object]:
         "library.reconciliation.read": LibraryReconciliationReadBrokerImpl(service),
         "library.maintenance": LibraryMaintenanceBrokerImpl(service),
         "artifact.routing": ArtifactRoutingBrokerImpl(service, artifact_execution),
+        # P1 #4985: Core-only USB execution, no provider rights inferred.
+        "reader.usb": ReaderUsbExecutionBrokerImpl(service),
         "cache": CacheBrokerImpl(service),
         "tasks": TaskBrokerImpl(service),
     }
