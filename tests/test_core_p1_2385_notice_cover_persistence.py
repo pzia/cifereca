@@ -127,12 +127,21 @@ def test_monotone_revision_and_cas_for_changed_parser_and_cover_contract(tmp_pat
             db, notice(OTHER, observed_at=3, parser_version="2"), epoch=2,
         )
         assert three.epoch == 3
-        four = store(
+        incomplete = store(
             db, notice(OTHER, observed_at=4, parser_version="2"),
             field_path=("new", "path"), complete=False, epoch=3,
         )
+        # A changed parser field cannot erase the previous attested image
+        # until the replacement field's inventory is actually complete.
+        assert incomplete == three
+        assert read_notice_cover(db, ref).epoch == 3
+        assert incomplete.attribute.candidates[0].url == OTHER
+        four = store(
+            db, notice(OTHER, observed_at=5, parser_version="2"),
+            field_path=("new", "path"), complete=True, epoch=3,
+        )
         assert four.epoch == 4
-        assert four.attribute.state == "pending"
+        assert four.attribute.state == "missing"
         assert read_notice_cover(db, ref).epoch == 4
         assert four.attribute.candidates == ()
     finally:
