@@ -445,6 +445,25 @@ class TaskRunner:
             "obtain", "index", "provider-connect", "sync-audit", "source-consent",
             "identity", "maintenance-inspection",
         } else "other"
+        def classify_business(value: Any) -> str:
+            """Use the exact TaskRunner classifier; isolated submit adapters
+            may only retain generic, non-authorizing compatibility tasks.
+            """
+            classify = getattr(self, "_business_outcome", None)
+            if callable(classify):
+                return classify(value, trace_kind)
+            # Historical AST-only submit() adapters are not Core authorities.
+            # A missing typed classifier cannot mint a successful supplier
+            # loan, physical copy, acquisition or DRM staging receipt.
+            if trace_kind in {
+                "borrow", "transfer", "acsm-import", "acsm-stage",
+                "lender-local-send", "lender-placement-check",
+                "borrow-verification", "loan-acquisition", "materialize",
+            }:
+                return "failed"
+            legacy = getattr(self, "_source_sync_outcome", None)
+            return legacy(value, trace_kind) if callable(legacy) else "failed"
+
         # An explicit user request must always run, including callers that
         # deliberately have no GTK control (keyboard actions, headless host).
         # A missing widget is not evidence that a task is automatic (#981).
@@ -535,7 +554,7 @@ class TaskRunner:
             outcome_status = "success"
             try:
                 value = fn(report) if with_progress else fn()
-                business = self._business_outcome(value, trace_kind)
+                business = classify_business(value)
                 if business != "success":
                     outcome_status = "failed"
                     if trace_kind in {"borrow", "opening-sync", "deep-sync"}:
@@ -608,7 +627,7 @@ class TaskRunner:
             business_status = (
                 ("cancelled" if isinstance(outcome[1], Cancelled) else "failed")
                 if outcome[0] == "error"
-                else self._business_outcome(outcome[1], trace_kind)
+                else classify_business(outcome[1])
             )
             # Isolated legacy submit() adapters do not carry the class's
             # helper methods. Those adapters cannot attest lock contention,
