@@ -31,6 +31,8 @@ from cifereca.core.device_usb_operation_journal import (
 )
 from cifereca.core.device_usb_sync_engine import UsbSyncResult
 from tests.test_p1_2854_usb_removal_review import completed_copy
+from tests.test_p1_2854_usb_live_source import live_args
+from tests.test_p1_2854_usb_copy_preparation import copy_review
 
 
 @pytest.fixture
