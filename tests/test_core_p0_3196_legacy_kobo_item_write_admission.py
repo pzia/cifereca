@@ -50,7 +50,8 @@ def test_any_writer_refuses_new_unqualified_keys_atomically(tmp_path, unqualifie
         storage.close()
 
 
-def test_historical_corrupt_sqlite_key_is_not_deleted_by_write_admission(tmp_path):
+@pytest.mark.parametrize("provider", ["kobo", "paris", "numilog", "synthetic"])
+def test_historical_corrupt_sqlite_key_is_not_deleted_by_write_admission(tmp_path, provider):
     storage = Storage(tmp_path / "legacy.sqlite")
     try:
         with storage._lock, storage._connect() as db:
@@ -58,13 +59,13 @@ def test_historical_corrupt_sqlite_key_is_not_deleted_by_write_admission(tmp_pat
                 "INSERT INTO backup_items("
                 "provider_id,credential_id,item_id,title,status,updated_at"
                 ") VALUES(?,?,?,?,?,?)",
-                ("kobo", "vault", "", "Historical", "complete", 1),
+                (provider, "vault", "", "Historical", "complete", 1),
             )
         before = _snapshot(storage)
         with pytest.raises(ValueError, match="backup_legacy_item_id_invalid"):
-            storage.backup_put(_claim(""))
+            storage.backup_put(_claim("", provider))
         assert _snapshot(storage) == before
-        assert storage.backup_get("kobo", "vault", "") is not None
+        assert storage.backup_get(provider, "vault", "") is not None
     finally:
         storage.close()
 
