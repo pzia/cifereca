@@ -154,3 +154,26 @@ def test_untrusted_account_does_not_authorize_a_new_borrow(harness):
         borrow_claim_key(choices[0]._account, notice),
     ) is None
     assert session.calls == 0
+
+
+def test_possible_lender_dto_cannot_be_forged_into_an_authorization(harness):
+    service, _account, session = harness
+    candidate, = _discover(service, _candidate().notice)
+    with pytest.raises(ValueError, match="invalid_possible_borrow_lender"):
+        replace(candidate, executable=True)
+    with pytest.raises(ValueError, match="invalid_possible_borrow_lender"):
+        replace(candidate, supplier_eligibility="eligible")
+    with pytest.raises(ValueError, match="invalid_possible_borrow_lender"):
+        replace(candidate, lender_identity_id="default")
+    assert session.calls == 0
+
+
+def test_shared_credential_in_two_profiles_cannot_select_a_lender(harness):
+    service, _account, session = harness
+    service.accounts.append(Account(
+        identity_id="default", provider_id="paris",
+        credential_id="card-alex", unique_id="",
+        display_name="Requesting profile", is_primary=True,
+    ))
+    assert _discover(service, _candidate().notice) == ()
+    assert session.calls == 0
