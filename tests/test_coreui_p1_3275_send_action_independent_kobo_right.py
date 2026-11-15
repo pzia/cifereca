@@ -54,7 +54,10 @@ def test_independent_b_purchase_same_product_does_not_hide_explicit_send():
     args, kw = submitted[0]
     assert kw["kind"] == "materialize"
     assert args[0] == "Envoi du fichier local…"
-    assert args[1]() == "complete"
+    assert args[1]() == {
+        "status": "complete", "target_identity_id": "bob",
+        "placement_id": "new-placement", "path": "/library/copied.epub",
+    }
     assert events[-2:] == [
         ("path", "placement", "alice"), ("send", "placement", "bob"),
     ]
