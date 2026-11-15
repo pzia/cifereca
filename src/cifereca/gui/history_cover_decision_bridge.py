@@ -73,7 +73,7 @@ class HistoryCoverDecisionBridge:
             raise ValueError("invalid History cover capacity")
         self._cache = CoverDecisionCache(max_scopes=max_occurrences)
         self._records: OrderedDict[
-            CoverDocumentScope, tuple[tuple[str, int, int], str | None, int],
+            CoverDocumentScope, tuple[tuple[str, int, int, int | None], str | None, int],
         ] = OrderedDict()
         self._revision = 0
         self._capacity = max_occurrences
@@ -81,18 +81,23 @@ class HistoryCoverDecisionBridge:
     def resolve(
         self, item: HistoryItem, *, identity_id: str,
         account_epoch: int, history_revision: int,
+        source_epoch: int | None = None,
     ) -> ResolvedBookCover | None:
         scope = exact_history_cover_scope(item, identity_id=identity_id)
         if (scope is None or type(account_epoch) is not int
                 or account_epoch < 0 or type(history_revision) is not int
-                or history_revision < 1):
+                or history_revision < 1
+                or (source_epoch is not None and (
+                    type(source_epoch) is not int or source_epoch < 0))):
             return None
         # The original History DTO is the only cover evidence; the generic
         # default image is visual fallback, not a documentary cover proof.
         url = item.thumbnail_url
         if url is not None and type(url) is not str:
             return None
-        context = (identity_id, account_epoch, history_revision)
+        # An A->B->A source-session rotation must advance N2 even if the
+        # same direct provider URL and upstream History ID are replayed.
+        context = (identity_id, account_epoch, history_revision, source_epoch)
         known = self._records.get(scope)
         if known is not None and known[0] == context and known[1] == url:
             cached = self._cache.peek(scope, revision=known[2])
@@ -155,6 +160,7 @@ def history_cover_presentation(
     decision = bridge.resolve(
         item, identity_id=identity_id,
         account_epoch=account_epoch, history_revision=producer_revision,
+        source_epoch=getattr(service, "_source_context_epoch", None),
     )
     if decision is None:
         return item  # unknown owner/source: never invent documentary linkage
