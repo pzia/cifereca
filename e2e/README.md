@@ -262,10 +262,17 @@ avant toute recherche avec l'ancien profil, puis que le même bouton
 conservé après disparition du Détail GTK ne peut plus déclencher
 de recherche. Cette preuve est signalée sous
 `P1_4761_stale_metadata_search_button_inert_gtk`.
-Le code
-`P1_4761_recommendations_typed_catalogue_author_gtk` est obligatoire
-pour créer ou revalider les planches privées #774 ; ni CI ni comparaison
-synthétique ne remplace l'inspection visuelle originale.
+Les codes
+`P1_4761_recommendations_typed_catalogue_author_gtk`,
+`P1_4761_recommendations_shared_compact_essential_gtk` et
+`P1_4761_stale_metadata_search_button_inert_gtk` sont **tous
+obligatoires** pour créer ou revalider les planches privées #774.
+Le probe vérifie le vrai bloc Core `Essentiel` (Source, Format, Langue)
+et l'inertie du bouton de recherche par auteur quand le profil actif
+change ou que le Détail est détruit. Il ne suffit pas de vérifier des
+booléens dans les fixtures de tests : ces checks proviennent de GTK réel.
+Ni CI ni comparaison synthétique ne remplace l'inspection visuelle
+originale.
 Le manifeste privé retient l'empreinte du livre synthétique. Cette
 égalité de fixture **ne certifie aucune jointure réelle de fournisseur**,
 couverture empruntée, ni appariement documentaire d'un compte utilisateur.
