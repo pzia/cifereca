@@ -55,6 +55,7 @@ def loan_cover_paint_receipt(
     observer = getattr(host, "_loan_cover_trace_observer", None)
     cache = getattr(host, "_loan_cover_decision_cache", None)
     if (scope is None or identity != loan.identity_id or type(identity) is not str
+            or not callable(getattr(getattr(host, "covers", None), "probe_media", None))
             or type(epoch) is not int or epoch < 0
             or type(revision) is not int or revision < 1
             or type(observer) is not LoanCoverTraceSubscriptions
