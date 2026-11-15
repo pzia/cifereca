@@ -1935,6 +1935,19 @@
         "tests/test_adept_borrower_identity_guard.py"
       ],
       "pr": "#6226"
+    },
+    {
+      "id": "guard-adept-profile-source-lease-after-runtime-hooks",
+      "journey": "Automatic loan ACSM already staged: pre-ADEPT borrower grant, profile resolution, profile inventory and readiness hooks",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Use the single existing borrower attention writer to deny staged Loan provenance changes after each external profile hook; reject absent/non-native borrower identities before invoking profile resolution and reject malformed profile names before inventory; preserve the pinned loan/edition/credential/borrower receipt coordinates and one-write count.",
+      "remaining_debt": "The Paris-specific grant callback remains a safety requirement pending typed provider-neutral borrower rights. No new ADEPT grants or fulfillment, no extra provider GET/POST, no AST retirement and no historical writer retirement.",
+      "tests": [
+        "tests/test_core_p0_5975_adept_profile_external_lease.py",
+        "tests/test_core_p0_1120_adept_profile_guard_extraction.py",
+        "tests/test_core_p0_1120_profile_receipt_projection.py"
+      ],
+      "pr": "#6218"
     }
   ],
   "retained_legacy_migrations": [
