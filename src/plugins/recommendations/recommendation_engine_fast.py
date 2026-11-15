@@ -208,6 +208,11 @@ def rank_candidates_prepared(
             -row.score,
             normalize(get_field(row.item, "title", "")),
             normalize(get_field(row.item, "author", "")),
+            # Equal relevance and display labels are not a reason to inherit
+            # provider-arrival order. Two distinct attested ISBN editions or
+            # source-scoped records must have a stable, documentary tiebreak.
+            # candidate_key is descriptive only, never lending permission.
+            candidate_key(row.item),
         )
     )
     return _mmr_fast(
