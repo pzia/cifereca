@@ -112,3 +112,69 @@ def test_v16_revocation_tombstone_is_scoped_and_persists_on_reopen(tmp_path):
         )[0]["borrower_identity_id"] == "bob"
     finally:
         reopened.close()
+
+
+def test_v16_profile_invalidation_retires_historical_authority(tmp_path):
+    """Database cascades must revoke legacy authority, not only the API."""
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        _persist_account(service.storage)
+        seed_historical_adept_binding(
+            service, credential_id="alice-paris", account_id="linked-123",
+            borrower_identity_id="bob", confirmed=True,
+        )
+        service.bind_adept_borrower_grant(
+            **SCOPE, borrower_identity_id="bob", confirmed=True,
+        )
+        service.storage.adept_profile_binding_set("identity", "bob", "reader-new")
+        assert service.storage.adept_borrower_grant_get(**SCOPE) is None
+        assert service.storage.paris_borrower_adept_binding_get(
+            credential_id="alice-paris", account_id="linked-123",
+        )["retired_for_authority"] is True
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice",
+        ) == (None, "adept_borrower_binding_required")
+    finally:
+        service.close()
+
+
+def test_legacy_only_row_remains_readable_until_explicit_cutover(tmp_path):
+    """An absent v16 row must not manufacture a revocation tombstone."""
+    service, _ = service_with_linked_borrower(tmp_path)
+    try:
+        seed_historical_adept_binding(
+            service, credential_id="alice-paris", account_id="linked-123",
+            borrower_identity_id="bob", confirmed=True,
+        )
+        service.storage.adept_borrower_grant_delete(**SCOPE)
+        assert service.storage.paris_borrower_adept_binding_get(
+            credential_id="alice-paris", account_id="linked-123",
+        )["retired_for_authority"] is False
+    finally:
+        service.close()
+
+
+def test_revoked_primary_exception_cannot_fallback_to_connection_identity(tmp_path):
+    from dataclasses import replace
+
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        _persist_account(service.storage)
+        primary = replace(loan, source_account_id="primary")
+        seed_historical_adept_binding(
+            service, credential_id="alice-paris", account_id="primary",
+            borrower_identity_id="bob", confirmed=True,
+        )
+        service.bind_adept_borrower_grant(
+            provider_id="paris", credential_id="alice-paris",
+            account_id="primary", borrower_identity_id="bob", confirmed=True,
+        )
+        service.storage.adept_borrower_grant_delete(
+            provider_id="paris", credential_id="alice-paris",
+            account_id="primary",
+        )
+        assert service._paris_adept_identity_for_loan(
+            primary, connection_identity_id="alice",
+        ) == (None, "adept_borrower_binding_required")
+    finally:
+        service.close()
