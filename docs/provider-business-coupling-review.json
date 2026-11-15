@@ -1285,6 +1285,22 @@
       "pr": "#6154",
       "in_ast_metric": false,
       "retired_at_sha": "626418337b8e93f0cbba5113f8ed486f3dcf2ec7"
+    },
+    {
+      "id": "struct-v5-historical-cardinality-supplier-sql-selector-neutralized",
+      "original": "SQLite v4->v5 hardcoded Kobo literal directly into the connection/account deduplication SELECTs, credential provenance UPDATE and derived-identity string",
+      "original_classification": "legacy_mutating_cutover",
+      "replacement": "Frozen historical provider cohort data plus parameterized provider_id in all v5 data-repair SELECTs/UPDATEs and deterministic derived identity IDs; Kobo remains the sole deployed historical cohort",
+      "classification": "replaced_supplier_selector_without_retiring_historical_writer",
+      "evidence": "The same old Kobo v4 SQLite fixture from #6159 covers identity-collision suffix, primary-account pruning, archived SHA/path and owner reassignments. A synthetic cohort exercises provider-neutral SQL and derived IDs without granting new runtime cardinality policy. The v5 writer still runs on pre-v5 schemas and remains in retained_legacy_migrations; historic uq_kobo indexes are still transitional schema DDL dropped by v15. No active writer retirement or AST cohort credit.",
+      "tests": [
+        "tests/test_core_p0_5975_v5_historical_cardinality_scope.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py",
+        "tests/test_core_p0_5743_sqlite_cardinality_v15.py"
+      ],
+      "pr": "#6162",
+      "in_ast_metric": false,
+      "retired_at_sha": "a97375df5d8b60465862238ca5f3a8841ee768e3"
     }
   ],
   "guard_installations": [
@@ -1401,10 +1417,10 @@
       "id": "legacy-sqlite-v5-kobo-cardinality-identity-repair",
       "classification": "legacy_mutating_cutover",
       "journey": "Historical SQLite schema v4->v5 one-time repair of duplicated Kobo connections/accounts and identity ADEPT bindings",
-      "productive_caller": "Storage.__init__ -> Storage._migrate(db) when persisted schema_version < 5, after v4 identity tables exist; v15 replaces the historic supplier-specific unique indexes with provider-neutral policy triggers",
-      "effect": "Splits duplicate old Kobo connections into deterministic derived identities; reassigns matching account, backup, entitlement and receipt identity_id; deletes surplus cached provider_accounts and obsolete ADEPT account-scope bindings, deduplicates ADEPT identity profiles. Existing schema v5+ never replays.",
+      "productive_caller": "Storage.__init__ -> Storage._migrate when schema_version < 5, iterating a frozen 0.8.1 historical single-connection provider cohort; v15 removes the temporary Kobo indexes and enforces persisted generic provider_cardinality_policies",
+      "effect": "Still splits duplicate historical Kobo connections and identities, updates exact credential-scoped archive/entitlement/receipt identity_id, deletes surplus cached upstream accounts and duplicate ADEPT profile bindings. The algorithm is parameterized for a versioned historical cohort, but the writer remains executable for old v4 stores.",
       "authority": "Exact pre-v5 persisted provider/credential/identity rows and historical Kobo one-connection cardinality. Not inferred from plugin descriptors, HTTP, filesystem path, or from any new entitlement/consent proof.",
-      "replacement_contract": "Retain old v4 database repair until a versioned, provider-neutral historical migration has tests for multiple credentials, account scopes, archives, ADEPT, duplicate identity collisions and atomic rollback; no data loss or silent change of existing v5+ stores.",
+      "replacement_contract": "Historical cohort frozen as data in #6162 (no runtime descriptor policy). The temporary supplier-named v5 indexes are still created and removed at v15. Retain versioned writer until oldest-supported-schema deprecation or fully safe generic historical migration with data-loss/rollback proof; never mistake removal of a SQL supplier selector for retirement of this writer.",
       "tests": [
         "tests/test_identities_081.py",
         "tests/test_core_p0_5743_sqlite_cardinality_v15.py",
