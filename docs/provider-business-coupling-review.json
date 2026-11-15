@@ -1838,6 +1838,17 @@
         "tests/test_core_p0_1120_public_return_projection.py"
       ],
       "pr": "#6197"
+    },
+    {
+      "id": "guard-loan-auto-native-loan-edition-keys-before-owner-lookup",
+      "journey": "Automatic loan acquisition initial read-only admission before identity_for_connection",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Loan ID must be nonempty native str and edition ID native str or None before any storage owner lookup. Invalid or hostile loan keys cannot invoke storage, borrower grant or entitlement inventory. Refusal loan_id never carries an untrusted object; after a drift callback only a native string is exposed.",
+      "remaining_debt": "The active Paris ADEPT borrower admission remains separately protected and not retired. This guard is not a provider decision removal or historical writer migration.",
+      "tests": [
+        "tests/test_automatic_loan_admission.py"
+      ],
+      "pr": "#pending"
     }
   ],
   "retained_legacy_migrations": [
