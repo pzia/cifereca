@@ -174,6 +174,9 @@ class CoverLoader:
         self.client.close()
 
     def stats(self) -> dict[str, int | float | str]:
+        # N3 EPUB counters are installation-wide media observations, never
+        # document ownership or provider-account statistics.
+        physical = self._epub_physical.stats()
         with self._lock:
             stats = dict(self._stats)
             count = int(stats.get("ui_decode_count") or 0)
@@ -186,6 +189,8 @@ class CoverLoader:
                 "inflight_urls": len(self._callbacks),
                 "workers": self.max_workers,
                 "cache_schema": CACHE_SCHEMA,
+                **{key: value for key, value in physical.items()
+                   if key.startswith("n3_epub_")},
             }
 
     def _absolute(self, url: str) -> str:
