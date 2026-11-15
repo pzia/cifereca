@@ -699,7 +699,7 @@ def main() -> int:
             "EPUB",
         ]
         assert [value for label, value in compact_rows if label == "Langue"] == [
-            "fr",
+            "Français",
         ]
         result["checks"]["P1_4761_search_shared_compact_essential_gtk"] = True
         # The same public Subject is already rendered in the canonical
