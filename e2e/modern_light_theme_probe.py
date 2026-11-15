@@ -296,6 +296,14 @@ def main() -> int:
             assert focused is not None and focused.get_root() is w, (
                 "Focus clavier absent de la fenêtre GTK"
             )
+            # A focus widget anywhere in the window is not sufficient:
+            # an unrelated SearchEntry could retain keyboard focus while
+            # the navigation row reports grab_focus() successfully.
+            # GTK focus must belong to the actual requested row (or one
+            # of its descendants), not merely to the same top-level.
+            assert focused is row or focused.is_ancestor(row), (
+                "Focus GTK absent de la ligne de navigation demandée"
+            )
             report["checks"][f"P1_757_navigation_focus_{route}"] = True
         light = capture(route, "light")
         active["light_image"] = light
