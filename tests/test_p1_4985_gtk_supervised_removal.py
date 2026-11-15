@@ -220,6 +220,8 @@ def test_confirmed_removal_has_distinct_worker_and_exact_consent(rig):
     assert consent.expires_at - consent.confirmed_at == 60
     assert invocation["mountpoint"] == rig.volume.mountpoint
     assert invocation["expected_profile_epoch"] == 1
+    assert callable(invocation["check_cancelled"])
+    assert invocation["check_cancelled"]() is None
     assert "Retrait USB supervisé terminé" in rig.host._reader_status_label.label
     assert rig.db.device_placement_get(
         "reader-alice", rig.book["artifact_id"],
@@ -411,3 +413,40 @@ def test_only_latest_of_two_overlapping_explicit_requests_can_prompt_user(rig):
     assert len(rig.dialogs) == 1
     rig.dialogs[0].answer("cancel")
     assert rig.backend.execution == []
+
+
+def test_replacing_selected_detail_revokes_queued_usb_unlink(rig):
+    click(rig)
+    rig.host.runner.advance()
+    assert len(rig.dialogs) == 1
+    rig.dialogs[0].answer("delete")
+    # Gtk.Widget::unroot is emitted when the selected detail is replaced.
+    rig.button.callbacks["unroot"](rig.button)
+    rig.host.runner.advance()
+    assert rig.backend.execution == []
+    assert rig.db.device_placement_get(
+        "reader-alice", rig.book["artifact_id"],
+    )["desired_state"] == "remove"
+
+
+def test_core_cancel_callback_is_revoked_on_device_aba(rig):
+    click(rig)
+    rig.host.runner.advance()
+    rig.dialogs[0].answer("delete")
+    rig.host.runner.advance()
+    assert len(rig.backend.execution) == 1
+    cancel = rig.backend.execution[0]["check_cancelled"]
+    assert cancel() is None
+    # No GTK call from a worker: only Python selection-generation tokens.
+    rig.host._reader_selection_generation += 2
+    with pytest.raises(RuntimeError, match="reader_usb_selection_scope_revoked"):
+        cancel()
+
+
+def test_worker_checks_original_selection_before_usb_scan(rig):
+    click(rig)
+    rig.host._reader_selection_generation += 1
+    rig.host.runner.advance()
+    assert rig.backend.previews == []
+    assert rig.backend.execution == []
+    assert rig.dialogs == []
