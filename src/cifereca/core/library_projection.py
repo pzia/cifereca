@@ -599,7 +599,7 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         cover = resolve_cover(cover_candidates)
         thumbnail_url = cover.url or None
         metadata["cover_resolution"] = cover.metadata()
-        rows.append({
+        recent_row = {
             "placement_id": placement.get("placement_id"), "artifact_id": placement.get("artifact_id"),
             "title": entry.get("title") or Path(str(placement.get("path") or "")).stem, "author": entry.get("author"),
             "identity_id": row_identity, "provider_id": provider_id, "item_id": item_id or None,
@@ -607,7 +607,48 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
             "metadata": metadata,
             "acquired_at": placement.get("created_at") or placement.get("updated_at"),
             "updated_at": placement.get("updated_at"),
-        })
+        }
+        # Récents can reuse Bibliothèque's exact Artifact+Placement N2 source.
+        # Metadata from a matching catalogue entry is only descriptive; the
+        # EPUB proof is taken from the Artifact's OWN inspection and a path
+        # resolved by Core.local_book_path in this exact identity.
+        artifact_id = str(placement.get("artifact_id") or "")
+        placement_id = str(placement.get("placement_id") or "")
+        raw_path = Path(str(placement.get("path") or ""))
+        if (artifact_id and placement_id and row_identity
+                and raw_path.suffix.lower() in (".epub", ".kepub")):
+            artifact = self.storage.artifact_get(artifact_id)
+            sha = str((artifact or {}).get("sha256") or "")
+            if not sha and artifact_id.startswith("sha256:"):
+                sha = artifact_id[7:]
+            if sha and type((artifact or {}).get("metadata")) is dict:
+                try:
+                    verified_path = self.local_book_path(
+                        placement_id, identity_id=row_identity,
+                    )
+                except (ProviderConfigurationError, OSError, ValueError):
+                    # A removed/unmounted Placement cannot publish an N2
+                    # source; keep the existing Recent row and reconcile.
+                    verified_path = None
+                if verified_path is not None:
+                    local_facts = project_verified_local_cover_evidence(
+                        identity_id=row_identity,
+                        book_key="artifact:sha256:" + sha,
+                        artifact_id=artifact_id,
+                        placement_id=placement_id,
+                        artifact_sha256=sha,
+                        artifact_metadata=artifact["metadata"],
+                        verified_path=verified_path,
+                        # Borrower/account-specific OriginLinks remain
+                        # independent from this local Artifact cover proof.
+                        candidates=tuple(
+                            proof for proof in (legacy, public if isinstance(catalog_cover, dict) else None)
+                            if proof is not None and proof.tier in ("origin", "catalog")
+                        ),
+                    )
+                    if local_facts is not None and local_facts.embedded is not None:
+                        recent_row["_exact_local_cover_evidence"] = local_facts
+        rows.append(recent_row)
         if len(rows) >= max(1, limit):
             break
     return rows
