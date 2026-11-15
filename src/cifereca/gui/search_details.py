@@ -151,6 +151,50 @@ def _search_detail_context_current(
     )
 
 
+def _publish_search_detail_cover(
+    self: SearchDetailHost, item: SearchResult, detail: ItemDetail,
+) -> None:
+    """Apply a *same-notice* cover to the visible Search row, without reselect.
+
+    The holdings callback already passed generation/identity guards. Require
+    the current selected GTK key to resolve to the exact source object and a
+    matching provider, credential, edition and docbase; homonymous results
+    and duplicate supplier IDs are not image provenance.
+    """
+    if (type(item) is not SearchResult or type(detail) is not ItemDetail
+            or getattr(self, "_search_mode", None) != "global"
+            or detail.source_provider != item.source_provider
+            or detail.source_credential != item.source_credential
+            or detail.record_id != item.record_id
+            or detail.docbase != item.docbase):
+        return
+    from ..core.covers import candidate
+    cover = candidate(detail.thumbnail_url, tier="catalog", source="search-holdings")
+    if cover is None:
+        return  # Never publish a signed, private, local or malformed URL.
+    page = getattr(self, "search_page", None)
+    selection = getattr(page, "selection", None)
+    row = selection.get_selected_item() if selection is not None else None
+    if (not isinstance(row, BookListItem)
+            or getattr(self, "search_objects", {}).get(row.key) is not item):
+        return
+    # Exactly scoped to the current row object and Core search/account epochs.
+    record = (
+        item, cover.url,
+        getattr(self, "_identity_context_generation", None),
+        getattr(self, "_search_generation", None),
+        getattr(self.service, "_account_context_epoch", None),
+        getattr(self.service, "_source_context_epoch", None),
+    )
+    prior = getattr(self, "_search_detail_cover_by_key", None)
+    covers = dict(prior) if type(prior) is dict and len(prior) < 128 else {}
+    covers[row.key] = record
+    self._search_detail_cover_by_key = covers
+    # BookListCell observes this signal only while bound. Do not splice the
+    # ListStore or cause Gtk.SingleSelection to re-trigger holdings() here.
+    row.set_thumbnail_url(cover.url)
+
+
 def _apply_search_detail(
     self: SearchDetailHost, selected_id: str, item: SearchResult, detail: ItemDetail,
     *, context: tuple[int, int, int, str | None] | None = None,
@@ -158,6 +202,7 @@ def _apply_search_detail(
     if not self._search_detail_context_current(selected_id, context):
         return
     self.search_page.detail.show_item_detail(item, detail)
+    _publish_search_detail_cover(self, item, detail)
     self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
                identity_id=getattr(getattr(getattr(self, "service", None),
                                            "current_identity", None), "identity_id", None),
