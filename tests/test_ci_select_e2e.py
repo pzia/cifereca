@@ -435,6 +435,30 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(mod.select(["tests/test_e2e_runner_contract.py"]), mod.ALL)
 
 
+    def test_p1_4985_real_mainwindow_reader_target_refresh_at_1366_and_1600(self):
+        self.assertEqual(mod.READER_TARGET_GTK, (
+            "reader-target-refresh-1366", "reader-target-refresh-1600",
+        ))
+        self.assertEqual(mod.select([
+            "e2e/reader_target_refresh_probe.py",
+        ]), mod.READER_TARGET_GTK)
+        self.assertEqual(mod.select([
+            "src/cifereca/gui/reader_target_actions.py",
+        ]), mod.READER_TARGET_GTK)
+        self.assertEqual(mod.select([
+            "src/cifereca/gui/reader_page_controller.py",
+        ]), mod.READER_INSPECTION_GTK + mod.READER_TARGET_GTK)
+        source = (ROOT / "e2e/reader_target_refresh_probe.py").read_text(
+            encoding="utf-8",
+        )
+        for invariant in (
+            "MainWindow(", "select_key(\"reader-book\")",
+            'button.emit("clicked")', '"Chemin réservé"',
+            "Gtk.Label", "profile_b", "profile_a", "unknown",
+        ):
+            self.assertIn(invariant, source)
+        self.assertIn("no_plugins=True", source)
+
     def test_p1_6077_real_gtk_reader_inspection_is_a_scoped_and_honest_probe(self):
         self.assertEqual(mod.READER_INSPECTION_GTK, (
             "reader-usb-inspection-1024", "reader-usb-inspection-1366",
