@@ -267,3 +267,60 @@ def test_reentrant_callbacks_have_monotonic_event_sequences_for_gtk():
     assert not cache.resolve_and_publish(
         stale, [candidate()], snapshot_complete=True,
     )
+
+
+def test_snapshot_can_be_published_only_once_even_after_cache_expiry():
+    now = [0.0]
+    cache = CoverDecisionCache(clock=lambda: now[0], selected_ttl=1)
+    scope = loan()
+    token = cache.begin(scope, revision=1)
+    assert cache.resolve_and_publish(token, [candidate()], snapshot_complete=True)
+    assert not cache.resolve_and_publish(
+        token, [candidate(ALT)], snapshot_complete=True,
+    )
+    assert cache.peek(scope, revision=1).uri == URL
+    now[0] = 2.0
+    assert cache.peek(scope, revision=1) is None
+    assert not cache.resolve_and_publish(
+        token, [candidate(ALT)], snapshot_complete=True,
+    )
+    assert cache.peek(scope, revision=1) is None
+    second = cache.begin(scope, revision=2)
+    assert cache.resolve_and_publish(
+        second, [candidate(ALT)], snapshot_complete=True,
+    )
+    assert cache.peek(scope, revision=2).uri == ALT
+
+
+def test_concurrent_observation_cannot_publish_after_invalidation():
+    from threading import Event, Thread
+
+    cache = CoverDecisionCache()
+    scope = loan()
+    token = cache.begin(scope, revision=1)
+    entered, resumed = Event(), Event()
+    outcomes = []
+
+    def delayed():
+        entered.set()
+        assert resumed.wait(5)
+        yield candidate()
+
+    thread = Thread(
+        target=lambda: outcomes.append(
+            cache.resolve_and_publish(
+                token, delayed(), snapshot_complete=True,
+            )
+        ),
+        daemon=True,
+    )
+    thread.start()
+    try:
+        assert entered.wait(5)
+        cache.invalidate(scope, cause="placement_changed")
+    finally:
+        resumed.set()
+        thread.join(5)
+    assert not thread.is_alive()
+    assert outcomes == [False]
+    assert cache.peek(scope, revision=1) is None
