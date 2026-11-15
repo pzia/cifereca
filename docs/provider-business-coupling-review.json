@@ -611,7 +611,7 @@
       "reachability": "productive"
     },
     {
-      "id": "site-36d7d98c0b5939ee21e6d5cd",
+      "id": "site-ad2f06a6ca9b22ee1e32194b",
       "classification": "legitimate_readonly_compat",
       "journey": "Read historical voluntary return receipts with obsolete Paris-specific format",
       "productive_caller": "LibraryService.verify_loan_return -> storage.loan_return_state and return_adept_orchestrator.public_state",
@@ -620,10 +620,11 @@
       "replacement_contract": "Keep bounded reader for old receipts while voluntary return is disabled; remove only with a proven historical data/ABI migration.",
       "tests": [
         "tests/test_p1_4048_legacy_return_seams_closed.py",
-        "tests/test_core_p0_1120_closure_gate.py"
+        "tests/test_core_p0_1120_closure_gate.py",
+        "tests/test_core_p0_5975_adept_return_receipt_read_lease.py"
       ],
       "retirement_pr": "",
-      "rationale": "Compatibility reader is not an active user-return permission or a new migration writer; the Paris filter remains a real read-only technical dependency.",
+      "rationale": "Compatibility reader is not an active user-return permission or a new migration writer; the Paris filter remains a real read-only technical dependency. Following #6219, the scanned AST anchor moved from an unvalidated str() loan predicate to the native scoped medium gate; the same historical read-only obligation remains, without retirement credit.",
       "decision_group_id": "loan.historical-return-receipt",
       "reachability": "legacy_only"
     }
@@ -1898,6 +1899,19 @@
         "tests/test_core_p0_5048_provider_neutral_identity_veto.py"
       ],
       "pr": "#6220"
+    },
+    {
+      "id": "guard-adept-return-receipt-native-source-account-lease",
+      "journey": "Read-only historic ADEPT return checkpoint lookup for an exact Paris borrower and loan",
+      "classification": "legitimate_readonly_compat",
+      "effect": "Capture strictly native Loan provider/credential/borrower/edition/loan and exact Account provider/credential/borrower before constructing the frozen historical v1 ADEPT receipt key. Reject drift before and after preflight/storage callbacks, including provider-casefold and empty/primary alias key collisions; no dynamic str coercion, no provider read, no new ADEPT return/rights.",
+      "remaining_debt": "This is historical read compatibility only; the provider-specific Paris borrower grant guard remains on actual acquisitions. Not an AST decision retirement nor any of the three outstanding mutating historical migrations.",
+      "tests": [
+        "tests/test_core_p0_5975_adept_return_receipt_read_lease.py",
+        "tests/test_core_p0_1120_adept_origin_status_redaction.py",
+        "tests/test_core_0984_adept_first_paris_reconcile.py"
+      ],
+      "pr": "#6219"
     }
   ],
   "retained_legacy_migrations": [

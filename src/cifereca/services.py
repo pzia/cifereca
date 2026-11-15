@@ -2429,33 +2429,88 @@ class LibraryService:
         )
 
     def verify_loan_return(self, loan: Loan) -> dict[str, Any]:
-        """Historical return receipt only; NEVER initiate or replay a return.
+        """Project one historical ADEPT return receipt; never retry or return.
 
-        Legacy receipts remain consultable across updates. Reading this API
-        does not call Adobe, Paris inventory, or any retired mutation path.
+        An old checkpoint cannot be selected through inferred borrower
+        coordinates, coercible plugin objects or a source changed by a
+        preflight/storage callback. This is a read-only compatibility path.
         """
         from .core.return_adept_orchestrator import adept_return_key, public_state
-        if str(loan.source_provider).lower() != "paris" or loan.medium != "digital":
+        from .core.adept_return_source_scope import HistoricalLoanSource
+
+        refused = {
+            "status": "failed", "scope": "adobe_first_paris",
+            "code": "loan_return_borrower_unproven", "retry": "none",
+        }
+        scope = HistoricalLoanSource.capture(loan)
+        if scope is None or type(loan.medium) is not str:
+            return refused
+        medium = loan.medium
+        if scope.provider_id.casefold() != "paris" or medium != "digital":
             return {"status": "not_requested", "scope": "adobe_first_paris"}
-        try:
-            account, _session, _key = self._return_loan_identity(loan)
-            key = adept_return_key(
-                loan.source_provider, loan.source_credential,
-                str(account.unique_id or "primary"), str(loan.id),
+        if not scope.borrower_proven:
+            return refused
+
+        def source_intact() -> bool:
+            return (
+                scope.current(loan)
+                and type(loan.medium) is str and loan.medium == medium
             )
+
+        if not source_intact():
+            return refused
+        try:
+            # Keep the historical preflight error projection for compatible
+            # callers; it may call an account/session shim, so revalidate
+            # every native coordinate immediately afterwards.
+            account, _session, _key = self._return_loan_identity(loan)
+            if not source_intact() or type(account) is not Account:
+                return refused
+            if (type(account.unique_id) is not str
+                    or type(account.provider_id) is not str
+                    or type(account.credential_id) is not str):
+                return refused
+            saved_account = (
+                account.provider_id, account.credential_id, account.unique_id,
+            )
+            borrower = account.unique_id if account.unique_id else "primary"
+            expected = scope.account_id if scope.account_id else "primary"
+            if (account.provider_id != scope.provider_id
+                    or account.credential_id != scope.credential_id
+                    or borrower != expected):
+                return {
+                    "status": "failed", "scope": "adobe_first_paris",
+                    "code": "loan_return_borrower_mismatch", "retry": "none",
+                }
+
+            def account_intact() -> bool:
+                return (
+                    type(account) is Account
+                    and type(account.provider_id) is str
+                    and type(account.credential_id) is str
+                    and type(account.unique_id) is str
+                    and (account.provider_id, account.credential_id,
+                         account.unique_id) == saved_account
+                )
+
+            key = adept_return_key(
+                scope.provider_id, scope.credential_id, borrower, scope.loan_id,
+            )
+            if not source_intact() or not account_intact():
+                return refused
             row = self.storage.loan_return_state(key)
+            if not source_intact() or not account_intact():
+                return refused
         except AttentionRequired as exc:
+            if not source_intact():
+                return refused
             return {
                 "status": "failed", "scope": "adobe_first_paris",
                 "code": return_adept_orchestrator.return_preflight_code(exc),
                 "retry": "none",
             }
-        except (ValueError, TypeError, KeyError):
-            return {
-                "status": "failed", "scope": "adobe_first_paris",
-                "code": "loan_return_borrower_unproven",
-                "retry": "none",
-            }
+        except (ValueError, TypeError, KeyError, AttributeError, UnicodeError):
+            return refused
         if row is None:
             return {"status": "not_requested", "scope": "adobe_first_paris"}
         if type(row) is not dict:
