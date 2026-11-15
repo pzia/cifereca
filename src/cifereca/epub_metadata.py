@@ -78,17 +78,47 @@ def _image_kind(data):
         except (ValueError,ET.ParseError):return None
     return None
 
+_CACHED_IMAGE_NAME = re.compile(r'[a-f0-9]{64}\.(png|jpg|gif|webp|svg)\Z')
+
+
+def valid_cached_cover_path(path: Path) -> bool:
+    """N3 physical image validity, not a DocumentRef-to-cover association.
+
+    A content-addressed EPUB image can still have a valid image signature
+    after being replaced by unrelated bytes. All N3 readers must check the
+    published filename SHA, not merely whether Gtk can decode its header.
+    """
+    if not isinstance(path, Path):
+        return False
+    try:
+        if (_CACHED_IMAGE_NAME.fullmatch(path.name) is None
+                or path.is_symlink()
+                or path.resolve().parent != cover_cache_dir().resolve()):
+            return False
+        flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+        fd = os.open(path, flags)
+        with os.fdopen(fd, 'rb') as stream:
+            size = os.fstat(stream.fileno()).st_size
+            if size < 8 or size > MAX_IMAGE:
+                return False
+            data = stream.read(MAX_IMAGE + 1)
+        return (len(data) == size
+                and hashlib.sha256(data).hexdigest() == path.name[:64]
+                and _image_kind(data) is not None)
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def cached_cover_url(metadata):
     cover=metadata.get('epub_cover') or {}
+    if type(cover) is not dict:
+        return None
     name=cover.get('cache_name')
-    if not isinstance(name,str) or not re.fullmatch(r'[a-f0-9]{64}\.(png|jpg|gif|webp|svg)',name):return None
+    if type(name) is not str or _CACHED_IMAGE_NAME.fullmatch(name) is None:
+        return None
     path=cover_cache_dir()/name
-    try:
-        if path.is_symlink() or not path.is_file() or path.stat().st_size>MAX_IMAGE:return None
-        data=path.read_bytes()
-        if hashlib.sha256(data).hexdigest()!=name.split('.')[0] or not _image_kind(data):return None
-        return path.resolve().as_uri()
-    except OSError:return None
+    return path.resolve().as_uri() if valid_cached_cover_path(path) else None
+
 
 def _publish_cover(data,kind):
     name=hashlib.sha256(data).hexdigest()+'.'+kind;path=cover_cache_dir()/name
