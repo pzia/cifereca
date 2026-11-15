@@ -85,6 +85,32 @@ def test_replaced_n2_token_invalidates_queued_gtk_read_even_for_same_uri(
         loader.close()
 
 
+def test_late_empty_placeholder_cannot_hide_new_n2_source(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    loader = CoverLoader(max_workers=2)
+    service = DocumentCoverService(loader)
+    try:
+        scope = _scope()
+        callbacks = []
+        stale = service.get_cover(scope, "detail", callbacks.append)
+        assert callbacks == [None]
+        assert stale.source_uri is None
+        assert stale.is_current()
+        service.register(CoverSourceSnapshot(
+            scope=scope, revision=1,
+            candidates=(candidate(
+                URI, tier="catalog", source="local",
+                evidence_id="notice-exact",
+            ),),
+        ))
+        assert not stale.is_current()  # GTK idle cannot hide newer source.
+    finally:
+        service.close()
+        loader.close()
+
+
 def test_replaced_n2_source_rejected_before_any_gtk_decode():
     host, loader, picture, calls, apply = env()
     token = [False]
