@@ -221,7 +221,19 @@ def _send_from_controller(service, placement_id, target):
     service.current_identity = service.identity_by_id(placement["identity_id"])
     add_local_book_actions(window, detail, item, **deps)
     assert submitted == []
-    action = next(a for a in actions if a._cifereca_action_id == "send-local:" + target)
+    # #3692: a single eligible recipient keeps a direct button; with more
+    # than one, the toolbar has one menu and the exact recipient is inside.
+    # Exercise the same executable callback in both configurations.
+    action = next(
+        (a for a in actions if a._cifereca_action_id == "send-local:" + target),
+        None,
+    )
+    if action is None:
+        menu, = (a for a in actions if a._cifereca_action_id == "send-local-menu")
+        recipients = menu.popover.child.children
+        action = next(
+            a for a in recipients if a._cifereca_action_id == "send-local:" + target
+        )
     action.click()
     args, kwargs = submitted.pop()
     assert kwargs["kind"] == "materialize"
