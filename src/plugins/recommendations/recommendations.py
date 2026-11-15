@@ -410,7 +410,7 @@ def _local_all_field_match(query: str, values: list[str]) -> bool:
     # This is the same one-letter guard as the explicit Sujet filter.
     for token in terms:
         if len(token) == 1:
-            pattern = r"(?<!\\w)" + re.escape(token) + r"(?!\\w)"
+            pattern = r"(?<!\w)" + re.escape(token) + r"(?!\w)"
             if not any(re.search(pattern, field) for field in fields):
                 return False
         elif not any(token in field for field in fields):
