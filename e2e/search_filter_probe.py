@@ -657,6 +657,51 @@ def main() -> int:
                 stack.append(child)
                 child = child.get_next_sibling()
         assert author_buttons == [PAIRED_BOOK["author"]]
+        # #4761/#774: compare the real, MAPPED Core compact heading on
+        # both surfaces. Previously only Recommendations proved that its
+        # source/format/language were actually painted; Search's paired
+        # screenshot could silently have an empty or stale compact header.
+        # Search has its own honest "Disponibilité non vérifiée" row,
+        # which is deliberately NOT inferred by Recommendations.
+        compact_heads = []
+        stack = [page.detail.content]
+        while stack:
+            current = stack.pop()
+            if (isinstance(current, Gtk.Box)
+                    and current.has_css_class("detail-heading")):
+                compact_heads.append(current)
+            child = current.get_first_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_next_sibling()
+        assert len(compact_heads) == 1
+        compact_rows = []
+        stack = [compact_heads[0]]
+        while stack:
+            current = stack.pop()
+            if (isinstance(current, Adw.ActionRow)
+                    and current.get_mapped()
+                    and current.has_css_class("detail-compact-value")):
+                compact_rows.append(
+                    (current.get_title(), current.get_subtitle())
+                )
+            child = current.get_first_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_next_sibling()
+        expected_source = window.service.provider_display_name(
+            PAIRED_BOOK["source_provider"]
+        )
+        assert [value for label, value in compact_rows if label == "Source"] == [
+            expected_source,
+        ]
+        assert [value for label, value in compact_rows if label == "Format"] == [
+            "EPUB",
+        ]
+        assert [value for label, value in compact_rows if label == "Langue"] == [
+            "fr",
+        ]
+        result["checks"]["P1_4761_search_shared_compact_essential_gtk"] = True
         # The same public Subject is already rendered in the canonical
         # Search DetailPanel metadata. Verify its actual GTK ActionRow
         # before comparing with Recommendations' new metadata section.
