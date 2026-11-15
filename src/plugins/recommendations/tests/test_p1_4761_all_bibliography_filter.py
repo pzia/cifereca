@@ -99,7 +99,7 @@ def test_url_like_publisher_is_not_indexed_as_a_bibliographic_name():
      "PRIVATE_TITLE_TOKEN"),
     ("author", "https://catalogue.example/person?token=PRIVATE_AUTHOR_TOKEN",
      "PRIVATE_AUTHOR_TOKEN"),
-    ("title", "Notice PRIVATE_BEARER_TOKEN", "PRIVATE_BEARER_TOKEN"),
+    ("title", "Notice bearer: PRIVATE_BEARER_TOKEN", "PRIVATE_BEARER_TOKEN"),
     ("author", "contact@example.invalid", "contact@example.invalid"),
     ("title", "/home/profile/private-book-title", "private-book-title"),
 ])
