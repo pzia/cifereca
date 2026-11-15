@@ -122,6 +122,23 @@ class CoverReadRequest:
         self._child: CoverRequest | None = None
         # Authoritative N2 selected URI, never inferred from physical N3.
         self._source_uri: str | None = None
+        # Reusable exact N2 CAS predicate. The worker checks before
+        # scheduling GTK, and the GTK main thread checks again at paint.
+        self._current_check: Callable[[], bool] | None = None
+
+    def is_current(self) -> bool:
+        """Fail closed when cancelled or its N2 source/epoch was replaced."""
+        with self._lock:
+            if not self._active:
+                return False
+            checker = self._current_check
+        if checker is None:
+            # No selected N2 source: allow the neutral missing placeholder.
+            return True
+        try:
+            return checker() is True
+        except Exception:
+            return False
 
     @property
     def source_uri(self) -> str | None:
@@ -367,18 +384,22 @@ class DocumentCoverService:
         # N3 cache-hit callback can be painted on GTK's idle queue.
         handle._source_uri = decision.uri
 
-        def delivered(path: Path | None) -> None:
-            if not handle.active:
-                return
+        def current_n2_source() -> bool:
             with self._lock:
-                valid = (
+                return (
                     not self._closed
                     and self._snapshots.get(document) is snapshot
                     and self.decisions.selected_token(
                         document, revision=snapshot.revision, uri=decision.uri,
                     ) == selected_token
                 )
-            if valid and handle.active:
+
+        handle._current_check = current_n2_source
+
+        def delivered(path: Path | None) -> None:
+            # A worker may have seen a valid N2 token, then been overtaken
+            # by a new owner/epoch before dispatching the GTK idle callback.
+            if handle.is_current():
                 callback(path)
 
         if decision.tier == "embedded":
