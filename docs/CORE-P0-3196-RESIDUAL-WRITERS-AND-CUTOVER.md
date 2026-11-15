@@ -1,5 +1,15 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+> **Delta P0 #5975 (15/11/2026) — cohorte historique v8 neutre.**
+> La réparation SQLite v7→v8 des alias de compte primaire n'effectue
+> plus de requêtes `WHERE provider_id='paris'` codées en dur.
+> Une cohorte **figée de données 0.8.3** `('paris',)` et des requêtes
+> paramétrées préservent le résultat d'upgrade des droits/reçus Paris.
+> Un fournisseur synthétique injecté exclusivement en test prouve la
+> neutralité de l'algorithme sans politique au runtime ni nouveau droit.
+> Le writer v8 reste exécutable et **toujours compté** : 3 writers historiques
+> distincts (Config 0.8.1, SQLite v5 et SQLite v8), sans double crédit.
+
 > **Delta P0 #5975 (2026-11-15) — inventaire honnête du writer v8.**
 > La migration historique SQLite **v7→v8** réécrit encore les droits
 > Paris et reçus `loan_auto` d'anciennes bases (alias emprunteur

@@ -23,6 +23,9 @@ CURRENT_SCHEMA_VERSION = 17
 # Frozen 0.8.1 migration cohort, NEVER live provider business policy.
 # v15's persistent generic cardinality table governs modern connections.
 _LEGACY_V5_SINGLE_CONNECTION_PROVIDERS = ("kobo",)
+# Frozen 0.8.3 alias cohort; v8 rewrites only old Paris primary-loan receipts.
+# Never derive it from runtime provider settings, capabilities, or plugins.
+_LEGACY_V8_PRIMARY_ACCOUNT_PROVIDERS = ("paris",)
 
 BASE_SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -953,72 +956,75 @@ class Storage:
                 # entitlement/acquisition ids and could create duplicate ledger
                 # rows for the very same loan. Normalize and merge them here.
                 db.row_factory = sqlite3.Row
-                entitlement_rows = db.execute(
-                    "SELECT * FROM entitlements WHERE provider_id='paris' "
-                    "AND (account_id IS NULL OR TRIM(account_id)='' OR account_id='primary') "
-                    "ORDER BY updated_at DESC, discovered_at DESC"
-                ).fetchall()
-                groups = {}
-                for raw in entitlement_rows:
-                    row = dict(raw)
-                    row['account_id'] = 'primary'
-                    key = (row.get('credential_id') or '', row.get('item_id') or '',
-                           row.get('entitlement_type') or '', row.get('loan_id') or '',
-                           row.get('identity_id') or '')
-                    groups.setdefault(key, []).append(row)
-                for rows in groups.values():
-                    base = rows[0]
-                    canonical_id = cls._entitlement_id_for(base)
-                    survivor = next((r for r in rows if r.get('entitlement_id') == canonical_id), rows[0])
-                    survivor_id = survivor['entitlement_id']
-                    if survivor_id != canonical_id:
-                        existing = db.execute("SELECT 1 FROM entitlements WHERE entitlement_id=?", (canonical_id,)).fetchone()
-                        if not existing:
-                            db.execute("UPDATE entitlements SET entitlement_id=? WHERE entitlement_id=?", (canonical_id, survivor_id))
-                            db.execute("UPDATE acquisition_ledger SET entitlement_id=? WHERE entitlement_id=?", (canonical_id, survivor_id))
-                            survivor_id = canonical_id
-                    db.execute("UPDATE entitlements SET account_id='primary' WHERE entitlement_id=?", (survivor_id,))
-                    for dup in rows:
-                        dup_id = dup['entitlement_id']
-                        if dup_id == survivor_id or dup_id == canonical_id:
-                            continue
-                        db.execute("UPDATE acquisition_ledger SET entitlement_id=? WHERE entitlement_id=?", (survivor_id, dup_id))
-                        db.execute("DELETE FROM entitlements WHERE entitlement_id=?", (dup_id,))
+                for legacy_provider_id in _LEGACY_V8_PRIMARY_ACCOUNT_PROVIDERS:
+                    entitlement_rows = db.execute(
+                        "SELECT * FROM entitlements WHERE provider_id=? "
+                        "AND (account_id IS NULL OR TRIM(account_id)='' OR account_id='primary') "
+                        "ORDER BY updated_at DESC, discovered_at DESC",
+                        (legacy_provider_id,),
+                    ).fetchall()
+                    groups = {}
+                    for raw in entitlement_rows:
+                        row = dict(raw)
+                        row['account_id'] = 'primary'
+                        key = (row.get('credential_id') or '', row.get('item_id') or '',
+                               row.get('entitlement_type') or '', row.get('loan_id') or '',
+                               row.get('identity_id') or '')
+                        groups.setdefault(key, []).append(row)
+                    for rows in groups.values():
+                        base = rows[0]
+                        canonical_id = cls._entitlement_id_for(base)
+                        survivor = next((r for r in rows if r.get('entitlement_id') == canonical_id), rows[0])
+                        survivor_id = survivor['entitlement_id']
+                        if survivor_id != canonical_id:
+                            existing = db.execute("SELECT 1 FROM entitlements WHERE entitlement_id=?", (canonical_id,)).fetchone()
+                            if not existing:
+                                db.execute("UPDATE entitlements SET entitlement_id=? WHERE entitlement_id=?", (canonical_id, survivor_id))
+                                db.execute("UPDATE acquisition_ledger SET entitlement_id=? WHERE entitlement_id=?", (canonical_id, survivor_id))
+                                survivor_id = canonical_id
+                        db.execute("UPDATE entitlements SET account_id='primary' WHERE entitlement_id=?", (survivor_id,))
+                        for dup in rows:
+                            dup_id = dup['entitlement_id']
+                            if dup_id == survivor_id or dup_id == canonical_id:
+                                continue
+                            db.execute("UPDATE acquisition_ledger SET entitlement_id=? WHERE entitlement_id=?", (survivor_id, dup_id))
+                            db.execute("DELETE FROM entitlements WHERE entitlement_id=?", (dup_id,))
 
-                ledger_rows = db.execute(
-                    "SELECT * FROM acquisition_ledger WHERE provider_id='paris' AND strategy='loan_auto' "
-                    "AND (account_id IS NULL OR TRIM(account_id)='' OR account_id='primary') "
-                    "ORDER BY updated_at DESC, created_at DESC"
-                ).fetchall()
-                groups = {}
-                for raw in ledger_rows:
-                    row = dict(raw)
-                    row['account_id'] = 'primary'
-                    key = (row.get('credential_id') or '', row.get('item_id') or '',
-                           row.get('entitlement_id') or '', row.get('identity_id') or '')
-                    groups.setdefault(key, []).append(row)
-                status_rank = {'complete': 5, 'acquiring': 4, 'retryable_error': 3, 'attention_required': 2, 'pending': 1, 'discovered': 0}
-                for rows in groups.values():
-                    # Prefer a completed row; otherwise the most recently updated one.
-                    rows.sort(key=lambda r: (status_rank.get(str(r.get('status') or ''), -1), int(r.get('updated_at') or 0)), reverse=True)
-                    survivor = rows[0]
-                    canonical_id = cls._acquisition_id_for(survivor)
-                    survivor_id = survivor['acquisition_id']
-                    max_attempts = max(int(r.get('attempt_count') or 0) for r in rows)
-                    if survivor_id != canonical_id:
-                        existing = db.execute("SELECT 1 FROM acquisition_ledger WHERE acquisition_id=?", (canonical_id,)).fetchone()
-                        if not existing:
-                            db.execute("UPDATE acquisition_ledger SET acquisition_id=? WHERE acquisition_id=?", (canonical_id, survivor_id))
-                            survivor_id = canonical_id
-                    db.execute(
-                        "UPDATE acquisition_ledger SET account_id='primary',attempt_count=? WHERE acquisition_id=?",
-                        (max_attempts, survivor_id),
-                    )
-                    for dup in rows[1:]:
-                        dup_id = dup['acquisition_id']
-                        if dup_id == survivor_id or dup_id == canonical_id:
-                            continue
-                        db.execute("DELETE FROM acquisition_ledger WHERE acquisition_id=?", (dup_id,))
+                    ledger_rows = db.execute(
+                        "SELECT * FROM acquisition_ledger WHERE provider_id=? AND strategy='loan_auto' "
+                        "AND (account_id IS NULL OR TRIM(account_id)='' OR account_id='primary') "
+                        "ORDER BY updated_at DESC, created_at DESC",
+                        (legacy_provider_id,),
+                    ).fetchall()
+                    groups = {}
+                    for raw in ledger_rows:
+                        row = dict(raw)
+                        row['account_id'] = 'primary'
+                        key = (row.get('credential_id') or '', row.get('item_id') or '',
+                               row.get('entitlement_id') or '', row.get('identity_id') or '')
+                        groups.setdefault(key, []).append(row)
+                    status_rank = {'complete': 5, 'acquiring': 4, 'retryable_error': 3, 'attention_required': 2, 'pending': 1, 'discovered': 0}
+                    for rows in groups.values():
+                        # Prefer a completed row; otherwise the most recently updated one.
+                        rows.sort(key=lambda r: (status_rank.get(str(r.get('status') or ''), -1), int(r.get('updated_at') or 0)), reverse=True)
+                        survivor = rows[0]
+                        canonical_id = cls._acquisition_id_for(survivor)
+                        survivor_id = survivor['acquisition_id']
+                        max_attempts = max(int(r.get('attempt_count') or 0) for r in rows)
+                        if survivor_id != canonical_id:
+                            existing = db.execute("SELECT 1 FROM acquisition_ledger WHERE acquisition_id=?", (canonical_id,)).fetchone()
+                            if not existing:
+                                db.execute("UPDATE acquisition_ledger SET acquisition_id=? WHERE acquisition_id=?", (canonical_id, survivor_id))
+                                survivor_id = canonical_id
+                        db.execute(
+                            "UPDATE acquisition_ledger SET account_id='primary',attempt_count=? WHERE acquisition_id=?",
+                            (max_attempts, survivor_id),
+                        )
+                        for dup in rows[1:]:
+                            dup_id = dup['acquisition_id']
+                            if dup_id == survivor_id or dup_id == canonical_id:
+                                continue
+                            db.execute("DELETE FROM acquisition_ledger WHERE acquisition_id=?", (dup_id,))
 
                 cls._write_schema_version(db, 8)
                 db.execute("RELEASE SAVEPOINT migration_v8")
