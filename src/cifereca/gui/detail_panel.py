@@ -117,6 +117,36 @@ class DetailPanel(Gtk.Box):
         status.set_vexpand(True)
         self._append_content(status)
 
+    def _bind_cover(
+        self, cover: CoverView, thumbnail: str | None, *,
+        cover_evidence=None,
+    ) -> None:
+        """Only an attested N1 source can select the shared N2/N3 path.
+
+        Do not downgrade a proved embedded EPUB to a warm supplier URL if
+        the scoped Core evidence was invalidated or N3 cannot materialize it.
+        The legacy URL path applies only when no Core proof was supplied.
+        """
+        if cover_evidence is None:
+            cover.bind_url(self.window.covers, thumbnail, priority=0)
+            return
+        from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
+        from .local_cover_adapter import LocalCoverEvidenceAdapter
+        from .document_cover_service import DocumentCoverService
+
+        adapter = getattr(self.window, "local_cover_adapter", None)
+        service = getattr(self.window, "document_covers", None)
+        if (type(cover_evidence) is not VerifiedLocalCoverEvidence
+                or type(adapter) is not LocalCoverEvidenceAdapter
+                or type(service) is not DocumentCoverService):
+            cover.bind_url(self.window.covers, None, priority=0)
+            return
+        try:
+            document = adapter.register(service, cover_evidence)
+            cover.bind_document(service, document, variant="detail", priority=0)
+        except (TypeError, ValueError, RuntimeError):
+            cover.bind_url(self.window.covers, None, priority=0)
+
     def _cover_and_title(
         self,
         title: str,
@@ -125,6 +155,7 @@ class DetailPanel(Gtk.Box):
         badges: Iterable[str] = (),
         *,
         essential=(),
+        cover_evidence=None,
     ) -> CoverView:
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         header.add_css_class("detail-heading")
@@ -133,7 +164,9 @@ class DetailPanel(Gtk.Box):
         cover.set_halign(Gtk.Align.START)
         cover.set_valign(Gtk.Align.START)
         header.append(cover)
-        cover.bind_url(self.window.covers, thumbnail, priority=0)
+        self._bind_cover(
+            cover, thumbnail, cover_evidence=cover_evidence,
+        )
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.START)
@@ -572,6 +605,7 @@ class DetailPanel(Gtk.Box):
         presentation: UiBookDetailPresentation,
         *,
         description: object | None = None,
+        cover_evidence=None,
     ) -> None:
         """Render the shared neutral book-detail projection.
 
@@ -595,6 +629,7 @@ class DetailPanel(Gtk.Box):
             presentation.thumbnail_url,
             presentation.badges,
             essential=essential,
+            cover_evidence=cover_evidence,
         )
         self._show_description(description)
         for section in sections:
@@ -641,6 +676,7 @@ class DetailPanel(Gtk.Box):
         badges: Iterable[str] = (),
         group_title: str | None = None,
         rows: list[tuple[str, str]] | None = None,
+        cover_evidence=None,
     ) -> None:
         """Compatibility helper backed by the shared detail projection."""
         self.show_presentation(book_detail_presentation(
@@ -650,7 +686,7 @@ class DetailPanel(Gtk.Box):
             badges=badges,
             group_title=group_title,
             rows=rows or (),
-        ))
+        ), cover_evidence=cover_evidence)
 
     def update_cached_book_details(self, contributions) -> None:
         """Replace only cached plugin groups/actions; preserve the base detail."""
