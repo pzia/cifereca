@@ -678,6 +678,7 @@ def main() -> int:
 
     def begin_late_library_loan_cover():
         from copy import copy
+        from cifereca.core.loan_source_identity import loan_source_key
         window = app_window[0]
         original = next(loan for loan in window.service.last_loans
                         if loan.record_id == RESOURCES[0])
