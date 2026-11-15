@@ -161,15 +161,18 @@ def _report_and_image(
                 "P1_4761_filter_preserves_exact_edition_real_gtk"
             ) is True
         )
-        # #4761: the shared compact Core header and an obsolete typed
-        # author action must both have been exercised in real GTK before
-        # a paired human review can be accepted for this exact build.
-        compact_header_ok = (
-            surface != "recommendations"
-            or report["checks"].get(
-                "P1_4761_recommendations_shared_compact_essential_gtk"
-            ) is True
+        # #4761: BOTH real GTK surfaces must attest the same public
+        # compact Source/Format/Language inside the Core detail heading.
+        # The original Search screenshot alone does not establish that
+        # its metadata was painted, even when its title/author were mapped.
+        compact_header_check = (
+            "P1_4761_search_shared_compact_essential_gtk"
+            if surface == "search" else
+            "P1_4761_recommendations_shared_compact_essential_gtk"
         )
+        compact_header_ok = report["checks"].get(compact_header_check) is True
+        # An obsolete typed author action must also have been exercised
+        # in GTK before accepting a paired visual-review checklist.
         stale_action_inert_ok = (
             surface != "recommendations"
             or report["checks"].get(
