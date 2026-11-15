@@ -161,6 +161,10 @@ def _load_reviewed_structural_evidence(path: Path) -> tuple[list[dict], list[dic
             "id", "journey", "classification", "effect",
             "remaining_debt", "tests", "pr",
         })),
+        ("retained_legacy_migrations", frozenset({
+            "id", "classification", "journey", "productive_caller",
+            "effect", "authority", "replacement_contract", "tests", "pr",
+        })),
     )
     results = []
     seen: set[str] = set()
@@ -177,13 +181,15 @@ def _load_reviewed_structural_evidence(path: Path) -> tuple[list[dict], list[dic
                     or any(type(t) is not str or not t.strip()
                            for t in row["tests"])):
                 raise ValueError("untraceable_reviewed_structural_evidence")
+            if name == "retained_legacy_migrations" and row["classification"] != "legacy_mutating_cutover":
+                raise ValueError("invalid_retained_legacy_migration_classification")
             if row["id"] in seen:
                 raise ValueError("duplicate_reviewed_structural_evidence")
             seen.add(row["id"])
             if "in_ast_metric" in row and type(row["in_ast_metric"]) is not bool:
                 raise ValueError("invalid_reviewed_ast_scope")
         results.append(entries)
-    return results[0], results[1]
+    return results[0], results[1], results[2]
 
 
 def _business_candidate_groups(sites: list[dict]) -> list[dict]:
@@ -226,7 +232,7 @@ def inventory(root: Path, *, registry: Path | None = None,
         raise ValueError("incomplete_AST_inventory")
     path = registry if registry is not None else root / "docs/provider-business-coupling-review.json"
     reviews = _load_reviews(path)
-    retirements, installed_guards = _load_reviewed_structural_evidence(path)
+    retirements, installed_guards, retained_legacy = _load_reviewed_structural_evidence(path)
     sites = _signal_sites(root, raw)
     matched = set()
     for site in sites:
@@ -264,7 +270,12 @@ def inventory(root: Path, *, registry: Path | None = None,
             if groups else 100.0
         ),
         "active_business_decisions_to_migrate": classes["must_migrate"],
-        "active_legacy_writers_to_retire": classes["legacy_mutating_cutover"],
+        # A source-specific predicate can become data-driven while its versioned
+        # historical writer remains active. Count manually reviewed non-AST
+        # migration writers separately, rather than crediting lexical removal.
+        "active_legacy_writers_to_retire": classes["legacy_mutating_cutover"] + len(retained_legacy),
+        "retained_non_ast_legacy_migration_writers": len(retained_legacy),
+        "retained_non_ast_legacy_migration_ids": sorted(row["id"] for row in retained_legacy),
         "safety_guards_pending_contract": classes["safety_guard_pending_contract"],
         "justified_retained": sum(classes[c] for c in (
             "legitimate_readonly_compat", "presentation_only", "false_positive")),
@@ -302,6 +313,9 @@ def inventory(root: Path, *, registry: Path | None = None,
             "A semantic fingerprint is relocation evidence, not proof of removal. "
             "Reviewed structural retirements and installed guards are human-authored "
             "evidence only: their count is not a proven active-debt delta. "
+            "Versioned historical writers may remain active after their supplier "
+            "predicate disappears; retained non-AST writers are disclosed and "
+            "included in active legacy debt until a verified writer cutover. "
             "Business candidate groups combine only explicitly human-tagged sites; "
             "an ungrouped candidate or unproven runtime reachability is never credited "
             "as reviewed, and the group inventory is not a complete call graph."
@@ -318,6 +332,8 @@ def compare(baseline: dict, current: dict) -> dict:
     new_retirements = set(current.get("reviewed_structural_retirement_ids", ()))
     prior_guards = set(baseline.get("reviewed_guard_installation_ids", ()))
     new_guards = set(current.get("reviewed_guard_installation_ids", ()))
+    prior_retained = set(baseline.get("retained_non_ast_legacy_migration_ids", ()))
+    new_retained = set(current.get("retained_non_ast_legacy_migration_ids", ()))
     lost = set(before) - set(after)
     gained = set(after) - set(before)
     # Potential moved/renamed sites have the same AST shape. No auto credit.
@@ -338,6 +354,8 @@ def compare(baseline: dict, current: dict) -> dict:
         "reviewed_structural_retirements_removed": sorted(prior_retirements - new_retirements),
         "reviewed_guard_installations_added": sorted(new_guards - prior_guards),
         "reviewed_guard_installations_removed": sorted(prior_guards - new_guards),
+        "retained_non_ast_legacy_migrations_added": sorted(new_retained - prior_retained),
+        "retained_non_ast_legacy_migrations_removed": sorted(prior_retained - new_retained),
         "added_site_ids": sorted(gained), "removed_site_ids": sorted(lost),
         "potential_relocations": moves,
         "reclassifications": [
