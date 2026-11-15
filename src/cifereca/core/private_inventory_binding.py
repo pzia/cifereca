@@ -18,16 +18,20 @@ def _coordinates(account):
             account.credential_id, account.unique_id)
 
 
-def private_inventory_binding_current(service, account, session, *, scope, epoch):
-    """Revalidate the pinned account/session without interpreting provider IDs.
+def private_inventory_binding_current(
+    service, account, session, *, scope, epoch,
+    require_source_enabled: bool = True,
+):
+    """Revalidate a pinned account/session without interpreting provider IDs.
 
-    Empty upstream account IDs are exact primary IDs, never wildcards. A v1
-    session without an accounts projection remains usable only when its
-    credential has exactly one registered account. Multiple upstream accounts
-    require an explicit local projection containing the requested account once.
+    Automatic private inventory reads additionally require the source Sync
+    switch. A user-requested, read-only history GET may use the same exact
+    persistent borrower/session lease without making the Sync switch an
+    unrelated permission gate. No variant grants acquisition consent.
     """
     try:
-        if (type(scope) is not tuple or len(scope) != 4
+        if (type(require_source_enabled) is not bool
+                or type(scope) is not tuple or len(scope) != 4
                 or any(type(value) is not str or "\x00" in value for value in scope)
                 or not all(scope[:3]) or type(epoch) is not int or epoch < 0):
             return False
@@ -61,7 +65,8 @@ def private_inventory_binding_current(service, account, session, *, scope, epoch
                     and sum(_coordinates(row) == scope for row in upstream) == 1)
 
         if (not memory_current() or service.identity_by_id(identity) is None
-                or service.sync_source_enabled(account) is not True
+                or (require_source_enabled
+                    and service.sync_source_enabled(account) is not True)
                 or service.storage.identity_for_connection(provider, credential) != identity):
             return False
         bindings = [row for row in service.storage.provider_connections(identity_id=identity)
