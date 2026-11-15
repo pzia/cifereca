@@ -175,6 +175,8 @@ def test_mainwindow_owns_shared_document_cache_and_disposes_before_n3():
     root = ROOT.parent
     start = (root / "main_window.py").read_text(encoding="utf-8")
     close = (root / "window_close.py").read_text(encoding="utf-8")
-    assert "self.document_covers = DocumentCoverService(self.covers)" in start
+    assert "self.document_covers = DocumentCoverService(" in start
+    assert "cached_source_reader=lambda ref: cached_notice_cover_snapshot(" in start
+    assert "self.service, ref" in start
     assert "service.close()" in close
     assert close.index("service.close()") < close.index("window.covers.close()")
