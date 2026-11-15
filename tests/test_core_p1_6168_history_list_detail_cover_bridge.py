@@ -56,6 +56,8 @@ def main_method(name):
     func = next(n for n in owner.body if isinstance(n, ast.FunctionDef)
                 and n.name == name)
     namespace = {
+        "__name__": "cifereca.gui.main_window",
+        "__package__": "cifereca.gui",
         "HistoryItem": HistoryItem, "BookListItem": Row,
         "fr_date": lambda value: str(value or ""),
     }
