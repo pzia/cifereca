@@ -258,7 +258,6 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
         )
     )
     guards = {
-        "site-d88574f6e28d059189c71da5",
         "site-5a3051124e11f87bf24ccfb6",
         "site-c668504ada66eace309e3e7f",
     }
@@ -270,12 +269,12 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
         row["id"] not in (removed_writer, removed_supplier_guard)
         for row in ledger["reviews"]
     )
-    assert len(reviews) == 3
+    assert len(reviews) == 2
     assert {row["decision_group_id"] for row in reviews} == {
         "legacy-backup.w1-canonical-publication-veto",
         "legacy-backup.w1-owner-archive-protection",
     }
-    # The three remaining W1 anchors are historical-only; the productive
+    # The two remaining W1 anchors are historical-only; the productive
     # W5 filename guard has been replaced by the neutral SourceReference gate.
     assert {row["reachability"] for row in reviews} == {"legacy_only"}
     assert all(
@@ -284,6 +283,37 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
         and all((root / test).is_file() for test in row["tests"])
         for row in reviews
     )
+    replacement = [
+        row for row in ledger["retirements"]
+        if row["id"] ==
+        "struct-w1-kobo-only-source-archive-veto-replaced-neutral"
+    ]
+    assert len(replacement) == 1
+    assert replacement[0]["original_site_id"] == (
+        "site-d88574f6e28d059189c71da5"
+    )
+    assert replacement[0]["retired_at_sha"] == (
+        "4d29509441374a11ac51e7a6a8a474ee963b73b4"
+    )
+    assert replacement[0]["in_ast_metric"] is True
+    assert replacement[0]["original_classification"] == (
+        "safety_guard_pending_contract"
+    )
+    assert replacement[0]["pr"] == "#6138"
+    assert all((root / test).is_file() for test in replacement[0]["tests"])
+    assert "site-d88574f6e28d059189c71da5" not in {
+        row["id"] for row in ledger["reviews"]
+    }
+    new_guard = [
+        row for row in ledger["guard_installations"]
+        if row["id"] ==
+        "guard-w1-all-provider-exact-typed-source-before-legacy-sql"
+    ]
+    assert len(new_guard) == 1
+    assert new_guard[0]["pr"] == "#6138"
+    assert new_guard[0]["classification"] == "safety_guard_pending_contract"
+    assert all((root / test).is_file() for test in new_guard[0]["tests"])
+
     dead_veto = [
         row for row in ledger["retirements"]
         if row["id"] ==
