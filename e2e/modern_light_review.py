@@ -52,6 +52,35 @@ def verify_capture_folder(
     sha = report.get("git_sha")
     if not isinstance(sha, str) or re.fullmatch(r"[0-9a-f]{40}", sha) is None:
         raise ValueError(f"{folder.name}: SHA de commit absent ou invalide")
+    # A PASS flag by itself is not the actual GTK/Adwaita proof. Require
+    # the closed assertions emitted by the real probe before accepting
+    # any private review or a completed human checklist.
+    checks = report.get("checks")
+    required = {"P1_757_all_routes_light_dark_gtk"}
+    for stage in stages:
+        if stage == "search-detail":
+            required.update((
+                "P1_757_real_search_detail_light",
+                "P1_757_real_search_detail_dark",
+            ))
+        else:
+            required.update((
+                f"P1_757_viewport_bounds_{stage}",
+                f"P1_757_dark_transition_{stage}",
+                f"P1_757_light_restore_{stage}",
+            ))
+    if "dashboard" in stages:
+        required.add("P1_757_real_installed_home_plugin")
+    if "constellations" in stages:
+        required.update((
+            "P1_757_real_plugin_factory_hosted",
+            "P1_757_plugin_light_real_gtk",
+            "P1_757_plugin_dark_real_gtk",
+        ))
+    if not isinstance(checks, dict) or any(
+        checks.get(key) is not True for key in required
+    ):
+        raise ValueError("Preuves du thème GTK réel incomplètes")
     images: dict[tuple[str, str], Path] = {}
     captures = report.get("screenshots")
     if not isinstance(captures, list):
@@ -61,6 +90,10 @@ def verify_capture_folder(
         if not isinstance(item, dict):
             raise ValueError("Capture non structurée")
         key = item.get("stage"), item.get("appearance")
+        if (item.get("observed_appearance") != item.get("appearance")
+                or type(item.get("observed_appearance")) is not str
+                or item["observed_appearance"] not in APPEARANCES):
+            raise ValueError("Apparence Adwaita réelle non attestée à la capture")
         if key not in expected or key in images:
             raise ValueError(f"Capture manquante, répétée ou inattendue : {key}")
         name = item.get("file")
