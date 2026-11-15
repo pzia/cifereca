@@ -269,7 +269,7 @@ def offer_cross_profile_local_send(
                 "Vérification de la livraison locale…",
                 check, ready, missing,
                 control=control, priority=TaskPriority.USER_ACTION,
-                kind="borrow",
+                kind="lender-placement-check",
             )
             return True
         except Exception:

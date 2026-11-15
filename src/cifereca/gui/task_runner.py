@@ -346,6 +346,37 @@ class TaskRunner:
             return "cancelled"
         return "failed"
 
+    @staticmethod
+    def _lender_placement_check_outcome(value: Any) -> str:
+        """A passive local observation neither borrows nor sends a book."""
+        from cifereca.core.borrow_for_identity_placement_resolution import (
+            LenderLocalPlacement,
+        )
+        if type(value) is not LenderLocalPlacement:
+            return "failed"
+        status, reason, loan = value.status, value.reason_code, value.loan
+        if (type(status) is not str or type(reason) is not str
+                or type(loan) is not str
+                or value.executable is not False
+                or value.retry_borrow is not False):
+            return "failed"
+        if (status == "present"
+                and reason == "lender_exact_local_placement_present"
+                and loan == "confirmed"):
+            placement = value._placement_id
+            return (
+                "success"
+                if type(placement) is str and 0 < len(placement) <= 1024
+                and chr(0) not in placement else "failed"
+            )
+        if (status == "unavailable" and value._placement_id is None):
+            if reason == "lender_delivery_unverified" and loan == "confirmed":
+                return "pending"
+            if (reason in {"lender_scope_unverified", "lender_loan_not_confirmed"}
+                    and loan in {"unknown", "confirmed", "not_attempted"}):
+                return "blocked"
+        return "failed"
+
     def _business_outcome(self, value: Any, kind: str) -> str:
         """One exact Core receipt for worker metrics and GTK task feedback."""
         if kind == "borrow":
@@ -356,6 +387,8 @@ class TaskRunner:
             return self._manual_acsm_outcome(value)
         if kind == "lender-local-send":
             return self._lender_local_send_outcome(value)
+        if kind == "lender-placement-check":
+            return self._lender_placement_check_outcome(value)
         if kind == "materialize":
             return self._materialize_outcome(value)
         if kind == "borrow-verification":
@@ -440,7 +473,7 @@ class TaskRunner:
             # Fixed, Core-owned task kinds already used by MainWindow.
             # Previously these appeared as "other" in local TRACE, making
             # timing samples impossible to attribute (#1741).
-            "history", "bookings", "search-known", "detail-cache", "transfer", "materialize", "acsm-import", "lender-local-send",
+            "history", "bookings", "search-known", "detail-cache", "transfer", "materialize", "acsm-import", "lender-local-send", "lender-placement-check",
             "adept-inventory", "adept-return", "loan-acquisition", "acsm-stage", "borrow", "borrow-verification",
             "obtain", "index", "provider-connect", "sync-audit", "source-consent",
             "identity", "maintenance-inspection",
@@ -653,7 +686,7 @@ class TaskRunner:
             # a partial result or a genuine source-sync failure (#2888).
             detail = (
                 f" business_status={business_status}"
-                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "opening-sync", "deep-sync"} else ""
+                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "lender-placement-check", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "opening-sync", "deep-sync"} else ""
             )
             # Only Core's explicitly closed BnF reason vocabulary may enter
             # the generic task receipt. Ignore arbitrary provider detail.
@@ -745,6 +778,12 @@ class TaskRunner:
                     if trace_kind == "lender-local-send" and business_status == "blocked"
                     else "Copie du prêteur non confirmée"
                     if trace_kind == "lender-local-send"
+                    else "Placement du prêteur en attente de livraison"
+                    if trace_kind == "lender-placement-check" and business_status == "pending"
+                    else "Vérification du placement bloquée"
+                    if trace_kind == "lender-placement-check" and business_status == "blocked"
+                    else "Placement du prêteur non confirmé"
+                    if trace_kind == "lender-placement-check"
                     else "Envoi du fichier local non confirmé"
                     if trace_kind == "materialize"
                     else "Récupération du livre en attente"
@@ -785,7 +824,7 @@ class TaskRunner:
                     business_status == "success", feedback_error,
                 )
                 if (business_status in {"pending", "partial", "blocked", "busy", "cancelled"}
-                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "opening-sync", "deep-sync"}):
+                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "lender-placement-check", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "opening-sync", "deep-sync"}):
                     self.window._task_finished(*finish_args, business_status)
                 else:
                     self.window._task_finished(*finish_args)
