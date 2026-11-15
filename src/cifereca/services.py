@@ -4701,9 +4701,29 @@ class LibraryService:
         for descriptive history, but cannot select a connected account to
         authorize a new acquisition, return or provider request.
         """
+        # A real installed provider owns its read-only account alias.
+        # Unregistered legacy callers still use the historical primary
+        # convention for descriptive compatibility; no provider can obtain
+        # a mutable action lease from an unregistered source.
+        primary_alias = "primary"
+        try:
+            plugin = self.registry.maybe_get(loan.source_provider)
+        except (AttributeError, TypeError, ValueError):
+            plugin = None
+        if plugin is not None:
+            from .providers.base import ProviderDescriptor
+            descriptor = inspect.getattr_static(plugin, "descriptor", None)
+            primary_alias = (
+                descriptor.existing_primary_loan_account_alias
+                if type(descriptor) is ProviderDescriptor
+                and type(descriptor.id) is str
+                and descriptor.id == loan.source_provider
+                else None
+            )
         return loan_accounts.account_for_loan(
             loan, accounts=self.accounts,
             configuration_error=ProviderConfigurationError,
+            primary_alias=primary_alias,
         )
 
     def _acquisition_work_dir(self, identity_id: str, provider_id: str, loan_id: str | None = None) -> Path:
