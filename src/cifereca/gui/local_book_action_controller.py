@@ -87,9 +87,6 @@ def _add_owned_download(window, detail, item, TaskPriority):
     )
     failure = 'Téléchargement ciblé indisponible. Actualisez les droits et vérifiez les fichiers locaux.'
     from ..core.source_context import source_context_epoch
-    # Exact local filesystem executor owned by the rendered action; GTK
-    # navigation/rebinding may only suppress subsequent presentation.
-    service = window.service
     generation = getattr(window, '_identity_context_generation', None)
     try:
         source_epoch = source_context_epoch(window.service)
@@ -187,6 +184,9 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
     # the active profile or a provider disconnect/reconnect (A -> B -> A).
     # Capture both identity and Core source leases before creating callbacks.
     from ..core.source_context import source_context_epoch
+    # Pin the source service as part of this specific local physical action.
+    # A widget's later context is only a projection/click guard.
+    service = window.service
     generation = getattr(window, '_identity_context_generation', None)
     try:
         source_epoch = source_context_epoch(window.service)
