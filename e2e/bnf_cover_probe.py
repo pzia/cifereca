@@ -215,6 +215,7 @@ def main() -> int:
     original_client = [None]
     embedded_file = [None]
     late_cover_row = [None]
+    revisit_details = [0]
 
     def save():
         report["duration_seconds"] = round(monotonic() - started, 2)
@@ -394,6 +395,45 @@ def main() -> int:
         capture("04b-bnf-search-exact-detail-cover-in-list")
         assert len(image_gets) == 2
         report["checks"]["search_detail_cover_rebinds_same_gtk_row"] = True
+        # P1 #6168: a book's exact-source N2 image must outlive a DIFFERENT
+        # selection and a fresh same-source response with no thumbnail.
+        window = app_window[0]
+        assert window.search_page.store.get_item(2).thumbnail_url == COVERS[0]
+        revisit_details[0] = len(applied_details)
+        window.search_page.selection.set_selected(0)
+        await_condition(
+            "search_cover_other_selection",
+            lambda: len(applied_details) > revisit_details[0]
+            and applied_details[-1] == RESOURCES[0]
+            and bool(selected_detail())
+            and selected_detail()[0].get_mapped()
+            and selected_detail()[0]._url == COVERS[0]
+            and selected_detail()[0].picture.get_paintable() is not None,
+            revisit_late_search_detail_cover,
+        )
+
+    def revisit_late_search_detail_cover():
+        window = app_window[0]
+        assert window.search_page.store.get_item(2).thumbnail_url == COVERS[0]
+        revisit_details[0] = len(applied_details)
+        window.search_page.selection.set_selected(2)
+        await_condition(
+            "search_exact_cover_after_return",
+            lambda: len(applied_details) > revisit_details[0]
+            and applied_details[-1] == RESOURCES[2]
+            and bool(selected_detail())
+            and selected_detail()[0].get_mapped()
+            and selected_detail()[0]._url == COVERS[0]
+            and selected_detail()[0].picture.get_paintable() is not None
+            and window.search_page.store.get_item(2).thumbnail_url == COVERS[0]
+            and bool(visible(COVERS[0])),
+            finish_revisited_search_detail_cover,
+        )
+
+    def finish_revisited_search_detail_cover():
+        capture("04c-bnf-search-late-cover-survives-return")
+        assert len(image_gets) == 2, "Returning to same notice must reuse cached image bytes"
+        report["checks"]["search_exact_cover_survives_reselection_gtk"] = True
         begin_loan_covers()
 
     def begin_loan_covers():
@@ -490,8 +530,13 @@ def main() -> int:
     def finish():
         assert set(image_gets) == set(COVERS)
         assert len(image_gets) == 2, "Search, loan list and both details must share cached public images"
-        assert details[-3:] == list(RESOURCES), "Provider detail scoped to each resource"
-        # #3104 adds one explicit *same-edition* late detail repaint after\n        # the three provider holdings callbacks; that repaint is not another\n        # holdings() request and must not be mistaken for one.\n        assert applied_details[-4:] == [*RESOURCES, RESOURCES[2]], (\n            "GTK applied provider details and the exact late Search repaint"\n        )
+        assert details[:3] == list(RESOURCES), "First provider results retain distinct resource binding"
+        assert len(details) <= 5 and all(
+            key in RESOURCES for key in details[3:]
+        ), "A revisit cannot fetch unrelated or duplicate supplier resource rows"
+        assert applied_details == [
+            *RESOURCES, RESOURCES[2], RESOURCES[0], RESOURCES[2],
+        ], "GTK rendered the late and subsequently revisited exact source"
         assert app_window[0].covers.stats()["ui_applied"] >= 4
         report["checks"]["missing_cover_no_image_get"] = True
         report["checks"]["cache_shared_search_detail"] = True

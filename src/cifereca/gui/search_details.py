@@ -38,10 +38,24 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
             return
         self._selected_search_id = row.key
         description = self._book_description(item)
+        # The same *known v2 exact notice* may already have a validated
+        # holdings image in the shared N2 decision. Only presentation uses
+        # it; neither the Library row nor its canonical rights are modified.
+        visual_thumbnail = item.get("thumbnail_url")
+        if item.get("source") == "known_catalog":
+            from cifereca.gui.search_detail_cover_reuse import (
+                cached_exact_selected_search_cover,
+            )
+            qualified = self._known_search_result(item)
+            if qualified is not None:
+                visual_thumbnail = (
+                    cached_exact_selected_search_cover(self, qualified)
+                    or visual_thumbnail
+                )
         self.search_page.detail.show_presentation(book_detail_presentation(
             title=str(item.get("title") or "Sans titre"),
             subtitle=str(item.get("author") or ""),
-            thumbnail=item.get("thumbnail_url"),
+            thumbnail=visual_thumbnail,
             badges=[],
             section_rows=local_book_detail_sections(
                 item,
@@ -100,7 +114,11 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
                source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)), self.search_controls)
         return
-    self.search_page.detail.show_search(item, loading=True)
+    from cifereca.gui.search_detail_cover_reuse import visual_search_item
+    # Re-selection must not drop a previously attested exact-source image
+    # while a new holdings lookup runs. Keep the original SearchResult for
+    # all authorizations and provider actions.
+    self.search_page.detail.show_search(visual_search_item(self, item), loading=True)
     self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
                identity_id=getattr(getattr(getattr(self, "service", None),
                                            "current_identity", None), "identity_id", None),
@@ -253,7 +271,12 @@ def _apply_search_detail(
 ) -> None:
     if not self._search_detail_context_current(selected_id, context):
         return
-    self.search_page.detail.show_item_detail(item, detail)
+    from cifereca.gui.search_detail_cover_reuse import visual_search_detail
+    # A fresh holdings response may omit a cover even though N2 still owns
+    # an admissible, non-expired decision for this precise source and epochs.
+    # Use a visual copy only: do NOT publish the old URL as new evidence.
+    presentation = visual_search_detail(self, item, detail)
+    self.search_page.detail.show_item_detail(item, presentation)
     _publish_search_detail_cover(self, item, detail)
     self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
                identity_id=getattr(getattr(getattr(self, "service", None),
@@ -286,7 +309,8 @@ def _search_detail_error(
 ) -> None:
     if not self._search_detail_context_current(selected_id, context):
         return
-    self.search_page.detail.show_search(item, loading=False)
+    from cifereca.gui.search_detail_cover_reuse import visual_search_item
+    self.search_page.detail.show_search(visual_search_item(self, item), loading=False)
     self._add_local_book_actions(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
                identity_id=getattr(getattr(getattr(self, "service", None),
                                            "current_identity", None), "identity_id", None),
