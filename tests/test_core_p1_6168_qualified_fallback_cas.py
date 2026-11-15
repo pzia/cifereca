@@ -191,6 +191,8 @@ def test_fallback_lease_expires_and_restores_epub_priority(state):
     assert stale is not None
     # N3 is repaired independently: it never creates a document association.
     item["image"].write_bytes(original)
+    changes = []
+    observer = item["decisions"].subscribe(item["scope"], changes.append)
     item["clock"][0] = 20.5
     callback = []
     request = item["service"].get_cover(
@@ -205,6 +207,10 @@ def test_fallback_lease_expires_and_restores_epub_priority(state):
     )
     assert new is not None and new.generation > stale.generation
     assert item["loader"].stats()["download_ok"] == 0
+    assert [event.cause for event in changes if event.kind == "invalidated"] == [
+        "materialization_requalified",
+    ]
+    observer.cancel()
 
 
 def test_no_unique_remote_candidate_keeps_embedded_n2(state):
