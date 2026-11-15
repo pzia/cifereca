@@ -209,6 +209,13 @@ def _render_search_results(self) -> int:
                         )
                         if resolved_uri is not None:
                             cover_url = resolved_uri
+            # A Core-local packet (valid or rejected) must NEVER cause the
+            # visible row to fall back to an unqualified descriptive URL.
+            # The normal BookListCell resolves valid packets through N2;
+            # the invalid ones simply have no cover. No-packet historical
+            # public results retain their legacy URL presentation.
+            if item.get("_exact_local_cover_evidence") is not None:
+                cover_url = None
             view_row = BookListItem(
                 key, str(item.get("title") or "Sans titre"), str(item.get("author") or ""),
                 " · ".join(x for x in [self._library_state_label(item), local_match_explanation(item, state.text, field=state.field)] if x),
