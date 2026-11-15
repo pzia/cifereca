@@ -153,3 +153,24 @@ def test_local_search_consumes_only_verified_library_packet_and_preserves_url_ta
     assert 'proof.scope.placement_id == item.get("placement_id")' in search
     assert "view_row._cover_document_ref = proof.scope" in search
     assert "proof, row._public_row_content[-1]" in search
+
+
+def test_missing_document_gateway_never_downgrades_proved_epub_to_hot_url(ready):
+    facts, _service, _adapter, loader = ready
+    calls = []
+    item = NS(
+        key="book:list", _cover_document_ref=facts.scope,
+        _cover_local_evidence=facts,
+        thumbnail_url="https://hot.example/img.jpg",
+        default_thumbnail_url=None, _cover_paint_observer=None,
+    )
+    cover = NS(
+        bind_document=lambda *args, **kwargs: calls.append(("doc", args)),
+        bind_url=lambda *args, **kwargs: calls.append(("url", args)),
+    )
+    host = NS(
+        window=NS(document_covers=None), cover=cover, cover_loader=loader,
+        _thumbnail_item=item, _bound_key=item.key,
+    )
+    method("_thumbnail_changed")(host, item)
+    assert calls == [("url", (loader, None))]
