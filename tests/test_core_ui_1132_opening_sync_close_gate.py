@@ -106,3 +106,37 @@ def test_open_owner_retains_progress_and_success_rendering():
     assert [row[0] for row in effects] == [
         "dashboard", "loans", "library", "recent", "activity",
     ]
+
+
+def test_queued_opening_sync_uses_admitted_core_not_replacement_window_service():
+    start, labels = _method()
+    host, tasks, effects = _host()
+    start(host)
+    other = []
+    host.service = NS(
+        last_loans=["other-private-loan"],
+        opening_sync=lambda **kw: other.append(kw),
+    )
+    args, _kwargs = tasks[0]
+    args[1](labels.append)
+    assert [event[0] for event in effects] == ["service-work"]
+    assert other == []
+    args[2]({"identities": [{"new_acquisitions": 1}]})
+    args[3](RuntimeError("PRIVATE_BEARER"))
+    assert [event[0] for event in effects] == ["service-work"]
+    assert labels == []
+
+
+def test_late_opening_progress_never_updates_replaced_core_ui():
+    start, labels = _method()
+    host, tasks, effects = _host()
+    start(host)
+    callbacks = []
+    host.service.opening_sync = lambda **kw: callbacks.append(kw["progress"])
+    args, _kw = tasks[0]
+    args[1](labels.append)
+    assert len(callbacks) == 1
+    host.service = NS(last_loans=[], opening_sync=lambda **kw: None)
+    callbacks[0]({"event": "identity_begin", "label": "Other private user"})
+    args[2]({"identities": []})
+    assert labels == [] and effects == []
