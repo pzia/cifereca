@@ -315,7 +315,9 @@ _BNF_COVER_STAGES = frozenset({
     "loan_missing_cover_placeholder",
     "remote_loan_image_without_source_thumbnail",
     "remote_loan_detail_cover", "embedded_loan_list_over_remote",
-    "embedded_loan_detail_over_remote", "search_results",
+    "embedded_loan_detail_over_remote",
+    "embedded_loan_list_over_supplier", "embedded_loan_detail_over_supplier",
+    "search_results",
     "global_button_visible",
 })
 
