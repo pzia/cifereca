@@ -74,6 +74,7 @@ def test_exact_kobo_cli_trace_only_when_explicitly_selected(
     assert result["status"] == "present_attested"
     assert calls[0] == ("open", {
         "diagnostics_enabled": True, "diagnostics_level": expected_level,
+        "builtin_ui": False,
     })
     assert calls[1] == (
         "connect", "synthetic", "trace" if active else "normal", active,
