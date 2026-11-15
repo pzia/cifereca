@@ -238,7 +238,16 @@ encore vide ou périmé ne suffit plus
 `P1_774_*_mapped_same_book_detail` sont obligatoires pour fabriquer
 ou valider la grille privée. Cela prouve les valeurs des en-têtes GTK,
 pas l'absence de clipping ou leur lisibilité : les PNG originaux doivent
-toujours être inspectés.
+toujours être inspectés. Le Catalogue Recommandations conserve désormais
+les `kind` déclarés par le modèle public dans le **DetailPanel Core** :
+chaque auteur attesté expose une action clavier de copie et une action
+explicite de recherche par auteur, comme les champs typés de Recherche.
+Le probe Recommandations vérifie les vrais boutons GTK mappés et leur
+dispatch `search_books(author, field="author", online=True, identity_id=...)`
+vers l'hôte de test sans déclencher de fournisseur. Le code
+`P1_4761_recommendations_typed_catalogue_author_gtk` est obligatoire
+pour créer ou revalider les planches privées #774 ; ni CI ni comparaison
+synthétique ne remplace l'inspection visuelle originale.
 Le manifeste privé retient l'empreinte du livre synthétique. Cette
 égalité de fixture **ne certifie aucune jointure réelle de fournisseur**,
 couverture empruntée, ni appariement documentaire d'un compte utilisateur.
