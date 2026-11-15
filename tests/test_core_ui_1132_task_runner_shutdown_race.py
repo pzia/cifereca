@@ -72,7 +72,16 @@ def _runner(on_submit=None):
         # both its worker and GTK callback paths. This headless fixture
         # extracts ONLY submit(), so inject the same neutral no-rights
         # classification for these lifecycle-only tests.
-        _business_outcome=lambda _value, _kind: "success",
+        _business_outcome=lambda _value, kind: (
+            # An isolated AST fixture has no actual Core receipt classifier.
+            # It may model an ordinary no-rights task success but must never
+            # turn a typed borrow/acquisition/transfer result into consent or
+            # a confirmed business outcome merely because the worker returned.
+            "failed" if kind in {
+                "loan-acquisition", "borrow", "borrow-verification",
+                "acsm-import", "lender-local-send", "materialize", "transfer",
+            } else "success"
+        ),
         present_error=lambda exception: events.append(("error", str(exception))),
     )
     return runner, window, events
