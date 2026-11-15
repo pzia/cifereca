@@ -1264,26 +1264,31 @@ class MainWindow(Adw.ApplicationWindow):
 
     def refresh_history(self, force: bool = False, control: Gtk.Widget | None = None) -> None:
         from ..core.source_context import source_context_epoch
-        current = self.service.current_identity
+        # A queued history GET has an explicit borrower and exact Core owner.
+        # GTK's later service binding must never retarget the request.
+        service = self.service
+        current = service.current_identity
         identity_id = current.identity_id if current is not None else None
         generation = self._identity_context_generation
-        account = self.service.current_account
+        account = service.current_account
         account_generation = self._account_context_generation
         try:
-            admitted_source_epoch = source_context_epoch(self.service)
+            admitted_source_epoch = source_context_epoch(service)
         except ValueError:
             # A corrupt source epoch must never authorize a queued private GET.
             return
 
         def done(rows: list[HistoryItem]) -> None:
-            if (self._identity_request_current(identity_id, generation)
+            if (not getattr(self, "_closed", False)
+                    and self.service is service
+                    and self._identity_request_current(identity_id, generation)
                     and account_generation == self._account_context_generation
-                    and self.service.current_account is account):
+                    and service.current_account is account):
                 self._populate_history(rows)
 
         self.runner.submit(
             "Chargement de l'historique…", lambda: library_projection.refresh_history(
-                self.service, force=force, account=account,
+                service, force=force, account=account,
                 expected_source_epoch=admitted_source_epoch,
             ), done, control=control,
             priority=TaskPriority.USER_ACTION if control is not None else TaskPriority.NORMAL, kind="history",
