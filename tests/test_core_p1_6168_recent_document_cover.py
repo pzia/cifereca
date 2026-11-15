@@ -92,3 +92,46 @@ def test_core_recent_uses_verified_local_path_not_catalogue_epub_member():
     assert 'artifact_metadata=artifact["metadata"]' in core
     assert "project_verified_local_cover_evidence(" in core
     assert "except (ProviderConfigurationError, OSError, ValueError)" in core
+
+
+
+def test_real_core_recent_and_library_share_one_exact_n2_epub_source(
+    tmp_path, monkeypatch,
+):
+    from tests.test_core_library_placement_identity_scope import _service
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    service = _service(tmp_path)
+    try:
+        book = tmp_path / "library" / "alice" / "book.epub"
+        book.parent.mkdir(parents=True, exist_ok=True)
+        raw = _write_epub(book, epub3=True)
+        indexed = service.catalog_index_path(
+            book, title="Verified Book", identity_id="alice",
+            provider_id="local", item_id="book-a",
+        )
+        assert indexed["status"] == "indexed"
+        artifact_id = "sha256:" + hashlib.sha256(raw).hexdigest()
+        catalog_row, = service.library_entries(identity_id="alice", scan=False)
+        recent_row, = service.recent_acquisitions(identity_id="alice")
+        lib = catalog_row.get("_exact_local_cover_evidence")
+        recent = recent_row.get("_exact_local_cover_evidence")
+        assert lib is not None and recent is not None
+        assert lib.scope == recent.scope
+        assert lib.scope.identity_id == "alice"
+        assert lib.scope.artifact_id == artifact_id
+        assert lib.scope.placement_id == recent_row["placement_id"]
+        assert lib.embedded.resource.cache_name == recent.embedded.resource.cache_name
+        assert lib.embedded.candidate.tier == "embedded"
+
+        # N3 image eviction must not delete the exact documentary link.
+        image = epub_metadata.cover_cache_dir() / lib.embedded.resource.cache_name
+        image.unlink()
+        library_fresh, = service.library_entries(identity_id="alice", scan=False)
+        recent_fresh, = service.recent_acquisitions(identity_id="alice")
+        assert library_fresh["_exact_local_cover_evidence"].scope == lib.scope
+        assert recent_fresh["_exact_local_cover_evidence"].scope == recent.scope
+        assert not image.exists()
+        assert service.recent_acquisitions(identity_id="bob") == []
+    finally:
+        service.close()
