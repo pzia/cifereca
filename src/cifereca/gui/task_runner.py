@@ -195,22 +195,33 @@ class TaskRunner:
         outcomes, not proof of successful transfer. Never trust arbitrary
         plugin truthiness or status subclasses.
         """
-        if type(value) is not dict or type(value.get("status")) is not str:
+        if type(value) is not dict:
             return "failed"
-        if value["status"] == "blocked":
+        status = value.get("status")
+        if type(status) is not str:
+            return "failed"
+        if status == "blocked":
             return "blocked"
-        if (
-            value["status"] == "complete"
-            and value.get("loan") == "not_attempted"
-            and value.get("delivery") == "present"
-            and value.get("transfer") == "completed"
-            and value.get("reason_code") == "independent_local_copy_completed"
-            and value.get("retry_borrow") is False
-            and type(value.get("copy")) is str
-            and value["copy"] in {"created", "already_present"}
-        ):
-            return "success"
-        return "failed"
+        if status != "complete" or value.get("retry_borrow") is not False:
+            return "failed"
+        # Validate every source-controlled scalar before equality, not just
+        # status: a str subclass can override __eq__ or __hash__.
+        expected = (
+            ("loan", "not_attempted"),
+            ("delivery", "present"),
+            ("transfer", "completed"),
+            ("reason_code", "independent_local_copy_completed"),
+        )
+        for field, wanted in expected:
+            candidate = value.get(field)
+            if type(candidate) is not str or candidate != wanted:
+                return "failed"
+        copy = value.get("copy")
+        return (
+            "success"
+            if type(copy) is str and copy in {"created", "already_present"}
+            else "failed"
+        )
 
     def is_active_automatic_opening(self) -> bool:
         """Passive GTK-side gate for periodic inventories during opening Sync.
