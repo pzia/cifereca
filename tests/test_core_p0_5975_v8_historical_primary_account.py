@@ -73,7 +73,8 @@ def test_v8_primary_borrower_legacy_repair_is_real_scoped_and_one_time(tmp_path)
             assert paris_receipt[0] == Storage._acquisition_id_for({
                 "provider_id": "paris", "credential_id": "credential",
                 "account_id": "primary", "item_id": "edition",
-                "entitlement_type": "loan", "loan_id": "loan-1",
+                # Historic acquisition_ledger has no loan_id/type columns.
+                "entitlement_type": "owned", "loan_id": None,
             })
             assert next(row for row in rights if row[1] == "future-library") == (
                 "right-foreign", "future-library", "", "alice"
