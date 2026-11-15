@@ -16,7 +16,7 @@ from tests.test_settings_page_composition import Widget
 PROVIDER = "biblioaccess.la-rochelle"
 
 
-def _harness(monkeypatch, *, enabled_sentinel=True, option_missing=False, return_saved=False):
+def _harness(monkeypatch, *, enabled_sentinel=True, option_missing=False, return_saved=False, return_host=False):
     saved = {
         "id": "credential-1", "provider": PROVIDER,
         "identity_id": "identity-1", "label": "La Rochelle",
@@ -88,7 +88,7 @@ def _harness(monkeypatch, *, enabled_sentinel=True, option_missing=False, return
     )
     assert len(editor_rows) == 1
     result = (editor_rows[0], submits, entries, session_action)
-    return (*result, saved) if return_saved else result
+    return (*result, saved) if return_saved else (*result, host) if return_host else result
 
 
 def test_legacy_enabled_default_matches_config_and_can_run_explicit_probe(monkeypatch):
@@ -186,3 +186,53 @@ def test_test_button_recognizes_temporary_success_without_claiming_saved_account
     assert "Session temporaire refermée" in editor["explicit_probe_status"].subtitle
     assert entries[-1][3]["phase"] == "test_connected_ephemeral"
     assert "PRIVATE" not in repr(entries)
+
+
+def test_queued_http_probe_never_rebinds_to_foreign_core_or_gtk(monkeypatch):
+    editor, submits, events, action, host = _harness(
+        monkeypatch, return_host=True,
+    )
+    host._identity_context_generation = 3
+    host._account_context_generation = 5
+    editor["explicit_probe_button"].emit("clicked")
+    args, _ = submits[-1]
+    original_core = host.service
+    foreign_action = Mock(side_effect=AssertionError("wrong Core issued HTTP probe"))
+    foreign_add = Mock()
+    host.service = NS(
+        accounts=(), last_loans=(),
+        diagnostics=NS(add=foreign_add),
+        explicit_provider_diagnostic=foreign_action,
+    )
+    result = args[1]()
+    assert result.status == "observed"
+    action.assert_called_once_with(
+        identity_id="identity-1", provider_id=PROVIDER,
+        credential_id="credential-1", user_consent=True,
+    )
+    foreign_action.assert_not_called()
+    args[2](result)
+    assert "en cours" in editor["explicit_probe_status"].subtitle
+    assert [x[3]["phase"] for x in events][-1] == "completed_unverified"
+    foreign_add.assert_not_called()
+    assert host.service is not original_core
+
+
+def test_http_probe_keeps_click_bound_method_and_refuses_aba_callback(monkeypatch):
+    editor, submits, events, action, host = _harness(
+        monkeypatch, return_host=True,
+    )
+    host._identity_context_generation = 1
+    host._account_context_generation = 1
+    editor["explicit_probe_button"].emit("clicked")
+    args, _ = submits[-1]
+    host.service.explicit_provider_diagnostic = Mock(
+        side_effect=AssertionError("queued provider method was replaced"),
+    )
+    result = args[1]()
+    action.assert_called_once()
+    host._account_context_generation = 2
+    host._account_context_generation = 3
+    args[2](result)
+    assert "en cours" in editor["explicit_probe_status"].subtitle
+    assert [x[3]["phase"] for x in events][-1] == "completed_unverified"
