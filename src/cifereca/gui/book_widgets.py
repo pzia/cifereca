@@ -75,6 +75,7 @@ class CoverView(Gtk.Overlay):
         self._url: str | None = None
         self._priority = 10
         self._decode_retry = False
+        self._document_check = None
         # Optional N0 paint observation: attached only by a Core source
         # adapter that already owns an exact N2 decision/lease. Never a
         # source of bibliographic evidence or provider access.
@@ -131,6 +132,7 @@ class CoverView(Gtk.Overlay):
         self._url = None
         self._decode_retry = False
         self._on_texture_applied = None
+        self._document_check = None
         self._set_logical_size(self._width, self._height)
         self.picture.set_paintable(None)
         self.placeholder.set_visible(True)
@@ -197,6 +199,9 @@ class CoverView(Gtk.Overlay):
             height=self._height * scale if variant == "list" else self._height,
         )
         self._request = request
+        # The worker already checked N2, but idle dispatch can run LATER
+        # than a Core source revision/identity/placement invalidation.
+        self._document_check = lambda: request.still_current
         # This is the N2-selected URI, NOT a reconstructed URL from the
         # thumbnail path. N0 paint receipts retain their exact source.
         self._url = request.source_uri
@@ -258,6 +263,17 @@ class CoverView(Gtk.Overlay):
         if generation != self._generation:
             loader.note_ui_stale()
             return False
+        check = getattr(self, "_document_check", None)
+        if check is not None:
+            try:
+                current = check() is True
+            except Exception:
+                current = False
+            if not current:
+                # Drop a queued N3 response invalidated AFTER its callback
+                # but BEFORE GDK creates a texture. Never paint stale bytes.
+                loader.note_ui_stale()
+                return False
         self.spinner.stop()
         self.spinner.set_visible(False)
         if not path:

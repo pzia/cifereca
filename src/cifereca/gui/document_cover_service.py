@@ -122,10 +122,28 @@ class CoverReadRequest:
         self._child: CoverRequest | None = None
         # Authoritative N2 selected URI, never inferred from physical N3.
         self._source_uri: str | None = None
+        # Recheck the EXACT N2 selection at GTK idle-paint time, not just
+        # at the N3 worker callback (which may queue an idle beforehand).
+        self._is_selected: Callable[[], bool] | None = None
 
     @property
     def source_uri(self) -> str | None:
         return self._source_uri
+
+    @property
+    def still_current(self) -> bool:
+        with self._lock:
+            if not self._active:
+                return False
+            check = self._is_selected
+        if check is None:
+            # Pending/unselected reads can still deliver a neutral missing
+            # placeholder. The generation guard rejects recycled widgets.
+            return True
+        try:
+            return check() is True
+        except Exception:
+            return False
 
     def cancel(self) -> None:
         with self._lock:
@@ -367,18 +385,20 @@ class DocumentCoverService:
         # N3 cache-hit callback can be painted on GTK's idle queue.
         handle._source_uri = decision.uri
 
-        def delivered(path: Path | None) -> None:
-            if not handle.active:
-                return
+        def selected_now() -> bool:
             with self._lock:
-                valid = (
+                return (
                     not self._closed
                     and self._snapshots.get(document) is snapshot
                     and self.decisions.selected_token(
                         document, revision=snapshot.revision, uri=decision.uri,
                     ) == selected_token
                 )
-            if valid and handle.active:
+
+        handle._is_selected = selected_now
+
+        def delivered(path: Path | None) -> None:
+            if handle.still_current:
                 callback(path)
 
         if decision.tier == "embedded":
