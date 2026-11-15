@@ -64,6 +64,7 @@ class _AccountBooleanText:
 
 def _sole_owner_of_legacy_provider_setting(
     config: Any, provider_id: str, account_id: str,
+    displayed: dict[str, Any],
 ) -> bool:
     """Unscoped legacy values may migrate to exactly one saved connection.
 
@@ -93,7 +94,12 @@ def _sole_owner_of_legacy_provider_setting(
         if owner is not None:
             return False
         owner = row
-    return owner is not None and type(owner.get("id")) is str and owner["id"] == account_id
+    return (
+        owner is not None and type(owner.get("id")) is str
+        and owner["id"] == account_id
+        and type(displayed) is dict and displayed.get("id") == account_id
+        and owner.get("identity_id") == displayed.get("identity_id")
+    )
 
 
 def _saved_option_of_exact_account(
@@ -252,7 +258,7 @@ def build_provider_account_editor(
                     config, provider_id, account_id, data, field.key,
                 )
                 if (not fallback and _sole_owner_of_legacy_provider_setting(
-                        config, provider_id, account_id)):
+                        config, provider_id, account_id, data)):
                     # A retired global value has no owner metadata. Keep
                     # it only for the unique historical connection; the
                     # next account and all other profiles use their own
