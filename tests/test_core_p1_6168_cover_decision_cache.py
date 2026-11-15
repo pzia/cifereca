@@ -1,0 +1,250 @@
+"""#6168 N2: shared decision cache, explicit events and stale completion guards."""
+from __future__ import annotations
+
+from dataclasses import FrozenInstanceError
+from itertools import chain
+
+import pytest
+
+from cifereca.core.book_cover_cache import CoverDecisionCache
+from cifereca.core.book_cover_projection import CoverDocumentScope
+from cifereca.core.covers import CoverCandidate
+
+URL = "https://public.example.org/book.png"
+ALT = "https://public.example.org/changed.png"
+
+
+def loan(**changes):
+    attrs = dict(
+        kind="loan", identity_id="alice", provider_id="biblioaccess",
+        credential_id="card-a", account_id="", loan_id="loan-42",
+        source_key="loan-source:exact-42",
+    )
+    attrs.update(changes)
+    return CoverDocumentScope(**attrs)
+
+
+def candidate(url=URL):
+    return CoverCandidate(url, "origin", "provider", "loan:42", 100)
+
+
+def completed(cache, scope, *, revision=1, rows=None, complete=True):
+    token = cache.begin(scope, revision=revision)
+    assert cache.resolve_and_publish(
+        token, [candidate()] if rows is None else rows,
+        snapshot_complete=complete,
+    )
+    return token
+
+
+def test_list_and_detail_subscribers_observe_one_decision_without_extra_fetch():
+    cache = CoverDecisionCache()
+    exact = loan()
+    list_events, detail_events = [], []
+    left = cache.subscribe(exact, list_events.append)
+    right = cache.subscribe(exact, detail_events.append)
+    completed(cache, exact)
+    listed = cache.peek(exact, revision=1)
+    detail = cache.peek(exact, revision=1)
+    assert listed is detail
+    assert listed.status == "selected" and listed.uri == URL
+    assert [x.kind for x in list_events] == ["refresh", "resolved"]
+    assert [x.kind for x in detail_events] == ["refresh", "resolved"]
+    assert detail_events[-1].decision is listed
+    assert list_events[-1].scope == exact
+    assert list_events[-1].generation == detail_events[-1].generation
+    left.cancel()
+    right.cancel()
+    right.cancel()
+    assert cache.stats()["subscribers"] == 0
+
+
+def test_source_revision_and_observation_epoch_reject_stale_completion():
+    cache = CoverDecisionCache()
+    exact = loan()
+    first = cache.begin(exact, revision=1)
+    second = cache.begin(exact, revision=2)
+    assert not cache.resolve_and_publish(first, [candidate()], snapshot_complete=True)
+    assert cache.resolve_and_publish(second, [candidate(ALT)], snapshot_complete=True)
+    assert cache.peek(exact, revision=1) is None
+    assert cache.peek(exact, revision=2).uri == ALT
+    with pytest.raises(ValueError, match="stale"):
+        cache.begin(exact, revision=1)
+
+
+@pytest.mark.parametrize("cause", [
+    "catalogue_changed", "account_epoch_changed", "identity_changed",
+    "artifact_changed", "placement_changed", "origin_link_changed",
+    "loan_changed", "entitlement_changed", "evidence_changed",
+])
+def test_invalidation_revokes_in_flight_work_and_notifies_both_views(cause):
+    cache = CoverDecisionCache()
+    exact = loan()
+    seen = []
+    cache.subscribe(exact, seen.append)
+    token = cache.begin(exact, revision=12)
+    cache.invalidate(exact, cause=cause)
+    assert cache.peek(exact, revision=12) is None
+    assert not cache.resolve_and_publish(token, [candidate()], snapshot_complete=True)
+    assert seen[-1].kind == "invalidated"
+    assert seen[-1].cause == cause and seen[-1].decision is None
+    assert seen[-1].generation > seen[-2].generation
+    next_token = cache.begin(exact, revision=13)
+    assert cache.resolve_and_publish(next_token, [candidate()], snapshot_complete=True)
+    assert cache.peek(exact, revision=13).status == "selected"
+
+
+def test_invalidation_is_scoped_by_identity_borrower_credential_and_loan():
+    cache = CoverDecisionCache()
+    alice, bob = loan(), loan(identity_id="bob")
+    second_card = loan(credential_id="card-b")
+    second_loan = loan(loan_id="loan-43")
+    other_borrower = loan(account_id="linked-1")
+    scopes = (alice, bob, second_card, second_loan, other_borrower)
+    for scope in scopes:
+        completed(cache, scope)
+    cache.invalidate(alice, cause="account_epoch_changed")
+    assert cache.peek(alice, revision=1) is None
+    for scope in scopes[1:]:
+        assert cache.peek(scope, revision=1).uri == URL
+
+
+def test_negative_pending_and_ambiguous_ttls_are_distinct_and_bounded():
+    now = [10.0]
+    cache = CoverDecisionCache(
+        selected_ttl=100.0, missing_ttl=10.0,
+        ambiguous_ttl=4.0, pending_ttl=1.0,
+        clock=lambda: now[0],
+    )
+    scopes = [loan(loan_id=str(i)) for i in range(4)]
+    completed(cache, scopes[0], rows=[])
+    completed(cache, scopes[1], rows=[], complete=False)
+    completed(cache, scopes[2], rows=[
+        candidate(), candidate(ALT),
+    ])
+    completed(cache, scopes[3])
+    assert [cache.peek(scope, revision=1).status for scope in scopes] == [
+        "missing", "pending", "ambiguous", "selected",
+    ]
+    now[0] = 11.1
+    assert cache.peek(scopes[1], revision=1) is None
+    assert cache.peek(scopes[0], revision=1).status == "missing"
+    now[0] = 14.1
+    assert cache.peek(scopes[2], revision=1) is None
+    now[0] = 20.1
+    assert cache.peek(scopes[0], revision=1) is None
+    assert cache.peek(scopes[3], revision=1).uri == URL
+
+
+def test_untrusted_uri_is_never_persisted_or_notified():
+    cache = CoverDecisionCache()
+    exact = loan()
+    seen = []
+    cache.subscribe(exact, seen.append)
+    completed(cache, exact, rows=[
+        CoverCandidate("https://public.example.org/secret?token=abc", "catalog", "bad"),
+    ])
+    hit = cache.peek(exact, revision=1)
+    assert hit.status == "missing"
+    assert hit.uri == ""
+    assert seen[-1].decision == hit
+    assert "token=abc" not in repr(hit)
+
+
+def test_one_broken_subscriber_does_not_block_second():
+    cache = CoverDecisionCache()
+    exact = loan()
+    seen = []
+    def broken(_event):
+        raise RuntimeError("simulated failed UI repaint")
+    cache.subscribe(exact, broken)
+    cache.subscribe(exact, seen.append)
+    completed(cache, exact)
+    assert [event.kind for event in seen] == ["refresh", "resolved"]
+
+
+def test_pending_from_iterable_failure_is_not_missing_and_never_half_committed():
+    cache = CoverDecisionCache()
+    scope = loan()
+    def failed():
+        yield candidate()
+        raise RuntimeError("provider incomplete")
+    completed(cache, scope, rows=failed())
+    assert cache.peek(scope, revision=1).status == "pending"
+
+
+def test_invalidation_batch_is_atomic_on_invalid_input_or_source_failure():
+    cache = CoverDecisionCache()
+    scopes = [loan(loan_id="a"), loan(loan_id="b")]
+    for scope in scopes:
+        completed(cache, scope)
+    with pytest.raises(TypeError):
+        cache.invalidate_many(chain(scopes, [object()]), cause="loan_changed")
+    for scope in scopes:
+        assert cache.peek(scope, revision=1) is not None
+    def broken():
+        yield scopes[0]
+        raise RuntimeError("source failed")
+    with pytest.raises(RuntimeError):
+        cache.invalidate_many(broken(), cause="loan_changed")
+    for scope in scopes:
+        assert cache.peek(scope, revision=1) is not None
+    assert cache.invalidate_many([*scopes, scopes[0]], cause="loan_changed") == 2
+    assert all(cache.peek(scope, revision=1) is None for scope in scopes)
+
+
+def test_bounded_eviction_cannot_reactivate_stale_token():
+    cache = CoverDecisionCache(max_scopes=2)
+    first_scope = loan(loan_id="first")
+    old = cache.begin(first_scope, revision=1)
+    completed(cache, loan(loan_id="second"))
+    completed(cache, loan(loan_id="third"))
+    assert cache.peek(first_scope, revision=1) is None
+    assert not cache.resolve_and_publish(old, [candidate()], snapshot_complete=True)
+    fresh = cache.begin(first_scope, revision=1)
+    assert fresh.generation > old.generation
+    assert cache.resolve_and_publish(fresh, [candidate()], snapshot_complete=True)
+
+
+def test_subscriber_budget_unsubscribe_and_no_duplicate_notifications():
+    cache = CoverDecisionCache(max_subscribers=1)
+    target = loan()
+    seen = []
+    handle = cache.subscribe(target, seen.append)
+    with pytest.raises(ValueError):
+        cache.subscribe(target, seen.append)
+    handle.cancel()
+    completed(cache, target)
+    assert seen == []
+    h2 = cache.subscribe(target, seen.append)
+    cache.invalidate(target, cause="loan_changed")
+    assert len(seen) == 1
+    h2.cancel()
+
+
+@pytest.mark.parametrize("bad", [
+    0, -1, float("inf"), float("nan"), 86401, True, "30",
+])
+def test_expiry_must_be_finite_positive_bounded(bad):
+    with pytest.raises(ValueError):
+        CoverDecisionCache(missing_ttl=bad)
+
+
+def test_invalid_cause_and_revisions_are_fail_closed():
+    cache = CoverDecisionCache()
+    with pytest.raises(ValueError):
+        cache.invalidate(loan(), cause="unknown")
+    with pytest.raises(ValueError):
+        cache.invalidate_many([], cause="unknown")
+    with pytest.raises(ValueError):
+        cache.begin(loan(), revision=True)
+
+
+def test_no_work_without_exact_source_scope_or_token():
+    cache = CoverDecisionCache()
+    with pytest.raises(TypeError):
+        cache.begin("loan", revision=1)
+    with pytest.raises(TypeError):
+        cache.resolve_and_publish(object(), [candidate()], snapshot_complete=True)
+    with pytest.raises(TypeError):
+        cache.subscribe(loan(), object())
