@@ -2300,28 +2300,28 @@ class Storage:
         except (TypeError, ValueError):
             attempt_count_value = 0
         with self._lock, self._connect() as db:
-            # W1 cutover for ALREADY-TYPED Kobo editions. The old
-            # (provider, credential, edition) projection has no borrower,
-            # branch or right, so it cannot safely refresh any canonical
-            # source. Once a typed source exists, keep an existing legacy
-            # row as a READ-ONLY archive and never create a new one here.
+            # W1: a v0.7 key (provider/credential/edition) has no
+            # account, branch, right or owner. Once ANY provider has a typed
+            # SourceReference for that exact key, its legacy projection must
+            # not change the archive or manufacture a parallel canonical A/B.
             #
-            # BEGIN IMMEDIATE pins the typed-source decision to the same
-            # SQLite write transaction as the legacy UPSERT below. A typed
-            # source cannot be inserted between this check and that UPSERT.
-            # Other providers retain their legacy mirror; untyped Kobo
-            # editions may update only their 0.7 archive and negative vetoes.
-            if item.get("provider_id") == "kobo":
+            # Hold the SQLite writer lease from the source check through the
+            # archive UPSERT/mirror. If a caller already holds a transaction,
+            # keep its scope: SQLite cannot upgrade a stale read snapshot to a
+            # conflicting write, and the transaction must fail closed.
+            if not db.in_transaction:
                 db.execute("BEGIN IMMEDIATE")
-                # A typed SourceReference owns this exact source: the 0.7
-                # archive is read-only, even before any legacy UPSERT.
-                if db.execute(
-                    "SELECT 1 FROM source_references WHERE provider_id='kobo' "
-                    "AND credential_id=? AND edition_id=? LIMIT 1",
-                    (str(item.get("credential_id") or ""),
-                     str(item.get("item_id") or "")),
-                ).fetchone() is not None:
-                    return
+            if db.execute(
+                "SELECT 1 FROM source_references WHERE provider_id=? "
+                "AND credential_id=? AND edition_id=? LIMIT 1",
+                (str(item.get("provider_id") or ""),
+                 str(item.get("credential_id") or ""),
+                 str(item.get("item_id") or "")),
+            ).fetchone() is not None:
+                return
+            # Without a typed source, Kobo remains archive-only while
+            # non-Kobo legacy recovery retains its existing compatibility
+            # mirror until the independent consumer cutover.
             # The v0.7 checkpoint remains writable for legacy recovery,
             # but neither passive inventory nor active delivery may mirror
             # canonical A/B state. The legacy PK omits owner/account: reject
