@@ -491,7 +491,8 @@ class BookListCell(Gtk.Box):
             self.cover.show_loading()
             bound_key = item.key
             from .history_cover_presentation import (
-                history_cover_context, publish_history_cover,
+                history_cover_context, history_cover_request_scope,
+                publish_history_cover,
             )
             context = history_cover_context(self.window)
             source_item = getattr(item, "_history_source_item", None)
@@ -518,7 +519,7 @@ class BookListCell(Gtk.Box):
                 item.cover_author,
                 item.cover_year,
                 item.default_thumbnail_url,
-                resolved,
+                resolved, scope=history_cover_request_scope(context),
             )
         else:
             self.cover.bind_url(self.cover_loader, item.default_thumbnail_url, priority=10)
