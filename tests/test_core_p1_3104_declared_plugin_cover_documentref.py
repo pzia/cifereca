@@ -251,11 +251,11 @@ def test_core_attested_ref_wins_conflicting_valid_plugin_document_even_same_url(
         _rows={}, _page=NS(show_rows=lambda values, total_count=None:
                            captured.extend(values)),
     )
-    row = UiBookListEntry(
-        "same-row", "Same title", thumbnail_url=FOREIGN_URL,
-        cover_document_ref=OTHER,
+    row = NS(
+        key="same-row", title="Same title", subtitle="", meta="", badge="",
+        thumbnail_url=FOREIGN_URL, cover_document_ref=OTHER,
+        _cover_document_ref=PUBLIC,
     )
-    object.__setattr__(row, "_cover_document_ref", PUBLIC)
     show_rows(host, [row])
     assert captured[0]._cover_document_ref == PUBLIC
     assert captured[0].thumbnail_url == FOREIGN_URL
@@ -269,11 +269,11 @@ def test_invalid_optional_declaration_does_not_revoke_valid_core_ref():
         _rows={}, _page=NS(show_rows=lambda values, total_count=None:
                            captured.extend(values)),
     )
-    row = UiBookListEntry(
-        "core-authority", "Book", thumbnail_url=FOREIGN_URL,
-        cover_document_ref=object(),
+    row = NS(
+        key="core-authority", title="Book", subtitle="", meta="", badge="",
+        thumbnail_url=FOREIGN_URL, cover_document_ref=object(),
+        _cover_document_ref=PUBLIC,
     )
-    object.__setattr__(row, "_cover_document_ref", PUBLIC)
     show_rows(host, [row])
     assert captured[0]._cover_document_ref == PUBLIC
     assert captured[0].thumbnail_url == FOREIGN_URL
