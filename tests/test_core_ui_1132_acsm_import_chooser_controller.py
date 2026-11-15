@@ -295,3 +295,116 @@ def test_stale_dialog_does_not_clear_newer_dialog_reference():
 
 def test_closed_host_does_not_touch_service_or_detached_chooser():
     choose_acsm(NS(_closed=True), Gtk=None)
+
+
+
+class HostileIdentity(str):
+    def strip(self, *_args):
+        raise AssertionError("untrusted identity strip")
+
+    def __eq__(self, _other):
+        raise AssertionError("untrusted identity equality")
+
+
+class HostileGeneration(int):
+    def __eq__(self, _other):
+        raise AssertionError("untrusted generation equality")
+
+
+class HostileResult(dict):
+    def get(self, _key, _default=None):
+        raise AssertionError("untrusted result get")
+
+
+@pytest.mark.parametrize("mutation", ["identity", "identity_generation", "account_generation"])
+def test_acsm_chooser_never_captures_hostile_scope_scalars(mutation):
+    host, Gtk, events, created, submitted, identities = _setup()
+    if mutation == "identity":
+        host.service.current_identity.identity_id = HostileIdentity("alice")
+    elif mutation == "identity_generation":
+        host._identity_context_generation = HostileGeneration(4)
+    else:
+        host._account_context_generation = HostileGeneration(7)
+    choose_acsm(host, Gtk=Gtk)
+    assert created == [] and submitted == []
+    assert events == [("error", ("Choisissez une identité pour importer un ACSM",))]
+
+
+@pytest.mark.parametrize("mutation", ["identity", "identity_generation", "account_generation"])
+def test_admitted_acsm_worker_keeps_pinned_identity_with_hostile_gtk_callback_scope(mutation):
+    host, Gtk, events, created, submitted, identities = _setup()
+    _submit(host, Gtk, created)
+    work, done = submitted[0][0][1:3]
+    if mutation == "identity":
+        host.service.current_identity.identity_id = HostileIdentity("alice")
+    elif mutation == "identity_generation":
+        host._identity_context_generation = HostileGeneration(4)
+    else:
+        host._account_context_generation = HostileGeneration(7)
+    assert work() == {"status": "complete"}
+    assert events == [("import", Path("/tmp/explicit.acsm"), "alice")]
+    done({"status": "complete"})
+    assert events == [("import", Path("/tmp/explicit.acsm"), "alice")]
+
+
+@pytest.mark.parametrize("result", [
+    None,
+    {},
+    {"status": True},
+    {"status": "retryable_error", "code": "/PRIVATE/auth?token=SECRET"},
+    {"status": HostileIdentity("complete")},
+    HostileResult(status="complete"),
+])
+def test_malformed_acsm_response_cannot_claim_success_or_leak_details(result):
+    host, Gtk, events, created, submitted, identities = _setup()
+    _submit(host, Gtk, created)
+    submitted[0][0][2](result)
+    assert events == [(
+        "error", ("Résultat de l’import ACSM indisponible.", "Import ACSM impossible"),
+    )]
+    assert "SECRET" not in repr(events)
+
+
+@pytest.mark.parametrize("code", [
+    "https://PRIVATE.example/?token=SECRET",
+    HostileIdentity("adept_profile_required"),
+    object(),
+])
+def test_attention_code_is_closed_public_enum_and_never_untrusted_text(code):
+    host, Gtk, events, created, submitted, identities = _setup()
+    _submit(host, Gtk, created)
+    submitted[0][0][2]({"status": "attention_required", "code": code})
+    assert events == [(
+        "attention",
+        "Import en attente : runtime DRM à configurer\nLe staging est conservé pour une nouvelle tentative.",
+        {"code": "attention_required"},
+    )]
+    assert "SECRET" not in repr(events)
+
+
+def test_known_adept_attention_code_is_preserved_without_provider_text():
+    host, Gtk, events, created, submitted, identities = _setup()
+    _submit(host, Gtk, created)
+    submitted[0][0][2]({
+        "status": "attention_required", "code": "adept_profile_ambiguous",
+        "private": "https://SECRET.example",
+    })
+    assert events == [(
+        "attention",
+        "Import en attente : adept_profile_ambiguous\nLe staging est conservé pour une nouvelle tentative.",
+        {"code": "adept_profile_ambiguous"},
+    )]
+
+
+@pytest.mark.parametrize("path", [
+    HostileIdentity("/tmp/explicit.acsm"),
+    "/tmp/invalid\x00.acsm",
+])
+def test_bad_chooser_path_does_not_queue_import(path):
+    host, Gtk, events, created, submitted, identities = _setup()
+    choose_acsm(host, Gtk=Gtk)
+    chooser = created[-1]
+    chooser.path = path
+    chooser.respond(Gtk.ResponseType.ACCEPT)
+    assert chooser.destroyed == 1
+    assert submitted == []

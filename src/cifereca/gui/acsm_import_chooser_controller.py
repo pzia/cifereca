@@ -19,19 +19,34 @@ def choose_acsm(window, *, Gtk):
         existing.present()
         return
     identity = window.service.current_identity
-    if identity is None:
-        window.show_error("Choisissez une identité pour importer un ACSM")
-        return
-    identity_id = identity.identity_id
+    identity_id = getattr(identity, "identity_id", None)
     identity_generation = getattr(window, "_identity_context_generation", None)
     account_generation = getattr(window, "_account_context_generation", None)
+    # Native scalars only: an untrusted subclass may override comparison.
+    if (type(identity_id) is not str or not 0 < len(identity_id) <= 256
+            or not identity_id.isprintable() or identity_id != identity_id.strip()
+            or type(identity_generation) is not int or identity_generation < 0
+            or type(account_generation) is not int or account_generation < 0):
+        window.show_error("Choisissez une identité pour importer un ACSM")
+        return
 
     def current() -> bool:
+        current_identity = getattr(
+            getattr(window.service, "current_identity", None), "identity_id", None,
+        )
+        current_identity_generation = getattr(
+            window, "_identity_context_generation", None,
+        )
+        current_account_generation = getattr(
+            window, "_account_context_generation", None,
+        )
         return (
             not getattr(window, "_closed", False)
-            and getattr(window, "_identity_context_generation", None) == identity_generation
-            and getattr(window, "_account_context_generation", None) == account_generation
-            and getattr(getattr(window.service, "current_identity", None), "identity_id", None) == identity_id
+            and type(current_identity) is str and current_identity == identity_id
+            and type(current_identity_generation) is int
+            and current_identity_generation == identity_generation
+            and type(current_account_generation) is int
+            and current_account_generation == account_generation
         )
 
     chooser = Gtk.FileChooserDialog(
@@ -67,25 +82,42 @@ def choose_acsm(window, *, Gtk):
             dialog.destroy()
             if getattr(window, "_acsm_chooser", None) is dialog:
                 window._acsm_chooser = None
-        if not path:
+        if (type(path) is not str or not 0 < len(path) <= 4096
+                or "\x00" in path):
             return
 
         def done(result):
             if not current():
                 return
-            if result.get("status") == "attention_required":
+            # An invalid result cannot assert acquisition success; never
+            # render a provider-controlled code containing private data.
+            if type(result) is not dict or type(result.get("status")) is not str:
+                window.show_error(
+                    "Résultat de l’import ACSM indisponible.", "Import ACSM impossible",
+                )
+                return
+            status = result["status"]
+            if status == "attention_required":
+                raw_code = result.get("code")
+                code = (raw_code if type(raw_code) is str and raw_code in {
+                    "adept_profile_required", "adept_profile_ambiguous",
+                    "runtime_missing",
+                } else None)
                 window.show_attention(
                     "Import en attente : "
-                    + str(result.get("code") or "runtime DRM à configurer")
+                    + (code if code is not None else "runtime DRM à configurer")
                     + "\nLe staging est conservé pour une nouvelle tentative.",
-                    code=result.get("code") or "attention_required",
+                    code=code or "attention_required",
                 )
-            else:
+            elif status in {"complete", "unchanged"}:
                 window._activity_result(
-                    "ACSM importé"
-                    if result.get("status") != "unchanged" else "ACSM déjà importé"
+                    "ACSM déjà importé" if status == "unchanged" else "ACSM importé",
                 )
                 window.refresh_library(False)
+            else:
+                window.show_error(
+                    "Résultat de l’import ACSM indisponible.", "Import ACSM impossible",
+                )
 
         window.runner.submit(
             "Import ACSM…",
