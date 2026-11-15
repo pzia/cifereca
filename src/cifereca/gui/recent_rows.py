@@ -6,6 +6,7 @@ nor reads a file or cache.
 """
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -23,11 +24,19 @@ def project_recent_rows(
     Duplicate placement IDs intentionally retain both display rows while the
     lookup mapping points to the last matching item, as the previous view did.
     """
+    # Inspect keys before materializing cells: two rows with one GTK key
+    # cannot each claim a unique Artifact/Placement. Avoid displaying either
+    # the attested image OR a fallback URL for such an ambiguous binding.
+    # This consumes any input iterable exactly once; it does not mutate DTOs.
+    source_items = list(items)
+    keys = [
+        str(item.get("placement_id") or f"recent:{index}")
+        for index, item in enumerate(source_items)
+    ]
+    occurrences = Counter(keys)
     rows: list[Any] = []
     objects: dict[str, dict[str, Any]] = {}
-    seen_cells: dict[str, Any | None] = {}
-    for item in items:
-        key = str(item.get("placement_id") or f"recent:{len(rows)}")
+    for item, key in zip(source_items, keys):
         objects[key] = item
         provider = str(item.get("provider_id") or "local")
         temporal = format_recent_timestamp(item.get("acquired_at"))
@@ -47,29 +56,24 @@ def project_recent_rows(
                 )
             except Exception:
                 label = "Source"
+        packet = item.get("_exact_local_cover_evidence")
+        # If a Core packet exists, only its exact N2 DocumentRef may supply
+        # the cover. A rejected/foreign packet or duplicate key must NEVER
+        # downgrade silently to the descriptive legacy thumbnail URL.
+        legacy_url = (
+            item.get("thumbnail_url")
+            if packet is None and occurrences[key] == 1 else None
+        )
         row = row_factory(
             key,
             str(item.get("title") or "Sans titre"),
             str(item.get("author") or ""),
             temporal,
             label,
-            item.get("thumbnail_url"),
+            legacy_url,
         )
-        # Two descriptive rows with the same GTK key are not an exact
-        # document binding: revoke any earlier packet, retain both rows.
-        # This is visual only and does not rewrite the Core snapshot.
-        if key in seen_cells:
-            earlier = seen_cells[key]
-            if earlier is not None:
-                for field in ("_cover_local_evidence", "_cover_document_ref"):
-                    if hasattr(earlier, field):
-                        delattr(earlier, field)
-                if hasattr(earlier, "_public_row_content"):
-                    delattr(earlier, "_public_row_content")
-            seen_cells[key] = None
-        else:
-            seen_cells[key] = row
-            facts = item.get("_exact_local_cover_evidence")
+        if occurrences[key] == 1:
+            facts = packet
             if (hasattr(row, "__dict__")
                     and type(facts) is VerifiedLocalCoverEvidence
                     and facts.scope.identity_id == item.get("identity_id")
@@ -81,7 +85,7 @@ def project_recent_rows(
                 row._cover_document_ref = facts.scope
                 row._public_row_content = (
                     "recent", key, item.get("title"), item.get("author"),
-                    temporal, label, item.get("thumbnail_url"), facts,
+                    temporal, label, legacy_url, facts,
                 )
         rows.append(row)
     return rows, objects
