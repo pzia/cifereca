@@ -1,5 +1,16 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+> **Delta #6136 (P0 #5975 / #3196, 15/11/2026) :**
+> `Storage.backup_put(kobo)` n'écrit plus la clé
+> `core.kobo.completed-legacy-archive.v1.*` dans `metadata`. Ce writer
+> historique de statut déjà-complet n'a plus d'effet depuis le cutover W1
+> archive-only pour toutes les transitions. La lecture du statut antérieur,
+> la lecture du marqueur, son calcul SHA et l'INSERT SQL sont retirés.
+> Les valeurs déjà persistées restent intactes ; l'UPSERT 0.7, les veto
+> SourceReference, owner et reçu canonique restent. Tests SQLite avec
+> trigger anti-réintroduction et audit du registre structurel ; aucun
+> retrait de writer non-Kobo ni migration destructive revendiqués.
+
 > **Delta #6132 (P0 #5975 / #3196, 15/11/2026) :** suppression du
 > veto `provider_id == 'kobo'` dans la moitié de publication de
 > `Storage._mirror_backup_row`. Ce garde était **inaccessible** :
