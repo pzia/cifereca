@@ -1,0 +1,35 @@
+{
+  "schema": "cifereca.test-classification/1",
+  "files": [
+    {
+      "path": "tests/test_ci_test_nested_core_consumers.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "contract"
+    },
+    {
+      "path": "tests/test_ci_security_mutation_campaign.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_ci_test_collection_inventory.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_ci_test_execution_inventory.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_ci_test_execution_aggregate.py",
+      "owner_architecture": "core",
+      "business_object": "ci_quality",
+      "test_level": "contract"
+    }
+  ]
+}
