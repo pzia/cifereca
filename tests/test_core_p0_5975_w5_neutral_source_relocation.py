@@ -135,10 +135,14 @@ def test_noop_relocation_keeps_attested_source_and_historical_path(tmp_path, pro
     store, placement_id, old, new = _case(tmp_path, provider)
     try:
         _typed_source(store, provider)
-        before = _snapshot(store)
+        with store._lock, store._connect() as db:
+            legacy = db.execute("SELECT * FROM backup_items").fetchall()
+            typed = db.execute("SELECT * FROM source_references").fetchall()
         store.relocate_local_path(old, old, identity_id="id1", provider_id=provider)
-        assert _snapshot(store) == before
         assert store.placement_get(placement_id)["path"] == str(old)
+        with store._lock, store._connect() as db:
+            assert db.execute("SELECT * FROM backup_items").fetchall() == legacy
+            assert db.execute("SELECT * FROM source_references").fetchall() == typed
     finally:
         store.close()
 
