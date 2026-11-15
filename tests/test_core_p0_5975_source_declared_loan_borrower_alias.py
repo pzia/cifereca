@@ -150,6 +150,17 @@ def test_hostile_provider_key_is_rejected_before_registry_lookup():
         service._account_for_loan(loan)
 
 
+def test_malformed_borrower_is_rejected_before_registry_lookup():
+    service = _service([_account()])
+    service.registry = NS(maybe_get=lambda _key: pytest.fail(
+        "invalid borrower reached provider registry"
+    ))
+    loan = _loan("reader-main")
+    loan.source_account_id = False
+    with pytest.raises(ProviderConfigurationError, match="non attesté"):
+        service._account_for_loan(loan)
+
+
 def test_loan_source_fields_must_be_native_and_no_private_values_leak():
     primary = _account()
     class SourceStr(str):
