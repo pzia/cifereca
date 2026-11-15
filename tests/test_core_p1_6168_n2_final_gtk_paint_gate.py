@@ -104,6 +104,9 @@ def test_gtk_rejects_invalid_n2_before_native_decode_and_shows_placeholder():
 
 def test_gtk_rechecks_n2_after_texture_before_success_metric():
     host, loader, picture, events, apply = env()
+    # env() stubs _show_missing as an event only; the real CoverView also
+    # clears GDK's paintable. Model that UI side effect explicitly here.
+    host._show_missing = lambda: picture.set_paintable(None)
     current = [True]
     host._document_check = lambda: current[0]
     host._on_texture_applied = lambda *_args: events.append("receipt")
