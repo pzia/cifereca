@@ -195,6 +195,34 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
     return displayed
 
 
+def _attach_loan_detail_receipt(self, loan: Loan, expected_url: str | None) -> None:
+    """Only the currently mounted GTK DetailPanel cover can certify paint.
+
+    Never annotate an actionable Loan. The panel's old cover is detached
+    whenever a later detail calls _cover_and_title; the binding itself also
+    checks GTK request generation and exact N2/identity/epoch in CoreUI.
+    """
+    paint_factory = globals().get("loan_cover_paint_receipt")
+    if not callable(paint_factory):
+        return
+    observed = paint_factory(
+        self, loan, surface="detail", expected_url=expected_url,
+    )
+    if observed is None:
+        return
+    panel = getattr(getattr(self, "loan_page", None), "detail", None)
+    cover = getattr(panel, "_active_cover_view", None)
+    setter = getattr(cover, "set_texture_applied_observer", None)
+    if not callable(setter):
+        return
+
+    def applied(url, source_path):
+        if getattr(panel, "_active_cover_view", None) is cover:
+            observed(url, source_path)
+
+    setter(applied)
+
+
 def _render_loans(self) -> None:
     if not hasattr(self, "loan_page"):
         return
@@ -246,12 +274,11 @@ def _render_loans(self) -> None:
         )
         paint_factory = globals().get("loan_cover_paint_receipt")
         if callable(paint_factory):
-            observer = paint_factory(
-                self, loan, surface="list",
-                expected_url=display.thumbnail_url,
+            observed = paint_factory(
+                self, loan, surface="list", expected_url=display.thumbnail_url,
             )
-            if observer is not None:
-                item._on_cover_applied = observer
+            if observed is not None:
+                item._cover_paint_observer = observed
         # MasterDetailPage.show_rows has an append-only fast path when keys
         # stay identical. A new exact local cover for the same loan must
         # invalidate that presentation (and repaint the mapped Gtk.ListView),
@@ -307,17 +334,11 @@ def _render_loans(self) -> None:
             # The list signal cannot update an already-open DetailPanel.
             # Refresh its presentation from the SAME cached N1/N2 decision:
             # no provider I/O, no action or selected-row mutation.
-            displayed = _loan_display_cover(self, fresh)
-            paint_factory = globals().get("loan_cover_paint_receipt")
-            if callable(paint_factory):
-                observer = paint_factory(
-                    self, fresh, surface="detail",
-                    expected_url=displayed.thumbnail_url,
-                )
-                if observer is not None:
-                    displayed = copy(displayed)
-                    displayed._on_cover_applied = observer
-            self.loan_page.detail.show_loan(displayed)
+            presented = _loan_display_cover(self, fresh)
+            self.loan_page.detail.show_loan(presented)
+            attach = globals().get("_attach_loan_detail_receipt")
+            if callable(attach):
+                attach(self, fresh, presented.thumbnail_url)
 
 
 def _loan_selected(self, row: BookListItem | None) -> None:
@@ -325,17 +346,11 @@ def _loan_selected(self, row: BookListItem | None) -> None:
     loan = self.loan_objects.get(row.key)
     if loan:
         self._displayed_loan = loan
-        displayed = _loan_display_cover(self, loan)
-        paint_factory = globals().get("loan_cover_paint_receipt")
-        if callable(paint_factory):
-            observer = paint_factory(
-                self, loan, surface="detail",
-                expected_url=displayed.thumbnail_url,
-            )
-            if observer is not None:
-                displayed = copy(displayed)
-                displayed._on_cover_applied = observer
-        self.loan_page.detail.show_loan(displayed)
+        presented = _loan_display_cover(self, loan)
+        self.loan_page.detail.show_loan(presented)
+        attach = globals().get("_attach_loan_detail_receipt")
+        if callable(attach):
+            attach(self, loan, presented.thumbnail_url)
         self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
             'source_credential':loan.source_credential,'record_id':loan.record_id})
         self._add_facets(self.loan_page.detail, {'source_provider':loan.source_provider,
@@ -406,17 +421,11 @@ def _loans_refreshed(self, rows):
         fresh = matches[0] if len(matches) == 1 else None
         self._displayed_loan=fresh
         if fresh:
-            displayed = _loan_display_cover(self, fresh)
-            paint_factory = globals().get("loan_cover_paint_receipt")
-            if callable(paint_factory):
-                observer = paint_factory(
-                    self, fresh, surface="detail",
-                    expected_url=displayed.thumbnail_url,
-                )
-                if observer is not None:
-                    displayed = copy(displayed)
-                    displayed._on_cover_applied = observer
-            self.loan_page.detail.show_loan(displayed)
+            presented = _loan_display_cover(self, fresh)
+            self.loan_page.detail.show_loan(presented)
+            attach = globals().get("_attach_loan_detail_receipt")
+            if callable(attach):
+                attach(self, fresh, presented.thumbnail_url)
         else:self.loan_page.detail.empty(
             "Prêt non retrouvé dans cette actualisation",
             "La réponse peut être vide ou partielle ; la disparition du prêt "
