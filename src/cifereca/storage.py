@@ -20,6 +20,10 @@ _TRACE_LOG = logging.getLogger("cifereca")
 # migrated forward transactionally.
 CURRENT_SCHEMA_VERSION = 17
 
+# Frozen 0.8.1 migration cohort, NEVER live provider business policy.
+# v15's persistent generic cardinality table governs modern connections.
+_LEGACY_V5_SINGLE_CONNECTION_PROVIDERS = ("kobo",)
+
 BASE_SCHEMA = """
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS cache (
@@ -761,88 +765,93 @@ class Storage:
                     db.execute("ALTER TABLE backup_items ADD COLUMN cover_url TEXT")
                 db.execute("DELETE FROM adept_profile_bindings WHERE scope_type='account'")
 
-                # Early 0.8.1 builds attached every legacy Kobo connection to the
-                # first Paris identity.  Preserve every Vault connection by splitting
-                # extras into deterministic derived identities instead of aborting the
-                # application startup.  Provenance rows that carry credential_id move
-                # with the connection; local catalog/placements remain untouched.
-                duplicated_identities = db.execute(
-                    "SELECT identity_id FROM provider_connections "
-                    "WHERE provider_id='kobo' GROUP BY identity_id HAVING COUNT(*)>1"
-                ).fetchall()
-                for (identity_id,) in duplicated_identities:
-                    connections = db.execute(
-                        "SELECT connection_id,credential_id,label,created_at FROM provider_connections "
-                        "WHERE provider_id='kobo' AND identity_id=? "
-                        "ORDER BY created_at,connection_id",
-                        (identity_id,),
+                # Fixed historical source cohort controls ONLY the v4->v5
+                # old-data split; no runtime plugin/descriptors influence it.
+                for legacy_provider_id in _LEGACY_V5_SINGLE_CONNECTION_PROVIDERS:
+                    # Early 0.8.1 builds attached every legacy Kobo connection to the
+                    # first Paris identity.  Preserve every Vault connection by splitting
+                    # extras into deterministic derived identities instead of aborting the
+                    # application startup.  Provenance rows that carry credential_id move
+                    # with the connection; local catalog/placements remain untouched.
+                    duplicated_identities = db.execute(
+                        "SELECT identity_id FROM provider_connections "
+                        "WHERE provider_id=? GROUP BY identity_id HAVING COUNT(*)>1",
+                        (legacy_provider_id,),
                     ).fetchall()
-                    for connection_id, credential_id, connection_label, _created_at in connections[1:]:
-                        suffix = hashlib.sha256(str(credential_id).encode("utf-8", "surrogatepass")).hexdigest()[:8]
-                        derived_id = f"{identity_id}-kobo-{suffix}"
-                        # Avoid collision with an unrelated pre-existing identity.
-                        candidate = derived_id
-                        serial = 2
-                        while db.execute(
-                            "SELECT 1 FROM identities WHERE identity_id=?", (candidate,)
-                        ).fetchone():
-                            candidate = f"{derived_id}-{serial}"
-                            serial += 1
-                        derived_id = candidate
+                    for (identity_id,) in duplicated_identities:
+                        connections = db.execute(
+                            "SELECT connection_id,credential_id,label,created_at FROM provider_connections "
+                            "WHERE provider_id=? AND identity_id=? "
+                            "ORDER BY created_at,connection_id",
+                            (legacy_provider_id, identity_id),
+                        ).fetchall()
+                        for connection_id, credential_id, connection_label, _created_at in connections[1:]:
+                            suffix = hashlib.sha256(str(credential_id).encode("utf-8", "surrogatepass")).hexdigest()[:8]
+                            derived_id = f"{identity_id}-{legacy_provider_id}-{suffix}"
+                            # Avoid collision with an unrelated pre-existing identity.
+                            candidate = derived_id
+                            serial = 2
+                            while db.execute(
+                                "SELECT 1 FROM identities WHERE identity_id=?", (candidate,)
+                            ).fetchone():
+                                candidate = f"{derived_id}-{serial}"
+                                serial += 1
+                            derived_id = candidate
 
-                        source = db.execute(
-                            "SELECT label,prefer_original_language,reading_languages_json,metadata_json,created_at,updated_at "
-                            "FROM identities WHERE identity_id=?",
-                            (identity_id,),
-                        ).fetchone()
-                        now = int(time.time())
-                        if source:
-                            base_label, prefer_vo, langs_json, metadata_json, created_at, updated_at = source
-                        else:
-                            base_label, prefer_vo, langs_json, metadata_json, created_at, updated_at = (
-                                str(identity_id), 0, '["fr"]', '{}', now, now
-                            )
-                        label = str(connection_label or f"{base_label} Kobo").strip() or f"{base_label} Kobo"
-                        db.execute(
-                            "INSERT INTO identities(identity_id,label,prefer_original_language,reading_languages_json,metadata_json,created_at,updated_at) "
-                            "VALUES(?,?,?,?,?,?,?)",
-                            (derived_id, label, prefer_vo, langs_json, metadata_json, created_at, updated_at),
-                        )
-                        db.execute(
-                            "UPDATE provider_connections SET identity_id=? WHERE connection_id=?",
-                            (derived_id, connection_id),
-                        )
-                        db.execute(
-                            "UPDATE provider_accounts SET identity_id=? WHERE connection_id=?",
-                            (derived_id, connection_id),
-                        )
-                        for table in ("backup_items", "entitlements", "acquisition_ledger"):
-                            if "identity_id" in cls._column_names(db, table):
-                                db.execute(
-                                    f"UPDATE {table} SET identity_id=? WHERE provider_id='kobo' AND credential_id=? "
-                                    "AND (identity_id=? OR identity_id IS NULL OR identity_id='')",
-                                    (derived_id, credential_id, identity_id),
+                            source = db.execute(
+                                "SELECT label,prefer_original_language,reading_languages_json,metadata_json,created_at,updated_at "
+                                "FROM identities WHERE identity_id=?",
+                                (identity_id,),
+                            ).fetchone()
+                            now = int(time.time())
+                            if source:
+                                base_label, prefer_vo, langs_json, metadata_json, created_at, updated_at = source
+                            else:
+                                base_label, prefer_vo, langs_json, metadata_json, created_at, updated_at = (
+                                    str(identity_id), 0, '["fr"]', '{}', now, now
                                 )
+                            label = str(connection_label or f"{base_label} {legacy_provider_id.title()}").strip() or f"{base_label} {legacy_provider_id.title()}"
+                            db.execute(
+                                "INSERT INTO identities(identity_id,label,prefer_original_language,reading_languages_json,metadata_json,created_at,updated_at) "
+                                "VALUES(?,?,?,?,?,?,?)",
+                                (derived_id, label, prefer_vo, langs_json, metadata_json, created_at, updated_at),
+                            )
+                            db.execute(
+                                "UPDATE provider_connections SET identity_id=? WHERE connection_id=?",
+                                (derived_id, connection_id),
+                            )
+                            db.execute(
+                                "UPDATE provider_accounts SET identity_id=? WHERE connection_id=?",
+                                (derived_id, connection_id),
+                            )
+                            for table in ("backup_items", "entitlements", "acquisition_ledger"):
+                                if "identity_id" in cls._column_names(db, table):
+                                    db.execute(
+                                        f"UPDATE {table} SET identity_id=? WHERE provider_id=? AND credential_id=? "
+                                        "AND (identity_id=? OR identity_id IS NULL OR identity_id='')",
+                                        (derived_id, legacy_provider_id, credential_id, identity_id),
+                                    )
 
-                # A Vault connection may have projected more than one Kobo account in
-                # an earlier build.  Provider-account rows are a cache/projection, so
-                # retain the primary row (then oldest as a deterministic fallback).
-                duplicated_accounts = db.execute(
-                    "SELECT identity_id FROM provider_accounts "
-                    "WHERE provider_id='kobo' GROUP BY identity_id HAVING COUNT(*)>1"
-                ).fetchall()
-                for (identity_id,) in duplicated_accounts:
-                    rows = db.execute(
-                        "SELECT provider_account_id FROM provider_accounts "
-                        "WHERE provider_id='kobo' AND identity_id=? "
-                        "ORDER BY is_primary DESC,created_at,provider_account_id",
-                        (identity_id,),
+                    # A Vault connection may have projected more than one Kobo account in
+                    # an earlier build.  Provider-account rows are a cache/projection, so
+                    # retain the primary row (then oldest as a deterministic fallback).
+                    duplicated_accounts = db.execute(
+                        "SELECT identity_id FROM provider_accounts "
+                        "WHERE provider_id=? GROUP BY identity_id HAVING COUNT(*)>1",
+                        (legacy_provider_id,),
                     ).fetchall()
-                    for (provider_account_id,) in rows[1:]:
-                        db.execute(
-                            "DELETE FROM provider_accounts WHERE provider_account_id=?",
-                            (provider_account_id,),
-                        )
+                    for (identity_id,) in duplicated_accounts:
+                        rows = db.execute(
+                            "SELECT provider_account_id FROM provider_accounts "
+                            "WHERE provider_id=? AND identity_id=? "
+                            "ORDER BY is_primary DESC,created_at,provider_account_id",
+                            (legacy_provider_id, identity_id),
+                        ).fetchall()
+                        for (provider_account_id,) in rows[1:]:
+                            db.execute(
+                                "DELETE FROM provider_accounts WHERE provider_account_id=?",
+                                (provider_account_id,),
+                            )
 
                 # A legacy global ADE profile could have been projected onto several
                 # identities by an early 0.8.1 build.  Keep the oldest deterministic
