@@ -10,6 +10,7 @@ import ast
 from collections import Counter, defaultdict
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 from scripts.ci_provider_ast_function_worklist import inventory as ast_inventory
@@ -511,6 +512,10 @@ def main(argv: list[str] | None = None) -> int:
             print("Cohort relocation pending:", c["relocations_unresolved"])
         if result["stale_reviews"]:
             print("Stale review IDs:", result["stale_reviews"])
+    # The JSON report is often redirected to a file in CI. A stale reviewed
+    # semantic site must still name its offending IDs on the failure console.
+    if result["stale_reviews"]:
+        print("Stale business-review IDs:", result["stale_reviews"], file=sys.stderr)
     return int(bool(result["stale_reviews"]))
 
 
