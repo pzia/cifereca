@@ -207,10 +207,23 @@ def inspect_usb_dry_run(
         if last is None or (binding, intentions) != last:
             return unknown("scope_changed")
         observed_at = scan.observed_at if scan is not None else None
+        # A true managed removal candidate needs BOTH an exact completed Core
+        # write journal receipt AND this run's fresh physical USB observation.
+        # SQLite receipt lookup is bounded, read-only and only done for this
+        # explicit worker scan. The result can never authorize deletion.
+        receipts = None
+        if scan is not None and any(
+            item.get("desired_state") == "remove" for item in selected
+        ):
+            from .device_usb_operation_journal import completed_usb_managed_receipts
+            receipts = completed_usb_managed_receipts(
+                storage=storage, identity_id=identity_id, device_id=device_id,
+                fingerprint=fingerprint,
+            )
         rows = preview_usb_delta(
             identity_id=identity_id, binding=binding,
             placements=selected, local=local,
-            scan=scan, receipts=None, now=check_time,
+            scan=scan, receipts=receipts, now=check_time,
         )
         # A verified local SHA and a missing USB target do not establish
         # reader compatibility. Use only the stored *declaration* and exact
