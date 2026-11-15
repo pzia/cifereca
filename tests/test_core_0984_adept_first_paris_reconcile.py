@@ -12,6 +12,7 @@ from cifereca.plugin_api import AttentionRequired
 from cifereca.models import Loan, Account
 from cifereca.core.return_adept_orchestrator import adept_return_key
 from cifereca.core.loan_return_guard import return_key
+from tests.historical_adept_seed import seed_historical_adept_binding
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 
 
@@ -34,7 +35,7 @@ class ParisSession:
 
 def setup(tmp_path, *, paris_active=False):
     service, loan = service_with_linked_borrower(tmp_path)
-    service.bind_paris_borrower_adept(
+    seed_historical_adept_binding(service, 
         credential_id="alice-paris", account_id="linked-123",
         borrower_identity_id="bob", confirmed=True,
     )

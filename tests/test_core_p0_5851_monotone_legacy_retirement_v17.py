@@ -11,6 +11,7 @@ import sqlite3
 import pytest
 
 from cifereca.storage import Storage, CURRENT_SCHEMA_VERSION
+from tests.historical_adept_seed import seed_historical_adept_storage
 from tests.test_core_p0_5851_atomic_legacy_grant_reconfirmation import (
     setup_legacy, scope, legacy, grant,
 )
@@ -28,8 +29,8 @@ def _retired(store):
 
 
 def _write_legacy(store):
-    store.paris_borrower_adept_binding_put(
-        credential_id="alice-paris", account_id="linked-123",
+    seed_historical_adept_storage(
+        store, credential_id="alice-paris", account_id="linked-123",
         borrower_identity_id="bob", profile_id="bob-profile", confirmed=True,
     )
 
@@ -94,7 +95,7 @@ def test_failed_reconfirmation_does_not_leave_tombstone(tmp_path):
         service.close()
 
 
-def test_unmigrated_legacy_is_not_tombstoned_and_can_update(tmp_path):
+def test_archived_unmigrated_legacy_row_remains_readable_and_editable_in_test_seed(tmp_path):
     service, _ = service_with_linked_borrower(tmp_path)
     try:
         _write_legacy(service.storage)
@@ -116,8 +117,8 @@ def test_tombstone_is_exact_to_credential_and_account(tmp_path):
             "identity_id": "alice", "provider_id": "paris",
             "credential_id": "other-paris", "label": "Other source",
         })
-        service.storage.paris_borrower_adept_binding_put(
-            credential_id="other-paris", account_id="linked-123",
+        seed_historical_adept_storage(
+            service.storage, credential_id="other-paris", account_id="linked-123",
             borrower_identity_id="bob", profile_id="bob-profile", confirmed=True,
         )
         assert service.storage.paris_borrower_adept_binding_get(
@@ -138,8 +139,8 @@ def test_direct_legacy_update_into_retired_key_is_rejected(tmp_path):
             "identity_id": "alice", "provider_id": "paris",
             "credential_id": "other-paris", "label": "Other source",
         })
-        service.storage.paris_borrower_adept_binding_put(
-            credential_id="other-paris", account_id="linked-123",
+        seed_historical_adept_storage(
+            service.storage, credential_id="other-paris", account_id="linked-123",
             borrower_identity_id="bob", profile_id="bob-profile", confirmed=True,
         )
         with service.storage._lock, service.storage._connect() as db:

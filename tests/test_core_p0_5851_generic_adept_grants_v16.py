@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 
 from cifereca.storage import Storage
+from tests.historical_adept_seed import seed_historical_adept_binding
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 
 
@@ -31,7 +32,7 @@ def test_generic_grant_is_new_explicit_proof_not_legacy_projection(tmp_path):
     try:
         _persist_account(store)
         assert store.schema_version() == 17
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
@@ -148,7 +149,7 @@ def test_v15_upgrade_creates_empty_grants_without_copying_legacy(tmp_path):
     service, _ = service_with_linked_borrower(tmp_path)
     dbpath = service.storage.path
     try:
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True)
         with service.storage._lock, service.storage._connect() as db:
