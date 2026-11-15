@@ -128,12 +128,12 @@ def test_detail_prefers_n2_before_any_legacy_url_get():
     lib = (GUI / "library_detail_controller.py").read_text(encoding="utf-8")
     assert 'item.get("_exact_local_cover_evidence")' in lib
     assert "publisher.register(bridge, evidence)" in lib
-    assert "cover_document=document" in lib
+    assert "prepare(document)" in lib
     assert "admitted_thumbnail = None" in lib
     reader = (GUI / "reader_page_controller.py").read_text(encoding="utf-8")
     assert 'source.get("_exact_local_cover_evidence")' in reader
     assert "publisher.register(bridge, facts)" in reader
-    assert "cover_document=cover_document" in reader
+    assert "prepare(cover_document)" in reader
 
 
 def test_one_process_wide_local_adapter_and_deterministic_teardown():
