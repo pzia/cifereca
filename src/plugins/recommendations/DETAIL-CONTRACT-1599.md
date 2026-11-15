@@ -53,6 +53,7 @@ variantes attestées. Le moteur/hôte commun gère la présentation GTK.
 | Absence d'ISBN / de source | Pas d'action de recherche ISBN ; conservations éventuelles de la notice publique | Absence d'ouvrage dans tous les catalogues |
 | Sélection A→B→A | Révocation des callbacks via générations de rang, de détail, clé et objet classé | Autorisation de réutiliser une action périmée |
 | Changement d'identité | Vérification à l'activation du callback ; recherche locale pour la **même** identité | Recherche sur un autre lecteur |
+| Filtre local / tri sur éditions à clé commune | Attribution des clés GTK sur **tout le classement brut avant filtre et tri** ; une édition cachée réserve sa clé, y compris les suffixes réels | Réaffecter au livre B la clé et le Détail du livre A quand A est masqué |
 | Filtre vide / ligne périmée | `empty_detail` explicite, révocation des sélections asynchrones/LLM | Détail ou action encore utilisable de la ligne précédente |
 | Rang provisoire / LLM tardif | Badge « Provisoire », invalidation des callbacks LLM par génération et sélection | Score définitif ou raison prouvée |
 
