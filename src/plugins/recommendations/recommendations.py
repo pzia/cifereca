@@ -374,8 +374,8 @@ def _safe_local_bibliography_value(raw: Any, *, limit: int = 512) -> str:
     """
     if type(raw) is not str or not raw:
         return ""
-    if ("://" in raw or raw.startswith(("/", "\\"))
-            or (("?" in raw or "&" in raw) and "=" in raw)
+    if ("://" in raw or "@" in raw or "=" in raw
+            or raw.startswith(("/", "\\"))
             or _LOCAL_SEARCH_SECRET_MARKER.search(raw)):
         return ""
     return raw[:limit]
