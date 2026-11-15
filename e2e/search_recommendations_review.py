@@ -14,6 +14,12 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
+
+# Also importable by offline tests via importlib.util (where e2e/ is not on
+# sys.path), without reading any local user data or importing GTK.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from paired_book_review_fixture import verified_fixture_receipt
 
 ROOT = Path(__file__).resolve().parents[1]
 SIZES = {1024: (1024, 768), 1366: (1366, 900), 1600: (1600, 1000)}
@@ -21,7 +27,7 @@ SURFACES = {
     "search": ("search-filter", "00-before", "screenshot", "GTK4/X11/Xvfb",
                "P1_774_search_real_matched_geometry", "p1_774_matched_geometry"),
     "recommendations": (
-        "recommendations-detail", "01-selected-a", "image", "GTK4/X11/XTEST",
+        "recommendations-detail", "09-paired-public-book", "image", "GTK4/X11/XTEST",
         "P1_774_real_gtk_logical_hidpi_geometry", "p1_774_geometry",
     ),
 }
@@ -86,6 +92,17 @@ def _report_and_image(
         report["checks"].get(required_check) is not True
     ):
         raise ReviewError("Preuve de géométrie GTK absente")
+    # Equal SHA/screens do not prove the same book. Both independent real
+    # probes assert the displayed Gtk.ListStore selection against the same
+    # exact *synthetic* source/edition before emitting this fixed receipt.
+    paired_check = (
+        "P1_774_search_selected_same_synthetic_book"
+        if surface == "search"
+        else "P1_774_recommendations_selected_same_synthetic_book"
+    )
+    if (report["checks"].get(paired_check) is not True
+            or report.get("p1_774_paired_book") != verified_fixture_receipt()):
+        raise ReviewError("Source/édition synthétique commune non attestée dans GTK")
     geometry = report.get(geometry_key)
     if (not isinstance(geometry, dict)
             or set(geometry) != {
@@ -139,6 +156,9 @@ def verified_pair(
     commits: set[str] = set()
     appearances: set[str] = set()
     fingerprint = hashlib.sha256()
+    fingerprint.update(
+        ("book:" + verified_fixture_receipt()["document_sha256"] + "\n").encode("ascii")
+    )
     for width, size in sorted(sizes.items()):
         images = {}
         for surface in ("search", "recommendations"):
@@ -216,6 +236,8 @@ def build_review(
             if (recorded.get("git_sha") != sha
                     or recorded.get("capture_fingerprint_sha256") != fingerprint
                     or recorded.get("appearance") != appearance
+                    or recorded.get("document_sha256") !=
+                        verified_fixture_receipt()["document_sha256"]
                     or recorded.get("widths") != sorted(sizes)):
                 raise ReviewError("Recette modifiée : préserver la grille privée antérieure")
         elif checklist.exists():
@@ -226,6 +248,7 @@ def build_review(
             "status": "VISUAL_REVIEW_REQUIRED",
             "git_sha": sha, "capture_fingerprint_sha256": fingerprint,
             "appearance": appearance,
+            "document_sha256": verified_fixture_receipt()["document_sha256"],
             "widths": sorted(sizes), "verified_source_captures": 2 * len(sizes),
         }
         manifest.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
@@ -263,6 +286,8 @@ def verify_completed_review(
             or manifest.get("git_sha") != sha
             or manifest.get("capture_fingerprint_sha256") != fingerprint
             or manifest.get("appearance") != appearance
+            or manifest.get("document_sha256") !=
+                verified_fixture_receipt()["document_sha256"]
             or manifest.get("widths") != sorted(sizes)
             or manifest.get("verified_source_captures") != 2 * len(sizes)):
         raise ReviewError("Grille et captures ne correspondent plus")
@@ -297,6 +322,7 @@ def verify_completed_review(
     receipt: dict[str, object] = {
         "status": "CHECKLIST_VERIFIED", "git_sha": sha,
         "appearance": appearance,
+        "document_sha256": verified_fixture_receipt()["document_sha256"],
         "capture_fingerprint_sha256": fingerprint,
         "checklist_sha256": hashlib.sha256(raw).hexdigest(),
         "reviewed_widths": len(seen), "findings": failures,
