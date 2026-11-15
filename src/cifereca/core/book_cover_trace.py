@@ -143,12 +143,12 @@ class CoverLifecycleTrace:
 
     def note_media(
         self, token: CoverCacheToken, *,
-        source_cached: bool, preview_cached: bool = False,
+        source_cached: bool, preview_cached: bool | None = False,
     ) -> bool:
-        """Record a real N3 byte/signature probe for a selected N1 decision."""
+        """Record validated N3 bytes. None leaves preview availability unobserved."""
         if type(token) is not CoverCacheToken:
             raise TypeError("expected exact N2 cache token")
-        if type(source_cached) is not bool or type(preview_cached) is not bool:
+        if type(source_cached) is not bool or type(preview_cached) not in (bool, type(None)):
             raise TypeError("media observations must be booleans")
         if preview_cached and not source_cached:
             raise ValueError("preview cache cannot exist without valid source")
@@ -165,7 +165,9 @@ class CoverLifecycleTrace:
                 evidence_present=previous.evidence_present,
                 resolved=True,
                 media_cached=source_cached,
-                preview_cached=preview_cached,
+                preview_cached=source_cached and (
+                    previous.preview_cached if preview_cached is None else preview_cached
+                ),
                 # A missing/corrupt physical source revokes earlier paint
                 # confirmations, without changing the N1 documentary choice.
                 list_painted=source_cached and previous.list_painted,

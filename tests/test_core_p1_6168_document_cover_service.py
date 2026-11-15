@@ -264,3 +264,91 @@ def test_cancelled_document_request_cannot_paint(prepared, monkeypatch):
     )
     assert finished.result(timeout=10) == b["physical"].as_uri()
     assert output == []
+
+
+def test_loan_trace_uses_one_live_receipt_per_render_variant(prepared):
+    from PIL import Image
+
+    from cifereca.gui.cover_preview import preview_path
+    from tests.test_core_p1_6168_gtk_texture_applied_hook import env
+
+    b = prepared
+    service, loader = b["service"], b["loader"]
+    document = CoverDocumentScope(
+        kind="loan", identity_id="alice", source_key="loan:exact-edition",
+        provider_id="library", credential_id="reader-card", account_id="account",
+        loan_id="loan-1",
+    )
+    snapshot = CoverSourceSnapshot(document, revision=1, candidates=(b["catalog"],))
+    service.register(snapshot)
+    source = loader._path(CATALOG)
+    image = Image.new("RGB", (32, 48), "red")
+    image.save(source, format="PNG")
+    image.save(preview_path(source, loader.preview_root, 120, 180), format="PNG")
+
+    listed, detailed = [], []
+    preview_ready = Event()
+    listing = service.get_cover(
+        document, "list", lambda path: (listed.append(path), preview_ready.set()),
+        width=120, height=180,
+    )
+    assert preview_ready.wait(10)
+    assert listed[0].parent == loader.preview_root
+    detail = service.get_cover(document, "detail", detailed.append)
+    state = service.cover_trace_snapshot(document)
+    assert state.status == "selected" and state.media_cached and state.preview_cached
+    assert not state.list_painted and not state.detail_painted
+    assert not listing.note_texture_applied(detailed[0])
+
+    host, gtk_loader, picture, _calls, apply = env()
+    host._request = listing
+    host._document_check = lambda: listing.still_current
+    apply(host, 4, gtk_loader, listed[0])
+    assert picture.paintable is not None
+    state = service.cover_trace_snapshot(document)
+    assert state.list_painted and not state.detail_painted
+    assert not listing.note_texture_applied(listed[0])
+    assert detail.note_texture_applied(detailed[0])
+    state = service.cover_trace_snapshot(document)
+    assert state.list_painted and state.detail_painted and state.preview_cached
+
+
+def test_exact_epub_paint_receipt_is_revoked_even_if_image_path_is_reused(prepared):
+    b = prepared
+    service = b["service"]
+    _register(b)
+    received = []
+    first = service.get_cover(b["scope"], "detail", received.append)
+    assert received == [b["physical"]]
+    assert service.cover_trace_snapshot(b["scope"]).media_cached
+
+    _register(b, revision=8)
+    stale = service.cover_trace_snapshot(b["scope"])
+    assert stale.invalidated
+    assert not first.note_texture_applied(received[0])
+
+    second = service.get_cover(b["scope"], "detail", received.append)
+    assert received == [b["physical"], b["physical"]]
+    second.cancel()
+    assert not second.note_texture_applied(received[1])
+    assert not service.cover_trace_snapshot(b["scope"]).detail_painted
+
+
+def test_trace_subscriptions_follow_snapshot_eviction_and_close(prepared):
+    b = prepared
+    loader = b["loader"]
+    service = DocumentCoverService(loader, max_documents=1)
+    scope = replace(b["scope"], identity_id="bob")
+    try:
+        first = CoverSourceSnapshot(b["scope"], revision=1)
+        second = CoverSourceSnapshot(scope, revision=1)
+        service.register(first)
+        service.get_cover(first.scope, "list", lambda path: None)
+        assert service.cover_trace_snapshot(first.scope).status == "missing"
+        service.register(second)
+        assert service.cover_trace_snapshot(first.scope) is None
+        service.get_cover(second.scope, "detail", lambda path: None)
+        assert service.decisions.stats()["subscribers"] == 1
+    finally:
+        service.close()
+    assert service.decisions.stats()["subscribers"] == 0

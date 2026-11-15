@@ -358,6 +358,13 @@ class CoverView(Gtk.Overlay):
             # after GDK decoded the bytes and GTK accepted the texture, and
             # never for an obsolete/recycled cover generation. Observer
             # failures must not cause a forced re-download or hide the image.
+            request = getattr(self, "_request", None)
+            receipt = getattr(request, "note_texture_applied", None)
+            if receipt is not None:
+                try:
+                    receipt(path)
+                except Exception:
+                    pass
             observer = getattr(self, "_on_texture_applied", None)
             if observer is not None:
                 try:

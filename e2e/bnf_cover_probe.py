@@ -492,8 +492,19 @@ def main() -> int:
             second_loan_detail,
         )
 
+    def assert_selected_loan_trace(window):
+        selected = window.loan_page.selection.get_selected_item()
+        assert selected is not None
+        document = selected._cover_document_ref
+        assert document.kind == "loan"
+        state = window.document_covers.cover_trace_snapshot(document)
+        assert state is not None and state.status == "selected"
+        assert state.evidence_present and state.resolved and state.media_cached
+        assert state.list_painted and state.detail_painted
+
     def second_loan_detail():
         window = app_window[0]
+        assert_selected_loan_trace(window)
         report["checks"]["first_real_gtk_loan_detail_cover"] = True
         capture("06-bnf-first-loan-detail")
         rows = [window.loan_page.store.get_item(i)
@@ -511,6 +522,8 @@ def main() -> int:
 
     def missing_loan_detail():
         window = app_window[0]
+        assert_selected_loan_trace(window)
+        report["checks"]["loan_n2_n3_and_both_gtk_paints_observed"] = True
         report["checks"]["second_real_gtk_loan_detail_cover"] = True
         capture("07-bnf-second-loan-detail")
         rows = [window.loan_page.store.get_item(i)
