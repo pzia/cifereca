@@ -310,7 +310,8 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
 # widget text, provider data, filesystem path or raw exception.
 _BNF_COVER_STAGES = frozenset({
     "startup", "two_distinct_list_covers", "first_detail", "second_detail",
-    "missing_placeholder", "two_exact_loan_list_covers",
+    "missing_placeholder", "search_late_detail_rebind",
+    "two_exact_loan_list_covers",
     "first_loan_detail_cover", "second_loan_detail_cover",
     "loan_missing_cover_placeholder",
     "remote_loan_image_without_source_thumbnail",

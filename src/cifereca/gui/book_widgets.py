@@ -228,6 +228,9 @@ class BookListItem(GObject.Object):
     """Modèle léger pour Gtk.ListView ; aucune image n'est chargée ici."""
 
     __gtype_name__ = "CiferecaBookListItem"
+    __gsignals__ = {
+        "thumbnail-changed": (GObject.SignalFlags.RUN_FIRST, None, ()),
+    }
 
     def __init__(
         self,
@@ -266,6 +269,28 @@ class BookListItem(GObject.Object):
         self.action_callback = action_callback
         self.action_icon_name = action_icon_name or 'view-more-symbolic'
 
+    def set_thumbnail_url(self, url: str | None) -> bool:
+        """Publish a validated presentation-only cover without replacing selection.
+
+        The producer owns URL validation and exact source binding. This signal
+        only updates mapped, currently bound GTK cover cells; no business DTO
+        or provider permission is ever changed.
+        """
+        if self.thumbnail_url == url:
+            return False
+        previous = self.thumbnail_url
+        self.thumbnail_url = url
+        # The common MasterDetailPage append-fast path compares presentation
+        # signatures, not mutable BookListItem fields. Keep the Search
+        # signature coherent with an in-place image update so a later
+        # no-op filter render does not accidentally reset selected detail.
+        content = getattr(self, "_public_row_content", None)
+        if (type(content) is tuple and len(content) >= 2
+                and content[0] == "search" and content[-1] == previous):
+            self._public_row_content = (*content[:-1], url)
+        self.emit("thumbnail-changed")
+        return True
+
 
 class BookListCell(Gtk.Box):
     """Cellule recyclée par Gtk.ListView.
@@ -284,6 +309,8 @@ class BookListCell(Gtk.Box):
         self._meta_request = None
         self._bound_key: str | None = None
         self._bind_epoch = 0
+        self._thumbnail_item: BookListItem | None = None
+        self._thumbnail_handler_id: int | None = None
         self.set_margin_top(8)
         self.set_margin_bottom(8)
         self.set_margin_start(8)
@@ -364,7 +391,22 @@ class BookListCell(Gtk.Box):
         if callback is not None:
             callback(button)
 
+    def _unbind_thumbnail_signal(self) -> None:
+        if self._thumbnail_item is not None and self._thumbnail_handler_id is not None:
+            self._thumbnail_item.disconnect(self._thumbnail_handler_id)
+        self._thumbnail_item = None
+        self._thumbnail_handler_id = None
+
+    def _thumbnail_changed(self, item: BookListItem) -> None:
+        if self._thumbnail_item is not item or self._bound_key != item.key:
+            return
+        self.cover.bind_url(
+            self.cover_loader, item.thumbnail_url or item.default_thumbnail_url,
+            priority=10,
+        )
+
     def bind(self, item: BookListItem) -> None:
+        self._unbind_thumbnail_signal()
         # Each materialization is a new selection, even for an ABA key.
         # A completed older metadata lookup must not decorate a later cell.
         self._bind_epoch += 1
@@ -458,8 +500,15 @@ class BookListCell(Gtk.Box):
             )
         else:
             self.cover.bind_url(self.cover_loader, item.default_thumbnail_url, priority=10)
+        # No source-key mutation or selection invalidation is necessary when
+        # asynchronous detail discovery provides a stronger cover for this row.
+        self._thumbnail_item = item
+        self._thumbnail_handler_id = item.connect(
+            "thumbnail-changed", self._thumbnail_changed,
+        )
 
     def unbind(self) -> None:
+        self._unbind_thumbnail_signal()
         self._bind_epoch += 1
         self._bound_key = None
         if self._meta_request is not None:

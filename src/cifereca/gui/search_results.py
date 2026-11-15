@@ -46,6 +46,7 @@ def _sync_search_detail_after_results(self) -> None:
 
 def _populate_local_search(self, rows: list[dict[str, Any]]) -> None:
     self._search_local_objects = {str(row.get("key") or f"local:{index}"): row for index, row in enumerate(rows)}
+    self._search_detail_cover_by_key = {}
     self._search_mode = "local"
     self._search_purchase_evidence = None
     self._loaded_search_context = None
@@ -184,6 +185,15 @@ def _render_search_results(self) -> int:
                 item.get("thumbnail_url"),
             ))
         self._attach_row_facets(local_rows, self._search_local_objects, self.search_controls)
+        for row in local_rows:
+            row._public_row_content = (
+                "search", row.key, getattr(row, "title", ""),
+                getattr(row, "subtitle", ""), getattr(row, "meta", ""),
+                getattr(row, "badge", ""), getattr(row, "action_label", ""),
+                getattr(row, "action_icon_name", ""),
+                bool(getattr(row, "action_callback", None)),
+                getattr(row, "thumbnail_url", None),
+            )
         self.search_page.show_rows(local_rows)
         self._search_local_snapshot_dirty = False
         shown = len(local_rows)
@@ -314,8 +324,23 @@ def _render_search_results(self) -> int:
             callback = lambda _button, selected=placement: self._open_placement(selected)
         elif direct:
             callback = lambda button, selected=item: self.download_direct_item(selected, button)
+        # A detail may have supplied a safe image after this exact edition
+        # was rendered. This is a presentation-only, scoped cache: reject
+        # same-key results from another source object, profile/epoch or query.
+        override = getattr(self, "_search_detail_cover_by_key", {})
+        retained = override.get(key) if type(override) is dict else None
+        cover_url = item.thumbnail_url
+        if (type(retained) is tuple and len(retained) == 6
+                and retained[0] is item
+                and retained[2:] == (
+                    getattr(self, "_identity_context_generation", None),
+                    getattr(self, "_search_generation", None),
+                    getattr(self.service, "_account_context_epoch", None),
+                    getattr(self.service, "_source_context_epoch", None),
+                )):
+            cover_url = retained[1]
         ui_rows.append(BookListItem(
-            key, item.title, item.author or "", meta, source, item.thumbnail_url,
+            key, item.title, item.author or "", meta, source, cover_url,
             action_label="Ouvrir" if placement else (download_action_label(item, check_required=check_required) if direct else None),
             action_callback=callback,
             action_icon_name="document-open-symbolic" if placement else ("document-save-symbolic" if direct else None),
@@ -325,6 +350,17 @@ def _render_search_results(self) -> int:
         **{key: project(item) for key, item in remote_rows},
     }
     self._attach_row_facets(ui_rows, objects, self.search_controls)
+    # MasterDetailPage may preserve same SourceKeys in append-fast mode; it
+    # must replace a row when its title, action context or cover changed.
+    for row in ui_rows:
+        row._public_row_content = (
+            "search", row.key, getattr(row, "title", ""),
+            getattr(row, "subtitle", ""), getattr(row, "meta", ""),
+            getattr(row, "badge", ""), getattr(row, "action_label", ""),
+            getattr(row, "action_icon_name", ""),
+            bool(getattr(row, "action_callback", None)),
+            getattr(row, "thumbnail_url", None),
+        )
     self.search_page.show_rows(ui_rows)
     self._search_local_snapshot_dirty = False
     shown = len(ui_rows)

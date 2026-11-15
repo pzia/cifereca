@@ -340,8 +340,61 @@ def main() -> int:
             and selected_detail()[0]._url is None
             and selected_detail()[0].picture.get_paintable() is None
             and selected_detail()[0].placeholder.get_visible(),
-            begin_loan_covers,
+            begin_late_search_detail_cover,
         )
+
+    def begin_late_search_detail_cover():
+        # #3104: exact holdings may deliver an image after Search's list row
+        # was painted. The real GTK cell must update without changing the
+        # selected source key, causing another holdings() or borrowing a
+        # homonymous book's private cover. Reuse a *public* fixture URL already
+        # served by the MockTransport, avoiding any extra external request.
+        from cifereca.models import ItemDetail
+        from cifereca.gui.book_widgets import BookListCell
+        window = app_window[0]
+        selected = window.search_page.selection.get_selected_item()
+        assert selected is not None and selected.thumbnail_url is None
+        item = window.search_objects[selected.key]
+        assert item.record_id == RESOURCES[2]
+        previous_generation = window._search_detail_request_generation
+        previous_details = len(details)
+        late = ItemDetail(
+            record_id=item.record_id, docbase=item.docbase,
+            title=item.title, author=item.author, type=item.type,
+            year=None, thumbnail_url=COVERS[0],
+            availability_status="unknown", availability_label="Non vérifiée",
+            holdings=[], source_provider=item.source_provider,
+            source_credential=item.source_credential,
+        )
+        window._apply_search_detail(
+            item.id, item, late, context=window._search_detail_request_context(),
+        )
+        assert window._search_detail_request_generation == previous_generation
+        assert len(details) == previous_details
+        assert window.search_page.selection.get_selected_item() is selected
+        assert selected.thumbnail_url == COVERS[0]
+        assert item.thumbnail_url is None  # provider DTO not mutated
+        await_condition(
+            "search_late_detail_rebind",
+            lambda: any(
+                isinstance(cell, BookListCell)
+                and cell._bound_key == selected.key
+                and cell.cover.get_mapped()
+                and cell.cover._url == COVERS[0]
+                and cell.cover.picture.get_paintable() is not None
+                and not cell.cover.placeholder.get_visible()
+                for cell in walk(window.search_page.listview)
+            ) and bool(selected_detail())
+            and selected_detail()[0]._url == COVERS[0]
+            and selected_detail()[0].picture.get_paintable() is not None,
+            finish_late_search_detail_cover,
+        )
+
+    def finish_late_search_detail_cover():
+        capture("04b-bnf-search-exact-detail-cover-in-list")
+        assert len(image_gets) == 2
+        report["checks"]["search_detail_cover_rebinds_same_gtk_row"] = True
+        begin_loan_covers()
 
     def begin_loan_covers():
         capture("04-bnf-missing-cover-placeholder")
@@ -438,7 +491,7 @@ def main() -> int:
         assert set(image_gets) == set(COVERS)
         assert len(image_gets) == 2, "Search, loan list and both details must share cached public images"
         assert details[-3:] == list(RESOURCES), "Provider detail scoped to each resource"
-        assert applied_details[-3:] == list(RESOURCES), "Real GTK applied all scoped details"
+        # #3104 adds one explicit *same-edition* late detail repaint after\n        # the three provider holdings callbacks; that repaint is not another\n        # holdings() request and must not be mistaken for one.\n        assert applied_details[-4:] == [*RESOURCES, RESOURCES[2]], (\n            "GTK applied provider details and the exact late Search repaint"\n        )
         assert app_window[0].covers.stats()["ui_applied"] >= 4
         report["checks"]["missing_cover_no_image_get"] = True
         report["checks"]["cache_shared_search_detail"] = True
