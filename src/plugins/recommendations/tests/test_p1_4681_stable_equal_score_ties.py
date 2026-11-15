@@ -81,7 +81,10 @@ def test_stable_ties_with_shared_score_cache_and_swapped_provider_orders():
         exploration=100, score_cache=cache,
     )
     assert _edition_rows(a) == _edition_rows(b)
-    assert len(cache) == 2
+    # The score cache is documentary: two different ISBN editions with
+    # identical authors/title/subjects share ONE content score. The stable
+    # edition tiebreak is independent from this legitimate cache reuse.
+    assert len(cache) == 1
     assert all(row.score > 0 for row in a)
     assert all(not hasattr(row, "executable") for row in a)
 
