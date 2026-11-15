@@ -68,6 +68,11 @@ def _runner(on_submit=None):
         # Isolated submit() AST harness: emulate the class-owned typed-result
         # classifier. No provider/broker result exists in these lifecycle tests.
         _source_sync_outcome=lambda _value, _kind: "success",
+        # submit() now calls the class-owned public outcome dispatcher on
+        # both its worker and GTK callback paths. This headless fixture
+        # extracts ONLY submit(), so inject the same neutral no-rights
+        # classification for these lifecycle-only tests.
+        _business_outcome=lambda _value, _kind: "success",
         present_error=lambda exception: events.append(("error", str(exception))),
     )
     return runner, window, events
