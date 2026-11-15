@@ -632,3 +632,60 @@ def test_w1_sourcekey_preflight_is_provider_neutral_and_physically_reviewed():
     assert guards[0]["classification"] == "safety_guard_pending_contract"
     assert "non-Kobo" in guards[0]["remaining_debt"]
     assert all((root / test).is_file() for test in retired[0]["tests"])
+
+
+def test_adept_borrower_and_return_reviewed_sites_preserve_negative_contracts():
+    """Five supplier-named AST sites are reviewed, not falsely marked retired."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads((root / "docs/provider-business-coupling-review.json")
+                        .read_text(encoding="utf-8"))
+    expected = {
+        "site-7874908d12d351ccb80742b1": (
+            "safety_guard_pending_contract", "adept-borrower.exact-source-grant",
+        ),
+        "site-7587067dd7068ebdaad80ad9": (
+            "safety_guard_pending_contract", "adept-borrower.exact-source-grant",
+        ),
+        "site-2e131a36740d4dc492a02de3": (
+            "safety_guard_pending_contract", "return-verification.exact-borrower-inventory",
+        ),
+        "site-b2c28295eb915336e054f6f1": (
+            "safety_guard_pending_contract", "return-verification.exact-borrower-inventory",
+        ),
+        "site-36d7d98c0b5939ee21e6d5cd": (
+            "legitimate_readonly_compat", "historical-return.readonly-receipt",
+        ),
+    }
+    selected = [row for row in ledger["reviews"] if row["id"] in expected]
+    assert len(selected) == len(expected)
+    assert {row["id"] for row in selected} == set(expected)
+    for row in selected:
+        assert (row["classification"], row["decision_group_id"]) == expected[row["id"]]
+        assert row["reachability"] in {"productive", "legacy_only"}
+        assert row["productive_caller"] and row["effect"]
+        assert row["authority"] and row["replacement_contract"]
+        assert row["rationale"] and not row["retirement_pr"]
+        assert len(row["tests"]) >= 2
+        assert all((root / path).is_file() for path in row["tests"])
+    assert sum(row["classification"] == "safety_guard_pending_contract"
+               for row in selected) == 4
+    assert sum(row["classification"] == "legitimate_readonly_compat"
+               for row in selected) == 1
+
+    # The historical read surface is intentionally retained. Neither the
+    # remaining Paris predicate nor its preflight may become a second POST.
+    service_source = (root / "src/cifereca/services.py").read_text(encoding="utf-8")
+    historical = service_source.split("    def verify_loan_return(", 1)[1].split(
+        "    def return_digital(", 1
+    )[0]
+    assert "self.storage.loan_return_state(key)" in historical
+    assert "paris" in historical and "not_requested" in historical
+    assert "ReturnDigitalLoan" not in historical
+    assert "self._return_loan_identity(loan)" in historical
+    source_guard = (root / "src/cifereca/core/adept_borrower.py").read_text(
+        encoding="utf-8"
+    )
+    assert "self.storage.adept_borrower_grant_get" in source_guard
+    assert "self.storage.paris_borrower_adept_binding_get" in source_guard
