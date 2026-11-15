@@ -133,6 +133,23 @@ class DetailPanel(Gtk.Box):
         if cover_evidence is None:
             cover.bind_url(self.window.covers, thumbnail, priority=0)
             return
+        from .loan_supplier_document_cover_bridge import (
+            VerifiedLoanSupplierCover, register_exact_loan_supplier,
+        )
+        if type(cover_evidence) is VerifiedLoanSupplierCover:
+            from .document_cover_service import DocumentCoverService
+            service = getattr(self.window, "document_covers", None)
+            if (type(service) is DocumentCoverService
+                    and register_exact_loan_supplier(
+                        self.window, cover_evidence.source_item, service,
+                        cover_evidence, cover_evidence.document,
+                    )):
+                cover.bind_document(
+                    service, cover_evidence.document, variant="detail", priority=0,
+                )
+            else:
+                cover.bind_url(self.window.covers, None, priority=0)
+            return
         from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
         from .local_cover_adapter import LocalCoverEvidenceAdapter
         from .document_cover_service import DocumentCoverService
