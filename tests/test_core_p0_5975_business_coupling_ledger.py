@@ -92,9 +92,10 @@ def test_stale_review_is_visible_and_invalidates_cli(tmp_path, capsys):
     assert result["stale_reviews"] == ["site-nonexistent"]
     assert main(["--root", str(tmp_path), "--registry", str(ledger),
                  "--json"]) == 1
-    assert json.loads(capsys.readouterr().out)["stale_reviews"] == [
-        "site-nonexistent"
-    ]
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["stale_reviews"] == ["site-nonexistent"]
+    assert "Stale business-review IDs:" in captured.err
+    assert "site-nonexistent" in captured.err
 
 
 def test_move_is_not_counted_as_executed_debt_removed(tmp_path):
@@ -260,7 +261,7 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
     guards = {
         # The removed middle Kobo predicate shifts the unchanged archive-only
         # third ordinal to the old second-ordinal AST ID: no false retirement.
-        "site-d88574f6e28d059189c71da5",
+        "site-dd2ac28f46a8a720315de122",
         "site-c668504ada66eace309e3e7f",
     }
     removed_writer = "site-1220521b4d5dc767addb6d29"
@@ -305,9 +306,15 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
     assert "site-5a3051124e11f87bf24ccfb6" not in {
         row["id"] for row in ledger["reviews"]
     }
+    # #6138 had rebound this Kobo archive-only guard to the old second
+    # ordinal. #6145 removes the earlier W1 admission predicate and rebinds
+    # the same *surviving* guard to the first ordinal: neither is retirement.
     moved_review = next(row for row in ledger["reviews"]
-                        if row["id"] == "site-d88574f6e28d059189c71da5")
+                        if row["id"] == "site-dd2ac28f46a8a720315de122")
     assert "archive-only" in moved_review["journey"]
+    assert "site-d88574f6e28d059189c71da5" not in {
+        row["id"] for row in ledger["reviews"]
+    }
     new_guard = [
         row for row in ledger["guard_installations"]
         if row["id"] ==
@@ -578,3 +585,50 @@ def test_real_081_migration_is_explicitly_retained_after_genericization():
     assert actual["retained_non_ast_legacy_migration_writers"] == 1
     assert actual["active_legacy_writers_to_retire"] >= 1
     assert not actual["stale_reviews"]
+
+
+def test_w1_sourcekey_preflight_is_provider_neutral_and_physically_reviewed():
+    import inspect
+    from pathlib import Path
+    from cifereca.storage import Storage
+
+    source = inspect.getsource(Storage.backup_put)
+    admission = source.split('now = int(item.get("updated_at")', 1)[0]
+    assert 'if item.get("provider_id") == "kobo"' not in admission
+    assert "backup_legacy_item_id_invalid" in admission
+    assert "backup_legacy_path_invalid" in admission
+    assert "type(key) is not str" in admission
+
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads((root / "docs/provider-business-coupling-review.json")
+                        .read_text(encoding="utf-8"))
+    old = "site-dd2ac28f46a8a720315de122"
+    # The surviving archive-only Kobo predicate inherits this identical AST
+    # ordinal when the earlier preflight branch is physically removed.
+    reviews = [row for row in ledger["reviews"] if row["id"] == old]
+    assert len(reviews) == 1
+    assert reviews[0]["journey"] == (
+        "W1 historical Kobo backup archive-only return without canonical mirror"
+    )
+    assert all(row["id"] != "site-d88574f6e28d059189c71da5"
+               for row in ledger["reviews"])
+    retired = [row for row in ledger["retirements"] if row["id"] ==
+               "struct-w1-all-provider-sourcekey-admission-supplier-predicate-retired"]
+    assert len(retired) == 1
+    assert retired[0]["original_site_id"] == old
+    assert retired[0]["original_classification"] == "safety_guard_pending_contract"
+    assert retired[0]["in_ast_metric"] is False
+    assert retired[0]["rebound_site_id"] == old
+    assert retired[0]["retained_guard_previous_id"] == (
+        "site-d88574f6e28d059189c71da5"
+    )
+    assert retired[0]["retired_at_sha"] == (
+        "f9efeabf8358e268d7bfcc71e5b9e1358acecd0c"
+    )
+    assert retired[0]["pr"] == "#6145"
+    guards = [row for row in ledger["guard_installations"] if row["id"] ==
+              "guard-w1-all-provider-legacy-sourcekey-path-admission"]
+    assert len(guards) == 1
+    assert guards[0]["classification"] == "safety_guard_pending_contract"
+    assert "non-Kobo" in guards[0]["remaining_debt"]
+    assert all((root / test).is_file() for test in retired[0]["tests"])

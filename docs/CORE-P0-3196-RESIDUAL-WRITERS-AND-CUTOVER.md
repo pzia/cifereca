@@ -1,5 +1,24 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+> **Delta P0 #6145 (15/11/2026) — validation W1 sans fournisseur privilégié.**
+> L'admission des nouveaux `backup_put` refuse désormais, pour tous les
+> fournisseurs, un `item_id` nul, non textuel, vide, délimité par des blancs,
+> trop long ou contenant NUL/CR/LF ; les chemins NUL sont pareillement refusés
+> **avant la transaction SQLite**. Le veto auparavant conditionné à Kobo est
+> remplacé par une garde générique, sans relire, effacer ou réécrire les anciennes
+> archives SQLite déjà corrompues. Matrice de tests Kobo/Paris/Numilog/inconnu :
+> échec atomique et préservation du registre canonique. Cette tranche retire
+> un **branchement fournisseur de sûreté**, non le miroir W1 non-Kobo pour
+> les sources encore non typées ; son retrait reste un chantier distinct.
+> **Précision AST :** après suppression du premier prédicat Kobo, le second
+> prédicat Kobo (archive-only toujours actif) hérite du même identifiant
+> ordinal `site-dd2ac28f46a8a720315de122` et la revue de son ancien
+> identifiant `site-d88574f6e28d059189c71da5` est réaffectée ; ni
+> disparition de ce dernier ni baisse brute AST ne prouvent un retrait de
+> garde ou de writer. Le retrait du préflight de marque est compté comme
+> **remplacement structurel**, sans crédit de retraite AST.
+
+
 > **Delta P0 #6138 (15/11/2026) — SourceReference neutralisée à l'entrée W1.**
 > Un `backup_put` historique ne peut désormais ni créer, ni modifier
 > `backup_items`, ni reprojeter un droit, acquisition, Artifact ou Placement

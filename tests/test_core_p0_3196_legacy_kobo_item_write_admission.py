@@ -1,4 +1,4 @@
-"""P0 #3196: newly written 0.7 Kobo product keys must be SourceKey-qualifiable.
+"""P0 #3196 / #5975: new 0.7 keys from ALL providers must be SourceKey-qualifiable.
 
 The old SQLite table may contain malformed historical keys: neither this
 test nor the production guard deletes/rewrites those legacy rows. The writer
@@ -11,9 +11,9 @@ import pytest
 from cifereca.storage import Storage
 
 
-def _claim(item: object):
+def _claim(item: object, provider: str = "kobo"):
     return {
-        "provider_id": "kobo", "credential_id": "vault",
+        "provider_id": provider, "credential_id": "vault",
         "account_id": "buyer", "identity_id": "alice",
         "item_id": item, "revision_id": "rev-1", "title": "Synthetic",
         "entitlement_type": "owned", "status": "complete",
@@ -36,20 +36,22 @@ def _snapshot(storage):
     None, "", "  ", " book ", "book ", "book\x00other",
     "book\nother", "book\rother", "x" * 1025, 1234,
 ])
-def test_kobo_writer_refuses_new_unqualified_keys_atomically(tmp_path, unqualified):
+@pytest.mark.parametrize("provider", ["kobo", "paris", "numilog", "synthetic"])
+def test_any_writer_refuses_new_unqualified_keys_atomically(tmp_path, unqualified, provider):
     storage = Storage(tmp_path / "legacy.sqlite")
     try:
-        storage.backup_put(_claim("book"))
+        storage.backup_put(_claim("book", provider))
         before = _snapshot(storage)
         with pytest.raises(ValueError, match="backup_legacy_item_id_invalid"):
-            storage.backup_put(_claim(unqualified))
+            storage.backup_put(_claim(unqualified, provider))
         assert _snapshot(storage) == before
-        assert storage.backup_get("kobo", "vault", "book") is not None
+        assert storage.backup_get(provider, "vault", "book") is not None
     finally:
         storage.close()
 
 
-def test_historical_corrupt_sqlite_key_is_not_deleted_by_write_admission(tmp_path):
+@pytest.mark.parametrize("provider", ["kobo", "paris", "numilog", "synthetic"])
+def test_historical_corrupt_sqlite_key_is_not_deleted_by_write_admission(tmp_path, provider):
     storage = Storage(tmp_path / "legacy.sqlite")
     try:
         with storage._lock, storage._connect() as db:
@@ -57,13 +59,13 @@ def test_historical_corrupt_sqlite_key_is_not_deleted_by_write_admission(tmp_pat
                 "INSERT INTO backup_items("
                 "provider_id,credential_id,item_id,title,status,updated_at"
                 ") VALUES(?,?,?,?,?,?)",
-                ("kobo", "vault", "", "Historical", "complete", 1),
+                (provider, "vault", "", "Historical", "complete", 1),
             )
         before = _snapshot(storage)
         with pytest.raises(ValueError, match="backup_legacy_item_id_invalid"):
-            storage.backup_put(_claim(""))
+            storage.backup_put(_claim("", provider))
         assert _snapshot(storage) == before
-        assert storage.backup_get("kobo", "vault", "") is not None
+        assert storage.backup_get(provider, "vault", "") is not None
     finally:
         storage.close()
 
@@ -102,5 +104,18 @@ def test_retired_manifest_prune_cannot_delete_historical_padded_id(tmp_path):
         assert storage.backup_get("kobo", "vault", " book ") == before_padded
         assert storage.entitlements(provider_id="kobo") == before_rights
         assert storage.acquisitions(provider_id="kobo") == before_ledger
+    finally:
+        storage.close()
+
+@pytest.mark.parametrize("provider", ["kobo", "paris", "numilog", "synthetic"])
+def test_poisoned_legacy_path_is_refused_before_any_provider_archive_or_mirror(tmp_path, provider):
+    storage = Storage(tmp_path / "legacy.sqlite")
+    try:
+        storage.backup_put(_claim("book", provider))
+        before = _snapshot(storage)
+        with pytest.raises(ValueError, match="backup_legacy_path_invalid"):
+            storage.backup_put({**_claim("poison", provider), "local_path": "root\x00epub"})
+        assert _snapshot(storage) == before
+        assert storage.backup_get(provider, "vault", "poison") is None
     finally:
         storage.close()

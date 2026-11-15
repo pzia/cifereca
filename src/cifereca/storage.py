@@ -2277,22 +2277,20 @@ class Storage:
                 raise ValueError("backup_acquisition_owner_conflict")
 
     def backup_put(self, item: dict[str, Any]) -> None:
-        # The Kobo 0.7 writer remains for legacy recovery. Never introduce
-        # *new* unusable product IDs into that compatibility table: the
-        # canonical migration cannot construct an exact SourceKey for them.
-        # Historical SQLite rows are preserved by pruning and still readable;
-        # this admission check only applies to future writes.
-        if item.get("provider_id") == "kobo":
-            key = item.get("item_id")
-            if (type(key) is not str or not key.strip()
-                    or key != key.strip() or len(key) > 1024
-                    or any(c in key for c in "\x00\r\n")):
-                raise ValueError("backup_legacy_item_id_invalid")
-            # W1 previously rejected NUL paths while projecting placements.
-            # Keep that input admission even though the canonical projection
-            # is now disabled: a later legacy reader must not ingest it.
-            if "\x00" in str(item.get("local_path") or ""):
-                raise ValueError("backup_legacy_path_invalid")
+        # W1: EVERY provider's new v0.7 compatibility checkpoint must have a
+        # SourceKey-qualifiable edition identifier. The historical SQLite
+        # table may already contain invalid old keys; preserve those rows for
+        # archive inspection and rollback, but never create new ambiguous
+        # source coordinates or let a legacy writer mint parallel Core facts.
+        key = item.get("item_id")
+        if (type(key) is not str or not key.strip()
+                or key != key.strip() or len(key) > 1024
+                or any(char in key for char in "\x00\r\n")):
+            raise ValueError("backup_legacy_item_id_invalid")
+        # A poisoned pathname must not be archived for a later compatibility
+        # reader, even if this provider's W1 row is currently archive-only.
+        if "\x00" in str(item.get("local_path") or ""):
+            raise ValueError("backup_legacy_path_invalid")
         now = int(item.get("updated_at") or time.time())
         attempt_count = item.get("attempt_count")
         try:
