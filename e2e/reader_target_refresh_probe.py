@@ -170,8 +170,8 @@ def main() -> int:
 
     def has_target():
         return any(
-            isinstance(widget, Gtk.Label)
-            and widget.get_text() == "Chemin réservé"
+            isinstance(widget, Adw.ActionRow)
+            and widget.get_title() == "Chemin réservé"
             for widget in walk(state["window"].readers_page.detail)
         )
 
