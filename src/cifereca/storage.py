@@ -1849,29 +1849,11 @@ class Storage:
             # refresh is not fresh provider A or a new CompletedDelivery B,
             # so the SQL publication half below is not admissible.
             return
-        # #3196 W1: a typed Kobo SourceReference may exist before canonical
-        # download/receipt, and the historical backup PK has no account or
-        # branch. The 0.7 writer may refresh its raw compatibility row, but
-        # cannot generate or update a parallel right, acquisition or local
-        # placement for an edition now owned by the canonical Core. Match the
-        # provider/credential/edition exactly; an alternate borrower is
-        # ambiguous, not authority to replay a legacy row.
-        if (
-            expected[0] == "kobo"
-            # On a v2/v0.7 migration snapshot, _mirror_backup_row runs
-            # *before* source_references exists. Keep legacy migration
-            # replayable; only test a table known to exist.
-            and (not migration or db.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' "
-                "AND name='source_references' LIMIT 1"
-            ).fetchone() is not None)
-            and db.execute(
-                "SELECT 1 FROM source_references WHERE provider_id='kobo' "
-                "AND credential_id=? AND edition_id=? LIMIT 1",
-                (expected[1], expected[3]),
-            ).fetchone() is not None
-        ):
-            return
+        # W1's Kobo archives never reach this publication half: the v2→v3
+        # importer skips them and backup_put uses archive_only=True after
+        # the same owner/receipt checks. The supplier-specific typed-source
+        # veto formerly here was unreachable. Keep generic historical
+        # projection for other providers until their cutover is proven.
         if projection_owned:
             entitlement_cursor = db.execute(
                 "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"

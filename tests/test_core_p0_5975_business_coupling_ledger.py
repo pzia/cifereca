@@ -258,7 +258,6 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
         )
     )
     guards = {
-        "site-7313c6ad37cfecdb7936e8bc",
         "site-d88574f6e28d059189c71da5",
         "site-5a3051124e11f87bf24ccfb6",
         "site-c668504ada66eace309e3e7f",
@@ -271,12 +270,12 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
         row["id"] not in (removed_writer, removed_supplier_guard)
         for row in ledger["reviews"]
     )
-    assert len(reviews) == 4
+    assert len(reviews) == 3
     assert {row["decision_group_id"] for row in reviews} == {
         "legacy-backup.w1-canonical-publication-veto",
         "legacy-backup.w1-owner-archive-protection",
     }
-    # The four remaining W1 anchors are historical-only; the productive
+    # The three remaining W1 anchors are historical-only; the productive
     # W5 filename guard has been replaced by the neutral SourceReference gate.
     assert {row["reachability"] for row in reviews} == {"legacy_only"}
     assert all(
@@ -285,6 +284,25 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
         and all((root / test).is_file() for test in row["tests"])
         for row in reviews
     )
+    dead_veto = [
+        row for row in ledger["retirements"]
+        if row["id"] ==
+        "struct-w1-unreachable-typed-source-mirror-veto-retired"
+    ]
+    assert len(dead_veto) == 1
+    assert dead_veto[0]["in_ast_metric"] is True
+    assert dead_veto[0]["original_site_id"] == (
+        "site-7313c6ad37cfecdb7936e8bc"
+    )
+    assert dead_veto[0]["retired_at_sha"] == (
+        "2dbfdb6c3bf62de9036fc1891f9aeeadbccb773a"
+    )
+    assert dead_veto[0]["pr"] == "#6132"
+    assert dead_veto[0]["original_classification"] == (
+        "safety_guard_pending_contract"
+    )
+    assert all((root / test).is_file() for test in dead_veto[0]["tests"])
+
     retirements = [
         row for row in ledger["retirements"]
         if row["id"] ==

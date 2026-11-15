@@ -1,5 +1,17 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+> **Delta #6132 (P0 #5975 / #3196, 15/11/2026) :** suppression du
+> veto `provider_id == 'kobo'` dans la moitié de publication de
+> `Storage._mirror_backup_row`. Ce garde était **inaccessible** :
+> l'import SQLite v2→v3 saute toutes les archives Kobo, et
+> `Storage.backup_put` passe systématiquement les archives Kobo avec
+> `archive_only=True` après vérification de collision d'identité et de
+> reçu canonique. L'ancien branchement faisait double emploi, sans effet
+> de production. Sa suppression ne retire ni le writer 0.7 de l'archive
+> brute ni la publication de compatibilité des autres fournisseurs.
+> Régression AST + migration v2 + archives/owners prévues par CI ;
+> **aucun crédit de suppression de writer exécutable** n'est revendiqué.
+
 
 > **Delta #6120 (P0 #5975 / #3196, 14/11/2026) :** la migration de
 > répertoire `Storage.commit_directory_migration` ne modifie désormais
