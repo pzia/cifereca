@@ -596,6 +596,7 @@ def main() -> int:
                 or baseline["search_requests"] != 1
                 or baseline["scroll"] < 5):
             raise AssertionError(f"Avant filtre non probant : {baseline}")
+        page = window.search_page
         # #774: the paired review must show an ACTUALLY selected real
         # GTK row whose Core source/record and public bibliography are
         # the same deterministic fixture used by the Recommendations view.
