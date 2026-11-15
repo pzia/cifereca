@@ -26,6 +26,28 @@ from recommendation_engine import (
 )
 
 
+class _ProfileCacheIdentity:
+    """Keep the exact ranking profile alive while its cached scores exist.
+
+    An object-id integer alone may be recycled when the caller reuses a
+    cache across A -> B -> A or after explicit feedback changes.
+    """
+
+    __slots__ = ("profile",)
+
+    def __init__(self, profile: ProfileVector) -> None:
+        self.profile = profile
+
+    def __hash__(self) -> int:
+        return id(self.profile)
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            type(other) is _ProfileCacheIdentity
+            and self.profile is other.profile
+        )
+
+
 def _score_signature(item: Any) -> tuple[Any, ...]:
     """Stable signature of every field consumed by content_score()."""
     md = metadata(item)
@@ -49,15 +71,26 @@ def score_candidate_cached(
     *,
     known_absent: bool = False,
 ) -> tuple[float, tuple[str, ...]]:
-    signature = _score_signature(item)
+    # The signature below describes *content*, not ISBN/edition identity
+    # or source-scope presence. A cached unowned notice with identical content
+    # must never override an exact ownership check on another edition.
+    # "known_absent" is only granted by the caller's prior possession check.
+    if known_absent is not True and is_already_present(profile, item):
+        return 0.0, ()
+
+    # Scores and rationales are functions of the *profile* as well as the
+    # candidate. "known_absent" also changes the ownership exclusion rule.
+    # Keep these dimensions in the key even if a caller reuses a dict.
+    signature = (
+        _ProfileCacheIdentity(profile), known_absent is True,
+        *_score_signature(item),
+    )
     cached = cache.get(signature)
     if cached is not None:
         return cached
-    scored = (
-        _content_score_prevalidated(profile, item)
-        if known_absent
-        else content_score(profile, item)
-    )
+    # The guarded path has already performed its exact ownership check,
+    # so a second check through content_score() is unnecessary.
+    scored = _content_score_prevalidated(profile, item)
     cache[signature] = scored
     return scored
 

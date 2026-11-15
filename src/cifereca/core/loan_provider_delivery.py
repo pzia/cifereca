@@ -80,8 +80,15 @@ def index_local_loan_artifact(
     if not final_path.is_file():
         raise ProviderConfigurationError("L'acquisition automatique n'a produit aucun artefact local")
     final_inspection = inspect_artifact(final_path)
-    if final_path.suffix.casefold() in {".epub", ".pdf"} and not final_inspection.valid:
-        raise ProviderConfigurationError("Artefact local invalide")
+    # A provider may supply an EPUB/PDF with a generic or misleading suffix.
+    # A failed format inspection must not become an indexed loan merely
+    # because the extension is .bin/.download instead of .epub/.pdf.
+    inspected_format = getattr(final_inspection, "media_format", None)
+    if (final_path.suffix.casefold() in {".epub", ".pdf", ".kepub"}
+            or (type(inspected_format) is str
+                and inspected_format.casefold() in {"epub", "pdf", "kepub"})):
+        if getattr(final_inspection, "valid", None) is not True:
+            raise ProviderConfigurationError("Artefact local invalide")
     _TRACE_LOG.info(
         "TRACE download artifact ready loan_ref=%s bytes=%s format=%s protected=%s",
         trace_ref, final_path.stat().st_size,

@@ -49,7 +49,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(set(mod.ALL) | set(mod.OPTIONAL_UX), set(runner.SCENARIOS))
         self.assertEqual(set(mod.ALL) & set(mod.OPTIONAL_UX), set())
         self.assertEqual(mod.OPTIONAL_UX, ("book-detail-1700",))
-        self.assertEqual(len(mod.ALL), 49)
+        self.assertEqual(len(mod.ALL), 51)
         self.assertEqual(mod.SEARCH_GTK, ("search-filter-p0", "search-filter-1024", "search-filter-1366", "search-filter-1600"))
         self.assertEqual(mod.PLUGIN_SCROLL, ("plugin-manager-scroll-1024", "plugin-manager-scroll-1366"))
         self.assertEqual(runner.SCENARIOS["search-filter-1024"]["width"], 1024)
@@ -435,6 +435,48 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(mod.select(["tests/test_e2e_runner_contract.py"]), mod.ALL)
 
 
+    def test_p1_4985_failed_gtk_stage_is_closed_and_never_raw_exception(self):
+        runner = (ROOT / "e2e/run.py").read_text(encoding="utf-8")
+        source = (ROOT / "e2e/reader_target_refresh_probe.py").read_text(encoding="utf-8")
+        assert "P1_4985_CLOSED_FAILURE_STAGE=" in runner
+        assert 'report_data.get("closed_failure_phase")' in runner
+        assert 'type(phase) is str and phase in closed_phases' in runner
+        assert '"profile_b", "profile_a", "finish"' in runner
+        assert '"closed_failure_phase"] = phase[0]' in source
+        assert '"reservation_commit"' in source
+        assert 'reserve_deadline[0] = monotonic() + 5.0' in source
+        assert 'if len(found) != 1 or not found[0].get_mapped():' in source
+        # A 1366px detail may put the secondary reservation action behind
+        # the real overflow menu; the E2E must open it before clicking.
+        assert 'found[0].get_parent() is getattr(bar, "overflow_box", None)' in source
+        assert 'bar.overflow_popover.popup()' in source
+        assert 'bar.overflow_button.get_mapped()' in source
+        assert "P1_4985_GTK_CLOSED_STAGE=" in source
+
+    def test_p1_4985_real_mainwindow_reader_target_refresh_at_1366_and_1600(self):
+        self.assertEqual(mod.READER_TARGET_GTK, (
+            "reader-target-refresh-1366", "reader-target-refresh-1600",
+        ))
+        self.assertEqual(mod.select([
+            "e2e/reader_target_refresh_probe.py",
+        ]), mod.READER_TARGET_GTK)
+        self.assertEqual(mod.select([
+            "src/cifereca/gui/reader_target_actions.py",
+        ]), mod.READER_TARGET_GTK)
+        self.assertEqual(mod.select([
+            "src/cifereca/gui/reader_page_controller.py",
+        ]), mod.READER_INSPECTION_GTK + mod.READER_TARGET_GTK)
+        source = (ROOT / "e2e/reader_target_refresh_probe.py").read_text(
+            encoding="utf-8",
+        )
+        for invariant in (
+            "MainWindow(", "select_key(\"reader-book\")",
+            'button.emit("clicked")', '"Chemin réservé"',
+            "Adw.ActionRow", "profile_b", "profile_a", "unknown",
+        ):
+            self.assertIn(invariant, source)
+        self.assertIn("no_plugins=True", source)
+
     def test_p1_6077_real_gtk_reader_inspection_is_a_scoped_and_honest_probe(self):
         self.assertEqual(mod.READER_INSPECTION_GTK, (
             "reader-usb-inspection-1024", "reader-usb-inspection-1366",
@@ -444,7 +486,12 @@ class SelectionTests(unittest.TestCase):
             "src/cifereca/gui/reader_page_controller.py",
             "e2e/reader_usb_inspection_probe.py",
         ):
-            self.assertEqual(mod.select([path]), mod.READER_INSPECTION_GTK)
+            self.assertEqual(
+                mod.select([path]),
+                mod.READER_INSPECTION_GTK + mod.READER_TARGET_GTK
+                if path.endswith("reader_page_controller.py")
+                else mod.READER_INSPECTION_GTK,
+            )
         probe = (ROOT / "e2e/reader_usb_inspection_probe.py").read_text(
             encoding="utf-8",
         )

@@ -211,24 +211,6 @@
       "rationale": "This AST anchor is inside backup_put, not Storage._migrate. It is a necessary input veto on a residual, non-productively called legacy writer surface, not an active Core acquisition producer."
     },
     {
-      "id": "site-7313c6ad37cfecdb7936e8bc",
-      "classification": "safety_guard_pending_contract",
-      "journey": "W1/v2 legacy backup mirror refuses canonical promotion of typed Kobo SourceReference",
-      "decision_group_id": "legacy-backup.w1-canonical-publication-veto",
-      "reachability": "legacy_only",
-      "productive_caller": "Storage._migrate on historical database upgrade and Storage.backup_put (legacy W1 entry) call Storage._mirror_backup_row after exact-row validation",
-      "effect": "Inside SQLite transaction, the Kobo SourceReference branch refuses synthesis/updating of legacy entitlements, acquisition ledger or local placement from v0.7 backup_items; an unrelated non-Kobo historical row can still use the legacy mirror",
-      "authority": "SourceReference A and canonical completed-delivery B are independent of the old three-coordinate backup key, which cannot attest account/borrower/branch",
-      "replacement_contract": "Versioned migration preserving the archive as untrusted historical data; one-way canonical A/B provenance, no old-row-as-right fallback. Retire non-Kobo legacy publishing separately after consumer proof",
-      "tests": [
-        "tests/test_core_p0_3196_w1_archive_only_cutover.py",
-        "tests/test_core_p0_3196_w5_passive_v2_migration.py",
-        "tests/test_core_p0_3196_w1_live_mirror_retired.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "This is a provider-named negative gate inside a mutating compatibility mirror, not a live Kobo purchase/loan decision. Removing it before generic migration could resurrect rights. Productive callsite is the historical Storage layer; supplier-specific runtime reachability not established by AST."
-    },
-    {
       "id": "site-d88574f6e28d059189c71da5",
       "classification": "safety_guard_pending_contract",
       "journey": "W1 legacy Kobo checkpoint transactional fence before archive upsert",
@@ -1221,6 +1203,38 @@
       "in_ast_metric": true,
       "original_site_id": "site-b4a6753e2f0ac2d6b78c0992",
       "retired_at_sha": "a4807403f58faf4911a706d71d6453595021af2f"
+    },
+    {
+      "id": "struct-w1-unreachable-typed-source-mirror-veto-retired",
+      "original": "Storage._mirror_backup_row contained a literal Kobo SourceReference veto after its archive_only return. Both productive Kobo entries had already been cut over: Storage._migrate v2→v3 skips Kobo archives entirely, and Storage.backup_put calls the mirror with archive_only=True after owner and completed-receipt collision checks.",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Retire only this unreachable supplier-specific predicate from the legacy mirror. Retain the v2→v3 Kobo archive skip, the archive_only return and all existing owner/canonical-receipt vetoes; preserve the non-Kobo compatibility writer until its consumers are cut over.",
+      "classification": "removed_unreachable_supplier_specific_w1_mirror_branch",
+      "evidence": "The sole runtime _mirror_backup_row callers are Storage._migrate and Storage.backup_put. v2→v3 migration continues for non-Kobo rows but skips Kobo before the call. The Kobo backup_put branch invokes archive_only=True; _mirror_backup_row returns before its historical canonical publication half. The source no longer contains a Kobo literal in that publishing half; AST regression test prevents reintroduction. SQLite tests check cold migration, metadata/retry archive-only semantics, per-profile owner conflicts and continued non-Kobo legacy mirroring. This retires a redundant dormant safety predicate, not an active writer or user-facing path.",
+      "tests": [
+        "tests/test_core_p0_3196_w1_archive_only_cutover.py",
+        "tests/test_core_p0_3196_w5_passive_v2_migration.py",
+        "tests/test_core_p0_3196_w1_live_mirror_retired.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6132",
+      "in_ast_metric": true,
+      "original_site_id": "site-7313c6ad37cfecdb7936e8bc",
+      "retired_at_sha": "2dbfdb6c3bf62de9036fc1891f9aeeadbccb773a"
+    },
+    {
+      "id": "struct-w1-completed-archive-metadata-marker-writer-retired",
+      "original": "Storage.backup_put(kobo) performed a persisted status/metadata SELECT and INSERT OR IGNORE into metadata for each legacy (credential,item) after the first complete/ok archive. That monotone marker previously prevented W1 from re-enabling canonical mirroring on a later retry after complete.",
+      "original_classification": "legacy_mutating_cutover",
+      "replacement": "Delete the obsolete per-archive completion marker key calculation, the metadata lookup, the former-status SELECT and the metadata INSERT entirely. Preserve the raw backup_items checkpoint, transaction, typed SourceReference refusal, exact owner/canonical-receipt validation and all existing marker rows for historical reads/rollback. Kobo backup_put always uses archive_only=True regardless of prior completion status.",
+      "classification": "retired_active_obsolete_w1_metadata_marker_writer",
+      "evidence": "Sole production literal usage and SQL writer for core.kobo.completed-legacy-archive.v1 was in Storage.backup_put, and no independent consumer is found. The current Kobo branch unconditionally returns from Storage._mirror_backup_row(...archive_only=True) after its bounded negative checks, with or without completion history. A SQLite BEFORE INSERT trigger now forbids any new obsolete marker while multiple first-complete, interrupted and retry status transitions persist in backup_items; canonical entities remain byte-for-byte unchanged. Older metadata rows survive untouched, and the non-Kobo compatibility mirror remains under its existing contracts.",
+      "tests": [
+        "tests/test_core_p0_3196_w1_archive_only_cutover.py",
+        "tests/test_core_p0_3196_w1_completed_archive_no_reprojection.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6136"
     }
   ],
   "guard_installations": [

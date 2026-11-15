@@ -299,3 +299,65 @@ def test_missing_file_after_directory_swap_is_unverified(
     assert row.sha256 is None and row.size is None
     # A replacement root or parent now exists, but was never pinned/attested.
     assert old_directory.is_dir()
+
+
+def test_selected_usb_root_with_symlinked_ancestor_is_unverified(tmp_path):
+    """No observation through an ancestor alias, even with a physical final root."""
+    physical = tmp_path / "physical"
+    root = physical / "reader"
+    root.mkdir(parents=True)
+    book = root / "book.epub"
+    book.write_bytes(b"private synthetic content")
+    alias = tmp_path / "aliased-parent"
+    alias.symlink_to(physical, target_is_directory=True)
+
+    result = observe_usb_files(alias / "reader", ("book.epub", "absent.epub"))
+    assert [row.status for row in result] == ["unverified", "unverified"]
+    assert all(row.sha256 is None and row.size is None for row in result)
+    assert book.read_bytes() == b"private synthetic content"
+
+
+def test_ancestor_swapped_to_symlink_of_same_pinned_root_is_unverified(
+    tmp_path, monkeypatch,
+):
+    """Even an alias to the *same inode* must revoke a mid-read USB observation.
+
+    Reopening only the last root component would wrongly mark this file present.
+    """
+    import os
+    import cifereca_storage_usb as usb
+
+    ancestor = tmp_path / "device-parent"
+    root = ancestor / "reader"
+    root.mkdir(parents=True)
+    book = root / "book.epub"
+    book.write_bytes(b"original synthetic USB bytes")
+    detached = tmp_path / "detached-parent"
+    real_read = os.read
+    swapped = False
+
+    def swap_ancestor(fd, limit):
+        nonlocal swapped
+        data = real_read(fd, limit)
+        if data and not swapped:
+            swapped = True
+            ancestor.rename(detached)
+            ancestor.symlink_to(detached, target_is_directory=True)
+        return data
+
+    monkeypatch.setattr(usb.os, "read", swap_ancestor)
+    result = usb.observe_usb_files(root, ("book.epub",))
+    assert swapped
+    assert result[0].status == "unverified"
+    assert result[0].sha256 is None and result[0].size is None
+    assert book.read_bytes() == b"original synthetic USB bytes"
+
+
+def test_selected_usb_root_dotdot_component_is_not_followed(tmp_path):
+    valid = tmp_path / "device"
+    valid.mkdir()
+    (valid / "book.epub").write_bytes(b"synthetic")
+    root = valid / ".." / "device"
+    result = observe_usb_files(root, ("book.epub",))
+    assert result[0].status == "unverified"
+    assert result[0].sha256 is None

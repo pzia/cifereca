@@ -1849,29 +1849,11 @@ class Storage:
             # refresh is not fresh provider A or a new CompletedDelivery B,
             # so the SQL publication half below is not admissible.
             return
-        # #3196 W1: a typed Kobo SourceReference may exist before canonical
-        # download/receipt, and the historical backup PK has no account or
-        # branch. The 0.7 writer may refresh its raw compatibility row, but
-        # cannot generate or update a parallel right, acquisition or local
-        # placement for an edition now owned by the canonical Core. Match the
-        # provider/credential/edition exactly; an alternate borrower is
-        # ambiguous, not authority to replay a legacy row.
-        if (
-            expected[0] == "kobo"
-            # On a v2/v0.7 migration snapshot, _mirror_backup_row runs
-            # *before* source_references exists. Keep legacy migration
-            # replayable; only test a table known to exist.
-            and (not migration or db.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' "
-                "AND name='source_references' LIMIT 1"
-            ).fetchone() is not None)
-            and db.execute(
-                "SELECT 1 FROM source_references WHERE provider_id='kobo' "
-                "AND credential_id=? AND edition_id=? LIMIT 1",
-                (expected[1], expected[3]),
-            ).fetchone() is not None
-        ):
-            return
+        # W1's Kobo archives never reach this publication half: the v2→v3
+        # importer skips them and backup_put uses archive_only=True after
+        # the same owner/receipt checks. The supplier-specific typed-source
+        # veto formerly here was unreachable. Keep generic historical
+        # projection for other providers until their cutover is proven.
         if projection_owned:
             entitlement_cursor = db.execute(
                 "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
@@ -2327,23 +2309,12 @@ class Storage:
             # BEGIN IMMEDIATE pins the typed-source decision to the same
             # SQLite write transaction as the legacy UPSERT below. A typed
             # source cannot be inserted between this check and that UPSERT.
-            # Other providers, and Kobo editions with no typed source,
-            # retain the historical writer until their recovery is migrated.
-            was_complete_kobo_archive = False
-            completed_archive_key = None
+            # Other providers retain their legacy mirror; untyped Kobo
+            # editions may update only their 0.7 archive and negative vetoes.
             if item.get("provider_id") == "kobo":
                 db.execute("BEGIN IMMEDIATE")
-                # The v0.7 row can move complete -> acquiring -> error.
-                # A single previous-status snapshot loses the historical
-                # complete transition after the first retry. Persist a
-                # monotone, private, per-legacy-PK archive marker instead.
-                completed_archive_key = (
-                    "core.kobo.completed-legacy-archive.v1."
-                    + hashlib.sha256(json.dumps([
-                        str(item.get("credential_id") or ""),
-                        str(item.get("item_id") or ""),
-                    ], ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
-                )
+                # A typed SourceReference owns this exact source: the 0.7
+                # archive is read-only, even before any legacy UPSERT.
                 if db.execute(
                     "SELECT 1 FROM source_references WHERE provider_id='kobo' "
                     "AND credential_id=? AND edition_id=? LIMIT 1",
@@ -2351,24 +2322,6 @@ class Storage:
                      str(item.get("item_id") or "")),
                 ).fetchone() is not None:
                     return
-                # W1 cutover: when an old Kobo receipt was ALREADY complete,
-                # later metadata refreshes are writes to a historical archive,
-                # not fresh independent supplier A/B delivery evidence.
-                # Snapshot this under the same BEGIN IMMEDIATE as the UPSERT,
-                # so another process cannot change its status between checks.
-                former = db.execute(
-                    "SELECT status FROM backup_items WHERE provider_id='kobo' "
-                    "AND credential_id=? AND item_id=? LIMIT 1",
-                    (str(item.get("credential_id") or ""),
-                     str(item.get("item_id") or "")),
-                ).fetchone()
-                was_complete_kobo_archive = bool(
-                    (former and former[0] in {"complete", "ok"})
-                    or db.execute(
-                        "SELECT 1 FROM metadata WHERE key=? LIMIT 1",
-                        (completed_archive_key,),
-                    ).fetchone()
-                )
             # The v0.7 checkpoint remains writable for legacy recovery,
             # but neither passive inventory nor active delivery may mirror
             # canonical A/B state. The legacy PK omits owner/account: reject
@@ -2411,25 +2364,10 @@ class Storage:
             )
             if backup_cursor.rowcount != 1:
                 raise ValueError("backup_projection_owner_conflict")
-            if completed_archive_key is not None and (
-                was_complete_kobo_archive
-                or str(item.get("status") or "pending") in {"complete", "ok"}
-            ):
-                # Commit atomically with the archive update and all owner
-                # checks below. Once complete, no later status may resurrect
-                # W1's positive projection; never clear this marker on retry.
-                db.execute(
-                    "INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)",
-                    (completed_archive_key, "archive_only_after_complete"),
-                )
-            # Keep the 0.7 compatibility projection and the generic 0.8 ledger
-            # in the same SQLite transaction. This makes Kobo immediately visible
-            # to the provider-neutral acquisition model without duplicating sync I/O.
-            # The UPSERT may have retained an already known account/identity,
-            # loan, strategy or attempt counter from a partial legacy patch.
-            # Hand off THAT merged row under the same write transaction. The
-            # raw input would manufacture a second NULL-account entitlement
-            # and could evade the canonical owner's collision guards.
+            # Hand off the persisted merged row, never the partial input:
+            # omitted account/identity/loan fields must not evade exact owner
+            # checks. Kobo ends at archive-only validation below; non-Kobo
+            # compatibility still writes the generic ledger separately.
             keys = ["provider_id", "credential_id", "item_id", *self._backup_keys()]
             persisted = db.execute(
                 "SELECT " + ",".join(keys) + " FROM backup_items "
@@ -2440,22 +2378,13 @@ class Storage:
             ).fetchone()
             if persisted is None:
                 raise ValueError("backup_projection_handoff_missing")
-            # #3196 W1: a legacy Kobo row with no proven borrower or profile
-            # is NOT eligible to mint a canonical entitlement, acquisition,
-            # Artifact or Placement. The old backup PK omits borrower and an
-            # unbound row is an archive/recovery hint only. Source-bound
-            # historical Kobo flows retain their mirror until W2/D1-D5 are
-            # migrated together; otherwise reconciliation and library UI
-            # lose their last 0.7 evidence.
-            #
-            # This is checked on the persisted merged row: a partial patch
-            # with omitted owner/account must not demote an earlier exact
-            # owner in the backup projection.
+            # The old backup PK omits borrower/account. A partial patch
+            # must not demote the stored owner before archive collision checks.
             merged = dict(zip(keys, persisted))
             # #3196 W1 final cutover: Kobo 0.7 backup_items is an archive,
             # never an independent supplier entitlement or completed delivery.
-            # Preserve the raw checkpoint, monotone archive marker, exact
-            # owner collisions and bounded canonical-receipt validation, but
+            # Preserve the raw checkpoint, exact owner collision vetoes
+            # and bounded canonical-receipt validation, but
             # do not publish entitlements, acquisition_ledger, Artifact,
             # Placement or local-presence facts from any Kobo backup status.
             # This also covers legacy rows with no typed SourceReference:
