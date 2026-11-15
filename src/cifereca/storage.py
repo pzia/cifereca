@@ -1849,11 +1849,11 @@ class Storage:
             # refresh is not fresh provider A or a new CompletedDelivery B,
             # so the SQL publication half below is not admissible.
             return
-        # W1's Kobo archives never reach this publication half: the v2→v3
-        # importer skips them and backup_put uses archive_only=True after
-        # the same owner/receipt checks. The supplier-specific typed-source
-        # veto formerly here was unreachable. Keep generic historical
-        # projection for other providers until their cutover is proven.
+        # No live W1 backup_put path reaches this publication half:
+        # archive_only=True is mandatory for EVERY provider. Only historical
+        # SQLite v2→v3 import of non-Kobo backup rows still executes this
+        # compatibility projection; that independent, versioned migration
+        # remains explicitly classified as a legacy writer in #5975.
         if projection_owned:
             entitlement_cursor = db.execute(
                 "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
@@ -1893,8 +1893,8 @@ class Storage:
         # guard is inside backup_put's transaction, after the exact owner
         # check, so an incompatible scope still fails atomically.
         #
-        # The active canonical case is left on the compatibility path until
-        # the Kobo writer moves to the v2 convergence executor (#3196).
+        # Historical schema-v3 import may still project an old generic
+        # receipt; live W1 archive replay has already returned above.
         if (existing_right is not None and not projection_owned
                 and (existing_right[8] != "active"
                      or cls._generic_status(row.get("status")) in {"pending", "discovered"})):
