@@ -18,7 +18,7 @@ import zipfile
 
 from .book_cover_projection import CoverDocumentScope
 from ..epub_metadata import (
-    MAX_ENTRIES, _bounded_directory, _image_kind, _member,
+    MAX_ENTRIES, MAX_IMAGE, _bounded_directory, _image_kind, _member,
     _publish_cover, _read, cover_cache_dir, valid_cached_cover_path,
 )
 
