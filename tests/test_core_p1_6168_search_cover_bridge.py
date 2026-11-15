@@ -250,3 +250,68 @@ def test_actual_global_search_renderer_uses_core_decision_after_row_rebuild():
     window._render_search_results()
     rows = window.search_page.show_rows.call_args.args[0]
     assert len(rows) == 1 and rows[0].thumbnail_url is None
+
+
+def test_repeated_exact_holdings_are_cache_hits_not_new_n2_generations():
+    source = item()
+    bridge = SearchCoverBridge()
+    assert bridge.publish(
+        source, detail(source), identity_id=IDENTITY, context=CONTEXT,
+    )
+    revision = bridge._revision
+    cache = bridge._cache
+    events = []
+    from cifereca.gui.search_cover_bridge import _scope
+    scope = _scope(source, IDENTITY)
+    handle = cache.subscribe(scope, events.append)
+    try:
+        # List/detail repaint and reconstructed DTO should be passive hits.
+        for row in (source, replace(source), source):
+            assert bridge.publish(
+                row, detail(row), identity_id=IDENTITY, context=CONTEXT,
+            )
+        assert bridge._revision == revision
+        assert events == []
+        assert bridge.selected_url(
+            replace(source), identity_id=IDENTITY, context=CONTEXT,
+        ) == COVER
+
+        # An account/source/search epoch change may have the same URI, but
+        # cannot reuse an old decision; it must publish a new generation.
+        changed = (CONTEXT[0], CONTEXT[1], CONTEXT[2] + 1, CONTEXT[3])
+        assert bridge.publish(
+            source, detail(source), identity_id=IDENTITY, context=changed,
+        )
+        assert bridge._revision == revision + 1
+        assert [event.kind for event in events] == ["refresh", "resolved"]
+        assert bridge.selected_url(
+            source, identity_id=IDENTITY, context=CONTEXT,
+        ) is None
+    finally:
+        handle.cancel()
+
+
+def test_expired_holdings_decision_is_refreshed_even_for_same_cover():
+    from cifereca.core.book_cover_cache import CoverDecisionCache
+
+    source = item()
+    bridge = SearchCoverBridge()
+    clock = [0.0]
+    bridge._cache = CoverDecisionCache(
+        max_scopes=128, selected_ttl=1, clock=lambda: clock[0],
+    )
+    assert bridge.publish(
+        source, detail(source), identity_id=IDENTITY, context=CONTEXT,
+    )
+    first_revision = bridge._revision
+    clock[0] = 2.0
+    assert bridge.selected_url(
+        source, identity_id=IDENTITY, context=CONTEXT,
+    ) is None
+    assert bridge.publish(
+        source, detail(source), identity_id=IDENTITY, context=CONTEXT,
+    )
+    assert bridge._revision == first_revision + 1
+    assert bridge.selected_url(
+        source, identity_id=IDENTITY, context=CONTEXT,
+    ) == COVER
