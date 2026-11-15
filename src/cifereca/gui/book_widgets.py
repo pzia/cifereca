@@ -286,7 +286,6 @@ class CoverView(Gtk.Overlay):
             self._set_logical_size(self._width, self._height)
             self.picture.set_paintable(texture)
             self.placeholder.set_visible(False)
-            loader.note_ui_applied()
             applied = True
         except Exception:
             loader.note_ui_failed()
@@ -313,6 +312,8 @@ class CoverView(Gtk.Overlay):
             self._show_missing()
             loader.note_ui_stale()
             return False
+        if applied:
+            loader.note_ui_applied()
         if (applied and generation == self._generation
                 and self._loader is loader and self._url):
             # A 'resolved' source or cache hit is NOT a GTK paint. Emit only
