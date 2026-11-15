@@ -252,6 +252,11 @@ def main() -> int:
 
     def await_condition(label, predicate, then, *, timeout=11.0):
         stages.append(label)
+        # Persist only the probe's own fixed checkpoint before starting the
+        # asynchronous GTK wait. A native exit can otherwise leave no failed
+        # callback and no last_stage to diagnose safely in public CI.
+        report["last_stage"] = label
+        save()
         deadline = monotonic() + timeout
         def poll():
             if predicate():
