@@ -59,7 +59,7 @@ def test_linked_borrower_requires_explicit_adept_binding(tmp_path):
         service.close()
 
 
-def test_explicit_binding_selects_borrower_not_connection_identity(tmp_path):
+def test_historical_binding_is_not_live_borrower_authority(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
         saved = seed_historical_adept_binding(service, 
@@ -71,11 +71,11 @@ def test_explicit_binding_selects_borrower_not_connection_identity(tmp_path):
         assert saved["confirmed_by"] == "explicit"
         assert service._paris_adept_identity_for_loan(
             loan, connection_identity_id="alice",
-        ) == ("bob", None)
+        ) == (None, "adept_borrower_binding_required")
         service.current_identity = service.identity_by_id("alice")
         assert service._paris_adept_identity_for_loan(
             loan, connection_identity_id="alice",
-        ) == ("bob", None)
+        ) == (None, "adept_borrower_binding_required")
     finally:
         service.close()
 
@@ -155,7 +155,7 @@ def test_second_connection_same_linked_borrower_needs_its_own_grant(tmp_path):
         )
         assert service._paris_adept_identity_for_loan(
             second_loan, connection_identity_id="bob",
-        ) == ("bob", None)
+        ) == (None, "adept_borrower_binding_required")
     finally:
         service.close()
 
@@ -217,8 +217,27 @@ def test_acsm_fulfillment_uses_borrower_profile_and_persists_return_binding(tmp_
     try:
         from dataclasses import replace
         loan = replace(loan, source_account_id=account_id)
-        seed_historical_adept_binding(service, 
+        seed_historical_adept_binding(service,
             credential_id="alice-paris", account_id=account_id,
+            borrower_identity_id="bob", confirmed=True,
+        )
+        # The historical row remains readable, but acquisition needs an
+        # independent and explicit v16 grant for the canonical account.
+        canonical_account = account_id if account_id == "linked-123" else "primary"
+        with service.storage._lock, service.storage._connect() as db:
+            connection_id = db.execute(
+                "SELECT connection_id FROM provider_connections "
+                "WHERE provider_id='paris' AND credential_id='alice-paris'"
+            ).fetchone()[0]
+        service.storage.provider_account_put({
+            "connection_id": connection_id, "provider_id": "paris",
+            "credential_id": "alice-paris", "identity_id": "alice",
+            "account_id": canonical_account,
+            "is_primary": canonical_account == "primary",
+        })
+        service.bind_adept_borrower_grant(
+            provider_id="paris", credential_id="alice-paris",
+            account_id=canonical_account,
             borrower_identity_id="bob", confirmed=True,
         )
         service._persist_active_loans("alice", [loan])
@@ -284,7 +303,7 @@ def test_primary_exception_requires_confirmation_and_preserves_normal_profile(tm
         )
         assert service._paris_adept_identity_for_loan(
             loan, connection_identity_id="alice"
-        ) == ("bob", None)
+        ) == (None, "adept_borrower_binding_required")
         assert service.storage.adept_profile_binding_get("identity", "alice") == "alice-profile"
         service.storage.adept_profile_binding_set("identity", "bob", "changed")
         assert service._paris_adept_identity_for_loan(
