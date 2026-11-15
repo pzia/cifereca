@@ -28,6 +28,22 @@ class PossibleBorrowLender:
     supplier_eligibility: Literal["not_verified"] = "not_verified"
     executable: bool = False
 
+    def __post_init__(self) -> None:
+        # Future UI callers must never reinterpret a locally found account
+        # as provider permission or an executable loan admission.
+        account, notice = self._account, self._notice
+        if (self.executable is not False
+                or self.supplier_eligibility != "not_verified"
+                or type(self.label) is not str
+                or not 0 < len(self.label) <= 80
+                or not self.label.isprintable()
+                or type(account) is not Account
+                or type(notice) is not SearchResult
+                or self.lender_identity_id != account.identity_id
+                or account.is_primary is not True
+                or borrow_claim_key(account, notice) is None):
+            raise ValueError("invalid_possible_borrow_lender")
+
 
 def discover_possible_borrow_lenders(
     service: Any, *, requesting_identity_id: str,
@@ -82,6 +98,17 @@ def discover_possible_borrow_lenders(
             if len(matching) != 1:
                 continue
             account = matching[0]
+            # The session key is provider+credential, not profile. If this
+            # key is registered to another profile too, the apparent
+            # lender session cannot be safely attributed to A.
+            if any(
+                type(other) is not Account
+                or (other.provider_id == provider
+                    and other.credential_id == credential
+                    and other.identity_id != account.identity_id)
+                for other in accounts
+            ):
+                continue
             route = (
                 account.identity_id, provider, credential, account.unique_id,
                 item.docbase, item.record_id, item.source_collection or "",
