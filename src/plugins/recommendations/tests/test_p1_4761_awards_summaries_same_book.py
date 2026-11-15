@@ -23,7 +23,7 @@ def book():
         "author": "Mila Fictive",
         "source_provider": "fixture",
         "metadata": {
-            "awards": [{"label": "Prix des Étoiles"}],
+            "awards": ["Prix des Étoiles"],
             "prizes": ["Grande Aurore"],
             "literary_prizes": ["Plume cosmique"],
             "description": "Une traversée dans la brume du fjord.",
