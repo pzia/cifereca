@@ -232,6 +232,7 @@ def completed_usb_managed_receipts(
                        != (identity_id, device_id, fingerprint)
                     or (pin.target_relative_path, pin.sha256, pin.size)
                        != (consent.target_relative_path, digest, entry.size)
+                    or pin.staged_name != ".cifereca-usb-" + operation_id + ".part"
                     or type(entry.size) is not int or entry.size <= 0
                     or type(pin.stage_version) is not tuple
                     or len(pin.stage_version) != 5
