@@ -183,7 +183,7 @@ def test_two_same_tier_covers_are_ambiguous_without_an_arbitrary_tie_break(gatew
     "file:///home/user/private-cover.png",
     "http://covers.example.org/cover.jpg",
     "https://127.0.0.1/cover.jpg",
-    "https://covers.example.org/?size=1;token=hidden",
+    "ftp://covers.example.org/not-a-safe-image.jpg",
     1234,
     ["https://covers.example.org/ok.jpg", "file:///etc/passwd"],
 ])
