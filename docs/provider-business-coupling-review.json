@@ -1424,6 +1424,19 @@
         "tests/test_private_inventory_binding.py"
       ],
       "pr": "#6177"
+    },
+    {
+      "id": "guard-existing-loan-exact-primary-alias-cardinality",
+      "journey": "Existing loan borrower resolution before source-bound loan action and historical return inspection",
+      "classification": "safety_guard_pending_contract",
+      "effect": "The registered provider's read-only descriptor defines whether a primary account with empty upstream ID can match an alias; ambiguous alias-vs-literal account and duplicate exact borrowers refuse without first-row-wins. Provider and credential always match. No rights or provider method are inferred.",
+      "remaining_debt": "The unregistered/no-registry historical LibraryService ABI keeps literal 'primary' as a non-authorizing compatibility lookup; downstream connected session/action lease and owner proofs remain mandatory. Other source-specific ADEPT/loan safety branches and writer migrations remain separately tracked; this guard is not credited as their retirement.",
+      "tests": [
+        "tests/test_core_p0_5975_source_declared_loan_borrower_alias.py",
+        "tests/test_loan_borrower_context.py",
+        "tests/test_provider_plugins.py"
+      ],
+      "pr": "#pending"
     }
   ],
   "retained_legacy_migrations": [
