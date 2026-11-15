@@ -1681,6 +1681,22 @@ class Storage:
                 raise
             version = 17
 
+        # Forward-compatible strengthening of v17: add this idempotent
+        # trigger even to already upgraded databases. The tombstone is an
+        # invariant of the v16 grant row's physical deletion, not a policy
+        # branch in a caller. Historical v15 rows remain readable.
+        db.execute("""
+            CREATE TRIGGER IF NOT EXISTS trg_adept_grant_paris_retire_on_delete
+            AFTER DELETE ON adept_borrower_grants
+            WHEN OLD.provider_id='paris'
+            BEGIN
+                INSERT OR IGNORE INTO paris_adept_grant_retirements
+                    (credential_id, account_id, retired_at)
+                VALUES (OLD.credential_id, OLD.account_id,
+                        CAST(strftime('%s','now') AS INTEGER));
+            END
+        """)
+
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
         raw = "\x1f".join(str(part or "") for part in parts).encode("utf-8", "surrogatepass")
@@ -3196,22 +3212,15 @@ class Storage:
             provider_id=provider_id, credential_id=credential_id,
             account_id=account_id,
         )
+        # The v17 SQL trigger handles the Paris tombstone atomically for
+        # *all* deletion paths, including indirect connection/profile cleanup
+        # and external SQLite callers, not only this public API.
         with self._lock, self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            revoked = db.execute(
+            db.execute(
                 "DELETE FROM adept_borrower_grants WHERE provider_id=? "
                 "AND credential_id=? AND account_id=?",
                 scope,
             )
-            # A v16 revocation must never reactivate an archived Paris v15
-            # grant for the same source. Keep that row readable as historical
-            # evidence, but retire its *authority* in the same transaction.
-            if scope[0] == "paris" and revoked.rowcount:
-                db.execute(
-                    "INSERT OR IGNORE INTO paris_adept_grant_retirements "
-                    "(credential_id,account_id,retired_at) VALUES (?,?,?)",
-                    (scope[1], scope[2], int(time.time())),
-                )
 
     def paris_borrower_adept_binding_put(
         self, *, credential_id: str, account_id: str, borrower_identity_id: str,
