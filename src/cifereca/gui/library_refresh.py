@@ -139,19 +139,18 @@ def refresh_recent(self, control: Gtk.Widget | None = None) -> None:
     self._recent_refresh_pending = True
     self._recent_refresh_generation = getattr(self, "_recent_refresh_generation", 0) + 1
     request_generation = self._recent_refresh_generation
-    identity = self.service.current_identity
+    service = self.service
+    identity = service.current_identity
     identity_id = identity.identity_id if identity is not None else None
     generation = self._identity_context_generation
     def work() -> list[dict[str, Any]]:
-        # No service fetch for a queued request invalidated by a newer
-        # request, profile switch or MainWindow close (#981).
-        if (getattr(self, "_closed", False)
-                or request_generation != self._recent_refresh_generation
-                or not self._identity_request_current(identity_id, generation)):
-            return []
-        return self.service.recent_acquisitions(identity_id=identity_id)
+        # This already-admitted recent/SQLite read is scoped to the captured
+        # Core instance and identity. UI navigation or window teardown is
+        # not source revocation; only GTK delivery belongs to those guards.
+        # The Core read accepts an explicit identity and no supplier GET.
+        return service.recent_acquisitions(identity_id=identity_id)
     def ok(items: list[dict[str, Any]]) -> None:
-        if (getattr(self, "_closed", False) or
+        if (getattr(self, "_closed", False) or self.service is not service or
                 request_generation != self._recent_refresh_generation):
             return
         self._recent_refresh_pending = False
@@ -161,7 +160,7 @@ def refresh_recent(self, control: Gtk.Widget | None = None) -> None:
         self._show_recent_entries(items)
         self._recent_loaded_generation = generation
     def err(exc: BaseException) -> None:
-        if (getattr(self, "_closed", False) or
+        if (getattr(self, "_closed", False) or self.service is not service or
                 request_generation != self._recent_refresh_generation):
             return
         self._recent_refresh_pending = False
