@@ -10,6 +10,7 @@ import time
 
 from .detail_model import book_detail_presentation
 from .reader_library_projection import project_reader_library
+from .local_detail_cover import exact_local_detail_cover
 from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 from .recent_time import format_recent_timestamp
 
@@ -387,13 +388,25 @@ def reader_selected(window, row) -> None:
         rows.append(("Chemin réservé", item.target_relative_path))
         if item.target_format is not None:
             rows.append(("Format prévu", item.target_format.upper()))
-    page.detail.show_presentation(book_detail_presentation(
+    presentation = book_detail_presentation(
         title=item.title,
         subtitle=item.author,
         thumbnail=item.thumbnail_url,
         badges=(),
         section_rows=[("Liseuse", rows)],
-    ))
+    )
+    cover_evidence = exact_local_detail_cover(
+        getattr(window, "_reader_source_items", {}).get(row.key),
+        active_identity_id=identity_id,
+        artifact_id=item.artifact_id,
+        placement_id=item.placement_id,
+    )
+    if cover_evidence is None:
+        page.detail.show_presentation(presentation)
+    else:
+        page.detail.show_local_presentation(
+            presentation, cover_evidence=cover_evidence,
+        )
     # A dry-run is a temporary observation of an exact list snapshot. It is
     # neither an instruction to deliver/remove nor a persistent presence
     # indicator. Filter/profile/device refresh clears it atomically.

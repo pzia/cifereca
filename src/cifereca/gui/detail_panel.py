@@ -68,6 +68,9 @@ class DetailPanel(Gtk.Box):
         # Exact last rendered remote Search detail; never an authorization cache.
         self._rendered_search_detail = None
         self._pending_action_focus_key = ""
+        # Used only during one synchronous local-detail render. Never a
+        # profile-wide association or secondary documentary cache.
+        self._next_cover_evidence = None
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_vexpand(True)
         self.action_scroll = AdaptiveActionBar(
@@ -117,6 +120,36 @@ class DetailPanel(Gtk.Box):
         status.set_vexpand(True)
         self._append_content(status)
 
+    def _bind_cover(
+        self, cover: CoverView, thumbnail: str | None, *,
+        cover_evidence=None,
+    ) -> None:
+        """Only an attested N1 source can select the shared N2/N3 path.
+
+        Do not downgrade a proved embedded EPUB to a warm supplier URL if
+        the scoped Core evidence was invalidated or N3 cannot materialize it.
+        The legacy URL path applies only when no Core proof was supplied.
+        """
+        if cover_evidence is None:
+            cover.bind_url(self.window.covers, thumbnail, priority=0)
+            return
+        from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
+        from .local_cover_adapter import LocalCoverEvidenceAdapter
+        from .document_cover_service import DocumentCoverService
+
+        adapter = getattr(self.window, "local_cover_adapter", None)
+        service = getattr(self.window, "document_covers", None)
+        if (type(cover_evidence) is not VerifiedLocalCoverEvidence
+                or type(adapter) is not LocalCoverEvidenceAdapter
+                or type(service) is not DocumentCoverService):
+            cover.bind_url(self.window.covers, None, priority=0)
+            return
+        try:
+            document = adapter.register(service, cover_evidence)
+            cover.bind_document(service, document, variant="detail", priority=0)
+        except (TypeError, ValueError, RuntimeError):
+            cover.bind_url(self.window.covers, None, priority=0)
+
     def _cover_and_title(
         self,
         title: str,
@@ -133,7 +166,11 @@ class DetailPanel(Gtk.Box):
         cover.set_halign(Gtk.Align.START)
         cover.set_valign(Gtk.Align.START)
         header.append(cover)
-        cover.bind_url(self.window.covers, thumbnail, priority=0)
+        evidence = getattr(self, "_next_cover_evidence", None)
+        if evidence is None:
+            cover.bind_url(self.window.covers, thumbnail, priority=0)
+        else:
+            self._bind_cover(cover, thumbnail, cover_evidence=evidence)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.START)
@@ -566,6 +603,26 @@ class DetailPanel(Gtk.Box):
                     break
         if trace is not None:
             trace.record("actions", started)
+
+    def show_local_presentation(
+        self, presentation: UiBookDetailPresentation, *,
+        cover_evidence, description: object | None = None,
+    ) -> None:
+        """Render a Core-attested local book through the unchanged UI facade.
+
+        The temporary packet is consumed synchronously by _cover_and_title;
+        it is cleared on exceptions and never reused by a different book.
+        """
+        if cover_evidence is None:
+            self.show_presentation(presentation, description=description)
+            return
+        if getattr(self, "_next_cover_evidence", None) is not None:
+            raise RuntimeError("nested exact local cover render")
+        self._next_cover_evidence = cover_evidence
+        try:
+            self.show_presentation(presentation, description=description)
+        finally:
+            self._next_cover_evidence = None
 
     def show_presentation(
         self,

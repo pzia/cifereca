@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from .local_book_detail_sections import local_book_detail_sections
 from .detail_selection_perf import current_detail_trace
+from .local_detail_cover import exact_local_detail_cover
 
 
 def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_presentation, detail_language, document_links) -> None:
@@ -74,7 +75,19 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
     )
     if trace is not None:
         trace.record("projection", projection_started)
-    detail.show_presentation(presentation, description=description)
+    # The owner's exact Core Artifact+Placement proof is the ONLY way to
+    # adopt the shared DocumentRef-first cover path. A global foreign
+    # bibliography never inherits A's private EPUB/source association.
+    cover_evidence = (
+        exact_local_detail_cover(item, active_identity_id=active)
+        if not foreign else None
+    )
+    if cover_evidence is None:
+        detail.show_presentation(presentation, description=description)
+    else:
+        detail.show_local_presentation(
+            presentation, description=description, cover_evidence=cover_evidence,
+        )
     window._add_local_book_actions(detail,item)
     if not foreign:
         # Preserve original action ordering for current-profile details.
