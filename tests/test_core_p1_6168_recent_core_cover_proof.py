@@ -137,6 +137,7 @@ def test_duplicate_recent_display_key_keeps_rows_but_revokes_book_join(prepared)
     assert not hasattr(visual[0], "_cover_document_ref")
     assert not hasattr(visual[1], "_cover_document_ref")
     assert [row.args[5] for row in visual] == [None, None]
+    assert all(getattr(row, "_recent_ambiguous_key", False) for row in visual)
 
 
 def test_rows_without_exact_metadata_remain_backward_compatible(prepared):
