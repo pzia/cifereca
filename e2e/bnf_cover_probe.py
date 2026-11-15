@@ -214,6 +214,7 @@ def main() -> int:
     started = monotonic()
     original_client = [None]
     embedded_file = [None]
+    late_cover_row = [None]
 
     def save():
         report["duration_seconds"] = round(monotonic() - started, 2)
@@ -670,6 +671,98 @@ def main() -> int:
         capture("10-bnf-embedded-over-valid-supplier-cover")
         assert len(image_gets) == 2, "Strong local proof must not fetch again"
         report["checks"]["embedded_local_over_valid_supplier_in_real_gtk"] = True
+        # #4979: the actual Library callback may arrive AFTER the loan list.
+        # Verify that the visible list repaints without a second loan fetch,
+        # not merely that the on-click detail sees the new Placement.
+        later(150, begin_late_library_loan_cover)
+
+    def begin_late_library_loan_cover():
+        from copy import copy
+        window = app_window[0]
+        original = next(loan for loan in window.service.last_loans
+                        if loan.record_id == RESOURCES[0])
+        missing = copy(original)
+        missing.thumbnail_url = None
+        previous = window._loan_cover_projection
+        assert len(previous[2]) == 2
+        local_row = previous[2][1]
+        assert local_row["metadata"]["cover_resolution"]["tier"] == "embedded"
+        late_cover_row[0] = local_row
+        window._loan_cover_projection = (previous[0], previous[1], ())
+        window._library_entries_cache = []
+        window._populate_loans([
+            missing if x is original else x for x in window.service.last_loans
+        ])
+        # Before the next Library delivery the exact loan has no image in
+        # its GTK model; no manual image/title/ISBN fallback is permitted.
+        assert any(
+            window.loan_page.store.get_item(i).thumbnail_url is None
+            and window.loan_page.store.get_item(i).key == loan_source_key(missing)
+            for i in range(window.loan_page.store.get_n_items())
+        )
+        later(200, deliver_late_library_loan_cover)
+
+    def deliver_late_library_loan_cover():
+        from cifereca.core.loan_source_identity import loan_source_key
+        window = app_window[0]
+        current = next(loan for loan in window.service.last_loans
+                       if loan.record_id == RESOURCES[0])
+        local_row = late_cover_row[0]
+        assert local_row is not None
+        # Supply a complete enough canonical Library row for the real GTK
+        # Library renderer; cover proof stays Core-attested and loan-scoped.
+        published = {
+            **local_row,
+            "key": "artifact:synthetic-embedded-artifact",
+            "title": current.title, "author": current.author,
+            "provider_id": current.source_provider,
+            "item_id": current.record_id,
+            "state": "local", "media_format": "EPUB",
+        }
+        assert getattr(window, "_library_all_profiles", False) is not True
+        window._show_library_entries([published])
+        embedded = published["thumbnail_url"]
+        assert any(
+            window.loan_page.store.get_item(i).thumbnail_url == embedded
+            and window.loan_page.store.get_item(i).key == loan_source_key(current)
+            for i in range(window.loan_page.store.get_n_items())
+        )
+        await_condition(
+            "late_library_loan_list_cover",
+            lambda: any(
+                isinstance(cover, CoverView) and cover._url == embedded
+                and cover.get_mapped()
+                and cover.picture.get_paintable() is not None
+                and not cover.placeholder.get_visible()
+                for cover in walk(window.loan_page.listview)
+            ),
+            select_late_library_loan_detail,
+        )
+
+    def select_late_library_loan_detail():
+        from cifereca.core.loan_source_identity import loan_source_key
+        window = app_window[0]
+        current = next(loan for loan in window.service.last_loans
+                       if loan.record_id == RESOURCES[0])
+        rows = [window.loan_page.store.get_item(i)
+                for i in range(window.loan_page.store.get_n_items())]
+        index = next(i for i, row in enumerate(rows)
+                     if row.key == loan_source_key(current))
+        window.loan_page.selection.set_selected(index)
+        embedded = late_cover_row[0]["thumbnail_url"]
+        await_condition(
+            "late_library_loan_detail_cover",
+            lambda: bool(selected_loan_cover())
+            and selected_loan_cover()[0].get_mapped()
+            and selected_loan_cover()[0]._url == embedded
+            and selected_loan_cover()[0].picture.get_paintable() is not None,
+            finish_late_library_loan_cover,
+        )
+
+    def finish_late_library_loan_cover():
+        capture("11-bnf-late-library-loan-list-and-detail")
+        assert len(image_gets) == 2, "Late local cover must not initiate GET"
+        report["checks"]["late_library_repaints_real_gtk_loan_list"] = True
         report["status"] = "PASS"
         result[0] = 0
         save()
