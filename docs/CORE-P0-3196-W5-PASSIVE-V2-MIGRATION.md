@@ -1,5 +1,21 @@
 # Core P0 #3196 — W5 : import SQLite v2→v3 des états Kobo passifs
 
+> **Mise à jour #6152 (15/11/2026) — contrat actuel, tous fournisseurs.**
+> Le v2→v3 est maintenant une **migration SQL de schéma uniquement** :
+> elle conserve chaque `backup_items` historique, sans convertir aucun
+> fournisseur (Kobo, Paris, Numilog, inconnu) en `entitlements`,
+> `acquisition_ledger`, `artifacts`, `placements` ou `catalog_entries`.
+> Aucun indice de reprise, statut `complete`, SHA ni chemin non vérifié ne
+> peut constituer une attestation A ou B. Le mécanisme est sous savepoint :
+> un échec de version laisse l'ancien v2 intact, et un nouveau démarrage
+> reprend sans importer de droits. Test 4 fournisseurs × 4 statuts,
+> conservation SQL de l'archive et réouverture. La suite du document décrit
+> **l'ancienne coupure partielle** ; la phrase « autres fournisseurs
+> inchangés » n'est plus valable à partir de #6152. La migration historique
+> Config 0.8.1 et la réparation d'identités SQLite v5 restent distinctes.
+> Aucun fichier utilisateur ni ligne d'archive n'est supprimé.
+
+
 La migration historique vers le ledger générique 0.8 appelait
 `_mirror_backup_row` pour **tous** les `backup_items` antérieurs.
 Ainsi, même un livre explicitement archivé par Kobo ou un `pending`
