@@ -27,6 +27,10 @@ class PublicBookMasterDetailView:
     def widget(self):
         return self._page
 
+    def bind_local_filter_focus(self, callback) -> None:
+        """Delegate Ctrl+F to the local controls owned by this plugin page."""
+        self._page.bind_local_filter_focus(callback)
+
     def append_toolbar(self, widget: object) -> None:
         self._page.toolbar.append(widget)
 
