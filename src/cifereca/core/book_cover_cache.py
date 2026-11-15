@@ -1,0 +1,308 @@
+"""Exact-scope N2 cover-decision cache and invalidation notifications (#6168).
+
+N1 owns admissibility and provenance; N2 caches ONLY N1 decisions. N3
+CoverLoader owns bytes and resized previews; no URL fetch, EPUB scan or
+filesystem I/O happens here. Producers must call invalidate/invalidate_many
+when their catalogue, account epoch, Artifact, Placement, OriginLink, loan
+or evidence changes. A cache hit alone is NOT evidence of identity linkage.
+
+Subscriptions are synchronous, thread-agnostic Core notifications: the GTK
+adapter MUST dispatch its presentation update on the GTK main context and
+check SourceKey / generation when handling the event.
+"""
+from __future__ import annotations
+
+from collections import OrderedDict
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
+import logging
+from threading import Lock
+import time
+from typing import Literal
+
+from .book_cover_projection import (
+    CoverDocumentScope, ResolvedBookCover, resolve_book_cover,
+)
+from .covers import CoverCandidate
+
+CoverChangeKind = Literal["refresh", "resolved", "invalidated"]
+CoverInvalidationCause = Literal[
+    "catalogue_changed", "account_epoch_changed", "identity_changed",
+    "artifact_changed", "placement_changed", "origin_link_changed",
+    "loan_changed", "entitlement_changed", "evidence_changed",
+]
+_LOG = logging.getLogger("cifereca")
+
+
+@dataclass(frozen=True, slots=True)
+class CoverCacheToken:
+    scope: CoverDocumentScope
+    revision: int
+    generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class CoverDecisionChange:
+    scope: CoverDocumentScope
+    revision: int
+    generation: int
+    kind: CoverChangeKind
+    decision: ResolvedBookCover | None = None
+    cause: CoverInvalidationCause | None = None
+
+
+@dataclass(slots=True)
+class _Slot:
+    token: CoverCacheToken
+    decision: ResolvedBookCover | None = None
+    expires_at: float = 0.0
+
+
+class CoverSubscription:
+    """Cancellation is idempotent; no callbacks are executed while locked."""
+
+    def __init__(self, owner: CoverDecisionCache, scope: CoverDocumentScope, key: int):
+        self._owner = owner
+        self._scope = scope
+        self._key = key
+
+    def cancel(self) -> None:
+        owner = self._owner
+        if owner is None:
+            return
+        self._owner = None
+        owner._unsubscribe(self._scope, self._key)
+
+
+class CoverDecisionCache:
+    """Bounded in-memory decisions; exact-scope CAS rejects stale completions.
+
+    A caller starts one source snapshot with begin(...). It publishes ONLY
+    with that token. A newer begin or invalidation revokes the old token, even
+    when a late callback has a visually identical URI. Revision and generation
+    are not inferred from UI navigation; they are supplied by the producer.
+    """
+
+    def __init__(
+        self, *, max_scopes: int = 2048, max_subscribers: int = 4096,
+        selected_ttl: float = 900.0, missing_ttl: float = 30.0,
+        ambiguous_ttl: float = 15.0, pending_ttl: float = 2.0,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        if (type(max_scopes) is not int or not 1 <= max_scopes <= 20000
+                or type(max_subscribers) is not int
+                or not 1 <= max_subscribers <= 50000):
+            raise ValueError("invalid cover cache capacity")
+        for ttl in (selected_ttl, missing_ttl, ambiguous_ttl, pending_ttl):
+            if (type(ttl) not in (int, float) or not 0 < ttl <= 86400
+                    or not float("-inf") < ttl < float("inf")):
+                raise ValueError("invalid cover decision TTL")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
+        self._max_scopes = max_scopes
+        self._max_subscribers = max_subscribers
+        self._ttl = {
+            "selected": float(selected_ttl),
+            "missing": float(missing_ttl),
+            "ambiguous": float(ambiguous_ttl),
+            "pending": float(pending_ttl),
+        }
+        self._clock = clock
+        self._lock = Lock()
+        self._slots: OrderedDict[CoverDocumentScope, _Slot] = OrderedDict()
+        self._subscribers: dict[
+            CoverDocumentScope, dict[int, Callable[[CoverDecisionChange], None]]
+        ] = {}
+        self._generation = 0
+        self._listener_id = 0
+        self._subscriber_count = 0
+
+    def _bump(self) -> int:
+        self._generation += 1
+        return self._generation
+
+    def _record(self, scope: CoverDocumentScope, slot: _Slot) -> None:
+        self._slots[scope] = slot
+        self._slots.move_to_end(scope)
+        while len(self._slots) > self._max_scopes:
+            self._slots.popitem(last=False)
+
+    def _listeners(
+        self, scope: CoverDocumentScope,
+    ) -> tuple[Callable[[CoverDecisionChange], None], ...]:
+        return tuple(self._subscribers.get(scope, {}).values())
+
+    @staticmethod
+    def _notify(
+        callbacks: tuple[Callable[[CoverDecisionChange], None], ...],
+        change: CoverDecisionChange,
+    ) -> None:
+        for callback in callbacks:
+            try:
+                callback(change)
+            except Exception:
+                # A failing detail listener cannot block a list listener.
+                _LOG.exception("cover-decision subscriber failed")
+
+    def begin(self, scope: CoverDocumentScope, *, revision: int) -> CoverCacheToken:
+        """Start a complete or partial observation, revoking older work."""
+        if type(scope) is not CoverDocumentScope:
+            raise TypeError("expected exact cover scope")
+        if type(revision) is not int or revision < 0:
+            raise ValueError("invalid cover revision")
+        with self._lock:
+            previous = self._slots.get(scope)
+            if previous is not None and revision < previous.token.revision:
+                raise ValueError("stale cover revision")
+            token = CoverCacheToken(scope, revision, self._bump())
+            self._record(scope, _Slot(token))
+            callbacks = self._listeners(scope)
+            event = CoverDecisionChange(
+                scope, revision, token.generation, "refresh",
+            )
+        self._notify(callbacks, event)
+        return token
+
+    def peek(
+        self, scope: CoverDocumentScope, *, revision: int,
+    ) -> ResolvedBookCover | None:
+        """Exact scoped/revisioned hit; expiry never becomes a \u2018missing\u2019 proof."""
+        if type(scope) is not CoverDocumentScope:
+            raise TypeError("expected exact cover scope")
+        if type(revision) is not int or revision < 0:
+            raise ValueError("invalid cover revision")
+        with self._lock:
+            slot = self._slots.get(scope)
+            if slot is None or slot.token.revision != revision:
+                return None
+            if slot.decision is None or self._clock() >= slot.expires_at:
+                slot.decision = None
+                return None
+            self._slots.move_to_end(scope)
+            return slot.decision
+
+    def resolve_and_publish(
+        self, token: CoverCacheToken, candidates: Iterable[CoverCandidate], *,
+        snapshot_complete: bool,
+        attested_book_identity: str = "",
+        catalog_priorities: Mapping[str, int] | None = None,
+    ) -> bool:
+        """Return False for a late, invalidated or evicted source snapshot.
+
+        N1 validates all candidate URLs and provenance before we cache them.
+        This method does no I/O and never turns a partial result into missing.
+        """
+        if type(token) is not CoverCacheToken:
+            raise TypeError("expected cover cache token")
+        with self._lock:
+            current = self._slots.get(token.scope)
+            if current is None or current.token != token:
+                return False
+        decision = resolve_book_cover(
+            token.scope, candidates, revision=token.revision,
+            snapshot_complete=snapshot_complete,
+            attested_book_identity=attested_book_identity,
+            catalog_priorities=catalog_priorities,
+        )
+        with self._lock:
+            current = self._slots.get(token.scope)
+            if current is None or current.token != token:
+                return False
+            current.decision = decision
+            current.expires_at = self._clock() + self._ttl[decision.status]
+            self._slots.move_to_end(token.scope)
+            callbacks = self._listeners(token.scope)
+            event = CoverDecisionChange(
+                token.scope, token.revision, token.generation,
+                "resolved", decision=decision,
+            )
+        self._notify(callbacks, event)
+        return True
+
+    def invalidate(
+        self, scope: CoverDocumentScope, *,
+        cause: CoverInvalidationCause,
+    ) -> None:
+        if type(scope) is not CoverDocumentScope:
+            raise TypeError("expected exact cover scope")
+        if cause not in (
+            "catalogue_changed", "account_epoch_changed", "identity_changed",
+            "artifact_changed", "placement_changed", "origin_link_changed",
+            "loan_changed", "entitlement_changed", "evidence_changed",
+        ):
+            raise ValueError("unknown cover invalidation cause")
+        with self._lock:
+            current = self._slots.get(scope)
+            revision = current.token.revision if current else 0
+            generation = self._bump()
+            # Preserve last known source revision; later workers must advance
+            # to a newer producer revision on true source changes.
+            self._record(scope, _Slot(CoverCacheToken(scope, revision, generation)))
+            callbacks = self._listeners(scope)
+            event = CoverDecisionChange(
+                scope, revision, generation, "invalidated", cause=cause,
+            )
+        self._notify(callbacks, event)
+
+    def invalidate_many(
+        self, scopes: Iterable[CoverDocumentScope], *,
+        cause: CoverInvalidationCause,
+    ) -> int:
+        """Validate and bound the entire batch before changing any scope."""
+        unique: dict[CoverDocumentScope, None] = {}
+        for index, scope in enumerate(scopes):
+            if index >= self._max_scopes:
+                raise ValueError("cover invalidation batch too large")
+            if type(scope) is not CoverDocumentScope:
+                raise TypeError("invalid cover invalidation scope")
+            unique[scope] = None
+        # Preserve the exact-event validation behavior even for empty batches.
+        if not unique:
+            if cause not in (
+                "catalogue_changed", "account_epoch_changed", "identity_changed",
+                "artifact_changed", "placement_changed", "origin_link_changed",
+                "loan_changed", "entitlement_changed", "evidence_changed",
+            ):
+                raise ValueError("unknown cover invalidation cause")
+            return 0
+        for scope in unique:
+            self.invalidate(scope, cause=cause)
+        return len(unique)
+
+    def subscribe(
+        self, scope: CoverDocumentScope,
+        callback: Callable[[CoverDecisionChange], None],
+    ) -> CoverSubscription:
+        if type(scope) is not CoverDocumentScope or not callable(callback):
+            raise TypeError("invalid cover subscriber")
+        with self._lock:
+            if self._subscriber_count >= self._max_subscribers:
+                raise ValueError("too many cover decision subscribers")
+            self._listener_id += 1
+            key = self._listener_id
+            self._subscribers.setdefault(scope, {})[key] = callback
+            self._subscriber_count += 1
+        return CoverSubscription(self, scope, key)
+
+    def _unsubscribe(self, scope: CoverDocumentScope, key: int) -> None:
+        with self._lock:
+            listeners = self._subscribers.get(scope)
+            if listeners is None or key not in listeners:
+                return
+            listeners.pop(key)
+            self._subscriber_count -= 1
+            if not listeners:
+                del self._subscribers[scope]
+
+    def stats(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "scopes": len(self._slots),
+                "subscribers": self._subscriber_count,
+            }
+
+
+__all__ = [
+    "CoverCacheToken", "CoverDecisionChange", "CoverSubscription",
+    "CoverDecisionCache",
+]
