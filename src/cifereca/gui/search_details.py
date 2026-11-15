@@ -52,7 +52,24 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                     cached_exact_selected_search_cover(self, qualified)
                     or visual_thumbnail
                 )
-        self.search_page.detail.show_presentation(book_detail_presentation(
+        # Search-local is a second view of a previously loaded Core book.
+        # Only its exact owner-scoped Artifact+Placement proof may use the
+        # shared DocumentRef; a hot cached URL/ISBN/title cannot mint one.
+        # Use an absolute import because the headless Search harness replays
+        # this function's AST outside its normal module globals.
+        from cifereca.gui.local_detail_cover import exact_local_detail_cover
+        active = getattr(
+            getattr(self.service, "current_identity", None), "identity_id", None,
+        )
+        cover_evidence = exact_local_detail_cover(
+            item, active_identity_id=active,
+        )
+        if (item.get("_exact_local_cover_evidence") is not None
+                and cover_evidence is None):
+            # A stale, foreign or malformed Core proof cannot authorize a
+            # provider URL fallback under the old book's visual identity.
+            visual_thumbnail = None
+        presentation = book_detail_presentation(
             title=str(item.get("title") or "Sans titre"),
             subtitle=str(item.get("author") or ""),
             thumbnail=visual_thumbnail,
@@ -67,7 +84,15 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                 offline_if_local=True,
             ),
             metadata=item.get('metadata'),
-        ), description=description)
+        )
+        detail = self.search_page.detail
+        if cover_evidence is None:
+            detail.show_presentation(presentation, description=description)
+        else:
+            detail.show_local_presentation(
+                presentation, description=description,
+                cover_evidence=cover_evidence,
+            )
         actions = []
         open_library = Gtk.Button(label="Voir dans Bibliothèque")
         open_library.connect("clicked", lambda _b, key=row.key: self._open_library_item(key))
