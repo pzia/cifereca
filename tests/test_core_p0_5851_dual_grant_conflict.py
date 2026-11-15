@@ -43,3 +43,72 @@ def test_dual_grants_different_owners_fail_closed(tmp_path):
         service.close()
 
 
+
+
+def test_v16_revocation_cannot_resurrect_archived_v15_authority(tmp_path):
+    """A direct v16 grant + revoke must be as monotone as reconfirmation."""
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        _persist_account(service.storage)
+        seed_historical_adept_binding(
+            service, credential_id="alice-paris", account_id="linked-123",
+            borrower_identity_id="bob", confirmed=True,
+        )
+        service.bind_adept_borrower_grant(
+            **SCOPE, borrower_identity_id="bob", confirmed=True,
+        )
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice",
+        ) == ("bob", None)
+        service.storage.adept_borrower_grant_delete(**SCOPE)
+        archived = service.storage.paris_borrower_adept_binding_get(
+            credential_id="alice-paris", account_id="linked-123",
+        )
+        assert archived["borrower_identity_id"] == "bob"
+        assert archived["retired_for_authority"] is True
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice",
+        ) == (None, "adept_borrower_binding_required")
+        # A new explicit v16 grant can authorize a different borrower: the
+        # archived conflicting v15 row remains descriptive, never a veto.
+        service.bind_adept_borrower_grant(
+            **SCOPE, borrower_identity_id="alice", confirmed=True,
+        )
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice",
+        ) == ("alice", None)
+        service.storage.adept_borrower_grant_delete(**SCOPE)
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice",
+        ) == (None, "adept_borrower_binding_required")
+    finally:
+        service.close()
+
+
+def test_v16_revocation_tombstone_is_scoped_and_persists_on_reopen(tmp_path):
+    from cifereca.storage import Storage
+
+    service, _ = service_with_linked_borrower(tmp_path)
+    path = service.storage.path
+    try:
+        _persist_account(service.storage)
+        seed_historical_adept_binding(
+            service, credential_id="alice-paris", account_id="linked-123",
+            borrower_identity_id="bob", confirmed=True,
+        )
+        service.bind_adept_borrower_grant(
+            **SCOPE, borrower_identity_id="bob", confirmed=True,
+        )
+        service.storage.adept_borrower_grant_delete(**SCOPE)
+    finally:
+        service.close()
+    reopened = Storage(path)
+    try:
+        assert reopened.paris_borrower_adept_binding_get(
+            credential_id="alice-paris", account_id="linked-123",
+        )["retired_for_authority"] is True
+        assert reopened.paris_borrower_adept_bindings(
+            credential_id="alice-paris",
+        )[0]["borrower_identity_id"] == "bob"
+    finally:
+        reopened.close()
