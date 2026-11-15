@@ -57,10 +57,9 @@ def test_editing_second_account_or_creating_new_never_imports_first_account_url(
     # This unscoped API behavior is intentionally retained for old callers.
     assert config.provider_option("future-provider", "endpoint") == "https://first.example"
     assert _render(config, first, "first") == "https://first.example"
-    fallback = (
-        "https://legacy-global.example" if has_global else "https://descriptor.example"
-    )
-    assert _render(config, second, "second") == fallback
+    # A global URL has no credential owner and must not be inherited by
+    # *either* row once the provider has two saved accounts.
+    assert _render(config, second, "second") == "https://descriptor.example"
     # New sources are never initialized from a retired global value.
     assert _render(config, {}, "third-new") == "https://descriptor.example"
     assert config.data == before
@@ -79,3 +78,60 @@ def test_first_account_value_is_never_used_as_another_disabled_account_default(t
     assert _render(config, target, "second") == ""
     assert _render(config, {}, "new") == "https://descriptor.example"
     assert config.get("source_sync_consent") is None
+
+
+
+def test_one_existing_legacy_owner_keeps_historical_global_endpoint(tmp_path):
+    config = Config(tmp_path / "settings.json")
+    only = {
+        "id": "historical", "provider": "future-provider",
+        "identity_id": "alice", "enabled": True, "options": {},
+    }
+    config.set("providers.accounts", [deepcopy(only)])
+    config.set("old_endpoint", "https://historical.example")
+    before = deepcopy(config.data)
+    assert _render(config, only, "historical") == "https://historical.example"
+    # An edited/forged row cannot adopt a global option it never owned.
+    assert _render(config, only, "another-id") == "https://descriptor.example"
+    assert _render(config, {}, "new-id") == "https://descriptor.example"
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("variant", ("second_profile", "disabled_second", "case_alias"))
+def test_multiaccount_global_url_never_leaks_across_credentials_or_profiles(
+    tmp_path, variant,
+):
+    config = Config(tmp_path / "settings.json")
+    first = {
+        "id": "first", "provider": "future-provider", "identity_id": "alice",
+        "enabled": True, "options": {},
+    }
+    second = {
+        "id": "second", "provider": "future-provider", "identity_id": "bob",
+        "enabled": variant != "disabled_second", "options": {},
+    }
+    if variant == "case_alias":
+        second["provider"] = "FUTURE-PROVIDER"
+    if variant == "disabled_second":
+        second["identity_id"] = "alice"
+    config.set("providers.accounts", [first, second])
+    config.set("old_endpoint", "https://someone-else.example")
+    before = deepcopy(config.data)
+    assert _render(config, first, "first") == "https://descriptor.example"
+    assert _render(config, second, "second") == "https://descriptor.example"
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("accounts", (
+    "corrupt", None, [{"provider": "future-provider", "id": "first"}, None],
+    [{"provider": "future-provider", "id": "first"}, {"id": "unknown"}],
+))
+def test_corrupt_or_unattributable_global_endpoint_fails_closed(tmp_path, accounts):
+    config = Config(tmp_path / "settings.json")
+    config.set("providers.accounts", deepcopy(accounts))
+    config.set("old_endpoint", "https://private-unknown-owner.example")
+    row = {
+        "id": "first", "provider": "future-provider", "identity_id": "default",
+        "options": {},
+    }
+    assert _render(config, row, "first") == "https://descriptor.example"

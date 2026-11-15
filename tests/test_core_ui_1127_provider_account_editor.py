@@ -115,7 +115,10 @@ def test_paris_url_and_identity_fallbacks_are_unchanged():
     historical, _, _, _ = _render(
         'paris', data={'id': 'paris-existing', 'options': {}},
         descriptor_options=[option],
-        legacy_values={'base_url': 'https://env.paris.example'},
+        legacy_values={
+            'base_url': 'https://env.paris.example',
+            'providers.accounts': [{'id': 'paris-existing', 'provider': 'paris'}],
+        },
     )
     assert historical['option_fields']['base_url'].text == 'https://env.paris.example'
     editor, _, _, _ = _render('paris', descriptor_options=[option])
@@ -224,7 +227,7 @@ def test_legacy_provider_option_is_scoped_to_exact_account_before_global_default
     other, _, _, _ = _render(
         'arbitrary', data={'id': 'arbitrary-b', 'options': {}}, **kwargs,
     )
-    assert other['option_fields']['base_url'].text == 'https://global.example'
+    assert other['option_fields']['base_url'].text == 'https://default.example'
     new, _, _, _ = _render('arbitrary', **kwargs)
     assert new['option_fields']['base_url'].text == 'https://default.example'
     saved, _, _, _ = _render(

@@ -42,7 +42,13 @@ n'atteste pas la validité d'un abonnement ou d'une session distante.
   `Adw.PasswordEntryRow` pour credential secret, `Adw.ComboRow`
   pour un choix, contrôle booléen, entrée et éditeur des options par
   emprunteur. Les clés de champ sont des données du descriptor, pas
-  des branches `if provider_id == …` dans l'éditeur.
+  des branches `if provider_id == …` dans l'éditeur. Un ancien
+  paramètre d'URL **global** n'est repris dans l'éditeur que si la
+  configuration ne contient **qu'une seule connexion du fournisseur**
+  et si son ID correspond exactement au compte édité. Avec plusieurs
+  comptes (y compris désactivés ou répartis sur plusieurs profils), cette
+  URL sans portée reste historique et n'est copiée dans **aucun** compte :
+  chacun affiche sa valeur propre ou le défaut du descriptor.
 - `src/cifereca/gui/settings_accounts_section.py` et les contrôleurs
   `settings_*` : section de comptes liée au profil ; revue de la durée
   de vie des actions et de la cohérence de leur rendu encore nécessaire.
