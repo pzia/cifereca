@@ -301,6 +301,12 @@ def _local_recommendation_field_values(item: Any, field: str) -> tuple[str, ...]
         ),
         "series": ("series",),
         "collection": ("collection",),
+        # Core Search's all-fields projection also includes public awards,
+        # synopsis and publisher. These are local, optional bibliographic
+        # facts, never provider payloads or ranking signals.
+        "award": ("awards", "prizes", "literary_prizes"),
+        "description": ("description", "summary", "synopsis"),
+        "publisher": ("publisher",),
     }.get(field)
     if names is None:
         return ()
@@ -353,6 +359,28 @@ _LOCAL_SEARCH_STOPWORDS = frozenset({
 })
 
 
+_LOCAL_SEARCH_SECRET_MARKER = re.compile(
+    r"(?i)(?:^|[^a-z0-9_])(?:bearer|token|access_token|refresh_token|"
+    r"password|secret|cookie|authorization|signature|api_key)\s*[:=]"
+)
+
+
+def _safe_local_bibliography_value(raw: Any, *, limit: int = 512) -> str:
+    """Only bounded, non-URL public bibliography enters broad local search.
+
+    A third-party synopsis may accidentally contain an acquisition link or
+    credential. The detail model owns display policy; *indexing* must not
+    make such values discoverable through a text search.
+    """
+    if type(raw) is not str or not raw:
+        return ""
+    if ("://" in raw or "@" in raw or "=" in raw
+            or raw.startswith(("/", "\\"))
+            or _LOCAL_SEARCH_SECRET_MARKER.search(raw)):
+        return ""
+    return raw[:limit]
+
+
 def _local_all_field_match(query: str, values: list[str]) -> bool:
     """All query terms may span fields; quoted phrases must stay in one.
 
@@ -376,10 +404,18 @@ def _local_all_field_match(query: str, values: list[str]) -> bool:
         normalized for value in values
         if type(value) is str and (normalized := normalize(value))
     ]
-    return all(
-        any(token in field for field in fields)
-        for token in (*terms, *phrases)
-    )
+    # A one-character edition qualifier must be a COMPLETE word.
+    # Otherwise the newly indexed public description "publique" would
+    # make a request for "Livre B" match every unrelated "Livre A/C".
+    # This is the same one-letter guard as the explicit Sujet filter.
+    for token in terms:
+        if len(token) == 1:
+            pattern = r"(?<!\w)" + re.escape(token) + r"(?!\w)"
+            if not any(re.search(pattern, field) for field in fields):
+                return False
+        elif not any(token in field for field in fields):
+            return False
+    return all(any(phrase in field for field in fields) for phrase in phrases)
 
 
 def _candidate_mapping_text(row: Mapping[str, Any], key: str) -> str:
@@ -1796,24 +1832,20 @@ class UxRecommendationsView:
                     _candidate_public_field(item, "title", limit=2048),
                     *_public_candidate_authors(item),
                 ]
-                for category in ("subject", "series", "collection", "language"):
-                    # Bound both row count and text per field. One malformed
-                    # catalogue payload must not stall the GTK local filter.
+                for category in (
+                    "subject", "series", "collection", "language",
+                    "award", "description", "publisher",
+                ):
+                    # Read Search's already-loaded public bibliographic
+                    # fields, with a closed bound and no provider access.
+                    # Opaque or URL/secret-like metadata never becomes an
+                    # independently searchable term.
                     values.extend(
-                        value[:512]
-                        for value in _local_recommendation_field_values(item, category)[:32]
-                        if "://" not in value
-                        and not (("?" in value or "&" in value) and "=" in value)
-                        and not value.startswith(("/", "\\"))
+                        value for raw in
+                        _local_recommendation_field_values(item, category)[:32]
+                        if (value := _safe_local_bibliography_value(raw))
                     )
                 values.extend(_local_ranked_isbns(ranked, sources))
-                publisher = _candidate_public_field(item, "publisher", limit=512)
-                # Provider metadata can contain mistaken URL-like values;
-                # an opaque acquisition/session URL is not a publisher name.
-                if publisher and not any(marker in publisher for marker in (
-                    "://", "?", "@", "=",
-                )):
-                    values.append(publisher)
                 # Core Search accepts order-independent words across
                 # attested fields, but requires quoted phrases to occur in a
                 # single bibliographic value. Keep the current diversified
