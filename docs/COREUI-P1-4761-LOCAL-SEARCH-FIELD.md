@@ -78,6 +78,20 @@ gardent leurs restrictions propres. Ce correctif ne prétend pas reproduire
 le *score* de pertinence de la Recherche Core : il préserve l'ordre diversifié
 de Recommandations.
 
+### Preuve dans la vraie interface GTK (suite #6184)
+
+Le scénario existant `recommendations-detail-1024/1366/1600` exerce
+désormais `Gtk.SearchEntry` et le vrai `LocalQueryControls` : sujet
+« Astronomie » + auteur « Autrice Attestée » retrouvent la même ligne avec
+`astronomie autrice`, l'ordre inverse ou `"astronomie" autrice`.
+`"astronomie autrice"` n'en retrouve aucune : deux valeurs distinctes
+ne forment pas une expression citée. Après rétablissement de la recherche
+simple, le filtre explicite Titre doit toujours masquer le sujet. Les
+compteurs réels, la sélection et l'invariance du compteur de requêtes et de
+la génération sont vérifiés dans **la vraie interface**, sous Xvfb/XTEST.
+Les données restent synthétiques ; ceci ne remplace pas la revue visuelle
+sur les mêmes notices entre pages (#774).
+
 ## Recette et frontières
 
 `e2e/recommendations_detail_probe.py` vérifie le vrai widget GTK aux
