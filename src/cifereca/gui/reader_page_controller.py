@@ -10,6 +10,7 @@ import time
 
 from .detail_model import book_detail_presentation
 from .reader_library_projection import project_reader_library
+from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 from .recent_time import format_recent_timestamp
 
 
@@ -305,6 +306,18 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
             source = entries.get(item.key)
             if source is not None:
                 window._reader_source_items[item.key] = source
+                # Reuse the Library's exact Core producer. Reader intentions
+                # alone do not grant a book/cover association, and USB must
+                # never become an alternate cover cache or file scanner.
+                facts = source.get("_exact_local_cover_evidence")
+                if (type(facts) is VerifiedLocalCoverEvidence
+                        and facts.scope.identity_id == identity_id
+                        and facts.scope.artifact_id == item.artifact_id
+                        and facts.scope.placement_id == item.placement_id
+                        and facts.scope.source_key == item.key):
+                    row._cover_local_evidence = facts
+                    row._cover_document_ref = facts.scope
+                    row._public_row_content = (*row._public_row_content, facts)
         window._reader_library_snapshot = snapshot
         page.show_rows(rows, total_count=len(rows))
         suffix = (
