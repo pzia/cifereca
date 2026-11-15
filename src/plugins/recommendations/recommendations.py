@@ -1751,12 +1751,33 @@ class UxRecommendationsView:
             ):
                 return False
             if field == "all":
-                # Preserve historical title + attested authors by default.
-                # Selecting a field is an explicit, local-only restriction.
-                haystack = normalize(" ".join((
+                # Match Search's documented all-fields semantics against
+                # *already loaded* public bibliography. Never index provider
+                # record IDs, file paths, URLs, raw metadata or access tokens.
+                # ISBNs retain the exact selected-catalogue variant guard.
+                values = [
                     _candidate_public_field(item, "title", limit=2048),
-                    " ".join(_public_candidate_authors(item)),
-                )))
+                    *_public_candidate_authors(item),
+                ]
+                for category in ("subject", "series", "collection", "language"):
+                    # Bound both row count and text per field. One malformed
+                    # catalogue payload must not stall the GTK local filter.
+                    values.extend(
+                        value[:512]
+                        for value in _local_recommendation_field_values(item, category)[:32]
+                        if "://" not in value
+                        and not (("?" in value or "&" in value) and "=" in value)
+                        and not value.startswith(("/", "\\"))
+                    )
+                values.extend(_local_ranked_isbns(ranked, sources))
+                publisher = _candidate_public_field(item, "publisher", limit=512)
+                # Provider metadata can contain mistaken URL-like values;
+                # an opaque acquisition/session URL is not a publisher name.
+                if publisher and not any(marker in publisher for marker in (
+                    "://", "?", "@", "=",
+                )):
+                    values.append(publisher)
+                haystack = normalize(" ".join(values))
                 if needle not in haystack:
                     return False
             else:

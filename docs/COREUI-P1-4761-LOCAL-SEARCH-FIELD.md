@@ -15,8 +15,13 @@ recommandations déjà calculées**. Le changement de champ, de texte, ou
 sa remise à `Champ` ne provoque **aucun nouveau classement, accès disque,
 scan de bibliothèque, requête catalogue, emprunt, téléchargement ou LLM**.
 
-* `Champ` : comportement existant, titre et auteurs attestés (plusieurs
-  auteurs pris en charge), ordre diversifié inchangé.
+* `Champ` (tous les champs) : titre et auteurs, mais aussi
+  **sujets, série, collection, langue, éditeur et ISBN attestés** déjà en
+  mémoire, afin de conserver la portée bibliographique de Recherche.
+  Les champs supplémentaires sont bornés, et les ISBN restent limités à la
+  **source exacte** quand le filtre Sources est actif. Les identifiants de
+  notice, URL, chemins locaux et autres valeurs privées ne sont pas indexés.
+  L'ordre diversifié demeure inchangé.
 * `Titre` / `Auteur` : valeurs publiques exactes du candidat.
 * `ISBN` : seuls les identifiants de livre dont la somme de contrôle a
   été vérifiée par le moteur ; un `record_id` fournisseur n'est jamais
@@ -31,6 +36,22 @@ Le compteur visible inclut le champ explicitement choisi, en utilisant
 le label du même widget Recherche. L'état vide est le comportement partagé
 de la liste, et le filtre reste réversible par sélection `Champ` ou
 effacement du texte.
+
+## Extension P1-FINALISATION du champ global (15/11/2026)
+
+La valeur par défaut `Champ` ne se limite plus au duo titre/auteur :
+lorsqu'une notice porte des classifications et éditions déjà attestées,
+l'utilisateur peut retrouver une recommandation par sujet, série, collection,
+langue, éditeur public ou ISBN valide, sans devoir choisir chaque champ
+successivement. **Aucun catalogue n'est interrogé à cette occasion.**
+
+Le texte d'éditeur ressemblant à une URL privée/signée n'est pas ajouté à
+l'index local. La protection des variantes ISBN entre catalogues respecte
+exactement le même garde que le filtre spécifique `ISBN`, y compris sur
+les recommandations dédoublonnées. Une projection manquante ou opaque
+reste inconnue, jamais transformée en texte à indexer. Les valeurs de
+métadonnées volumineuses sont bornées ; ce filtre n'est pas un moteur de
+recherche globale ni une autorisation d'opération fournisseur.
 
 ## Recette et frontières
 
