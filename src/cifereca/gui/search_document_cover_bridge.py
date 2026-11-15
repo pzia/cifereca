@@ -46,12 +46,24 @@ def _current(
     )
     if (getattr(window, "_closed", False)
             or getattr(window, "_search_mode", None) != "global"
-            or getattr(window, "_loaded_search_context", None) is None
             or type(item) is not SearchResult
             or type(row_key) is not str or not row_key
             or type(objects) is not dict or objects.get(row_key) is not item
             or any(type(epoch) is not int or epoch < 0 for epoch in context)
             or type(identity_id) is not str or not identity_id):
+        return None
+    # A rendered result from an old query must not acquire a *fresh*
+    # documentary source epoch just because the user changed a filter.
+    # The original online batch was explicitly bound to this query state.
+    controls = getattr(getattr(window, "search_controls", None), "state", None)
+    if not callable(controls):
+        return None
+    try:
+        state = controls()
+        expected_query = (state.text, state.field, state.scope, identity_id)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if getattr(window, "_loaded_search_context", None) != expected_query:
         return None
     scope = _scope(item, identity_id)
     return (scope, context) if scope is not None else None
