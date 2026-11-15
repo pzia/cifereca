@@ -85,6 +85,36 @@ def _populate_loans(self, rows: list[Loan]) -> None:
     if hasattr(self,'_refresh_statistics'):self._refresh_statistics()
 
 
+def _library_loan_covers_updated(self, entries: list[dict[str, Any]]) -> None:
+    """Repaint loans from a newly committed, identity-scoped Library snapshot.
+
+    Loan and Library refreshes complete independently. A late local Placement
+    can appear after the loan list was first painted, while a subsequent click
+    sees its cover in the detail. Use only the already delivered Core rows;
+    never fetch a provider, scan a file or guess by bibliographic title.
+    """
+    if (getattr(self, "_closed", False)
+            or getattr(self, "_library_all_profiles", False) is True
+            or not hasattr(self, "loan_page")):
+        return
+    identity = getattr(getattr(self, "service", None), "current_identity", None)
+    identity_id = getattr(identity, "identity_id", None)
+    if type(identity_id) is not str or not identity_id:
+        return
+    rows = materialized_loan_cover_rows(entries)
+    if entries and not rows:
+        return  # Incomplete/oversize view is not an authoritative snapshot.
+    epoch = getattr(self.service, "_account_context_epoch", None)
+    self._loan_cover_projection = (epoch, identity_id, rows)
+    # A loan refresh already running may finish with an older library read.
+    # Its loan DTOs are still applicable, but must not revoke this newer
+    # successful Library projection merely by completing last.
+    self._loan_cover_library_revision = (
+        getattr(self, "_loan_cover_library_revision", 0) + 1
+    )
+    self._render_loans()
+
+
 def _loan_display_cover(self, loan: Loan) -> Loan:
     """Display-only image fallback; retain the original loan for every action.
 
@@ -220,6 +250,7 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
     # An A -> B -> A round trip has the same identity ID but invalidates an
     # earlier refresh. Guard the GTK callback by the Core account epoch too.
     account_epoch = getattr(self.service, "_account_context_epoch", None)
+    library_revision = getattr(self, "_loan_cover_library_revision", 0)
     def work():
         rows = self.service.refresh_identity_loans(
             force=force, identity_id=identity_id,
@@ -247,7 +278,8 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
             if getattr(self.service, "_account_context_epoch", None) != account_epoch:
                 return
             rows, cover_rows = payload
-            self._loan_cover_projection = (account_epoch, identity_id, cover_rows)
+            if getattr(self, "_loan_cover_library_revision", 0) == library_revision:
+                self._loan_cover_projection = (account_epoch, identity_id, cover_rows)
             self._loans_refreshed(rows)
     self.runner.submit(
         "Actualisation des emprunts…",

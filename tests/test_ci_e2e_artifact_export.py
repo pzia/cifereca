@@ -986,6 +986,8 @@ def test_bnf_covers_failure_exports_only_closed_synthetic_stage():
             ("embedded_loan_detail_over_remote", True),
             ("embedded_loan_list_over_supplier", True),
             ("embedded_loan_detail_over_supplier", True),
+            ("late_library_loan_list_cover", True),
+            ("late_library_loan_detail_cover", True),
             ("remote_loan_detail_cover", True),
             ("startup", True),
             ("PRIVATE_SIGNED_URL", False),

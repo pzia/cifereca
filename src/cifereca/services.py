@@ -454,6 +454,28 @@ class LibraryService:
             scope_current=_capture_cross_profile_read_scope(self, requesting_identity_id)[1],
         )
 
+    def possible_borrow_lenders_for_current_identity(
+        self, *, exact_notice: SearchResult,
+    ):
+        """#4988: inert 0/1/N lender options for one already-rendered notice.
+
+        A provider capability is not an offer. This does not authenticate,
+        post a loan, grant a right, switch profiles or authorize copying.
+        """
+        from .core.borrow_for_identity_discovery import (
+            discover_possible_borrow_lenders,
+        )
+        if type(exact_notice) is not SearchResult:
+            return ()
+        requesting_id, scope_current = _capture_cross_profile_read_scope(self)
+        if not scope_current():
+            return ()
+        result = discover_possible_borrow_lenders(
+            self, requesting_identity_id=requesting_id,
+            notices=(exact_notice,),
+        )
+        return result if scope_current() else ()
+
     def preview_borrow_for_current_identity(
         self, *, expected_edition_id: str, observations: object,
         now: int | None = None,

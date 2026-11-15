@@ -1175,6 +1175,16 @@ class DetailPanel(Gtk.Box):
             group.add(row)
         self._append_content(group)
         self._rendered_search_detail = (item, detail)
+        # #4988: potential *local* lender accounts, not verified supplier
+        # offers. The shared Search/Recommendations detail is read-only;
+        # no loan/copy action is attached until a distinct Core admission.
+        try:
+            from .cross_profile_possible_lender_detail import (
+                append_possible_lender_summary,
+            )
+            append_possible_lender_summary(self, item)
+        except Exception:
+            pass
         # Shared Search and Recommendations: already confirmed local lender
         # claims only, no provider I/O or implicit send consent.
         try:
