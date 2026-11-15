@@ -149,10 +149,20 @@ def _report_and_image(
                 "P1_4761_recommendations_typed_catalogue_author_gtk"
             ) is True
         )
+        # The actual GTK SingleSelection must preserve the exact edition
+        # under local source/field filters, including colliding raw keys.
+        # No completed private UX grid may bypass this paired-book path.
+        filter_selection_ok = (
+            surface != "recommendations"
+            or report["checks"].get(
+                "P1_4761_filter_preserves_exact_edition_real_gtk"
+            ) is True
+        )
         if (report["checks"].get(paired_check) is not True
                 or report["checks"].get(heading_check) is not True
                 or report["checks"].get(subject_check) is not True
                 or not catalogue_actions_ok
+                or not filter_selection_ok
                 or report.get("p1_774_paired_book") != verified_fixture_receipt()):
             raise ReviewError(
                 "Source/édition, détail GTK ou sujet commun non attesté"
