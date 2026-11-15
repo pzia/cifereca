@@ -137,3 +137,60 @@ def test_malformed_one_book_preview_row_is_not_executable(
         lambda _: pytest.fail("malformed Core preview must not reach journal"),
     )
     assert engine.synchronize_usb_reader(**data) == engine.UsbSyncResult("unavailable")
+
+
+@pytest.mark.parametrize("single", [True, False])
+def test_confirmed_removal_count_ignores_other_pending_upload_only_if_scoped(
+    copy, tmp_path, monkeypatch, single,
+):
+    """Exact regression: unrelated wishes cannot mask a completed unlink."""
+    from cifereca.core.device_usb_removal_review import UsbRemovalConsent
+    from cifereca.core.device_usb_removal_execute import UsbRemovalExecution
+
+    args, _, _, _ = copy
+    original = args["consent"]
+    removal = UsbRemovalConsent(
+        original.identity_id, original.device_id,
+        original.usb_fingerprint, original.artifact_id,
+        original.sha256, original.target_relative_path,
+        "b" * 32, "c" * 32, original.confirmed_at, original.expires_at,
+    )
+    data = _arguments(tmp_path, removal, None)
+    data["confirmations"] = {removal.artifact_id: removal}
+    data["rights"] = {}
+    if single:
+        data["artifact_id"] = removal.artifact_id
+    other = "sha256:" + "e" * 64
+    scans, removals = [], []
+
+    def inspect(**kwargs):
+        scans.append(kwargs["artifact_id"])
+        rows = (_row(removal.artifact_id, "remove_candidate"),)
+        if not single:
+            rows += (_row(other, "upload_candidate"),)
+        return UsbDryRun(
+            removal.identity_id, removal.device_id, "scanned", True, 1, rows,
+        )
+
+    monkeypatch.setattr(engine, "inspect_usb_dry_run", inspect)
+    monkeypatch.setattr(engine, "SqliteUsbOperationJournal", lambda _: object())
+    monkeypatch.setattr(
+        engine, "execute_usb_removal",
+        lambda **kwargs: removals.append(kwargs["consent"])
+        or UsbRemovalExecution("removed", "committed"),
+    )
+    monkeypatch.setattr(
+        engine, "execute_usb_library_copy",
+        lambda **_: pytest.fail("unconfirmed other upload must not run"),
+    )
+    monkeypatch.setattr(
+        engine, "record_verified_usb_observation",
+        lambda **_: NS(status="recorded"),
+    )
+    result = engine.synchronize_usb_reader(**data)
+    assert scans == [removal.artifact_id if single else None]
+    assert removals == [removal]
+    assert result == engine.UsbSyncResult(
+        "completed" if single else "pending",
+        removed=1, pending=0 if single else 1, observed=True,
+    )
