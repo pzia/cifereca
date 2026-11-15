@@ -41,6 +41,30 @@ def service_with_linked_borrower(tmp_path):
     return service, loan
 
 
+def confirm_borrower_v16(
+    service, *, credential_id="alice-paris", account_id="linked-123",
+    connection_identity_id="alice", borrower_identity_id="bob",
+):
+    """Persist the exact source account before explicit v16 confirmation."""
+    with service.storage._lock, service.storage._connect() as db:
+        rows = db.execute(
+            "SELECT connection_id FROM provider_connections "
+            "WHERE provider_id=? AND credential_id=?",
+            ("paris", credential_id),
+        ).fetchall()
+    assert len(rows) == 1
+    service.storage.provider_account_put({
+        "connection_id": rows[0][0], "provider_id": "paris",
+        "credential_id": credential_id, "identity_id": connection_identity_id,
+        "account_id": account_id, "is_primary": account_id == "primary",
+    })
+    return service.bind_adept_borrower_grant(
+        provider_id="paris", credential_id=credential_id,
+        account_id=account_id, borrower_identity_id=borrower_identity_id,
+        confirmed=True,
+    )
+
+
 def test_linked_borrower_requires_explicit_adept_binding(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
@@ -221,24 +245,11 @@ def test_acsm_fulfillment_uses_borrower_profile_and_persists_return_binding(tmp_
             credential_id="alice-paris", account_id=account_id,
             borrower_identity_id="bob", confirmed=True,
         )
-        # The historical row remains readable, but acquisition needs an
-        # independent and explicit v16 grant for the canonical account.
-        canonical_account = account_id if account_id == "linked-123" else "primary"
-        with service.storage._lock, service.storage._connect() as db:
-            connection_id = db.execute(
-                "SELECT connection_id FROM provider_connections "
-                "WHERE provider_id='paris' AND credential_id='alice-paris'"
-            ).fetchone()[0]
-        service.storage.provider_account_put({
-            "connection_id": connection_id, "provider_id": "paris",
-            "credential_id": "alice-paris", "identity_id": "alice",
-            "account_id": canonical_account,
-            "is_primary": canonical_account == "primary",
-        })
-        service.bind_adept_borrower_grant(
-            provider_id="paris", credential_id="alice-paris",
-            account_id=canonical_account,
-            borrower_identity_id="bob", confirmed=True,
+        # The v15 row is descriptive; only the explicit scoped v16 grant
+        # can authorize the ACSM/profile/return stage.
+        confirm_borrower_v16(
+            service, account_id=(account_id if account_id == "linked-123"
+                                 else "primary"),
         )
         service._persist_active_loans("alice", [loan])
         acsm = tmp_path / "linked.acsm"
