@@ -45,7 +45,10 @@ def _history_cache_key(account: Account) -> str:
     return f"history-v4:{digest}"
 
 
-def refresh_history(self, force: bool = False, *, account: Account) -> list[HistoryItem]:
+def refresh_history(
+    self, force: bool = False, *, account: Account,
+    expected_source_epoch: int | None = None,
+) -> list[HistoryItem]:
     # A Core worker must not rediscover the GTK-selected account after enqueue.
     key = _history_cache_key(account)
     # An immutable borrower scope and source epoch protect a manual history
@@ -53,6 +56,14 @@ def refresh_history(self, force: bool = False, *, account: Account) -> list[Hist
     # only the GTK-displayed account does not revoke the admitted read.
     from .source_context import source_context_epoch
     source_epoch = source_context_epoch(self)
+    # A queued UI request may have been admitted under a source generation
+    # that was revoked before its worker began. Never replace that lease
+    # with the newer generation simply because the same account ID exists.
+    if expected_source_epoch is not None and (
+        type(expected_source_epoch) is not int
+        or expected_source_epoch != source_epoch
+    ):
+        raise ProviderConfigurationError("history_source_binding_changed")
     source_scope = (
         account.identity_id, account.provider_id,
         account.credential_id, account.unique_id,
