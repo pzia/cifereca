@@ -1912,6 +1912,17 @@
         "tests/test_core_0984_adept_first_paris_reconcile.py"
       ],
       "pr": "#6219"
+    },
+    {
+      "id": "guard-loan-auto-borrower-refusal-native-source-after-callback",
+      "journey": "Automatic loan acquisition read-only borrower admission refusal after external Paris grant callback",
+      "classification": "safety_guard_pending_contract",
+      "effect": "After borrower callback, validate pinned native provider, credential, borrower, loan and edition and bound identity before returning even a denial; on drift return fixed source_scope_changed and never publish hostile loan ID or query entitlements.",
+      "remaining_debt": "Paris borrower-grant gate stays active pending typed provider-neutral grant contract; this only hardens a refusal boundary, not an AST retirement or historical migration.",
+      "tests": [
+        "tests/test_automatic_loan_admission.py"
+      ],
+      "pr": "#TBD"
     }
   ],
   "retained_legacy_migrations": [
