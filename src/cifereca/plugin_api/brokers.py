@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, runtime_checkable
 from .digital_loan_availability import DigitalLoanAvailability
 from .models import (
@@ -9,6 +10,29 @@ from .models import (
     TaskControl, TaskHandle, TransformRequest, TransformResult,
     ReleaseInstallationSnapshot, ReleaseUpdatePreview,
 )
+
+@runtime_checkable
+class ReaderUsbExecutionBroker(Protocol):
+    """#4985: trusted CoreUI USB preview and one-book confirmation boundary.
+
+    Confirmation types are validated by the Core executor; the interface
+    does not accept GTK-invented copy-rights witnesses or policy callbacks.
+    Untrusted plugins are denied via the broker's for_plugin guard.
+    """
+
+    def completed_copy_operation(
+        self, *, identity_id: str, device_id: str, artifact_id: str,
+    ) -> str | None: ...
+
+    def preview(
+        self, *, identity_id: str, device_id: str, mountpoint: Path,
+    ) -> Any: ...
+
+    def execute_one(
+        self, *, confirmation: Any, mountpoint: Path,
+        check_cancelled: Callable[[], None] | None = None,
+    ) -> Any: ...
+
 
 @runtime_checkable
 class ReleaseUpdateReadBroker(Protocol):
