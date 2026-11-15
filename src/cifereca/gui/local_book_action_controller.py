@@ -318,7 +318,9 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
                         and type(result.get('target_identity_id')) is str
                         and result['target_identity_id'] == target_id
                         and type(result.get('placement_id')) is str
-                        and result['placement_id']):
+                        and result['placement_id']
+                        and type(result.get('path')) is str
+                        and result['path'] and chr(0) not in result['path']):
                     window._activity_result(
                         'Livre déjà présent dans ce profil'
                         if status == 'unchanged' else 'Livre envoyé'
