@@ -692,9 +692,40 @@ def main() -> int:
         expected_source = window.service.provider_display_name(
             PAIRED_BOOK["source_provider"]
         )
-        assert [value for label, value in compact_rows if label == "Source"] == [
-            expected_source,
-        ]
+        actual_sources = [value for label, value in compact_rows
+                          if label == "Source"]
+        if actual_sources != [expected_source]:
+            # Offline E2E book is synthetic; log only closed, boolean
+            # observables, never provider labels, subtitles or user data.
+            all_compact = []
+            stack = [compact_heads[0]]
+            while stack:
+                current = stack.pop()
+                if (isinstance(current, Adw.ActionRow)
+                        and current.has_css_class("detail-compact-value")):
+                    all_compact.append(current)
+                child = current.get_first_child()
+                while child is not None:
+                    stack.append(child)
+                    child = child.get_next_sibling()
+            source_widgets = [
+                widget for widget in all_compact
+                if widget.get_title() == "Source"
+            ]
+            print("P1_4761_SAFE_SOURCE_DIAG=" + json.dumps({
+                "essential_rows": len(all_compact),
+                "source_widgets": len(source_widgets),
+                "source_visible": sum(widget.get_visible()
+                                      for widget in source_widgets),
+                "source_mapped": sum(widget.get_mapped()
+                                     for widget in source_widgets),
+                "source_value_equal": any(
+                    widget.get_subtitle() == expected_source
+                    for widget in source_widgets
+                ),
+                "expected_source_nonempty": bool(expected_source),
+            }, sort_keys=True), flush=True)
+        assert actual_sources == [expected_source]
         assert [value for label, value in compact_rows if label == "Format"] == [
             "EPUB",
         ]
