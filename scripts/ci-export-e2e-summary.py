@@ -305,6 +305,47 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
     return {}
 
 
+# Closed stages from the synthetic BnF XTEST cover probe. A failed GTK
+# verification may publish its last *fixed stage*, never the screenshot,
+# widget text, provider data, filesystem path or raw exception.
+_BNF_COVER_STAGES = frozenset({
+    "startup", "two_distinct_list_covers", "first_detail", "second_detail",
+    "missing_placeholder", "two_exact_loan_list_covers",
+    "first_loan_detail_cover", "second_loan_detail_cover",
+    "loan_missing_cover_placeholder",
+    "remote_loan_image_without_source_thumbnail",
+    "remote_loan_detail_cover", "embedded_loan_list_over_remote",
+    "embedded_loan_detail_over_remote", "search_results",
+    "global_button_visible",
+})
+
+
+def _failed_bnf_cover_checkpoint(source: Path, scenario: str) -> dict:
+    if scenario != "bnf-covers-1366":
+        return {}
+    # This probe saves directly into --out, unlike the nested book-detail
+    # report. Do not follow symlinks or export provider-owned arbitrary text.
+    # CI invokes e2e/run.py with --out e2e-artifacts/<scenario>;
+    # the runner itself appends its scenario name once more.
+    outer = source.resolve().parent / scenario
+    folder = outer / scenario
+    report = folder / "screen.json"
+    try:
+        if outer.is_symlink() or folder.is_symlink() or report.is_symlink():
+            return {}
+        if not report.is_file() or report.stat().st_size > MAX_BYTES:
+            return {}
+        data = json.loads(report.read_text(encoding="utf-8"))
+        if type(data) is not dict:
+            return {}
+        stage = data.get("last_stage")
+        if type(stage) is str and stage in _BNF_COVER_STAGES:
+            return {"bnf_covers_last_stage": stage}
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        pass
+    return {}
+
+
 # Only these source-defined synthetic phases may leave the GTK runner.
 _PLUGIN_SCROLL_STAGES = frozenset({
     "initial_scroll", "first_toggle", "first_grab_focus",
@@ -578,6 +619,7 @@ def safe_summary(source: Path) -> dict:
         if code != 0:
             row.update(_failed_diagnostic(source, scenario))
             row.update(_failed_book_detail_checkpoint(source, scenario))
+            row.update(_failed_bnf_cover_checkpoint(source, scenario))
             row.update(_failed_plugin_scroll_checkpoint(source, scenario))
             row.update(_failed_maintenance_checkpoint(source, scenario))
             row.update(_native_abort_diagnosis(source, scenario, code))
