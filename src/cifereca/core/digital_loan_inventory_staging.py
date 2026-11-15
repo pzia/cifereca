@@ -14,7 +14,8 @@ from __future__ import annotations
 from datetime import datetime
 
 from ..plugin_api.loan_inventory import (
-    LoanBranchCoverage, LoanInventorySnapshot, _loan_matches_scope,
+    INVENTORY_CONTRACT, LoanBranchCoverage, LoanInventoryScope,
+    LoanInventorySnapshot, _loan_matches_scope,
 )
 from .digital_loan_remaining_policy import (
     DigitalCapacityScope, DigitalInventoryReceipt,
@@ -60,6 +61,44 @@ def stage_uncommitted_digital_inventory(
                    for upstream in expected_upstreams)
             or len(set(expected_upstreams)) != len(expected_upstreams)):
         raise ValueError("digital_inventory_staging_invalid_contract")
+
+    # A frozen upstream envelope is still an untrusted Python object:
+    # object.__setattr__ and nested mutable Loan rows can replace its
+    # branches/contract AFTER LoanInventorySnapshot.__post_init__. Before
+    # interpreting a claimed complete pagination, validate the *current*
+    # complete envelope again. In particular, a duplicated upstream with
+    # conflicting complete/partial claims must not be collapsed by the
+    # dictionary projection below (last-wins would falsely claim success).
+    if (snapshot.contract != INVENTORY_CONTRACT
+            or type(snapshot.scope) is not LoanInventoryScope
+            or type(snapshot.loans) is not tuple
+            or len(snapshot.loans) > 10000
+            or type(snapshot.branches) is not tuple
+            or len(snapshot.branches) > 32
+            or type(snapshot.status) is not str
+            or snapshot.status not in ("success", "partial", "failed", "cancelled")
+            or any(type(row) is not LoanBranchCoverage
+                   for row in snapshot.branches)):
+        return None
+    try:
+        scope.__post_init__()
+        snapshot.scope.__post_init__()
+        for row in snapshot.branches:
+            # Rebuilding the immutable branch verifies type, medium,
+            # completeness/pagination and its closed reason code even after
+            # a malicious/buggy upstream mutated its frozen fields.
+            LoanBranchCoverage(
+                upstream=row.upstream, medium=row.medium,
+                completeness=row.completeness,
+                pagination_complete=row.pagination_complete,
+                reason_code=row.reason_code,
+            )
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if len({(row.upstream, row.medium) for row in snapshot.branches}) != len(
+        snapshot.branches
+    ):
+        return None
 
     upstream_scope = snapshot.scope
     if (scope.identity_id != upstream_scope.identity_id
