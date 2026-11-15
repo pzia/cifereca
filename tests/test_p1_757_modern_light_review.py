@@ -410,6 +410,43 @@ def test_signed_originals_and_complete_human_grid_produce_private_bounded_receip
     assert "UX_ACCEPTED" not in private.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("edits", [
+    {"clipping": "KO", "ux_verdict": "KO", "notes": ""},
+    {"clipping": "KO", "ux_verdict": "KO", "notes": "   "},
+    {"ux_verdict": "KO", "notes": ""},
+])
+def test_failed_visual_review_requires_diagnostic_kept_private(tmp_path, edits):
+    fixture(tmp_path)
+    opts = {"sizes": {64: (64, 40)}, "stages": ("dashboard",)}
+    build_review(tmp_path, **opts)
+    checklist = _fill_private_review(
+        tmp_path, edit=lambda rows: rows[0].update(edits),
+    )
+    notes = checklist.read_bytes()
+    with pytest.raises(ValueError, match="diagnostic privé"):
+        module.verify_completed_review(tmp_path, **opts)
+    assert checklist.read_bytes() == notes
+    assert not (tmp_path / "modern-light-private-review"
+                / "visual-review-verdict.json").exists()
+
+
+def test_failed_visual_review_preserves_ux_observation_only_in_csv(tmp_path):
+    fixture(tmp_path)
+    opts = {"sizes": {64: (64, 40)}, "stages": ("dashboard",)}
+    build_review(tmp_path, **opts)
+    _fill_private_review(tmp_path, edit=lambda rows: rows[0].update(
+        keyboard_focus="KO", ux_verdict="KO",
+        notes="Clavier privé /home/operator/token=SECRET, impossible de focaliser",
+    ))
+    receipt = module.verify_completed_review(tmp_path, **opts)
+    assert receipt["findings"] == 1
+    assert receipt["ready_for_ux_decision"] is False
+    assert "SECRET" not in str(receipt)
+    private = (tmp_path / "modern-light-private-review" /
+               "visual-review-verdict.json").read_text(encoding="utf-8")
+    assert "SECRET" not in private
+
+
 def test_observed_ux_issue_is_never_accepted_as_clean(tmp_path):
     fixture(tmp_path)
     build_review(tmp_path, sizes={64: (64, 40)}, stages=("dashboard",))
