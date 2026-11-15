@@ -186,3 +186,56 @@ def test_detail_panel_consumes_and_clears_exact_document_ref_during_render():
     assert "bind_declared_document_cover" in header
     assert "self._bind_cover(cover, thumbnail, cover_evidence=evidence)" in header
     assert header.index("if evidence is not None:") < header.index("elif document is not None:")
+
+
+
+def test_plugin_list_and_detail_request_same_exact_n2_source_not_a_plugin_url(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    loader = CoverLoader(max_workers=2)
+    observed = []
+    monkeypatch.setattr(
+        loader, "load_preview", lambda uri, cb, **kw: (
+            observed.append(("list", uri)) or NS(cancel=lambda: None)
+        ),
+    )
+    monkeypatch.setattr(
+        loader, "load", lambda uri, cb, **kw: (
+            observed.append(("detail", uri)) or NS(cancel=lambda: None)
+        ),
+    )
+    service = DocumentCoverService(loader)
+    try:
+        service.register(CoverSourceSnapshot(
+            scope=PUBLIC, revision=1,
+            candidates=(candidate(
+                URL, tier="catalog", source="notice-c",
+                evidence_id=PUBLIC.source_key,
+            ),),
+        ))
+        row = UiBookListEntry(
+            "public:a", "Livre", thumbnail_url=FOREIGN_URL,
+            cover_document_ref=PUBLIC,
+        )
+        details = UiBookDetailPresentation(
+            "Livre", thumbnail_url=FOREIGN_URL,
+            cover_document_ref=PUBLIC,
+        )
+        show_rows = show_rows_function()
+        generated = []
+        host = NS(
+            _rows={}, _page=NS(show_rows=lambda rows, total_count=None:
+                                generated.extend(rows)),
+        )
+        show_rows(host, [row])
+        assert generated[0]._cover_document_ref == details.cover_document_ref
+        listed = service.get_cover(generated[0]._cover_document_ref, "list", lambda _: None)
+        described = service.get_cover(details.cover_document_ref, "detail", lambda _: None)
+        assert listed.source_uri == described.source_uri == URL
+        assert service.decisions.peek(PUBLIC, revision=1).uri == URL
+        assert observed == [("list", URL), ("detail", URL)]
+        assert FOREIGN_URL not in repr(observed)
+    finally:
+        service.close()
+        loader.close()
