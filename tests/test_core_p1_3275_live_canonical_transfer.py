@@ -221,7 +221,25 @@ def _send_from_controller(service, placement_id, target):
     service.current_identity = service.identity_by_id(placement["identity_id"])
     add_local_book_actions(window, detail, item, **deps)
     assert submitted == []
-    action = next(a for a in actions if a._cifereca_action_id == "send-local:" + target)
+    # With three profiles, the owned-send action is a menu, not a toolbar
+    # button for each destination. Exercise the actual recipient callback.
+    direct = [
+        button for button in actions
+        if button._cifereca_action_id == "send-local:" + target
+    ]
+    if direct:
+        action = direct[0]
+    else:
+        menu = next(
+            button for button in actions
+            if button._cifereca_action_id == "send-local-menu"
+        )
+        choice_buttons = menu.popover.child.children
+        assert len(choice_buttons) >= 2
+        action = next(
+            button for button in choice_buttons
+            if button._cifereca_action_id == "send-local:" + target
+        )
     action.click()
     args, kwargs = submitted.pop()
     assert kwargs["kind"] == "materialize"
