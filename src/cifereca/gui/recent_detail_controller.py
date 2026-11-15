@@ -1,6 +1,8 @@
 """Recent acquisition detail presenter, using injected window/formatting (#1129)."""
 from __future__ import annotations
 
+from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
+
 
 def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
     if getattr(window, "_closed", False) or not row:
@@ -27,10 +29,28 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
     full_path = str(item.get("path") or "")
     file_name = Path(full_path).name if full_path else "—"
     acquired = format_recent_timestamp(item.get("acquired_at"), detailed=True)
-    detail.show_summary(
+    cover_document = None
+    thumbnail = item.get("thumbnail_url")
+    facts = item.get("_exact_local_cover_evidence")
+    owner = getattr(getattr(window.service, "current_identity", None), "identity_id", None)
+    if facts is not None:
+        if (type(facts) is VerifiedLocalCoverEvidence
+                and facts.scope.identity_id == owner
+                and facts.scope.artifact_id == item.get("artifact_id")
+                and facts.scope.placement_id == item.get("placement_id")):
+            bridge = getattr(window, "document_covers", None)
+            publisher = getattr(window, "local_cover_adapter", None)
+            if bridge is not None and publisher is not None:
+                try:
+                    cover_document = publisher.register(bridge, facts)
+                except (TypeError, ValueError, RuntimeError):
+                    cover_document = None
+        if cover_document is None:
+            thumbnail = None
+    summary_kwargs = dict(
         title=str(item.get("title") or "Sans titre"),
         subtitle=str(item.get("author") or ""),
-        thumbnail=item.get("thumbnail_url"),
+        thumbnail=thumbnail,
         badges=[provenance, "Local"],
         group_title="Récupération",
         rows=[
@@ -40,6 +60,9 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
             ("Chemin", full_path or "—"),
         ],
     )
+    if cover_document is not None:
+        summary_kwargs["cover_document"] = cover_document
+    detail.show_summary(**summary_kwargs)
     window._add_book_notice(detail,item)
     window._add_local_book_actions(detail,item)
     window._add_facets(detail, item, window.search_controls)
