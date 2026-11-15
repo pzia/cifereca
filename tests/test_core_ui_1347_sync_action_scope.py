@@ -302,16 +302,18 @@ def test_old_source_button_cannot_enqueue_after_identity_change():
     assert window.runner.tasks == []
 
 
-def test_source_sync_queued_work_and_completion_are_identity_scoped():
+def test_source_sync_queued_work_keeps_admitted_source_after_navigation():
     window, broker, calls, build, page = _fixture()
     now = _source_row(window).suffixes[1]
     now.click()
     assert len(window.runner.tasks) == 1
     task = window.runner.tasks[0]
     window.service.current_identity = NS(identity_id="bob")
-    assert task.work() is None
-    task.done(None)
-    assert not any(name == "sync-source" for name, *rest in calls)
+    # Navigation cannot cancel an admitted Core source action. The exact
+    # broker source ID was captured at click-time, never re-resolved in GTK.
+    assert task.work() == "ok"
+    task.done("ok")
+    assert ("sync-source", "kobo-one") in calls
     assert not any(name == "refresh-library" for name, *rest in calls)
 
 
@@ -374,7 +376,7 @@ def test_mismatched_broker_source_owner_is_not_rendered_or_enabled():
     )
 
 
-def test_old_kobo_preview_never_schedules_or_delivers_after_identity_change():
+def test_admitted_kobo_preview_keeps_exact_source_but_drops_old_gtk_delivery():
     window, broker, calls, build, page = _fixture()
     row = _source_row(window)
     preview = row.suffixes[2]
@@ -383,10 +385,12 @@ def test_old_kobo_preview_never_schedules_or_delivers_after_identity_change():
     assert len(window.runner.tasks) == 1
     task = window.runner.tasks[0]
     window.service.current_identity = NS(identity_id="bob")
-    assert task.work() is None
+    # A clicked preview is an exact source-bound read; navigation only
+    # prevents its response from being painted in the new identity's UI.
+    task.work()
     task.done(NS(ok=True, facts={}))
     assert output.subtitle == "Calcul local en cours…"
-    assert not any(name == "preview" for name, *rest in calls)
+    assert ("preview", "kobo-one") in calls
 
 
 def test_old_kobo_preview_button_after_refresh_is_inert():
@@ -416,7 +420,7 @@ def test_identity_a_b_a_generation_cycle_revokes_prior_scope():
     assert sync_action_scope_current(window, fresh)
 
 
-def test_queued_source_work_rejects_identity_a_b_a_even_when_id_repeats():
+def test_queued_source_work_survives_aba_but_drops_old_gtk_delivery():
     window, broker, calls, build, page = _fixture()
     window._identity_context_generation = 11
     # Captured after generation is added, just like MainWindow.
@@ -424,9 +428,9 @@ def test_queued_source_work_rejects_identity_a_b_a_even_when_id_repeats():
     _source_row(window).suffixes[1].click()
     task = window.runner.tasks[0]
     window._identity_context_generation = 13
-    assert task.work() is None
-    task.done(None)
-    assert not any(name == "sync-source" for name, *rest in calls)
+    assert task.work() == "ok"
+    task.done("ok")
+    assert ("sync-source", "kobo-one") in calls
     assert not any(name == "refresh-library" for name, *rest in calls)
 
 

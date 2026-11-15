@@ -154,6 +154,54 @@ def test_explicit_dialog_runs_only_chosen_account_and_safe_progress(monkeypatch)
     assert not cancel.sensitive
 
 
+
+def test_admitted_preparation_keeps_exact_source_after_navigation_but_no_dialog(monkeypatch):
+    w, broker, calls = fixture(monkeypatch)
+    download, _, output = controls(w)
+    download.click()
+    task = w.runner.tasks[-1]
+    w.service.current_identity = NS(identity_id="bob")
+    result = task.work()
+    assert ("prepare", "kobo-one") in calls
+    task.done(result)
+    assert not Dialog.shown
+    assert not any(c[0] == "acquire" for c in calls)
+    assert "Préparation distante" in output.subtitle
+
+
+@pytest.mark.parametrize("switch_back", [False, True])
+def test_confirmed_materialization_survives_navigation_without_stale_gtk_paint(
+    monkeypatch, switch_back,
+):
+    w, broker, calls = fixture(monkeypatch)
+    w._identity_context_generation = 17
+    w._refresh_sync_page()
+    download, _, output = controls(w)
+    download.click()
+    task = w.runner.tasks[-1]
+    task.done(task.work())
+    Dialog.shown[-1].choose("run")
+    assert len(w.runner.tasks) == 2
+    admitted = w.runner.tasks[-1]
+    assert admitted.options["kind"] == "source-materialize"
+
+    # Only the display selection changed. The clicked source and the
+    # explicitly confirmed one-use token remain pinned; the Core broker
+    # still independently validates source ownership, consent and leases.
+    w.service.current_identity = NS(identity_id="bob")
+    w._identity_context_generation += 1
+    if switch_back:
+        w.service.current_identity = NS(identity_id="alice")
+        w._identity_context_generation += 1
+    labels = []
+    result = admitted.work(labels.append)
+    assert ("acquire", "kobo-one", "d" * 64) in calls
+    assert labels == ["Téléchargement local · 1 fichier(s) acquis"]
+    admitted.done(result)
+    assert output.subtitle.startswith("Téléchargement de ce compte en cours")
+    assert not any(c[0] == "refresh-library" for c in calls)
+
+
 def test_aba_identity_change_blocks_old_dialog_and_queued_acquisition(monkeypatch):
     w, broker, calls = fixture(monkeypatch)
     w._identity_context_generation = 4
