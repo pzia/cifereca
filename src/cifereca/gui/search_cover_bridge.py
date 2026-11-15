@@ -101,6 +101,17 @@ class SearchCoverBridge:
         )
         if cover is None:
             return False
+        # A repeated callback for the SAME admitted notice/snapshot must not
+        # restart N1 or create a new N2 generation. GTK list and detail can
+        # reuse the still-live decision; only changed evidence or an expired
+        # decision starts a new observation. The 4-epoch context is mandatory.
+        known = self._records.get(scope)
+        if known is not None and known[0] == generation:
+            cached = self._cache.peek(scope, revision=known[1])
+            if (cached is not None and cached.status == "selected"
+                    and cached.uri == cover.url):
+                self._records.move_to_end(scope)
+                return True
         # An exact holdings cover is stronger than the source list's
         # catalogue thumbnail; Core still checks private URL admissibility.
         self._revision += 1
