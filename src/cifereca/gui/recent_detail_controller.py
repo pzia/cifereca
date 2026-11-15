@@ -1,6 +1,9 @@
 """Recent acquisition detail presenter, using injected window/formatting (#1129)."""
 from __future__ import annotations
 
+from .local_detail_cover import exact_recent_detail_cover
+from .detail_model import book_detail_presentation
+
 
 def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
     if getattr(window, "_closed", False) or not row:
@@ -27,7 +30,14 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
     full_path = str(item.get("path") or "")
     file_name = Path(full_path).name if full_path else "—"
     acquired = format_recent_timestamp(item.get("acquired_at"), detailed=True)
-    detail.show_summary(
+    active = getattr(
+        getattr(getattr(window, "service", None), "current_identity", None),
+        "identity_id", None,
+    )
+    evidence = exact_recent_detail_cover(
+        item, active_identity_id=active,
+    )
+    summary = dict(
         title=str(item.get("title") or "Sans titre"),
         subtitle=str(item.get("author") or ""),
         thumbnail=item.get("thumbnail_url"),
@@ -40,6 +50,22 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
             ("Chemin", full_path or "—"),
         ],
     )
+    if evidence is None:
+        # Historical/non-EPUB Recent rows keep the exact existing renderer.
+        detail.show_summary(**summary)
+    else:
+        render = getattr(detail, "show_local_presentation", None)
+        if callable(render):
+            # One N2 DocumentRef for both list and detail. Do not issue a
+            # legacy URL request before this attested EPUB source is chosen.
+            render(
+                book_detail_presentation(**summary),
+                cover_evidence=evidence,
+            )
+        else:
+            # A custom/old host cannot use the attested EPUB source; it
+            # must not downgrade to a warm URL by accident.
+            detail.show_summary(**{**summary, "thumbnail": None})
     window._add_book_notice(detail,item)
     window._add_local_book_actions(detail,item)
     window._add_facets(detail, item, window.search_controls)
