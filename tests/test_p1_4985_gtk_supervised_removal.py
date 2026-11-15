@@ -83,6 +83,9 @@ class FakeBroker:
         return self.copy_operation
 
     def execute_one(self, **kwargs):
+        # Core checks the pinned cancellation token while the locked
+        # operation is in flight, before the GTK success callback repaints.
+        assert kwargs["check_cancelled"]() is None
         self.execution.append(kwargs)
         return self.outcome
 
@@ -221,7 +224,10 @@ def test_confirmed_removal_has_distinct_worker_and_exact_consent(rig):
     assert invocation["mountpoint"] == rig.volume.mountpoint
     assert invocation["expected_profile_epoch"] == 1
     assert callable(invocation["check_cancelled"])
-    assert invocation["check_cancelled"]() is None
+    # A successful result repaints the selected detail and revokes its old
+    # callback. Core already checked its validity *inside* execute_one.
+    with pytest.raises(RuntimeError, match="reader_usb_selection_scope_revoked"):
+        invocation["check_cancelled"]()
     assert "Retrait USB supervisé terminé" in rig.host._reader_status_label.label
     assert rig.db.device_placement_get(
         "reader-alice", rig.book["artifact_id"],
@@ -431,6 +437,9 @@ def test_replacing_selected_detail_revokes_queued_usb_unlink(rig):
 
 
 def test_core_cancel_callback_is_revoked_on_device_aba(rig):
+    # A partial/blocked Core operation does not repaint the selection, so
+    # the cancellation token is still live until the user changes device.
+    rig.backend.outcome = UsbSyncResult("partial", failed=1, observed=False)
     click(rig)
     rig.host.runner.advance()
     rig.dialogs[0].answer("delete")
