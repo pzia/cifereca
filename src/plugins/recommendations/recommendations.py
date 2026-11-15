@@ -1564,12 +1564,14 @@ class UxRecommendationsView:
     def _reference_changed(self, *_args) -> None:
         if self._reloading_references:
             return
-        index = int(self._reference.get_selected())
-        reference = (
-            self._reference_books[index - 1]
-            if 0 < index <= len(self._reference_books)
-            else None
-        )
+        index = self._reference.get_selected()
+        # Gtk.INVALID_LIST_POSITION may be emitted transiently when its model
+        # changes. It is not a request to clear the selected reference or
+        # recalculate for the entire library; only index 0 means that.
+        # Never coerce bool/float positions into a different book index.
+        if type(index) is not int or not 0 <= index <= len(self._reference_books):
+            return
+        reference = self._reference_books[index - 1] if index else None
         if reference is self._reference_book:
             return
         self._reference_book = reference
