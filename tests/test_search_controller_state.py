@@ -88,6 +88,51 @@ def test_local_search_uses_requested_identity_and_rejects_old_query_callback():
     host.online.assert_not_called()
 
 
+
+def test_queued_local_search_uses_original_core_not_replaced_window_service():
+    host = _host()
+    original_core = host.service
+    host._identity_context_generation = 1
+    host._account_context_generation = 1
+    host.run_search(False)
+    pending = host.requests[-1]
+
+    new_core = NS(
+        current_identity=NS(identity_id="alice"),
+        search_known_catalog=Mock(return_value=[{"key": "wrong-core"}]),
+    )
+    host.service = new_core
+    host._identity_context_generation += 1
+    host._account_context_generation += 1
+    assert pending.work() == [{"key": "local"}]
+    original_core.search_known_catalog.assert_called_once_with(
+        "Dumas", "all", field="all", identity_id="alice",
+    )
+    new_core.search_known_catalog.assert_not_called()
+    pending.done([{"key": "old-core"}])
+    host._populate_local_search.assert_not_called()
+
+
+def test_queued_local_search_survives_a_b_a_without_republishing_stale_view():
+    host = _host()
+    host._identity_context_generation = 3
+    host._account_context_generation = 5
+    host.run_search(False)
+    pending = host.requests[-1]
+    host.service.current_identity = NS(identity_id="bob")
+    host._account_context_generation += 1
+    host.service.current_identity = NS(identity_id="alice")
+    host._account_context_generation += 1
+
+    assert pending.work() == [{"key": "local"}]
+    host.service.search_known_catalog.assert_called_once_with(
+        "Dumas", "all", field="all", identity_id="alice",
+    )
+    pending.done([{"key": "obsolete"}])
+    host._populate_local_search.assert_not_called()
+
+
+
 def test_remote_batches_wait_for_ui_dispatch_and_stale_batch_is_discarded():
     host = _host()
     host.run_search(True)

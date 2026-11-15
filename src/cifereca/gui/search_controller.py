@@ -205,10 +205,20 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     if not force:
         self._last_search_query = state.text
         self._search_mode = "local"
+        # The SQLite worker belongs to the Core active at enqueue, not to a
+        # later MainWindow service (which may point to a different database).
+        known_core = self.service
+        identity_generation = getattr(self, "_identity_context_generation", None)
+        account_generation = getattr(self, "_account_context_generation", None)
         def done(rows):
-            if current(): self._populate_local_search(rows)
+            # Core execution remains valid after navigation; GTK delivery does
+            # not, including A→B→A with the same visible identity label.
+            if (current() and self.service is known_core
+                    and getattr(self, "_identity_context_generation", None) == identity_generation
+                    and getattr(self, "_account_context_generation", None) == account_generation):
+                self._populate_local_search(rows)
         self.runner.submit("Recherche dans le connu…",
-            lambda: self.service.search_known_catalog(state.text, state.scope, field=state.field, identity_id=identity_id),
+            lambda: known_core.search_known_catalog(state.text, state.scope, field=state.field, identity_id=identity_id),
             done, control=self.search_button, priority=TaskPriority.USER_ACTION, kind="search-known")
         return
     # A NEW explicit online request is a new source/account snapshot even
