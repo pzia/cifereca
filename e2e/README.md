@@ -176,6 +176,43 @@ python3 e2e/run.py --scenario search-filter-1366
 python3 e2e/run.py --scenario recommendations-detail-1366
 ```
 
+### P1 #774 — revue UX jumelée, privée et liée au commit
+
+Après les six scénarios réels (Recherche et Recommandations à 1024, 1366 et
+1600 px), sur **le même HEAD**, l'hôte GTK habilité prépare trois planches
+côte à côte sans transférer de captures ni de détails métier :
+
+    for w in 1024 1366 1600; do
+      python3 e2e/run.py --scenario "search-filter-$w"
+      python3 e2e/run.py --scenario "recommendations-detail-$w"
+    done
+    python3 e2e/search_recommendations_review.py --root e2e-artifacts
+
+Le script compare une capture réelle de Recherche avec une capture réelle
+de Recommandations **à largeur identique**. Il refuse les rapports non PASS,
+les absences de preuves de géométrie GTK, les fichiers PNG altérés ou liés,
+les scénarios HiDPI substitués au 1×, les résolutions incohérentes et les
+commits différents du HEAD local. Les deux fixtures restent différentes :
+**aucun résultat de parité bibliographique ni même contenu de livre n'est
+revendiqué par ces planches**.
+
+Les fichiers de e2e-artifacts/search-recommendations-private-review/ restent
+privés (0700 pour le dossier, 0600 pour les planches et reçus). La grille
+ux-checklist.csv contient une ligne par largeur et des axes de densité,
+filtres, focus, détail, couverture, clipping et états partiels/erreur. La
+revue doit être faite sur **les PNG originaux pleine taille**, pas seulement
+sur les planches réduites. Pour contrôler une grille remplie explicitement :
+
+    python3 e2e/search_recommendations_review.py --root e2e-artifacts --verify-checklist
+
+Le verdict refuse toute capture régénérée, y compris au **même SHA Git**,
+et préserve les notes locales d'une grille précédente. Un statut
+CHECKLIST_VERIFIED n'est **pas** une approbation UX : la présence de KO/N/A
+reste visible via des compteurs bornés. La validation finale de #774/#4761
+exige encore une revue visuelle effective et les écarts sont à ventiler ;
+aucune capture, annotation, URL ou donnée de compte ne doit partir vers un
+artefact CI public.
+
 ### P1 #942 — compteur réel et données exclues (GTK 1366)
 
 Le même scénario `book-detail-1366` vérifie après le parcours normal
