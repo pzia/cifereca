@@ -30,6 +30,7 @@ CoverInvalidationCause = Literal[
     "catalogue_changed", "account_epoch_changed", "identity_changed",
     "artifact_changed", "placement_changed", "origin_link_changed",
     "loan_changed", "entitlement_changed", "evidence_changed",
+    "materialization_requalified",
 ]
 _LOG = logging.getLogger("cifereca")
 
@@ -338,6 +339,7 @@ class CoverDecisionCache:
             "catalogue_changed", "account_epoch_changed", "identity_changed",
             "artifact_changed", "placement_changed", "origin_link_changed",
             "loan_changed", "entitlement_changed", "evidence_changed",
+            "materialization_requalified",
         ):
             raise ValueError("unknown cover invalidation cause")
         with self._lock:
@@ -372,6 +374,7 @@ class CoverDecisionCache:
                 "catalogue_changed", "account_epoch_changed", "identity_changed",
                 "artifact_changed", "placement_changed", "origin_link_changed",
                 "loan_changed", "entitlement_changed", "evidence_changed",
+                "materialization_requalified",
             ):
                 raise ValueError("unknown cover invalidation cause")
             return 0
