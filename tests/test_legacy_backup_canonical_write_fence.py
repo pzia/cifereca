@@ -66,14 +66,17 @@ def test_legacy_replay_preserves_published_content_and_history(published, same_s
         db.execute("UPDATE placements SET state=?", (state,))
         original_artifact = db.execute("SELECT * FROM artifacts WHERE sha256=?", (sha,)).fetchone()
     before = physical_rows(store)
+    before_ledger = store.acquisitions()
+    before_archive = store.backup_get("seller", "card", "edition")
     store.backup_put(legacy(path, sha if same_sha else "b" * 64))
     assert physical_rows(store) == before
     with store._lock, store._connect() as db:
         assert db.execute("SELECT * FROM artifacts WHERE sha256=?", (sha,)).fetchone() == original_artifact
-    # The legacy attempt remains historical; it cannot claim this placement or
-    # promote its unverified file to a completed canonical artifact receipt.
-    assert store.acquisitions()[0]["artifact_id"] is None
-    assert store.backup_get("seller", "card", "edition") is not None
+    # A canonical SourceReference now owns the exact supplier/credential/edition.
+    # Replay W1 is refused *before* the archive UPSERT and synthetic ledger,
+    # irrespective of the final SHA or current physical Placement state.
+    assert store.acquisitions() == before_ledger
+    assert store.backup_get("seller", "card", "edition") == before_archive
     assert hashlib.sha256(path.read_bytes()).hexdigest() == sha
 
 
