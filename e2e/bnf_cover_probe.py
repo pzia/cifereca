@@ -614,6 +614,62 @@ def main() -> int:
         capture("09-bnf-embedded-over-remote-loan-cover")
         assert len(image_gets) == 2, "Embedded local image must not cause HTTP"
         report["checks"]["embedded_local_over_remote_in_real_gtk"] = True
+        # A direct, valid supplier thumbnail must not hide a *stronger*
+        # attested local Placement. Exercise the real CoreUI loan projection
+        # and real Gtk.ListView after switching the same SourceKey back to
+        # its supplier thumbnail (previous test covered only missing URLs).
+        later(150, begin_embedded_over_supplier)
+
+    def begin_embedded_over_supplier():
+        from copy import copy
+        window = app_window[0]
+        original = next(loan for loan in window.service.last_loans
+                        if loan.record_id == RESOURCES[0])
+        source = copy(original)
+        source.thumbnail_url = COVERS[0]
+        embedded = window._loan_cover_projection[2][1]["thumbnail_url"]
+        assert embedded.startswith("file:")
+        window._populate_loans([
+            source if x is original else x for x in window.service.last_loans
+        ])
+        assert next(loan for loan in window.service.last_loans
+                    if loan.record_id == RESOURCES[0]).thumbnail_url == COVERS[0]
+        await_condition(
+            "embedded_loan_list_over_supplier",
+            lambda: any(
+                window.loan_page.store.get_item(i).thumbnail_url == embedded
+                for i in range(window.loan_page.store.get_n_items())
+            ) and any(
+                isinstance(cover, CoverView) and cover._url == embedded
+                and cover.get_mapped()
+                and cover.picture.get_paintable() is not None
+                and not cover.placeholder.get_visible()
+                for cover in walk(window.loan_page.listview)
+            ),
+            select_embedded_over_supplier,
+        )
+
+    def select_embedded_over_supplier():
+        window = app_window[0]
+        embedded = window._loan_cover_projection[2][1]["thumbnail_url"]
+        rows = [window.loan_page.store.get_item(i)
+                for i in range(window.loan_page.store.get_n_items())]
+        index = next(i for i, row in enumerate(rows)
+                     if row.thumbnail_url == embedded)
+        window.loan_page.selection.set_selected(index)
+        await_condition(
+            "embedded_loan_detail_over_supplier",
+            lambda: bool(selected_loan_cover())
+            and selected_loan_cover()[0].get_mapped()
+            and selected_loan_cover()[0]._url == embedded
+            and selected_loan_cover()[0].picture.get_paintable() is not None,
+            finish_embedded_over_supplier,
+        )
+
+    def finish_embedded_over_supplier():
+        capture("10-bnf-embedded-over-valid-supplier-cover")
+        assert len(image_gets) == 2, "Strong local proof must not fetch again"
+        report["checks"]["embedded_local_over_valid_supplier_in_real_gtk"] = True
         report["status"] = "PASS"
         result[0] = 0
         save()

@@ -108,6 +108,10 @@ def test_p1_4118_bnf_real_gtk_search_detail_two_cover_acceptance():
         'report["checks"]["second_real_gtk_detail_cover"]',
         'report["checks"]["missing_cover_no_image_get"]',
         'report["checks"]["cache_shared_search_detail"]',
+        'report["checks"]["embedded_local_over_valid_supplier_in_real_gtk"]',
+        '"embedded_loan_list_over_supplier"',
+        '"embedded_loan_detail_over_supplier"',
+        'walk(window.loan_page.listview)',
         'report["status"] = "PASS"',
     ):
         assert marker in probe
