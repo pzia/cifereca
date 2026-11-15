@@ -189,6 +189,12 @@ Après inspection des **PNG originaux en pleine résolution**, renseigner dans
 busy_disabled_error_states / density`, indiquer `OK`, `KO` ou `N/A`.
 Une valeur `N/A` exige une justification en notes privées et **n'est pas un
 PASS** ; un `KO` implique `ux_verdict=KO` pour la ligne.
+**Chaque ligne avec `ux_verdict=KO` exige aussi un diagnostic concret** dans
+`notes`, conservé dans le CSV privé (jamais dans le reçu agrégé, les logs
+ou GitHub). Un simple verdict négatif sans commentaire ne suffit pas à
+qualifier l'écart ni à le transmettre à CoreUI/UX. Un `KO` global reste
+possible même si les cinq axes sont renseignés `OK`, à condition de
+consigner la raison indépendante de ces axes dans les notes.
 Les états non observés ne doivent pas être marqués `OK`.
 
 ```bash
