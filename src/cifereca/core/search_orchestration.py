@@ -1877,6 +1877,11 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
     if type(identity_id) is not str or not identity_id.strip():
         return 0
     now = int(time.time())
+    # Revoke a former producer association before validating current rows.
+    # A mutable supplier result may be reused by a later source batch.
+    for row in rows:
+        if type(row) is SearchResult:
+            row.__dict__.pop("_core_notice_cover_document_ref", None)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
     # The stronger #5073 UI/action proof remains authoritative for actions.
@@ -2001,11 +2006,15 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
                 )
                 if observed is None:
                     continue
-                persist_notice_cover(
+                persisted = persist_notice_cover(
                     self.storage, observed,
                     field_path=("search_result", "thumbnail_url"),
                     cover_inventory_complete=True,
                 )
+                # Only Core's accepted SQLite observation can supply this
+                # ephemeral DocumentRef; it is not serialized into the
+                # provider cache or inferred by GTK from the image URL.
+                row._core_notice_cover_document_ref = persisted.document
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # The historical catalogue mirror is still independently
                 # useful; one malformed provider notice must not abort other
