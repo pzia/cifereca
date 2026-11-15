@@ -300,6 +300,92 @@
       "rationale": "A security boundary for plugin diagnostic provenance, not a business-right or supplier-routing rule; do not remove hardcoded trusted-producer gate before generic attestation.",
       "decision_group_id": "diagnostics.runtime-producer-integrity",
       "reachability": "productive"
+    },
+    {
+      "id": "site-7874908d12d351ccb80742b1",
+      "classification": "safety_guard_pending_contract",
+      "journey": "ADEPT exact Paris borrower: ledger v16/legacy grant and connection identity",
+      "decision_group_id": "adept-borrower.exact-source-grant",
+      "reachability": "productive",
+      "productive_caller": "LibraryService._paris_adept_identity_for_loan -> core.adept_borrower._paris_adept_identity_for_loan during attached/automatic ADEPT loan and status flows",
+      "effect": "Fail-closed exact source Account/credential/identity lookup; reconciles v16 explicit grant against legacy Paris binding, rejects foreign borrower or profile drift, never infers Adobe owner from UI account",
+      "authority": "Native loan/provider/credential/account coordinates plus versioned persisted v16 borrower grant, exact binding and pinned ADEPT profile; provider text alone does not confer rights",
+      "replacement_contract": "Provider-neutral versioned ADEPT borrower-origin API using authenticated SourceKey and explicitly confirmed grant; retain existing legacy/v16 dual-evidence refusal codes until reconciled",
+      "tests": [
+        "tests/test_core_p0_5851_dual_grant_conflict.py",
+        "tests/test_core_p0_1120_paris_borrower_typed_input.py",
+        "tests/test_adept_grant_native_writer.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Name-based method signal is a currently executed owner/provenance guard, not provider-specific permission to borrow. Removing it before a generic persisted grant resolver would allow wrong-profile ADEPT actions."
+    },
+    {
+      "id": "site-7587067dd7068ebdaad80ad9",
+      "classification": "safety_guard_pending_contract",
+      "journey": "LibraryService facade to exact ADEPT Paris borrower resolver",
+      "decision_group_id": "adept-borrower.exact-source-grant",
+      "reachability": "productive",
+      "productive_caller": "LibraryService._paris_adept_identity_for_loan forwarding to core.adept_borrower for ADEPT loan/return status with explicit connection_identity_id",
+      "effect": "Preserves explicit connection_identity_id and returns `(borrower_identity_id, refusal_code)` without selecting UI current account, mutating binding or guessing borrower; delegated resolver performs fail-closed grant checks",
+      "authority": "Exact connection owner and persisted borrower/profile grant validated by core.adept_borrower rather than GTK selection or arbitrary provider response",
+      "replacement_contract": "Facade can be retired only when all callers use a neutral borrower resolver with same signature/refusal semantics and complete v16 legacy-conflict checks",
+      "tests": [
+        "tests/test_paris_borrower_adept_binding.py",
+        "tests/test_core_p0_5851_dual_grant_conflict.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Supplier-named facade is a live safety boundary. Although it is thin, the explicit scope and refusal contract cannot be erased as an AST cleanup."
+    },
+    {
+      "id": "site-2e131a36740d4dc492a02de3",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Verify exact Paris DILICOM borrower before interpreting returned loan inventory",
+      "decision_group_id": "return-verification.exact-borrower-inventory",
+      "reachability": "productive",
+      "productive_caller": "loan_return_verification._read_paris_return_presence -> _paris_inventory_exact_borrower for verified PNB loan-inventory snapshots",
+      "effect": "Refuses missing/foreign Account provider, credential, borrower, identity and malformed loan rows; an empty list does not attest return for the wrong primary/linked borrower",
+      "authority": "Exact selected source Account and native Loan source_provider/source_credential/source_account_id, plus typed inventory completeness; no inference from loan absence alone",
+      "replacement_contract": "Provider-neutral typed return-observation attestation requiring complete scoped inventory and branch provenance; retain Paris-only negative cases until equivalent generic contract",
+      "tests": [
+        "tests/test_core_p0_2975_return_borrower_scope.py",
+        "tests/test_core_p0_2975_paris_primary_alias_provenance.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "A live safety veto against false absence/returned claims and cross-borrower confirmation, not a presentation-only brand string."
+    },
+    {
+      "id": "site-b2c28295eb915336e054f6f1",
+      "classification": "safety_guard_pending_contract",
+      "journey": "LibraryService exact Paris post-ADEPT return inventory verification",
+      "decision_group_id": "return-verification.exact-borrower-inventory",
+      "reachability": "productive",
+      "productive_caller": "LibraryService.verify_paris_return_inventory invokes loan_return_verification.verify_paris_return_inventory for read-back of exact-source PNB inventory",
+      "effect": "Forwards to verified exact-account inventory read, with injected AttentionRequired/logging seams; may perform one scoped fresh inventory GET but never posts ReturnDigitalLoan, never grants rights from absence",
+      "authority": "Persisted return/source borrower provenance, completeness and active session validation in loan_return_verification, not current UI selection",
+      "replacement_contract": "Neutral read-only provider return-verification API with explicit source scope, completeness and in-flight revocation checks, retaining no-POST discipline",
+      "tests": [
+        "tests/test_core_p0_1120_paris_inventory_completeness.py",
+        "tests/test_core_p0_2975_typed_return_inventory_absence.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "The method name triggers provider AST detection but the delegated read can affect return attestation; retain until a scope-equivalent neutral verifier replaces it."
+    },
+    {
+      "id": "site-36d7d98c0b5939ee21e6d5cd",
+      "classification": "legitimate_readonly_compat",
+      "journey": "Historical Paris ADEPT-first return receipt lookup after voluntary return feature removal",
+      "decision_group_id": "historical-return.readonly-receipt",
+      "reachability": "legacy_only",
+      "productive_caller": "LibraryService.verify_loan_return external read-only compatibility ABI for legacy persisted return receipts, no current return mutation path",
+      "effect": "For Paris digital loan only, resolves exact borrower, fetches existing SQLite loan_return_state by historical adept_return_key, maps public return status; other providers return not_requested, no GET/POST/replay or new checkpoint",
+      "authority": "Persisted historical return ledger record and exact origin/borrower; old 'adobe_first_paris' status labels are descriptive, not authority to return a loan",
+      "replacement_contract": "Preserve read-only archive receipt access and historical scope labels while retiring mutations. A generic versioned archived-return reader may replace the provider filter after migration of stored keys and caller contracts",
+      "tests": [
+        "tests/test_p1_4048_legacy_return_seams_closed.py",
+        "tests/test_core_p0_1120_adept_origin_status_redaction.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "Explicit Paris/digital predicate selects legacy receipt namespace; it does not dispatch a provider mutation. Retaining this narrow read-only compatibility avoids silently losing historical statuses."
     }
   ],
   "retirements": [
