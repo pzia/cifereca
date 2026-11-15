@@ -541,6 +541,54 @@ class LibraryService:
             requesting_identity_id=requesting_id, scope_current=scope_current,
         )
 
+    def execute_normal_lender_borrow_for_current_identity(
+        self, *, captured_candidate, exact_notice: SearchResult,
+        expected_requesting_identity_id: str,
+        expected_context_epoch: int, expected_source_epoch: int,
+        confirmed: bool = False,
+    ) -> dict[str, object]:
+        """#4988: manually confirmed one-shot lender A while reader B stays active.
+
+        An old GTK choice cannot rebind itself to a new requesting profile
+        after B→C→B. The Core executor still re-discovers A, rechecks the
+        source/edition/manifest and owns the sole durable provider claim.
+        """
+        from .core.borrow_for_identity_executor import _result
+        from .core.borrow_for_identity_normal_executor import (
+            execute_normal_lender_borrow,
+        )
+        if (type(expected_requesting_identity_id) is not str
+                or not expected_requesting_identity_id
+                or type(expected_context_epoch) is not int
+                or expected_context_epoch < 0
+                or type(expected_source_epoch) is not int
+                or expected_source_epoch < 0
+                or type(exact_notice) is not SearchResult):
+            return _result("blocked", "lender_scope_revoked")
+        requester, read_scope = _capture_cross_profile_read_scope(
+            self, expected_requesting_identity_id,
+        )
+
+        def current() -> bool:
+            try:
+                return (
+                    requester == expected_requesting_identity_id
+                    and read_scope() is True
+                    and self._account_context_epoch == expected_context_epoch
+                    and self._source_context_epoch == expected_source_epoch
+                )
+            except Exception:
+                return False
+
+        if not current():
+            return _result("blocked", "lender_scope_revoked")
+        return execute_normal_lender_borrow(
+            self, captured_candidate=captured_candidate,
+            exact_notice=exact_notice,
+            requesting_identity_id=expected_requesting_identity_id,
+            scope_current=current, confirmed=confirmed,
+        )
+
     def manual_borrow_diagnostic(self, item: SearchResult) -> dict[str, object]:
         """Read-only scoped admission from the installed provider policy."""
         from .core.manual_borrow_contract import manual_borrow_action_diagnostic
