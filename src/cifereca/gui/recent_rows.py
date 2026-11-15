@@ -81,7 +81,14 @@ def project_recent_rows(
             if (hasattr(row, "__dict__")
                     and type(facts) is VerifiedLocalCoverEvidence
                     and facts.scope.identity_id == item.get("identity_id")
-                    and facts.scope.source_key == key
+                    # Recent GTK key is Placement; N2 uses the same exact
+                    # Artifact+Placement source as Library and its detail.
+                    and facts.scope.source_key == (
+                        "artifact:sha256:" + facts.artifact_sha256
+                    )
+                    and facts.scope.artifact_id == (
+                        "sha256:" + facts.artifact_sha256
+                    )
                     and facts.scope.artifact_id == item.get("artifact_id")
                     and facts.scope.placement_id == item.get("placement_id")
                     and item.get("key") == key):
