@@ -87,6 +87,13 @@ def test_all_never_indexes_identifiers_credentials_or_private_metadata(secret):
     assert not matches(ranked(), secret)
 
 
+def test_url_like_publisher_is_not_indexed_as_a_bibliographic_name():
+    row = ranked(publisher="https://private.example/loan?token=PRIVATE_TOKEN")
+    assert not matches(row, "PRIVATE_TOKEN")
+    assert not matches(row, "private.example")
+    assert matches(row, "Botanique")
+
+
 def test_all_rejects_untrusted_opaque_metadata_without_string_coercion():
     class Secret:
         def __str__(self):
