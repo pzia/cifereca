@@ -174,3 +174,29 @@ def test_adept_detail_aba_does_not_repaint_older_result(name):
     done(result)
     failed(RuntimeError("PRIVATE-ADEPT"))
     _no_gtk(host)
+
+
+class HostileIdentity(str):
+    def __eq__(self, _other):
+        raise AssertionError("untrusted provider identity equality was invoked")
+
+
+@pytest.mark.parametrize("name", ["choose_adept_loan", "reconcile_adept_from_detail"])
+def test_adept_gtk_scope_never_executes_hostile_identity_equality(name):
+    host, _, requests = _host()
+    book = _loan()
+    _method(name)(host, "acquisition-a", book, object())
+    (_label, _work, done, failed), _ = requests[-1]
+    book.identity_id = HostileIdentity("alice")
+    done({"status": "resolved"})
+    failed(RuntimeError("PRIVATE"))
+    _no_gtk(host)
+
+
+def test_retired_send_mode_does_not_bind_or_call_acquisition():
+    host, original, requests = _host()
+    del original.reacquire_digital_loan
+    _method("prepare_pnb_for_loan")(host, _loan(), send=True)
+    work = requests[-1][0][1]
+    with pytest.raises(RuntimeError, match="storage.target"):
+        work()
