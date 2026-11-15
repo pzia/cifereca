@@ -2169,24 +2169,40 @@ class LibraryService:
         source_artifact_id: str, requesting_identity_id: str,
         expected_account_context_epoch: int,
         expected_source_context_epoch: int, confirmed: bool = False,
+        admitted_requester_identity: object = None,
     ) -> dict[str, object]:
-        """#4662: explicit local A→B copy, independent of provider loan status.
+        """#4662/#5833: independent local copy with an exact recipient lease.
 
-        Uses the exact existing "Envoyer à" physical transfer under the Core
-        lock, without deriving an entitlement, ACSM operation or a loan POST.
+        GTK may pass an already-admitted requester object. Its execution
+        lease uses the identity registry and Core source epoch, never the
+        currently displayed profile/account. Legacy synchronous callers
+        without this proof retain the navigation-dependent admission fence.
         """
         from .core.present_placement_copy import send_present_placement_copy
 
-        selected = getattr(self, "current_identity", None)
+        if admitted_requester_identity is None:
+            # Legacy direct/synchronous ABI: do not silently grant a
+            # background task authority to an arbitrary unselected identity.
+            selected = getattr(self, "current_identity", None)
 
-        def scope_current() -> bool:
-            # Re-evaluate at every physical-copy boundary, including under
-            # the global lock and after publication. A→B→A changes epoch.
-            return (
-                self.current_identity is selected
-                and self._account_context_epoch == expected_account_context_epoch
-                and self._source_context_epoch == expected_source_context_epoch
-            )
+            def scope_current() -> bool:
+                return (
+                    self.current_identity is selected
+                    and self._account_context_epoch == expected_account_context_epoch
+                    and self._source_context_epoch == expected_source_context_epoch
+                )
+        else:
+            # The confirmed GTK action captured this exact object BEFORE
+            # enqueue. Identity removal/rebind and source reconfiguration
+            # revoke it, but ordinary navigation does not.
+            selected = admitted_requester_identity
+
+            def scope_current() -> bool:
+                return (
+                    self.identity_by_id(requesting_identity_id) is selected
+                    and self.identity_by_id(source_identity_id) is not None
+                    and self._source_context_epoch == expected_source_context_epoch
+                )
 
         return send_present_placement_copy(
             self, source_placement_id=source_placement_id,
