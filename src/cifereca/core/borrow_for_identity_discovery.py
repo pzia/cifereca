@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from ..models import Account, SearchResult
 from ..plugin_api.lending_capabilities import assess_lending_operation
-from .borrow_action_scope import borrow_claim_key
+from .borrow_action_scope import _fields, borrow_claim_key
 from .borrow_for_identity_live import _lender_label
 from .borrow_for_identity_preview import _display_account_label
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
@@ -29,6 +29,11 @@ class PossibleBorrowLender:
     _notice: SearchResult = field(repr=False, compare=False)
     supplier_eligibility: Literal["not_verified"] = "not_verified"
     executable: bool = False
+    # A SearchResult and Account can be mutated in-place after rendering;
+    # object identity alone is not an immutable edition/source snapshot.
+    _captured_fields: tuple[object, ...] = field(
+        init=False, repr=False, compare=False,
+    )
 
     def __post_init__(self) -> None:
         # Future UI callers must never reinterpret a locally found account
@@ -45,6 +50,7 @@ class PossibleBorrowLender:
                 or account.is_primary is not True
                 or borrow_claim_key(account, notice) is None):
             raise ValueError("invalid_possible_borrow_lender")
+        object.__setattr__(self, "_captured_fields", _fields(account, notice))
 
 
 def discover_possible_borrow_lenders(
