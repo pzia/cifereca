@@ -1006,3 +1006,21 @@ def test_bnf_covers_failure_exports_only_closed_synthetic_stage():
         report.unlink()
         report.symlink_to(root / "secret.json")
         assert "bnf_covers_last_stage" not in module.safe_summary(source)["results"][0]
+
+
+
+def test_bnf_probe_checkpoints_are_saved_before_asynchronous_gtk_wait():
+    import ast
+    source = (ROOT / "e2e/bnf_cover_probe.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    condition = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "await_condition"
+    )
+    lines = [
+        ast.unparse(stmt) for stmt in condition.body
+        if isinstance(stmt, (ast.Assign, ast.Expr))
+    ]
+    assert 'report[\'last_stage\'] = label' in lines
+    assert 'save()' in lines
+    assert lines.index('report[\'last_stage\'] = label') < lines.index('save()')
