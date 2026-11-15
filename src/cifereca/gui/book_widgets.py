@@ -75,6 +75,7 @@ class CoverView(Gtk.Overlay):
         self._url: str | None = None
         self._priority = 10
         self._decode_retry = False
+        self._paint_observer: Callable[[], None] | None = None
 
         self.placeholder = Gtk.Image.new_from_icon_name("image-x-generic-symbolic")
         self.placeholder.set_pixel_size(max(24, self._width // 2))
@@ -126,6 +127,7 @@ class CoverView(Gtk.Overlay):
         self._loader = None
         self._url = None
         self._decode_retry = False
+        self._paint_observer = None
         self._set_logical_size(self._width, self._height)
         self.picture.set_paintable(None)
         self.placeholder.set_visible(True)
@@ -136,7 +138,12 @@ class CoverView(Gtk.Overlay):
         self.spinner.set_visible(True)
         self.spinner.start()
 
-    def bind_url(self, loader: CoverLoader, url: str | None, *, priority: int = 10) -> None:
+    def bind_url(
+        self, loader: CoverLoader, url: str | None, *, priority: int = 10,
+        on_image_applied: Callable[[], None] | None = None,
+    ) -> None:
+        if on_image_applied is not None and not callable(on_image_applied):
+            raise TypeError("cover paint observer must be callable")
         # A rapid GTK list rebuild can rebind the same URL before the
         # asynchronous cache/preview callback reaches the main loop.
         # Resetting here invalidates that callback's generation repeatedly,
@@ -145,9 +152,11 @@ class CoverView(Gtk.Overlay):
         # failed request may still be refreshed by an ordinary rebind, and
         # changing loader, URL or priority retains the normal cancellation.
         if (url and self._loader is loader and self._url == url
-                and self._priority == priority and self.spinner.get_visible()):
+                and self._priority == priority and self.spinner.get_visible()
+                and on_image_applied is getattr(self, "_paint_observer", None)):
             return
         self.reset()
+        self._paint_observer = on_image_applied
         if not url:
             self._show_missing()
             return
@@ -215,6 +224,19 @@ class CoverView(Gtk.Overlay):
                 self._start_cover_request(force=True)
             else:
                 self._show_missing()
+        else:
+            # Not a cache-hit receipt: GTK actually accepted the decoded
+            # texture for the CURRENT binding. A broken subscriber must not
+            # be mistaken for a decode failure or evict an image from disk.
+            observer = getattr(self, "_paint_observer", None)
+            if observer is not None:
+                try:
+                    observer()
+                except Exception:
+                    import logging
+                    logging.getLogger("cifereca").exception(
+                        "cover texture observer failed"
+                    )
         return False
 
     def set_path(self, path: Path | None) -> bool:
@@ -397,12 +419,24 @@ class BookListCell(Gtk.Box):
         self._thumbnail_item = None
         self._thumbnail_handler_id = None
 
+    def _cover_image_applied(self, item: BookListItem, epoch: int) -> None:
+        if (self._thumbnail_item is item and self._bound_key == item.key
+                and self._bind_epoch == epoch):
+            callback = getattr(item, "_on_cover_applied", None)
+            if callable(callback):
+                callback()
+
     def _thumbnail_changed(self, item: BookListItem) -> None:
         if self._thumbnail_item is not item or self._bound_key != item.key:
             return
+        callback = (
+            (lambda row=item, epoch=self._bind_epoch:
+             self._cover_image_applied(row, epoch))
+            if callable(getattr(item, "_on_cover_applied", None)) else None
+        )
         self.cover.bind_url(
             self.cover_loader, item.thumbnail_url or item.default_thumbnail_url,
-            priority=10,
+            priority=10, on_image_applied=callback,
         )
 
     def bind(self, item: BookListItem) -> None:
@@ -475,8 +509,16 @@ class BookListCell(Gtk.Box):
             except Exception:
                 pass
             self._meta_request = None
+        on_applied = (
+            (lambda row=item, epoch=binding_epoch:
+             self._cover_image_applied(row, epoch))
+            if callable(getattr(item, "_on_cover_applied", None)) else None
+        )
         if item.thumbnail_url:
-            self.cover.bind_url(self.cover_loader, item.thumbnail_url, priority=10)
+            self.cover.bind_url(
+                self.cover_loader, item.thumbnail_url, priority=10,
+                on_image_applied=on_applied,
+            )
         elif item.cover_provider and item.cover_title:
             # L'historique lié observé ne fournit aucune ThumbnailUrl. Résoudre
             # via Search.svc uniquement pour cette cellule visible/recyclée.
@@ -499,7 +541,10 @@ class BookListCell(Gtk.Box):
                 resolved,
             )
         else:
-            self.cover.bind_url(self.cover_loader, item.default_thumbnail_url, priority=10)
+            self.cover.bind_url(
+                self.cover_loader, item.default_thumbnail_url, priority=10,
+                on_image_applied=on_applied,
+            )
         # No source-key mutation or selection invalidation is necessary when
         # asynchronous detail discovery provides a stronger cover for this row.
         self._thumbnail_item = item
