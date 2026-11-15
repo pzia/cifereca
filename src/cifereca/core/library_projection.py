@@ -48,6 +48,15 @@ def _history_cache_key(account: Account) -> str:
 def refresh_history(self, force: bool = False, *, account: Account) -> list[HistoryItem]:
     # A Core worker must not rediscover the GTK-selected account after enqueue.
     key = _history_cache_key(account)
+    # An immutable borrower scope and source epoch protect a manual history
+    # GET from account removal, disconnect or source replacement. Switching
+    # only the GTK-displayed account does not revoke the admitted read.
+    from .source_context import source_context_epoch
+    source_epoch = source_context_epoch(self)
+    source_scope = (
+        account.identity_id, account.provider_id,
+        account.credential_id, account.unique_id,
+    )
     epoch = self._account_context_epoch
     ttl = int(self.config.get("cache.history_seconds", 1800))
     if not force:
@@ -63,7 +72,18 @@ def refresh_history(self, force: bool = False, *, account: Account) -> list[Hist
         if self._account_context_epoch == epoch and self.current_account is account:
             self.last_history = []
         return []
+    # Reuse the Core-owned, provider-neutral durable borrower lease. A
+    # disconnected/disabled source, swapped session or deleted borrower must
+    # never be queried, nor may an in-flight old response reach the cache.
+    if not self._history_source_lease_current(
+        account, session, scope=source_scope, epoch=source_epoch,
+    ):
+        raise ProviderConfigurationError("history_source_binding_unavailable")
     rows = session.history(account)
+    if not self._history_source_lease_current(
+        account, session, scope=source_scope, epoch=source_epoch,
+    ):
+        raise ProviderConfigurationError("history_source_binding_changed")
     direct = sum(1 for x in rows if x.thumbnail_url)
     default_only = sum(1 for x in rows if not x.thumbnail_url and x.default_thumbnail_url)
     missing = sum(1 for x in rows if not x.thumbnail_url and not x.default_thumbnail_url)
