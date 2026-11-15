@@ -10,6 +10,7 @@ import time
 
 from .detail_model import book_detail_presentation
 from .reader_library_projection import project_reader_library
+from .local_detail_cover import exact_local_detail_cover
 from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 from .recent_time import format_recent_timestamp
 
@@ -393,6 +394,11 @@ def reader_selected(window, row) -> None:
         thumbnail=item.thumbnail_url,
         badges=(),
         section_rows=[("Liseuse", rows)],
+    ), cover_evidence=exact_local_detail_cover(
+        getattr(window, "_reader_source_items", {}).get(row.key),
+        active_identity_id=identity_id,
+        artifact_id=item.artifact_id,
+        placement_id=item.placement_id,
     ))
     # A dry-run is a temporary observation of an exact list snapshot. It is
     # neither an instruction to deliver/remove nor a persistent presence
