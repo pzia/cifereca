@@ -26,7 +26,7 @@ from ..core.book_cover_projection import (
 from ..core.covers import CoverCandidate, candidate
 from ..core.epub_cover_source import AttestedEmbeddedCover
 from ..core.epub_cover_failure_qualification import EpubCoverPhysicalAssessment
-from ..epub_metadata import cover_cache_dir
+from ..epub_metadata import cover_cache_dir, valid_cached_cover_path
 from .cover_loader import CoverLoader, CoverRequest
 
 
@@ -252,6 +252,15 @@ class DocumentCoverService:
             if self.decisions.selected_token(
                 document, revision=snapshot.revision, uri=source_uri,
             ) != expected_token:
+                return None
+            # N3 is process-wide. Another profile may have restored the exact
+            # content-addressed image after the failure was qualified; in
+            # that case keep the original EPUB N1 preference, not the hot URL.
+            # This check runs only on an explicit worker-side requalification,
+            # never on the normal N2-hit book-list path.
+            if valid_cached_cover_path(
+                cover_cache_dir() / snapshot.embedded.resource.cache_name,
+            ):
                 return None
 
             fallback = resolve_book_cover(
