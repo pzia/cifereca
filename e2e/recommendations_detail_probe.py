@@ -427,6 +427,33 @@ def main():
         assert "1 sur 3" in view._summary.get_text()
         assert view._generation == generation and not state["searches"]
         report["checks"]["P1_4761_all_fields_public_bibliography_gtk"] = True
+        # #4761/#6184: exercise the *real* SearchEntry + shared Field
+        # selector with two terms from different attested book fields.
+        # "astronomie" belongs to Sujet and "autrice" to Auteur.
+        # Word order is irrelevant; quotes cannot join those two fields.
+        for words in ("astronomie autrice", "AUTRICE ASTRONOMIE",
+                      '"astronomie" autrice'):
+            query.entry.set_text(words)
+            query.entry.emit("activate")
+            assert store.get_n_items() == 1
+            assert store.get_item(0).title == "Livre A"
+            assert "1 sur 3" in view._summary.get_text()
+            assert view._master._page.count_label.get_text() == "1 / 3 éléments"
+        report["checks"]["P1_4761_real_gtk_multifield_words"] = True
+        query.entry.set_text('"astronomie autrice"')
+        query.entry.emit("activate")
+        assert store.get_n_items() == 0
+        assert "0 sur 3" in view._summary.get_text()
+        assert view._master._page.count_label.get_text() == "0 / 3 éléments"
+        assert view._master._page.selection.get_selected_item() is None
+        report["checks"]["P1_4761_real_gtk_quoted_phrase_not_cross_field"] = True
+        # Restore the original subject query before the strict Titre check,
+        # so this extension cannot weaken older field-specific assertions.
+        query.entry.set_text("astronomie")
+        query.entry.emit("activate")
+        assert store.get_n_items() == 1
+        assert view._generation == generation and not state["searches"]
+        report["checks"]["P1_4761_real_gtk_multiword_zero_new_queries"] = True
         query.field.set_selected(1)  # Champ · Titre
         assert store.get_n_items() == 0
         assert "0 sur 3" in view._summary.get_text()
