@@ -3686,44 +3686,66 @@ class LibraryService:
         when the source, loan transaction or origin profile is ambiguous.
         """
         from .core.adept_return_origin import inventory_attests_return_origin
+        from .core.adept_return_source_scope import HistoricalLoanSource
 
+        denied = {"status": "adept_identity_unproven", "return_available": False}
+        scope = HistoricalLoanSource.capture(loan)
+        if scope is None:
+            return denied
         borrower_code = None
-        is_paris = str(loan.source_provider).lower() == "paris"
+        is_paris = scope.provider_id.casefold() == "paris"
         if is_paris:
             connection_identity_id = self.storage.identity_for_connection(
-                loan.source_provider, loan.source_credential
+                scope.provider_id, scope.credential_id,
             )
+            if type(connection_identity_id) is not str or not connection_identity_id:
+                return denied
             identity = self.identity_by_id(connection_identity_id)
             if identity is None:
-                return {"status": "adept_identity_unproven", "return_available": False}
-            borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
-                loan, connection_identity_id=identity.identity_id,
-            )
+                return denied
         else:
             try:
                 identity = self.identity_for_connection(
-                    loan.source_provider, loan.source_credential
+                    scope.provider_id, scope.credential_id,
                 )
             except ProviderConfigurationError:
-                return {"status": "adept_identity_unproven", "return_available": False}
-            borrower_identity_id = identity.identity_id
+                return denied
+        # Source lookup may call a plugin or storage shim. Do not let it
+        # retarget the loan, and never read ledger rows with unknown borrower.
+        if (not scope.current(loan) or not scope.borrower_proven
+                or type(identity.identity_id) is not str
+                or not identity.identity_id):
+            return denied
+        bound_identity_id = identity.identity_id
+        borrower_identity_id = bound_identity_id
+        if is_paris:
+            borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+                loan, connection_identity_id=bound_identity_id,
+            )
+            if not scope.current(loan):
+                return denied
 
-        all_rights = self.storage.entitlements(provider_id=loan.source_provider)
-        all_acquisitions = self.storage.acquisitions(provider_id=loan.source_provider)
+        all_rights = self.storage.entitlements(provider_id=scope.provider_id)
+        if not scope.current(loan):
+            return denied
+        all_acquisitions = self.storage.acquisitions(provider_id=scope.provider_id)
+        if not scope.current(loan):
+            return denied
         if is_paris and self._cross_identity_loan_conflict(
-            all_acquisitions, provider_loan_id=loan.id,
-            identity_id=identity.identity_id,
-            entitlements=[r for r in all_rights if r.get("state") == "active"],
+            all_acquisitions, provider_loan_id=scope.loan_id,
+            identity_id=bound_identity_id,
+            entitlements=[
+                r for r in all_rights
+                if type(r) is dict and r.get("state") == "active"
+            ],
         ):
             return {"status": "adept_loan_identity_conflict", "return_available": False}
+        if not scope.current(loan):
+            return denied
 
         entitlements = {
             row["entitlement_id"] for row in all_rights
-            if row.get("identity_id") == identity.identity_id
-            and row.get("loan_id") == loan.id
-            and row.get("credential_id") == loan.source_credential
-            and str(row.get("account_id") or "") == str(loan.source_account_id or "")
-            and str(row.get("item_id") or "") == str(loan.record_id or loan.id)
+            if scope.matches_entitlement(row, identity_id=bound_identity_id)
         }
         candidates = []
         for row in all_acquisitions:
@@ -3732,10 +3754,9 @@ class LibraryService:
                     # #989: a manual/imported ADEPT artifact is not proof of
                     # this automatic Paris loan's fulfillment transaction.
                     or row.get("strategy") != "loan_auto"
-                    or row.get("identity_id") != identity.identity_id
-                    or row.get("credential_id") != loan.source_credential
-                    or str(row.get("account_id") or "") != str(loan.source_account_id or "")
-                    or str(row.get("item_id") or "") != str(loan.record_id or loan.id)):
+                    or not scope.matches_acquisition(
+                        row, identity_id=bound_identity_id,
+                    )):
                 continue
             metadata = row.get("metadata")
             if type(metadata) is not dict:
@@ -3743,12 +3764,19 @@ class LibraryService:
                 # a different same-account ADEPT return transaction.
                 return {"status": "adept_return_binding_required", "return_available": False}
             recorded_loan_id = metadata.get("provider_loan_id")
-            if recorded_loan_id is not None and str(recorded_loan_id) != str(loan.id):
+            if recorded_loan_id is not None and not scope.matches_loan_receipt(
+                recorded_loan_id,
+            ):
                 continue
-            if recorded_loan_id is None and row.get("entitlement_id") not in entitlements:
+            if recorded_loan_id is None and (
+                type(row.get("entitlement_id")) is not str
+                or row["entitlement_id"] not in entitlements
+            ):
                 continue
             candidates.append(row)
 
+        if not scope.current(loan):
+            return denied
         if not candidates:
             # Only the native None means no borrower refusal. A falsey,
             # malformed or private callback code must not be interpreted as
@@ -3819,6 +3847,8 @@ class LibraryService:
             state = "token_missing"
         if state in {"returned", "returned_unverified"} and self._provider_loan_active_for_acquisition(row):
             state = "provider_conflict"
+        if not scope.current(loan):
+            return denied
         return {
             "status": state,
             "acquisition_id": row["acquisition_id"],

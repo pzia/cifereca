@@ -489,7 +489,7 @@
       "reachability": "productive"
     },
     {
-      "id": "site-16f7682c2e46693e6c3dab00",
+      "id": "site-e25ad2cf6472e075797d889f",
       "classification": "safety_guard_pending_contract",
       "journey": "Read-only ADEPT return availability status from exact Paris loan provenance",
       "productive_caller": "LibraryService.adept_return_status_for_loan -> _paris_adept_identity_for_loan before historical acquisitions/rights status projection",
@@ -500,12 +500,12 @@
         "tests/test_core_0984_adept_return_status_provenance.py"
       ],
       "retirement_pr": "",
-      "rationale": "Provider check and borrower callback belong to one source-specific status fence. Direct productive reachability is not established from an exported facade alone.",
+      "rationale": "Provider check and borrower callback belong to one source-specific status fence. Direct productive reachability is not established from an exported facade alone. Site reviewed again after typed native-scope guard extraction in #6206; this is a retained read-only safety fence, not an AST retirement.",
       "decision_group_id": "adept.return-source-provenance-status",
       "reachability": "unproven"
     },
     {
-      "id": "site-e6a2a73748c726a5f5a9267c",
+      "id": "site-9db736c5a6459afb19e60a9a",
       "classification": "safety_guard_pending_contract",
       "journey": "Read-only ADEPT return availability status from exact Paris loan provenance",
       "productive_caller": "LibraryService.adept_return_status_for_loan -> _paris_adept_identity_for_loan before historical acquisitions/rights status projection",
@@ -516,7 +516,7 @@
         "tests/test_core_0984_adept_return_status_provenance.py"
       ],
       "retirement_pr": "",
-      "rationale": "Provider check and borrower callback belong to one source-specific status fence. Direct productive reachability is not established from an exported facade alone.",
+      "rationale": "Provider check and borrower callback belong to one source-specific status fence. Direct productive reachability is not established from an exported facade alone. Site reviewed again after typed native-scope guard extraction in #6206; this is a retained read-only safety fence, not an AST retirement.",
       "decision_group_id": "adept.return-source-provenance-status",
       "reachability": "unproven"
     },
@@ -1860,6 +1860,31 @@
         "tests/test_automatic_loan_admission.py"
       ],
       "pr": "#6209"
+    },
+    {
+      "id": "guard-adept-historical-status-typed-borrower-refusal",
+      "journey": "Read-only historic ADEPT status for a loan with absent or non-inventory-attested borrower grant",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Only a literal None is borrower-grant approval; any falsey, foreign or private refusal value uses the fixed public borrower code allowlist. A separately inventory-attested old ADEPT license remains inspectable but voluntary return stays retired.",
+      "remaining_debt": "The Paris-specific borrower admission remains a safety requirement pending the typed and versioned provider-neutral grant contract; no new mutation or right was introduced. This is read-only status hardening, not a removed AST decision.",
+      "tests": [
+        "tests/test_core_p0_5975_adept_return_status_borrower_refusal.py",
+        "tests/test_adept_attested_historical_return.py"
+      ],
+      "pr": "#6203"
+    },
+    {
+      "id": "guard-adept-historical-status-native-source-lease",
+      "journey": "Read-only historical ADEPT return status selects exact persisted acquisition and entitlement for the original loan",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Frozen native Loan source coordinates, source-change veto after external callbacks, and strict provider/credential/borrower/edition/loan owner + right ID comparisons without str coercion. Unknown borrower and corrupt source rows never select a foreign old license.",
+      "remaining_debt": "Historical provenance remains read-only, ADEPT return mutation stays retired, and the provider-specific Paris borrower/profile grant guard remains until its own secure contract cutover. No historical writer is retired.",
+      "tests": [
+        "tests/test_core_p0_5975_adept_return_exact_source_scope.py",
+        "tests/test_core_0984_adept_return_status_provenance.py",
+        "tests/test_adept_attested_historical_return.py"
+      ],
+      "pr": "#6206"
     }
   ],
   "retained_legacy_migrations": [
