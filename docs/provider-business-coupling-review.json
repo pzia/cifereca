@@ -1948,6 +1948,19 @@
         "tests/test_core_p0_1120_profile_receipt_projection.py"
       ],
       "pr": "#6218"
+    },
+    {
+      "id": "guard-explicit-reacquisition-native-source-lease-before-staging",
+      "journey": "Explicit digital-loan reacquisition: pinned source and borrower grant from eligibility through rights staging and historical acquisition receipts",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Capture native provider/credential/borrower/loan/edition/medium before eligibility; revalidate after all storage and ADEPT borrower callbacks and after initial rights staging, never select a mismatched previous acquisition or invoke fulfillment under another loan's scope. Preserve historical complete-acquisition artifact metadata only for an exact native source and path.",
+      "remaining_debt": "Provider-specific Paris borrower admission and historical storage migration writers remain; no new grant/GET/POST, no AST retirement or migration retirement.",
+      "tests": [
+        "tests/test_core_p0_5975_explicit_reacquire_native_scope.py",
+        "tests/test_core_p0_5975_explicit_reacquire_borrower_refusal.py",
+        "tests/test_core_0919.py"
+      ],
+      "pr": "#pending"
     }
   ],
   "retained_legacy_migrations": [
