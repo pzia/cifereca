@@ -234,6 +234,12 @@ def _render_loans(self) -> None:
             source_key, loan.title, subtitle, meta, due.label,
             display.thumbnail_url, badge_style=due.style,
         )
+        from .loan_cover_paint_trace import loan_cover_paint_receipt
+        observed = loan_cover_paint_receipt(
+            self, loan, surface="list", expected_url=display.thumbnail_url,
+        )
+        if observed is not None:
+            item._on_cover_applied = observed
         # MasterDetailPage.show_rows has an append-only fast path when keys
         # stay identical. A new exact local cover for the same loan must
         # invalidate that presentation (and repaint the mapped Gtk.ListView),
@@ -265,7 +271,16 @@ def _loan_selected(self, row: BookListItem | None) -> None:
     loan = self.loan_objects.get(row.key)
     if loan:
         self._displayed_loan = loan
-        self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
+        displayed = _loan_display_cover(self, loan)
+        from .loan_cover_paint_trace import loan_cover_paint_receipt
+        observed = loan_cover_paint_receipt(
+            self, loan, surface="detail",
+            expected_url=displayed.thumbnail_url,
+        )
+        if observed is not None:
+            displayed = copy(displayed)  # never annotate actionable Loan
+            displayed._on_cover_applied = observed
+        self.loan_page.detail.show_loan(displayed)
         self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
             'source_credential':loan.source_credential,'record_id':loan.record_id})
         self._add_facets(self.loan_page.detail, {'source_provider':loan.source_provider,
@@ -335,7 +350,17 @@ def _loans_refreshed(self, rows):
         ]
         fresh = matches[0] if len(matches) == 1 else None
         self._displayed_loan=fresh
-        if fresh:self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
+        if fresh:
+            displayed = _loan_display_cover(self, fresh)
+            from .loan_cover_paint_trace import loan_cover_paint_receipt
+            observed = loan_cover_paint_receipt(
+                self, fresh, surface="detail",
+                expected_url=displayed.thumbnail_url,
+            )
+            if observed is not None:
+                displayed = copy(displayed)
+                displayed._on_cover_applied = observed
+            self.loan_page.detail.show_loan(displayed)
         else:self.loan_page.detail.empty(
             "Prêt non retrouvé dans cette actualisation",
             "La réponse peut être vide ou partielle ; la disparition du prêt "
