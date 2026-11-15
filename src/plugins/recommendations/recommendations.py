@@ -404,10 +404,18 @@ def _local_all_field_match(query: str, values: list[str]) -> bool:
         normalized for value in values
         if type(value) is str and (normalized := normalize(value))
     ]
-    return all(
-        any(token in field for field in fields)
-        for token in (*terms, *phrases)
-    )
+    # A one-character edition qualifier must be a COMPLETE word.
+    # Otherwise the newly indexed public description "publique" would
+    # make a request for "Livre B" match every unrelated "Livre A/C".
+    # This is the same one-letter guard as the explicit Sujet filter.
+    for token in terms:
+        if len(token) == 1:
+            pattern = r"(?<!\\w)" + re.escape(token) + r"(?!\\w)"
+            if not any(re.search(pattern, field) for field in fields):
+                return False
+        elif not any(token in field for field in fields):
+            return False
+    return all(any(phrase in field for field in fields) for phrase in phrases)
 
 
 def _candidate_mapping_text(row: Mapping[str, Any], key: str) -> str:
