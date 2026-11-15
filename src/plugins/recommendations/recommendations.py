@@ -1768,7 +1768,11 @@ class UxRecommendationsView:
                     )
                 values.extend(_local_ranked_isbns(ranked, sources))
                 publisher = _candidate_public_field(item, "publisher", limit=512)
-                if publisher:
+                # Provider metadata can contain mistaken URL-like values;
+                # an opaque acquisition/session URL is not a publisher name.
+                if publisher and not any(marker in publisher for marker in (
+                    "://", "?", "@", "=",
+                )):
                     values.append(publisher)
                 haystack = normalize(" ".join(values))
                 if needle not in haystack:
