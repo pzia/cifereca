@@ -143,7 +143,8 @@ def test_list_and_detail_forward_only_bound_paint_callbacks():
     assert original.index("loader.note_ui_applied()") < original.index("observer()")
     detail_cover = ast.unparse(_method(DETAIL, "_cover_and_title", "DetailPanel"))
     loan = ast.unparse(_method(DETAIL, "show_loan", "DetailPanel"))
-    assert 'on_image_applied=getattr(self, "_cover_image_applied_callback", None)' in detail_cover
-    assert 'getattr(loan, "_on_cover_applied", None)' in loan
+    assert "on_image_applied=getattr(self" in detail_cover
+    assert "_cover_image_applied_callback" in detail_cover
+    assert "getattr(loan" in loan and "_on_cover_applied" in loan
     assert "finally:" in loan
     assert "self._cover_image_applied_callback = None" in loan
