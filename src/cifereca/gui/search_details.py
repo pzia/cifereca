@@ -193,6 +193,28 @@ def _publish_search_detail_cover(
     # BookListCell observes this signal only while bound. Do not splice the
     # ListStore or cause Gtk.SingleSelection to re-trigger holdings() here.
     row.set_thumbnail_url(cover.url)
+    # N2: the exact same notice can be re-projected into a new GTK row
+    # without another holdings request or relying on a mutable DTO.
+    # The legacy selected-row update above remains the immediate paint path.
+    identity = getattr(
+        getattr(self.service, "current_identity", None), "identity_id", None,
+    )
+    if type(identity) is str and identity:
+        from .search_cover_bridge import SearchCoverBridge
+        bridge = getattr(self, "_search_cover_bridge", None)
+        if bridge is None:
+            bridge = SearchCoverBridge()
+            self._search_cover_bridge = bridge
+        if isinstance(bridge, SearchCoverBridge):
+            bridge.publish(
+                item, detail, identity_id=identity,
+                context=(
+                    getattr(self, "_identity_context_generation", None),
+                    getattr(self, "_search_generation", None),
+                    getattr(self.service, "_account_context_epoch", None),
+                    getattr(self.service, "_source_context_epoch", None),
+                ),
+            )
 
 
 def _apply_search_detail(
