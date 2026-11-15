@@ -44,7 +44,10 @@ def _ui_host():
         ],
         type_ignores=[],
     )
-    # AST-executed GUI methods retain their real package for relative imports.\n    namespace = {"__name__": "cifereca.gui.main_window",\n                 "__package__": "cifereca.gui",\n                 "TaskPriority": NS(USER_ACTION="user", NORMAL="normal"),
+    # AST-executed GUI methods retain their real package for relative imports.
+    namespace = {"__name__": "cifereca.gui.main_window",
+                 "__package__": "cifereca.gui",
+                 "TaskPriority": NS(USER_ACTION="user", NORMAL="normal"),
                  "shell_account_selection_controller": shell_account_selection_controller,
                  "library_projection": library_projection}
     exec(compile(ast.fix_missing_locations(module), str(MAIN), "exec"), namespace)
