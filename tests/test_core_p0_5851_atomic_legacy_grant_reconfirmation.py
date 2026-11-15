@@ -43,7 +43,7 @@ def test_explicit_reconfirmation_retires_legacy_in_one_transaction(tmp_path):
     try:
         assert legacy(service) is not None
         assert grant(service) is None
-        assert linked_identity(service, loan) == ("bob", None)
+        assert linked_identity(service, loan) == (None, "adept_borrower_binding_required")
         proof = service.reconfirm_legacy_adept_borrower_grant(
             **scope(), borrower_identity_id="bob", confirmed=True,
         )
