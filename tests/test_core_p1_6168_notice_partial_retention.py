@@ -1,7 +1,6 @@
 """#6168/#4552: Notice C partial reads never tombstone a complete cover."""
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -122,7 +121,7 @@ def test_first_partial_remains_pending_until_complete_source_arrives(bound):
         on_source_changed=lambda: events.append("refresh"),
     )
     assert first.source_uri is None
-    publish(service, adapter, B, 2, status="partial")
+    publish(service, adapter, A, 2, status="partial")
     assert events == ["refresh"]
     assert service.get_cover(document, "detail", lambda _: None).source_uri is None
     publish(service, adapter, B, 3)
