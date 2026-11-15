@@ -197,10 +197,8 @@ def persist_notice_cover(
                        or previous.attribute != attribute)
             if observation.observed_at < seen_at and changed:
                 raise ValueError("notice_c_persisted_stale_source")
-            if (previous.attribute.state != "pending"
-                    and (observation.status == "partial"
-                         or (attribute.state == "pending"
-                             and attribute.field_path == previous.attribute.field_path))):
+            if (previous.attribute.snapshot_complete
+                    and not attribute.snapshot_complete):
                 # Incomplete parsing/cover inventory is no tombstone. Persist
                 # its *time* (not its untrusted media) to reject older work.
                 _advance_seen_watermark(
