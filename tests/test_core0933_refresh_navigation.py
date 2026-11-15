@@ -70,7 +70,8 @@ def test_identity_activation_ignores_late_results_from_previous_identity():
     assert "identity_activation_controller.activate_identity" in _method_source(
         MAIN, "MainWindow", "_activate_identity",
     )
-    assert "if not window.service.current_identity or window.service.current_identity.identity_id != identity.identity_id:" in source
+    assert "window.service is not service" in source
+    assert "service.current_identity.identity_id != identity.identity_id" in source
     assert "return" in source
 
 
