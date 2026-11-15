@@ -216,6 +216,9 @@ def test_cancelled_selection_during_locked_inode_review_never_unlinks(
     local_bytes, reader_bytes = (
         rig.source.read_bytes(), rig.final.read_bytes(),
     )
+    observed_before = rig.storage.device_placement_get(
+        rig.consent.device_id, rig.consent.artifact_id,
+    )["observed_state"]
     result = rig.facade.execute_one(
         confirmation=rig.consent, mountpoint=rig.mountpoint,
         expected_profile_epoch=3, check_cancelled=check_selection,
@@ -231,7 +234,7 @@ def test_cancelled_selection_during_locked_inode_review_never_unlinks(
     saved = rig.storage.device_placement_get(
         rig.consent.device_id, rig.consent.artifact_id,
     )
-    assert saved["observed_state"] == "unknown"
+    assert saved["observed_state"] == observed_before
     assert rig.journal.get(rig.consent.copy_operation_id).phase == "completed"
 
 
