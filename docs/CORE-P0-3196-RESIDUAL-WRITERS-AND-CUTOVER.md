@@ -1,6 +1,6 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
-> **Delta P0 #6142 (15/11/2026) — validation W1 sans fournisseur privilégié.**
+> **Delta P0 #6145 (15/11/2026) — validation W1 sans fournisseur privilégié.**
 > L'admission des nouveaux `backup_put` refuse désormais, pour tous les
 > fournisseurs, un `item_id` nul, non textuel, vide, délimité par des blancs,
 > trop long ou contenant NUL/CR/LF ; les chemins NUL sont pareillement refusés
