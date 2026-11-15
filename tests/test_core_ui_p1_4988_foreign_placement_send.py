@@ -104,6 +104,7 @@ def test_confirmed_foreign_copy_executes_once_with_all_exact_scopes():
         "requesting_identity_id": "bob",
         "expected_account_context_epoch": 3,
         "expected_source_context_epoch": 7,
+        "admitted_requester_identity": window.service.current_identity,
         "confirmed": True,
     }]
     done(result)
@@ -124,23 +125,47 @@ def test_refusing_dialog_never_calls_core_or_queues_worker():
     assert not queued and not calls
 
 
-def test_aba_and_stale_button_revoke_before_launch_and_execution():
+def test_admitted_copy_survives_navigation_but_gtk_delivery_is_suppressed():
+    window, row, detail, actions, events, queued, calls, deps = setup()
+    dialog = Dialog()
+    assert add_foreign_present_placement_send(
+        window, detail, row, TaskPriority=deps["TaskPriority"],
+        dialog_factory=lambda _window: dialog,
+    )
+    captured_recipient = window.service.current_identity
+    actions[0].click()
+    dialog.respond("send")
+    work, done, failed = queued[0][0][1:4]
+    window.service.current_identity = NS(identity_id="alice")
+    window.service._account_context_epoch += 1
+    window._identity_context_generation += 1
+    window.service.current_identity = NS(identity_id="bob")
+    window.service._account_context_epoch += 1
+    window._identity_context_generation += 1
+    result = work()
+    assert result["status"] == "complete"
+    assert len(calls) == 1
+    assert calls[0]["requesting_identity_id"] == "bob"
+    assert calls[0]["admitted_requester_identity"] is captured_recipient
+    done(result)
+    failed(RuntimeError("PRIVATE"))
+    assert not any(ev[0] in {"activity", "library", "recent", "error"}
+                   for ev in events)
+
+
+def test_stale_button_is_inert_before_new_confirmation():
     window, row, detail, actions, _events, queued, calls, deps = setup()
     dialog = Dialog()
     assert add_foreign_present_placement_send(
         window, detail, row, TaskPriority=deps["TaskPriority"],
         dialog_factory=lambda _window: dialog,
     )
+    window._identity_context_generation += 1
     actions[0].click()
-    dialog.respond("send")
-    work = queued[0][0][1]
-    window.service._account_context_epoch += 2
-    assert work() == {"status": "blocked"}
-    assert calls == []
+    assert not dialog.shown and not queued and not calls
 
     other = Dialog()
-    window._foreign_placement_send_pending = None
-    window.service._account_context_epoch = 3
+    window._identity_context_generation -= 1
     more = []
     assert add_foreign_present_placement_send(
         window, NS(add_actions=lambda rows: more.extend(rows)), row,
