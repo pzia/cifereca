@@ -42,16 +42,18 @@ def test_non_none_refusal_always_vetoes_unattested_return_status(
             before = deepcopy(service.storage.acquisition_get(acq))
         else:
             before = None
+        before_rows = deepcopy(service.storage.acquisitions(provider_id="paris"))
+        before_rights = deepcopy(service.storage.entitlements(provider_id="paris"))
         monkeypatch.setattr(
             service, "_paris_adept_identity_for_loan",
             lambda *_args, **_kwargs: ("bob", refusal),
         )
         result = service.adept_return_status_for_loan(loan)
         assert result == {"status": public_code, "return_available": False}
-        assert service.storage.acquisitions(provider_id="paris") == (
-            [before] if before is not None else []
-        )
-        assert service.storage.entitlements(provider_id="paris") == []
+        assert service.storage.acquisitions(provider_id="paris") == before_rows
+        assert service.storage.entitlements(provider_id="paris") == before_rights
+        if before is not None:
+            assert service.storage.acquisition_get(acq) == before
     finally:
         service.close()
 
