@@ -244,7 +244,13 @@ chaque auteur attesté expose une action clavier de copie et une action
 explicite de recherche par auteur, comme les champs typés de Recherche.
 Le probe Recommandations vérifie les vrais boutons GTK mappés et leur
 dispatch `search_books(author, field="author", online=True, identity_id=...)`
-vers l'hôte de test sans déclencher de fournisseur. Le code
+vers l'hôte de test sans déclencher de fournisseur. Le même probe
+vérifie qu'un changement du **profil global** rend ce bouton inopérant
+avant toute recherche avec l'ancien profil, puis que le même bouton
+conservé après disparition du Détail GTK ne peut plus déclencher
+de recherche. Cette preuve est signalée sous
+`P1_4761_stale_metadata_search_button_inert_gtk`.
+Le code
 `P1_4761_recommendations_typed_catalogue_author_gtk` est obligatoire
 pour créer ou revalider les planches privées #774 ; ni CI ni comparaison
 synthétique ne remplace l'inspection visuelle originale.

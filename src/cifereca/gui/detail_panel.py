@@ -411,13 +411,25 @@ class DetailPanel(Gtk.Box):
             tooltip += " : " + action_value
             lookup.set_tooltip_text(tooltip)
             lookup.update_property([Gtk.AccessibleProperty.LABEL], [tooltip])
-            lookup.connect(
-                "clicked",
-                lambda _button, value=query_value, field=query_field,
-                identity=identity_id: search(
+            def search_one(button, value=query_value, field=query_field,
+                           identity=identity_id):
+                # The selected profile may change while a detail/GTK
+                # callback remains alive. Never dispatch an explicit online
+                # search with the identity captured on an old presentation,
+                # or from a detached/closed DetailPanel button.
+                if getattr(self.window, "_closed", False) or not button.get_mapped():
+                    return False
+                active = getattr(
+                    getattr(getattr(self.window, "service", None),
+                            "current_identity", None), "identity_id", None,
+                )
+                if active != identity:
+                    return False
+                return search(
                     value, field=field, online=True, identity_id=identity,
-                ),
-            )
+                )
+
+            lookup.connect("clicked", search_one)
             row.add_suffix(lookup)
 
     def _append_content(self, widget):

@@ -46,6 +46,9 @@ class Button(Widget):
     def __init__(self, icon):
         super().__init__()
         self.icon = icon
+        self.mapped = True  # a real, currently visible GTK button
+    def get_mapped(self):
+        return self.mapped
     @classmethod
     def new_from_icon_name(cls, icon):
         return cls(icon)
@@ -112,6 +115,16 @@ def test_copy_is_independent_and_search_is_explicit_and_typed():
     assert events[-1] == ("search", ("9780306406157",), {
         "field": "isbn", "online": True, "identity_id": "alice",
     })
+    assert len([event for event in events if event[0] == "search"]) == 1
+    # An in-flight click from the old profile must not query under Alice.
+    window.service.current_identity.identity_id = "bob"
+    buttons[1][1].click()
+    assert len([event for event in events if event[0] == "search"]) == 1
+    window.service.current_identity.identity_id = "alice"
+    # Even under the original profile, the saved detached GTK button
+    # cannot dispatch a new search.
+    buttons[1][1].mapped = False
+    buttons[1][1].click()
     assert len([event for event in events if event[0] == "search"]) == 1
 
 

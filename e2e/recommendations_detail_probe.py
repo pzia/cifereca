@@ -1644,6 +1644,25 @@ def main():
             (PAIRED_BOOK["author"], "author", True, "alice")
         ]
         report["checks"]["P1_4761_recommendations_typed_catalogue_author_gtk"] = True
+        # Global profile can change before a queued Gtk clicked callback.
+        # Even with this old author button still mapped, no old-account
+        # query may be dispatched. All data is synthetic, no supplier I/O.
+        window = state["window"]
+        window.service.current_identity.identity_id = "bob"
+        search_buttons[0].emit("clicked")
+        assert state["searches"] == searches_before + [
+            (PAIRED_BOOK["author"], "author", True, "alice")
+        ]
+        window.service.current_identity.identity_id = "alice"
+        # Once the selection detail has gone, emitting a saved old GTK
+        # button must also remain inert, even with the same identity.
+        page.detail.empty("Sélection révoquée", "Ancien bouton détaché")
+        assert not search_buttons[0].get_mapped()
+        search_buttons[0].emit("clicked")
+        assert state["searches"] == searches_before + [
+            (PAIRED_BOOK["author"], "author", True, "alice")
+        ]
+        report["checks"]["P1_4761_stale_metadata_search_button_inert_gtk"] = True
         state["plugin"].deactivate()
         report["status"] = "PASS"
         save()
