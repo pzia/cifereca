@@ -155,10 +155,22 @@ def project_library_rows(
                 meta_parts.append(f"Appareil {present_count}/{len(device_statuses)}")
             elif keep_count:
                 meta_parts.append("Appareil à synchroniser")
-        rows.append(row_factory(
-            key, str(item.get("title") or "Sans titre"),
-            str(item.get("author") or ""),
-            " · ".join(part for part in meta_parts if part),
-            provider_label, item.get("thumbnail_url"),
-        ))
+        title = str(item.get("title") or "Sans titre")
+        author = str(item.get("author") or "")
+        meta = " · ".join(part for part in meta_parts if part)
+        cover_url = item.get("thumbnail_url")
+        row = row_factory(key, title, author, meta, provider_label, cover_url)
+        # MasterDetailPage.show_rows preserves same-key rows when presentation
+        # signatures match. A later canonical Library snapshot may change the
+        # cover without changing its Artifact/SourceKey: force the mapped GTK
+        # cell to rebind only when its actual presentation or owner changed.
+        # Keep the GTK-free projector compatible with tuple factories used by
+        # legacy headless adapters and tests.
+        if hasattr(row, "__dict__"):
+            row._public_row_content = (
+                "library", key, title, author, meta, provider_label, cover_url,
+                item.get("identity_id"), item.get("_library_view_owner"),
+                item.get("provider_id"), item.get("item_id"),
+            )
+        rows.append(row)
     return rows, objects
