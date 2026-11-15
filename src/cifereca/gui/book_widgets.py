@@ -75,6 +75,9 @@ class CoverView(Gtk.Overlay):
         self._url: str | None = None
         self._priority = 10
         self._decode_retry = False
+        # The exact N2 source is checked again on the GTK main thread.
+        # URL-only widgets have no such guard and retain their old path.
+        self._document_read_current = None
         # Optional N0 paint observation: attached only by a Core source
         # adapter that already owns an exact N2 decision/lease. Never a
         # source of bibliographic evidence or provider access.
@@ -130,6 +133,7 @@ class CoverView(Gtk.Overlay):
         self._loader = None
         self._url = None
         self._decode_retry = False
+        self._document_read_current = None
         self._on_texture_applied = None
         self._set_logical_size(self._width, self._height)
         self.picture.set_paintable(None)
@@ -197,6 +201,7 @@ class CoverView(Gtk.Overlay):
             height=self._height * scale if variant == "list" else self._height,
         )
         self._request = request
+        self._document_read_current = request.is_current
         # This is the N2-selected URI, NOT a reconstructed URL from the
         # thumbnail path. N0 paint receipts retain their exact source.
         self._url = request.source_uri
@@ -258,6 +263,16 @@ class CoverView(Gtk.Overlay):
         if generation != self._generation:
             loader.note_ui_stale()
             return False
+        # N3 completed before this idle callback, but N2 may have been
+        # invalidated or requalified meanwhile without a GTK rebind.
+        # Check the exact document/source CAS token AT THE PAINT SINK.
+        current_n2 = getattr(self, "_document_read_current", None)
+        if current_n2 is not None and not current_n2():
+            self.spinner.stop()
+            self.spinner.set_visible(False)
+            self._show_missing()
+            loader.note_ui_stale()
+            return False
         self.spinner.stop()
         self.spinner.set_visible(False)
         if not path:
@@ -292,6 +307,12 @@ class CoverView(Gtk.Overlay):
                 self._start_cover_request(force=True)
             else:
                 self._show_missing()
+        if (applied and current_n2 is not None and not current_n2()):
+            # N2 could also change during native GDK decoding. The old
+            # texture must not count as a successful applied cover/receipt.
+            self._show_missing()
+            loader.note_ui_stale()
+            return False
         if (applied and generation == self._generation
                 and self._loader is loader and self._url):
             # A 'resolved' source or cache hit is NOT a GTK paint. Emit only
