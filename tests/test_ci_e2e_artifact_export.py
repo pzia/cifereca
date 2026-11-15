@@ -982,6 +982,7 @@ def test_bnf_covers_failure_exports_only_closed_synthetic_stage():
         source = root / "summary.json"
         source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
         for value, accepted in (
+            ("search_late_detail_rebind", True),
             ("embedded_loan_list_over_remote", True),
             ("embedded_loan_detail_over_remote", True),
             ("embedded_loan_list_over_supplier", True),
