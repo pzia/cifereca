@@ -4709,8 +4709,12 @@ class LibraryService:
         # a registry key. A hostile __hash__ or str subclass must never reach
         # registry/plugin code or influence the fallback alias.
         source_provider = loan.source_provider
+        source_credential = loan.source_credential
+        source_borrower = loan.source_account_id
         primary_alias = None
-        if type(source_provider) is str and source_provider:
+        if (type(source_provider) is str and source_provider
+                and type(source_credential) is str and source_credential
+                and type(source_borrower) is str):
             try:
                 registry = self.registry
             except AttributeError:
