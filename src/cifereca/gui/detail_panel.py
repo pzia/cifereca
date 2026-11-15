@@ -71,6 +71,7 @@ class DetailPanel(Gtk.Box):
         # Used only during one synchronous local-detail render. Never a
         # profile-wide association or secondary documentary cache.
         self._next_cover_evidence = None
+        self._next_cover_document_ref = None
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_vexpand(True)
         self.action_scroll = AdaptiveActionBar(
@@ -224,10 +225,19 @@ class DetailPanel(Gtk.Box):
         cover.set_valign(Gtk.Align.START)
         header.append(cover)
         evidence = getattr(self, "_next_cover_evidence", None)
-        if evidence is None:
-            cover.bind_url(self.window.covers, thumbnail, priority=0)
-        else:
+        document = getattr(self, "_next_cover_document_ref", None)
+        if evidence is not None:
+            # Core-owned N1 evidence outranks a plugin-level reference.
             self._bind_cover(cover, thumbnail, cover_evidence=evidence)
+        elif document is not None:
+            from .declared_document_cover import bind_declared_document_cover
+            bind_declared_document_cover(
+                cover, self.window.covers,
+                getattr(self.window, "document_covers", None), document,
+                variant="detail", priority=0,
+            )
+        else:
+            cover.bind_url(self.window.covers, thumbnail, priority=0)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.START)
@@ -703,13 +713,21 @@ class DetailPanel(Gtk.Box):
         sections = sorted(presentation.sections, key=lambda item: item.order)
         essential = [field for section in sections if section.title == "Essentiel"
                      for field in section.fields]
-        self._cover_and_title(
-            presentation.title,
-            presentation.subtitle or None,
-            presentation.thumbnail_url,
-            presentation.badges,
-            essential=essential,
-        )
+        # The neutral presentation carries the same opaque Core DocumentRef
+        # as its list row. Only _cover_and_title binds it; no plugin URL is
+        # treated as documentary authority. Keep this a single-render lease.
+        previous_ref = getattr(self, "_next_cover_document_ref", None)
+        self._next_cover_document_ref = getattr(presentation, "cover_document_ref", None)
+        try:
+            self._cover_and_title(
+                presentation.title,
+                presentation.subtitle or None,
+                presentation.thumbnail_url,
+                presentation.badges,
+                essential=essential,
+            )
+        finally:
+            self._next_cover_document_ref = previous_ref
         self._show_description(description)
         for section in sections:
             if section.title == "Essentiel":
