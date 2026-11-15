@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urljoin, urlsplit, unquote
 import re
-from ..epub_metadata import cover_cache_dir, MAX_IMAGE
+from ..epub_metadata import cover_cache_dir, MAX_IMAGE, valid_cached_cover_path
 
 import httpx
 from ..http_trace import HTTPX_TRANSPORT
@@ -308,7 +308,11 @@ class CoverLoader:
         except (OSError, ValueError, TypeError):
             path = None
 
-        source_cached = bool(path is not None and self._valid_cache_file(path))
+        source_cached = bool(
+            path is not None
+            and (valid_cached_cover_path(path) if kind == "embedded"
+                 else self._valid_cache_file(path))
+        )
         preview_cached = False
         if source_cached and width is not None and height is not None:
             try:
@@ -411,16 +415,14 @@ class CoverLoader:
             return request
 
         if url.startswith('file:'):
-            # Only Core-published cover-cache files are accepted, never arbitrary local URIs.
-            parsed=urlsplit(url);local=Path(unquote(parsed.path))
-            root=cover_cache_dir().resolve()
-            valid=False
-            try:
-                valid=bool(not parsed.netloc and not parsed.query and not parsed.fragment
-                    and not local.is_symlink() and local.resolve().parent==root
-                    and re.fullmatch(r'[a-f0-9]{64}\.(png|jpg|gif|webp|svg)',local.name)
-                    and local.stat().st_size<=MAX_IMAGE and self._valid_cache_file(local))
-            except OSError:pass
+            # Only Core-published EPUB cache images; verify the full digest
+            # instead of merely accepting valid-looking replacement bytes.
+            parsed=urlsplit(url)
+            local=Path(unquote(parsed.path))
+            valid=bool(
+                not parsed.netloc and not parsed.query and not parsed.fragment
+                and valid_cached_cover_path(local)
+            )
             with self._lock:
                 self._stats['requested']+=1
                 self._stats['cache_hit_valid' if valid else 'cache_invalid']+=1
