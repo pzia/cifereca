@@ -435,6 +435,16 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(mod.select(["tests/test_e2e_runner_contract.py"]), mod.ALL)
 
 
+    def test_p1_4985_failed_gtk_stage_is_closed_and_never_raw_exception(self):
+        runner = (ROOT / "e2e/run.py").read_text(encoding="utf-8")
+        source = (ROOT / "e2e/reader_target_refresh_probe.py").read_text(encoding="utf-8")
+        assert "P1_4985_CLOSED_FAILURE_STAGE=" in runner
+        assert 'report_data.get("closed_failure_phase")' in runner
+        assert 'type(phase) is str and phase in closed_phases' in runner
+        assert '"profile_b", "profile_a", "finish"' in runner
+        assert '"closed_failure_phase"] = phase[0]' in source
+        assert "P1_4985_GTK_CLOSED_STAGE=" in source
+
     def test_p1_4985_real_mainwindow_reader_target_refresh_at_1366_and_1600(self):
         self.assertEqual(mod.READER_TARGET_GTK, (
             "reader-target-refresh-1366", "reader-target-refresh-1600",
