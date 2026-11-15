@@ -14,10 +14,17 @@ def selected(tmp_path, *, wish=None):
     db, entries, window, _ = environment(tmp_path)
     book = entries[0]
     if wish is not None:
+        # The storage contract rejects a first-time remove: a managed
+        # keep intention must precede an explicit withdrawal wish.
         db.device_usb_intent_set(
             identity_id="alice", device_id="reader-alice",
-            artifact_id=book["artifact_id"], desired_state=wish,
+            artifact_id=book["artifact_id"], desired_state="keep",
         )
+        if wish == "remove":
+            db.device_usb_intent_set(
+                identity_id="alice", device_id="reader-alice",
+                artifact_id=book["artifact_id"], desired_state="remove",
+            )
     window._account_context_generation = 0
     window._route_display_token = object()
     window.errors = []
@@ -155,7 +162,8 @@ def test_stale_click_cannot_rewrite_other_intentions(tmp_path, change):
     before = deepcopy(db.device_placements(device_id="reader-alice"))
     button.callbacks["clicked"](button)
     assert db.device_placements(device_id="reader-alice") == before
-    assert window.errors == [] or change == "placement"
+    # A live but stale SQL form gets a closed refusal, never a silent write.
+    assert window.errors == [] or change in ("placement", "newer_intent")
 
 
 @pytest.mark.parametrize("change", [
