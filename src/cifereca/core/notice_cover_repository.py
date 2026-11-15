@@ -60,6 +60,11 @@ def _opaque_key(document: CoverDocumentScope) -> str | None:
     return _PREFIX + document.source_key[len("notice-c:v1:"):]
 
 
+def is_notice_cover_document(document: CoverDocumentScope) -> bool:
+    """Pure source-index scope eligibility, without SQLite or profile I/O."""
+    return _opaque_key(document) is not None
+
+
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for name, value in pairs:
@@ -203,4 +208,7 @@ def persist_notice_cover(
     return PersistedNoticeCover(observation, attribute, epoch)
 
 
-__all__ = ["PersistedNoticeCover", "read_notice_cover", "persist_notice_cover"]
+__all__ = [
+    "PersistedNoticeCover", "read_notice_cover", "persist_notice_cover",
+    "is_notice_cover_document",
+]
