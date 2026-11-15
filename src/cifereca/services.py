@@ -4701,9 +4701,63 @@ class LibraryService:
         for descriptive history, but cannot select a connected account to
         authorize a new acquisition, return or provider request.
         """
+        # A real installed provider owns its read-only account alias.
+        # Unregistered legacy callers still use the historical primary
+        # convention for descriptive compatibility; no provider can obtain
+        # a mutable action lease from an unregistered source.
+        # Validate plugin-supplied coordinates BEFORE using a provider ID as
+        # a registry key. A hostile __hash__ or str subclass must never reach
+        # registry/plugin code or influence the fallback alias.
+        source_provider = loan.source_provider
+        source_credential = loan.source_credential
+        source_borrower = loan.source_account_id
+        primary_alias = None
+        if (type(source_provider) is str and source_provider
+                and type(source_credential) is str and source_credential
+                and type(source_borrower) is str):
+            try:
+                registry = self.registry
+            except AttributeError:
+                # Historical in-memory LibraryService.__new__ adapters.
+                primary_alias = "primary"
+            else:
+                try:
+                    plugin = registry.maybe_get(source_provider)
+                except Exception:
+                    # A corrupt registry lookup is not an absent descriptor
+                    # and cannot revive the legacy primary alias.
+                    plugin = object()
+                if plugin is None:
+                    # No provider is installed yet; preserve inert old lookups.
+                    primary_alias = "primary"
+                else:
+                    from .providers.base import ProviderDescriptor
+                    descriptor = inspect.getattr_static(plugin, "descriptor", None)
+                    primary_alias = (
+                        descriptor.existing_primary_loan_account_alias
+                        if type(descriptor) is ProviderDescriptor
+                        and type(descriptor.id) is str
+                        and descriptor.id == source_provider
+                        else None
+                    )
+        # Registry callbacks are outside this method's trust boundary.
+        # A provider/binding edit during alias discovery must not turn an
+        # initially admitted source into a different borrower's lookup.
+        if (
+            type(loan.source_provider) is not str
+            or loan.source_provider != source_provider
+            or type(loan.source_credential) is not str
+            or loan.source_credential != source_credential
+            or type(loan.source_account_id) is not str
+            or loan.source_account_id != source_borrower
+        ):
+            raise ProviderConfigurationError(
+                "Compte emprunteur non attesté pour ce prêt"
+            )
         return loan_accounts.account_for_loan(
             loan, accounts=self.accounts,
             configuration_error=ProviderConfigurationError,
+            primary_alias=primary_alias,
         )
 
     def _acquisition_work_dir(self, identity_id: str, provider_id: str, loan_id: str | None = None) -> Path:
