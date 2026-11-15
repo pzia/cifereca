@@ -46,7 +46,7 @@ def test_one_eligible_destination_is_one_direct_button():
     args, options = queued.pop()
     assert options["control"] is actions[1]
     assert options["kind"] == "materialize"
-    assert args[1]() == "complete"
+    assert args[1]()["status"] == "complete"
 
 
 def test_multiple_destinations_have_one_action_and_exact_menu_choices():
@@ -63,7 +63,7 @@ def test_multiple_destinations_have_one_action_and_exact_menu_choices():
     assert len(queued) == 1
     args, options = queued[0]
     assert options["control"] is charlie
-    assert args[1]() == "complete"
+    assert args[1]()["status"] == "complete"
     assert events[-2:] == [
         ("path", "placement", "alice"),
         ("send", "placement", "charlie"),
@@ -72,13 +72,16 @@ def test_multiple_destinations_have_one_action_and_exact_menu_choices():
     bob.click()
     charlie.click()
     assert len(queued) == 1
-    args[2]("complete")
+    args[2]({
+        "status": "complete", "target_identity_id": "charlie",
+        "placement_id": "new-placement", "path": "/library/copied.epub",
+    })
     assert events[-3:] == [
         ("activity", "Livre envoyé"), ("recent",), ("library", False),
     ]
     bob.click()
     assert len(queued) == 2
-    assert queued[1][0][1]() == "complete"
+    assert queued[1][0][1]()["target_identity_id"] == "bob"
     assert events[-1] == ("send", "placement", "bob")
 
 
@@ -100,14 +103,12 @@ def test_pending_worker_revalidates_context_and_result_lifecycle():
     bob.click()
     args, options = queued[0]
     window.service.current_identity = NS(identity_id="charlie")
-    from cifereca.plugin_api import Cancelled
-    try:
-        args[1]()
-    except Cancelled:
-        pass
-    else:
-        raise AssertionError("stale source scope was accepted")
-    args[2]("complete")
+    # The already-clicked filesystem A→B copy runs, even while the active
+    # GTK identity is C. Its completion must not repaint C.
+    receipt = args[1]()
+    assert receipt["target_identity_id"] == "bob"
+    assert ("send", "placement", "bob") in events
+    args[2](receipt)
     assert not any(e[0] == "activity" for e in events)
     window.service.current_identity = NS(identity_id="alice")
     # The old widget callback cannot be resurrected after revocation.
@@ -134,7 +135,10 @@ def test_unchanged_core_result_is_not_presented_as_new_copy():
     window, actions, events, queued = _display()
     bob = actions[1].popover.child.children[0]
     bob.click()
-    queued[0][0][2]({"status": "unchanged"})
+    queued[0][0][2]({
+        "status": "unchanged", "target_identity_id": "bob",
+        "placement_id": "new-placement", "path": "/library/copied.epub",
+    })
     assert ("activity", "Livre déjà présent dans ce profil") in events
 
 
