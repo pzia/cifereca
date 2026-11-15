@@ -194,3 +194,15 @@ def test_detail_copy_uses_gtk4_content_provider_with_explicit_feedback():
     assert 'self.window.toast(\'Copié\')' in source
     assert 'self.window.toast(\'Copie impossible\')' in source
     assert "get_clipboard().set_text(" not in source
+
+
+
+def test_typed_detail_search_rejects_stale_identity_and_unmapped_buttons():
+    """P1 #4761: explicit metadata navigation uses the current Core profile."""
+    source = ast.unparse(_method("DetailPanel", "_add_metadata_actions"))
+    assert "def search_one(button, value=query_value, field=query_field, identity=identity_id):" in source
+    assert "getattr(self.window, '_closed', False)" in source
+    assert "not button.get_mapped()" in source
+    assert "active != identity" in source
+    assert "return search(value, field=field, online=True, identity_id=identity)" in source
+    assert "lookup.connect('clicked', search_one)" in source
