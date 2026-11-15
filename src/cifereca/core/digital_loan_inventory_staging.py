@@ -79,6 +79,12 @@ def stage_uncommitted_digital_inventory(
     # an upstream row modified since the envelope was built is not evidence.
     seen_rows = []
     active: set[str] = set()
+    # loan.id alone is not a source/edition key across upstream branches.
+    # Identical replayed rows can safely deduplicate; conflicting rows
+    # sharing an ID cannot prove how many *distinct* loans are active.
+    # Since DigitalInventoryReceipt counts IDs, any such collision must
+    # revoke completeness rather than silently underestimate occupation.
+    loan_identity_by_id: dict[str, tuple[object, ...]] = {}
     trustworthy_states = True
     for loan in snapshot.loans:
         if not _loan_matches_scope(loan, upstream_scope):
@@ -86,9 +92,21 @@ def stage_uncommitted_digital_inventory(
         fields = (
             loan.id, loan.identity_id, loan.source_provider,
             loan.source_credential, loan.source_account_id,
-            loan.medium, loan.state,
+            loan.medium, loan.state, loan.provider, loan.record_id,
         )
         seen_rows.append(fields)
+        loan_identity = (
+            loan.provider, loan.record_id, loan.medium, loan.state,
+            loan.source_account_id,
+        )
+        previous_identity = loan_identity_by_id.setdefault(
+            loan.id, loan_identity,
+        )
+        if previous_identity != loan_identity:
+            # A reused ID may denote independent loans on two branches,
+            # or a contradictory active/returned record. Both are unsafe
+            # to subtract from a total quota as one loan.
+            trustworthy_states = False
         if (type(loan.state) is not str
                 or loan.state not in ("active", "returned", "expired", "inactive")
                 or loan.medium == "unknown"):
@@ -98,7 +116,7 @@ def stage_uncommitted_digital_inventory(
     if tuple(seen_rows) != tuple((
         loan.id, loan.identity_id, loan.source_provider,
         loan.source_credential, loan.source_account_id,
-        loan.medium, loan.state,
+        loan.medium, loan.state, loan.provider, loan.record_id,
     ) for loan in snapshot.loans):
         return None
 

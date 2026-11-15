@@ -184,3 +184,44 @@ def test_legacy_partial_snapshot_without_page_evidence_cannot_stage_availability
         branches=(), observed_at=None,
     )
     assert staging(receipt=receipt) is None
+
+
+@pytest.mark.parametrize("conflicting", [
+    replace(loan(1), record_id="another-edition"),
+    replace(loan(1), provider="OVERDRIVE"),
+    loan(1, medium="physical"),
+    loan(1, state="returned"),
+    loan(1, state="expired"),
+])
+def test_reused_loan_id_with_other_edition_branch_or_state_is_not_complete(
+    conflicting,
+):
+    """One ID in two different records is not proof of only one active loan."""
+    receipt = snapshot(rows=(loan(1), conflicting, loan(2)))
+    result = staging(receipt=receipt)
+    assert result is not None
+    assert result.status == "partial"
+    assert result.pagination_complete is False
+    assert result.durably_committed is False
+    # Even with a complete typed pagination claim and a manual ceiling,
+    # ambiguous duplicate IDs must never produce a positive N.
+    decision = evaluate_digital_remaining(
+        SCOPE, now=NOW, epoch=7, max_age=timedelta(hours=6),
+        manual_total=4, inventory=result,
+    )
+    assert (decision.status, decision.remaining, decision.eligibility) == (
+        "unknown", None, "not_verified",
+    )
+
+
+def test_exact_duplicate_loan_replay_stays_complete_and_counts_once():
+    receipt = snapshot(rows=(loan(1), loan(1), loan(2)))
+    result = staging(receipt=receipt)
+    assert result.status == "success"
+    assert result.pagination_complete is True
+    assert result.active_loan_ids == ("loan-1", "loan-2")
+    assert result.durably_committed is False
+    assert evaluate_digital_remaining(
+        SCOPE, now=NOW, epoch=7, max_age=timedelta(hours=6),
+        manual_total=4, inventory=result,
+    ).remaining is None
