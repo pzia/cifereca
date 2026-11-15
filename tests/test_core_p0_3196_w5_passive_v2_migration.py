@@ -1,7 +1,7 @@
-"""#3196 W5: old SQLite v2 Kobo archives do not become rights in v3.
+"""#3196 / #5975 W5: old SQLite v2 archives never become rights in v3.
 
 Physical files and provider sessions are intentionally absent. The v2->v3
-migration is an offline import, not a fresh Kobo-owned-right observation.
+migration is a structural upgrade, not a fresh provider-owned-right observation.
 """
 from __future__ import annotations
 
@@ -115,7 +115,9 @@ def test_v2_passive_kobo_backups_survive_without_synthesizing_v3_rights(tmp_path
                 assert ("kobo", "vault", passive) not in selected
             assert ("kobo", "vault", "complete") not in selected
             assert ("kobo", "vault", "interrupted") not in selected
-            assert ("external", "other", "other-provider") in selected
+            # The same archive-only rule now covers unknown suppliers: no
+            # synthetic canonical source or receipt is granted from W1/v2.
+            assert ("external", "other", "other-provider") not in selected
     finally:
         storage.close()
 
