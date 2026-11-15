@@ -240,7 +240,7 @@ class CoverView(Gtk.Overlay):
                 self._show_missing()
         if (applied and generation == self._generation
                 and self._loader is loader and self._url
-                and self.picture.get_paintable() is texture):
+                and self.picture.get_paintable() is not None):
             # A 'resolved' source or cache hit is NOT a GTK paint. Emit only
             # after GDK decoded the bytes and GTK accepted the texture, and
             # never for an obsolete/recycled cover generation. Observer
