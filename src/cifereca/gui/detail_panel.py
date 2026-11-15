@@ -125,6 +125,7 @@ class DetailPanel(Gtk.Box):
         badges: Iterable[str] = (),
         *,
         essential=(),
+        cover_document=None,
     ) -> CoverView:
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         header.add_css_class("detail-heading")
@@ -133,7 +134,16 @@ class DetailPanel(Gtk.Box):
         cover.set_halign(Gtk.Align.START)
         cover.set_valign(Gtk.Align.START)
         header.append(cover)
-        cover.bind_url(self.window.covers, thumbnail, priority=0)
+        service = getattr(self.window, "document_covers", None)
+        if cover_document is not None and service is not None:
+            # The exact source was registered from Core before this detail
+            # was built. Do NOT queue a legacy URL GET before N2 can prefer
+            # its attested embedded EPUB.
+            cover.bind_document(
+                service, cover_document, variant="detail", priority=0,
+            )
+        else:
+            cover.bind_url(self.window.covers, thumbnail, priority=0)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.START)
@@ -572,6 +582,7 @@ class DetailPanel(Gtk.Box):
         presentation: UiBookDetailPresentation,
         *,
         description: object | None = None,
+        cover_document=None,
     ) -> None:
         """Render the shared neutral book-detail projection.
 
@@ -589,12 +600,15 @@ class DetailPanel(Gtk.Box):
         sections = sorted(presentation.sections, key=lambda item: item.order)
         essential = [field for section in sections if section.title == "Essentiel"
                      for field in section.fields]
+        cover_kwargs = {"essential": essential}
+        if cover_document is not None:
+            cover_kwargs["cover_document"] = cover_document
         self._cover_and_title(
             presentation.title,
             presentation.subtitle or None,
             presentation.thumbnail_url,
             presentation.badges,
-            essential=essential,
+            **cover_kwargs,
         )
         self._show_description(description)
         for section in sections:
@@ -641,16 +655,23 @@ class DetailPanel(Gtk.Box):
         badges: Iterable[str] = (),
         group_title: str | None = None,
         rows: list[tuple[str, str]] | None = None,
+        cover_document=None,
     ) -> None:
         """Compatibility helper backed by the shared detail projection."""
-        self.show_presentation(book_detail_presentation(
+        presentation = book_detail_presentation(
             title=title,
             subtitle=subtitle,
             thumbnail=thumbnail,
             badges=badges,
             group_title=group_title,
             rows=rows or (),
-        ))
+        )
+        if cover_document is None:
+            self.show_presentation(presentation)
+        else:
+            self.show_presentation(
+                presentation, cover_document=cover_document,
+            )
 
     def update_cached_book_details(self, contributions) -> None:
         """Replace only cached plugin groups/actions; preserve the base detail."""
