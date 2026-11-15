@@ -1269,6 +1269,22 @@
       "in_ast_metric": false,
       "original_site_id": "site-dd9fadf5918f4eb2fda40376",
       "retired_at_sha": "e7c8fd4ba28e63ad7688662177a4d2676ea6fc42"
+    },
+    {
+      "id": "struct-dead-positive-legacy-mirror-sql-physically-removed",
+      "original": "SQL publication body in Storage._mirror_backup_row could INSERT/UPDATE entitlements, acquisition_ledger, artifacts, placements and catalog_entries from unverified v0.7 backups, after archive-only short-circuit",
+      "original_classification": "unreachable_historical_positive_writer_body",
+      "replacement": "Physical deletion of the unreachable canonical SQL body; the helper still validates exact owners and bounded canonical completion receipts, then returns only in archive-only mode",
+      "classification": "removed_unreachable_legacy_code_not_additional_active_writer",
+      "evidence": "After #6149 all W1 providers call archive_only=True; after #6152 v2->v3 has no data import call. AST tests prove no remaining SQL INSERT/UPDATE/DELETE of canonical state inside _mirror_backup_row and no v3 invocation; runtime test rejects an accidental old archive_only=False call with explicit ValueError. This is dead-code deletion, not a second active-writer retirement credit.",
+      "tests": [
+        "tests/test_core_p0_5975_no_legacy_positive_mirror_sql.py",
+        "tests/test_core_p0_5975_w1_provider_neutral_archive_only.py",
+        "tests/test_core_p0_3196_w5_passive_v2_migration.py"
+      ],
+      "pr": "#6154",
+      "in_ast_metric": false,
+      "retired_at_sha": "626418337b8e93f0cbba5113f8ed486f3dcf2ec7"
     }
   ],
   "guard_installations": [
@@ -1353,6 +1369,17 @@
         "tests/test_core_p0_5975_business_coupling_ledger.py"
       ],
       "pr": "#6152"
+    },
+    {
+      "id": "guard-w1-v3-no-positive-legacy-mirror-entry",
+      "journey": "Old direct or accidental Storage._mirror_backup_row calls outside archive-only verification",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Any archive_only=False legacy mirror invocation raises backup_legacy_canonical_projection_retired, never reaches a canonical SQL writer",
+      "remaining_debt": "The public W1 archive UPSERT remains available for rollback/history; Config 0.8.1 pre-tombstone and SQLite v5 historical cardinality repair remain separate legacy data migrations",
+      "tests": [
+        "tests/test_core_p0_5975_no_legacy_positive_mirror_sql.py"
+      ],
+      "pr": "#6154"
     }
   ],
   "retained_legacy_migrations": [
