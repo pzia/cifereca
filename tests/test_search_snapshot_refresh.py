@@ -125,15 +125,68 @@ def test_stale_completion_never_overwrites_current_view(mutation):
     assert host._search_local_objects == {} and host.search_page.rows == []
 
 
-def test_queued_obsolete_read_and_error_never_touch_widgets_or_echo_exception():
+def test_queued_obsolete_read_stays_owned_by_admitted_identity_without_gtk_publish():
     host = _window()
-    host.service.search_known_catalog = Mock(side_effect=AssertionError('no SQL after switch'))
+    host.service.search_known_catalog = Mock(return_value=[_row('admitted-A')])
     invalidate_search_snapshot(host)
     host._identity_context_generation += 1
-    assert host.tasks[0].work() == []
-    host.tasks[0].failed(RuntimeError('https://private.invalid?auth=PRIVATE'))
+    result = host.tasks[0].work()
+    assert result == [_row('admitted-A')]
+    host.service.search_known_catalog.assert_called_once_with(
+        'Fictional', 'all', field='title', identity_id='alice',
+    )
+    host.tasks[0].done(result)
     assert not host.search_page.rows
     host.toast.assert_not_called()
+    assert host._search_snapshot_pending is None
+
+
+def test_delayed_sql_read_pins_query_owner_service_across_aba_and_window_close():
+    host = _window()
+    admitted = host.service
+    admitted.search_known_catalog = Mock(return_value=[_row('A')])
+    invalidate_search_snapshot(host)
+    host.service.current_identity = NS(identity_id='bob')
+    host._identity_context_generation += 1
+    host.service.current_identity = NS(identity_id='alice')
+    host._identity_context_generation += 1
+    host.state = replace(host.state, text='Other')
+    host.service = NS(
+        current_identity=NS(identity_id='alice'),
+        search_known_catalog=Mock(side_effect=AssertionError('wrong service')),
+    )
+    host._closed = True
+    result = host.tasks[0].work()
+    assert result == [_row('A')]
+    admitted.search_known_catalog.assert_called_once_with(
+        'Fictional', 'all', field='title', identity_id='alice',
+    )
+    host.service.search_known_catalog.assert_not_called()
+    host.tasks[0].done(result)
+    assert not host.search_page.rows
+    assert host._search_snapshot_pending is None
+
+
+def test_delayed_sql_read_never_rebinds_a_identity_to_b_before_worker_start():
+    host = _window()
+    lookups = []
+    host.service.search_known_catalog = Mock(
+        side_effect=lambda query, scope, *, field, identity_id:
+            lookups.append((identity_id, query)) or [_row(identity_id)],
+    )
+    invalidate_search_snapshot(host)
+    host.service.current_identity = NS(identity_id='bob')
+    host._identity_context_generation += 1
+    first = host.tasks[0].work()
+    host.tasks[0].done(first)
+    assert not host.search_page.rows
+    assert lookups == [('alice', 'Fictional')]
+    invalidate_search_snapshot(host)
+    second = host.tasks[1].work()
+    host.tasks[1].done(second)
+    assert lookups == [
+        ('alice', 'Fictional'), ('bob', 'Fictional'),
+    ]
     assert host._search_snapshot_pending is None
 
 
