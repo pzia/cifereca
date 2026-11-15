@@ -420,8 +420,9 @@ def test_replacing_selected_detail_revokes_queued_usb_unlink(rig):
     rig.host.runner.advance()
     assert len(rig.dialogs) == 1
     rig.dialogs[0].answer("delete")
-    # Gtk.Widget::unroot is emitted when the selected detail is replaced.
-    rig.button.callbacks["unroot"](rig.button)
+    # Gtk.Widget:root notifies when the selected detail is detached.
+    rig.button.get_root = lambda: None
+    rig.button.callbacks["notify::root"](rig.button, None)
     rig.host.runner.advance()
     assert rig.backend.execution == []
     assert rig.db.device_placement_get(
@@ -455,7 +456,8 @@ def test_worker_checks_original_selection_before_usb_scan(rig):
 def test_unroot_before_worker_discovery_prevents_even_usb_preview(rig):
     click(rig)
     assert len(rig.host.runner.jobs) == 1
-    rig.button.callbacks["unroot"](rig.button)
+    rig.button.get_root = lambda: None
+    rig.button.callbacks["notify::root"](rig.button, None)
     rig.host.runner.advance()
     assert rig.backend.previews == []
     assert rig.backend.copy_calls == []
@@ -471,5 +473,6 @@ def test_old_unroot_cannot_revoke_new_selected_control(rig):
     nonce = object()
     rig.host._reader_usb_execute_control = second
     rig.host._reader_usb_execute_nonce = nonce
-    first.callbacks["unroot"](first)
+    first.get_root = lambda: None
+    first.callbacks["notify::root"](first, None)
     assert rig.host._reader_usb_execute_nonce is nonce
