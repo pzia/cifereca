@@ -213,6 +213,7 @@ def main() -> int:
     result = [1]
     started = monotonic()
     original_client = [None]
+    embedded_file = [None]
 
     def save():
         report["duration_seconds"] = round(monotonic() - started, 2)
@@ -523,6 +524,91 @@ def main() -> int:
         capture("08-bnf-exact-remote-loan-cover")
         report["checks"]["remote_entitlement_exact_loan_cover_in_gtk"] = True
         assert len(image_gets) == 2
+        # #4979: a verified embedded Placement must outrank the same loan's
+        # remote catalogue thumbnail in both the actual GTK list and detail.
+        later(150, begin_embedded_loan_cover)
+
+    def begin_embedded_loan_cover():
+        from copy import copy
+        from cifereca.core.loan_cover_fallback import attested_local_loan_cover_proof
+        from cifereca.core.loan_source_identity import loan_source_key
+        from cifereca.epub_metadata import cover_cache_dir
+
+        window = app_window[0]
+        original = next(loan for loan in window.service.last_loans
+                        if loan.record_id == RESOURCES[0])
+        without_thumbnail = copy(original)
+        without_thumbnail.thumbnail_url = None
+        content = png((0, 180, 60))
+        root = cover_cache_dir()
+        root.mkdir(parents=True, exist_ok=True)
+        local = root / (hashlib.sha256(content).hexdigest() + ".png")
+        if not local.exists():
+            local.write_bytes(content)
+            embedded_file[0] = local
+        url = local.as_uri()
+        entitlement = {
+            "loan_id": original.id,
+            "credential_id": original.source_credential,
+            "account_id": original.source_account_id,
+        }
+        local_row = {
+            "local": True,
+            "identity_id": original.identity_id,
+            "artifact_id": "synthetic-embedded-artifact",
+            "placement_id": "synthetic-embedded-placement",
+            "thumbnail_url": url,
+            "metadata": {"cover_resolution": {
+                "status": "selected", "tier": "embedded", "url": url,
+            }},
+        }
+        proof = attested_local_loan_cover_proof(
+            without_thumbnail, entitlement, local_row,
+            identity_id=original.identity_id,
+            provider_id=original.source_provider, item_id=original.record_id,
+        )
+        assert proof is not None
+        assert proof["loan_source_key"] == loan_source_key(original)
+        local_row["_exact_loan_cover_proofs"] = [proof]
+        # Retain the previously verified remote entitlement in the same
+        # projection: the real adapter must choose embedded, not first-wins.
+        previous = window._loan_cover_projection
+        assert previous is not None and len(previous[2]) == 1
+        window._loan_cover_projection = (
+            previous[0], previous[1], (previous[2][0], local_row),
+        )
+        window._populate_loans([
+            without_thumbnail if x is original else x
+            for x in window.service.last_loans
+        ])
+        await_condition(
+            "embedded_loan_list_over_remote",
+            lambda: window.loan_page.store.get_n_items() == 3
+            and bool(visible_loan(url)),
+            select_embedded_loan,
+        )
+
+    def select_embedded_loan():
+        window = app_window[0]
+        url = window._loan_cover_projection[2][1]["thumbnail_url"]
+        rows = [window.loan_page.store.get_item(i)
+                for i in range(window.loan_page.store.get_n_items())]
+        index = next(i for i, row in enumerate(rows)
+                     if row.thumbnail_url == url)
+        window.loan_page.selection.set_selected(index)
+        await_condition(
+            "embedded_loan_detail_over_remote",
+            lambda: bool(selected_loan_cover())
+            and selected_loan_cover()[0].get_mapped()
+            and selected_loan_cover()[0]._url == url
+            and selected_loan_cover()[0].picture.get_paintable() is not None,
+            finish_embedded_loan,
+        )
+
+    def finish_embedded_loan():
+        capture("09-bnf-embedded-over-remote-loan-cover")
+        assert len(image_gets) == 2, "Embedded local image must not cause HTTP"
+        report["checks"]["embedded_local_over_remote_in_real_gtk"] = True
         report["status"] = "PASS"
         result[0] = 0
         save()
@@ -590,6 +676,8 @@ def main() -> int:
                 device[0].close()
             patch_detail.stop()
             patch_search.stop()
+            if embedded_file[0] is not None:
+                embedded_file[0].unlink(missing_ok=True)
             try:
                 session.close()
                 loan_session.close()
