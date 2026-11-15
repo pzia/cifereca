@@ -337,6 +337,7 @@ def main() -> int:
     fake_execution = []
     fake_start = [None]
     fake_volume = [None]
+    fake_epoch = [None]
 
     def install_synthetic_executor():
         # This is a synthetic GTK/UI integration test ONLY. The fake broker
@@ -373,7 +374,10 @@ def main() -> int:
                         "managed_removal_requires_confirmation",
                     ),),
                 )
-            def execute_one(self, *, confirmation, mountpoint):
+            def execute_one(
+                self, *, confirmation, mountpoint, expected_profile_epoch,
+            ):
+                assert expected_profile_epoch == fake_epoch[0]
                 assert confirmation.artifact_id == artifact_id
                 assert confirmation.copy_operation_id == "a" * 32
                 assert confirmation.target_relative_path == (
@@ -385,6 +389,7 @@ def main() -> int:
         window = state["window"]
         manager = window.plugin_manager
         assert manager is not None
+        fake_epoch[0] = window.service._account_context_epoch
         manager._brokers["reader.usb"] = FakeOnlyUsbBroker()
         # Refresh only the selected detail: the list-row version is
         # intentionally unchanged after synthetic test-broker injection.
