@@ -80,11 +80,9 @@ def test_exact_entitlement_proof_prioritizes_epub_even_when_n3_image_is_missing(
     {"_exact_local_cover_evidence": None},
     {"_exact_loan_cover_proofs": []},
     {"_exact_loan_cover_proofs": [{"loan_id": "loan-one"}]},
-    {"metadata": {"cover_resolution": {
-        "status": "selected", "tier": "origin",
-        "url": "https://example.org/different.png",
-    }}},
-    {"thumbnail_url": "https://example.org/different.png"},
+    {"_exact_loan_cover_proofs": [{
+        "loan_id": "loan-one", "url": "javascript:invalid",
+    }]},
 ])
 def test_no_cross_profile_or_unproven_placement_join(linked, mutation):
     loan, row, _facts = linked
@@ -99,6 +97,19 @@ def test_no_cross_profile_or_unproven_placement_join(linked, mutation):
     {"source_account_id": "borrower-b"},
     {"source_provider": "different-provider"},
 ])
+def test_later_library_descriptive_thumbnail_must_not_revoke_core_loan_link(linked):
+    loan, row, facts = linked
+    # The Core loan entitlement proof was validated on the original local
+    # row. Another entitlement may then update the merged display thumbnail:
+    # that does not change the already proven exact loan->Placement link.
+    later = {**row, "thumbnail_url": "https://example.org/other.png",
+             "metadata": {"cover_resolution": {
+                 "status": "selected", "tier": "origin",
+                 "url": "https://example.org/other.png",
+             }}}
+    assert exact_attested_loan_epub_cover(loan, (later,)) is facts
+
+
 def test_borrower_and_loan_coordinates_must_match(linked, change):
     from dataclasses import replace
     loan, row, _facts = linked
