@@ -220,6 +220,9 @@ def _render_search_results(self) -> int:
             # snapshot. Consume ONLY its exact Core owner+Placement proof;
             # remote catalogue rows never acquire one by title/ISBN/URL.
             proof = item.get("_exact_local_cover_evidence")
+            # Some controller ABI tests execute this method standalone.
+            # Keep the evidence type available in that same function scope.
+            from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
             if (type(proof) is VerifiedLocalCoverEvidence
                     and proof.scope.identity_id == item.get("identity_id")
                     and proof.scope.source_key == item.get("key")
