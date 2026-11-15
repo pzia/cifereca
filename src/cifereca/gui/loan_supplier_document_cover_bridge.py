@@ -172,6 +172,8 @@ def show_supplier_loan_cover(
     host: Any, loan: Loan, display: Callable[[], Loan],
 ) -> bool:
     """Render catalogue-tier N2 detail without changing show_loan's ABI."""
+    if _current(host, loan) is None:
+        return False
     presentation = display()
     evidence = exact_supplier_loan_cover(host, loan, displayed=presentation)
     if evidence is None:
