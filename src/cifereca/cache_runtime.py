@@ -229,8 +229,37 @@ class ScopedCacheBroker:
         }
 
     def purge(self, namespace_id: str = "", *, expired_only: bool = False) -> CachePurgeResult:
-        current = {row.namespace_id: row for row in self.namespaces()}
-        requested = [namespace_id] if namespace_id else list(current)
+        if namespace_id:
+            # Validate the public request before any inventory access. The
+            # filesystem cache path does not require SQLite to be available.
+            if not self._allowed(namespace_id):
+                return CachePurgeResult(False, warnings=("cache_namespace_forbidden",))
+            if namespace_id.startswith("plugin:"):
+                owner = namespace_id.split(":", 1)[1]
+                if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", owner) is None:
+                    return CachePurgeResult(False, warnings=("cache_namespace_invalid",))
+                if expired_only:
+                    return CachePurgeResult(False, warnings=("cache_expiration_unsupported",))
+                root = cache_dir() / "plugins" / owner
+                if self.allow_global and not (root.is_dir() or root.is_symlink()):
+                    return CachePurgeResult(False, warnings=("cache_namespace_stale",))
+                current = {namespace_id: self._plugin_namespace(owner)}
+            elif namespace_id == "core:epub-covers":
+                if expired_only:
+                    return CachePurgeResult(False, warnings=("cache_expiration_unsupported",))
+                entries, size = _tree_stats(cache_dir() / "epub-covers-v1")
+                current = {namespace_id: CacheNamespaceInfo(
+                    namespace_id, "core", "core", entries, size, 0, True,
+                    "Prévisualisations de couvertures EPUB",
+                )}
+            elif namespace_id.startswith("db:"):
+                current = {row.namespace_id: row for row in self.namespaces()}
+            else:
+                return CachePurgeResult(False, warnings=("cache_namespace_unknown",))
+            requested = [namespace_id]
+        else:
+            current = {row.namespace_id: row for row in self.namespaces()}
+            requested = list(current)
         removed = freed = 0
         done: list[str] = []
         warnings: list[str] = []
