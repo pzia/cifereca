@@ -1221,6 +1221,20 @@
       "in_ast_metric": true,
       "original_site_id": "site-7313c6ad37cfecdb7936e8bc",
       "retired_at_sha": "2dbfdb6c3bf62de9036fc1891f9aeeadbccb773a"
+    },
+    {
+      "id": "struct-w1-completed-archive-metadata-marker-writer-retired",
+      "original": "Storage.backup_put(kobo) performed a persisted status/metadata SELECT and INSERT OR IGNORE into metadata for each legacy (credential,item) after the first complete/ok archive. That monotone marker previously prevented W1 from re-enabling canonical mirroring on a later retry after complete.",
+      "original_classification": "legacy_mutating_cutover",
+      "replacement": "Delete the obsolete per-archive completion marker key calculation, the metadata lookup, the former-status SELECT and the metadata INSERT entirely. Preserve the raw backup_items checkpoint, transaction, typed SourceReference refusal, exact owner/canonical-receipt validation and all existing marker rows for historical reads/rollback. Kobo backup_put always uses archive_only=True regardless of prior completion status.",
+      "classification": "retired_active_obsolete_w1_metadata_marker_writer",
+      "evidence": "Sole production literal usage and SQL writer for core.kobo.completed-legacy-archive.v1 was in Storage.backup_put, and no independent consumer is found. The current Kobo branch unconditionally returns from Storage._mirror_backup_row(...archive_only=True) after its bounded negative checks, with or without completion history. A SQLite BEFORE INSERT trigger now forbids any new obsolete marker while multiple first-complete, interrupted and retry status transitions persist in backup_items; canonical entities remain byte-for-byte unchanged. Older metadata rows survive untouched, and the non-Kobo compatibility mirror remains under its existing contracts.",
+      "tests": [
+        "tests/test_core_p0_3196_w1_archive_only_cutover.py",
+        "tests/test_core_p0_3196_w1_completed_archive_no_reprojection.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6136"
     }
   ],
   "guard_installations": [

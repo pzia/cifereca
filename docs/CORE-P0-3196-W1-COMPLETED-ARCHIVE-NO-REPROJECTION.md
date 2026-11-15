@@ -1,5 +1,14 @@
 # P0 #3196 — W1 : reçus Kobo déjà complets, pas de reprojection 0.8
 
+> **Delta #6136 (15/11/2026) — marker writer retiré.** Ce document
+> conserve le déroulé historique des cutovers antérieurs, dont le marqueur
+> monotone décrit ci-dessous. Depuis que *tous* les états Kobo passent
+> systématiquement par `archive_only=True`, ce marqueur n'a plus de lecteur
+> métier utile : `Storage.backup_put()` n'écrit ni ne consulte plus
+> `core.kobo.completed-legacy-archive.v1.*`. Les anciens marqueurs déjà
+> persistés restent intacts, pour rollback/audit. Ni `backup_items`, ni les
+> contrôles d'owner/receipts, ni le miroir non-Kobo ne sont supprimés.
+
 ## Dépendance au writer 0.7 encore active
 
 `Storage.backup_put()` persiste les reçus de sauvegarde historique
