@@ -190,6 +190,40 @@ def test_display_only_account_change_keeps_original_history_read_and_exact_cache
     )
 
 
+@pytest.mark.parametrize("expected", [20, None])
+def test_queued_source_epoch_matches_exact_admission(expected):
+    service, account, _other, _session, _state, result, fetched, written = _service()
+    assert refresh_history(
+        service, force=True, account=account, expected_source_epoch=expected,
+    ) == [result]
+    assert fetched == [account] and len(written) == 1
+
+
+@pytest.mark.parametrize("expected", [19, 21, True, "20"])
+def test_queued_history_wrong_epoch_never_reads_provider_or_cache(expected):
+    service, account, _other, _session, _state, _result, fetched, written = _service()
+    with pytest.raises(ProviderConfigurationError, match="history_source_binding_changed"):
+        refresh_history(
+            service, force=True, account=account, expected_source_epoch=expected,
+        )
+    assert fetched == [] and written == []
+    assert service.last_history == ["previous presentation"]
+
+
+def test_queued_history_detects_revocation_even_if_connection_still_looks_ready():
+    service, account, _other, _session, _state, _result, fetched, written = _service()
+    admitted_epoch = service._source_context_epoch
+    service._source_context_epoch += 1
+    # The connection/session can be re-established with the same coordinates.
+    # A task enqueued earlier must not adopt the newer lease at worker start.
+    with pytest.raises(ProviderConfigurationError, match="history_source_binding_changed"):
+        refresh_history(
+            service, force=True, account=account,
+            expected_source_epoch=admitted_epoch,
+        )
+    assert not fetched and not written
+
+
 def test_automatic_inventory_lease_still_requires_sync_switch_and_strict_mode():
     service, account, _other, session, _state, _result, _fetched, _written = _service()
     scope = (
