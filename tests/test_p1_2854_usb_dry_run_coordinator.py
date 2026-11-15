@@ -592,7 +592,7 @@ def test_missing_local_book_is_never_qualified_as_upload(tmp_path, monkeypatch):
     result = inspect(db, root, mount)
     assert result.status == "scanned"
     assert result.rows[0].action == "blocked"
-    assert result.rows[0].reason == "owned_source_unverified"
+    assert result.rows[0].reason == "owned_source_file_missing"
     assert not result.rows[0].executable
 
 
