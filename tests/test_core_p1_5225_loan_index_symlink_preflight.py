@@ -174,3 +174,63 @@ def test_provider_trace_keeps_physical_file_size_without_any_symlink(tmp_path):
     end = [args for template, args in logs
            if template.startswith("TRACE download provider end")]
     assert len(end) == 1 and end[0][2] == physical.stat().st_size
+
+
+@pytest.mark.parametrize("filename,media_format", [
+    ("loan.bin", "epub"),
+    ("loan.download", "pdf"),
+    ("loan.kepub", "kepub"),
+    ("loan.epub", "unknown"),
+    ("loan.pdf", "unknown"),
+])
+@pytest.mark.parametrize("invalid", [False, None, 0])
+def test_invalid_ebook_inspection_never_reaches_canonical_index(
+    tmp_path, filename, media_format, invalid,
+):
+    """Content evidence is authoritative even with a misleading extension."""
+    path = tmp_path / filename
+    path.write_bytes(b"synthetic invalid artifact")
+    calls = []
+    def forbidden(*_args, **_kwargs):
+        calls.append("indexed")
+        pytest.fail("An invalid e-book must not be indexed")
+    with pytest.raises(ProviderConfigurationError, match="Artefact local invalide"):
+        index_local_loan_artifact(
+            NS(catalog_index_path=forbidden), fake_loan(),
+            NS(identity_id="alice"), path,
+            time=time, _TRACE_LOG=logging.getLogger("cifereca.test"),
+            inspect_artifact=lambda _: NS(
+                valid=invalid, media_format=media_format, protected=False,
+            ),
+            ProviderConfigurationError=ProviderConfigurationError,
+        )
+    assert not calls
+    assert path.read_bytes() == b"synthetic invalid artifact"
+
+
+@pytest.mark.parametrize("filename,media_format", [
+    ("loan.bin", "epub"),
+    ("loan.download", "pdf"),
+    ("loan.kepub", "kepub"),
+])
+def test_valid_ebook_with_generic_suffix_preserves_existing_index_contract(
+    tmp_path, filename, media_format,
+):
+    path = tmp_path / filename
+    path.write_bytes(b"synthetic accepted bytes")
+    calls = []
+    def index(received, **scope):
+        calls.append((received, scope))
+        return {"status": "indexed", "artifact_id": "synthetic"}
+    inspection, receipt = index_local_loan_artifact(
+        NS(catalog_index_path=index), fake_loan(), NS(identity_id="alice"),
+        path, time=time, _TRACE_LOG=logging.getLogger("cifereca.test"),
+        inspect_artifact=lambda _: NS(
+            valid=True, media_format=media_format, protected=False,
+        ),
+        ProviderConfigurationError=ProviderConfigurationError,
+    )
+    assert inspection.valid is True
+    assert receipt["status"] == "indexed"
+    assert len(calls) == 1 and calls[0][0] == path
+    assert calls[0][1]["identity_id"] == "alice"
