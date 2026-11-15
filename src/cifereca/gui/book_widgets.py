@@ -75,6 +75,10 @@ class CoverView(Gtk.Overlay):
         self._url: str | None = None
         self._priority = 10
         self._decode_retry = False
+        # Optional N0 paint observation: attached only by a Core source
+        # adapter that already owns an exact N2 decision/lease. Never a
+        # source of bibliographic evidence or provider access.
+        self._on_texture_applied: Callable[[str, Path], None] | None = None
 
         self.placeholder = Gtk.Image.new_from_icon_name("image-x-generic-symbolic")
         self.placeholder.set_pixel_size(max(24, self._width // 2))
@@ -126,6 +130,7 @@ class CoverView(Gtk.Overlay):
         self._loader = None
         self._url = None
         self._decode_retry = False
+        self._on_texture_applied = None
         self._set_logical_size(self._width, self._height)
         self.picture.set_paintable(None)
         self.placeholder.set_visible(True)
@@ -136,7 +141,21 @@ class CoverView(Gtk.Overlay):
         self.spinner.set_visible(True)
         self.spinner.start()
 
-    def bind_url(self, loader: CoverLoader, url: str | None, *, priority: int = 10) -> None:
+    def set_texture_applied_observer(
+        self, callback: Callable[[str, Path], None] | None,
+    ) -> None:
+        """Bind an exact Core observer to the current request generation.
+
+        The detail panel can install this after show_presentation() created
+        its CoverView. Reset/rebind always clears a prior observer.
+        """
+        self._on_texture_applied = callback if callable(callback) else None
+
+    def bind_url(
+        self, loader: CoverLoader, url: str | None, *,
+        priority: int = 10,
+        on_texture_applied: Callable[[str, Path], None] | None = None,
+    ) -> None:
         # A rapid GTK list rebuild can rebind the same URL before the
         # asynchronous cache/preview callback reaches the main loop.
         # Resetting here invalidates that callback's generation repeatedly,
@@ -146,8 +165,10 @@ class CoverView(Gtk.Overlay):
         # changing loader, URL or priority retains the normal cancellation.
         if (url and self._loader is loader and self._url == url
                 and self._priority == priority and self.spinner.get_visible()):
+            self.set_texture_applied_observer(on_texture_applied)
             return
         self.reset()
+        self.set_texture_applied_observer(on_texture_applied)
         if not url:
             self._show_missing()
             return
@@ -188,6 +209,7 @@ class CoverView(Gtk.Overlay):
         if not path:
             self._show_missing()
             return False
+        applied = False
         try:
             decode_started = time.perf_counter()
             texture = Gdk.Texture.new_from_file(Gio.File.new_for_path(str(path)))
@@ -196,6 +218,7 @@ class CoverView(Gtk.Overlay):
             self.picture.set_paintable(texture)
             self.placeholder.set_visible(False)
             loader.note_ui_applied()
+            applied = True
         except Exception:
             loader.note_ui_failed()
             self.picture.set_paintable(None)
@@ -215,6 +238,19 @@ class CoverView(Gtk.Overlay):
                 self._start_cover_request(force=True)
             else:
                 self._show_missing()
+        if (applied and generation == self._generation
+                and self._loader is loader and self._url
+                and self.picture.get_paintable() is texture):
+            # A 'resolved' source or cache hit is NOT a GTK paint. Emit only
+            # after GDK decoded the bytes and GTK accepted the texture, and
+            # never for an obsolete/recycled cover generation. Observer
+            # failures must not cause a forced re-download or hide the image.
+            observer = self._on_texture_applied
+            if observer is not None:
+                try:
+                    observer(self._url, path)
+                except Exception:
+                    pass
         return False
 
     def set_path(self, path: Path | None) -> bool:
@@ -410,6 +446,7 @@ class BookListCell(Gtk.Box):
         self.cover.bind_url(
             self.cover_loader, item.thumbnail_url or item.default_thumbnail_url,
             priority=10,
+            on_texture_applied=getattr(item, "_cover_paint_observer", None),
         )
 
     def bind(self, item: BookListItem) -> None:
@@ -483,7 +520,10 @@ class BookListCell(Gtk.Box):
                 pass
             self._meta_request = None
         if item.thumbnail_url:
-            self.cover.bind_url(self.cover_loader, item.thumbnail_url, priority=10)
+            self.cover.bind_url(
+                self.cover_loader, item.thumbnail_url, priority=10,
+                on_texture_applied=getattr(item, "_cover_paint_observer", None),
+            )
         elif item.cover_provider and item.cover_title:
             # L'historique lié observé ne fournit aucune ThumbnailUrl. Résoudre
             # via Search.svc uniquement pour cette cellule visible/recyclée.
@@ -533,7 +573,10 @@ class BookListCell(Gtk.Box):
                 resolved, scope=history_cover_request_scope(context),
             )
         else:
-            self.cover.bind_url(self.cover_loader, item.default_thumbnail_url, priority=10)
+            self.cover.bind_url(
+                self.cover_loader, item.default_thumbnail_url, priority=10,
+                on_texture_applied=getattr(item, "_cover_paint_observer", None),
+            )
         # No source-key mutation or selection invalidation is necessary when
         # asynchronous detail discovery provides a stronger cover for this row.
         self._thumbnail_item = item
