@@ -13,53 +13,17 @@ same captured identity and all four UI/Core context generations.
 from __future__ import annotations
 
 from collections import OrderedDict
-from hashlib import sha256
-import json
 
 from ..core.book_cover_cache import CoverDecisionCache
 from ..core.book_cover_projection import CoverDocumentScope
+from ..core.search_cover_provenance import exact_search_cover_scope
 from ..core.covers import candidate
 from ..models import ItemDetail, SearchResult
 
 
-def _exact(value: object, *, allow_empty: bool = False) -> bool:
-    return (
-        type(value) is str
-        and len(value) <= 512
-        and (allow_empty or bool(value))
-        and value.isprintable()
-    )
-
-
 def _scope(item: SearchResult, identity_id: str) -> CoverDocumentScope | None:
-    if (type(item) is not SearchResult or not _exact(identity_id)
-            or not _exact(item.source_provider)
-            or not _exact(item.record_id)
-            or not _exact(item.docbase)
-            or not _exact(item.source_credential, allow_empty=True)):
-        return None
-    extras = (
-        getattr(item, "source_collection", None),
-        getattr(item, "source_account_id", None),
-        getattr(item, "revision_id", None),
-    )
-    if any(value is not None and not _exact(value, allow_empty=True)
-           for value in extras):
-        return None
-    coordinates = (
-        item.source_provider, item.source_credential, item.record_id,
-        item.docbase, *(value if value is not None else None for value in extras),
-    )
-    digest = sha256(
-        json.dumps(coordinates, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
-    return CoverDocumentScope(
-        kind="catalogue", identity_id=identity_id,
-        source_key="search-exact:" + digest,
-        provider_id=item.source_provider,
-        credential_id=item.source_credential,
-        account_id=item.source_account_id,
-    )
+    """Preserve the Search N2 public source identity, shared with Core N1."""
+    return exact_search_cover_scope(item, identity_id)
 
 
 def _context(values: object) -> tuple[int, int, int, int] | None:
