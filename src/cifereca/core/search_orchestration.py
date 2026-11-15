@@ -1902,14 +1902,20 @@ def _stamp_cached_public_notice_refs(
         # Only a *candidate* coordinate is constructed here (observed_at=1
         # is intentionally not an upstream freshness timestamp). No
         # observation is stored; read_notice_cover remains the only authority.
-        snapshot = admit_public_search_cover(
-            row, identity_id=identity_id, observed_at=1,
-            public_cover_url=safe_url,
-        )
-        if snapshot is not None:
-            row._core_notice_cover_document_ref = notice_cover_document_ref(
-                snapshot.key,
+        try:
+            snapshot = admit_public_search_cover(
+                row, identity_id=identity_id, observed_at=1,
+                public_cover_url=safe_url,
             )
+            if snapshot is not None:
+                row._core_notice_cover_document_ref = notice_cover_document_ref(
+                    snapshot.key,
+                )
+        except (ValueError, TypeError, UnicodeError):
+            # A malformed cached supplier coordinate must not abort search
+            # or be interpreted as an absent/negative source in Notice C.
+            # Do not log untrusted source strings or sensitive image URLs.
+            continue
 
 
 def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None=None) -> int:
