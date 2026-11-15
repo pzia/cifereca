@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
+from hashlib import sha256
 import time
 from typing import Any
 
@@ -43,6 +44,24 @@ def history_cover_context(window: Any) -> HistoryCoverContext | None:
                    for number in (account_epoch, source_epoch, generation))):
         return None
     return HistoryCoverContext(identity, account_epoch, source_epoch, generation)
+
+
+def history_cover_request_scope(
+    context: HistoryCoverContext | None,
+) -> str:
+    """Namespace the lazy resolver's private in-memory key by exact account epoch.
+
+    An old URL from another primary identity, or an A→B→A activation, cannot
+    be replayed just because its bibliography/title/record tuple is equal.
+    This key does not attest documentary equivalence or authorize rights.
+    """
+    if type(context) is not HistoryCoverContext:
+        return ""
+    values = (
+        context.identity_id, str(context.account_epoch),
+        str(context.source_epoch), str(context.identity_generation),
+    )
+    return sha256("\\0".join(values).encode("utf-8")).hexdigest()
 
 
 def _same_current_item(
@@ -120,5 +139,5 @@ def publish_history_cover(
 
 __all__ = [
     "HistoryCoverContext", "history_cover_context",
-    "cached_history_cover", "publish_history_cover",
+    "history_cover_request_scope", "cached_history_cover", "publish_history_cover",
 ]
