@@ -1,0 +1,154 @@
+"""#3104: the shared GTK list never keeps stale book paintables at a stable key.
+
+Run the REAL MasterDetailPage.show_rows method headlessly with a lightweight
+Gio.ListStore facade. No provider, file system or GUI startup is needed.
+"""
+from __future__ import annotations
+
+import ast
+from pathlib import Path
+from types import SimpleNamespace as NS
+
+import pytest
+
+
+SOURCE = Path(__file__).resolve().parents[1] / "src/cifereca/gui/master_detail.py"
+
+
+class BookRow:
+    def __init__(self, key="exact:1", *, cover=None, title="Le livre",
+                 author="Autrice", badge="Catalogue", fallback=None):
+        self.key = key
+        self.title = title
+        self.subtitle = author
+        self.meta = ""
+        self.badge = badge
+        self.badge_style = ""
+        self.thumbnail_url = cover
+        self.default_thumbnail_url = fallback
+        self.cover_provider = None
+        self.cover_record_id = None
+        self.cover_title = title
+        self.cover_author = None
+        self.cover_year = None
+        self.action_label = ""
+        self.action_icon_name = "view-more-symbolic"
+
+
+def production_methods():
+    tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
+    page = next(n for n in tree.body if isinstance(n, ast.ClassDef)
+                and n.name == "MasterDetailPage")
+    method = next(n for n in page.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "show_rows")
+    helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "_same_book_row_presentation")
+    fields = next(n for n in tree.body if isinstance(n, ast.Assign)
+                  and any(isinstance(t, ast.Name)
+                          and t.id == "_BOOK_ROW_VISIBLE_FIELDS"
+                          for t in n.targets))
+    ns = {
+        "BookListItem": BookRow,
+        "_BOOK_ROW_VISIBLE_FIELDS": ast.literal_eval(fields.value),
+        "time": NS(perf_counter=lambda: 1.0),
+    }
+    node = ast.fix_missing_locations(ast.Module(body=[helper, method], type_ignores=[]))
+    exec(compile(node, str(SOURCE), "exec"), ns)
+    return ns["_same_book_row_presentation"], ns["show_rows"]
+
+
+def page_with(row):
+    class Store:
+        def __init__(self):
+            self.items = [row]
+            self.splice_count = 0
+        def get_n_items(self):
+            return len(self.items)
+        def get_item(self, index):
+            return self.items[index]
+        def splice(self, start, delete, rows):
+            self.splice_count += 1
+            self.items[start:start + delete] = list(rows)
+        def append(self, item):
+            self.items.append(item)
+    store = Store()
+    class Selection:
+        def __init__(self):
+            self.position = 0
+        def get_selected_item(self):
+            if 0 <= self.position < len(store.items):
+                return store.items[self.position]
+            return None
+        def set_selected(self, position):
+            self.position = position
+    selection = Selection()
+    perf = []
+    states = []
+    counts = []
+    obj = NS(
+        store=store, selection=selection,
+        window=NS(search_page=None, ui_perf=NS(record=lambda *a: perf.append(a))),
+        list_stack=NS(set_visible_child_name=states.append),
+        _update_count=counts.append,
+        clear_rows=lambda: store.items.clear(),
+    )
+    return obj, store, selection, perf, states, counts
+
+
+@pytest.mark.parametrize("change", [
+    {"cover": "https://public.example/exact.png"},
+    {"title": "Le livre — édition attestée"},
+    {"author": "Autrice enrichie"},
+    {"badge": "Prêt BnF"},
+    {"fallback": "https://public.example/fallback.png"},
+])
+def test_same_source_key_with_changed_visible_content_replaces_real_gtk_row(change):
+    equal, show = production_methods()
+    old = BookRow()
+    new = BookRow(**change)
+    assert old.key == new.key
+    assert not equal(old, new)
+    page, store, selected, perf, states, counts = page_with(old)
+    show(page, [new], total_count=1)
+    assert store.items == [new] and store.splice_count == 1
+    assert selected.get_selected_item() is new
+    assert perf[-1][0] == "list.replace"
+    assert states == ["list"] and counts == [1]
+
+
+def test_wrong_or_incomplete_explicit_revision_cannot_mask_cover_change():
+    equal, show = production_methods()
+    old = BookRow(cover=None)
+    new = BookRow(cover="https://public.example/exact.jpg")
+    old._public_row_content = new._public_row_content = ("loan", old.key)
+    assert equal(old, new) is False
+    page, store, selection, perf, _, _ = page_with(old)
+    show(page, [new])
+    assert store.items[0] is new
+    assert perf[-1][0] == "list.replace"
+
+
+def test_explicit_action_context_change_forces_rebind_even_when_visuals_match():
+    equal, show = production_methods()
+    old, new = BookRow(), BookRow()
+    old._public_row_content = ("search", "credential-a")
+    new._public_row_content = ("search", "credential-b")
+    assert not equal(old, new)
+    page, store, _, perf, _, _ = page_with(old)
+    show(page, [new])
+    assert store.items[0] is new
+    assert perf[-1][0] == "list.replace"
+
+
+def test_unchanged_book_and_progressive_append_keep_fast_path_and_selection():
+    equal, show = production_methods()
+    old, equivalent = BookRow(), BookRow()
+    assert equal(old, equivalent)
+    page, store, selection, perf, states, counts = page_with(old)
+    second = BookRow("exact:2", cover="https://public.example/second.jpg")
+    show(page, [equivalent, second], total_count=4)
+    assert store.splice_count == 1  # only append the tail
+    assert store.items == [old, second]  # unchanged first GObject is reused
+    assert selection.get_selected_item() is old
+    assert perf[-1][0] == "list.append-fast"
+    assert states == ["list"] and counts == [4]
