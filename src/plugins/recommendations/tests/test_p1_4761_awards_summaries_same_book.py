@@ -84,6 +84,8 @@ def test_only_public_attested_fields_enter_the_new_projection(field, fact):
     "https://server.example/loan?token=PRIVATE_TOKEN",
     "token=PRIVATE_TOKEN",
     "Bearer: PRIVATE_TOKEN",
+    "PRIVATE_ACCOUNT@example.org",
+    "opaque=PRIVATE_TOKEN",
     "/home/private/credentials",
     r"\\fileserver\secret",
     "https://example.org/books?signature=PRIVATE_TOKEN",
