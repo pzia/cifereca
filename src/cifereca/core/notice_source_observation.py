@@ -15,7 +15,7 @@ import json
 import math
 import re
 from typing import Any
-from urllib.parse import urlsplit, parse_qsl
+from urllib.parse import urlsplit, parse_qsl, unquote
 
 _MAX_BYTES = 65536
 _MAX_VALUE_BYTES = 8192
@@ -43,7 +43,9 @@ _RESTRICTED_QUERY_KEYS = frozenset((
 
 
 def _restricted_query_key(value: str) -> bool:
-    normalized = "".join(ch for ch in value.casefold() if ch.isalnum())
+    # parse_qsl decodes one level; a doubly-percent-encoded signed key
+    # must not turn into an apparently harmless descriptive query field.
+    normalized = "".join(ch for ch in unquote(value).casefold() if ch.isalnum())
     return (normalized in _RESTRICTED_QUERY_KEYS
             or normalized.startswith(("xamz", "xgoog")))
 
@@ -122,7 +124,7 @@ def _safe_scalar(text: str) -> bool:
                           else candidate)
             u = urlsplit(source_url)
             if (not u.hostname or u.username is not None or u.password is not None
-                    or u.fragment or
+                    or u.fragment or ";" in u.query or
                     any(_restricted_query_key(k)
                         for k, _ in parse_qsl(u.query, keep_blank_values=True))):
                 return False
