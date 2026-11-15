@@ -91,6 +91,13 @@ class FakeBroker:
 def rig(tmp_path, monkeypatch):
     db, entries, host, _ = environment(tmp_path)
     book = entries[0]
+    # The shared read-only reader fixture deliberately starts disabled. An
+    # explicit execution test must enable the *exact* configured reader.
+    db.device_usb_binding_declare(
+        identity_id="alice", device_id="reader-alice",
+        label="Lecteur Alice", usb_fingerprint="uuid-alice-0001",
+        enabled=True,
+    )
     digest = book["artifact_id"].removeprefix("sha256:")
     db.device_usb_intent_set(
         identity_id="alice", device_id="reader-alice",
