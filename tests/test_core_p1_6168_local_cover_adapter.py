@@ -143,8 +143,10 @@ def test_evidence_registry_eviction_never_resurrects_prior_revision(prepared):
         adapter.register(service, b)
         assert adapter.stats()["sources"] == 1
         adapter.register(service, a)
-        current = service.get_cover(doc_a, "detail", lambda path: None)
-        assert current.source_uri == a.embedded.candidate.url
+        service.get_cover(doc_a, "detail", lambda path: None)
+        assert service.decisions.peek(doc_a, revision=3).uri == (
+            a.embedded.candidate.url
+        )
         assert service.decisions.peek(doc_a, revision=3).tier == "embedded"
         assert service.decisions.peek(doc_a, revision=1) is None
     finally:
