@@ -11,6 +11,7 @@ from typing import Any, Callable, Mapping
 
 from .device_usb_copy_admission import UsbCopyConsent, UsbCopyRightsEvidence
 from .device_usb_dry_run import inspect_usb_dry_run
+from .device_usb_preview import _sha
 from .device_usb_library_copy import execute_usb_library_copy
 from .device_usb_observation_record import record_verified_usb_observation
 from .device_usb_removal_execute import execute_usb_removal
@@ -37,11 +38,15 @@ def synchronize_usb_reader(
     rights: Mapping[str, UsbCopyRightsEvidence],
     policy_verifier: Callable[[UsbCopyRightsEvidence], bool] | None,
     check_cancelled: Callable[[], None] | None = None,
+    artifact_id: str | None = None,
 ) -> UsbSyncResult:
     """Apply only exact per-book confirmations from a fresh advisory delta.
 
     No confirmation means pending, not an implicit authorization. A scan
     failure never becomes an empty delta or a successfully synced reader.
+    The optional exact SHA artifact scope preserves whole-reader convergence by
+    default but prevents a per-book consent from inheriting unrelated pending
+    actions in the result (or dispatch).
     """
     if (not isinstance(identity_root, Path) or not identity_root.is_absolute()
             or not isinstance(mountpoint, Path) or not mountpoint.is_absolute()
@@ -50,15 +55,26 @@ def synchronize_usb_reader(
             or type(device_id) is not str or not device_id
             or not callable(current_profile)
             or not isinstance(confirmations, Mapping)
-            or not isinstance(rights, Mapping)):
+            or not isinstance(rights, Mapping)
+            or (artifact_id is not None and (
+                type(artifact_id) is not str
+                or not artifact_id.startswith("sha256:")
+                or not _sha(artifact_id[7:])
+            ))):
         return UsbSyncResult("blocked")
 
     preview = inspect_usb_dry_run(
         storage=storage, identity_id=identity_id, device_id=device_id,
         identity_root=identity_root, mountpoint=mountpoint,
+        artifact_id=artifact_id,
     )
     if (preview.status != "scanned" or preview.scan_attested is not True
-            or preview.executable is not False):
+            or preview.executable is not False
+            or (artifact_id is not None and (
+                type(preview.rows) is not tuple
+                or len(preview.rows) != 1
+                or preview.rows[0].artifact_id != artifact_id
+            ))):
         return UsbSyncResult("unavailable")
 
     journal = SqliteUsbOperationJournal(storage)
