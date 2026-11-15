@@ -1408,7 +1408,8 @@
       "tests": [
         "tests/test_identities_081.py",
         "tests/test_core_p0_5743_sqlite_cardinality_v15.py",
-        "tests/test_core_p0_5975_business_coupling_ledger.py"
+        "tests/test_core_p0_5975_business_coupling_ledger.py",
+        "tests/test_core_p0_5975_v5_historical_cardinality_scope.py"
       ],
       "pr": "#6154"
     }
