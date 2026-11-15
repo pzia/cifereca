@@ -20,7 +20,6 @@ from cifereca.core.device_usb_preview import UsbPreviewRow
 from cifereca.core.device_usb_removal_review import UsbRemovalConsent
 from cifereca.core.device_usb_sync_engine import UsbSyncResult
 from cifereca.gui import reader_usb_execute_actions as controller
-from cifereca.core import device_usb_operation_journal as journal
 from tests.test_p1_2854_readers_master_detail_page import environment
 
 
@@ -71,11 +70,17 @@ class FakeBroker:
         self.report = report
         self.previews = []
         self.execution = []
+        self.copy_operation = "a" * 32
+        self.copy_calls = []
         self.outcome = UsbSyncResult("completed", removed=1, observed=True)
 
     def preview(self, **kwargs):
         self.previews.append(kwargs)
         return self.report
+
+    def completed_copy_operation(self, **kwargs):
+        self.copy_calls.append(kwargs)
+        return self.copy_operation
 
     def execute_one(self, **kwargs):
         self.execution.append(kwargs)
@@ -110,14 +115,6 @@ def rig(tmp_path, monkeypatch):
     monkeypatch.setattr(
         preview, "_discover_mounted_binding",
         lambda **kwargs: selected["volume"],
-    )
-    journal_calls = []
-    operation_id = "a" * 32
-    def lookup(**kwargs):
-        journal_calls.append(kwargs)
-        return {book["artifact_id"]: operation_id}
-    monkeypatch.setattr(
-        journal, "completed_usb_managed_copy_operations", lookup, raising=False,
     )
     row = UsbPreviewRow(
         book["artifact_id"], "remove", "present", "unknown", None,
@@ -154,7 +151,7 @@ def rig(tmp_path, monkeypatch):
     assert actions[0]._cifereca_action_id == "reader-usb-execute-remove"
     return NS(
         db=db, book=book, host=host, backend=backend, volume=volume,
-        selected=selected, lookup=journal_calls, dialogs=dialogs,
+        selected=selected, dialogs=dialogs,
         button=actions[0], errors=errors,
     )
 
@@ -183,7 +180,7 @@ def test_cancelled_confirmation_never_calls_core_executor(rig):
     click(rig)
     rig.host.runner.advance()
     assert len(rig.backend.previews) == 1
-    assert len(rig.lookup) >= 1
+    assert len(rig.backend.copy_calls) >= 1
     assert len(rig.dialogs) == 1 and rig.dialogs[0].presented
     assert rig.dialogs[0].close_response == "cancel"
     assert "delete" in rig.dialogs[0].responses
@@ -294,10 +291,7 @@ def test_worker_revalidates_mount_copy_receipt_and_intent(rig, monkeypatch, chan
     if change == "mount_swap":
         rig.selected["volume"] = replace(rig.volume, mount_id=72)
     elif change == "receipt_replacement":
-        monkeypatch.setattr(
-            journal, "completed_usb_managed_copy_operations",
-            lambda **_: {rig.book["artifact_id"]: "c" * 32},
-        )
+        rig.backend.copy_operation = "c" * 32
     elif change == "wish_revoked":
         rig.db.device_usb_intent_set(
             identity_id="alice", device_id="reader-alice",
@@ -335,10 +329,7 @@ def test_review_has_no_positive_without_matching_physical_scan_and_copy(rig, mon
                                                reason="source_unverified"),),
         )
     else:
-        monkeypatch.setattr(
-            journal, "completed_usb_managed_copy_operations",
-            lambda **_: {},
-        )
+        rig.backend.copy_operation = None
     click(rig)
     rig.host.runner.advance()
     assert rig.dialogs == []
