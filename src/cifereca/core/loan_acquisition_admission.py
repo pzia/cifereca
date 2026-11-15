@@ -173,23 +173,40 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     # Loan ID + local identity alone never authorize an entitlement link.
     # An unknown borrower is not the empty/primary borrower: keep the
     # acquisition's optional entitlement unbound rather than guess.
-    exact_borrower = loan.source_account_id
+    exact_borrower = pinned_borrower
+    exact_item_id = pinned_record_id if pinned_record_id else pinned_loan_id
+    # Storage inventory rows are read models, not provider permission.
+    # Require exact native coordinate types before comparing: a malformed
+    # value must never invoke its __eq__ or select another borrower's right.
     entitlement_rows = [
         row for row in entitlement_inventory
-        if row.get("loan_id") == pinned_loan_id
-        and row.get("identity_id") == bound_identity_id
-        and row.get("provider_id") == pinned_provider
-        and row.get("credential_id") == pinned_credential
+        if type(row) is dict
+        and type(row.get("loan_id")) is str
+        and row["loan_id"] == pinned_loan_id
+        and type(row.get("identity_id")) is str
+        and row["identity_id"] == bound_identity_id
+        and type(row.get("provider_id")) is str
+        and row["provider_id"] == pinned_provider
+        and type(row.get("credential_id")) is str
+        and row["credential_id"] == pinned_credential
         and type(exact_borrower) is str
-        and row.get("account_id") == exact_borrower
-        and row.get("item_id") == str(pinned_record_id or pinned_loan_id)
-        and row.get("entitlement_type") == "loan"
+        and type(row.get("account_id")) is str
+        and row["account_id"] == exact_borrower
+        and type(row.get("item_id")) is str
+        and row["item_id"] == exact_item_id
+        and type(row.get("entitlement_type")) is str
+        and row["entitlement_type"] == "loan"
     ]
     if not admission_intact():
         return source_changed()
-    # A duplicate exact right is ambiguous, not a first-row-wins link.
+    # An absent/hostile entitlement ID is not a right. Count *all* exact
+    # provenance matches before validating the ID, so a corrupt duplicate
+    # cannot turn an ambiguous right into an apparently unique one.
     entitlement_id = (
         entitlement_rows[0]["entitlement_id"]
-        if len(entitlement_rows) == 1 else None
+        if len(entitlement_rows) == 1
+        and type(entitlement_rows[0].get("entitlement_id")) is str
+        and bool(entitlement_rows[0]["entitlement_id"])
+        else None
     )
     return AutomaticLoanAdmission(identity=identity, entitlement_id=entitlement_id)
