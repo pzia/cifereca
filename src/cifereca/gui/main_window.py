@@ -1658,10 +1658,41 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def choose_adept_loan(self, acquisition_id, loan, control):
-        self.runner.submit("Lecture des prêts ADEPT…", lambda: self.service.adept_loan_choices(acquisition_id),
-            lambda result: self._present_adept_loan_choices(acquisition_id, loan, result),
-            lambda exc: self.show_error(str(exc), "Lecture des prêts impossible"), control=control,
-            priority=TaskPriority.USER_ACTION, kind="adept-inventory")
+        # The queued ADEPT inventory is owned by the Core/loan at the click.
+        # Only GTK presentation is scoped to the still-visible detail page.
+        admitted_core = self.service
+        lookup = admitted_core.adept_loan_choices
+        loan_identity = getattr(loan, "identity_id", None)
+        identity_generation = getattr(self, "_identity_context_generation", None)
+        account_generation = getattr(self, "_account_context_generation", None)
+        account_epoch = getattr(admitted_core, "_account_context_epoch", None)
+
+        def ui_current():
+            return (
+                not getattr(self, "_closed", False)
+                and self.service is admitted_core
+                and type(loan_identity) is str and bool(loan_identity)
+                and getattr(loan, "identity_id", None) == loan_identity
+                and getattr(getattr(admitted_core, "current_identity", None),
+                            "identity_id", None) == loan_identity
+                and identity_generation == getattr(self, "_identity_context_generation", None)
+                and account_generation == getattr(self, "_account_context_generation", None)
+                and account_epoch == getattr(admitted_core, "_account_context_epoch", None)
+            )
+
+        def done(result):
+            if ui_current():
+                self._present_adept_loan_choices(acquisition_id, loan, result)
+
+        def failed(_exc):
+            if ui_current():
+                self.show_error("Inventaire ADEPT indisponible", "Lecture des prêts impossible")
+
+        self.runner.submit(
+            "Lecture des prêts ADEPT…", lambda: lookup(acquisition_id),
+            done, failed, control=control, priority=TaskPriority.USER_ACTION,
+            kind="adept-inventory",
+        )
 
     def _present_adept_loan_choices(self, acquisition_id, loan, result):
         return adept_loan_choice_controller.present_adept_loan_choices(
@@ -1669,13 +1700,51 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def reconcile_adept_from_detail(self, acquisition_id, loan, control):
+        admitted_core = self.service
+        reconcile = admitted_core.reconcile_adept_acquisition
+        loan_identity = getattr(loan, "identity_id", None)
+        identity_generation = getattr(self, "_identity_context_generation", None)
+        account_generation = getattr(self, "_account_context_generation", None)
+        account_epoch = getattr(admitted_core, "_account_context_epoch", None)
+
+        def ui_current():
+            return (
+                not getattr(self, "_closed", False)
+                and self.service is admitted_core
+                and type(loan_identity) is str and bool(loan_identity)
+                and getattr(loan, "identity_id", None) == loan_identity
+                and getattr(getattr(admitted_core, "current_identity", None),
+                            "identity_id", None) == loan_identity
+                and identity_generation == getattr(self, "_identity_context_generation", None)
+                and account_generation == getattr(self, "_account_context_generation", None)
+                and account_epoch == getattr(admitted_core, "_account_context_epoch", None)
+            )
+
         def ok(result):
+            if not ui_current():
+                return
             self.loan_page.detail.show_loan(loan)
-            labels = {"resolved": "Liaison ADEPT vérifiée", "ambiguous": "Plusieurs prêts correspondent : liaison non résolue", "unresolved": "Aucun prêt ne correspond au chemin du fichier", "inventory_error": "Inventaire partiel : liaison non résolue", "profile_missing": "Associez un profil ADEPT à cette identité", "artifact_missing": "Fichier local absent", "binding_conflict": "L’inventaire contredit la liaison enregistrée"}
-            self._activity_result(labels.get(result["status"], "Liaison ADEPT non résolue"))
-        self.runner.submit("Vérification du prêt ADEPT…", lambda: self.service.reconcile_adept_acquisition(acquisition_id), ok,
-            lambda exc: self.show_error(str(exc), "Vérification ADEPT impossible"), control=control,
-            priority=TaskPriority.USER_ACTION, kind="adept-inventory")
+            labels = {
+                "resolved": "Liaison ADEPT vérifiée",
+                "ambiguous": "Plusieurs prêts correspondent : liaison non résolue",
+                "unresolved": "Aucun prêt ne correspond au chemin du fichier",
+                "inventory_error": "Inventaire partiel : liaison non résolue",
+                "profile_missing": "Associez un profil ADEPT à cette identité",
+                "artifact_missing": "Fichier local absent",
+                "binding_conflict": "L’inventaire contredit la liaison enregistrée",
+            }
+            status = result.get("status") if type(result) is dict else None
+            self._activity_result(labels.get(status, "Liaison ADEPT non résolue"))
+
+        def failed(_exc):
+            if ui_current():
+                self.show_error("Vérification ADEPT indisponible", "Vérification ADEPT impossible")
+
+        self.runner.submit(
+            "Vérification du prêt ADEPT…", lambda: reconcile(acquisition_id),
+            ok, failed, control=control, priority=TaskPriority.USER_ACTION,
+            kind="adept-inventory",
+        )
 
     def prepare_explicit_loan_acsm_for_loan(self, loan: Loan, control: Gtk.Widget | None = None) -> None:
         from .explicit_loan_acsm_controller import prepare_explicit_loan_acsm
@@ -1689,21 +1758,25 @@ class MainWindow(Adw.ApplicationWindow):
         # This task operates on the explicitly selected loan. Only the GTK
         # completion view depends on the still-visible identity/account:
         # A→B→A must not reopen an older loan detail or publish a late toast.
+        admitted_core = self.service
+        # Capture the bound producer before TaskRunner queues the request.
+        reacquire = admitted_core.reacquire_digital_loan
         selected_identity = getattr(
-            getattr(self.service, "current_identity", None), "identity_id", None,
+            getattr(admitted_core, "current_identity", None), "identity_id", None,
         )
         selected_loan_identity = getattr(loan, "identity_id", None)
         identity_generation = getattr(self, "_identity_context_generation", None)
-        account_epoch = getattr(self.service, "_account_context_epoch", None)
+        account_epoch = getattr(admitted_core, "_account_context_epoch", None)
 
         def ui_current() -> bool:
             current_identity = getattr(
-                getattr(self.service, "current_identity", None), "identity_id", None,
+                getattr(admitted_core, "current_identity", None), "identity_id", None,
             )
             current_generation = getattr(self, "_identity_context_generation", None)
-            current_epoch = getattr(self.service, "_account_context_epoch", None)
+            current_epoch = getattr(admitted_core, "_account_context_epoch", None)
             return (
                 not getattr(self, "_closed", False)
+                and self.service is admitted_core
                 and type(selected_identity) is str and bool(selected_identity)
                 and type(selected_loan_identity) is str
                 and selected_loan_identity == selected_identity
@@ -1717,7 +1790,7 @@ class MainWindow(Adw.ApplicationWindow):
         def work():
             if send:
                 raise RuntimeError("L’envoi vers une liseuse nécessite un plugin storage.target.")
-            return self.service.reacquire_digital_loan(loan)
+            return reacquire(loan)
         def ok(result):
             if not ui_current():
                 return
