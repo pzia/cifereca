@@ -15,6 +15,12 @@ from .library_projection import _read_provider_origin_coordinates
 
 
 def action_statistics(self, identity_id: str, *, window_seconds: int=2592000):
+    # A direct Core caller must never receive aggregate action counts for
+    # identity_id=None. SQLite uses a missing filter for an all-profile read.
+    if (type(identity_id) is not str or not 0 < len(identity_id) <= 256
+            or not identity_id.isprintable()
+            or identity_id != identity_id.strip()):
+        raise ValueError("identity_id_required")
     from ..plugin_api import ActionStatistics
     window = max(60, int(window_seconds or 2592000))
     until = int(time.time()); since = until - window
@@ -59,6 +65,14 @@ def _provider_origin_statistics(storage, identity_id: str) -> tuple[dict[str, in
 
 def identity_statistics(self, identity_id, *, window_seconds: int=2592000):
     """Persisted inventory facts only; no scan, authentication or download."""
+    # A direct Core/CLI/HTTP caller must provide a native identity reference.
+    # In particular, None must not enumerate orphan placements or aggregate
+    # action counters, and a hostile str subclass must not redefine equality
+    # against unrelated placement owners.
+    if (type(identity_id) is not str or not 0 < len(identity_id) <= 256
+            or not identity_id.isprintable()
+            or identity_id != identity_id.strip()):
+        raise ValueError("identity_id_required")
     placements=[r for r in self.storage.placements(state='present') if r.get('identity_id')==identity_id]
     artifacts={r['artifact_id']:r for r in self.storage.artifacts()}
     ids={r['artifact_id'] for r in placements if r['artifact_id'] in artifacts}

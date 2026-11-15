@@ -1208,7 +1208,14 @@ class IdentityBrokerImpl:
             _account_ref(self.service, row)
             for row in self.service.accounts_for_identity(identity_id)
         )
-    def statistics(self, identity_id: str, *, window_seconds: int = 2592000): return self.service.identity_statistics(identity_id, window_seconds=window_seconds)
+    def statistics(self, identity_id: str, *, window_seconds: int = 2592000):
+        # Identical native scope contract as the Core producer. Never pass an
+        # omitted/hostile coordinate into a plugin-visible statistics query.
+        if (type(identity_id) is not str or not 0 < len(identity_id) <= 256
+                or not identity_id.isprintable()
+                or identity_id != identity_id.strip()):
+            raise ValueError("identity_id_required")
+        return self.service.identity_statistics(identity_id, window_seconds=window_seconds)
     def digital_loan_availability(self, identity_id: str):
         # Additive, read-only broker facet; no UI-selected identity fallback,
         # provider GET, session refresh or SQLite mutation at Home rendering.
