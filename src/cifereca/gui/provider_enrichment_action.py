@@ -46,23 +46,27 @@ def add_provider_enrichment_action(host, selected_id, item, detail, context, *,
 
     if selected_row_key() is None:
         return False
+    # The action belongs to the exact Core that rendered the source row.
+    # A retained GTK button cannot rebind itself to a replacement service.
+    render_core = host.service
     button = button_factory("Enrichir les métadonnées", "view-refresh-symbolic")
 
     def invoke(_button):
-        if (not host._search_detail_context_current(selected_id, context)
+        if (host.service is not render_core
+                or not host._search_detail_context_current(selected_id, context)
                 or selected_row_key() is None):
             return
-        # Use the identity snapshot captured by the existing search detail
-        # context. A changed profile invalidates both the worker's request
-        # and its subsequent GTK callback.
+        # Capture the exact Core callable and identity at admission. The
+        # worker never consults the mutable window; Core independently
+        # revalidates source/credential authorization at provider I/O.
+        enrich = render_core.enrich_provider_search_result
         expected_identity_id = context[3] or ""
         def do_enrich():
-            return host.service.enrich_provider_search_result(
-                item, expected_identity_id=expected_identity_id,
-            )
+            return enrich(item, expected_identity_id=expected_identity_id)
 
         def success(enriched):
-            if not host._search_detail_context_current(selected_id, context):
+            if (host.service is not render_core
+                    or not host._search_detail_context_current(selected_id, context)):
                 return
             source_key = selected_row_key()
             if source_key is None:
@@ -81,7 +85,8 @@ def add_provider_enrichment_action(host, selected_id, item, detail, context, *,
         def failure(_exc):
             # Never echo arbitrary private/provider exceptions, signed URLs,
             # account ids, or raw HTML to a GTK toast.
-            if host._search_detail_context_current(selected_id, context):
+            if (host.service is render_core
+                    and host._search_detail_context_current(selected_id, context)):
                 host.toast("Enrichissement indisponible ou non attesté.", 5)
 
         host.runner.submit(
