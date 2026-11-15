@@ -102,6 +102,8 @@ def test_recent_row_receives_same_exact_documentref_without_media_lookup(prepare
     ref = visual[0]._cover_document_ref
     assert ref == core[0]["_exact_local_cover_evidence"].scope
     assert visual[0]._cover_local_evidence is core[0]["_exact_local_cover_evidence"]
+    # The GTK cell must fetch from N2, never from this legacy URL.
+    assert visual[0].args[5] is None
     assert visual[0]._public_row_content[-1] is visual[0]._cover_local_evidence
     assert not physical.exists()
 
@@ -120,6 +122,7 @@ def test_cross_owner_and_forged_documentref_cannot_reach_recent_row(prepared):
         display, _ = project_recent_rows((row,), row_factory=Row)
         assert not hasattr(display[0], "_cover_document_ref")
         assert not hasattr(display[0], "_cover_local_evidence")
+        assert display[0].args[5] is None  # forbidden URL downgrade
 
 
 def test_duplicate_recent_display_key_keeps_rows_but_revokes_book_join(prepared):
@@ -133,6 +136,7 @@ def test_duplicate_recent_display_key_keeps_rows_but_revokes_book_join(prepared)
     assert indexed[pid] is second
     assert not hasattr(visual[0], "_cover_document_ref")
     assert not hasattr(visual[1], "_cover_document_ref")
+    assert [row.args[5] for row in visual] == [None, None]
 
 
 def test_rows_without_exact_metadata_remain_backward_compatible(prepared):
@@ -144,3 +148,26 @@ def test_rows_without_exact_metadata_remain_backward_compatible(prepared):
     assert len(visual) == 1 and len(visual[0]) == 6
     assert visual[0][0] == pid
     assert indexed[pid] is raw
+    assert visual[0][5] == ORIGIN  # no Core packet: legacy compatibility
+
+
+def test_duplicate_recent_legacy_urls_are_hidden_even_without_core_packets():
+    # A shared GTK key is not enough to identify which cover belongs to which
+    # source. One stale row must not obtain an accidental image from its URL.
+    inputs = [
+        {"placement_id": "duplicate", "title": "A", "thumbnail_url": ORIGIN},
+        {"placement_id": "duplicate", "title": "B",
+         "thumbnail_url": "https://public.example.org/other-cover.jpg"},
+    ]
+    rows, objects = project_recent_rows(inputs, row_factory=lambda *x: x)
+    assert len(rows) == 2 and objects["duplicate"] is inputs[-1]
+    assert rows[0][5] is None and rows[1][5] is None
+
+
+def test_rejected_packet_never_downgrades_in_headless_row_factory(prepared):
+    service, _, _, _, _ = prepared
+    original = service.recent_acquisitions(identity_id="alice")[0]
+    forged = {**original, "identity_id": "bob"}
+    rows, objects = project_recent_rows([forged], row_factory=lambda *x: x)
+    assert rows[0][5] is None
+    assert objects[forged["placement_id"]] is forged
