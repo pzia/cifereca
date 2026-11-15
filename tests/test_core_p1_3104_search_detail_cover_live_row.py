@@ -164,3 +164,27 @@ def test_in_place_repaint_is_presentation_only_and_rerender_is_versioned():
         next(n for n in ast.parse(DETAILS.read_text(encoding="utf-8")).body
              if isinstance(n, ast.FunctionDef) and n.name == "_publish_search_detail_cover")
     )
+
+
+def test_search_detail_port_exposes_only_scoped_cover_capabilities():
+    """Regression: MainWindow invokes publisher through SearchDetailPort.
+
+    Missing _search_mode silently disabled the publisher via getattr default;
+    missing _search_detail_cover_by_key prevented saving the scoped result.
+    """
+    from cifereca.gui.search_host_port import (
+        SEARCH_DETAIL_CAPABILITIES, SearchDetailPort,
+    )
+
+    assert {"_search_mode", "_search_detail_cover_by_key"} <= SEARCH_DETAIL_CAPABILITIES
+    source = item()
+    window, row = host(source)
+    window._search_detail_cover_by_key = {}
+    port = SearchDetailPort(window)
+    publisher()(port, source, detail(source))
+    assert row.changes == [COVER]
+    assert window._search_detail_cover_by_key[row.key][0] is source
+    port._search_detail_cover_by_key = {}
+    assert window._search_detail_cover_by_key == {}
+    with pytest.raises(AttributeError):
+        port._provider_credentials = "forbidden"
