@@ -163,13 +163,22 @@ son écran historique 1280×1024 inchangé.
 
 Comparer, pour la même largeur, avec les captures locales issues de
 `recommendations-detail-1024`, `recommendations-detail-1366` et
-`recommendations-detail-1600` (vrais GTK/XTEST, candidats synthétiques).
+`recommendations-detail-1600` (vrais GTK/XTEST). Depuis la recette commune
+#774, la capture Search `00-before.png` et la capture Recommandations
+`09-paired-public-book.png` montrent une **même notice synthétique**
+attestée par le titre, l'auteur, l'ISBN, la source exacte et l'identifiant
+d'édition. Les deux probes contrôlent réellement la sélection GTK avant
+d'émettre le reçu déterministe `document_sha256` ; la revue refuse tout
+SHA, thème, source, édition ou reçu incompatible. Les autres captures du
+parcours Recommandations restent des fixtures distinctes et servent aux
+tests d'action, de profils et de filtres, pas à une comparaison du même livre.
+
 Les rapports `screen.json` contiennent le SHA et les tailles d'écran ;
 les PNG sont uniquement des éléments de revue **locale** : ne jamais les
-publier dans les artefacts CI, ni prétendre comparer des notices identiques
-entre les deux fixtures. Une revue visuelle effective des deux surfaces,
-des états partiels et des couvertures reste nécessaire pour fermer #774 ;
-les succès XTEST seuls ne prouvent pas une recette fournisseur réelle.
+publier dans les artefacts CI. Une inspection visuelle effective des
+captures originales, des états partiels et des couvertures reste nécessaire
+pour fermer #774 ; les succès XTEST ne prouvent ni une connexion
+fournisseur réelle ni un verdict UX.
 
 ```bash
 python3 e2e/run.py --scenario search-filter-1366
@@ -179,7 +188,8 @@ python3 e2e/run.py --scenario recommendations-detail-1366
 ### P1 #774 — revue UX jumelée, privée, HEAD et clair/sombre attestés
 
 Les scénarios Search/Recommandations 1024, 1366 et 1600 px, exécutés sur
-**le même HEAD et dans le même thème GTK réellement observé**, alimentent
+**le même HEAD, le même livre synthétique attesté et dans le même thème GTK
+réellement observé**, alimentent
 trois planches privées côte à côte **par thème**. Après passage des recettes
 sur l'hôte GTK/X11 habilité :
 
