@@ -799,6 +799,21 @@ class DetailPanel(Gtk.Box):
         direct.connect("clicked", lambda _b: self.window.download_direct_item(item, direct))
         self._actions([direct])
 
+    def show_loan_local(self, loan: Loan, *, cover_evidence) -> None:
+        """Loan view with an owner/entitlement-attested EPUB DocumentRef.
+
+        Keep show_loan's public ABI and its renewal/return/download actions.
+        The staging packet is consumed solely for this synchronous render,
+        never for a later loan, identity, or selection.
+        """
+        if getattr(self, "_next_cover_evidence", None) is not None:
+            raise RuntimeError("nested exact loan cover render")
+        self._next_cover_evidence = cover_evidence
+        try:
+            self.show_loan(loan)
+        finally:
+            self._next_cover_evidence = None
+
     def show_loan(self, loan: Loan, include_pnb_action: bool = True) -> None:
         self._cancel_meta_request()
         source = self.window.service.provider_display_name(str(loan.source_provider or loan.provider))

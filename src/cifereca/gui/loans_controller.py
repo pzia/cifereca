@@ -228,6 +228,7 @@ def _render_loans(self) -> None:
             display_loans, wanted_languages,
             self.service.storage.catalog_entries(),
         )
+    from cifereca.gui.loan_cover_n2_bridge import loan_embedded_cover_for_host
     for loan in display_loans:
         due = loan_due_presentation(loan.due_at, is_late=bool(loan.is_late))
         subtitle = loan.library or ("Prêt numérique" if loan.medium == "digital" else "Prêt physique")
@@ -243,6 +244,12 @@ def _render_loans(self) -> None:
             source_key, loan.title, subtitle, meta, due.label,
             display.thumbnail_url, badge_style=due.style,
         )
+        evidence = loan_embedded_cover_for_host(self, loan)
+        if evidence is not None:
+            # A loan row is not a Placement identity. The Core link above is
+            # the permission to display this exact owner-specific source.
+            item._cover_document_ref = evidence.scope
+            item._cover_local_evidence = evidence
         # MasterDetailPage.show_rows has an append-only fast path when keys
         # stay identical. A new exact local cover for the same loan must
         # invalidate that presentation (and repaint the mapped Gtk.ListView),
@@ -252,6 +259,10 @@ def _render_loans(self) -> None:
             "loan", source_key, loan.title, subtitle, meta, due.label,
             display.thumbnail_url, due.style, scope_context,
         )
+        if evidence is not None:
+            # Do not run the URL-only in-place repaint optimization when a
+            # documentary association changes. Force cell rebind at N2.
+            item._public_row_content += (evidence,)
         ranked_rows.append((due.sort_key, item))
     ranked_rows.sort(key=lambda item: item[0])
     rows = [row for _rank, row in ranked_rows]
@@ -298,7 +309,11 @@ def _render_loans(self) -> None:
             # The list signal cannot update an already-open DetailPanel.
             # Refresh its presentation from the SAME cached N1/N2 decision:
             # no provider I/O, no action or selected-row mutation.
-            self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
+            from cifereca.gui.loan_cover_n2_bridge import show_attested_loan_cover
+            if not show_attested_loan_cover(
+                self, fresh, lambda: _loan_display_cover(self, fresh),
+            ):
+                self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
 
 
 def _loan_selected(self, row: BookListItem | None) -> None:
@@ -306,7 +321,11 @@ def _loan_selected(self, row: BookListItem | None) -> None:
     loan = self.loan_objects.get(row.key)
     if loan:
         self._displayed_loan = loan
-        self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
+        from cifereca.gui.loan_cover_n2_bridge import show_attested_loan_cover
+        if not show_attested_loan_cover(
+            self, loan, lambda: _loan_display_cover(self, loan),
+        ):
+            self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
         self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
             'source_credential':loan.source_credential,'record_id':loan.record_id})
         self._add_facets(self.loan_page.detail, {'source_provider':loan.source_provider,
@@ -376,7 +395,12 @@ def _loans_refreshed(self, rows):
         ]
         fresh = matches[0] if len(matches) == 1 else None
         self._displayed_loan=fresh
-        if fresh:self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
+        if fresh:
+            from cifereca.gui.loan_cover_n2_bridge import show_attested_loan_cover
+            if not show_attested_loan_cover(
+                self, fresh, lambda: _loan_display_cover(self, fresh),
+            ):
+                self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
         else:self.loan_page.detail.empty(
             "Prêt non retrouvé dans cette actualisation",
             "La réponse peut être vide ou partielle ; la disparition du prêt "
