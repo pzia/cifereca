@@ -454,7 +454,7 @@ class SelectionTests(unittest.TestCase):
         for invariant in (
             "MainWindow(", "select_key(\"reader-book\")",
             'button.emit("clicked")', '"Chemin réservé"',
-            "Gtk.Label", "profile_b", "profile_a", "unknown",
+            "Adw.ActionRow", "profile_b", "profile_a", "unknown",
         ):
             self.assertIn(invariant, source)
         self.assertIn("no_plugins=True", source)
