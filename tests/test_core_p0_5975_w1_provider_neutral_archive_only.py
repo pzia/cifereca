@@ -81,7 +81,9 @@ def test_w1_replay_cannot_change_independently_recorded_right(tmp_path, provider
         store.backup_put(_row(provider, status="acquiring", digest="b" * 64))
         assert _snapshot(store) == original
         assert store.backup_get(provider, "account", "edition")["status"] == "acquiring"
-        with pytest.raises(ValueError, match="backup_entitlement_owner_conflict"):
+        # The archive's own exact owner lock fires before the subsequent
+        # independent-right collision check; both are fail-closed.
+        with pytest.raises(ValueError, match="backup_(projection|entitlement)_owner_conflict"):
             store.backup_put(_row(provider, identity="bob"))
         assert _snapshot(store) == original
         assert store.backup_get(provider, "account", "edition")["identity_id"] == "alice"
