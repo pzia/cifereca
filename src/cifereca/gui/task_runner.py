@@ -225,27 +225,50 @@ class TaskRunner:
 
     @staticmethod
     def _manual_acsm_outcome(value: Any) -> str:
-        """Closed Core manual-import receipt; staging is not acquisition."""
+        """Closed Core ACSM result, shared by manual and exact-loan imports.
+
+        A staged ACSM with missing ADEPT profile is *pending*, not imported.
+        A cancelled stale GTK action is not a successful artifact. No
+        provider code, path, status subclass or raw exception crosses this
+        task receipt boundary. 'unchanged' is an idempotent success, not
+        an attestation of a new acquisition.
+        """
         if type(value) is not dict:
             return "failed"
         status = value.get("status")
         if type(status) is not str:
             return "failed"
+        if status in {"complete", "unchanged"}:
+            # Core manual_acsm_import is the sole producer of these statuses.
+            # Its positive receipt includes an exact durable acquisition ID,
+            # an existing output path and, for a new artifact, its SHA-256.
+            # A forged status-only dict is never evidence of a new file.
+            acquisition_id = value.get("acquisition_id")
+            path = value.get("path")
+            if (type(acquisition_id) is not str
+                    or not acquisition_id.startswith("manual-acsm:")
+                    or len(acquisition_id) != 44
+                    or any(ch not in "0123456789abcdef"
+                           for ch in acquisition_id[12:])
+                    or type(path) is not str or not 0 < len(path) <= 4096
+                    or "\x00" in path):
+                return "failed"
+            if status == "unchanged":
+                return "success"  # Idempotence, never a new acquisition.
+            artifact_id = value.get("artifact_id")
+            if (type(artifact_id) is not str
+                    or not artifact_id.startswith("sha256:")
+                    or len(artifact_id) != 71
+                    or any(ch not in "0123456789abcdef"
+                           for ch in artifact_id[7:])):
+                return "failed"
+            return "success"
         if status == "attention_required":
             return "pending"
-        if status in {"complete", "unchanged"}:
-            # A complete/unchanged receipt always carries a bounded path
-            # and acquisition reference from the Core's local ledger.
-            path = value.get("path")
-            acquisition = value.get("acquisition_id")
-            if (type(path) is str and 0 < len(path) <= 4096
-                    and chr(0) not in path
-                    and type(acquisition) is str
-                    and acquisition.startswith("manual-acsm:")
-                    and len(acquisition) == len("manual-acsm:") + 32
-                    and all(char in "0123456789abcdef"
-                            for char in acquisition[len("manual-acsm:"):])):
-                return "success"
+        if status == "cancelled":
+            return "cancelled"
+        if status == "blocked":
+            return "blocked"
         return "failed"
 
     @staticmethod
@@ -772,6 +795,10 @@ class TaskRunner:
                     if trace_kind == "transfer"
                     else "Import ACSM en attente — configuration DRM nécessaire"
                     if trace_kind == "acsm-import" and business_status == "pending"
+                    else "Import ACSM annulé"
+                    if trace_kind == "acsm-import" and business_status == "cancelled"
+                    else "Import ACSM bloqué"
+                    if trace_kind == "acsm-import" and business_status == "blocked"
                     else "Import ACSM non confirmé"
                     if trace_kind == "acsm-import"
                     else "Copie du prêteur bloquée"
