@@ -160,6 +160,16 @@ def test_revoked_primary_exception_cannot_fallback_to_connection_identity(tmp_pa
     service, loan = service_with_linked_borrower(tmp_path)
     try:
         _persist_account(service.storage)
+        with service.storage._lock, service.storage._connect() as db:
+            connection_id = db.execute(
+                "SELECT connection_id FROM provider_connections "
+                "WHERE provider_id='paris' AND credential_id='alice-paris'"
+            ).fetchone()[0]
+        service.storage.provider_account_put({
+            "connection_id": connection_id, "provider_id": "paris",
+            "credential_id": "alice-paris", "identity_id": "alice",
+            "account_id": "primary", "is_primary": True,
+        })
         primary = replace(loan, source_account_id="primary")
         seed_historical_adept_binding(
             service, credential_id="alice-paris", account_id="primary",
