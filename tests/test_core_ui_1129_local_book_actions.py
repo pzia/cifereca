@@ -426,7 +426,9 @@ def test_local_send_refuses_to_publish_forged_or_unverified_copy_receipt():
         {"status": "complete", "target_identity_id": "foreign",
          "placement_id": "new-placement"},
         {"status": "unchanged", "target_identity_id": "bob"},
+        {"status": "complete", "target_identity_id": "bob",
+         "placement_id": "new-placement", "path": "/tmp/" + chr(0)},
     ):
         done(receipt)
-    assert len([row for row in events if row[0] == "error"]) == 5
+    assert len([row for row in events if row[0] == "error"]) == 6
     assert not any(row[0] == "activity" for row in events)
