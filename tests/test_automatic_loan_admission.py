@@ -268,7 +268,10 @@ def test_admission_rejects_untrusted_loan_keys_before_owner_lookup(
         assert result.identity is None and result.entitlement_id is None
         assert result.refusal["status"] == "attention_required"
         assert result.refusal["reason"] == "source_scope_unproven"
-        assert result.refusal["code"] == "adept_identity_unproven"
+        assert result.refusal["code"] == (
+            "adept_loan_identity_conflict"
+            if field == "id" and bad == "" else "adept_identity_unproven"
+        )
         assert result.refusal["retry"] == "explicit_only"
         if field == "id":
             assert result.refusal["loan_id"] == (bad if type(bad) is str else None)
