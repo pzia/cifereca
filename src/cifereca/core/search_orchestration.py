@@ -1979,4 +1979,38 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             },
         })
     self.storage.catalog_entries_upsert_many(upserts)
+    # #6366: this is the real Core ingestion boundary for *parsed* live
+    # supplier rows. No GTK binder, extra provider GET or N3 cache HIT may
+    # create a Notice C source. Preserve the old catalogue mirror for now.
+    #
+    # Production Storage owns the durable source index. Test/fake storage
+    # backends without that index keep the existing mirror contract.
+    from ..storage import Storage
+    if isinstance(self.storage, Storage):
+        import sqlite3
+        from .notice_search_cover_producer import admit_public_search_cover
+        from .notice_cover_repository import persist_notice_cover
+        for _key, row, _state, _qualified in keyed:
+            public_url = _shared_catalogue_cover_url(row.thumbnail_url)
+            if public_url is None:
+                continue
+            try:
+                observed = admit_public_search_cover(
+                    row, identity_id=identity_id, observed_at=now,
+                    public_cover_url=public_url,
+                )
+                if observed is None:
+                    continue
+                persist_notice_cover(
+                    self.storage, observed,
+                    field_path=("search_result", "thumbnail_url"),
+                    cover_inventory_complete=True,
+                )
+            except (ValueError, TypeError, OSError, sqlite3.Error):
+                # The historical catalogue mirror is still independently
+                # useful; one malformed provider notice must not abort other
+                # rows. No source strings, URL, path or secrets in the log.
+                logging.getLogger("cifereca").warning(
+                    "TRACE notice c public search code=source_persist_failed"
+                )
     return len(upserts)
