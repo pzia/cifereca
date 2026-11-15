@@ -467,6 +467,9 @@ class SelectionTests(unittest.TestCase):
             "src/cifereca/gui/reader_intent_actions.py",
         ]), mod.READER_TARGET_GTK)
         self.assertEqual(mod.select([
+            "src/cifereca/gui/reader_usb_execute_actions.py",
+        ]), mod.READER_TARGET_GTK)
+        self.assertEqual(mod.select([
             "src/cifereca/gui/reader_page_controller.py",
         ]), mod.READER_INSPECTION_GTK + mod.READER_TARGET_GTK)
         source = (ROOT / "e2e/reader_target_refresh_probe.py").read_text(
