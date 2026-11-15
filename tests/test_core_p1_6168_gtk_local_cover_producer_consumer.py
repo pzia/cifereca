@@ -143,3 +143,13 @@ def test_one_process_wide_local_adapter_and_deterministic_teardown():
     assert "self.local_cover_adapter = LocalCoverEvidenceAdapter()" in window
     assert close.index("adapter.close()") < close.index("service.close()")
     assert close.index("service.close()") < close.index("window.covers.close()")
+
+
+def test_local_search_consumes_only_verified_library_packet_and_preserves_url_tail():
+    search = (GUI / "search_results.py").read_text(encoding="utf-8")
+    assert 'item.get("_exact_local_cover_evidence")' in search
+    assert 'proof.scope.identity_id == item.get("identity_id")' in search
+    assert 'proof.scope.artifact_id == item.get("artifact_id")' in search
+    assert 'proof.scope.placement_id == item.get("placement_id")' in search
+    assert "view_row._cover_document_ref = proof.scope" in search
+    assert "proof, row._public_row_content[-1]" in search
