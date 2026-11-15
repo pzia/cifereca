@@ -282,10 +282,25 @@ def render_readers(window, *, Gtk, BookListItem) -> None:
         }
         rows = []
         for item in snapshot.books:
-            rows.append(BookListItem(
+            row = BookListItem(
                 item.key, item.title, item.author, item.label,
                 "Bibliothèque locale", item.thumbnail_url,
-            ))
+            )
+            # MasterDetailPage.show_rows has an append-only fast path for
+            # unchanged keys. Reader intentions can change in SQLite while
+            # the visible book key stays identical (notably after reserving a
+            # destination). Mark the complete *presentation* version so GTK
+            # replaces that row, restores its selection and re-renders the
+            # detail instead of retaining a stale target/action.
+            row._public_row_content = (
+                "reader", identity_id, selected, item.key,
+                item.artifact_id, item.placement_id,
+                item.title, item.author, item.thumbnail_url,
+                item.desired_state, item.label, item.last_known,
+                item.last_observed_at, item.target_relative_path,
+                item.target_format,
+            )
+            rows.append(row)
             window._reader_items[item.key] = item
             source = entries.get(item.key)
             if source is not None:
