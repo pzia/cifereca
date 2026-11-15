@@ -18,7 +18,7 @@ import zipfile
 
 from .book_cover_projection import CoverDocumentScope
 from ..epub_metadata import (
-    MAX_ENTRIES, MAX_IMAGE, _bounded_directory, _image_kind, _member,
+    MAX_ENTRIES, _bounded_directory, _image_kind, _member,
     _publish_cover, _read, cover_cache_dir, valid_cached_cover_path,
 )
 
@@ -52,6 +52,9 @@ class ExactEpubCoverResource:
         if (type(self.artifact_sha256) is not str
                 or _SHA.fullmatch(self.artifact_sha256) is None):
             raise ValueError("invalid EPUB artifact digest")
+        if (self.scope.artifact_id.startswith("sha256:")
+                and self.scope.artifact_id[7:] != self.artifact_sha256):
+            raise ValueError("EPUB cover does not match scoped Artifact")
         if (type(self.member) is not str
                 or not self.member or len(self.member) > 512
                 or not self.member.isprintable()):
