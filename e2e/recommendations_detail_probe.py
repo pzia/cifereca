@@ -1555,6 +1555,28 @@ def main():
         ]
         assert titles == [PAIRED_BOOK["title"]]
         assert authors == [PAIRED_BOOK["author"]]
+        # #4761: the recommendation-specific score/why section is BELOW
+        # the canonical Core DetailPanel compact 'Essentiel' header, with
+        # only already-attested public bibliography for this same book.
+        headers = [
+            child for child in walk(page.detail.content)
+            if isinstance(child, Gtk.Box) and child.has_css_class("detail-heading")
+        ]
+        assert len(headers) == 1
+        compact = [
+            (child.get_title(), child.get_subtitle())
+            for child in walk(headers[0])
+            if isinstance(child, Adw.ActionRow) and child.get_mapped()
+            and child.has_css_class("detail-compact-value")
+        ]
+        assert compact == [
+            ("Source", view._display_source(PAIRED_BOOK["source_provider"])),
+            ("Format", "EPUB"),
+            ("Langue", "fr"),
+        ]
+        assert not any(label in ("Disponibilité", "Droit", "Prêt")
+                       for label, _ in compact)
+        report["checks"]["P1_4761_recommendations_shared_compact_essential_gtk"] = True
         # #4761: Search already displays public "Sujet" in the canonical
         # DetailPanel metadata; the same source/edition in Recommendations
         # must also carry that fact, not merely allow filtering on it.
