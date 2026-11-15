@@ -140,7 +140,7 @@ class CoverView(Gtk.Overlay):
 
     def bind_url(
         self, loader: CoverLoader, url: str | None, *, priority: int = 10,
-        on_image_applied: Callable[[], None] | None = None,
+        on_image_applied=None,
     ) -> None:
         if on_image_applied is not None and not callable(on_image_applied):
             raise TypeError("cover paint observer must be callable")
