@@ -12,6 +12,7 @@ are thread-agnostic: GTK callers must dispatch and bind-check on main.
 from __future__ import annotations
 
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Callable
 from dataclasses import dataclass
 import time
@@ -25,7 +26,9 @@ from ..core.book_cover_projection import (
 )
 from ..core.covers import CoverCandidate, candidate
 from ..core.epub_cover_source import AttestedEmbeddedCover
-from ..core.epub_cover_failure_qualification import EpubCoverPhysicalAssessment
+from ..core.epub_cover_failure_qualification import (
+    EpubCoverPhysicalAssessment, qualify_failed_epub_cover,
+)
 from ..epub_metadata import cover_cache_dir, valid_cached_cover_path
 from .cover_loader import CoverLoader, CoverRequest
 
@@ -201,6 +204,16 @@ class DocumentCoverService:
         self._lock = RLock()
         self._snapshots: OrderedDict[CoverDocumentScope, CoverSourceSnapshot] = OrderedDict()
         self._resolving: set[CoverDocumentScope] = set()
+        # A failed N3 materialization is only a request for worker-side
+        # physical assessment, NEVER evidence of a missing documentary EPUB.
+        # One bounded qualifier per exact (DocumentRef, source revision).
+        self._qualify_pool = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="cifereca-cover-qualifier",
+        )
+        self._qualify_active: set[tuple[CoverDocumentScope, int]] = set()
+        self._qualify_cooldown: OrderedDict[
+            tuple[CoverDocumentScope, int], float
+        ] = OrderedDict()
         self._closed = False
 
     def register(self, snapshot: CoverSourceSnapshot) -> None:
@@ -303,11 +316,79 @@ class DocumentCoverService:
             )
             return fallback
 
+    def _qualify_failed_embedded_in_worker(
+        self,
+        document: CoverDocumentScope,
+        snapshot: CoverSourceSnapshot,
+        token: CoverCacheToken,
+        handle: CoverReadRequest,
+        source_changed: Callable[[], None],
+    ) -> None:
+        """Single-flight bounded physical check, then exact N2 CAS + UI rebind.
+
+        This is called ONLY after N3 returned None, never on an image-cache
+        hit. The qualifier's expensive SHA/ZIP checks run on a worker. A
+        stale/partial/ambiguous source cannot trigger a remote image fetch.
+        The callback tells GTK to rebind the original DocumentRef, never to
+        paint URL bytes under the old embedded token.
+        """
+        if (snapshot.embedded is None or snapshot.verified_epub_path is None
+                or not snapshot.candidates or not handle.active):
+            return
+        key = (document, snapshot.revision)
+        with self._lock:
+            if (self._closed or self._snapshots.get(document) is not snapshot
+                    or key in self._qualify_active
+                    or self._clock() < self._qualify_cooldown.get(key, 0)):
+                return
+            if self.decisions.selected_token(
+                document, revision=snapshot.revision,
+                uri=snapshot.embedded.candidate.url,
+            ) != token:
+                return
+            self._qualify_active.add(key)
+
+        def work() -> None:
+            changed = False
+            try:
+                assessment = qualify_failed_epub_cover(
+                    snapshot.embedded.resource,
+                    source_path=snapshot.verified_epub_path,
+                )
+                changed = self.apply_qualified_epub_fallback(
+                    document, assessment, expected_token=token,
+                ) is not None
+            except (OSError, TypeError, ValueError, RuntimeError):
+                # No private path, source URL or ZIP exception can become a
+                # GTK diagnostic. Treat any unexpected failure as retryable.
+                pass
+            finally:
+                with self._lock:
+                    self._qualify_active.discard(key)
+                    if not changed and not self._closed:
+                        self._qualify_cooldown[key] = self._clock() + 15.0
+                        self._qualify_cooldown.move_to_end(key)
+                        while len(self._qualify_cooldown) > self._max_documents:
+                            self._qualify_cooldown.popitem(last=False)
+            if changed and handle.active:
+                try:
+                    source_changed()
+                except Exception:
+                    # The UI may have closed while the worker was running.
+                    pass
+
+        try:
+            self._qualify_pool.submit(work)
+        except RuntimeError:
+            with self._lock:
+                self._qualify_active.discard(key)
+
     def get_cover(
         self,
         document: CoverDocumentScope, variant: CoverVariant,
         callback: Callable[[Path | None], None], *,
         width: int = 180, height: int = 270,
+        on_source_changed: Callable[[], None] | None = None,
     ) -> CoverReadRequest:
         """Use N2 HIT first; only N3 fetch/extraction follows an N1 selection.
 
@@ -323,6 +404,8 @@ class DocumentCoverService:
             raise ValueError("unknown cover variant")
         if not callable(callback):
             raise TypeError("expected cover callback")
+        if on_source_changed is not None and not callable(on_source_changed):
+            raise TypeError("expected source-change callback")
         if (type(width) is not int or type(height) is not int
                 or not 1 <= width <= 2048 or not 1 <= height <= 2048):
             raise ValueError("invalid preview dimensions")
@@ -417,6 +500,12 @@ class DocumentCoverService:
         def delivered(path: Path | None) -> None:
             if handle.still_current:
                 callback(path)
+                if (path is None and decision.tier == "embedded"
+                        and on_source_changed is not None):
+                    self._qualify_failed_embedded_in_worker(
+                        document, snapshot, selected_token, handle,
+                        on_source_changed,
+                    )
 
         if decision.tier == "embedded":
             embedded = snapshot.embedded
@@ -449,6 +538,9 @@ class DocumentCoverService:
             self._snapshots.clear()
             self._resolving.clear()
             self._qualified_fallback.clear()
+            self._qualify_active.clear()
+            self._qualify_cooldown.clear()
+        self._qualify_pool.shutdown(wait=False, cancel_futures=True)
 
 
 __all__ = [
