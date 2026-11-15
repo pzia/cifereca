@@ -13,6 +13,7 @@ from threading import Lock
 from typing import Any
 
 from ..core.book_cover_projection import CoverDocumentScope
+from ..core.search_cover_provenance import project_exact_search_catalogue_cover
 from ..core.covers import CoverCandidate, candidate
 from ..models import SearchResult
 from .document_cover_service import CoverSourceSnapshot, DocumentCoverService
@@ -98,12 +99,13 @@ def exact_remote_search_document(
         )
         if origin is not None:
             candidates.append(origin)
-    catalogue = candidate(
-        item.thumbnail_url, tier="catalog", source="search-result",
-        evidence_id=scope.source_key,
+    catalogue_facts = project_exact_search_catalogue_cover(
+        item, identity_id=scope.identity_id,
     )
-    if catalogue is not None:
-        candidates.append(catalogue)
+    # Core, never GTK or the N3 image cache, is the source of the direct
+    # catalogue evidence and owns the exact source-identity coordinates.
+    if catalogue_facts is not None and catalogue_facts.scope == scope:
+        candidates.append(catalogue_facts.catalogue)
     if not candidates:
         return None
     return VerifiedSearchDocumentCover(
