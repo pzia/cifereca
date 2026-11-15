@@ -127,6 +127,11 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
         _, borrower_code = self._paris_adept_identity_for_loan(
             loan, connection_identity_id=bound_identity_id,
         )
+        # The borrower callback is an external source of loan mutations.
+        # Even on refusal, never publish its changed/hostile loan ID or
+        # present the decision as belonging to a different loan.
+        if not admission_intact():
+            return source_changed()
         # A non-None borrower refusal is never an approval, even if its
         # plugin-provided value is falsey or carries private text.
         if borrower_code is not None:
@@ -135,7 +140,7 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
                 trace_ref,
             )
             return AutomaticLoanAdmission(refusal={
-                "status": "attention_required", "loan_id": loan.id,
+                "status": "attention_required", "loan_id": pinned_loan_id,
                 "code": public_borrower_refusal_code(borrower_code),
                 "retry": "explicit_only",
             })
