@@ -76,6 +76,9 @@ def gtk_core(tmp_path, live_broker, monkeypatch):
     # The deterministic Core copy fixture uses NOW for consent freshness.
     # Do not patch process-global time or replace Core's review clock.
     monkeypatch.setattr(gui, "time", NS(time=lambda: NOW))
+    # Test-only deterministic operation ID distinct from the historical
+    # completed-copy fixture's old removal consent.
+    monkeypatch.setattr(gui, "secrets", NS(token_hex=lambda _: "c" * 32))
 
     dialogs, actions = [], []
     adw = NS(MessageDialog=NS(
@@ -132,7 +135,8 @@ def test_gtk_cancel_then_confirm_unlinks_only_the_real_managed_usb_copy(
     ctx.host.runner.advance()
     assert not rig.final.exists()
     assert rig.source.read_bytes() == source
-    assert rig.journal.get(rig.consent.operation_id) is not None
+    assert rig.journal.get("c" * 32).phase == "completed"
+    assert rig.journal.get(rig.consent.operation_id) is None
     assert rig.storage.device_placement_get(
         rig.consent.device_id, rig.consent.artifact_id,
     )["observed_state"] == "missing"
