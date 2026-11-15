@@ -159,7 +159,13 @@ def project_library_rows(
         title = str(item.get("title") or "Sans titre")
         author = str(item.get("author") or "")
         meta = " · ".join(part for part in meta_parts if part)
-        cover_url = item.get("thumbnail_url")
+        # A rejected Core packet cannot silently downgrade to the
+        # descriptive old URL. Only an unassociated legacy row may retain
+        # that compatibility path; an attested row is N2-first.
+        cover_url = (
+            item.get("thumbnail_url")
+            if item.get("_exact_local_cover_evidence") is None else None
+        )
         row = row_factory(key, title, author, meta, provider_label, cover_url)
         # MasterDetailPage.show_rows preserves same-key rows when presentation
         # signatures match. A later canonical Library snapshot may change the

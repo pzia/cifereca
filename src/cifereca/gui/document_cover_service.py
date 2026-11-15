@@ -287,13 +287,25 @@ class DocumentCoverService:
         self._closed = False
 
     def register(self, snapshot: CoverSourceSnapshot) -> None:
-        """Install only a newer exact source snapshot; no HTTP or EPUB I/O."""
+        """Install a newer exact source snapshot; notify viewers after unlock."""
+        self._register_snapshot(snapshot, only_if_absent=False)
+
+    def _register_snapshot(
+        self, snapshot: CoverSourceSnapshot, *, only_if_absent: bool,
+    ) -> None:
+        """CAS on presence for Core read-through, never notify under N2 lock.
+
+        A concurrent stronger producer can win before the worker's persisted
+        source returns. Its live value must not be replaced by a stale worker.
+        """
         if type(snapshot) is not CoverSourceSnapshot:
             raise TypeError("expected attested source inventory")
         with self._lock:
             if self._closed:
                 raise RuntimeError("cover service is closed")
             previous = self._snapshots.get(snapshot.scope)
+            if only_if_absent and previous is not None:
+                return
             if previous is not None:
                 if snapshot.revision < previous.revision:
                     raise ValueError("stale cover source revision")
@@ -599,14 +611,15 @@ class DocumentCoverService:
                 # A failed or revoked producer read has no negative meaning.
                 # In particular, never log provider credentials or URLs.
                 snapshot = None
+            if (type(snapshot) is CoverSourceSnapshot
+                    and snapshot.scope == document):
+                try:
+                    # The presence CAS runs under lock, but registered GTK
+                    # observers are called only after that lock is released.
+                    self._register_snapshot(snapshot, only_if_absent=True)
+                except (ValueError, TypeError, RuntimeError):
+                    pass
             with self._lock:
-                if (not self._closed and document not in self._snapshots
-                        and type(snapshot) is CoverSourceSnapshot
-                        and snapshot.scope == document):
-                    try:
-                        self.register(snapshot)
-                    except (ValueError, TypeError, RuntimeError):
-                        pass
                 live = not self._closed and document in self._snapshots
                 waiters = self._read_waiters.pop(document, [])
                 self._read_active.discard(document)

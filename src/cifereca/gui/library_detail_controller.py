@@ -60,7 +60,11 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
     presentation = book_detail_presentation(
         title=str(item.get("title") or "Sans titre"),
         subtitle=str(item.get("author") or ""),
-        thumbnail=item.get("thumbnail_url"),
+        # When a Core packet is present, only its exact N2 association can
+        # authorize painting. If rejected (owner/Artifact/Placement), do
+        # NOT substitute an unqualified cached catalogue/legacy URL.
+        thumbnail=(item.get("thumbnail_url")
+                   if item.get("_exact_local_cover_evidence") is None else None),
         badges=[],
         section_rows=local_book_detail_sections(
             item,
