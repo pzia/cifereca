@@ -86,6 +86,7 @@ def exact_history_document_evidence(
         item, identity_id=scope.identity_id,
         account_epoch=account_epoch,
         history_revision=history_revision,
+        source_epoch=source_epoch,
     )
     if (decision is None or decision.status != "selected"
             or decision.scope != scope or decision.uri != direct.url
@@ -146,6 +147,7 @@ def register_exact_history_document(
     decision = bridge.resolve(
         source_item, identity_id=scope.identity_id,
         account_epoch=account_epoch, history_revision=history_revision,
+        source_epoch=source_epoch,
     )
     if (decision is None or decision.status != "selected"
             or decision.scope != document
