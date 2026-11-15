@@ -84,6 +84,12 @@ class CoverReadRequest:
         self._lock = Lock()
         self._active = True
         self._child: CoverRequest | None = None
+        # Authoritative N2 selected URI, never inferred from physical N3.
+        self._source_uri: str | None = None
+
+    @property
+    def source_uri(self) -> str | None:
+        return self._source_uri
 
     def cancel(self) -> None:
         with self._lock:
@@ -218,6 +224,9 @@ class DocumentCoverService:
         if snapshot is None or decision is None or selected_token is None:
             callback(None)
             return handle
+        # The return handle exposes the N2 source before any synchronous
+        # N3 cache-hit callback can be painted on GTK's idle queue.
+        handle._source_uri = decision.uri
 
         def delivered(path: Path | None) -> None:
             if not handle.active:
