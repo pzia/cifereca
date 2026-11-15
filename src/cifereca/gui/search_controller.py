@@ -164,7 +164,13 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     state = self.search_controls.state()
     if len(state.text) < 2:
         self.toast("Saisissez au moins 2 caractères"); return
-    request_identity = self.service.current_identity.identity_id if self.service.current_identity else None
+    # One Core and account/source snapshot owns the submitted search. GTK
+    # navigation must never choose another database/provider after enqueue.
+    request_core = self.service
+    admitted_identity = getattr(request_core, "current_identity", None)
+    request_identity = getattr(admitted_identity, "identity_id", None)
+    admitted_account_epoch = getattr(request_core, "_account_context_epoch", None)
+    admitted_source_epoch = getattr(request_core, "_source_context_epoch", None)
     online_key = (state, request_identity)
     if force and pending_online_search_matches(
         getattr(self, "_online_pending_key", None), online_key,
@@ -177,7 +183,7 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     # the next request is pending, even if both use the same query text.
     self._loaded_search_context = None
     generation = self._search_generation
-    identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
+    identity_id = request_identity
     # Never reuse source verdicts across requests, accounts or generations.
     self._online_source_statuses = {}
     self._online_source_context = (
@@ -188,10 +194,20 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     response_facets = getattr(self, "_search_response_facets", None)
     if response_facets is not None:
         response_facets.begin(self._online_source_context)
+    def admitted_core_current():
+        # Core-owned, thread-safe cancellation lease; no GTK/widget reads.
+        # Source account rebind and A→B→A revoke remote supplier I/O.
+        return (
+            getattr(request_core, "current_identity", None) is admitted_identity
+            and getattr(request_core, "_account_context_epoch", None) == admitted_account_epoch
+            and getattr(request_core, "_source_context_epoch", None) == admitted_source_epoch
+        )
     def current():
-        if getattr(self, "_closed", False):
+        if (getattr(self, "_closed", False)
+                or self.service is not request_core
+                or not admitted_core_current()):
             return False
-        identity = self.service.current_identity.identity_id if self.service.current_identity else None
+        identity = getattr(getattr(request_core, "current_identity", None), "identity_id", None)
         live_state = self.search_controls.state()
         # Editing the query text/field/scope invalidates in-flight results
         # immediately, even before the next explicit search. Local facets
@@ -283,10 +299,25 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     def done(summary):
         clear_pending()
         if not current(): return
-        self.service.last_search_warnings = list(summary.warnings)
+        request_core.last_search_warnings = list(summary.warnings)
         # Batch delivery is progressive; the final render only reconciles
         # ranking/deduplication with the authoritative aggregate.
-        self._remote_search_results = merge_results(self._remote_search_results, list(self.service.last_search))
+        self._remote_search_results = merge_results(self._remote_search_results, list(request_core.last_search))
         self._populate_search(self._remote_search_results, announce=True)
-    self.runner.submit("Recherche en ligne…", lambda: progressive_online_search(self.service, state, on_batch), done, failed,
+    class AdmittedSearchControl:
+        def cancelled(self):
+            return not admitted_core_current()
+
+    def online_work():
+        # search_progressive captures current_identity when it starts, not
+        # when this GUI task is enqueued. Refuse a moved account before it can
+        # issue a private GET; Core rechecks this lease before each provider.
+        if not admitted_core_current():
+            from ..plugin_api import Cancelled
+            raise Cancelled("Recherche en ligne périmée")
+        return progressive_online_search(
+            request_core, state, on_batch, control=AdmittedSearchControl(),
+        )
+
+    self.runner.submit("Recherche en ligne…", online_work, done, failed,
                        control=self.search_global_button, priority=TaskPriority.USER_ACTION, kind="search-online")

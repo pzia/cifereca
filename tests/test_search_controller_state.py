@@ -220,3 +220,87 @@ assert 'cifereca.gui.search_controller' not in sys.modules
 """
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
+
+
+def test_online_search_queued_for_a_never_dispatches_to_replaced_core_b():
+    host = _host()
+    host.run_search(True)
+    pending = host.requests[-1]
+    original = host.service
+    other = NS(
+        current_identity=NS(identity_id="alice"),
+        last_search=[{"key": "private-B"}], last_search_warnings=[],
+    )
+    host.service = other
+    pending.work()
+    assert host.online.call_count == 1
+    assert host.online.call_args.args[0] is original
+    assert host.online.call_args.kwargs["control"].cancelled() is False
+    pending.done(NS(warnings=[]))
+    assert host._remote_search_results == []
+    assert other.last_search_warnings == []
+    host._populate_search.assert_not_called()
+
+
+def test_online_search_queued_a_b_a_cannot_start_foreign_get():
+    from cifereca.plugin_api import Cancelled
+    host = _host()
+    host.run_search(True)
+    task = host.requests[-1]
+    host.service.current_identity = NS(identity_id="bob")
+    host.service.current_identity = NS(identity_id="alice")
+    with pytest.raises(Cancelled):
+        task.work()
+    host.online.assert_not_called()
+    task.failed(Cancelled("old account"))
+    assert host._online_pending_key is None
+    host.show_error.assert_not_called()
+
+
+@pytest.mark.parametrize("epoch", ["_account_context_epoch", "_source_context_epoch"])
+def test_online_search_revoked_core_epoch_cannot_start_provider_io(epoch):
+    from cifereca.plugin_api import Cancelled
+    host = _host()
+    setattr(host.service, epoch, 11)
+    host.run_search(True)
+    pending = host.requests[-1]
+    setattr(host.service, epoch, 12)
+    with pytest.raises(Cancelled):
+        pending.work()
+    host.online.assert_not_called()
+    pending.done(NS(warnings=[]))
+    host._populate_search.assert_not_called()
+
+
+def test_running_federated_search_receives_core_only_cancellation_lease():
+    host = _host()
+    host.service._account_context_epoch = 5
+    host.service._source_context_epoch = 10
+    host.run_search(True)
+    pending = host.requests[-1]
+    pending.work()
+    lease = host.online.call_args.kwargs["control"]
+    assert lease.cancelled() is False
+    host.service._source_context_epoch = 11
+    assert lease.cancelled() is True
+    # A changed source cannot publish a remote result even if identity and
+    # query text still match exactly.
+    pending.done(NS(warnings=["PRIVATE"]))
+    assert host.service.last_search_warnings == []
+    host._populate_search.assert_not_called()
+
+
+def test_online_a_b_a_same_identity_text_never_publishes_old_batch():
+    host = _host()
+    host.run_search(True)
+    pending = host.requests[-1]
+    pending.work()
+    on_batch = host.online.call_args.args[2]
+    host.service.current_identity = NS(identity_id="bob")
+    host.service.current_identity = NS(identity_id="alice")
+    on_batch(NS(results=[NS(id="private", source_provider="paris")]))
+    dispatch, args = host.scheduled.pop()
+    assert dispatch(*args) is False
+    pending.done(NS(warnings=[]))
+    assert host._remote_search_results == []
+    host._populate_search.assert_not_called()
