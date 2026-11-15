@@ -7,13 +7,15 @@ The future explicit-click executor must rebind the exact source and claim.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections import Counter
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from ..models import Account, SearchResult
 from ..plugin_api.lending_capabilities import assess_lending_operation
 from .borrow_action_scope import borrow_claim_key
 from .borrow_for_identity_live import _lender_label
+from .borrow_for_identity_preview import _display_account_label
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
 
 
@@ -202,7 +204,38 @@ def discover_possible_borrow_lenders(
             return ()
     except Exception:
         return ()
-    return tuple(result)
+    # Multiple credentials of the same lender cannot be shown as identical
+    # actionable-looking choices. Stable private sorting and public, bounded
+    # account labels distinguish them without exposing the credential key.
+    ordered = sorted(result, key=lambda row: (
+        row.lender_identity_id, row._account.provider_id,
+        row._account.credential_id, row._account.unique_id,
+        row._notice.docbase, row._notice.record_id,
+    ))
+    frequencies = Counter(row.label for row in ordered)
+    public_accounts = {
+        id(row): _display_account_label(row._account.display_name)[:32]
+        for row in ordered
+    }
+    pairs = Counter((row.label, public_accounts[id(row)]) for row in ordered)
+    ordinals: Counter[str] = Counter()
+    visible = []
+    for row in ordered:
+        if frequencies[row.label] == 1:
+            visible.append(row)
+            continue
+        account_label = public_accounts[id(row)]
+        if pairs[(row.label, account_label)] > 1:
+            ordinals[row.label] += 1
+            suffix = (
+                f" · {account_label} · choix "
+                f"{ordinals[row.label]}/{frequencies[row.label]}"
+            )
+        else:
+            suffix = f" · {account_label}"
+        safe_prefix = row.label[:max(1, 80 - len(suffix))].rstrip()
+        visible.append(replace(row, label=safe_prefix + suffix))
+    return tuple(visible)
 
 
 __all__ = ["PossibleBorrowLender", "discover_possible_borrow_lenders"]
