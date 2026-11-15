@@ -239,3 +239,54 @@ def test_plugin_list_and_detail_request_same_exact_n2_source_not_a_plugin_url(
     finally:
         service.close()
         loader.close()
+
+
+def test_core_attested_ref_wins_conflicting_valid_plugin_document_even_same_url():
+    # A plugin is never allowed to redirect the image/document association of
+    # an independently attached Core N1 proof (e.g. the exact list row packet).
+    # Matching URLs/titles are irrelevant: the two DocumentRefs remain distinct.
+    show_rows = show_rows_function()
+    captured = []
+    host = NS(
+        _rows={}, _page=NS(show_rows=lambda values, total_count=None:
+                           captured.extend(values)),
+    )
+    row = UiBookListEntry(
+        "same-row", "Same title", thumbnail_url=FOREIGN_URL,
+        cover_document_ref=OTHER,
+    )
+    object.__setattr__(row, "_cover_document_ref", PUBLIC)
+    show_rows(host, [row])
+    assert captured[0]._cover_document_ref == PUBLIC
+    assert captured[0].thumbnail_url == FOREIGN_URL
+    assert host._rows["same-row"] is row
+
+
+def test_invalid_optional_declaration_does_not_revoke_valid_core_ref():
+    show_rows = show_rows_function()
+    captured = []
+    host = NS(
+        _rows={}, _page=NS(show_rows=lambda values, total_count=None:
+                           captured.extend(values)),
+    )
+    row = UiBookListEntry(
+        "core-authority", "Book", thumbnail_url=FOREIGN_URL,
+        cover_document_ref=object(),
+    )
+    object.__setattr__(row, "_cover_document_ref", PUBLIC)
+    show_rows(host, [row])
+    assert captured[0]._cover_document_ref == PUBLIC
+    assert captured[0].thumbnail_url == FOREIGN_URL
+
+
+def test_explicit_valid_plugin_document_is_still_used_without_core_packet():
+    show_rows = show_rows_function()
+    captured = []
+    host = NS(
+        _rows={}, _page=NS(show_rows=lambda values, total_count=None:
+                           captured.extend(values)),
+    )
+    row = UiBookListEntry("plugin", "Book", thumbnail_url=FOREIGN_URL,
+                          cover_document_ref=OTHER)
+    show_rows(host, [row])
+    assert captured[0]._cover_document_ref == OTHER
