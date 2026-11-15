@@ -268,6 +268,55 @@ def test_queued_history_worker_uses_admitted_account_after_ui_switch(monkeypatch
     assert host.history_displayed == []
 
 
+def test_queued_history_get_cannot_rebind_to_new_core_same_identity(monkeypatch):
+    host = _ui_host()
+    initial = host.service
+    admitted = initial.current_account
+    seen = []
+
+    def read(service, *, force=False, account=None, expected_source_epoch=None):
+        seen.append((service, account, force, expected_source_epoch))
+        return ["history read for A"]
+
+    monkeypatch.setattr(library_projection, "refresh_history", read)
+    host.refresh_history(force=True)
+    pending = host.runner.pending[-1]
+    # MainWindow can bind another Core during an in-flight history task.
+    # Even same ID + same selected Account pointer is not the original
+    # admission context; read A only from original service, never new.
+    host.service = NS(current_identity=NS(identity_id="alice"),
+                      current_account=admitted)
+    assert pending.work() == ["history read for A"]
+    assert seen == [(initial, admitted, True, 0)]
+    pending.done(["history read for A"])
+    assert host.history_displayed == []
+
+
+def test_queued_history_get_after_a_b_a_preserves_one_admitted_borrower(monkeypatch):
+    host = _ui_host()
+    old = host.service.current_account
+    seen = []
+    monkeypatch.setattr(
+        library_projection, "refresh_history",
+        lambda service, *, force=False, account=None, expected_source_epoch=None:
+            seen.append((service, account.unique_id, expected_source_epoch))
+            or ["history-" + account.unique_id],
+    )
+    host.refresh_history()
+    request = host.runner.pending[-1]
+    host._account_changed(NS(get_selected=lambda: 1), None)
+    host._account_changed(NS(get_selected=lambda: 0), None)
+    assert request.work() == ["history-a"]
+    assert seen == [(host.service, old.unique_id, 0)]
+    request.done(["old-a"])
+    assert host.history_displayed == []
+    host.refresh_history()
+    fresh = host.runner.pending[-1]
+    assert fresh.work() == ["history-a"]
+    fresh.done(["fresh-a"])
+    assert host.history_displayed == [["fresh-a"]]
+
+
 def test_history_explicit_account_uses_its_cache_and_session_after_switch():
     host, writes = _service_host()
     admitted = host.current_account
