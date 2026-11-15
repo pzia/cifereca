@@ -1281,22 +1281,27 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def _history_book_row(self, x: HistoryItem) -> BookListItem:
+        from .history_cover_presentation import cached_history_cover
+        visual_cover = x.thumbnail_url or cached_history_cover(self, x)
         row = BookListItem(
             x.id, x.title, x.author or "",
             f"Emprunté le {fr_date(x.borrowed_at)} · {x.year or x.document_type or ''}",
             "Numérique" if x.medium == "digital" else "Physique",
-            x.thumbnail_url,
+            visual_cover,
             # 0.2.7: ne plus lancer de recherches catalogue automatiques pour
             # reconstruire les vignettes de l'historique d'un compte lié. Le site
             # officiel présente la même absence de vignettes ; on conserve donc le
             # placeholder en attendant une étude des identifiants en amont.
-            cover_provider=(x.provider if (not x.thumbnail_url and self.service.current_account.is_primary) else None),
+            cover_provider=(x.provider if (not visual_cover and self.service.current_account.is_primary) else None),
             cover_record_id=(x.record_id if (not x.thumbnail_url and self.service.current_account.is_primary) else None),
             cover_title=x.title,
             cover_author=x.author,
             cover_year=x.year,
             default_thumbnail_url=x.default_thumbnail_url,
         )
+        # Bind the exact DTO, not just a potentially duplicated supplier ID.
+        # An asynchronous cover for a prior homonymous/foreign row is refused.
+        row._history_source_item = x
         self._attach_row_facets([row],{x.id:{'author':x.author,'source_provider':x.source_provider}},self.search_controls)
         # The history refresh may replace the cover or its fallback while
         # keeping the same upstream row ID. MasterDetailPage's append-fast

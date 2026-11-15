@@ -844,16 +844,41 @@ class DetailPanel(Gtk.Box):
         self._cancel_meta_request()
         clear_box(self.content)
         self._clear_actions()
+        from .history_cover_presentation import (
+            cached_history_cover, history_cover_context,
+            history_cover_request_scope, publish_history_cover,
+        )
+        present_cover = cached_history_cover(self.window, item)
         medium = "Numérique" if item.medium == "digital" else "Physique"
         cover = self._cover_and_title(
-            item.title, item.author, item.thumbnail_url or item.default_thumbnail_url,
+            item.title, item.author,
+            item.thumbnail_url or present_cover or item.default_thumbnail_url,
             [medium, item.year or ""],
         )
-        if not item.thumbnail_url and self.window.service.current_account.is_primary:
+        if (not item.thumbnail_url and not present_cover
+                and self.window.service.current_account.is_primary):
+            context = history_cover_context(self.window)
             cover.show_loading()
 
             def resolved(url: str | None) -> None:
+                if (context is not None
+                        and history_cover_context(self.window) != context):
+                    return  # A prior account/identity epoch is no longer UI.
+                sources = getattr(self.window, "history_objects", None)
+                if (context is not None and type(sources) is dict
+                        and sources.get(item.id) is not item):
+                    return  # The exact HistoryItem was superseded.
                 if url:
+                    page = getattr(self.window, "history_page", None)
+                    selection = getattr(page, "selection", None)
+                    row = (
+                        selection.get_selected_item()
+                        if selection is not None else None
+                    )
+                    if row is not None:
+                        publish_history_cover(
+                            self.window, item, row, url, context=context,
+                        )
                     cover.bind_url(self.window.covers, url, priority=0)
                 else:
                     cover.reset()
@@ -861,8 +886,9 @@ class DetailPanel(Gtk.Box):
             self._meta_request = self.window.history_cover_resolver.request(
                 item.provider, item.record_id, item.title, item.author, item.year,
                 item.default_thumbnail_url, resolved,
+                scope=history_cover_request_scope(context),
             )
-        elif not item.thumbnail_url:
+        elif not item.thumbnail_url and not present_cover:
             # Compte lié : pas de requêtes de reconstruction automatiques.
             cover.reset()
         self._group("Historique", [

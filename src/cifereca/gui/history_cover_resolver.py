@@ -74,9 +74,9 @@ class HistoryCoverResolver:
         return out
 
     @staticmethod
-    def _key(provider: str, record_id: str | None, title: str, author: str | None, year: str | None) -> str:
+    def _key(provider: str, record_id: str | None, title: str, author: str | None, year: str | None, scope: str = "") -> str:
         return "\0".join([
-            str(provider or ""), str(record_id or ""), str(title or ""),
+            scope, str(provider or ""), str(record_id or ""), str(title or ""),
             str(author or ""), str(year or ""),
         ])
 
@@ -88,7 +88,7 @@ class HistoryCoverResolver:
         author: str | None,
         year: str | None,
         default_url: str | None,
-        callback: Callable[[str | None], None],
+        callback: Callable[[str | None], None], *, scope: str = "",
     ) -> _MetaRequest:
         holder = {"active": True}
         request = _MetaRequest(holder)
@@ -100,7 +100,11 @@ class HistoryCoverResolver:
         if not title:
             GLib.idle_add(self._deliver, holder, callback, default_url)
             return request
-        key = self._key(provider, record_id, title, author, year)
+        # A scoped window cannot reuse another identity's in-memory result.
+        # Existing callers without a scope keep compatibility.
+        if type(scope) is not str or len(scope) > 128 or not scope.isprintable():
+            scope = ""
+        key = self._key(provider, record_id, title, author, year, scope)
         with self._lock:
             self._stats["requested"] += 1
             if key in self._memory:
@@ -125,6 +129,8 @@ class HistoryCoverResolver:
                 value, status = default_url, "error"
             with self._lock:
                 self._memory[key] = (value, status)
+                if len(self._memory) > 2048:
+                    self._memory.pop(next(iter(self._memory)))
                 callbacks = self._pending.pop(key, [])
                 self._stats[status if status in {"matched", "ambiguous", "not_found", "no_cover", "error"} else "error"] += 1
                 self._stats["completed"] += 1
