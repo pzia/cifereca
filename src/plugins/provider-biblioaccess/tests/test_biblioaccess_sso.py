@@ -1343,3 +1343,51 @@ def test_transient_acsm_403_keeps_cas_session_for_redownload(monkeypatch, tmp_pa
         assert len(attempts) == 2
     finally:
         session.close()
+
+
+def test_myloans_exact_row_image_is_display_only_not_a_new_delivery_right():
+    """#6168: one authenticated loan observation, one independent cover."""
+    from types import SimpleNamespace as NS
+    from cifereca.plugin_api import read_loan_inventory
+
+    url = "https://www.biblioaccess.com/1409/Covers/synthetic-cover.png"
+    synthetic = NS(
+        product_ref="10001", book_id="20002",
+        title="SYNTHETIC-BOOK", due_at_local="08/11/2026 12:30:00",
+        acsm_offer_present=False, thumbnail_url=url,
+    )
+    session, _client, calls = _synced_session(rows=[synthetic])
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        inventory = read_loan_inventory(session, account)
+        assert inventory.status == "success"
+        loan, = inventory.loans
+        assert loan.thumbnail_url == url
+        assert loan.identity_id == "identity-a"
+        assert loan.source_provider == mod.PROVIDER_ID
+        assert loan.source_credential == "cred-a"
+        assert loan.source_account_id == "primary"
+        assert loan.ebook_url is None
+        assert loan.raw == {}
+        assert loan.can_return is False and loan.renewable is False
+        assert calls.count("live_loans") == 1
+        # A descriptive image never authorizes download or return.
+        assert not loan.raw.get("acsm_offer_present")
+    finally:
+        session.close()
+
+
+def test_older_myloans_rows_without_image_remain_accepted():
+    """#6168: historical fake/provider rows without the optional field."""
+    from cifereca.plugin_api import read_loan_inventory
+
+    session, _client, _calls = _synced_session()
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        inventory = read_loan_inventory(session, account)
+        assert inventory.status == "success"
+        assert inventory.loans[0].thumbnail_url is None
+    finally:
+        session.close()
