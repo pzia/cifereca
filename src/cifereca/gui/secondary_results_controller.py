@@ -14,9 +14,8 @@ def populate_history(window, rows, preserve_all: bool = False) -> None:
         return
     if not preserve_all:
         window._history_all_rows = list(rows)
-        # A committed provider History read is one new source snapshot.
-        # Reapplying a language facet must not invalidate a cover decision
-        # or trigger an additional supplier fetch for identical rows.
+        # A committed History source read advances documentary cover revision;
+        # reapplying filters must not relabel the same occurrence as fresh.
         window._history_cover_revision = (
             getattr(window, "_history_cover_revision", 0) + 1
         )
