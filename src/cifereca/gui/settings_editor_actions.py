@@ -338,12 +338,19 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
 
             def explicit_probe(_button, *, e=editor, saved=dict(data),
                                pid=provider_id):
+                # Admission belongs to the Core at the explicit click, not to
+                # a later MainWindow binding while TaskRunner waits.
+                admitted_core = self.service
+                generations = (
+                    getattr(self, "_identity_context_generation", None),
+                    getattr(self, "_account_context_generation", None),
+                )
                 # Closed, value-free diagnostic for the repeated field case
                 # where no provider HTTP request follows an attempted test.
                 # No credential, account ID, draft or exception is logged.
                 def record(phase, status="ok"):
                     try:
-                        self.service.diagnostics.add(
+                        admitted_core.diagnostics.add(
                             "PLUGIN", "explicit provider probe UI", status,
                             detail={"provider_id": pid, "phase": phase})
                     except Exception:
@@ -376,6 +383,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         "Enregistrer les modifications avant de tester le compte.")
                     record("blocked_unsaved", "warning")
                     return
+                probe_method = admitted_core.explicit_provider_diagnostic
                 e["_probe_pending"] = True
                 button = e["explicit_probe_button"]
                 button.set_sensitive(False)
@@ -387,6 +395,18 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     if page_lifetime is None or page_lifetime.alive:
                         button.set_sensitive(True)
 
+                def callback_current():
+                    return (
+                        self.service is admitted_core
+                        and not getattr(self, "_closed", False)
+                        and not e.get("deleted")
+                        and (page_lifetime is None or page_lifetime.alive)
+                        and generations == (
+                            getattr(self, "_identity_context_generation", None),
+                            getattr(self, "_account_context_generation", None),
+                        )
+                    )
+
                 def done(result):
                     release()
                     status = getattr(result, "status", None)
@@ -397,7 +417,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         "completed_unverified" if observed else "unavailable",
                         "ok" if (live or observed) else "warning",
                     )
-                    if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
+                    if callback_current():
                         e["explicit_probe_status"].set_subtitle(
                             "Connexion vérifiée pour ce test. "
                             "Session temporaire refermée ; aucune modification du compte."
@@ -409,7 +429,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 def error(_exc):
                     release()
                     record("failed", "warning")
-                    if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
+                    if callback_current():
                         e["explicit_probe_status"].set_subtitle(
                             "Diagnostic refusé. Enregistrer, activer le compte "
                             "et vérifier l’option de recette.")
@@ -417,7 +437,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 try:
                     self.runner.submit(
                         "Recette HTTP fournisseur…",
-                        lambda: self.service.explicit_provider_diagnostic(
+                        lambda: probe_method(
                             identity_id=current["identity_id"], provider_id=pid,
                             credential_id=current["id"], user_consent=True,
                         ),
