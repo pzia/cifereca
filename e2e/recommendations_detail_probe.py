@@ -43,6 +43,7 @@ from cifereca.gui.exact_search_notice_navigation import (
     can_open_loaded_search_notice as core_can_open_exact,
     open_loaded_search_notice as core_open_exact,
 )
+from paired_book_review_fixture import BOOK as PAIRED_BOOK, verified_fixture_receipt
 from recommendation_engine import CatalogNoticeVariant, RankedCandidate
 from recommendations import RecommendationsPlugin
 from x11_input import X11Input
@@ -1491,6 +1492,68 @@ def main():
         assert view._master._page.selection.get_selected_item() is None
         assert not state["in_place_obtain"][1:]
         report["checks"]["P1_4664_gtk_stale_holdings_callback_inert"] = True
+        # The paired UX review uses the same synthetic book/source/edition
+        # as the ACTUAL Search GTK selection, not the earlier independent
+        # recommendation/Paris account fixtures. Finish only after capturing
+        # this real mapped plugin row + detail.
+        later(150, paired_review_setup)
+
+    def paired_review_setup():
+        report["p1_774_phase"] = "original_scenarios"
+        view = state["view"]
+        query = view._query_controls
+        query.entry.set_text("")
+        query.entry.emit("activate")
+        query.provider.set_values(())
+        query.languages.set_values(())
+        query.types.set_values(())
+        query.scope.set_selected(0)
+        query.field.set_selected(0)
+        view._score.set_value(15)
+        candidate = ranked(
+            PAIRED_BOOK["record_id"], PAIRED_BOOK["title"],
+            PAIRED_BOOK["isbn"], score=90,
+            provider=PAIRED_BOOK["source_provider"],
+        )
+        candidate.item["author"] = PAIRED_BOOK["author"]
+        candidate.item["authors"] = [PAIRED_BOOK["author"]]
+        candidate.item["metadata"] = {
+            "isbn": PAIRED_BOOK["isbn"],
+            "subjects": [PAIRED_BOOK["subject"]],
+        }
+        view._ranked = [candidate]
+        view._reload_providers((
+            (PAIRED_BOOK["source_provider"], "Gallica (fixture)"),
+        ))
+        view._reload_languages(view._ranked)
+        view._reload_document_choices()
+        view._render()
+        page = view._master._page
+        assert page.store.get_n_items() == 1
+        page.selection.set_selected(0)
+        later(160, paired_review_capture)
+
+    def paired_review_capture():
+        view = state["view"]
+        page = view._master._page
+        selected = page.selection.get_selected_item()
+        assert selected is not None
+        assert selected.title == PAIRED_BOOK["title"]
+        assert selected.subtitle == PAIRED_BOOK["author"]
+        assert page.detail.get_mapped()
+        assert view.selected_identity_id() == "alice"
+        assert not state["searches"][1:]
+        candidate, = view._ranked
+        assert candidate.item["record_id"] == PAIRED_BOOK["record_id"]
+        assert candidate.item["source_provider"] == PAIRED_BOOK["source_provider"]
+        assert candidate.item["isbn"] == PAIRED_BOOK["isbn"]
+        assert candidate.notices[0].record_id == PAIRED_BOOK["record_id"]
+        assert candidate.notices[0].source_provider == PAIRED_BOOK["source_provider"]
+        assert candidate.notices[0].isbn == PAIRED_BOOK["isbn"]
+        assert PAIRED_BOOK["subject"] in candidate.item["metadata"]["subjects"]
+        report["p1_774_paired_book"] = verified_fixture_receipt()
+        report["checks"]["P1_774_recommendations_selected_same_synthetic_book"] = True
+        capture("09-paired-public-book")
         state["plugin"].deactivate()
         report["status"] = "PASS"
         save()
