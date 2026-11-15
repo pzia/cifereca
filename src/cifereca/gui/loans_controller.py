@@ -17,7 +17,6 @@ from ..models import Loan
 from ..core.loan_source_identity import loan_source_key, unambiguous_loan_rows
 from ..core.covers import candidate
 from ..core.loan_cover_fallback import loan_local_cover, materialized_loan_cover_rows
-from ..core.loan_cover_evidence import exact_attested_loan_epub_cover
 from .book_widgets import BookListItem
 from .loan_view import LOAN_FILTER_LABELS, loan_context_label, loan_due_presentation, loan_medium_counts, loan_row_metadata
 from .master_detail import MasterDetailPage
@@ -130,46 +129,6 @@ def _library_loan_covers_updated(self, entries: list[dict[str, Any]]) -> None:
     self._render_loans()
 
 
-def _loan_embedded_cover_evidence(self, loan: Loan):
-    """Admit only this borrower's already materialized exact Core link.
-
-    No fresh Library scan, provider request, ZIP read or thumbnail cache
-    inspection on the GTK thread. Identity and account epochs are mandatory.
-    """
-    active = getattr(
-        getattr(self.service, "current_identity", None), "identity_id", None,
-    )
-    projection = getattr(self, "_loan_cover_projection", None)
-    if (type(loan) is not Loan or type(active) is not str or not active
-            or loan.identity_id != active
-            or type(projection) is not tuple or len(projection) != 3
-            or projection[0] != getattr(self.service, "_account_context_epoch", None)
-            or projection[1] != active
-            or type(projection[2]) is not tuple
-            or not projection[2]):
-        return None
-    return exact_attested_loan_epub_cover(loan, projection[2])
-
-
-def _show_loan_cover_detail(self, loan: Loan) -> None:
-    """Same Core N1/DocumentRef as the bound list cell; actions unchanged."""
-    displayed = _loan_display_cover(self, loan)
-    evidence = _loan_embedded_cover_evidence(self, loan)
-    detail = self.loan_page.detail
-    if evidence is None:
-        detail.show_loan(displayed)
-        return
-    present = getattr(detail, "show_loan_local", None)
-    if callable(present):
-        present(displayed, cover_evidence=evidence)
-    else:
-        # Legacy/custom detail host cannot consume an N2 packet. It must
-        # not paint a weaker URL ahead of an already attested EPUB.
-        neutral = copy(displayed)
-        neutral.thumbnail_url = None
-        detail.show_loan(neutral)
-
-
 def _loan_display_cover(self, loan: Loan) -> Loan:
     """Display-only image fallback; retain the original loan for every action.
 
@@ -269,6 +228,7 @@ def _render_loans(self) -> None:
             display_loans, wanted_languages,
             self.service.storage.catalog_entries(),
         )
+    from cifereca.gui.loan_cover_n2_bridge import loan_embedded_cover_for_host
     for loan in display_loans:
         due = loan_due_presentation(loan.due_at, is_late=bool(loan.is_late))
         subtitle = loan.library or ("Prêt numérique" if loan.medium == "digital" else "Prêt physique")
@@ -284,7 +244,7 @@ def _render_loans(self) -> None:
             source_key, loan.title, subtitle, meta, due.label,
             display.thumbnail_url, badge_style=due.style,
         )
-        evidence = _loan_embedded_cover_evidence(self, loan)
+        evidence = loan_embedded_cover_for_host(self, loan)
         if evidence is not None:
             # A loan row is not a Placement identity. The Core link above is
             # the permission to display this exact owner-specific source.
@@ -349,7 +309,11 @@ def _render_loans(self) -> None:
             # The list signal cannot update an already-open DetailPanel.
             # Refresh its presentation from the SAME cached N1/N2 decision:
             # no provider I/O, no action or selected-row mutation.
-            _show_loan_cover_detail(self, fresh)
+            from cifereca.gui.loan_cover_n2_bridge import show_attested_loan_cover
+            if not show_attested_loan_cover(
+                self, fresh, lambda: _loan_display_cover(self, fresh),
+            ):
+                self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
 
 
 def _loan_selected(self, row: BookListItem | None) -> None:
@@ -357,7 +321,11 @@ def _loan_selected(self, row: BookListItem | None) -> None:
     loan = self.loan_objects.get(row.key)
     if loan:
         self._displayed_loan = loan
-        _show_loan_cover_detail(self, loan)
+        from cifereca.gui.loan_cover_n2_bridge import show_attested_loan_cover
+        if not show_attested_loan_cover(
+            self, loan, lambda: _loan_display_cover(self, loan),
+        ):
+            self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
         self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
             'source_credential':loan.source_credential,'record_id':loan.record_id})
         self._add_facets(self.loan_page.detail, {'source_provider':loan.source_provider,
@@ -427,7 +395,12 @@ def _loans_refreshed(self, rows):
         ]
         fresh = matches[0] if len(matches) == 1 else None
         self._displayed_loan=fresh
-        if fresh:_show_loan_cover_detail(self, fresh)
+        if fresh:
+            from cifereca.gui.loan_cover_n2_bridge import show_attested_loan_cover
+            if not show_attested_loan_cover(
+                self, fresh, lambda: _loan_display_cover(self, fresh),
+            ):
+                self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
         else:self.loan_page.detail.empty(
             "Prêt non retrouvé dans cette actualisation",
             "La réponse peut être vide ou partielle ; la disparition du prêt "
