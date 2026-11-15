@@ -248,3 +248,22 @@ def test_no_work_without_exact_source_scope_or_token():
         cache.resolve_and_publish(object(), [candidate()], snapshot_complete=True)
     with pytest.raises(TypeError):
         cache.subscribe(loan(), object())
+
+
+def test_reentrant_callbacks_have_monotonic_event_sequences_for_gtk():
+    cache = CoverDecisionCache()
+    scope = loan()
+    observed = []
+    def reentrant(event):
+        if event.kind == "refresh":
+            cache.invalidate(scope, cause="evidence_changed")
+    cache.subscribe(scope, reentrant)
+    cache.subscribe(scope, observed.append)
+    stale = cache.begin(scope, revision=1)
+    # A callback may publish a newer event before another listener sees the
+    # original refresh. Consumers discard events with lower sequence values.
+    assert [event.kind for event in observed] == ["invalidated", "refresh"]
+    assert observed[0].sequence > observed[1].sequence
+    assert not cache.resolve_and_publish(
+        stale, [candidate()], snapshot_complete=True,
+    )
