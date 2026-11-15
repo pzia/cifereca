@@ -1436,7 +1436,7 @@
         "tests/test_loan_borrower_context.py",
         "tests/test_provider_plugins.py"
       ],
-      "pr": "#pending"
+      "pr": "#6187"
     }
   ],
   "retained_legacy_migrations": [
