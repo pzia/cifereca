@@ -72,8 +72,11 @@ def invalidate_search_snapshot(window):
         window._search_snapshot_again = True
         return
     owner = _identity(window)
-    if owner is None:
+    if type(owner) is not str or not owner:
         return
+    # The work owner is the admitted Core service, never a later GTK-selected
+    # identity/service. Delivery remains scoped to the visible Search view.
+    service = window.service
     identity_generation = getattr(window, '_identity_context_generation', None)
     window._search_generation = getattr(window, '_search_generation', 0) + 1
     search_generation = window._search_generation
@@ -94,11 +97,12 @@ def invalidate_search_snapshot(window):
                 and query == (live.text, live.field, live.scope))
 
     def work():
-        if (not identity_current() or search_generation != window._search_generation
-                or window._search_mode != 'local'):
-            return []
-        return window.service.search_known_catalog(
-            state.text, state.scope, field=state.field, identity_id=owner)
+        # A queued local SQLite read is owned by the exact captured identity,
+        # even if navigation changes A→B→A before this worker starts. No GTK
+        # window, visible account, search generation or widget is a worker
+        # input. Core's known catalogue does not perform a provider GET.
+        return service.search_known_catalog(
+            query[0], query[2], field=query[1], identity_id=owner)
 
     def finish():
         if getattr(window, '_search_snapshot_pending', None) is not token:
