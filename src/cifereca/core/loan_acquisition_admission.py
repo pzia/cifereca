@@ -29,7 +29,9 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     if (type(loan.source_provider) is not str or not loan.source_provider
             or type(loan.source_credential) is not str
             or not loan.source_credential
-            or type(loan.source_account_id) not in (str, type(None))):
+            or type(loan.source_account_id) not in (str, type(None))
+            or type(loan.id) is not str or not loan.id
+            or type(loan.record_id) not in (str, type(None))):
         _TRACE_LOG.warning(
             "TRACE download loan_auto blocked reason=source_scope_unproven request_ref=%s",
             request_ref,
