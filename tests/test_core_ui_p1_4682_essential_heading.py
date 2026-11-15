@@ -54,3 +54,20 @@ def test_other_section_headings_keep_their_visible_titles():
     assert "group.set_title('' if title == 'Essentiel' else title)" in group
     assert "group.set_title('')" not in group
     assert "section.title == 'Détail'" in _method("show_presentation")
+
+
+
+def test_recommendations_catalogue_keeps_typed_per_value_affordances():
+    """The Core renderer must consume, not discard, public field kinds."""
+    renderer = _method("show_presentation")
+    group = _method("_group")
+    # Search's 'Détail' and Recommendations' 'Catalogue' share the same
+    # per-field copy/search sink. Scoring/rights context stays passive.
+    assert "section.title == 'Détail' or section.title == 'Catalogue'" in renderer
+    assert "self._group(section.title, rows, fields=section.fields)" in renderer
+    assert "self._group(section.title, rows)" in renderer
+    assert "if field is not None and field.kind != 'text':" in group
+    assert "self._add_metadata_actions(row, label, safe_value, field.kind)" in group
+    actions = _method("_add_metadata_actions")
+    assert "kind in {'title', 'author', 'subject', 'series', 'collection', 'language', 'isbn', 'all'}" in actions
+    assert "lambda _button" in actions
