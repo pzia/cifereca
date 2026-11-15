@@ -266,3 +266,103 @@ def test_missing_actions_and_malformed_loan_fail_closed_before_any_dialog():
         stage=None, importer=None,
     )
     assert not Dialog.shown
+
+
+def test_confirmed_token_get_keeps_exact_loan_after_gtk_a_b_a_navigation():
+    """A confirmed GET is Core authority; GTK only controls visual delivery."""
+    w, _ = window()
+    queue = []
+    w.runner = NS(submit=lambda *args, **kwargs: queue.append((args, kwargs)))
+    loan = start(w)
+    Dialog.shown[0].respond("get")
+    assert len(queue) == 1
+    work, done, failed = queue[0][0][1:4]
+    w.service.current_identity = NS(identity_id="another")
+    w._identity_context_generation += 1
+    w._account_context_generation += 1
+    w.service.current_identity = NS(identity_id="default")
+    w._identity_context_generation += 1
+    w._account_context_generation += 1
+
+    result = work()
+    assert result == {"status": "candidate_acsm", "path": "/private/staged.acsm"}
+    # The original loan is pinned, not retargeted to current_identity.
+    w.service.stage_explicit_loan_acsm.assert_called_once()
+    call = w.service.stage_explicit_loan_acsm.call_args
+    assert call.args[0] is not loan
+    assert call.args[0].id == "loan-a"
+    assert call.kwargs == {
+        "confirmed": True, "expected_identity_id": "default",
+    }
+    done(result)
+    failed(RuntimeError("SECRET source"))
+    assert len(Dialog.shown) == 1
+    w.show_error.assert_not_called()
+    w.show_attention.assert_not_called()
+    w._activity_result.assert_not_called()
+    w.service.import_bnf_loan_acsm.assert_not_called()
+
+
+def test_confirmed_adept_import_keeps_staged_owner_after_gtk_navigation():
+    """The second consent is independent of the original GTK selection."""
+    w, _ = window()
+    queue = []
+    w.runner = NS(submit=lambda *args, **kwargs: queue.append((args, kwargs)))
+    loan = start(w)
+    Dialog.shown[0].respond("get")
+    assert len(queue) == 1
+    queue[0][0][2](queue[0][0][1]())  # Live UI: offer separate import consent.
+    assert len(Dialog.shown) == 2
+    Dialog.shown[1].respond("import")
+    assert len(queue) == 2
+    work, done, failed = queue[1][0][1:4]
+
+    # A→B→A is only a visual change and must not abort the admitted import.
+    w.service.current_identity = NS(identity_id="another")
+    w._identity_context_generation += 1
+    w._account_context_generation += 1
+    w.service.current_identity = NS(identity_id="default")
+    w._identity_context_generation += 1
+    w._account_context_generation += 1
+    result = work()
+    assert result == {"status": "complete"}
+    w.service.import_bnf_loan_acsm.assert_called_once()
+    call = w.service.import_bnf_loan_acsm.call_args
+    assert call.args[0].name == "staged.acsm"
+    assert call.kwargs["expected_identity_id"] == "default"
+    assert call.kwargs["loan"] is not loan
+    assert call.kwargs["loan"].id == "loan-a"
+    assert call.kwargs["title"] == "Fiction"
+
+    done(result)
+    failed(RuntimeError("SECRET ADEPT"))
+    w.refresh_library.assert_not_called()
+    w._activity_result.assert_not_called()
+    w.show_error.assert_not_called()
+    w.show_attention.assert_not_called()
+
+
+def test_deferred_acsm_workers_have_no_gtk_selection_or_token_reads():
+    """Both physically queued jobs pass only the frozen Core arguments."""
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / (
+        "src/cifereca/gui/explicit_loan_acsm_controller.py"
+    )
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    work_nodes = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "work"
+    ]
+    assert len(work_nodes) == 2
+    for work in work_nodes:
+        names = {node.id for node in ast.walk(work)
+                 if isinstance(node, ast.Name)}
+        attrs = {node.attr for node in ast.walk(work)
+                 if isinstance(node, ast.Attribute)}
+        assert "current" not in names
+        assert "window" not in names
+        assert "current_identity" not in attrs
+        assert "_identity_context_generation" not in attrs
+        assert "_account_context_generation" not in attrs
