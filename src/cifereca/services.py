@@ -544,6 +544,7 @@ class LibraryService:
     def execute_normal_lender_borrow_for_current_identity(
         self, *, captured_candidate, exact_notice: SearchResult,
         expected_requesting_identity_id: str,
+        expected_requesting_identity: object,
         expected_context_epoch: int, expected_source_epoch: int,
         confirmed: bool = False,
     ) -> dict[str, object]:
@@ -573,6 +574,9 @@ class LibraryService:
             try:
                 return (
                     requester == expected_requesting_identity_id
+                    and self.current_identity is expected_requesting_identity
+                    and getattr(expected_requesting_identity, "identity_id", None)
+                        == expected_requesting_identity_id
                     and read_scope() is True
                     and self._account_context_epoch == expected_context_epoch
                     and self._source_context_epoch == expected_source_epoch
