@@ -91,3 +91,49 @@ def test_service_projection_preserves_exact_receipt_and_public_sanitizer():
     assert calls == [key]
     assert public["status"] == "still_active"
     assert public["verification"] == "still_present"
+
+
+@pytest.mark.parametrize(("initial", "field", "replacement"), [
+    ({}, "source_provider", "PARIS"),
+    ({"source_account_id": ""}, "source_account_id", "primary"),
+    ({}, "source_account_id", "borrower-b"),
+    ({}, "source_account_id", None),
+    ({}, "source_credential", "credential-b"),
+    ({}, "id", "loan-b"),
+    ({}, "source_provider", Exploding()),
+    ({}, "id", Exploding()),
+])
+def test_service_drops_stale_receipt_after_storage_changes_exact_source(
+    initial, field, replacement,
+):
+    candidate = loan(**initial)
+    original_key = read_only_return_receipt_key(candidate)
+    calls = []
+    service = LibraryService.__new__(LibraryService)
+
+    def lookup(key):
+        calls.append(key)
+        setattr(candidate, field, replacement)
+        return {"status": "still_active", "verification": "still_present"}
+
+    service.storage = NS(loan_return_state=lookup)
+    assert service.loan_return_state(candidate) is None
+    assert calls == [original_key]
+
+
+def test_source_lease_rejects_same_historical_hash_with_different_borrower():
+    from cifereca.core.loan_return_guard import (
+        read_only_return_receipt_lease, return_receipt_lease_intact,
+    )
+    candidate = loan(source_account_id="")
+    lease = read_only_return_receipt_lease(candidate)
+    assert lease is not None
+    assert return_receipt_lease_intact(candidate, lease)
+    candidate.source_account_id = "primary"
+    assert read_only_return_receipt_key(candidate) == lease.key
+    assert not return_receipt_lease_intact(candidate, lease)
+
+    candidate.source_account_id = ""
+    candidate.source_provider = "PARIS"
+    assert read_only_return_receipt_key(candidate) == lease.key
+    assert not return_receipt_lease_intact(candidate, lease)

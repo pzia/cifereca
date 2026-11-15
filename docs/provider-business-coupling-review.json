@@ -1790,6 +1790,17 @@
       "pr": "#6154"
     },
     {
+      "id": "guard-return-receipt-native-source-lease-after-storage",
+      "journey": "Read-only historical provider-return checkpoint for the exact loan borrower while storage may invoke external callbacks",
+      "classification": "legitimate_readonly_compat",
+      "effect": "Ephemeral native-string provider/credential/borrower/loan snapshot before storage read; reject changes immediately before and after read, including provider casefold equivalence and frozen empty-vs-primary receipt-key aliases. No stale projection, no writes, no provider I/O, no added return permission.",
+      "remaining_debt": "The existing v1 return receipt key and read-only compatibility remain. This is a safety guard, not a retired Core AST decision, ADEPT authorization or historical migration writer.",
+      "tests": [
+        "tests/test_core_p0_5975_return_receipt_readonly_scope.py"
+      ],
+      "pr": "#6213"
+    },
+    {
       "id": "guard-history-manual-get-exact-source-lease",
       "journey": "Manual borrower history provider GET admitted through CoreUI or headless LibraryService",
       "classification": "safety_guard_pending_contract",
