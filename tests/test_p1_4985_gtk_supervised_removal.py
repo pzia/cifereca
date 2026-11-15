@@ -450,3 +450,26 @@ def test_worker_checks_original_selection_before_usb_scan(rig):
     assert rig.backend.previews == []
     assert rig.backend.execution == []
     assert rig.dialogs == []
+
+
+def test_unroot_before_worker_discovery_prevents_even_usb_preview(rig):
+    click(rig)
+    assert len(rig.host.runner.jobs) == 1
+    rig.button.callbacks["unroot"](rig.button)
+    rig.host.runner.advance()
+    assert rig.backend.previews == []
+    assert rig.backend.copy_calls == []
+    assert rig.backend.execution == []
+    assert rig.dialogs == []
+
+
+def test_old_unroot_cannot_revoke_new_selected_control(rig):
+    first = rig.button
+    click(rig)
+    # Simulate a replacement detail with a distinct new active control.
+    second = object()
+    nonce = object()
+    rig.host._reader_usb_execute_control = second
+    rig.host._reader_usb_execute_nonce = nonce
+    first.callbacks["unroot"](first)
+    assert rig.host._reader_usb_execute_nonce is nonce
