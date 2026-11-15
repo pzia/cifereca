@@ -408,3 +408,84 @@ def test_bad_chooser_path_does_not_queue_import(path):
     chooser.respond(Gtk.ResponseType.ACCEPT)
     assert chooser.destroyed == 1
     assert submitted == []
+
+
+
+def test_replaced_core_service_before_chooser_accept_is_not_import_authority():
+    host, Gtk, events, created, submitted, identities = _setup()
+    choose_acsm(host, Gtk=Gtk)
+    chooser = created[-1]
+    chooser.path = "/tmp/private.acsm"
+    first = host.service
+    # Even an identical identity ID and unchanged GTK generations cannot
+    # turn a new Core instance into the old dialog's admitted source.
+    host.service = NS(
+        current_identity=identities["alice"],
+        import_acsm=lambda *_a, **_k: events.append(("wrong-service",)),
+    )
+    chooser.respond(Gtk.ResponseType.ACCEPT)
+    assert first is not host.service
+    assert chooser.destroyed == 1
+    assert host._acsm_chooser is None
+    assert submitted == []
+    assert events == []
+
+
+def test_accepted_chooser_pins_original_core_importer_on_service_replacement():
+    host, Gtk, events, created, submitted, identities = _setup()
+    _submit(host, Gtk, created)
+    assert len(submitted) == 1
+    work, done = submitted[0][0][1:3]
+    initial = host.service
+    host.service = NS(
+        current_identity=identities["alice"],
+        import_acsm=lambda *_a, **_k: events.append(("wrong-service",)),
+    )
+    assert work() == {"status": "complete"}
+    assert events == [("import", Path("/tmp/explicit.acsm"), "alice")]
+    done({"status": "complete"})
+    done({"status": "attention_required", "code": "adept_profile_required"})
+    assert initial is not host.service
+    assert events == [("import", Path("/tmp/explicit.acsm"), "alice")]
+
+
+def test_accepted_chooser_pins_original_importer_even_if_method_reassigned():
+    host, Gtk, events, created, submitted, identities = _setup()
+    _submit(host, Gtk, created)
+    work = submitted[0][0][1]
+    host.service.import_acsm = lambda *_a, **_k: events.append(("retargeted",))
+    assert work() == {"status": "complete"}
+    assert events == [("import", Path("/tmp/explicit.acsm"), "alice")]
+
+
+@pytest.mark.parametrize("moment", ["chooser", "completion"])
+def test_rebuilt_identity_object_with_same_id_cannot_reuse_gtk_result(moment):
+    host, Gtk, events, created, submitted, identities = _setup()
+    if moment == "chooser":
+        choose_acsm(host, Gtk=Gtk)
+        chooser = created[-1]
+        chooser.path = "/tmp/explicit.acsm"
+        host.service.current_identity = NS(identity_id="alice", label="Alice")
+        chooser.respond(Gtk.ResponseType.ACCEPT)
+        assert submitted == []
+        assert events == []
+        assert chooser.destroyed == 1
+    else:
+        _submit(host, Gtk, created)
+        host.service.current_identity = NS(identity_id="alice", label="Alice")
+        work, done = submitted[0][0][1:3]
+        assert work() == {"status": "complete"}
+        done({"status": "complete"})
+        assert events == [("import", Path("/tmp/explicit.acsm"), "alice")]
+
+
+def test_manual_acsm_worker_never_reads_window_service_at_execution():
+    owner = ast.parse(OWNER.read_text(encoding="utf-8"))
+    controller = next(
+        node for node in owner.body
+        if isinstance(node, ast.FunctionDef) and node.name == "choose_acsm"
+    )
+    source = ast.unparse(controller)
+    assert "lambda: window.service.import_acsm" not in source
+    assert "importer = service.import_acsm" in source
+    assert "getattr(window, 'service', None) is service" in source
