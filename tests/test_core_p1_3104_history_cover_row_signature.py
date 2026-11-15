@@ -38,7 +38,8 @@ def build_row():
                and n.name == "MainWindow")
     func = next(n for n in cls.body if isinstance(n, ast.FunctionDef)
                 and n.name == "_history_book_row")
-    env = {"BookListItem": Row, "fr_date": lambda value: value or "—"}
+    env = {"BookListItem": Row, "HistoryItem": object,
+           "fr_date": lambda value: value or "—"}
     exec(compile(ast.fix_missing_locations(ast.Module(body=[func], type_ignores=[])),
                  str(MAIN), "exec"), env)
     return env["_history_book_row"]
