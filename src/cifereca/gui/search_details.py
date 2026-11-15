@@ -136,11 +136,30 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
     selected_id = item.id
     context = self._search_detail_request_context()
+    # The four-field selection lease predates Core's independent account
+    # and source epochs. A disconnect/rebind can replace the credential
+    # session *without changing the selected book ID or GTK generation*.
+    # Gate worker entry AND delivery under that same exact active session
+    # activation; old callbacks must not republish a foreign thumbnail.
+    source_epochs = (
+        getattr(self.service, "_account_context_epoch", None),
+        getattr(self.service, "_source_context_epoch", None),
+    )
+
+    def epochs_current() -> bool:
+        return (not getattr(self, "_closed", False) and source_epochs == (
+            getattr(self.service, "_account_context_epoch", None),
+            getattr(self.service, "_source_context_epoch", None),
+        ))
+
     self.runner.submit(
         "Chargement des disponibilités…",
-        lambda: self.service.holdings(item, self._last_search_query, force=False),
-        lambda detail: self._apply_search_detail(selected_id, item, detail, context=context),
-        lambda exc: self._search_detail_error(selected_id, item, exc, context=context),
+        lambda: self.service.holdings(item, self._last_search_query, force=False)
+        if epochs_current() else None,
+        lambda detail: self._apply_search_detail(selected_id, item, detail, context=context)
+        if epochs_current() else None,
+        lambda exc: self._search_detail_error(selected_id, item, exc, context=context)
+        if epochs_current() else None,
         priority=TaskPriority.METADATA, kind="holdings",
         # Selection-triggered metadata is passive; callback failures are diagnostic.
         origin="automatic",
@@ -341,7 +360,22 @@ def _load_known_detail(self: SearchDetailHost, item):
     self._search_detail_request_generation += 1
     selected = self._selected_search_id
     context = self._search_detail_request_context()
-    self.runner.submit("Disponibilités…", lambda: self.service.holdings(item, self._last_search_query, force=False),
-        lambda detail: self._apply_search_detail(selected, item, detail, context=context),
-        priority=TaskPriority.USER_ACTION, kind="holdings",
-        origin="user")
+    source_epochs = (
+        getattr(self.service, "_account_context_epoch", None),
+        getattr(self.service, "_source_context_epoch", None),
+    )
+
+    def epochs_current() -> bool:
+        return (not getattr(self, "_closed", False) and source_epochs == (
+            getattr(self.service, "_account_context_epoch", None),
+            getattr(self.service, "_source_context_epoch", None),
+        ))
+
+    self.runner.submit(
+        "Disponibilités…",
+        lambda: self.service.holdings(item, self._last_search_query, force=False)
+        if epochs_current() else None,
+        lambda detail: self._apply_search_detail(selected, item, detail, context=context)
+        if epochs_current() else None,
+        priority=TaskPriority.USER_ACTION, kind="holdings", origin="user",
+    )

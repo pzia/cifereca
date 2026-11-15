@@ -61,6 +61,10 @@ def test_live_known_detail_still_queues_one_explicit_holdings_request():
         _selected_search_id="book",
         _search_detail_request_context=lambda: (3, 1, 9, "camille"),
         _last_search_query="Loup",
+        service=NS(
+            _account_context_epoch=3, _source_context_epoch=9,
+            holdings=lambda *_args, **_kwargs: None,
+        ),
         runner=NS(submit=lambda *args, **kwargs: calls.append((args, kwargs))),
     )
     _method("_load_known_detail")(host, NS(id="book"))
