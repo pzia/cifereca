@@ -20,6 +20,10 @@ class ReaderUsbExecutionBroker(Protocol):
     Untrusted plugins are denied via the broker's for_plugin guard.
     """
 
+    def completed_copy_operation(
+        self, *, identity_id: str, device_id: str, artifact_id: str,
+    ) -> str | None: ...
+
     def preview(
         self, *, identity_id: str, device_id: str, mountpoint: Path,
     ) -> Any: ...
