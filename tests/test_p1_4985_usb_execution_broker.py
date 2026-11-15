@@ -111,6 +111,7 @@ def test_confirmed_remove_delegates_exact_book_to_locked_core(rig, monkeypatch):
     assert result == UsbSyncResult("completed", removed=1, observed=True)
     assert len(captured) == 1
     assert captured[0]["confirmations"] == {consent.artifact_id: consent}
+    assert captured[0]["artifact_id"] == consent.artifact_id
     assert captured[0]["rights"] == {}
     assert captured[0]["policy_verifier"] is None
     assert captured[0]["registry_generation"] == 4
