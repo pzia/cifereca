@@ -3937,10 +3937,15 @@ class LibraryService:
                     _, borrower_code = self._paris_adept_identity_for_loan(
                         loan, connection_identity_id=identity.identity_id,
                     )
-                    if borrower_code:
+                    # Only None attests successful borrower admission.
+                    # A falsey/malformed external refusal must never bypass
+                    # the veto or enter the public receipt unfiltered.
+                    if borrower_code is not None:
                         return {
                             "status": "attention_required", "loan_id": loan.id,
-                            "code": borrower_code, "retry": "explicit_only",
+                            "code": adept_borrower.public_borrower_refusal_code(
+                                borrower_code
+                            ), "retry": "explicit_only",
                         }
                     if self._cross_identity_loan_conflict(
                         self.storage.acquisitions(provider_id=loan.source_provider),
