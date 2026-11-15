@@ -60,11 +60,34 @@ def _directory_chain_unchanged(
         os.close(current)
 
 
-def _selected_root_unchanged(root: Path, root_fd: int, flags: int) -> bool:
-    """Check the selected path still names the pinned directory, not its replacement."""
+def _open_selected_root(root: Path, flags: int) -> int:
+    """Open every absolute root component without following an ancestor link.
+
+    O_NOFOLLOW on the final path alone leaves /mount/alias/Books vulnerable
+    to an alias being swapped in while a device is being observed.
+    """
+    components = root.parts
+    if not components or components[0] != "/" or any(
+        part in (".", "..") for part in components[1:]
+    ):
+        raise ValueError("usb_observation_root_invalid")
+    current = os.open("/", flags)
     try:
-        reopened = os.open(root, flags)
-    except OSError:
+        for component in components[1:]:
+            next_fd = os.open(component, flags, dir_fd=current)
+            os.close(current)
+            current = next_fd
+        return current
+    except BaseException:
+        os.close(current)
+        raise
+
+
+def _selected_root_unchanged(root: Path, root_fd: int, flags: int) -> bool:
+    """Reopen the full selected root chain and compare its pinned inode."""
+    try:
+        reopened = _open_selected_root(root, flags)
+    except (OSError, ValueError):
         return False
     try:
         original = os.fstat(root_fd)
@@ -90,8 +113,8 @@ def observe_usb_files(root: Path, relative_paths: tuple[str, ...]) -> tuple[UsbF
         raise ValueError("usb_observation_paths_collide")
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     try:
-        root_fd = os.open(root, flags)
-    except OSError:
+        root_fd = _open_selected_root(root, flags)
+    except (OSError, ValueError):
         return tuple(UsbFileObservation(path, "unverified") for path, _ in selected)
     try:
         result = []
