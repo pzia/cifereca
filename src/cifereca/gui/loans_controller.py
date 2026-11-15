@@ -100,10 +100,12 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
         original_url.lower().startswith(("https://", "http://")) and
         candidate(original_url, tier="catalog", source="loan-provider") is not None
     )
-    if safe_source:
-        return loan
-    safe_preview = copy(loan) if original_url else loan
-    if safe_preview is not loan:
+    # Keep a validated supplier thumbnail as the safe fallback, but do not
+    # short-circuit a more authoritative, loan-scoped embedded/origin proof.
+    # A provider thumbnail is catalog-tier evidence, not proof that the
+    # corresponding local EPUB/Placement cover is absent.
+    safe_preview = loan if safe_source or not original_url else copy(loan)
+    if not safe_source and safe_preview is not loan:
         safe_preview.thumbnail_url = None
     active = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
     if active is None or loan.identity_id != active:
@@ -118,6 +120,13 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
     resolved = loan_local_cover(loan, cover_rows)
     if resolved.status != "selected" or not resolved.url:
         return safe_preview
+    # A distinct catalog cover never replaces an already validated exact
+    # supplier thumbnail. Only a verified stronger tier may supersede it.
+    # Ambiguous/stale/foreign proofs leave the source thumbnail untouched.
+    if safe_source and resolved.tier not in ("embedded", "origin"):
+        return loan
+    if safe_source and resolved.url == original_url:
+        return loan
     displayed = copy(safe_preview)
     displayed.thumbnail_url = resolved.url
     return displayed
