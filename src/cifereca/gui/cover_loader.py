@@ -264,7 +264,10 @@ class CoverLoader:
         when all profiles share cifereca's physical media store.
         """
         try:
-            fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            fd = os.open(
+                path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+            )
             with os.fdopen(fd, "rb") as fh:
                 info = os.fstat(fh.fileno())
                 if (not stat.S_ISREG(info.st_mode)
