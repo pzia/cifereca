@@ -2235,7 +2235,7 @@ class Storage:
         return out
 
     @classmethod
-    def _check_kobo_legacy_canonical_owner(
+    def _check_legacy_canonical_owner(
         cls, db: sqlite3.Connection, row: dict[str, Any],
     ) -> None:
         """Preserve W1 owner-collision veto without a canonical SQL writer.
@@ -2317,9 +2317,9 @@ class Storage:
                  str(item.get("item_id") or "")),
             ).fetchone() is not None:
                 return
-            # Without a typed source, Kobo remains archive-only while
-            # non-Kobo legacy recovery retains its existing compatibility
-            # mirror until the independent consumer cutover.
+            # Without a typed source, ALL providers may update their 0.7
+            # archive, but none may mint A/B or local-presence facts here.
+            # Historical v2->v3 migration remains independent.
             # The v0.7 checkpoint remains writable for legacy recovery,
             # but neither passive inventory nor active delivery may mirror
             # canonical A/B state. The legacy PK omits owner/account: reject
@@ -2364,8 +2364,7 @@ class Storage:
                 raise ValueError("backup_projection_owner_conflict")
             # Hand off the persisted merged row, never the partial input:
             # omitted account/identity/loan fields must not evade exact owner
-            # checks. Kobo ends at archive-only validation below; non-Kobo
-            # compatibility still writes the generic ledger separately.
+            # checks. Every W1 provider ends at archive-only validation.
             keys = ["provider_id", "credential_id", "item_id", *self._backup_keys()]
             persisted = db.execute(
                 "SELECT " + ",".join(keys) + " FROM backup_items "
@@ -2379,23 +2378,14 @@ class Storage:
             # The old backup PK omits borrower/account. A partial patch
             # must not demote the stored owner before archive collision checks.
             merged = dict(zip(keys, persisted))
-            # #3196 W1 final cutover: Kobo 0.7 backup_items is an archive,
-            # never an independent supplier entitlement or completed delivery.
-            # Preserve the raw checkpoint, exact owner collision vetoes
-            # and bounded canonical-receipt validation, but
-            # do not publish entitlements, acquisition_ledger, Artifact,
-            # Placement or local-presence facts from any Kobo backup status.
-            # This also covers legacy rows with no typed SourceReference:
-            # absence of canonical A is NOT authorization to mint it from W1.
-            if item.get("provider_id") == "kobo":
-                self._check_kobo_legacy_canonical_owner(db, merged)
-                self._mirror_backup_row(
-                    db, merged, now=now, migration=False, archive_only=True,
-                )
-                return
-            # Other providers keep their existing compatibility projection.
+            # #3196 / #5975 W1 cutover: ALL 0.7 backup_items are archives.
+            # Neither a complete status nor a SHA/path claim is provider A,
+            # verified local B, or permission to synthesize a canonical right.
+            # Preserve exact cross-owner checks and bounded canonical receipt
+            # validation, including for preexisting old Core projections.
+            self._check_legacy_canonical_owner(db, merged)
             self._mirror_backup_row(
-                db, merged, now=now, migration=False,
+                db, merged, now=now, migration=False, archive_only=True,
             )
 
     def backup_list(self, provider_id: str | None = None, credential_id: str | None = None) -> list[dict[str, Any]]:
