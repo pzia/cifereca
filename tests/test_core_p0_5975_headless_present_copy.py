@@ -154,7 +154,7 @@ def test_headless_copy_does_not_treat_navigation_epoch_as_authority(monkeypatch)
                             "placement_id": "target",
                         })
     result = worker.send_present_placement_copy(
-        host, **_kwargs(host, lambda: True),
+        host, **_kwargs(host, lambda: True), admitted_scope=True,
     )
     assert result["status"] == "complete"
     assert result["copy"] == "created"
@@ -167,6 +167,7 @@ def test_admitted_facade_never_resolves_mutable_selected_identity(monkeypatch):
     def capture(_service, **kwargs):
         observed.append(kwargs)
         assert kwargs["requester_identity"] is host.requester
+        assert kwargs["admitted_scope"] is True
         assert kwargs["scope_current"]() is True
         host._account_context_epoch += 2  # Ordinary UI navigation.
         assert kwargs["scope_current"]() is True
@@ -232,5 +233,28 @@ def test_admitted_facade_is_revoked_by_sender_identity_deletion(monkeypatch):
         requesting_identity_id="bob", expected_account_context_epoch=7,
         expected_source_context_epoch=9, confirmed=True,
         admitted_requester_identity=host.requester,
+    )
+    assert outcome["status"] == "blocked"
+
+
+
+def test_legacy_core_direct_call_retains_independent_epoch_fence(monkeypatch):
+    host = Headless()
+    host._account_context_epoch = 27
+    monkeypatch.setattr(worker, "InterProcessLock", lambda _path: pytest.fail("no lock"))
+    monkeypatch.setattr(worker, "acquisition_lock_file", lambda: pytest.fail("no path"))
+    outcome = worker.send_present_placement_copy(
+        host, **_kwargs(host, lambda: True),
+    )
+    assert outcome["status"] == "blocked"
+    assert outcome["reason_code"] == "local_send_context_revoked"
+
+
+@pytest.mark.parametrize("scope_flag", [None, "yes", 1])
+def test_core_direct_call_refuses_unnative_admission_flag(scope_flag, monkeypatch):
+    host = Headless()
+    monkeypatch.setattr(worker, "InterProcessLock", lambda _path: pytest.fail("no lock"))
+    outcome = worker.send_present_placement_copy(
+        host, **_kwargs(host, lambda: True), admitted_scope=scope_flag,
     )
     assert outcome["status"] == "blocked"
