@@ -285,3 +285,31 @@ def test_p1_4664_reconnected_source_only_allows_a_newly_rendered_owned_button():
     window.service._source_context_epoch = 8
     fresh.click()
     assert len(submissions) == 1 and calls == [target]
+
+
+def test_queued_owned_download_does_not_switch_to_another_core_with_same_identity():
+    window, actions, calls, submissions, target = setup_action()
+    actions[0].click()
+    assert len(submissions) == 1
+    wrong = []
+    window.service = NS(
+        current_identity=NS(identity_id="alice"),
+        _source_context_epoch=0,
+        obtain_owned_library_item=lambda t: wrong.append(t),
+    )
+    work = submissions[0][0][1]
+    with pytest.raises(RuntimeError, match="contexte"):
+        work()
+    assert calls == [] and wrong == []
+
+
+def test_old_owned_button_is_not_rebound_to_replacement_core_before_click():
+    window, actions, calls, submissions, _target = setup_action()
+    wrong = []
+    window.service = NS(
+        current_identity=NS(identity_id="alice"),
+        _source_context_epoch=0,
+        obtain_owned_library_item=lambda t: wrong.append(t),
+    )
+    actions[0].click()
+    assert submissions == [] and calls == [] and wrong == []
