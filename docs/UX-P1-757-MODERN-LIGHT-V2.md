@@ -123,6 +123,21 @@ L'agent UX doit inspecter les PNG originaux en pleine résolution : la création
 de planches n'est **pas** une validation visuelle, WCAG ou un droit de fusion.
 Aucune capture réelle ni donnée de compte ne doit être publiée dans les CI.
 
+### Règle d'intégrité des images revues (15/11/2026)
+
+La grille et son manifeste privé sont liés **aux octets des 36 PNG originaux**,
+en plus du SHA du commit. Un nouveau lancement GTK sur le même commit peut
+reproduire les mêmes étapes avec des pixels différents : l'ancienne grille
+remplie **ne peut pas** valider les nouvelles captures. La régénération des
+planches et la vérification du verdict refusent alors l'opération, sans
+écraser les notes de l'inspection précédente. Archiver séparément l'ancienne
+revue dans l'espace privé, puis créer une grille neuve pour ces nouveaux PNG ;
+ne rien téléverser vers les artefacts CI publics.
+
+La valeur `capture_fingerprint_sha256` ne certifie pas l'accessibilité ni
+l'absence d'écarts visuels. Elle lie uniquement les observations humaines à
+la collection exacte des PNG vérifiés.
+
 ### Verdict de la grille privée (P1 #757)
 
 Le script **ne remplit pas** les observations UX à la place du reviewer.
