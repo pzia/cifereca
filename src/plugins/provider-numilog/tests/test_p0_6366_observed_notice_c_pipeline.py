@@ -280,13 +280,26 @@ def test_observed_supplier_c_to_real_n2_n3_metrics_and_single_image_get(
         assert image_gets == ["GET"]  # warm image, no GET on list
         n3_before = loader.stats()
         assert n3_before["cache_hit_valid"] >= 1
-        assert n3_before["preview_created"] >= 1
+        # Plugin-only CI may lack GdkPixbuf, which is required to create a
+        # preview. The real CoverLoader must then return the validated source
+        # image rather than attempt a second supplier GET. On GTK hosts with
+        # the decoder, the generated preview is reused on the next list bind.
+        created = n3_before["preview_created"]
+        fallback = n3_before["preview_fallback"]
+        assert created + fallback >= 1
+        if created:
+            assert rendered_list[0].parent == loader.preview_root
+        else:
+            assert rendered_list[0] == rendered_detail[0]
 
         again = Event()
         cached = covers.get_cover(doc, "list", lambda _: again.set())
         assert cached.source_uri == row.thumbnail_url and again.wait(10)
         assert image_gets == ["GET"]
-        assert loader.stats()["preview_hit"] >= 1
+        if created:
+            assert loader.stats()["preview_hit"] >= 1
+        else:
+            assert loader.stats()["preview_fallback"] >= fallback
 
         # Bob views the same anonymous source on the same desktop. Neither
         # GET nor N2 admission needs repeating; source/edition stays stable.
