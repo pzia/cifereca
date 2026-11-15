@@ -122,6 +122,10 @@ def _library_loan_covers_updated(self, entries: list[dict[str, Any]]) -> None:
     self._loan_cover_decision_revision = (
         getattr(self, "_loan_cover_decision_revision", 0) + 1
     )
+    # This revision was produced by a later, identity/epoch-scoped Library
+    # cover snapshot. Unlike a loan inventory refresh it may change ONLY
+    # image presentation; retain the bound GTK list row if that is all.
+    self._loan_cover_in_place_revision = self._loan_cover_decision_revision
     self._render_loans()
 
 
@@ -204,6 +208,11 @@ def _render_loans(self) -> None:
         for key, button in self.loan_filter_buttons.items():
             label = LOAN_FILTER_LABELS.get(key, key)
             button.set_label(f"{label} · {counts.get(key, 0)}")
+    scope_context = (
+        identity_id,
+        getattr(self.service, "_account_context_epoch", None),
+        getattr(self.service, "_source_context_epoch", None),
+    )
     ranked_rows: list[tuple[tuple[int, int], BookListItem]] = []
     wanted_languages = set(self.loan_languages.values()) if hasattr(self, 'loan_languages') else set()
     display_loans = []
@@ -238,9 +247,10 @@ def _render_loans(self) -> None:
         # stay identical. A new exact local cover for the same loan must
         # invalidate that presentation (and repaint the mapped Gtk.ListView),
         # without changing the loan SourceKey or mutating its original rights.
+        item._loan_cover_context = scope_context
         item._public_row_content = (
             "loan", source_key, loan.title, subtitle, meta, due.label,
-            display.thumbnail_url, due.style,
+            display.thumbnail_url, due.style, scope_context,
         )
         ranked_rows.append((due.sort_key, item))
     ranked_rows.sort(key=lambda item: item[0])
@@ -257,7 +267,38 @@ def _render_loans(self) -> None:
         )
     objects={key:{"source_provider":loan.source_provider,"media_format":loan.media_format,"author":loan.author,"metadata":(dict((loan.raw or {}).get('_cifereca') or {}) if isinstance((loan.raw or {}).get('_cifereca'),dict) else dict(loan.raw or {}))} for key,loan in self.loan_objects.items()}
     self._attach_row_facets(rows,objects,self.search_controls)
+    changed_cover_keys = None
+    revision = getattr(self, "_loan_cover_decision_revision", None)
+    if (type(revision) is int and revision > 0
+            and getattr(self, "_loan_cover_in_place_revision", None) == revision):
+        from cifereca.gui.loan_cover_repaint import repaint_exact_loan_cover_rows
+        changed_cover_keys = repaint_exact_loan_cover_rows(
+            self.loan_page, rows, context=scope_context,
+        )
+    self._loan_cover_in_place_revision = None
+    # All visible fields and exact context unchanged: MasterDetailPage's
+    # append-fast path now keeps the selected Gtk.ListView cells. Otherwise
+    # its existing full replacement still handles sorting/filter changes.
     self.loan_page.show_rows(rows, total_count=len(rows))
+    if changed_cover_keys:
+        selected = getattr(getattr(self.loan_page, "selection", None),
+                           "get_selected_item", None)
+        selected_row = selected() if callable(selected) else None
+        selected_key = getattr(selected_row, "key", None)
+        current = getattr(self, "_displayed_loan", None)
+        fresh = getattr(self, "loan_objects", {}).get(selected_key)
+        if (selected_key in changed_cover_keys
+                and type(current) is Loan and type(fresh) is Loan
+                and current.identity_id == identity_id
+                and fresh.identity_id == identity_id
+                and loan_source_key(current) == selected_key
+                and loan_source_key(fresh) == selected_key
+                and getattr(self.service, "_account_context_epoch", None)
+                    == scope_context[1]):
+            # The list signal cannot update an already-open DetailPanel.
+            # Refresh its presentation from the SAME cached N1/N2 decision:
+            # no provider I/O, no action or selected-row mutation.
+            self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
 
 
 def _loan_selected(self, row: BookListItem | None) -> None:

@@ -2374,13 +2374,15 @@ class LibraryService:
 
     def loan_return_state(self, loan: Loan) -> dict[str, Any] | None:
         """Persistent status for UI; no verification or provider side effect."""
-        from .core.loan_return_guard import return_key, public_return_state
-        if not loan.id or loan.source_account_id is None:
-            return None
-        key = return_key(
-            loan.source_provider, loan.source_credential,
-            str(loan.source_account_id or "primary"), str(loan.id),
+        from .core.loan_return_guard import (
+            public_return_state, read_only_return_receipt_key,
         )
+        # Historical checkpoints are private read models, not proof of
+        # borrower authorization. Never coerce a plugin-owned field to str,
+        # nor use a missing borrower to address another account's receipt.
+        key = read_only_return_receipt_key(loan)
+        if key is None:
+            return None
         row = self.storage.loan_return_state(key)
         return public_return_state(row) if row is not None else None
 
@@ -3743,7 +3745,16 @@ class LibraryService:
             candidates.append(row)
 
         if not candidates:
-            return {"status": borrower_code or "no_acquisition", "return_available": False}
+            # Only the native None means no borrower refusal. A falsey,
+            # malformed or private callback code must not be interpreted as
+            # approval, or escape into the public status of a historical loan.
+            return {
+                "status": (
+                    adept_borrower.public_borrower_refusal_code(borrower_code)
+                    if borrower_code is not None else "no_acquisition"
+                ),
+                "return_available": False,
+            }
         if len(candidates) != 1:
             return {"status": "adept_return_acquisition_ambiguous", "return_available": False}
 
@@ -3754,8 +3765,11 @@ class LibraryService:
         if type(binding) is not dict:
             binding = {}
         origin_attested = inventory_attests_return_origin(binding)
-        if borrower_code and not origin_attested:
-            return {"status": borrower_code, "return_available": False}
+        if borrower_code is not None and not origin_attested:
+            return {
+                "status": adept_borrower.public_borrower_refusal_code(borrower_code),
+                "return_available": False,
+            }
         # Grants/current identity profile govern NEW fulfillment. Historical
         # inventory attestation preserves a completed license's own origin.
         # Exact Paris provenance and cross-identity/duplicate guards above stay.
