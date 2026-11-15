@@ -56,9 +56,11 @@ def check(
     # validation. Check the original transaction again before profile lookup.
     if borrower_code is None and not source_intact():
         borrower_code = "adept_borrower_ambiguous"
-    # Only None means proven: a falsey malformed code must not select ADEPT.
-    if borrower_code is not None:
-        code = public_borrower_refusal_code(borrower_code)
+    # Keep a single durable attention writer for every borrower-scope veto.
+    # Profile resolution and inventory are external callbacks too: they must
+    # not return a profile for a different staged loan after the first grant.
+    def borrower_refusal(raw_code: Any) -> dict[str, Any]:
+        code = public_borrower_refusal_code(raw_code)
         self.storage.acquisition_put(
             attention_receipt(
                 ledger_base=ledger_base, previous_meta=previous_meta,
@@ -73,9 +75,26 @@ def check(
             "status": "attention_required", "loan_id": expected_loan_id,
             "code": code, "retry": "explicit_only",
         }
+
+    # Only literal None means approved. A profile resolver must never receive
+    # an absent/foreign borrower identity even when the guard code was None.
+    if borrower_code is not None:
+        return borrower_refusal(borrower_code)
+    if (type(adept_borrower_identity_id) is not str
+            or not adept_borrower_identity_id
+            or not source_intact()):
+        return borrower_refusal("adept_borrower_ambiguous")
     try:
         profile_name, profile_source = self.resolve_adept_profile_for_identity(adept_borrower_identity_id)
+        if not source_intact():
+            return borrower_refusal("adept_borrower_ambiguous")
+        if type(profile_name) is not str or not profile_name:
+            raise AdeptProfileResolutionError(
+                "Profil ADEPT indisponible", code="adept_profile_required",
+            )
     except AdeptProfileResolutionError as exc:
+        if not source_intact():
+            return borrower_refusal("adept_borrower_ambiguous")
         # Profile-resolution exceptions may be provided by runtime extensions.
         # Their message and even their code are untrusted: neither belongs in
         # the durable acquisition ledger or the public loan receipt.
@@ -117,9 +136,18 @@ def check(
         )
     except Exception:
         profile_rows = []
+    if not source_intact():
+        return borrower_refusal("adept_borrower_ambiguous")
     profile_row = self._adept_profile_row(profile_name, profile_rows)
+    if not source_intact():
+        return borrower_refusal("adept_borrower_ambiguous")
     if profile_row:
-        if adept_acsm_plan.profile_is_explicitly_acsm_unready(profile_row):
+        explicitly_unready = adept_acsm_plan.profile_is_explicitly_acsm_unready(
+            profile_row,
+        )
+        if not source_intact():
+            return borrower_refusal("adept_borrower_ambiguous")
+        if explicitly_unready:
             code = "adept_profile_acsm_not_ready"
             message = "Le profil ADEPT lié à cette identité n'est pas prêt pour les acquisitions ACSM"
             self.storage.acquisition_put(
@@ -135,4 +163,8 @@ def check(
                 trace_ref,
             )
             return {"status": "attention_required", "loan_id": expected_loan_id, "code": code, "error": message}
+    # A final fast recheck excludes mutations by the readiness hook. Never
+    # hand an ADEPT profile to the fulfillment stage for a shifted loan.
+    if not source_intact():
+        return borrower_refusal("adept_borrower_ambiguous")
     return adept_borrower_identity_id, profile_name
