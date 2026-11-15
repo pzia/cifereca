@@ -1,0 +1,181 @@
+"""#4988: passive discovery of *possible* lenders for the ordinary borrow flow.
+
+This module is not the dual-positive-evidence preview of #4662. It may show
+a locally configured lender, but it never claims the supplier will accept the
+loan or that copying to the requester is permitted. No provider call occurs.
+The future explicit-click executor must rebind the exact source and claim.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from ..models import Account, SearchResult
+from ..plugin_api.lending_capabilities import assess_lending_operation
+from .borrow_action_scope import borrow_claim_key
+from .borrow_for_identity_live import _lender_label
+from .loan_action_scope import _inert_session_accounts, _inert_session_state
+
+
+@dataclass(frozen=True, slots=True)
+class PossibleBorrowLender:
+    """Inert local account candidate, never an upstream offer or permission."""
+
+    label: str
+    lender_identity_id: str = field(repr=False)
+    _account: Account = field(repr=False, compare=False)
+    _notice: SearchResult = field(repr=False, compare=False)
+    supplier_eligibility: Literal["not_verified"] = "not_verified"
+    executable: bool = False
+
+
+def discover_possible_borrow_lenders(
+    service: Any, *, requesting_identity_id: str,
+    notices: tuple[SearchResult, ...],
+) -> tuple[PossibleBorrowLender, ...]:
+    """Enumerate 0/1/N *local* lender choices without provider IO or claims.
+
+    Each notice is one exact provider/credential/branch/record observation.
+    This deliberately does not join editions by title/ISBN or manufacture
+    BorrowerOperationEvidence. It never switches the active identity.
+    """
+    if (type(requesting_identity_id) is not str
+            or not requesting_identity_id
+            or type(notices) is not tuple or len(notices) > 64
+            or any(type(item) is not SearchResult for item in notices)):
+        return ()
+    try:
+        selected = service.current_identity
+        if selected is None or selected.identity_id != requesting_identity_id:
+            return ()
+        context_epoch = service._account_context_epoch
+        source_epoch = service._source_context_epoch
+        if (type(context_epoch) is not int or context_epoch < 0
+                or type(source_epoch) is not int or source_epoch < 0):
+            return ()
+        accounts = service.accounts
+        if type(accounts) not in (list, tuple) or len(accounts) > 512:
+            return ()
+    except Exception:
+        return ()
+
+    result: list[PossibleBorrowLender] = []
+    seen: set[tuple[str, ...]] = set()
+    for item in notices:
+        try:
+            if (item.medium != "digital"
+                    or type(item.source_provider) is not str
+                    or not item.source_provider
+                    or type(item.source_credential) is not str
+                    or not item.source_credential
+                    or type(item.docbase) is not str or not item.docbase
+                    or type(item.record_id) is not str or not item.record_id):
+                continue
+            provider, credential = item.source_provider, item.source_credential
+            matching = [
+                a for a in accounts
+                if (type(a) is Account and a.is_primary is True
+                    and a.identity_id != requesting_identity_id
+                    and a.provider_id == provider
+                    and a.credential_id == credential)
+            ]
+            if len(matching) != 1:
+                continue
+            account = matching[0]
+            route = (
+                account.identity_id, provider, credential, account.unique_id,
+                item.docbase, item.record_id, item.source_collection or "",
+            )
+            if route in seen or borrow_claim_key(account, item) is None:
+                continue
+            if service.identity_by_id(account.identity_id) is None:
+                continue
+            if service.storage.identity_for_connection(
+                    provider, credential) != account.identity_id:
+                continue
+            connections = service.storage.provider_connections(
+                identity_id=account.identity_id,
+            )
+            if (type(connections) is not list or len(connections) > 512
+                    or sum(
+                        type(conn) is dict
+                        and conn.get("identity_id") == account.identity_id
+                        and conn.get("provider_id") == provider
+                        and conn.get("credential_id") == credential
+                        and conn.get("enabled") is True
+                        for conn in connections
+                    ) != 1
+                    or sum(
+                        type(conn) is dict
+                        and conn.get("identity_id") == account.identity_id
+                        and conn.get("provider_id") == provider
+                        and conn.get("credential_id") == credential
+                        for conn in connections
+                    ) != 1):
+                continue
+            session = service._sessions.get(
+                service._session_key(provider, credential),
+            )
+            state = _inert_session_state(session)
+            session_accounts = _inert_session_accounts(session)
+            if (state is None or session_accounts is None
+                    or state.get("connected") is not True
+                    or state.get("_closed") is True
+                    or state.get("provider_id") != provider
+                    or state.get("credential_id") != credential
+                    or sum(a is account for a in session_accounts) != 1):
+                continue
+            manager = service._plugin_manager
+            plugin_id = service._provider_plugin_ids.get(provider)
+            if type(plugin_id) is not str or not plugin_id or manager is None:
+                continue
+            status = manager.status(plugin_id)
+            declaration = status.descriptor
+            enabled_for = getattr(manager, "enabled_for_identity", None)
+            if (status.enabled is not True or status.state != "ready"
+                    or declaration.id != plugin_id
+                    or declaration.type != "provider.library"
+                    or not callable(enabled_for)
+                    or enabled_for(plugin_id, account.identity_id) is not True):
+                continue
+            fact = assess_lending_operation(
+                "loan.borrow",
+                manifest_capabilities=declaration.capabilities,
+                descriptor=state.get("descriptor"), session=session,
+                account=account,
+            )
+            if (fact.usable is not True
+                    or service.storage.metadata_get(
+                        borrow_claim_key(account, item),
+                    ) is not None
+                    or service.storage.loan_borrow_state(
+                        borrow_claim_key(account, item),
+                    ) is not None):
+                continue
+            if (service.current_identity is not selected
+                    or service._account_context_epoch != context_epoch
+                    or service._source_context_epoch != source_epoch
+                    or service._sessions.get(
+                        service._session_key(provider, credential)) is not session):
+                return ()  # ABA/rebind invalidates the *whole* list.
+            lender = service.identity_by_id(account.identity_id)
+            label = _lender_label(getattr(lender, "label", None))
+            result.append(PossibleBorrowLender(
+                label=label, lender_identity_id=account.identity_id,
+                _account=account, _notice=item,
+            ))
+            seen.add(route)
+        except Exception:
+            # One malformed/offline provider cannot suppress unrelated lenders.
+            continue
+    try:
+        if (service.current_identity is not selected
+                or service._account_context_epoch != context_epoch
+                or service._source_context_epoch != source_epoch):
+            return ()
+    except Exception:
+        return ()
+    return tuple(result)
+
+
+__all__ = ["PossibleBorrowLender", "discover_possible_borrow_lenders"]
