@@ -1411,6 +1411,19 @@
         "tests/test_core_p0_5975_no_legacy_positive_mirror_sql.py"
       ],
       "pr": "#6154"
+    },
+    {
+      "id": "guard-history-manual-get-exact-source-lease",
+      "journey": "Manual borrower history provider GET admitted through CoreUI or headless LibraryService",
+      "classification": "safety_guard_pending_contract",
+      "effect": "New pre-GET and post-GET exact identity/provider/credential/borrower, live source-session epoch and persisted account/connection lease. A real revocation refuses the provider read or cache write; an ordinary GTK display switch cannot retarget the admitted account. The queued UI captures source epoch at submit and rejects source ABA before worker I/O.",
+      "remaining_debt": "Other Core/TaskRunner entrypoints still need independent exact source admission; the existing source-auto-consent compatibility and historical data migrations remain tracked separately under #5975. A local cached history entry is a private scoped read model, never proof of a right.",
+      "tests": [
+        "tests/test_core_p0_5851_history_live_source_lease.py",
+        "tests/test_core_account_scoped_secondary_async.py",
+        "tests/test_private_inventory_binding.py"
+      ],
+      "pr": "#6177"
     }
   ],
   "retained_legacy_migrations": [
