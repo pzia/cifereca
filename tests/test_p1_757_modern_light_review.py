@@ -184,6 +184,64 @@ def test_symlink_capture_is_rejected(tmp_path):
                               stages=("dashboard",))
 
 
+@pytest.mark.parametrize("entry", ["screen.json", "00-dashboard-light.png"])
+def test_hardlinked_external_capture_input_rejected(tmp_path, entry):
+    folder = fixture(tmp_path)
+    original = folder / entry
+    external = tmp_path / ("outside.json" if entry.endswith("json") else "outside.png")
+    original.rename(external)
+    original.hardlink_to(external)
+    assert original.stat().st_nlink == 2
+    with pytest.raises(ValueError, match="non sûr"):
+        verify_capture_folder(folder, width=64, size=(64, 40),
+                              stages=("dashboard",))
+
+
+def test_linked_manifest_cannot_substitute_private_capture_report(tmp_path):
+    folder = fixture(tmp_path)
+    report = folder / "screen.json"
+    outside = tmp_path / "outside.json"
+    report.rename(outside)
+    report.symlink_to(outside)
+    with pytest.raises(ValueError, match="non sûr"):
+        verify_capture_folder(folder, width=64, size=(64, 40),
+                              stages=("dashboard",))
+
+
+def test_linked_capture_directory_fails_closed(tmp_path):
+    folder = fixture(tmp_path)
+    linked = tmp_path / "linked-captures"
+    linked.symlink_to(folder.name, target_is_directory=True)
+    with pytest.raises(ValueError, match="lié"):
+        verify_capture_folder(linked, width=64, size=(64, 40),
+                              stages=("dashboard",))
+
+
+def test_oversized_private_capture_manifest_is_never_parsed(tmp_path):
+    folder = fixture(tmp_path)
+    report = folder / "screen.json"
+    with report.open("wb") as stream:
+        stream.truncate(4 * 1024 * 1024 + 1)
+    with pytest.raises(ValueError, match="trop volumineux"):
+        verify_capture_folder(folder, width=64, size=(64, 40),
+                              stages=("dashboard",))
+
+
+def test_unsafe_capture_cannot_reuse_prior_completed_private_verdict(tmp_path):
+    folder = fixture(tmp_path)
+    opts = {"sizes": {64: (64, 40)}, "stages": ("dashboard",)}
+    build_review(tmp_path, **opts)
+    notes = _fill_private_review(tmp_path).read_bytes()
+    image = folder / "00-dashboard-light.png"
+    external = tmp_path / "linked-original.png"
+    image.rename(external)
+    image.hardlink_to(external)
+    with pytest.raises(ValueError, match="non sûr"):
+        module.verify_completed_review(tmp_path, **opts)
+    assert (tmp_path / "modern-light-private-review" /
+            "ux-checklist.csv").read_bytes() == notes
+
+
 def test_stale_head_is_rejected_before_generating_review(tmp_path):
     fixture(tmp_path)
     with pytest.raises(ValueError, match="HEAD différent"):
