@@ -1716,15 +1716,11 @@ class Storage:
         cls, db: sqlite3.Connection, row: dict[str, Any], *, now: int | None = None,
         migration: bool = False, archive_only: bool = False,
     ) -> None:
-        timestamp = int(row.get("updated_at") or now or time.time())
         entitlement_id = cls._entitlement_id_for(row)
         entitlement_type = str(row.get("entitlement_type") or "owned")
-        # A v0.7 projection must not overwrite a newer, provider-attested
-        # canonical right (state, revision, expires_at, metadata or timestamp).
-        # Preserve the canonical row while still mirroring the historical
-        # receipt. This SELECT is inside the same SQLite write transaction
-        # held by backup_put() / the migration; another writer cannot rebind
-        # the entitlement between the scope check and the receipt handoff.
+        # A v0.7 archive must not overwrite a newer, provider-attested
+        # canonical right. Validate the exact owner in the same SQLite
+        # transaction as backup_put's raw archive UPSERT, before returning.
         existing_right = db.execute(
             "SELECT provider_id,credential_id,account_id,item_id,"
             "entitlement_type,loan_id,identity_id,metadata_json,state "
@@ -1743,13 +1739,6 @@ class Storage:
                     or (old_owner is not None and offered_owner is not None
                         and old_owner != offered_owner)):
                 raise ValueError("backup_entitlement_owner_conflict")
-            previous_metadata = cls._json_load(existing_right[7])
-            projection_owned = (
-                previous_metadata.get("compatibility_projection") == "backup_items"
-                or previous_metadata.get("imported_from") == "backup_items"
-            )
-        else:
-            projection_owned = True
         # #3196: a v0.7 replay may share an acquisition ID with an imported
         # completed Core journal, or publish a SECOND synthetic ledger row
         # while a normal canonical-intake stage already owns this source.
@@ -1772,7 +1761,6 @@ class Storage:
         ).fetchall()
         if len(checkpoints) > 1000:
             raise ValueError("backup_canonical_receipt_scope_budget")
-        completed_canonical_source = False
         for existing_id, p, credential, account, item, owner, stage_status, raw in checkpoints:
             if type(raw) is not str:
                 continue
@@ -1821,252 +1809,17 @@ class Storage:
             stored = (p, credential, account, item, owner)
             if (stored == expected and type(owner) is str and owner
                     and type(account) is str):
-                completed_canonical_source = True
-            elif existing_id == old_id:
+                continue
+            if existing_id == old_id:
                 # A reused deterministic ID must never be reassigned to
                 # another account, borrower or book, even via legacy replay.
                 raise ValueError("backup_acquisition_owner_conflict")
-        if completed_canonical_source:
-            # backup_put refreshed only the compatibility projection.
-            # No entitlement, Artifact, Placement, catalogue or acquisition
-            # journal is synthesized from old and possibly stale data.
-            return
-        if archive_only:
-            # Reuse ALL canonical-checkpoint collision, bounded JSON and
-            # status-consistency checks above before returning. An archive
-            # refresh is not fresh provider A or a new CompletedDelivery B,
-            # so the SQL publication half below is not admissible.
-            return
-        # No live W1 backup_put path reaches this publication half:
-        # archive_only=True is mandatory for EVERY provider. Only historical
-        # SQLite v2→v3 import of non-Kobo backup rows still executes this
-        # compatibility projection; that independent, versioned migration
-        # remains explicitly classified as a legacy writer in #5975.
-        if projection_owned:
-            entitlement_cursor = db.execute(
-                "INSERT INTO entitlements(entitlement_id,provider_id,credential_id,account_id,item_id,revision_id,"
-                "entitlement_type,state,loan_id,expires_at,metadata_json,discovered_at,updated_at,identity_id) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(entitlement_id) DO UPDATE SET revision_id=excluded.revision_id,"
-                "state=excluded.state,expires_at=COALESCE(excluded.expires_at,entitlements.expires_at),"
-                "metadata_json=excluded.metadata_json,"
-                "identity_id=COALESCE(excluded.identity_id,entitlements.identity_id),updated_at=excluded.updated_at "
-                "WHERE entitlements.provider_id=excluded.provider_id "
-                "AND entitlements.credential_id=excluded.credential_id "
-                "AND entitlements.account_id IS excluded.account_id "
-                "AND entitlements.item_id=excluded.item_id "
-                "AND entitlements.entitlement_type=excluded.entitlement_type "
-                "AND entitlements.loan_id IS excluded.loan_id "
-                "AND (entitlements.identity_id IS NULL OR excluded.identity_id IS NULL "
-                "OR entitlements.identity_id=excluded.identity_id)",
-                (
-                    entitlement_id, str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
-                    row.get("account_id"), str(row.get("item_id") or ""), row.get("revision_id"), entitlement_type,
-                    "active", row.get("loan_id"), row.get("expires_at"),
-                    cls._json_dump({
-                        **({"imported_from": "backup_items"} if migration else {"compatibility_projection": "backup_items"}),
-                        "title": row.get("title"), "author": row.get("author"),
-                        "media_format": str(row.get("format") or "").lower() or None,
-                        "cover_url": row.get("cover_url"),
-                    }),
-                    timestamp, timestamp, row.get("identity_id"),
-                ),
-            )
-            if entitlement_cursor.rowcount != 1:
-                raise ValueError("backup_entitlement_owner_conflict")
-        # Historical backup_items must not publish an acquisition, invent an
-        # Artifact or create a local Placement/notice for a source whose right
-        # has been independently revoked or expired. The legacy receipt itself
-        # stays persisted in backup_items for migration and inspection. This
-        # guard is inside backup_put's transaction, after the exact owner
-        # check, so an incompatible scope still fails atomically.
-        #
-        # Historical schema-v3 import may still project an old generic
-        # receipt; live W1 archive replay has already returned above.
-        if (existing_right is not None and not projection_owned
-                and (existing_right[8] != "active"
-                     or cls._generic_status(row.get("status")) in {"pending", "discovered"})):
-            # An independent ACTIVE entitlement already exists: passive
-            # 0.7 discovery (pending/queued/unknown) is not an acquisition
-            # attempt and cannot synthesize a canonical receipt or local
-            # content claim. Active attempts/completions remain compatible
-            # until the legacy delivery writer is migrated to Core v2.
-            return
-        artifact_id = None
-        sha = str(row.get("sha256") or "").strip().lower()
-        # This is an unverified v0.7 declaration. Do not manufacture an
-        # Artifact with a malformed, truncated, prefixed or nonhex digest.
-        # Retain the raw value in backup_items for audit/migration; no
-        # independent provenance or local-file validation is inferred.
-        if len(sha) != 64 or any(char not in "0123456789abcdef" for char in sha):
-            sha = ""
-        if sha:
-            artifact_id = f"sha256:{sha}"
-            try:
-                size = max(0, int(row.get("size") or 0))
-            except (TypeError, ValueError):
-                size = 0
-            # A legacy claim of a SHA/size is not a validation of its bytes.
-            # Preserve existing canonical content facts, even on same-SHA replay.
-            db.execute(
-                "INSERT INTO artifacts(artifact_id,sha256,size,media_format,mime_type,metadata_json,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO NOTHING",
-                (artifact_id, sha, size, str(row.get("format") or "unknown").lower(), None,
-                 cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp),
-            )
-        local_path = str(row.get("local_path") or "").strip()
-        placement_id = None
-        if local_path:
-            # Path.resolve() previously rejected embedded NUL. Lexical
-            # normalization must not silently admit a poisoned SQL pathname.
-            if "\x00" in local_path:
-                raise ValueError("backup_legacy_path_invalid")
-            # 0.7 has only a *claim* about this pathname, not permission to
-            # dereference it. Path.resolve() followed a symlink from A into
-            # B, storing a foreign physical pathname under A's identity and
-            # potentially blocking B's later independently verified Placement.
-            # Normalize spelling only; leave actual file/symlink attestation
-            # to the canonical scanner/publisher. No filesystem read here.
-            claimed_path = os.path.abspath(os.path.expanduser(local_path))
-            placement_id = cls._stable_id("placement", claimed_path)
-            # A physical pathname is unique across canonical placements.
-            # Only an untouched, unverified legacy placeholder may be refreshed.
-            # A canonical scan/publication (including missing/invalid history)
-            # has higher authority than this writer and must not be relabelled.
-            # Another right/identity cannot silently take it over merely
-            # because its legacy Kobo projection names the same local file.
-            placement_cursor = db.execute(
-                "INSERT INTO placements(placement_id,artifact_id,path,identity_id,provider_id,source_item_id,state,last_seen_at,"
-                "metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(path) DO UPDATE SET artifact_id=COALESCE(excluded.artifact_id,placements.artifact_id),"
-                "provider_id=COALESCE(excluded.provider_id,placements.provider_id),source_item_id=COALESCE(excluded.source_item_id,placements.source_item_id),"
-                # A passive v0.7 replay is not a physical stat/hash. Keep the
-                # original placeholder timestamp when its physical mapping
-                # (SHA claim, supplier, edition) is unchanged; a changed claim
-                # still updates the placeholder, never its verification state.
-                "updated_at=CASE WHEN "
-                "placements.artifact_id IS COALESCE(excluded.artifact_id,placements.artifact_id) "
-                "AND placements.provider_id IS COALESCE(excluded.provider_id,placements.provider_id) "
-                "AND placements.source_item_id IS COALESCE(excluded.source_item_id,placements.source_item_id) "
-                "THEN placements.updated_at ELSE excluded.updated_at END "
-                "WHERE placements.state='unverified' AND placements.metadata_json=? "
-                "AND (placements.identity_id IS NULL OR excluded.identity_id IS NULL "
-                "OR placements.identity_id=excluded.identity_id) "
-                "AND (placements.provider_id IS NULL OR excluded.provider_id IS NULL "
-                "OR placements.provider_id=excluded.provider_id) "
-                "AND (placements.source_item_id IS NULL OR excluded.source_item_id IS NULL "
-                "OR placements.source_item_id=excluded.source_item_id) "
-                # A v0.7 placeholder can coexist with a catalogue already
-                # promoted by an independent scan. Never let the old writer
-                # change its physical claim after the catalogue became
-                # authoritative, even if the placement itself stayed unverified.
-                "AND NOT EXISTS (SELECT 1 FROM catalog_entries AS catalog_guard "
-                "WHERE catalog_guard.placement_id=placements.placement_id AND ("
-                "catalog_guard.metadata_json IS NOT ? OR catalog_guard.local_state<>'local' "
-                "OR catalog_guard.identity_id IS NOT ? OR catalog_guard.provider_id IS NOT ? "
-                "OR catalog_guard.item_id IS NOT ?))",
-                (placement_id, artifact_id, claimed_path, row.get("identity_id"), row.get("provider_id"),
-                 row.get("item_id"), "unverified", None, cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp,
-                 cls._json_dump({"imported_from": "backup_items"}),
-                  cls._json_dump({"imported_from": "backup_items"}),
-                  row.get("identity_id"), row.get("provider_id"), row.get("item_id")),
-            )
-            if placement_cursor.rowcount != 1:
-                # The historical backup projection can contain multiple
-                # item references to the same pathname (including diagnoses
-                # of broken mappings). Preserve each legacy/source receipt,
-                # but never create another canonical LOCAL catalogue claim
-                # or link this item's acquisition to the incumbent artifact.
-                placement_id = None
-                artifact_id = None
-            else:
-                catalog_id = cls._stable_id("catalog", placement_id)
-                db.execute(
-                    "INSERT INTO catalog_entries(catalog_entry_id,artifact_id,placement_id,title,author,media_format,identity_id,"
-                    "provider_id,item_id,local_state,metadata_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) "
-                    "ON CONFLICT(catalog_entry_id) DO UPDATE SET artifact_id=COALESCE(excluded.artifact_id,catalog_entries.artifact_id),"
-                    "title=excluded.title,author=COALESCE(excluded.author,catalog_entries.author),media_format=COALESCE(excluded.media_format,catalog_entries.media_format),"
-                    "provider_id=COALESCE(excluded.provider_id,catalog_entries.provider_id),item_id=COALESCE(excluded.item_id,catalog_entries.item_id),"
-                    "updated_at=excluded.updated_at "
-                    # Refresh only a still-owned 0.7 descriptive placeholder.
-                    # Do not overwrite a local catalogue entry promoted by a
-                    # scan, an explicit declaration, or a different account.
-                    "WHERE catalog_entries.placement_id IS excluded.placement_id "
-                    "AND catalog_entries.metadata_json IS ? AND catalog_entries.local_state='local' "
-                    "AND catalog_entries.identity_id IS excluded.identity_id "
-                    "AND catalog_entries.provider_id IS excluded.provider_id "
-                    "AND catalog_entries.item_id IS excluded.item_id",
-                    (catalog_id, artifact_id, placement_id, str(row.get("title") or row.get("item_id") or "Sans titre"),
-                     row.get("author"), str(row.get("format") or "").lower() or None, row.get("identity_id"), row.get("provider_id"), row.get("item_id"),
-                     "local", cls._json_dump({"imported_from": "backup_items"}), timestamp, timestamp,
-                     cls._json_dump({"imported_from": "backup_items"})),
-                )
-        acquisition_id = cls._acquisition_id_for(row)
-        acquisition_cursor = db.execute(
-            "INSERT INTO acquisition_ledger(acquisition_id,entitlement_id,provider_id,credential_id,account_id,item_id,title,status,"
-            "strategy,executor,candidate_id,artifact_id,attempt_count,last_attempt_at,error_code,error_message,attention_code,"
-            "metadata_json,created_at,updated_at,identity_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(acquisition_id) DO UPDATE SET "
-            # Passive old discovery/preflight must never downgrade a completed
-            # canonical acquisition. Active attempts (acquiring/errors) remain
-            # possible so an intentional new delivery is not blocked.
-            "status=CASE WHEN acquisition_ledger.status='complete' "
-            "AND excluded.status IN ('pending','discovered') "
-            "THEN acquisition_ledger.status ELSE excluded.status END,"
-            "strategy=CASE WHEN acquisition_ledger.status='complete' "
-            "AND excluded.status IN ('pending','discovered') "
-            "THEN acquisition_ledger.strategy "
-            "ELSE COALESCE(excluded.strategy,acquisition_ledger.strategy) END,"
-            "executor=CASE WHEN acquisition_ledger.status='complete' "
-            "AND excluded.status IN ('pending','discovered') "
-            "THEN acquisition_ledger.executor "
-            "ELSE COALESCE(excluded.executor,acquisition_ledger.executor) END,"
-            "artifact_id=CASE WHEN acquisition_ledger.status='complete' "
-            "AND excluded.status IN ('pending','discovered') "
-            "THEN acquisition_ledger.artifact_id "
-            "ELSE COALESCE(excluded.artifact_id,acquisition_ledger.artifact_id) END,"
-            "attempt_count=CASE WHEN acquisition_ledger.status='complete' "
-            "AND excluded.status IN ('pending','discovered') "
-            "THEN acquisition_ledger.attempt_count "
-            "ELSE MAX(acquisition_ledger.attempt_count,excluded.attempt_count) END,"
-            "last_attempt_at=CASE WHEN acquisition_ledger.status='complete' "
-            "AND excluded.status IN ('pending','discovered') "
-            "THEN acquisition_ledger.last_attempt_at "
-            "ELSE COALESCE(excluded.last_attempt_at,acquisition_ledger.last_attempt_at) END,"
-            "error_message=CASE WHEN acquisition_ledger.status='complete' "
-            "AND excluded.status IN ('pending','discovered') "
-            "THEN acquisition_ledger.error_message ELSE excluded.error_message END,"
-            "attention_code=CASE WHEN acquisition_ledger.status='complete' "
-            "AND excluded.status IN ('pending','discovered') "
-            "THEN acquisition_ledger.attention_code ELSE excluded.attention_code END,"
-            # A passive v0.7 replay cannot assert a fresher owner or
-            # timestamp for an already completed canonical receipt. Active
-            # acquisitions keep their existing forward transitions.
-            "identity_id=CASE WHEN acquisition_ledger.status='complete' "
-            "AND excluded.status IN ('pending','discovered') "
-            "THEN acquisition_ledger.identity_id "
-            "ELSE COALESCE(excluded.identity_id,acquisition_ledger.identity_id) END,"
-            "updated_at=CASE WHEN acquisition_ledger.status='complete' "
-            "AND excluded.status IN ('pending','discovered') "
-            "THEN acquisition_ledger.updated_at ELSE excluded.updated_at END "
-            "WHERE acquisition_ledger.entitlement_id IS excluded.entitlement_id "
-            "AND acquisition_ledger.provider_id=excluded.provider_id "
-            "AND acquisition_ledger.credential_id=excluded.credential_id "
-            "AND acquisition_ledger.account_id IS excluded.account_id "
-            "AND acquisition_ledger.item_id=excluded.item_id "
-            "AND (acquisition_ledger.identity_id IS NULL OR excluded.identity_id IS NULL "
-            "OR acquisition_ledger.identity_id=excluded.identity_id)",
-            (
-                acquisition_id, entitlement_id, str(row.get("provider_id") or ""), str(row.get("credential_id") or ""),
-                row.get("account_id"), str(row.get("item_id") or ""), row.get("title"), cls._generic_status(row.get("status")),
-                row.get("acquisition_strategy"), row.get("executor"), None, artifact_id, int(row.get("attempt_count") or 0),
-                row.get("last_attempt_at"), None, row.get("error"), row.get("attention_code"),
-                cls._json_dump({"legacy_status": row.get("status")}), timestamp, timestamp, row.get("identity_id"),
-            ),
-        )
-
-        if acquisition_cursor.rowcount != 1:
-            raise ValueError("backup_acquisition_owner_conflict")
+        # #5975: after the public W1 and SQLite v2->v3 cutovers,
+        # no caller may project a 0.7 archive into canonical rights, bytes
+        # or catalogues. Keep the strict legacy owner/receipt validation
+        # above, but fail closed on any attempt to revive positive mirroring.
+        if not archive_only:
+            raise ValueError("backup_legacy_canonical_projection_retired")
 
     def schema_version(self) -> int:
         with self._lock, self._connect() as db:
