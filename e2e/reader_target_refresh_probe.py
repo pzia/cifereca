@@ -33,7 +33,7 @@ from cifereca.gui.main_window import MainWindow
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = frozenset({
     "preflight", "core", "fixture", "gtk", "reader", "selection",
-    "reservation", "repaint", "profile_b", "profile_a", "finish",
+    "reservation", "reservation_commit", "repaint", "profile_b", "profile_a", "finish",
 })
 
 
@@ -197,11 +197,23 @@ def main() -> int:
         report["checks"]["real_mainwindow_selected_reader_book"] = True
         later(150, reserve)
 
+    # GTK may finish allocating the real DetailPanel a few frames after
+    # selection, especially at 1366. A user cannot click an unmapped button:
+    # wait for that exact UI affordance instead of racing a fixed 150 ms.
+    reserve_deadline = [None]
+
     def reserve():
         phase[0] = "reservation"
-        window = state["window"]
-        button = actions()[0]
-        assert button.get_mapped()
+        if reserve_deadline[0] is None:
+            reserve_deadline[0] = monotonic() + 5.0
+        found = actions()
+        if len(found) != 1 or not found[0].get_mapped():
+            if monotonic() < reserve_deadline[0]:
+                later(120, reserve)
+                return
+            raise AssertionError("Reserve action never mapped")
+        button = found[0]
+        phase[0] = "reservation_commit"
         button.emit("clicked")
         after = core.storage.device_placement_get("reader-a", artifact_id)
         assert after["target_relative_path"] == "Books/Cifereca/" + digest + ".epub"
