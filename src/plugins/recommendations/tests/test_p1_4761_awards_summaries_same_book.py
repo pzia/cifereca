@@ -85,7 +85,7 @@ def test_only_public_attested_fields_enter_the_new_projection(field, fact):
     "token=PRIVATE_TOKEN",
     "Bearer: PRIVATE_TOKEN",
     "/home/private/credentials",
-    "\\\\fileserver\\secret",
+    r"\\fileserver\secret",
     "https://example.org/books?signature=PRIVATE_TOKEN",
 ])
 def test_signed_urls_and_secrets_never_enter_searchable_book_facts(payload):
