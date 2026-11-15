@@ -21,6 +21,7 @@ from ..catalogue_link import safe_document_link_url
 from ..config import Config
 from ..core.search import file_format
 from ..core import library_projection
+from ..core.notice_cover_repository import is_notice_cover_document
 from ..identity_selection import identity_change_required
 from ..language import language_label
 from ..diagnostics import Diagnostics
@@ -31,6 +32,7 @@ from ..models import HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from ..services import LibraryService
 from .cover_loader import CoverLoader
 from .document_cover_service import DocumentCoverService
+from .notice_cover_cached_reader import cached_notice_cover_snapshot
 from .local_cover_adapter import LocalCoverEvidenceAdapter
 from .search_document_cover_bridge import SearchDocumentCoverRegistry
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
@@ -202,7 +204,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.covers = CoverLoader(diagnostics=diagnostics, max_workers=6)
         # All routes share one N2 document cache + one physical N3 loader.
         # Neither cache is partitioned by the currently displayed profile.
-        self.document_covers = DocumentCoverService(self.covers)
+        self.document_covers = DocumentCoverService(
+            self.covers,
+            cached_source_reader=lambda ref: cached_notice_cover_snapshot(
+                self.service, ref,
+            ),
+            cached_source_scope=is_notice_cover_document,
+        )
         # N2 revisions follow exact documents, N3 bytes stay shared on desktop.
         self.local_cover_adapter = LocalCoverEvidenceAdapter()
         self.search_document_cover_registry = SearchDocumentCoverRegistry()

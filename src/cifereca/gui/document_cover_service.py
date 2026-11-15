@@ -209,6 +209,7 @@ class DocumentCoverService:
         fallback_ttl: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
         cached_source_reader: Callable[[CoverDocumentScope], CoverSourceSnapshot | None] | None = None,
+        cached_source_scope: Callable[[CoverDocumentScope], bool] | None = None,
     ):
         if not isinstance(loader, CoverLoader):
             raise TypeError("expected shared CoverLoader")
@@ -223,6 +224,9 @@ class DocumentCoverService:
             raise ValueError("invalid qualified fallback lifetime")
         if cached_source_reader is not None and not callable(cached_source_reader):
             raise TypeError("cached cover source reader must be callable")
+        if (cached_source_scope is not None and
+                (cached_source_reader is None or not callable(cached_source_scope))):
+            raise TypeError("cached source scope requires a callable reader")
         self.loader = loader
         self.decisions = decisions if decisions is not None else CoverDecisionCache()
         self._max_documents = max_documents
@@ -254,6 +258,7 @@ class DocumentCoverService:
         # reader must return cached, already-admitted documentary evidence;
         # it runs in a bounded worker, never inside a GTK widget or N3.
         self._cached_source_reader = cached_source_reader
+        self._cached_source_scope = cached_source_scope
         self._read_pool = (
             ThreadPoolExecutor(max_workers=2, thread_name_prefix="cifereca-cover-source")
             if cached_source_reader is not None else None
@@ -542,6 +547,15 @@ class DocumentCoverService:
         pool = self._read_pool
         if reader is None or pool is None:
             return
+        # Legacy loan/local/Search refs cannot be found in the persisted
+        # Notice C source index. A pure Core eligibility predicate avoids
+        # scheduling unnecessary SQLite reads for recycled GTK cells.
+        if self._cached_source_scope is not None:
+            try:
+                if self._cached_source_scope(document) is not True:
+                    return
+            except Exception:
+                return  # Untrusted filter failure is unknown, not missing.
         with self._lock:
             if self._closed:
                 return
