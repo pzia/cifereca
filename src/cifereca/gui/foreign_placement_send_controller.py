@@ -97,11 +97,11 @@ def add_foreign_present_placement_send(
         state["phase"] = "working"
 
         def work():
-            if (state["phase"] != "working"
-                    or getattr(window, "_foreign_placement_send_pending", None)
-                       is not token
-                    or not live()):
-                return {"status": "blocked"}
+            # Admission is the user's confirmed source/target pair. Never
+            # consult mutable GTK selection, page token or button from this
+            # queued worker: A→B→A is a visual switch, not revocation.
+            # The Core facade checks the captured requester against the
+            # *live identity registry*, source epoch and physical placement.
             return action(
                 source_placement_id=source_placement,
                 source_identity_id=source_identity,
@@ -109,6 +109,7 @@ def add_foreign_present_placement_send(
                 requesting_identity_id=target_id,
                 expected_account_context_epoch=account_epoch,
                 expected_source_context_epoch=source_epoch,
+                admitted_requester_identity=requester,
                 confirmed=True,
             )
 
