@@ -126,6 +126,7 @@ def synchronize_usb_reader(
                 storage=storage, copy_journal=journal, removal_journal=journal,
                 lock_root=lock_root, mountpoint=mountpoint, consent=consent,
                 current_profile=removal_profile,
+                check_cancelled=check_cancelled,
             )
             if result.status == "removed":
                 removed += 1
