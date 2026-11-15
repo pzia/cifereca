@@ -1,5 +1,23 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+> **Delta P0 #6149 (15/11/2026) — retrait du writer canonique W1 actif.**
+> `Storage.backup_put` n'est appelé directement par aucun module Core/plugin
+> de production (garde AST source dans les tests). L'API historique reste
+> consultable et peut toujours actualiser `backup_items` pour les quatre
+> fournisseurs testés, mais **aucun fournisseur** ne peut en tirer un nouvel
+> Entitlement, Acquisition, Artifact, Placement, catalogue ou OriginLink :
+> `_mirror_backup_row(..., archive_only=True)` est obligatoire. Le veto
+> `SourceReference` exact, les conflits d'identité/compte, les reçus
+> canoniques contradictoires et les refus d'identifiants/chemins invalides
+> restent sous la même transaction. Tests SQLite de relecture/reprise,
+> triggers interdisant tout INSERT canonique et garde AST sur l'appelant.
+> **Attention : la migration historique SQLite v2→v3 des archives non-Kobo
+> reste un writer distinct** et demeure recensée dans
+> `retained_legacy_migrations` avec classification
+> `legacy_mutating_cutover`, comme le réparateur Config 0.8.1. Les
+> migrations v5/v15 ne sont pas modifiées. Aucun historique 0.7 n'est effacé.
+
+
 > **Delta P0 #6145 (15/11/2026) — validation W1 sans fournisseur privilégié.**
 > L'admission des nouveaux `backup_put` refuse désormais, pour tous les
 > fournisseurs, un `item_id` nul, non textuel, vide, délimité par des blancs,

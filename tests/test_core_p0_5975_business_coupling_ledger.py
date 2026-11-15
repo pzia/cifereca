@@ -258,34 +258,47 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
             encoding="utf-8"
         )
     )
-    guards = {
-        # The removed middle Kobo predicate shifts the unchanged archive-only
-        # third ordinal to the old second-ordinal AST ID: no false retirement.
+    # #6149 removed the public W1 non-Kobo canonical mirror. The two Kobo
+    # AST safety-site IDs vanish or rebind, but the *same safety contract*
+    # remains provider-neutral, and earns no fictitious cohort retirement.
+    old_guards = {
         "site-dd2ac28f46a8a720315de122",
         "site-c668504ada66eace309e3e7f",
     }
     removed_writer = "site-1220521b4d5dc767addb6d29"
     removed_supplier_guard = "site-b4a6753e2f0ac2d6b78c0992"
-    reviews = [row for row in ledger["reviews"] if row["id"] in guards]
-    assert {row["id"] for row in reviews} == guards
-    assert all(
-        row["id"] not in (removed_writer, removed_supplier_guard)
-        for row in ledger["reviews"]
+    assert not old_guards.intersection(row["id"] for row in ledger["reviews"])
+    assert all(row["id"] not in (removed_writer, removed_supplier_guard)
+               for row in ledger["reviews"])
+    retired = [row for row in ledger["retirements"] if row["id"] ==
+               "struct-w1-all-provider-live-canonical-mirror-retired"]
+    assert len(retired) == 1
+    assert retired[0]["original_classification"] == "legacy_mutating_cutover"
+    assert retired[0]["in_ast_metric"] is False
+    assert retired[0]["retired_at_sha"] == (
+        "d503d0659f5707544828df5dffaa1bdd85815111"
     )
-    assert len(reviews) == 2
-    assert {row["decision_group_id"] for row in reviews} == {
-        "legacy-backup.w1-canonical-publication-veto",
-        "legacy-backup.w1-owner-archive-protection",
-    }
-    # The two remaining W1 anchors are historical-only; the productive
-    # W5 filename guard has been replaced by the neutral SourceReference gate.
-    assert {row["reachability"] for row in reviews} == {"legacy_only"}
-    assert all(
-        row["classification"] == "safety_guard_pending_contract"
-        and row["effect"] and row["authority"] and row["replacement_contract"]
-        and all((root / test).is_file() for test in row["tests"])
-        for row in reviews
-    )
+    assert retired[0]["pr"] == "#6149"
+    assert all((root / test).is_file() for test in retired[0]["tests"])
+    guard = [row for row in ledger["guard_installations"] if row["id"] ==
+             "guard-w1-universal-archive-only-and-owner-validation"]
+    assert len(guard) == 1
+    assert guard[0]["classification"] == "safety_guard_pending_contract"
+    assert "v2->v3" in guard[0]["remaining_debt"]
+    assert all((root / test).is_file() for test in guard[0]["tests"])
+    v3 = [row for row in ledger["retained_legacy_migrations"] if row["id"] ==
+          "legacy-sqlite-v3-non-kobo-backup-import-writer"]
+    assert len(v3) == 1 and v3[0]["classification"] == "legacy_mutating_cutover"
+    assert all((root / test).is_file() for test in v3[0]["tests"])
+    assert all(row["id"] != "site-5a3051124e11f87bf24ccfb6"
+               for row in ledger["reviews"])
+    for id in ("struct-w1-supplier-only-archive-veto-replaced-neutral",
+               "struct-w1-supplier-collision-helper-generalized"):
+        matches = [row for row in ledger["retirements"] if row["id"] == id]
+        assert len(matches) == 1
+        assert matches[0]["in_ast_metric"] is False
+        assert matches[0]["original_site_id"] in old_guards
+
     replacement = [
         row for row in ledger["retirements"]
         if row["id"] ==
@@ -302,28 +315,15 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
         "safety_guard_pending_contract"
     )
     assert replacement[0]["pr"] == "#6138"
-    assert all((root / test).is_file() for test in replacement[0]["tests"])
-    assert "site-5a3051124e11f87bf24ccfb6" not in {
-        row["id"] for row in ledger["reviews"]
-    }
-    # #6138 had rebound this Kobo archive-only guard to the old second
-    # ordinal. #6145 removes the earlier W1 admission predicate and rebinds
-    # the same *surviving* guard to the first ordinal: neither is retirement.
-    moved_review = next(row for row in ledger["reviews"]
-                        if row["id"] == "site-dd2ac28f46a8a720315de122")
-    assert "archive-only" in moved_review["journey"]
-    assert "site-d88574f6e28d059189c71da5" not in {
-        row["id"] for row in ledger["reviews"]
-    }
-    new_guard = [
+    neutral_source_guard = [
         row for row in ledger["guard_installations"]
         if row["id"] ==
         "guard-w1-all-provider-exact-typed-source-before-legacy-sql"
     ]
-    assert len(new_guard) == 1
-    assert new_guard[0]["pr"] == "#6138"
-    assert new_guard[0]["classification"] == "safety_guard_pending_contract"
-    assert all((root / test).is_file() for test in new_guard[0]["tests"])
+    assert len(neutral_source_guard) == 1
+    assert neutral_source_guard[0]["pr"] == "#6138"
+    assert neutral_source_guard[0]["classification"] == "safety_guard_pending_contract"
+    assert all((root / test).is_file() for test in neutral_source_guard[0]["tests"])
 
     dead_veto = [
         row for row in ledger["retirements"]
@@ -582,8 +582,14 @@ def test_real_081_migration_is_explicitly_retained_after_genericization():
     assert physical[0]["in_ast_metric"] is False
     assert physical[0]["original_site_id"] == "site-e3fc978e29d69c2c875be9dc"
     actual = inventory(root)
-    assert actual["retained_non_ast_legacy_migration_writers"] == 1
-    assert actual["active_legacy_writers_to_retire"] >= 1
+    # The Config 0.8.1 repair is retained AND the SQLite v2->v3
+    # non-Kobo importer remains a separate executable legacy writer.
+    assert actual["retained_non_ast_legacy_migration_writers"] >= 2
+    assert actual["active_legacy_writers_to_retire"] >= 2
+    assert {
+        "legacy-config-081-cardinality-versioned-writer",
+        "legacy-sqlite-v3-non-kobo-backup-import-writer",
+    } <= set(actual["retained_non_ast_legacy_migration_ids"])
     assert not actual["stale_reviews"]
 
 
@@ -603,13 +609,14 @@ def test_w1_sourcekey_preflight_is_provider_neutral_and_physically_reviewed():
     ledger = json.loads((root / "docs/provider-business-coupling-review.json")
                         .read_text(encoding="utf-8"))
     old = "site-dd2ac28f46a8a720315de122"
-    # The surviving archive-only Kobo predicate inherits this identical AST
-    # ordinal when the earlier preflight branch is physically removed.
-    reviews = [row for row in ledger["reviews"] if row["id"] == old]
-    assert len(reviews) == 1
-    assert reviews[0]["journey"] == (
-        "W1 historical Kobo backup archive-only return without canonical mirror"
-    )
+    # #6149 physically replaced the last Kobo-only archive guard with the
+    # neutral W1 path. The old AST ordinal is no longer a reviewed live site:
+    # it is not evidence that the safety contract itself was retired.
+    assert all(row["id"] != old for row in ledger["reviews"])
+    neutral = [row for row in ledger["guard_installations"] if row["id"] ==
+               "guard-w1-universal-archive-only-and-owner-validation"]
+    assert len(neutral) == 1
+    assert neutral[0]["pr"] == "#6149"
     assert all(row["id"] != "site-d88574f6e28d059189c71da5"
                for row in ledger["reviews"])
     retired = [row for row in ledger["retirements"] if row["id"] ==
@@ -630,5 +637,5 @@ def test_w1_sourcekey_preflight_is_provider_neutral_and_physically_reviewed():
               "guard-w1-all-provider-legacy-sourcekey-path-admission"]
     assert len(guards) == 1
     assert guards[0]["classification"] == "safety_guard_pending_contract"
-    assert "non-Kobo" in guards[0]["remaining_debt"]
+    assert "migration" in guards[0]["remaining_debt"] or "archive" in guards[0]["remaining_debt"]
     assert all((root / test).is_file() for test in retired[0]["tests"])

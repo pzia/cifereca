@@ -102,13 +102,18 @@ def test_source_fence_matches_all_three_coordinates_only(
         assert store.backup_get(
             row["provider_id"], row["credential_id"], row["item_id"]
         ) is not None
-        # Untyped non-Kobo compatibility remains explicitly reachable;
-        # an unrelated typed source cannot be used as a global veto.
-        assert len(store.entitlements(provider_id=row["provider_id"])) == 1
-        assert len(store.acquisitions(provider_id=row["provider_id"])) == 1
+        # Exact typed-source fencing must not become a global archive veto:
+        # an unrelated provider/credential/edition stays writable as 0.7
+        # history. Since #6149, even this non-Kobo legacy row is archive-only
+        # and cannot synthesize a right, a completed delivery or local bytes.
+        assert store.entitlements(provider_id=row["provider_id"]) == []
+        assert store.acquisitions(provider_id=row["provider_id"]) == []
         after = _snapshot(store)
-        assert after["source_references"] == old["source_references"]
-        assert after["origin_links"] == old["origin_links"]
+        # A new historical backup_items row is allowed for a DIFFERENT
+        # SourceKey. No canonical table is changed by that archive insert.
+        assert len(after["backup_items"]) == len(old["backup_items"]) + 1
+        assert all(after[name] == rows for name, rows in old.items()
+                   if name != "backup_items")
     finally:
         store.close()
 

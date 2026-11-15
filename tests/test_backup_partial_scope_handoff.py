@@ -1,4 +1,8 @@
-"""#3196: partial legacy updates preserve the known canonical source scope."""
+"""#3196/#5975: partial W1 archives retain scope without fabricating A/B.
+
+A historical checkpoint may carry identity/account metadata; once
+canonical rows exist independently, it cannot relabel either owner.
+"""
 import pytest
 
 from cifereca.storage import Storage
@@ -19,29 +23,29 @@ def test_partial_attempt_reuses_known_account_and_identity_after_restart(tmp_pat
     store = Storage(path)
     try:
         store.backup_put(initial())
-        entitlement_id = store.entitlements()[0]["entitlement_id"]
-        acquisition_id = store.acquisitions()[0]["acquisition_id"]
-        patch = {k: v for k, v in initial().items() if k in ("provider_id", "credential_id", "item_id")}
+        first = store.backup_get("seller", "card", "edition")
+        assert store.entitlements() == store.acquisitions() == []
+        patch = {k: v for k, v in initial().items()
+                 if k in ("provider_id", "credential_id", "item_id")}
         if unknown:
             patch.update(account_id=None, identity_id=None)
         patch["status"] = "acquiring"
         store.backup_put(patch)
-        assert len(store.entitlements()) == len(store.acquisitions()) == 1
-        right, receipt = store.entitlements()[0], store.acquisitions()[0]
-        assert right["entitlement_id"] == entitlement_id
-        assert receipt["acquisition_id"] == acquisition_id
-        for record in (right, receipt, store.backup_get("seller", "card", "edition")):
-            assert record["identity_id"] == "A" and record["account_id"] == "buyer"
-        assert receipt["status"] == "acquiring"
-        assert receipt["strategy"] == "exact-offer"
-        assert receipt["executor"] == "core"
-        assert right["expires_at"] == "2099-01-01"
+        archive = store.backup_get("seller", "card", "edition")
+        assert archive["status"] == "acquiring"
+        assert archive["identity_id"] == "A"
+        assert archive["account_id"] == "buyer"
+        assert archive["acquisition_strategy"] == "exact-offer"
+        assert archive["executor"] == "core"
+        assert archive["expires_at"] == "2099-01-01"
+        assert first["account_id"] == archive["account_id"]
+        assert store.entitlements() == store.acquisitions() == []
     finally:
         store.close()
     reopened = Storage(path)
     try:
-        assert len(reopened.acquisitions()) == len(reopened.entitlements()) == 1
-        assert reopened.acquisitions()[0]["account_id"] == "buyer"
+        assert reopened.backup_get("seller", "card", "edition")["account_id"] == "buyer"
+        assert reopened.acquisitions() == reopened.entitlements() == []
     finally:
         reopened.close()
 
@@ -50,7 +54,16 @@ def test_partial_attempt_reuses_known_account_and_identity_after_restart(tmp_pat
 def test_partial_update_cannot_evade_canonical_owner_collision(tmp_path, table):
     store = Storage(tmp_path / "state.sqlite")
     try:
-        store.backup_put(initial())
+        row = initial()
+        store.backup_put(row)
+        right_id = store.entitlement_put({
+            **row, "entitlement_type": "owned", "state": "inactive",
+        })
+        store.acquisition_put({
+            **row, "entitlement_id": right_id,
+            "acquisition_id": Storage._acquisition_id_for(row),
+            "status": "discovered",
+        })
         with store._lock, store._connect() as db:
             db.execute("UPDATE " + table + " SET identity_id='B'")
         before = store.backup_get("seller", "card", "edition")
