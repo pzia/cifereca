@@ -145,7 +145,18 @@ def exact_remote_search_document(
             and admitted.kind == "public_catalogue"
             and admitted.provider_id == item.source_provider
             and admitted.identity_id is None):
-        scope = admitted
+        # A plugin can supply extra attributes on a mutable SearchResult.
+        # Replay the exact Core source-coordinate derivation before trusting
+        # the producer's private stamp; do not borrow another edition's N2.
+        from ..core.notice_search_cover_producer import admit_public_search_cover
+        from ..core.notice_cover_projection import notice_cover_document_ref
+        expected = admit_public_search_cover(
+            item, identity_id=scope.identity_id or "",
+            observed_at=1, public_cover_url=catalogue_facts.catalogue.url,
+        )
+        if (expected is not None
+                and notice_cover_document_ref(expected.key) == admitted):
+            scope = admitted
     return VerifiedSearchDocumentCover(
         source_item=item, row_key=row_key,
         document=scope, context=context,
