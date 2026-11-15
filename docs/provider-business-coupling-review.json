@@ -1814,6 +1814,18 @@
         "tests/test_provider_plugins.py"
       ],
       "pr": "#6187"
+    },
+    {
+      "id": "guard-paris-legacy-writer-v16-immediate-sql-veto",
+      "journey": "Legacy Paris ADEPT borrower binding UPSERT after service-level v16 preflight",
+      "classification": "safety_guard_pending_contract",
+      "effect": "The live Storage.paris_borrower_adept_binding_put takes SQLite BEGIN IMMEDIATE, checks the raw canonical v16 row for the exact Paris credential/account in the same transaction, and refuses any newer legacy UPSERT when v16 is present, including an intervening v16 write after the facade preflight.",
+      "remaining_debt": "Historical public bind_paris_borrower_adept remains executable on never-migrated scopes; the three unclassified AST anchors on that method are NOT retired, and a preexisting legacy row followed by canonical v16 still needs an explicit safe cutover/nonloss proof. SQL v17 retirement tombstone is unchanged. The 3 historical Config/SQLite migration writers remain separately active.",
+      "tests": [
+        "tests/test_core_p0_5851_legacy_writer_v16_interlock.py",
+        "tests/test_core_p0_5851_monotone_legacy_retirement_v17.py"
+      ],
+      "pr": "#6196"
     }
   ],
   "retained_legacy_migrations": [
