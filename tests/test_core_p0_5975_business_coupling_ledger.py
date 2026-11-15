@@ -582,14 +582,13 @@ def test_real_081_migration_is_explicitly_retained_after_genericization():
     assert physical[0]["in_ast_metric"] is False
     assert physical[0]["original_site_id"] == "site-e3fc978e29d69c2c875be9dc"
     actual = inventory(root)
-    # The Config 0.8.1 repair is retained AND the SQLite v2->v3
-    # non-Kobo importer remains a separate executable legacy writer.
-    assert actual["retained_non_ast_legacy_migration_writers"] >= 2
-    assert actual["active_legacy_writers_to_retire"] >= 2
-    assert {
+    # The Config 0.8.1 repair still mutates pre-tombstone histories.
+    # The unrelated SQLite v3 importer was physically retired in #6152.
+    assert actual["retained_non_ast_legacy_migration_writers"] == 1
+    assert actual["active_legacy_writers_to_retire"] >= 1
+    assert actual["retained_non_ast_legacy_migration_ids"] == [
         "legacy-config-081-cardinality-versioned-writer",
-        "legacy-sqlite-v3-non-kobo-backup-import-writer",
-    } <= set(actual["retained_non_ast_legacy_migration_ids"])
+    ]
     assert not actual["stale_reviews"]
 
 
@@ -639,3 +638,51 @@ def test_w1_sourcekey_preflight_is_provider_neutral_and_physically_reviewed():
     assert guards[0]["classification"] == "safety_guard_pending_contract"
     assert "migration" in guards[0]["remaining_debt"] or "archive" in guards[0]["remaining_debt"]
     assert all((root / test).is_file() for test in retired[0]["tests"])
+
+
+def test_v3_legacy_writer_retired_without_importing_any_provider_right():
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads((root / "docs/provider-business-coupling-review.json")
+                        .read_text(encoding="utf-8"))
+    retired = [row for row in ledger["retirements"]
+               if row["id"] == "struct-v3-all-provider-legacy-backup-import-writer-retired"]
+    assert len(retired) == 1
+    assert retired[0]["original_classification"] == "legacy_mutating_cutover"
+    assert retired[0]["in_ast_metric"] is False
+    assert retired[0]["retired_at_sha"] == (
+        "e7c8fd4ba28e63ad7688662177a4d2676ea6fc42"
+    )
+    assert retired[0]["pr"] == "#6152"
+    assert all((root / test).is_file() for test in retired[0]["tests"])
+
+    prior_guard = "site-dd9fadf5918f4eb2fda40376"
+    assert all(row["id"] != prior_guard for row in ledger["reviews"])
+    neutral = [row for row in ledger["guard_installations"]
+               if row["id"] == "guard-v3-structural-only-all-provider-archives"]
+    assert len(neutral) == 1
+    assert neutral[0]["pr"] == "#6152"
+    assert all((root / test).is_file() for test in neutral[0]["tests"])
+    assert "legacy-sqlite-v3-non-kobo-backup-import-writer" not in {
+        row["id"] for row in ledger["retained_legacy_migrations"]
+    }
+    source = (root / "src/cifereca/storage.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    migrate = next(node for node in ast.walk(tree)
+                   if isinstance(node, ast.FunctionDef)
+                   and node.name == "_migrate")
+    if3 = next(node for node in ast.walk(migrate)
+               if isinstance(node, ast.If)
+               and "version < 3" in ast.unparse(node.test))
+    assert not any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "_mirror_backup_row"
+        for n in ast.walk(if3)
+    )
+    assert all(
+        not (isinstance(n, ast.Constant) and n.value == "kobo")
+        for n in ast.walk(if3)
+    )
