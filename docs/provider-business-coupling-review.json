@@ -1301,6 +1301,21 @@
       "pr": "#6162",
       "in_ast_metric": false,
       "retired_at_sha": "a97375df5d8b60465862238ca5f3a8841ee768e3"
+    },
+    {
+      "id": "struct-v8-historical-primary-account-supplier-sql-selector-neutralized",
+      "original": "v7->v8 SQLite data repair directly selected provider_id='paris' when merging primary-alias entitlements and automatic loan receipts",
+      "original_classification": "legacy_mutating_cutover",
+      "replacement": "Immutable 0.8.3 historical primary-alias provider cohort, with provider_id parameterization for exact entitlement and loan_auto receipt recovery",
+      "classification": "replaced_supplier_selector_without_retiring_historical_writer",
+      "evidence": "Real v7 Paris old rights/receipts, primary-alias duplicates and unknown-provider isolation remain invariant; a synthetic provider added to a test-only historical cohort verifies the same generic SQL algorithm. Historical writer is still executable for schema_version<8 and counted separately from Config 0.8.1 and v5. No new attestation, acquiring permission or runtime provider policy is created.",
+      "tests": [
+        "tests/test_core_p0_5975_v8_historical_primary_account.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6170",
+      "in_ast_metric": false,
+      "retired_at_sha": "PENDING-NEW-COMMIT"
     }
   ],
   "guard_installations": [
@@ -1433,10 +1448,10 @@
       "id": "legacy-sqlite-v8-paris-primary-account-receipt-repair",
       "classification": "legacy_mutating_cutover",
       "journey": "Historical SQLite v7->v8 primary-borrower alias normalization of Paris loan rights and acquisition receipts",
-      "productive_caller": "Storage.__init__ -> Storage._migrate(db) for databases with schema_version < 8; the v8 savepoint rewrites and deduplicates historical Paris entitlements and loan_auto acquisition_ledger rows",
-      "effect": "Rekeys old NULL/empty/primary account_id to primary, merges duplicate entitlement and acquisition IDs, rebinds their linked receipts, preserves highest attempt count and most advanced status; existing v8+ databases are not rewritten",
+      "productive_caller": "Storage.__init__ -> Storage._migrate(db) when schema_version < 8, iterating frozen 0.8.3 primary-alias historical provider cohort",
+      "effect": "Still rekeys historical Paris primary-account aliases and merges duplicate entitlement / loan_auto acquisition receipts, preserving max attempts and status, while the versioned SQL data repair is now supplier-neutral. Current v8+ stores do not replay.",
       "authority": "Versioned Paris 0.8.3 historical borrower key and exact stored provider/credential/account/item/identity/loan coordinates; no runtime descriptor, network, ADEPT call, user-selected GTK identity or new B right",
-      "replacement_contract": "Keep counting this executable data migration separately from v5 and Config 0.8.1. Version-neutral historical normalization or eventual sunset requires exact old-v7 fixtures with duplicate receipts, competing borrower/identity scopes, unknown providers, rollback and idempotence; never delete old receipts or misattribute rights merely to reduce AST.",
+      "replacement_contract": "Retain executable v8 writer in the historical debt inventory. Frozen cohort only specifies Paris 0.8.3 persisted old data, not a provider plugin/runtime policy. Remove only after versioned oldest-schema sunset or lossless migration+rollback proof; don't count supplier SQL-selector deletion as an active writer retirement.",
       "tests": [
         "tests/test_core_p0_5975_v8_historical_primary_account.py",
         "tests/test_core_p0_5975_business_coupling_ledger.py"
