@@ -54,10 +54,22 @@ def loan_cover_decision(
     if type(cache) is not CoverDecisionCache:
         return None
 
-    # Register the trace before the N2 refresh/resolved events. A test
-    # or headless caller without a physical CoverLoader keeps the old path.
-    from .loan_cover_paint_trace import subscribe_loan_cover_trace
-    subscribe_loan_cover_trace(host, cache, scope)
+    # N0 subscribes to actual N2 refresh/resolved/invalidation events.
+    # A new identity/account/source epoch resets the observation rather than
+    # replaying a previous presentation as if it had been repainted.
+    from .loan_cover_trace_bridge import LoanCoverTraceSubscriptions
+    observer = getattr(host, "_loan_cover_trace_observer", None)
+    if observer is None:
+        observer = LoanCoverTraceSubscriptions(max_scopes=128)
+        host._loan_cover_trace_observer = observer
+    if type(observer) is LoanCoverTraceSubscriptions:
+        observer.watch(
+            cache, scope,
+            context=(active, epoch, getattr(
+                getattr(host, "service", None), "_source_context_epoch", None,
+            )),
+        )
+
     hit = cache.peek(scope, revision=revision)
     if hit is not None:
         return hit
