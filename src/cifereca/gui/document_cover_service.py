@@ -20,10 +20,13 @@ from pathlib import Path
 from threading import Lock, RLock
 from typing import Literal
 
-from ..core.book_cover_cache import CoverDecisionCache, CoverCacheToken
+from ..core.book_cover_cache import (
+    CoverCacheToken, CoverDecisionCache, CoverSubscription,
+)
 from ..core.book_cover_projection import (
     CoverDocumentScope, ResolvedBookCover, resolve_book_cover,
 )
+from ..core.book_cover_trace import CoverLifecycleTrace, CoverTraceSnapshot
 from ..core.covers import CoverCandidate, candidate
 from ..core.epub_cover_source import AttestedEmbeddedCover
 from ..core.epub_cover_failure_qualification import (
@@ -128,6 +131,7 @@ class CoverReadRequest:
         # Recheck the EXACT N2 selection at GTK idle-paint time, not just
         # at the N3 worker callback (which may queue an idle beforehand).
         self._is_selected: Callable[[], bool] | None = None
+        self._paint_receipt: tuple[Path, Callable[[], bool]] | None = None
 
     @property
     def source_uri(self) -> str | None:
@@ -148,9 +152,24 @@ class CoverReadRequest:
         except Exception:
             return False
 
+    def _offer_paint_receipt(self, path: Path, receipt: Callable[[], bool]) -> None:
+        with self._lock:
+            if self._active:
+                self._paint_receipt = path, receipt
+
+    def note_texture_applied(self, path: Path) -> bool:
+        """Consume the receipt for the exact image this request delivered."""
+        with self._lock:
+            receipt = self._paint_receipt
+            if not self._active or receipt is None or receipt[0] != path:
+                return False
+            self._paint_receipt = None
+        return receipt[1]()
+
     def cancel(self) -> None:
         with self._lock:
             self._active = False
+            self._paint_receipt = None
             child = self._child
         if child is not None:
             child.cancel()
@@ -197,6 +216,8 @@ class DocumentCoverService:
         self.loader = loader
         self.decisions = decisions if decisions is not None else CoverDecisionCache()
         self._max_documents = max_documents
+        self._trace = CoverLifecycleTrace(max_scopes=max_documents)
+        self._trace_subscriptions: dict[CoverDocumentScope, CoverSubscription] = {}
         self._fallback_ttl = float(fallback_ttl)
         self._clock = clock
         # Temporary N2 requalification, never a physical N3 media cache.
@@ -247,6 +268,16 @@ class DocumentCoverService:
                 old_scope, _ = self._snapshots.popitem(last=False)
                 self._qualified_fallback.pop(old_scope, None)
                 self.decisions.invalidate(old_scope, cause="evidence_changed")
+                subscription = self._trace_subscriptions.pop(old_scope, None)
+                if subscription is not None:
+                    subscription.cancel()
+
+    def cover_trace_snapshot(self, document: CoverDocumentScope) -> CoverTraceSnapshot | None:
+        """Return the last observed steps for this registered document."""
+        with self._lock:
+            if document not in self._trace_subscriptions:
+                return None
+            return self._trace.snapshot(document)
 
     def apply_qualified_epub_fallback(
         self,
@@ -441,6 +472,14 @@ class DocumentCoverService:
                 decision = None
             else:
                 self._snapshots.move_to_end(document)
+                if document not in self._trace_subscriptions:
+                    try:
+                        self._trace_subscriptions[document] = self._trace.attach(
+                            self.decisions, document,
+                        )
+                    except ValueError:
+                        # Diagnostic capacity must never block cover reads.
+                        pass
                 lease = self._qualified_fallback.get(document)
                 if lease is not None:
                     live = self.decisions.selected_token(
@@ -520,7 +559,28 @@ class DocumentCoverService:
 
         handle._is_selected = selected_now
 
+        def record_texture() -> bool:
+            with self._lock:
+                return handle.still_current and self._trace.note_painted(
+                    selected_token, surface=variant,
+                )
+
         def delivered(path: Path | None) -> None:
+            with self._lock:
+                if not handle.still_current:
+                    return
+                if path is not None and document in self._trace_subscriptions:
+                    # N3 has validated the source for both variants. A list
+                    # read may return the source itself if previewing fails.
+                    preview_seen = (
+                        True if variant == "list" and path.parent == self.loader.preview_root
+                        else None
+                    )
+                    recorded = self._trace.note_media(
+                        selected_token, source_cached=True, preview_cached=preview_seen,
+                    )
+                    if recorded:
+                        handle._offer_paint_receipt(path, record_texture)
             if handle.still_current:
                 callback(path)
                 if (path is None and decision.tier == "embedded"
@@ -559,6 +619,9 @@ class DocumentCoverService:
         with self._lock:
             self._closed = True
             self._snapshots.clear()
+            for subscription in self._trace_subscriptions.values():
+                subscription.cancel()
+            self._trace_subscriptions.clear()
             self._resolving.clear()
             self._qualified_fallback.clear()
             self._qualify_active.clear()
