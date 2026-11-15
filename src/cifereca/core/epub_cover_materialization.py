@@ -119,6 +119,12 @@ class EpubCoverPhysicalCache:
         self._negative_until: OrderedDict[_PhysicalKey, float] = OrderedDict()
         self._max_negative = min(4096, max_inflight * 4)
         self._pending: dict[_PhysicalKey, Future[str | None]] = {}
+        # Physical N3 counters: no DocumentRef/profile/credential in export.
+        self._counts = {
+            "n3_epub_hit": 0, "n3_epub_miss": 0,
+            "n3_epub_singleflight": 0, "n3_epub_cooldown": 0,
+            "n3_epub_overflow": 0, "n3_epub_failed": 0,
+        }
 
     def request(
         self, source: ExactEpubCoverResource, *, source_path: Path,
@@ -135,21 +141,26 @@ class EpubCoverPhysicalCache:
             target = cover_cache_dir() / source.cache_name
             if valid_cached_cover_path(target):
                 # Warm N3: no source file open, ZIP parse, hash or GET.
+                self._counts["n3_epub_hit"] += 1
                 return _finished(target.resolve().as_uri())
             key = _physical_key(source, source_path)
             future = self._pending.get(key)
             if future is not None:
                 # Same bytes from two N2 document refs share ONE N3 read.
+                self._counts["n3_epub_singleflight"] += 1
                 return future
             cooldown = self._negative_until.get(key)
             if cooldown is not None:
                 if self._clock() < cooldown:
                     self._negative_until.move_to_end(key)
+                    self._counts["n3_epub_cooldown"] += 1
                     return _finished(None)
                 self._negative_until.pop(key, None)
             if len(self._pending) >= self._limit:
+                self._counts["n3_epub_overflow"] += 1
                 return _finished(None)
             future = self._pool.submit(self._restore, source, source_path)
+            self._counts["n3_epub_miss"] += 1
             self._pending[key] = future
         future.add_done_callback(lambda done: self._release(key, done))
         return future
@@ -169,6 +180,7 @@ class EpubCoverPhysicalCache:
             if result is not None or self._closed:
                 self._negative_until.pop(key, None)
             else:
+                self._counts["n3_epub_failed"] += 1
                 self._negative_until[key] = self._clock() + self._negative_ttl
                 self._negative_until.move_to_end(key)
                 while len(self._negative_until) > self._max_negative:
@@ -213,8 +225,9 @@ class EpubCoverPhysicalCache:
             return None
 
     def stats(self) -> dict[str, int]:
+        """Counters for physical N3 work only, without documentary keys."""
         with self._lock:
-            return {"inflight": len(self._pending)}
+            return {"inflight": len(self._pending), **self._counts}
 
     def close(self) -> None:
         with self._lock:

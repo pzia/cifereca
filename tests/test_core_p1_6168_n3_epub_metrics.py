@@ -1,0 +1,174 @@
+"""#6168: physical N3 EPUB diagnostics are shared and never owner-scoped."""
+from __future__ import annotations
+
+from dataclasses import replace
+import hashlib
+from threading import Event
+
+import pytest
+
+from cifereca import epub_metadata
+from cifereca.core.book_cover_projection import CoverDocumentScope
+from cifereca.core.epub_cover_materialization import (
+    EpubCoverPhysicalCache, ExactEpubCoverResource,
+)
+from cifereca.gui.cover_loader import CoverLoader
+from tests.test_epub_cover_contract import _write_epub
+
+
+@pytest.fixture
+def physical(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    path = tmp_path / "exact.epub"
+    raw = _write_epub(path, epub3=True)
+    metadata = epub_metadata.inspect_epub(path)
+    digest = hashlib.sha256(raw).hexdigest()
+    scope = CoverDocumentScope(
+        kind="placement", identity_id="alice",
+        source_key="artifact:sha256:" + digest,
+        artifact_id="sha256:" + digest,
+        placement_id="place:a",
+    )
+    resource = ExactEpubCoverResource(
+        scope=scope, source_revision=1, artifact_sha256=digest,
+        member=metadata["epub_cover"]["member"],
+        cache_name=metadata["epub_cover"]["cache_name"],
+    )
+    image = epub_metadata.cover_cache_dir() / resource.cache_name
+    assert epub_metadata.valid_cached_cover_path(image)
+    return path, resource, image
+
+
+def test_hot_n3_hits_shared_across_profiles_and_exposed_by_loader(physical):
+    path, original, image = physical
+    other = replace(
+        original, source_revision=99,
+        scope=replace(original.scope, identity_id="bob",
+                      placement_id="place:b"),
+    )
+    loader = CoverLoader(max_workers=2)
+    try:
+        one = loader._epub_physical.request(original, source_path=path)
+        two = loader._epub_physical.request(other, source_path=path)
+        assert one.done() and two.done()
+        assert one.result() == two.result() == image.resolve().as_uri()
+        stats = loader.stats()
+        assert stats["n3_epub_hit"] == 2
+        assert stats["n3_epub_miss"] == 0
+        assert stats["n3_epub_singleflight"] == 0
+        assert "alice" not in repr(stats) and "bob" not in repr(stats)
+        assert "place:" not in repr(stats)
+    finally:
+        loader.close()
+
+
+def test_cold_n3_reuses_one_epub_worker_for_two_exact_documents(
+    physical, monkeypatch,
+):
+    path, original, image = physical
+    other = replace(
+        original, source_revision=99,
+        scope=replace(original.scope, identity_id="bob",
+                      placement_id="place:b"),
+    )
+    image.unlink()
+    cache = EpubCoverPhysicalCache(max_workers=2)
+    entered, release = Event(), Event()
+    calls = []
+    actual_restore = cache._restore
+
+    def gated(source, source_path):
+        calls.append((source, source_path))
+        entered.set()
+        assert release.wait(10)
+        return actual_restore(source, source_path)
+
+    monkeypatch.setattr(cache, "_restore", gated)
+    try:
+        first = cache.request(original, source_path=path)
+        assert entered.wait(10)
+        second = cache.request(other, source_path=path)
+        assert first is second
+        stats = cache.stats()
+        assert stats["n3_epub_hit"] == 0
+        assert stats["n3_epub_miss"] == 1
+        assert stats["n3_epub_singleflight"] == 1
+        assert stats["inflight"] == 1
+        release.set()
+        assert first.result(timeout=10) == image.resolve().as_uri()
+        assert len(calls) == 1
+        again = cache.request(other, source_path=path)
+        assert again.done() and again.result() == image.resolve().as_uri()
+        assert cache.stats()["n3_epub_hit"] == 1
+    finally:
+        release.set()
+        cache.close()
+
+
+def test_failed_epub_is_one_miss_followed_by_cooldown_not_new_documentary_absence(
+    physical, monkeypatch,
+):
+    path, source, image = physical
+    image.unlink()
+    clock = [20.0]
+    cache = EpubCoverPhysicalCache(
+        negative_ttl=30.0, clock=lambda: clock[0],
+    )
+    done = Event()
+    original_release = cache._release
+
+    def observe(key, finished):
+        original_release(key, finished)
+        done.set()
+
+    monkeypatch.setattr(cache, "_release", observe)
+    monkeypatch.setattr(cache, "_restore", lambda *_: None)
+    try:
+        assert cache.request(source, source_path=path).result(timeout=10) is None
+        assert done.wait(10)
+        assert cache.stats()["n3_epub_failed"] == 1
+        assert cache.stats()["n3_epub_miss"] == 1
+        assert cache.request(source, source_path=path).result() is None
+        assert cache.stats()["n3_epub_cooldown"] == 1
+        assert cache.stats()["n3_epub_miss"] == 1
+        clock[0] = 50.1
+        done.clear()
+        assert cache.request(source, source_path=path).result(timeout=10) is None
+        assert done.wait(10)
+        assert cache.stats()["n3_epub_miss"] == 2
+        assert cache.stats()["n3_epub_failed"] == 2
+    finally:
+        cache.close()
+
+
+def test_distinct_source_overflow_not_double_counted_as_n3_miss(
+    physical, monkeypatch,
+):
+    path, source, image = physical
+    image.unlink()
+    another_path = path.with_name("other.epub")
+    cache = EpubCoverPhysicalCache(max_workers=1, max_inflight=1)
+    entered, release = Event(), Event()
+    actual_restore = cache._restore
+
+    def gated(resource, source_path):
+        entered.set()
+        assert release.wait(10)
+        return actual_restore(resource, source_path)
+
+    monkeypatch.setattr(cache, "_restore", gated)
+    try:
+        first = cache.request(source, source_path=path)
+        assert entered.wait(10)
+        # Same Artifact but a distinct source file is a distinct physical
+        # task; no extra slot can be admitted until the first is finished.
+        assert cache.request(
+            source, source_path=another_path,
+        ).result() is None
+        assert cache.stats()["n3_epub_miss"] == 1
+        assert cache.stats()["n3_epub_overflow"] == 1
+        release.set()
+        assert first.result(timeout=10) == image.resolve().as_uri()
+    finally:
+        release.set()
+        cache.close()
