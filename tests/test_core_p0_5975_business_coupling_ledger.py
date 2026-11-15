@@ -286,9 +286,15 @@ def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
     assert guard[0]["classification"] == "safety_guard_pending_contract"
     assert "v2->v3" in guard[0]["remaining_debt"]
     assert all((root / test).is_file() for test in guard[0]["tests"])
-    v3 = [row for row in ledger["retained_legacy_migrations"] if row["id"] ==
-          "legacy-sqlite-v3-non-kobo-backup-import-writer"]
-    assert len(v3) == 1 and v3[0]["classification"] == "legacy_mutating_cutover"
+    # #6152 retires the last versioned v3 positive importer. Its historic
+    # name must no longer be counted as active, but its reviewed physical
+    # retirement and tests remain in the ledger.
+    assert not any(row["id"] == "legacy-sqlite-v3-non-kobo-backup-import-writer"
+                   for row in ledger["retained_legacy_migrations"])
+    v3 = [row for row in ledger["retirements"] if row["id"] ==
+          "struct-v3-all-provider-legacy-backup-import-writer-retired"]
+    assert len(v3) == 1 and v3[0]["original_classification"] == "legacy_mutating_cutover"
+    assert v3[0]["pr"] == "#6152"
     assert all((root / test).is_file() for test in v3[0]["tests"])
     assert all(row["id"] != "site-5a3051124e11f87bf24ccfb6"
                for row in ledger["reviews"])
