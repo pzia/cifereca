@@ -226,6 +226,13 @@ def test_cancelled_selection_during_locked_inode_review_never_unlinks(
     assert rig.final.read_bytes() == reader_bytes
     assert rig.source.read_bytes() == local_bytes
     assert rig.journal.get(rig.consent.operation_id) is None
+    # A cancelled UI selection cannot publish a false USB observation or
+    # retire the original completed-copy receipt.
+    saved = rig.storage.device_placement_get(
+        rig.consent.device_id, rig.consent.artifact_id,
+    )
+    assert saved["observed_state"] == "unknown"
+    assert rig.journal.get(rig.consent.copy_operation_id).phase == "completed"
 
 
 def test_valid_selection_remains_accepted_by_rechecked_profile_callback(
