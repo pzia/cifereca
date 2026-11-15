@@ -115,6 +115,12 @@ def refresh_history(
         },
         level="detailed",
     )
+    # Diagnostics may invoke synchronous observers. Recheck the live source
+    # after that callback before persisting any private cached rows.
+    if not self._history_source_lease_current(
+        account, session, scope=source_scope, epoch=source_epoch,
+    ):
+        raise ProviderConfigurationError("history_source_binding_changed")
     self.storage.cache_put("account", key, [asdict(x) for x in rows], ttl)
     if self._account_context_epoch == epoch and self.current_account is account:
         self.last_history = rows
