@@ -242,7 +242,8 @@ def test_actual_v2_css_text_colours_remain_accessible_across_surfaces():
     badge = base + " .book-tag"
     badge_content = badge + ".tag-content"
     muted = base + " .dim-label"
-    c = lambda selector, prop: _css_declared_color(css, selector, prop)
+    def c(selector: str, prop: str) -> str:
+        return _css_declared_color(css, selector, prop)
 
     # These are the actual CSS foreground/background pairs in the shipped
     # light theme, including inherited colours and selection overrides.
