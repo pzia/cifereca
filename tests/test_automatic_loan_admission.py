@@ -304,3 +304,60 @@ def test_admission_rejects_mutated_hostile_loan_key_after_owner_lookup(
         }
     finally:
         service.close()
+
+
+@pytest.mark.parametrize(("field", "replacement"), [
+    ("id", _HostileLoanCoordinate()),
+    ("id", "foreign-loan"),
+    ("record_id", "foreign-edition"),
+    ("source_account_id", "other-borrower"),
+    ("source_credential", "other-credential"),
+])
+def test_borrower_refusal_callback_drift_never_publishes_foreign_loan(
+    tmp_path, monkeypatch, field, replacement,
+):
+    service, loan = _setup(tmp_path)
+    try:
+        def refused_and_drifted(*_args, **_kwargs):
+            setattr(loan, field, replacement)
+            return None, "adept_borrower_binding_required"
+
+        monkeypatch.setattr(service, "_paris_adept_identity_for_loan", refused_and_drifted)
+
+        def no_rights(*_args, **_kwargs):
+            pytest.fail("borrower refusal must not inspect rights or acquisitions")
+
+        monkeypatch.setattr(service.storage, "entitlements", no_rights)
+        monkeypatch.setattr(service.storage, "acquisitions", no_rights)
+        result = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert result.identity is None and result.entitlement_id is None
+        assert result.refusal == {
+            "status": "attention_required",
+            "loan_id": "loan-0" if field == "id" and type(replacement) is not str
+                       else loan.id,
+            "code": "adept_identity_unproven",
+            "reason": "source_scope_changed",
+            "retry": "explicit_only",
+        }
+    finally:
+        service.close()
+
+
+def test_unchanged_borrower_refusal_preserves_public_code_and_pinned_id(
+    tmp_path, monkeypatch,
+):
+    service, loan = _setup(tmp_path)
+    try:
+        monkeypatch.setattr(
+            service, "_paris_adept_identity_for_loan",
+            lambda *_a, **_kw: (None, "adept_borrower_binding_required"),
+        )
+        result = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert result.refusal == {
+            "status": "attention_required",
+            "loan_id": "loan-0",
+            "code": "adept_borrower_binding_required",
+            "retry": "explicit_only",
+        }
+    finally:
+        service.close()
