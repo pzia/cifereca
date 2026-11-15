@@ -123,6 +123,33 @@ def test_uninstalled_legacy_alias_remains_only_as_compatibility():
     ) is primary
 
 
+def test_malformed_registry_cannot_reactivate_historical_primary_alias():
+    service = _service([_account()])
+    def broken_registry(_provider):
+        raise RuntimeError("untrusted registry failure")
+    service.registry = NS(maybe_get=broken_registry)
+    with pytest.raises(ProviderConfigurationError, match="introuvable"):
+        service._account_for_loan(_loan("primary"))
+
+
+def test_hostile_provider_key_is_rejected_before_registry_lookup():
+    service = _service([_account()])
+    class HostileProvider:
+        def __hash__(self):
+            raise AssertionError("untrusted provider hash must not run")
+
+        def __eq__(self, _other):
+            raise AssertionError("untrusted provider comparison must not run")
+
+    service.registry = NS(maybe_get=lambda _key: pytest.fail(
+        "untrusted provider reached the installed registry"
+    ))
+    loan = _loan("")
+    loan.source_provider = HostileProvider()
+    with pytest.raises(ProviderConfigurationError, match="non attesté"):
+        service._account_for_loan(loan)
+
+
 def test_loan_source_fields_must_be_native_and_no_private_values_leak():
     primary = _account()
     class SourceStr(str):
