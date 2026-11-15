@@ -215,9 +215,14 @@ def test_legacy_provider_option_is_scoped_to_exact_account_before_global_default
                          'https://default.example', 'base_url')
     kwargs = {
         'descriptor_options': [option],
-        'legacy_values': {'base_url': 'https://global.example'},
-        'provider_values': {
-            ('arbitrary', 'base_url', 'arbitrary-a'): 'https://provider-a.example',
+        'legacy_values': {
+            'base_url': 'https://global.example',
+            'providers.accounts': [
+                {'id': 'arbitrary-a', 'provider': 'arbitrary',
+                 'options': {'base_url': 'https://provider-a.example'}},
+                {'id': 'arbitrary-b', 'provider': 'arbitrary',
+                 'options': {}},
+            ],
         },
     }
     owner, _, _, _ = _render(

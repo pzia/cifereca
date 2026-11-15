@@ -64,6 +64,7 @@ class _AccountBooleanText:
 
 def _sole_owner_of_legacy_provider_setting(
     config: Any, provider_id: str, account_id: str,
+    displayed: dict[str, Any],
 ) -> bool:
     """Unscoped legacy values may migrate to exactly one saved connection.
 
@@ -93,7 +94,65 @@ def _sole_owner_of_legacy_provider_setting(
         if owner is not None:
             return False
         owner = row
-    return owner is not None and type(owner.get("id")) is str and owner["id"] == account_id
+    return (
+        owner is not None and type(owner.get("id")) is str
+        and owner["id"] == account_id
+        and type(displayed) is dict and displayed.get("id") == account_id
+        and owner.get("identity_id") == displayed.get("identity_id")
+    )
+
+
+def _saved_option_of_exact_account(
+    config: Any, provider_id: str, account_id: str,
+    displayed: dict[str, Any], option_key: str,
+) -> str | None:
+    """Never use Config.provider_option's first-row lookup in GTK Settings.
+
+    Two configured rows may share provider/credential while belonging to
+    different profiles. A credential is not an owner identity, and the
+    first row is not an acceptable fallback for the second.
+    """
+    if (type(provider_id) is not str or not provider_id
+            or type(account_id) is not str or not account_id
+            or type(displayed) is not dict
+            or displayed.get("id") != account_id
+            or type(option_key) is not str):
+        return None
+    getter = getattr(config, "get", None)
+    if not callable(getter):
+        return None
+    try:
+        rows = getter("providers.accounts")
+    except Exception:
+        return None
+    if type(rows) not in (list, tuple) or len(rows) > 4096:
+        return None
+    exact = None
+    for row in rows:
+        if (type(row) is not dict
+                or type(row.get("provider")) is not str
+                or type(row.get("id")) is not str):
+            return None
+        if (row["provider"].casefold() == provider_id.casefold()
+                and row["id"] == account_id):
+            if exact is not None:
+                return None
+            exact = row
+    if exact is None:
+        return None
+    # A draft changing its owner, or an unowned legacy record rebound to
+    # another identity, must not read the prior owner's saved endpoint.
+    owner = exact.get("identity_id")
+    displayed_owner = displayed.get("identity_id")
+    if owner != displayed_owner or (
+            owner is not None and
+            (type(owner) is not str or not owner.strip())):
+        return None
+    options = exact.get("options")
+    if type(options) is not dict:
+        return None
+    value = options.get(option_key)
+    return value if type(value) is str else None
 
 
 def build_provider_account_editor(
@@ -192,17 +251,14 @@ def build_provider_account_editor(
                 # Unscoped legacy values belong to historical account editors
                 # only. A new connection must use its descriptor default,
                 # never inherit another account's former global setting.
-                provider_option = getattr(config, "provider_option", None)
-                if callable(provider_option):
-                    # A legacy value belongs to one exact connection. With
-                    # no credential_id, Config.provider_option reads the
-                    # provider's *first* account and could silently copy its
-                    # endpoint into another (or a newly created) account.
-                    fallback = provider_option(
-                        provider_id, field.key, None, credential_id=account_id,
-                    )
+                # Config.provider_option selects the *first* matching
+                # provider/credential row. An imported duplicate under a
+                # different identity makes even that scoped lookup unsafe.
+                fallback = _saved_option_of_exact_account(
+                    config, provider_id, account_id, data, field.key,
+                )
                 if (not fallback and _sole_owner_of_legacy_provider_setting(
-                        config, provider_id, account_id)):
+                        config, provider_id, account_id, data)):
                     # A retired global value has no owner metadata. Keep
                     # it only for the unique historical connection; the
                     # next account and all other profiles use their own
