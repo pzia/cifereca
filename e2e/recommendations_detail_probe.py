@@ -1663,6 +1663,68 @@ def main():
             (PAIRED_BOOK["author"], "author", True, "alice")
         ]
         report["checks"]["P1_4761_stale_metadata_search_button_inert_gtk"] = True
+        # #4761: real GTK ListStore/SingleSelection must keep the exact
+        # selected edition even when an earlier colliding key is hidden by
+        # a LOCAL view filter. The already captured paired-book screenshot
+        # above remains the same synthetic source/edition.
+        colliding = [
+            ranked(f"filter-duplicate-{suffix}", f"Edition {suffix}",
+                   PAIRED_BOOK["isbn"], score=90,
+                   provider=PAIRED_BOOK["source_provider"])
+            for suffix in ("A", "B", "C")
+        ]
+        for candidate, key in zip(
+            colliding, ("collision", "collision", "collision:1")
+        ):
+            candidate.item["view_key"] = key
+        visible = {"filter-duplicate-A", "filter-duplicate-B", "filter-duplicate-C"}
+        view._ranked = colliding
+        view._candidate_key = lambda candidate: candidate.item["view_key"]
+        view._matches = lambda candidate: candidate.item["record_id"] in visible
+
+        def actual_gtk_rows():
+            return [
+                (page.store.get_item(index).title, page.store.get_item(index).key)
+                for index in range(page.store.get_n_items())
+            ]
+
+        view._render(preserve_summary=True)
+        assert actual_gtk_rows() == [
+            ("Edition A", "collision"),
+            ("Edition B", "collision:2"),
+            ("Edition C", "collision:1"),
+        ]
+        assert page.select_key("collision:2")
+        assert page.selection.get_selected_item().title == "Edition B"
+        assert view._exact_notice_state["ranked"] is colliding[1]
+        visible.remove("filter-duplicate-A")
+        view._render(preserve_summary=True)
+        assert actual_gtk_rows() == [
+            ("Edition B", "collision:2"),
+            ("Edition C", "collision:1"),
+        ]
+        selected_book = page.selection.get_selected_item()
+        assert selected_book is not None
+        assert (selected_book.key, selected_book.title) == (
+            "collision:2", "Edition B"
+        )
+        assert view._exact_notice_state["ranked"] is colliding[1]
+        detail_titles = [
+            child.get_text() for child in walk(page.detail.content)
+            if isinstance(child, Gtk.Label)
+            and child.get_mapped() and child.has_css_class("detail-title")
+        ]
+        assert detail_titles == ["Edition B"]
+        visible.remove("filter-duplicate-B")
+        view._render(preserve_summary=True)
+        assert actual_gtk_rows() == [("Edition C", "collision:1")]
+        assert page.selection.get_selected_item() is None
+        assert view._exact_notice_state is None
+        assert page.select_key("collision:2") is False
+        assert state["searches"] == searches_before + [
+            (PAIRED_BOOK["author"], "author", True, "alice")
+        ]
+        report["checks"]["P1_4761_filter_preserves_exact_edition_real_gtk"] = True
         state["plugin"].deactivate()
         report["status"] = "PASS"
         save()

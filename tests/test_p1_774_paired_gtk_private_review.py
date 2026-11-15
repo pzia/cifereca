@@ -55,6 +55,7 @@ def _one(root: Path, surface: str, sha: str = SHA, appearance: str = "light") ->
             ): True,
             **({
                 "P1_4761_recommendations_typed_catalogue_author_gtk": True,
+                "P1_4761_filter_preserves_exact_edition_real_gtk": True,
             } if surface == "recommendations" else {}),
         },
         "p1_774_paired_book": module.verified_fixture_receipt(),
@@ -199,6 +200,31 @@ def test_absent_shared_gtk_selection_proof_fails_closed(tmp_path):
     with pytest.raises(module.ReviewError, match="Source/édition"):
         module.build_review(tmp_path, sizes=SIZES)
     assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+def test_missing_real_gtk_duplicate_filter_selection_evidence_fails_closed(tmp_path):
+    _pair(tmp_path)
+    path = tmp_path / "recommendations-detail-1024/screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["checks"].pop("P1_4761_filter_preserves_exact_edition_real_gtk")
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="Source/édition"):
+        module.build_review(tmp_path, sizes=SIZES)
+    assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+def test_changed_gtk_selection_proof_invalidates_old_private_grid(tmp_path):
+    _pair(tmp_path)
+    module.build_review(tmp_path, sizes=SIZES)
+    checklist = _human_review(tmp_path)
+    previous = checklist.read_bytes()
+    path = tmp_path / "recommendations-detail-1024/screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["checks"]["P1_4761_filter_preserves_exact_edition_real_gtk"] = False
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="Source/édition"):
+        module.verify_completed_review(tmp_path, sizes=SIZES)
+    assert checklist.read_bytes() == previous
 
 
 @pytest.mark.parametrize("surface", ["search", "recommendations"])

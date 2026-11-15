@@ -225,6 +225,18 @@ bibliographique, le row GTK sélectionné et le détail mappé ; elle ne
 remplace aucun scénario précédent. Le comparateur refuse un rapport sans
 les deux attestations GTK, ou une source, un record ou une empreinte
 documentaire différents, **même si HEAD, thème et PNG sont conformes**.
+La preuve de sûreté de sélection Recommandations
+`P1_4761_filter_preserves_exact_edition_real_gtk` est également
+obligatoire pour la recette privée. Après la capture de la notice commune,
+le vrai `Gtk.SingleSelection` et son `Gio.ListStore` sont exercés sur
+trois éditions synthétiques dont deux ont la même clé et la troisième
+réserve un suffixe réel. Masquer la première édition doit **préserver**
+la clé, la sélection et le titre GTK de la seconde ; masquer ensuite la
+seconde doit **révoquer** la sélection et refuser toute réutilisation de
+sa clé. Cette vérification n'ajoute ni capture privée ni GET fournisseur :
+elle protège la correspondance notice↔détail/actions entre deux filtres,
+sans prétendre inspecter la lisibilité du résultat.
+
 Les deux probes exigent également que le **panneau DetailPanel réellement
 mappé** comporte le titre et l'auteur attendus dans les **widgets
 réellement utilisés** : `Gtk.Label.detail-title` pour les deux vues,

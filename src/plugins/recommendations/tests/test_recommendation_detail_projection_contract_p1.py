@@ -260,6 +260,100 @@ def test_colliding_recommendation_keys_never_select_another_book(candidate_keys)
     assert all(detail.actions == () for detail in details)
 
 
+def test_colliding_editions_keep_their_exact_keys_when_filters_hide_siblings():
+    """P1 #4761: filtering does not transfer a GTK selection to another book."""
+    view, rows, details, empties = _make_view({"title": "seed"})
+    view._ranked = [
+        RankedCandidate(
+            item={"title": title, "key": key, "authors": ["Auteur"]},
+            score=90, reasons=(), sources=(),
+        )
+        for title, key in (
+            ("Edition A", "edition"),
+            ("Edition B", "edition"),
+            ("Edition C", "edition:1"),
+        )
+    ]
+    view._candidate_key = lambda ranked: ranked.item["key"]
+    visible = {"Edition A", "Edition B", "Edition C"}
+    view._matches = lambda ranked: ranked.item["title"] in visible
+
+    def render():
+        rows.clear()
+        view._render(preserve_summary=True)
+        return {row.title: row.key for row in rows}
+
+    full = {
+        "Edition A": "edition",
+        "Edition B": "edition:2",  # edition:1 belongs to the real C key
+        "Edition C": "edition:1",
+    }
+    assert render() == full
+    chosen = next(row for row in rows if row.title == "Edition B")
+    view._selected_row(chosen)
+    selected = view._exact_notice_state
+    assert details[-1].title == "Edition B"
+
+    # Hide the first collision. Edition B must NOT inherit its sibling's
+    # 'edition' key, or the old GTK detail/actions could point at A/B/C.
+    visible.remove("Edition A")
+    assert render() == {key: value for key, value in full.items()
+                        if key in visible}
+    assert view._exact_notice_state is selected
+    assert view._ranked_by_key[chosen.key].item["title"] == "Edition B"
+    assert len(details) == 1
+    assert not empties
+
+    # Hide the selected book while keeping another colliding edition.
+    # The old detail is cleared, not silently switched to the surviving C.
+    visible.remove("Edition B")
+    assert render() == {"Edition C": "edition:1"}
+    assert view._exact_notice_state is None
+    assert empties[-1][0] == "Aucune recommandation sélectionnée"
+    assert len(details) == 1
+    view._selected_row(chosen)  # delayed GTK selection for hidden Edition B
+    assert empties[-1][0] == "Notice indisponible"
+    assert len(details) == 1
+
+    visible.update(("Edition A", "Edition B"))
+    assert render() == full
+
+
+def test_fallback_keys_stay_reserved_when_earlier_candidates_are_filtered():
+    view, rows, details, empties = _make_view({"title": "seed"})
+    view._ranked = [
+        RankedCandidate(
+            item={"title": title, "key": key},
+            score=80, reasons=(), sources=(),
+        )
+        for title, key in (
+            ("First", "recommendation-1"),
+            ("Fallback", ""),
+            ("Collision", "recommendation-1"),
+        )
+    ]
+    view._candidate_key = lambda ranked: ranked.item["key"]
+    visible = {"First", "Fallback", "Collision"}
+    view._matches = lambda ranked: ranked.item["title"] in visible
+
+    rows.clear()
+    view._render(preserve_summary=True)
+    original = {row.title: row.key for row in rows}
+    assert original == {
+        "First": "recommendation-1",
+        "Fallback": "recommendation-1:1",
+        "Collision": "recommendation-1:2",
+    }
+    visible.remove("First")
+    rows.clear()
+    view._render(preserve_summary=True)
+    assert {row.title: row.key for row in rows} == {
+        "Fallback": original["Fallback"],
+        "Collision": original["Collision"],
+    }
+    assert not details and not empties
+
+
 def test_same_candidate_key_collision_keeps_original_key_stable():
     view, rows, details, _ = _make_view({"title": "seed"})
     view._ranked = [

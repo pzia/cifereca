@@ -2535,7 +2535,11 @@ class UxRecommendationsView:
     def _render(self, preserve_summary: bool = False) -> None:
         if getattr(self, "_disposed", False):
             return
-        visible = [row for row in self._ranked if self._matches(row)]
+        # Allocate keys from the COMPLETE ranked snapshot, not the visible
+        # subset. Two exact editions may legitimately share candidate_key;
+        # filtering out the first used to transfer its GTK key to the next.
+        # This silently rebound an existing selection/detail to another book.
+        # A view filter must never change an edition's stable row identity.
         # Synchronize the view counter before materializing GTK rows: real
         # HiDPI reallocation and detail-selection callbacks can interrupt
         # presentation after show_rows has changed the list model. The
@@ -2547,18 +2551,21 @@ class UxRecommendationsView:
 
         rows = []
         mapping = {}
-        # Reserve/allocate every list key from the original ranked order,
-        # BEFORE applying a local alphabetical/affinity sort. Otherwise two
-        # exact source variants with a shared candidate_key can exchange
-        # GTK keys (and stale detail actions) when the reader changes sort.
+        # Reserve and allocate ALL keys in ranked order BEFORE filtering or
+        # applying a local sort. A hidden colliding edition must still reserve
+        # its key, including explicit real keys such as "edition:1".
+        # Otherwise the surviving edition can impersonate the hidden one
+        # without the user making a new selection.
         original_keys = tuple(
             self._candidate_key(ranked) or f"recommendation-{index}"
-            for index, ranked in enumerate(visible)
+            for index, ranked in enumerate(self._ranked)
         )
         reserved_keys = set(original_keys)
         used_keys: set[str] = set()
         keyed = []
-        for index, (ranked, original_key) in enumerate(zip(visible, original_keys)):
+        for index, (ranked, original_key) in enumerate(
+            zip(self._ranked, original_keys)
+        ):
             key = original_key
             if key in used_keys:
                 suffix = index
@@ -2567,7 +2574,8 @@ class UxRecommendationsView:
                     suffix += 1
                     key = f"{original_key}:{suffix}"
             used_keys.add(key)
-            keyed.append((ranked, key))
+            if self._matches(ranked):
+                keyed.append((ranked, key))
         for ranked, key in _sort_visible_recommendations(
             keyed, self._local_sort_key(),
         ):
