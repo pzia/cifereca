@@ -85,6 +85,12 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
     # Close documentary subscriptions before physical N3 worker pools.
     # Both caches are process/window-owned, not per-profile slices.
     try:
+        adapter = getattr(window, "local_cover_adapter", None)
+        if adapter is not None:
+            adapter.close()
+    except Exception:
+        pass
+    try:
         service = getattr(window, "document_covers", None)
         if service is not None:
             service.close()
