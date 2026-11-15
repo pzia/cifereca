@@ -550,8 +550,12 @@ class LocalCatalog:
         if not path.is_file():return entry
         cached=dict(artifact.get('metadata') or {})
         force=getattr(self,'_force_covers',False) and entry.get('artifact_id') not in getattr(self,'_cover_refresh_seen',set())
+        # N1 is the Artifact's inspected EPUB-member proof; N3 is only the
+        # content-addressed extracted image. Cache eviction/corruption of N3
+        # cannot invalidate the N1 documentary association or force a ZIP
+        # metadata rescan. N3 restores bytes from the exact immutable Artifact.
+        # An explicit force_covers scan still reinspects the EPUB on demand.
         complete=cached.get('epub_metadata_schema')==EPUB_METADATA_SCHEMA and not force
-        if cached.get('epub_cover') and not cached_cover_url(cached):complete=False
         if not complete:
             inspected=inspect_epub(path)
             if hasattr(self,'_cover_refresh_seen'):self._cover_refresh_seen.add(entry.get('artifact_id'))
