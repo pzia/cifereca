@@ -1,0 +1,35 @@
+"""#3104/#6168: plugin-neutral document cover binding to the shared N2 cache.
+
+The plugin may pass back a Core-provided opaque DocumentRef. It cannot
+create documentary proof by supplying that reference, a raw image URL, ISBN
+or title: DocumentCoverService resolves only admitted exact N2 evidence.
+No provider/EPUB read, user permission or profile cache namespace here.
+"""
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from ..core.book_cover_projection import CoverDocumentScope
+from .document_cover_service import DocumentCoverService
+
+CoverVariant = Literal["list", "detail"]
+
+
+def bind_declared_document_cover(
+    cover: Any, loader: Any, service: Any, document: object, *,
+    variant: CoverVariant, priority: int,
+) -> bool:
+    """Bind an exact reference, or fail closed without legacy URL fallback."""
+    if (type(document) is not CoverDocumentScope
+            or type(service) is not DocumentCoverService):
+        cover.bind_url(loader, None, priority=priority)
+        return False
+    try:
+        cover.bind_document(service, document, variant=variant, priority=priority)
+    except (TypeError, ValueError, RuntimeError):
+        cover.bind_url(loader, None, priority=priority)
+        return False
+    return True
+
+
+__all__ = ["bind_declared_document_cover"]
