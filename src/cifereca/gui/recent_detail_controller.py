@@ -8,6 +8,14 @@ from .detail_model import book_detail_presentation
 def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
     if getattr(window, "_closed", False) or not row:
         return
+    if getattr(row, "_recent_ambiguous_key", False) is True:
+        # The lookup intentionally keeps the last row for compatibility,
+        # but a duplicate visual key cannot select an exact book/detail.
+        window.recent_page.detail.empty(
+            "Référence ambiguë",
+            "Actualisez les livres récents avant d'ouvrir ce détail.",
+        )
+        return
     item = window._recent_objects.get(row.key)
     if not item:
         return
