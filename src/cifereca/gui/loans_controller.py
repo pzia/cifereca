@@ -77,6 +77,12 @@ def _populate_loans(self, rows: list[Loan]) -> None:
     # conflicting cards are not promoted into the click/renew/download model.
     rows = list(unambiguous_loan_rows(rows))
     self.service.last_loans = rows
+    # A fresh provider inventory changes the evidence epoch even when the
+    # Library snapshot is unchanged. Cached thumbnails from the prior Loan
+    # DTO must not override a newer supplier image or disappearance.
+    self._loan_cover_decision_revision = (
+        getattr(self, "_loan_cover_decision_revision", 0) + 1
+    )
     # The same upstream loan can be visible under two Paris credentials.
     # Preserve both source-bound rows instead of overwriting by loan.id.
     self.loan_objects = {loan_source_key(x): x for x in rows}
@@ -112,6 +118,10 @@ def _library_loan_covers_updated(self, entries: list[dict[str, Any]]) -> None:
     self._loan_cover_library_revision = (
         getattr(self, "_loan_cover_library_revision", 0) + 1
     )
+    # Both independent proof producers advance one monotonic cover revision.
+    self._loan_cover_decision_revision = (
+        getattr(self, "_loan_cover_decision_revision", 0) + 1
+    )
     self._render_loans()
 
 
@@ -141,24 +151,42 @@ def _loan_display_cover(self, loan: Loan) -> Loan:
     if active is None or loan.identity_id != active:
         return safe_preview
     evidence = getattr(self, "_loan_cover_projection", None)
-    if (type(evidence) is tuple and len(evidence) == 3
-            and evidence[0] == getattr(self.service, "_account_context_epoch", None)
-            and evidence[1] == active and evidence[2]):
-        cover_rows = evidence[2]
-    else:
-        cover_rows = getattr(self, "_library_entries_cache", ())
-    resolved = loan_local_cover(loan, cover_rows)
-    if resolved.status != "selected" or not resolved.url:
+    trusted_snapshot = (
+        type(evidence) is tuple and len(evidence) == 3
+        and evidence[0] == getattr(self.service, "_account_context_epoch", None)
+        and evidence[1] == active and type(evidence[2]) is tuple
+        and bool(evidence[2])
+    )
+    cover_rows = (
+        evidence[2] if trusted_snapshot
+        else getattr(self, "_library_entries_cache", ())
+    )
+    # Same N1 decision across list and detail: no second borrower/Placement
+    # scan after the first scoped revision is already in the N2 cache.
+    # The compatibility fallback below remains for headless/legacy windows,
+    # empty or incomplete Library snapshots and no-provenance loans.
+    decision = None
+    if trusted_snapshot:
+        from cifereca.gui.loan_cover_decision_bridge import loan_cover_decision
+        decision = loan_cover_decision(self, loan, cover_rows)
+    resolved = (
+        decision if decision is not None
+        else loan_local_cover(loan, cover_rows)
+    )
+    selected_url = (
+        resolved.uri if decision is not None else resolved.url
+    ) if resolved.status == "selected" else ""
+    if not selected_url:
         return safe_preview
     # A distinct catalog cover never replaces an already validated exact
     # supplier thumbnail. Only a verified stronger tier may supersede it.
     # Ambiguous/stale/foreign proofs leave the source thumbnail untouched.
     if safe_source and resolved.tier not in ("embedded", "origin"):
         return loan
-    if safe_source and resolved.url == original_url:
+    if safe_source and selected_url == original_url:
         return loan
     displayed = copy(safe_preview)
-    displayed.thumbnail_url = resolved.url
+    displayed.thumbnail_url = selected_url
     return displayed
 
 
