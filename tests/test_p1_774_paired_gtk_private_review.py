@@ -65,6 +65,19 @@ def _one(root: Path, surface: str, sha: str = SHA, appearance: str = "light") ->
             "sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
         }],
     }
+    for index, (workflow, staged) in enumerate(module.WORKFLOW_STAGES.items()):
+        workflow_stage, workflow_check = staged[surface]
+        snapshot = folder / f"{workflow_stage}.png"
+        Image.new(
+            "RGB", SIZE,
+            ("red", "green", "orange", "purple")[index * 2 + (surface == "search")],
+        ).save(snapshot)
+        report["checks"][workflow_check] = True
+        report["steps"].append({
+            "stage": workflow_stage, field: snapshot.name,
+            "appearance": appearance,
+            "sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest(),
+        })
     if surface == "recommendations":
         report.update(width=1024, scale=1)
     (folder / "screen.json").write_text(json.dumps(report), encoding="utf-8")
@@ -111,14 +124,64 @@ def test_same_head_real_gtk_pair_generates_private_review_not_ux_acceptance(tmp_
     report = module.build_review(tmp_path, sizes=SIZES, expected_sha=SHA)
     private = tmp_path / "search-recommendations-private-review"
     assert report["status"] == "VISUAL_REVIEW_REQUIRED"
-    assert report["verified_source_captures"] == 2
+    assert report["verified_source_captures"] == module.CAPTURES_PER_WIDTH
+    assert report["workflow_sheets"] == ["filters", "states"]
     assert report["git_sha"] == SHA
     assert report["appearance"] == "light"
     assert len(report["capture_fingerprint_sha256"]) == 64
     assert (private / "pair-1024.png").is_file()
+    assert (private / "pair-1024-filters.png").is_file()
+    assert (private / "pair-1024-states.png").is_file()
     assert (private / "ux-checklist.csv").is_file()
     assert private.stat().st_mode & 0o777 == 0o700
     assert (private / "pair-1024.png").stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("workflow", ["filters", "states"])
+@pytest.mark.parametrize("surface", ["search", "recommendations"])
+def test_unverified_real_workflow_stage_prevents_a_private_review(
+    tmp_path, workflow, surface,
+):
+    _pair(tmp_path)
+    prefix = "search-filter" if surface == "search" else "recommendations-detail"
+    path = tmp_path / f"{prefix}-1024/screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    _stage, check = module.WORKFLOW_STAGES[workflow][surface]
+    report["checks"].pop(check)
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="parcours GTK"):
+        module.build_review(tmp_path, sizes=SIZES)
+    assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+@pytest.mark.parametrize("workflow", ["filters", "states"])
+def test_missing_workflow_png_is_not_equivalent_to_a_baseline_pair(tmp_path, workflow):
+    _pair(tmp_path)
+    folder = tmp_path / "recommendations-detail-1024"
+    stage = module.WORKFLOW_STAGES[workflow]["recommendations"][0]
+    (folder / f"{stage}.png").unlink()
+    with pytest.raises(module.ReviewError, match="non sûr"):
+        module.build_review(tmp_path, sizes=SIZES)
+    assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+def test_completed_review_is_invalidated_by_changed_supplementary_pixels(tmp_path):
+    _pair(tmp_path)
+    module.build_review(tmp_path, sizes=SIZES)
+    checklist = _human_review(tmp_path)
+    original = checklist.read_bytes()
+    folder = tmp_path / "recommendations-detail-1024"
+    path = folder / "screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    stage = module.WORKFLOW_STAGES["states"]["recommendations"][0]
+    image = folder / f"{stage}.png"
+    Image.new("RGB", SIZE, "black").save(image)
+    step, = (x for x in report["steps"] if x["stage"] == stage)
+    step["sha256"] = hashlib.sha256(image.read_bytes()).hexdigest()
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="correspondent"):
+        module.verify_completed_review(tmp_path, sizes=SIZES)
+    assert checklist.read_bytes() == original
 
 
 def test_absent_shared_gtk_selection_proof_fails_closed(tmp_path):
