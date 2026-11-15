@@ -11,7 +11,7 @@ from typing import Any, Callable, Mapping
 
 from .device_usb_copy_admission import UsbCopyConsent, UsbCopyRightsEvidence
 from .device_usb_dry_run import inspect_usb_dry_run
-from .device_usb_preview import _sha
+from .device_usb_preview import UsbPreviewRow, _sha
 from .device_usb_library_copy import execute_usb_library_copy
 from .device_usb_observation_record import record_verified_usb_observation
 from .device_usb_removal_execute import execute_usb_removal
@@ -73,6 +73,7 @@ def synchronize_usb_reader(
             or (artifact_id is not None and (
                 type(preview.rows) is not tuple
                 or len(preview.rows) != 1
+                or type(preview.rows[0]) is not UsbPreviewRow
                 or preview.rows[0].artifact_id != artifact_id
             ))):
         return UsbSyncResult("unavailable")
