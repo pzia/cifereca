@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from .local_book_detail_sections import local_book_detail_sections
 from .detail_selection_perf import current_detail_trace
+from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 
 
 def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_presentation, detail_language, document_links) -> None:
@@ -54,12 +55,37 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
 
     detail = window.library_page.detail
     description = window._book_description(item)
+    # Exact Core Artifact+Placement evidence is the ONLY route to N2 for
+    # embedded EPUB. A warm provider image in N3 cannot reorder N1.
+    evidence = item.get("_exact_local_cover_evidence")
+    document = None
+    admitted_thumbnail = item.get("thumbnail_url")
+    if evidence is not None and not foreign:
+        matched = (
+            type(evidence) is VerifiedLocalCoverEvidence
+            and evidence.scope.identity_id == owner
+            and evidence.scope.artifact_id == item.get("artifact_id")
+            and evidence.scope.placement_id == item.get("placement_id")
+            and evidence.scope.source_key == item.get("key")
+        )
+        if matched:
+            bridge = getattr(window, "document_covers", None)
+            publisher = getattr(window, "local_cover_adapter", None)
+            if bridge is not None and publisher is not None:
+                try:
+                    document = publisher.register(bridge, evidence)
+                except (ValueError, TypeError, RuntimeError):
+                    document = None
+        if document is None:
+            # A malformed or stale EPUB proof is NOT authorization to serve
+            # an unrelated cached origin/catalogue image instead.
+            admitted_thumbnail = None
     trace = current_detail_trace()
     projection_started = trace.clock() if trace else None
     presentation = book_detail_presentation(
         title=str(item.get("title") or "Sans titre"),
         subtitle=str(item.get("author") or ""),
-        thumbnail=item.get("thumbnail_url"),
+        thumbnail=admitted_thumbnail,
         badges=[],
         section_rows=local_book_detail_sections(
             item,
@@ -74,7 +100,12 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
     )
     if trace is not None:
         trace.record("projection", projection_started)
-    detail.show_presentation(presentation, description=description)
+    if document is None:
+        detail.show_presentation(presentation, description=description)
+    else:
+        detail.show_presentation(
+            presentation, description=description, cover_document=document,
+        )
     window._add_local_book_actions(detail,item)
     if not foreign:
         # Preserve original action ordering for current-profile details.
