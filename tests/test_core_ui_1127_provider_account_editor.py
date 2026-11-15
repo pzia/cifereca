@@ -227,7 +227,7 @@ def test_legacy_provider_option_is_scoped_to_exact_account_before_global_default
     other, _, _, _ = _render(
         'arbitrary', data={'id': 'arbitrary-b', 'options': {}}, **kwargs,
     )
-    assert other['option_fields']['base_url'].text == 'https://global.example'
+    assert other['option_fields']['base_url'].text == 'https://default.example'
     new, _, _, _ = _render('arbitrary', **kwargs)
     assert new['option_fields']['base_url'].text == 'https://default.example'
     saved, _, _, _ = _render(
