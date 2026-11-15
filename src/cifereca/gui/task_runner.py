@@ -989,8 +989,8 @@ class TaskRunner:
             # its final GTK receipt even under sustained repaint/progress
             # traffic. This priority is bound to the generic task contract,
             # never the provider ID; unrelated task kinds retain idle order.
-            # The old supplier-named kind remains a passive TRACE compatibility
-            # label only and cannot select expedited execution here.
+            # Expedited GTK materialization delivery belongs solely to the
+            # supplier-neutral Core kind; unknown/retired names stay generic.
             normal_priority = (
                 getattr(GLib, "PRIORITY_DEFAULT", None)
                 if trace_kind == "source-materialize" else None
