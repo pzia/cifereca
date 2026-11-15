@@ -9,7 +9,7 @@ The GUI owns four active identity/query/account/source epochs separately.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 import json
 
@@ -72,7 +72,7 @@ class ExactSearchCatalogueCover:
 
 
 def project_exact_search_catalogue_cover(
-    item: SearchResult, *, identity_id: str,
+    item: SearchResult, *, identity_id: str, share_public: bool = False,
 ) -> ExactSearchCatalogueCover | None:
     """Qualify only an active source-originated edition's catalogue image.
 
@@ -94,6 +94,17 @@ def project_exact_search_catalogue_cover(
     )
     if proof is None:
         return None
+    # The anonymous catalogue contract identifies a source independently
+    # of the reading profile. A public-looking URL, private catalogue
+    # session or account-scoped result cannot opt itself into this key.
+    if (share_public and scope.credential_id == "__public__"
+            and type(item.source_collection) is str
+            and item.source_collection == "public_catalog"
+            and item.source_account_id is None
+            and (item.owned is None or item.owned is False)
+            and (item.downloadable is None or item.downloadable is False)
+            and item.download_url is None):
+        scope = replace(scope, kind="public_catalogue", identity_id=None)
     return ExactSearchCatalogueCover(scope, proof)
 
 

@@ -15,7 +15,7 @@ from typing import Iterable, Literal, Mapping
 from .covers import CoverCandidate, resolve_cover
 
 
-ScopeKind = Literal["catalogue", "loan", "placement"]
+ScopeKind = Literal["catalogue", "public_catalogue", "loan", "placement"]
 CoverStatus = Literal["selected", "missing", "pending", "ambiguous"]
 CoverReason = Literal[
     "attested", "complete_no_admissible_cover", "conflicting_evidence",
@@ -30,12 +30,13 @@ class CoverDocumentScope:
 
     `source_key` must be generated from the producer's exact, normalized
     coordinates; this class does not infer documentary equivalence.
+    Public catalogue sources use an anonymous credential and no profile.
     `account_id=""` may represent an explicitly known primary borrower;
     `None` represents an unknown/non-applicable account.
     """
 
     kind: ScopeKind
-    identity_id: str
+    identity_id: str | None
     source_key: str
     provider_id: str = ""
     credential_id: str = ""
@@ -45,10 +46,10 @@ class CoverDocumentScope:
     placement_id: str = ""
 
     def __post_init__(self) -> None:
-        if self.kind not in ("catalogue", "loan", "placement"):
+        if self.kind not in ("catalogue", "public_catalogue", "loan", "placement"):
             raise ValueError("invalid cover scope kind")
         for field_name in (
-            "identity_id", "source_key", "provider_id", "credential_id",
+            "source_key", "provider_id", "credential_id",
             "loan_id", "artifact_id", "placement_id",
         ):
             value = getattr(self, field_name)
@@ -60,8 +61,16 @@ class CoverDocumentScope:
                  or len(self.account_id) > 512
                  or not self.account_id.isprintable())):
             raise ValueError("invalid account scope")
-        if not self.identity_id or not self.source_key:
-            raise ValueError("cover scope requires exact identity and source key")
+        if not self.source_key:
+            raise ValueError("cover scope requires exact source key")
+        if self.kind == "public_catalogue":
+            if (self.identity_id is not None or self.credential_id != "__public__"
+                    or self.account_id is not None or not self.provider_id
+                    or self.loan_id or self.artifact_id or self.placement_id):
+                raise ValueError("public catalogue cover requires anonymous source")
+        elif (type(self.identity_id) is not str or not self.identity_id
+                or len(self.identity_id) > 512 or not self.identity_id.isprintable()):
+            raise ValueError("cover scope requires exact identity")
         if self.kind == "catalogue" and not self.provider_id:
             raise ValueError("catalogue cover requires a source provider")
         if (self.kind == "loan" and (

@@ -113,12 +113,20 @@ def exact_remote_search_document(
         if origin is not None:
             candidates.append(origin)
     catalogue_facts = project_exact_search_catalogue_cover(
-        item, identity_id=scope.identity_id,
+        item, identity_id=scope.identity_id, share_public=True,
     )
     # Core, never GTK or the N3 image cache, is the source of the direct
     # catalogue evidence and owns the exact source-identity coordinates.
-    if catalogue_facts is not None and catalogue_facts.scope == scope:
-        candidates.append(catalogue_facts.catalogue)
+    if catalogue_facts is not None:
+        catalogue = catalogue_facts.catalogue
+        if (catalogue_facts.scope.kind == "public_catalogue"
+                and (not candidates or candidates[0].url == catalogue.url)):
+            # Some anonymous holdings render the listing's own image again.
+            # An identical public URL adds no independently scoped source.
+            # A distinct holdings image stays under the active profile.
+            scope = catalogue_facts.scope
+            candidates.clear()
+        candidates.append(catalogue)
     if not candidates:
         return None
     return VerifiedSearchDocumentCover(
@@ -126,6 +134,13 @@ def exact_remote_search_document(
         document=scope, context=context,
         candidates=tuple(candidates),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _RegisteredSearchCover:
+    candidates: tuple[CoverCandidate, ...]
+    revision: int
+    private_evidence: VerifiedSearchDocumentCover | None
 
 
 class SearchDocumentCoverRegistry:
@@ -139,7 +154,7 @@ class SearchDocumentCoverRegistry:
         self._issued = 0
         self._closed = False
         self._known: OrderedDict[
-            CoverDocumentScope, tuple[VerifiedSearchDocumentCover, int],
+            CoverDocumentScope, _RegisteredSearchCover,
         ] = OrderedDict()
 
     def register(
@@ -153,24 +168,26 @@ class SearchDocumentCoverRegistry:
             if self._closed:
                 raise RuntimeError("Search document registry closed")
             known = self._known.get(evidence.document)
-            if (known is not None
-                    and known[0].source_item is evidence.source_item
-                    and known[0].row_key == evidence.row_key
-                    and known[0].document == evidence.document
-                    and known[0].context == evidence.context
-                    and known[0].candidates == evidence.candidates):
-                revision = known[1]
-            else:
-                revision = self._issued + 1
+            is_public = evidence.document.kind == "public_catalogue"
+            same = known is not None and known.candidates == evidence.candidates
+            if same and not is_public:
+                prior = known.private_evidence
+                same = (prior is not None and prior.source_item is evidence.source_item
+                        and prior == evidence)
+            revision = known.revision if same else self._issued + 1
             snapshot = CoverSourceSnapshot(
                 scope=evidence.document, revision=revision,
                 candidates=evidence.candidates, snapshot_complete=True,
             )
             # Refuse stale/replaced evidence before advancing the registry.
             service.register(snapshot)
-            if known is None or revision != known[1]:
+            if not same:
                 self._issued = revision
-            self._known[evidence.document] = (evidence, revision)
+            # Shared entries carry the source candidates, not the active
+            # row object, identity or navigation epochs of their consumer.
+            self._known[evidence.document] = _RegisteredSearchCover(
+                evidence.candidates, revision, None if is_public else evidence,
+            )
             self._known.move_to_end(evidence.document)
             while len(self._known) > self._limit:
                 self._known.popitem(last=False)
@@ -183,8 +200,9 @@ class SearchDocumentCoverRegistry:
 
 
 def search_document_is_current(window: Any, evidence: VerifiedSearchDocumentCover) -> bool:
-    current = _current(window, evidence.source_item, evidence.row_key)
-    return current == (evidence.document, evidence.context)
+    return evidence == exact_remote_search_document(
+        window, evidence.source_item, evidence.row_key,
+    )
 
 
 def selected_search_document(window: Any, item: SearchResult) -> VerifiedSearchDocumentCover | None:
@@ -212,14 +230,7 @@ def register_exact_search_document(
             or evidence.document != document
             or evidence.source_item is not item):
         return False
-    current = exact_remote_search_document(
-        window, item, evidence.row_key,
-    )
-    if (current is None or current.source_item is not item
-            or current.row_key != evidence.row_key
-            or current.document != evidence.document
-            or current.context != evidence.context
-            or current.candidates != evidence.candidates):
+    if not search_document_is_current(window, evidence):
         return False
     adapter = getattr(window, "search_document_cover_registry", None)
     if type(adapter) is not SearchDocumentCoverRegistry:

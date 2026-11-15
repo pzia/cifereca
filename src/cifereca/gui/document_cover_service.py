@@ -69,6 +69,8 @@ class CoverSourceSnapshot:
             # the separate immutable embedded field below.
             if raw.tier not in ("origin", "catalog"):
                 raise ValueError("embedded cover requires exact Core proof")
+            if self.scope.kind == "public_catalogue" and raw.tier != "catalog":
+                raise ValueError("public catalogue scope requires direct catalogue evidence")
             checked = candidate(
                 raw.url, tier=raw.tier, source=raw.source,
                 evidence_id=raw.evidence_id,
