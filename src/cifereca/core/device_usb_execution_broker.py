@@ -293,6 +293,7 @@ class ReaderUsbExecutionBrokerImpl:
                 confirmations={confirmation.artifact_id: confirmation},
                 rights={}, policy_verifier=None,
                 check_cancelled=check_cancelled,
+                artifact_id=confirmation.artifact_id,
             )
             return result if type(result) is UsbSyncResult else blocked
         except Exception:
