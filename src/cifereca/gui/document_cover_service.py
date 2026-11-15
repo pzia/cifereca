@@ -475,26 +475,20 @@ class DocumentCoverService:
         with self._lock:
             if self._closed:
                 return
-            if document in self._snapshots:
-                # A Core producer may register a stronger source in the
-                # tiny gap between get_cover's N2 MISS and this scheduling
-                # step. Notify the visible subscriber rather than losing
-                # its only chance to rebind (its neutral callback is stale).
-                current_source_raced = True
-            else:
-                current_source_raced = False
-            if current_source_raced:
-                pass
-            elif self._clock() < self._read_cooldown.get(document, 0):
-                return
-            elif document in self._read_active:
-                waiters = self._read_waiters.setdefault(document, [])
-                if source_changed is not None and len(waiters) < 32:
-                    waiters.append((handle, source_changed))
-                return
+            # A producer may register between get_cover's N2 MISS and
+            # scheduling. Notify this visible consumer instead of stranding
+            # its stale neutral placeholder.
+            current_source_raced = document in self._snapshots
             if not current_source_raced:
-                # Includes queued work, so virtual-list scrolling cannot
-                # produce an unbounded pending Core-read backlog.
+                if self._clock() < self._read_cooldown.get(document, 0):
+                    return
+                if document in self._read_active:
+                    waiters = self._read_waiters.setdefault(document, [])
+                    if source_changed is not None and len(waiters) < 32:
+                        waiters.append((handle, source_changed))
+                    return
+                # Includes queued reads, so rapidly recycled GTK cells
+                # cannot enqueue unbounded Core source work.
                 if len(self._read_active) >= 16:
                     return
                 self._read_active.add(document)
