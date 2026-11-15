@@ -10,6 +10,7 @@ import time
 
 from .detail_model import book_detail_presentation
 from .reader_library_projection import project_reader_library
+from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 from .recent_time import format_recent_timestamp
 
 
