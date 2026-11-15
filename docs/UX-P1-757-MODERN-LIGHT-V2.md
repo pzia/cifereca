@@ -37,6 +37,17 @@ Contrastes calculés (WCAG texte normal, seuil 4,5:1) :
 | Texte secondaire | `#4e6482` / `#f7faff` | 5,79 |
 | Libellé de tag | `#12315f` / `#e5eefc` | 11,02 |
 
+Le test `test_actual_v2_css_text_colours_remain_accessible_across_surfaces`
+calcule désormais les rapports **à partir des déclarations du CSS livré**, et
+non des seules valeurs figées du tableau. Il couvre aussi le panneau latéral,
+la sélection, les libellés secondaires sélectionnés, les badges de contenu,
+les boutons principaux et les libellés secondaires sur fenêtre, carte et
+survol. Le contour de focus explicite est contrôlé à **3:1** au minimum
+contre les fonds clairs déclarés (`test_actual_v2_focus_ring_contrasts_with_light_surfaces`).
+Un changement de palette défavorable fait ainsi échouer la CI, mais cette
+vérification statique **n'atteste ni le dessin effectif ni la navigation au
+clavier** : l'inspection privée des PNG GTK et du focus reste obligatoire.
+
 Les libellés secondaires `dim-label` des lignes de navigation sélectionnées
 prennent explicitement le blanc ; leur encre secondaire `#4e6482` n'atteint
 pas le contraste WCAG AA sur l'accent bleu. Aucun état sombre n'est modifié.
