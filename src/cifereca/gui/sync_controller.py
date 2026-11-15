@@ -1269,9 +1269,13 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
         getattr(self, "_source_inventory_startup_pending", False) is True
         and control is None and deep is False
     )
+    # Opening Sync spans every configured identity. Its Core is bound at
+    # admission, independently from later account/window navigation.
+    opening_service = self.service
 
     def progress(event: dict[str, Any], report) -> None:
-        if getattr(self, "_closed", False):
+        if (getattr(self, "_closed", False)
+                or self.service is not opening_service):
             return
         kind = str(event.get("event") or "")
         if kind == "identity_begin":
@@ -1283,7 +1287,7 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             report(label)
     def work(report):
         try:
-            return self.service.opening_sync(
+            return opening_service.opening_sync(
                 progress=lambda event: progress(event, report), deep=deep,
             )
         except Exception:
@@ -1293,7 +1297,8 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             raise RuntimeError("Synchronisation des bibliothèques indisponible") from None
 
     def ok(summary: dict[str, Any]) -> None:
-        if getattr(self, "_closed", False):
+        if (getattr(self, "_closed", False)
+                or self.service is not opening_service):
             return
         from time import perf_counter
 
@@ -1353,7 +1358,8 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             from .source_inventory_startup import dispatch_after_opening
             dispatch_after_opening(self)
     def err(exc: BaseException) -> None:
-        if getattr(self, "_closed", False):
+        if (getattr(self, "_closed", False)
+                or self.service is not opening_service):
             return
         self.diagnostics.add("SYNC", "opening sync", "error", detail={"reason": "opening_sync_failed"})
         self._render_dashboard()
