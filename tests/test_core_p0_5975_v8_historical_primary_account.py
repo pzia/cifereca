@@ -104,7 +104,6 @@ def test_v8_still_has_historical_mutating_sql_not_a_retired_writer():
     from cifereca.storage import Storage
     from pathlib import Path
     import json
-    from cifereca.core import library_reconciliation  # noqa: F401
     root = Path(__file__).resolve().parents[1]
     ledger = json.loads((root / "docs/provider-business-coupling-review.json").read_text())
     paths = [row for row in ledger["retained_legacy_migrations"]
