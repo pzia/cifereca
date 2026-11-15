@@ -147,3 +147,55 @@ def test_sender_foreign_symlink_does_not_create_recipient_copy(tmp_path):
                        for row in service.storage.placements())
     finally:
         service.close()
+
+
+def test_confirmed_local_send_survives_visual_a_b_a_with_exact_real_bytes(tmp_path):
+    service, source_path, placement = _setup(tmp_path)
+    requester = service.current_identity
+    initial_account_epoch = service._account_context_epoch
+    initial_source_epoch = service._source_context_epoch
+    try:
+        service.select_identity("alice")
+        service.select_identity("bob")
+        assert service._account_context_epoch != initial_account_epoch
+        assert service._source_context_epoch == initial_source_epoch
+        assert service.identity_by_id("bob") is requester
+
+        result = _send(
+            service, placement,
+            expected_account_context_epoch=initial_account_epoch,
+            expected_source_context_epoch=initial_source_epoch,
+            admitted_requester_identity=requester,
+        )
+        assert result["status"] == "complete"
+        assert result["transfer"] == "completed"
+        recipients = [
+            row for row in service.storage.placements()
+            if row["identity_id"] == "bob"
+        ]
+        assert len(recipients) == 1
+        assert Path(recipients[0]["path"]).read_bytes() == source_path.read_bytes()
+        assert service.storage.entitlements() == []
+        assert service.storage.acquisitions() == []
+    finally:
+        service.close()
+
+
+def test_confirmed_copy_refuses_true_source_epoch_revocation_before_io(tmp_path):
+    service, _source_path, placement = _setup(tmp_path)
+    requester = service.current_identity
+    expected = service._source_context_epoch
+    try:
+        service._source_context_epoch += 1
+        outcome = _send(
+            service, placement, expected_source_context_epoch=expected,
+            admitted_requester_identity=requester,
+        )
+        assert outcome["status"] == "blocked"
+        assert outcome["reason_code"] == "local_send_context_revoked"
+        assert not any(
+            row["identity_id"] == "bob"
+            for row in service.storage.placements()
+        )
+    finally:
+        service.close()
