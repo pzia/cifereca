@@ -7,6 +7,7 @@ from types import SimpleNamespace as NS
 
 
 MAIN = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+MASTER_DETAIL = MAIN.parent / "master_detail.py"
 INVALID = 0xFFFFFFFF
 
 
@@ -50,8 +51,24 @@ def _show_rows():
     tree = ast.parse(gui_source_text(MAIN))
     cls = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "MasterDetailPage")
     method = next(node for node in cls.body if isinstance(node, ast.FunctionDef) and node.name == "show_rows")
-    module = ast.Module(body=[method], type_ignores=[])
-    ns = {"BookListItem": BookListItem, "time": NS(perf_counter=lambda: 0.0)}
+    # Compile the public show_rows with its *production* presentation helper.
+    # Older harnesses extracted only the method, masking the dependency on
+    # the visual fallback now shared by all five book views.
+    source = ast.parse(MASTER_DETAIL.read_text(encoding="utf-8"))
+    helper = next(n for n in source.body
+                  if isinstance(n, ast.FunctionDef)
+                  and n.name == "_same_book_row_presentation")
+    fields = next(n for n in source.body
+                  if isinstance(n, ast.Assign)
+                  and any(isinstance(t, ast.Name)
+                          and t.id == "_BOOK_ROW_VISIBLE_FIELDS"
+                          for t in n.targets))
+    module = ast.Module(body=[helper, method], type_ignores=[])
+    ns = {
+        "BookListItem": BookListItem,
+        "time": NS(perf_counter=lambda: 0.0),
+        "_BOOK_ROW_VISIBLE_FIELDS": ast.literal_eval(fields.value),
+    }
     exec(compile(ast.fix_missing_locations(module), str(MAIN), "exec"), ns)
     return ns["show_rows"]
 
