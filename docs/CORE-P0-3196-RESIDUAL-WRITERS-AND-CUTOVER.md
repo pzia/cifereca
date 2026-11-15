@@ -11,7 +11,12 @@
 > `archive_only=False` échoue explicitement et n'écrit rien.
 > Cette suppression **n'est pas un troisième writer actif retiré** :
 > les deux retraits exécutables ont été tracés séparément dans #6149
-> et #6152. La migration Config 0.8.1 pré-tombstone et SQLite v5 restent.
+> et #6152. Les migrations Config 0.8.1 pré-tombstone et SQLite v5
+> restent **toutes deux exécutables pour les données anciennes**. Le
+> registre inclut désormais explicitement SQLite v5 dans
+> `retained_legacy_migrations`, auparavant hors du compteur AST et de
+> l'inventaire non-AST : le total honnête est **2 writers historiques
+> résiduels**, sans annuler le retrait réel du writer v3.
 
 
 > **Delta P0 #6152 (15/11/2026) — retraite du dernier import SQLite v3
