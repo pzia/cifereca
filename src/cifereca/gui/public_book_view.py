@@ -77,17 +77,18 @@ class PublicBookMasterDetailView:
             # an already attested Core scope may cross this UI boundary:
             # plugin URL, title, ISBN and public row key cannot create one.
             from cifereca.core.book_cover_projection import CoverDocumentScope
-            # The explicit public plugin ABI and the legacy Core-internal
-            # row packet feed one identical GTK cache binding. No URL/title
-            # inference and no second N2 writer. Bad declared refs fail closed.
+            # The Core-attested exact row packet takes precedence over an
+            # optional plugin declaration, even if both are syntactically
+            # valid but name DIFFERENT documents. No URL/title/ISBN join.
+            core_document = getattr(row, "_cover_document_ref", None)
             declared = getattr(row, "cover_document_ref", None)
-            document = (
-                declared if declared is not None
-                else getattr(row, "_cover_document_ref", None)
-            )
-            if type(document) is CoverDocumentScope:
-                item._cover_document_ref = document
+            if type(core_document) is CoverDocumentScope:
+                item._cover_document_ref = core_document
+            elif type(declared) is CoverDocumentScope:
+                item._cover_document_ref = declared
             elif declared is not None:
+                # An invalid explicit reference must not cause a legacy
+                # fetch of the plugin's unqualified thumbnail URL.
                 item.thumbnail_url = None
             item._public_row_content = presentation
             ui_rows.append(item)
