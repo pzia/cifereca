@@ -192,6 +192,123 @@ def _contrast(left, right):
     return (a + 0.05) / (b + 0.05)
 
 
+def _css_declared_color(css: str, selector: str, property_name: str) -> str:
+    """Resolve a V2 CSS property from the ACTUAL shipped stylesheet.
+
+    Frozen palette constants can keep passing even when a later CSS edit
+    weakens a colour; the regression oracle must read declarations instead.
+    This intentionally verifies explicit V2 rules, not GTK's full cascade.
+    """
+    import re
+
+    without_comments = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    named = dict(re.findall(
+        r"@define-color\s+(cifereca_light_[a-z_]+)\s+(#[0-9a-fA-F]{6})\s*;",
+        without_comments,
+    ))
+
+    for selectors, declarations in re.findall(
+        r"([^{}]+)\{([^{}]*)\}", without_comments,
+    ):
+        if selector not in (part.strip() for part in selectors.split(",")):
+            continue
+        found = re.search(
+            r"(?m)^\s*" + re.escape(property_name) + r"\s*:\s*([^;]+);",
+            declarations,
+        )
+        if found is None:
+            continue
+        raw = found.group(1).strip()
+        if raw.startswith("@"):
+            assert raw[1:] in named, f"Unknown V2 token: {raw}"
+            return named[raw[1:]]
+        if raw == "white":
+            return "#ffffff"
+        assert re.fullmatch(r"#[0-9a-fA-F]{6}", raw), (
+            f"Explicit V2 colour required: {selector} / {property_name}"
+        )
+        return raw
+    raise AssertionError(f"V2 CSS declaration missing: {selector} / {property_name}")
+
+
+def test_actual_v2_css_text_colours_remain_accessible_across_surfaces():
+    css = MODERN_LIGHT_CSS.decode("utf-8")
+    base = "window.cifereca-modern-light"
+    sidebar = base + " .sidebar"
+    selected = sidebar + " row:selected"
+    badge = base + " .book-tag"
+    badge_content = badge + ".tag-content"
+    muted = base + " .dim-label"
+    c = lambda selector, prop: _css_declared_color(css, selector, prop)
+
+    # These are the actual CSS foreground/background pairs in the shipped
+    # light theme, including inherited colours and selection overrides.
+    pairs = {
+        "body": (c(base, "color"), c(base, "background-color")),
+        "sidebar": (c(sidebar, "color"), c(sidebar, "background-color")),
+        "selected-sidebar": (c(selected, "color"), c(selected, "background-color")),
+        "selected-muted": (
+            c(selected + " .dim-label", "color"),
+            c(selected, "background-color"),
+        ),
+        "book-badge": (c(badge, "color"), c(badge, "background-color")),
+        "content-badge": (c(badge, "color"), c(badge_content, "background-color")),
+        "primary-button": (
+            c(base + " button.suggested-action", "color"),
+            c(base + " button.suggested-action", "background-color"),
+        ),
+    }
+    for surface in (
+        c(base, "background-color"),
+        c(sidebar, "background-color"),
+        c(base + " .login-card", "background-color"),
+        c(base + " .book-row:hover", "background-color"),
+    ):
+        pairs["muted-on-" + surface] = (c(muted, "color"), surface)
+
+    for name, (ink, surface) in pairs.items():
+        assert _contrast(ink, surface) >= 4.5, (
+            f"Actual V2 CSS contrast below WCAG AA normal text: {name}"
+        )
+
+
+def test_actual_v2_focus_ring_contrasts_with_light_surfaces():
+    # The blue focus outline must remain discernible against all explicitly
+    # painted light surfaces. This is a static colour oracle, not a claim
+    # that every widget receives the focus event or paints an intact ring.
+    import re
+
+    css = MODERN_LIGHT_CSS.decode("utf-8")
+    base = "window.cifereca-modern-light"
+    ring_rule = "window.cifereca-modern-light button:focus-visible"
+    stripped = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    rule = next((
+        block for selectors, block in re.findall(
+            r"([^{}]+)\{([^{}]*)\}", stripped,
+        )
+        if ring_rule in (part.strip() for part in selectors.split(","))
+    ), "")
+    match = re.search(r"outline:\s*2px\s+solid\s+(@[\w]+|#[0-9a-fA-F]{6});", rule)
+    assert match, "Missing visible V2 keyboard focus ring"
+    token = match.group(1)
+    if token.startswith("@"):
+        definitions = dict(re.findall(
+            r"@define-color\s+([\w]+)\s+(#[0-9a-fA-F]{6});", stripped,
+        ))
+        assert token[1:] in definitions
+        ink = definitions[token[1:]]
+    else:
+        ink = token
+    for selector in (
+        base, base + " .sidebar", base + " .login-card",
+        base + " .book-row:hover",
+    ):
+        surface = _css_declared_color(css, selector, "background-color")
+        assert _contrast(ink, surface) >= 3.0, (
+            f"Actual V2 focus ring below WCAG non-text contrast: {selector}"
+        )
+
+
 @pytest.mark.parametrize(("ink", "surface"), [
     ("#ffffff", "#1d5fcb"),  # selected navigation and primary actions
     ("#152641", "#f7faff"),  # body and title text
