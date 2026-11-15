@@ -267,9 +267,13 @@ def main(argv: list[str] | None = None) -> int:
         p.error("--username est retiré : configurez la connexion dans le plugin fournisseur")
 
     private_kobo_trace = a.cmd == "kobo-sync-edition" and a.trace
+    # CLI owns no GTK presentation. Provider/DRM/maintenance plugins retain
+    # their Core-managed lifecycle; built-in UI packages belong to the app.
+    # Never bring the desktop page graph into a batch/CLI process by default.
     core = CiferecaCore.open(
         diagnostics_enabled=True,
         diagnostics_level="trace" if private_kobo_trace else "detailed",
+        builtin_ui=False,
     )
     service = core.library
     kobo_trace_previous_level = None
