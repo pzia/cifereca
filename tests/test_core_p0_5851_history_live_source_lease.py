@@ -97,6 +97,20 @@ def test_manual_history_accepts_unknown_provider_exact_binding_without_sync_opt_
     assert service.last_history == [result]
 
 
+def test_history_refuses_stale_cache_when_diagnostic_observer_revokes_source():
+    service, account, _other, _session, state, _result, fetched, written = _service()
+
+    def revoke_during_diagnostics(*_args, **_kwargs):
+        state["enabled"] = False
+
+    service.diagnostics.add = revoke_during_diagnostics
+    with pytest.raises(ProviderConfigurationError, match="history_source_binding_changed"):
+        refresh_history(service, force=True, account=account)
+    assert fetched == [account]
+    assert written == []
+    assert service.last_history == ["previous presentation"]
+
+
 @pytest.mark.parametrize("revocation", [
     "session_replaced", "source_epoch_changed", "account_unbound",
     "connection_disabled", "owner_changed", "account_removed",
