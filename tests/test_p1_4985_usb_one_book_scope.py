@@ -117,3 +117,23 @@ def test_invalid_single_book_scope_rejected_before_usb_scan(
         lambda **_: pytest.fail("invalid scope must never scan USB"),
     )
     assert engine.synchronize_usb_reader(**data) == engine.UsbSyncResult("blocked")
+
+
+def test_malformed_one_book_preview_row_is_not_executable(
+    copy, tmp_path, monkeypatch,
+):
+    args, _, _, _ = copy
+    data = _arguments(tmp_path, args["consent"], args["rights"])
+    data["artifact_id"] = args["consent"].artifact_id
+    monkeypatch.setattr(
+        engine, "inspect_usb_dry_run",
+        lambda **_: UsbDryRun(
+            data["identity_id"], data["device_id"], "scanned", True,
+            1, ({"artifact_id": data["artifact_id"]},),
+        ),
+    )
+    monkeypatch.setattr(
+        engine, "SqliteUsbOperationJournal",
+        lambda _: pytest.fail("malformed Core preview must not reach journal"),
+    )
+    assert engine.synchronize_usb_reader(**data) == engine.UsbSyncResult("unavailable")
