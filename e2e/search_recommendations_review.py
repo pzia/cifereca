@@ -393,6 +393,11 @@ def verify_completed_review(
                 raise ReviewError("Exclusion sans justification privée")
         if "KO" in axes and verdict != "KO":
             raise ReviewError("Anomalie UX masquée par un verdict OK")
+        if verdict == "KO" and not (row["notes"] or "").strip():
+            # Keep the diagnosis exclusively inside the local checklist.
+            # An unexplained failure cannot be handed to the UX/CoreUI
+            # reviewer, and must not become a valid numeric receipt.
+            raise ReviewError("Anomalie UX KO sans diagnostic privé")
         failures += int(verdict == "KO")
     if seen != expected:
         raise ReviewError("Revue humaine incomplète")

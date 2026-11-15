@@ -274,7 +274,7 @@ et `e2e-artifacts/dark/search-recommendations-private-review/` sont
 et reçus). La grille `ux-checklist.csv` comporte densité, filtres, focus,
 détail, couverture, clipping et états partiels/erreur par largeur.
 Examiner **les PNG originaux pleine taille dans les deux thèmes** avant de
-remplir `OK/KO/N/A` avec justifications locales :
+remplir `OK/KO/N/A` avec justifications locales. **Chaque ligne `ux_verdict=KO` doit comporter un diagnostic non vide dans `notes`**, même pour une anomalie globale hors axes. Un `N/A` doit également être justifié. Ces notes restent dans le CSV privé et ne sont jamais copiées dans le reçu agrégé ou les artefacts CI :
 
     python3 e2e/search_recommendations_review.py --root e2e-artifacts/light --appearance light --verify-checklist
     python3 e2e/search_recommendations_review.py --root e2e-artifacts/dark --appearance dark --verify-checklist
