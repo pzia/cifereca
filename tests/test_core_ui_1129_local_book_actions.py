@@ -91,7 +91,10 @@ def _environment(*, item=None, identities=("alice", "bob"), local=True,
 
         def materialize_to_identity(self, placement, target_id):
             events.append(("send", placement, target_id))
-            return "complete"
+            return {
+                "status": "complete", "target_identity_id": target_id,
+                "placement_id": "new-placement", "path": "/library/copied.epub",
+            }
 
     service = Service()
     window = NS(
@@ -203,10 +206,14 @@ def test_send_is_deferred_and_rechecks_source_before_materialization():
     assert kwargs["priority"] == 7
     assert kwargs["kind"] == "materialize"
     assert kwargs["control"] is actions[1]
-    assert args[1]() == "complete"
+    receipt = args[1]()
+    assert receipt == {
+        "status": "complete", "target_identity_id": "bob",
+        "placement_id": "new-placement", "path": "/library/copied.epub",
+    }
     assert events[-2:] == [("path", "placement", "alice"),
                             ("send", "placement", "bob")]
-    args[2]("complete")
+    args[2](receipt)
     assert events[-3:] == [("activity", "Livre envoyé"),
                             ("recent",), ("library", False)]
 
@@ -359,3 +366,69 @@ def test_failed_artifact_route_preserves_safe_feedback_and_ignores_late_callback
     window._closed = True
     failed(HostileError(PRIVATE))
     assert len(shown) == 2
+
+
+def test_admitted_local_send_runs_for_original_placement_and_recipient_after_aba():
+    window, item, detail, actions, events, submitted, _, deps = _environment()
+    add_local_book_actions(window, detail, item, **deps)
+    actions[1].click()
+    assert len(submitted) == 1
+    original_service = window.service
+    # A→B→A after the user clicked; even a different Core service becomes
+    # active for presentation. The already-admitted copy keeps its own Core.
+    window.service.current_identity = NS(identity_id="bob")
+    window._identity_context_generation = 1
+    window.service.current_identity = NS(identity_id="alice")
+    window._identity_context_generation = 2
+    replacement = NS(
+        current_identity=NS(identity_id="alice"),
+        local_book_path=lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError("worker retargeted new service")
+        ),
+        materialize_to_identity=lambda *_a: (_ for _ in ()).throw(
+            AssertionError("worker retargeted new service")
+        ),
+    )
+    window.service = replacement
+    receipt = submitted[0][0][1]()
+    assert receipt["target_identity_id"] == "bob"
+    assert events[-2:] == [
+        ("path", "placement", "alice"), ("send", "placement", "bob"),
+    ]
+    assert original_service is not window.service
+    before = list(events)
+    submitted[0][0][2](receipt)
+    assert events == before  # Stale GTK screen cannot show A's receipt.
+
+
+def test_admitted_local_send_rechecks_real_physical_source_in_worker():
+    window, item, detail, actions, events, submitted, _, deps = _environment()
+    add_local_book_actions(window, detail, item, **deps)
+    actions[1].click()
+    window.service.exists = False
+    try:
+        submitted[0][0][1]()
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("missing source was not rejected")
+    assert not any(row[0] == "send" for row in events)
+    assert not any(row[0] == "activity" for row in events)
+
+
+def test_local_send_refuses_to_publish_forged_or_unverified_copy_receipt():
+    window, item, detail, actions, events, submitted, _, deps = _environment()
+    add_local_book_actions(window, detail, item, **deps)
+    actions[1].click()
+    done = submitted[0][0][2]
+    for receipt in (
+        None, "complete", {"status": "complete"},
+        {"status": "complete", "target_identity_id": "foreign",
+         "placement_id": "new-placement"},
+        {"status": "unchanged", "target_identity_id": "bob"},
+        {"status": "complete", "target_identity_id": "bob",
+         "placement_id": "new-placement", "path": "/tmp/" + chr(0)},
+    ):
+        done(receipt)
+    assert len([row for row in events if row[0] == "error"]) == 6
+    assert not any(row[0] == "activity" for row in events)

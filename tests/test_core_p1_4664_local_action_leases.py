@@ -51,12 +51,14 @@ def test_deferred_send_and_late_success_cannot_cross_a_b_a():
     w.service.current_identity = NS(identity_id="bob")
     w.service.current_identity = NS(identity_id="alice")
     w._identity_context_generation += 2
-    with pytest.raises(Cancelled):
-        args[1]()
+    # An admitted physical A→B copy survives GTK A→B→A. Only its
+    # obsolete activity UI is suppressed.
+    receipt = args[1]()
+    assert receipt["target_identity_id"] == "bob"
+    assert ("send", "placement", "bob") in events
     before = list(events)
-    args[2]("complete")
+    args[2](receipt)
     assert events == before
-    assert not any(entry[0] == "send" for entry in events)
 
     actions[1].click()
     assert len(submissions) == 1
@@ -134,13 +136,15 @@ def test_replaced_detail_revokes_queued_send_and_late_success_same_identity():
     assert len(submissions) == 1
     args, _kwargs = submissions[0]
     sender._cifereca_action_context_revoked = True
-    with pytest.raises(Cancelled):
-        args[1]()
+    # Detail disposal is not an explicit cancellation of an admitted
+    # local A→B filesystem mutation. Core still validates physical source.
+    receipt = args[1]()
+    assert receipt["target_identity_id"] == "bob"
+    assert ("send", "placement", "bob") in events
     original = list(events)
-    args[2]("complete")
+    args[2](receipt)
     sender.click()
     assert events == original and len(submissions) == 1
-    assert not any(event[0] == "send" for event in events)
 
 
 def test_replaced_artifact_menu_blocks_child_even_if_child_itself_survives():

@@ -184,6 +184,9 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
     # the active profile or a provider disconnect/reconnect (A -> B -> A).
     # Capture both identity and Core source leases before creating callbacks.
     from ..core.source_context import source_context_epoch
+    # Pin the source service as part of this specific local physical action.
+    # A widget's later context is only a projection/click guard.
+    service = window.service
     generation = getattr(window, '_identity_context_generation', None)
     try:
         source_epoch = source_context_epoch(window.service)
@@ -191,6 +194,7 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
         return
     def context_current():
         if (getattr(window, '_closed', False)
+                or window.service is not service
                 or getattr(getattr(window.service, 'current_identity', None),
                            'identity_id', None) != identity_id
                 or getattr(window, '_identity_context_generation', None)
@@ -299,23 +303,35 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
                     and (parent is None or action_current(parent)))
 
         def work():
-            if not still_current():
-                raise Cancelled('Contexte du fichier local périmé.')
-            window.service.local_book_path(placement_id, identity_id=identity_id)
-            if not still_current():
-                raise Cancelled('Contexte du fichier local périmé.')
-            return window.service.materialize_to_identity(placement_id, target_id)
+            # The user already clicked the exact A placement and B recipient.
+            # No visual GTK selection/button generation may cancel a queued
+            # physical copy. Core rechecks ownership and bytes under its
+            # acquisition lock; source removal/replacement remains blocking.
+            service.local_book_path(placement_id, identity_id=identity_id)
+            return service.materialize_to_identity(placement_id, target_id)
 
         def done(result):
             sending[0] = False
             if still_current():
                 status = result.get('status') if type(result) is dict else None
-                window._activity_result(
-                    'Livre déjà présent dans ce profil' if status == 'unchanged'
-                    else 'Livre envoyé'
-                )
-                window.refresh_recent()
-                window.refresh_library(False)
+                if (type(status) is str and status in ('complete', 'unchanged')
+                        and type(result.get('target_identity_id')) is str
+                        and result['target_identity_id'] == target_id
+                        and type(result.get('placement_id')) is str
+                        and result['placement_id']
+                        and type(result.get('path')) is str
+                        and result['path'] and chr(0) not in result['path']):
+                    window._activity_result(
+                        'Livre déjà présent dans ce profil'
+                        if status == 'unchanged' else 'Livre envoyé'
+                    )
+                    window.refresh_recent()
+                    window.refresh_library(False)
+                else:
+                    window.show_error(
+                        'Copie locale non confirmée ; vérifiez les fichiers.',
+                        'Envoi du livre impossible',
+                    )
 
         def failed(exc):
             sending[0] = False
