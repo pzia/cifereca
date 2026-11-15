@@ -92,6 +92,7 @@ LOCAL_GUI = {
     "reader_usb_preview_actions.py": READER_INSPECTION_GTK,
     "reader_page_controller.py": READER_INSPECTION_GTK + READER_TARGET_GTK,
     "reader_intent_actions.py": READER_TARGET_GTK,
+    "reader_usb_execute_actions.py": READER_TARGET_GTK,
     "reader_target_actions.py": READER_TARGET_GTK,
     "maintenance_result_view.py": MAINT,
     "maintenance_line_progress.py": MAINT,
