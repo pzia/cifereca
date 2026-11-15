@@ -109,6 +109,7 @@ def test_real_broker_removes_only_receipted_usb_copy_and_records_absence(live_br
 
     result = rig.facade.execute_one(
         confirmation=consent, mountpoint=rig.mountpoint,
+        expected_profile_epoch=3,
     )
     assert result == UsbSyncResult("completed", removed=1, observed=True)
     assert not rig.final.exists()
@@ -127,6 +128,7 @@ def test_real_broker_removes_only_receipted_usb_copy_and_records_absence(live_br
     rig.final.write_bytes(b"unrelated replacement")
     assert rig.facade.execute_one(
         confirmation=consent, mountpoint=rig.mountpoint,
+        expected_profile_epoch=3,
     ).status != "completed"
     assert rig.final.read_bytes() == b"unrelated replacement"
     assert rig.source.read_bytes() == source_bytes
@@ -154,6 +156,7 @@ def test_real_broker_never_unlinks_if_proof_revoked(live_broker, change):
     actual = rig.final.read_bytes()
     result = rig.facade.execute_one(
         confirmation=rig.consent, mountpoint=rig.mountpoint,
+        expected_profile_epoch=3,
     )
     assert result.status != "completed"
     assert rig.final.read_bytes() == actual
