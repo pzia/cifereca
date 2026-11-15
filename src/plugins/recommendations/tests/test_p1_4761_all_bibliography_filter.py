@@ -94,6 +94,36 @@ def test_url_like_publisher_is_not_indexed_as_a_bibliographic_name():
     assert matches(row, "Botanique")
 
 
+@pytest.mark.parametrize(("field", "value", "secret"), [
+    ("title", "https://catalogue.example/book?token=PRIVATE_TITLE_TOKEN",
+     "PRIVATE_TITLE_TOKEN"),
+    ("author", "https://catalogue.example/person?token=PRIVATE_AUTHOR_TOKEN",
+     "PRIVATE_AUTHOR_TOKEN"),
+    ("title", "Notice PRIVATE_BEARER_TOKEN", "PRIVATE_BEARER_TOKEN"),
+    ("author", "contact@example.invalid", "contact@example.invalid"),
+    ("title", "/home/profile/private-book-title", "private-book-title"),
+])
+def test_all_never_indexes_url_or_secret_like_title_and_author(
+    field, value, secret,
+):
+    # A provider can return a syntactically valid string which is suitable
+    # for a cautious UI label but not for the local searchable bibliography.
+    # The other, genuinely attested fields remain searchable.
+    row = ranked(**{field: value})
+    assert not matches(row, secret)
+    assert matches(row, "Botanique")
+    assert matches(row, "Nébuleuse")
+
+
+def test_explicit_title_author_filters_remain_independent_of_all_index():
+    # The change is deliberately restricted to the broad 'Tous' index:
+    # specific-field selection keeps its established UI contract.
+    row = ranked(title="Catalogue ordinaire", author="Autrice locale")
+    assert matches(row, "Catalogue", field="title")
+    assert matches(row, "Autrice", field="author")
+    assert matches(row, "Catalogue autrice", field="all")
+
+
 def test_url_like_subject_is_not_indexed_by_default_all():
     row = ranked(metadata={
         "subjects": [
