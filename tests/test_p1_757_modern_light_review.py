@@ -129,6 +129,47 @@ def test_missing_theme_observation_invalidates_old_completed_grid(tmp_path):
     assert checklist.read_bytes() == previous
 
 
+def test_same_png_and_head_but_changed_gtk_probe_evidence_invalidates_review(tmp_path):
+    folder = fixture(tmp_path)
+    opts = {"sizes": {64: (64, 40)}, "stages": ("dashboard",)}
+    manifest = build_review(tmp_path, **opts)
+    assert len(manifest["probe_evidence_sha256"]) == 64
+    checklist = _fill_private_review(tmp_path)
+    previous = checklist.read_bytes()
+    original = (folder / "00-dashboard-light.png").read_bytes()
+    report_path = folder / "screen.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    # All mandatory checks, screenshot SHA, HEAD and observed Adwaita remain
+    # valid. A different probe receipt must still revoke the human review.
+    report["checks"]["extra_probe_observation"] = True
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    assert (folder / "00-dashboard-light.png").read_bytes() == original
+    assert verify_capture_folder(folder, width=64, size=(64, 40),
+                                 stages=("dashboard",))[0] == "a" * 40
+    with pytest.raises(ValueError, match="Preuves GTK différentes"):
+        module.verify_completed_review(tmp_path, **opts)
+    with pytest.raises(ValueError, match="Preuves GTK différentes"):
+        build_review(tmp_path, **opts)
+    assert checklist.read_bytes() == previous
+
+
+def test_prior_private_manifest_without_gtk_probe_fingerprint_is_stale(tmp_path):
+    fixture(tmp_path)
+    opts = {"sizes": {64: (64, 40)}, "stages": ("dashboard",)}
+    build_review(tmp_path, **opts)
+    checklist = _fill_private_review(tmp_path)
+    previous = checklist.read_bytes()
+    manifest_path = tmp_path / "modern-light-private-review" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("probe_evidence_sha256")
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="Preuves GTK différentes"):
+        module.verify_completed_review(tmp_path, **opts)
+    with pytest.raises(ValueError, match="Preuves GTK différentes"):
+        build_review(tmp_path, **opts)
+    assert checklist.read_bytes() == previous
+
+
 def test_tampered_capture_is_rejected(tmp_path):
     folder = fixture(tmp_path)
     Image.new("RGB", (64, 40), "red").save(folder / "00-dashboard-light.png")
