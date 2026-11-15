@@ -1877,6 +1877,13 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
     if type(identity_id) is not str or not identity_id.strip():
         return 0
     now = int(time.time())
+    # A SearchResult instance can be reused across a subsequent Core search.
+    # Never retain an old source association if this invocation later refuses
+    # its fresh producer evidence; dataclass serialization omits this private
+    # presentation-only witness.
+    for row in rows:
+        if type(row) is SearchResult:
+            row.__dict__.pop("_core_notice_cover_document_ref", None)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
     # The stronger #5073 UI/action proof remains authoritative for actions.
@@ -2001,11 +2008,15 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
                 )
                 if observed is None:
                     continue
-                persist_notice_cover(
+                persisted = persist_notice_cover(
                     self.storage, observed,
                     field_path=("search_result", "thumbnail_url"),
                     cover_inventory_complete=True,
                 )
+                # Core supplies the very DocumentRef that it just admitted.
+                # GTK neither re-derives a source from its URL nor opens
+                # SQLite; N2 later reads this revision on its bounded worker.
+                row._core_notice_cover_document_ref = persisted.document
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # The historical catalogue mirror is still independently
                 # useful; one malformed provider notice must not abort other
