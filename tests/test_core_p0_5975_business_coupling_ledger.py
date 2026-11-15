@@ -686,3 +686,43 @@ def test_v3_legacy_writer_retired_without_importing_any_provider_right():
         not (isinstance(n, ast.Constant) and n.value == "kobo")
         for n in ast.walk(if3)
     )
+
+
+def test_legacy_positive_mirror_body_retired_without_double_writer_credit():
+    import inspect
+    from pathlib import Path
+    from cifereca.storage import Storage
+
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads((root / "docs/provider-business-coupling-review.json")
+                        .read_text(encoding="utf-8"))
+    records = [row for row in ledger["retirements"]
+               if row["id"] == "struct-dead-positive-legacy-mirror-sql-physically-removed"]
+    assert len(records) == 1
+    row = records[0]
+    assert row["original_classification"] == "unreachable_historical_positive_writer_body"
+    assert row["classification"] == "removed_unreachable_legacy_code_not_additional_active_writer"
+    assert row["in_ast_metric"] is False
+    assert row["pr"] == "#6154"
+    assert row["retired_at_sha"] == "626418337b8e93f0cbba5113f8ed486f3dcf2ec7"
+    assert all((root / test).is_file() for test in row["tests"])
+
+    source = inspect.getsource(Storage._mirror_backup_row)
+    assert "backup_legacy_canonical_projection_retired" in source
+    assert "INSERT INTO entitlements" not in source
+    assert "INSERT INTO acquisition_ledger" not in source
+    assert "INSERT INTO artifacts" not in source
+    assert "INSERT INTO placements" not in source
+    assert "INSERT INTO catalog_entries" not in source
+
+    guards = [row for row in ledger["guard_installations"] if row["id"] ==
+              "guard-w1-v3-no-positive-legacy-mirror-entry"]
+    assert len(guards) == 1
+    assert guards[0]["pr"] == "#6154"
+    assert all((root / test).is_file() for test in guards[0]["tests"])
+    current = inventory(root)
+    assert current["retained_non_ast_legacy_migration_writers"] == 1
+    assert current["retained_non_ast_legacy_migration_ids"] == [
+        "legacy-config-081-cardinality-versioned-writer"
+    ]
+    assert not current["stale_reviews"]
