@@ -491,7 +491,7 @@ def main() -> int:
         assert set(image_gets) == set(COVERS)
         assert len(image_gets) == 2, "Search, loan list and both details must share cached public images"
         assert details[-3:] == list(RESOURCES), "Provider detail scoped to each resource"
-        assert applied_details[-3:] == list(RESOURCES), "Real GTK applied all scoped details"
+        # #3104 adds one explicit *same-edition* late detail repaint after\n        # the three provider holdings callbacks; that repaint is not another\n        # holdings() request and must not be mistaken for one.\n        assert applied_details[-4:] == [*RESOURCES, RESOURCES[2]], (\n            "GTK applied provider details and the exact late Search repaint"\n        )
         assert app_window[0].covers.stats()["ui_applied"] >= 4
         report["checks"]["missing_cover_no_image_get"] = True
         report["checks"]["cache_shared_search_detail"] = True
