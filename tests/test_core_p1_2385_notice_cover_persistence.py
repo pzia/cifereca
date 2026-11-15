@@ -13,6 +13,7 @@ from cifereca.core.notice_source_observation import (
 from cifereca.core.notice_cover_projection import notice_cover_document_ref
 from cifereca.core.notice_cover_repository import (
     PersistedNoticeCover, persist_notice_cover, read_notice_cover,
+    is_notice_cover_document,
 )
 from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
 from cifereca.gui.document_cover_service import DocumentCoverService
@@ -258,3 +259,63 @@ def test_same_second_revision_change_requires_exact_cas_not_fake_time_resolution
             store(db, notice(URL, observed_at=1), epoch=one.epoch)
     finally:
         db.close()
+
+
+
+def test_readthrough_never_schedules_legacy_n2_ref_or_unknown_plugin_source(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    loader = CoverLoader(max_workers=2)
+    attempts = []
+    reader = lambda ref: attempts.append(ref)
+    n2 = DocumentCoverService(
+        loader, cached_source_reader=reader,
+        cached_source_scope=is_notice_cover_document,
+    )
+    try:
+        doc = notice_cover_document_ref(PUBLIC)
+        foreign = replace(doc, source_key="search:unrelated-legacy")
+        assert is_notice_cover_document(doc)
+        assert not is_notice_cover_document(foreign)
+        callbacks = []
+        for _ in range(40):
+            n2.get_cover(foreign, "list", callbacks.append)
+        assert callbacks == [None] * 40
+        assert not attempts
+        assert not n2._read_active
+        assert not n2._read_waiters
+        assert n2.decisions.peek(foreign, revision=1) is None
+    finally:
+        n2.close()
+        loader.close()
+
+
+def test_source_scope_predicate_requires_reader_and_fails_closed(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    loader = CoverLoader(max_workers=2)
+    try:
+        with pytest.raises(TypeError, match="requires a callable reader"):
+            DocumentCoverService(
+                loader, cached_source_scope=is_notice_cover_document,
+            )
+        source_reads = []
+        service = DocumentCoverService(
+            loader,
+            cached_source_reader=lambda ref: source_reads.append(ref),
+            cached_source_scope=lambda ref: (_ for _ in ()).throw(
+                RuntimeError("corrupt eligibility"),
+            ),
+        )
+        try:
+            assert service.get_cover(
+                notice_cover_document_ref(PUBLIC), "detail", lambda _: None,
+            ).source_uri is None
+            assert source_reads == []
+            assert not service._read_active
+        finally:
+            service.close()
+    finally:
+        loader.close()
