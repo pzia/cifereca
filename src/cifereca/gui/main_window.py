@@ -1684,6 +1684,19 @@ class MainWindow(Adw.ApplicationWindow):
             TaskPriority=TaskPriority, control=control,
         )
 
+    def present_normal_cross_profile_borrow(
+        self, *, expected_item: SearchResult,
+        control: Gtk.Widget | None = None,
+    ) -> bool:
+        """#4988: choose A and confirm a normal lender POST without switching B."""
+        from .cross_profile_normal_borrow_controller import (
+            present_normal_cross_profile_lender_choice,
+        )
+        return present_normal_cross_profile_lender_choice(
+            self, expected_item=expected_item, Adw=Adw,
+            TaskPriority=TaskPriority, control=control,
+        )
+
     def borrow_search_item(self, item: SearchResult, control: Gtk.Widget | None = None, *, account=None) -> None:
         from .manual_borrow_controller import (
             _present_manual_borrow, present_manual_borrow_verification,
