@@ -5,7 +5,8 @@ function; no GTK, provider access, SQLite or physical image read is required.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
+from copy import copy
 
 from ..models import Loan
 from ..core.loan_cover_evidence import exact_attested_loan_epub_cover
@@ -30,4 +31,29 @@ def loan_embedded_cover_for_host(host: Any, loan: Loan):
     return exact_attested_loan_epub_cover(loan, projection[2])
 
 
-__all__ = ["loan_embedded_cover_for_host"]
+def show_attested_loan_cover(
+    host: Any, loan: Loan, display: Callable[[], Loan],
+) -> bool:
+    """Render through N2 only if the exact borrower/Placement proof exists.
+
+    False means the unchanged legacy DetailPanel path should render the loan.
+    The host supplies its existing display-only Loan copy; this gateway never
+    calls a provider or mutates the canonical loan DTO.
+    """
+    evidence = loan_embedded_cover_for_host(host, loan)
+    if evidence is None:
+        return False
+    panel = getattr(getattr(host, "loan_page", None), "detail", None)
+    presentation = display()
+    if callable(getattr(panel, "show_loan_local", None)):
+        panel.show_loan_local(presentation, cover_evidence=evidence)
+    else:
+        # An old/custom host cannot paint weaker URL evidence ahead of the
+        # exact EPUB: keep the loan content but suppress its URL cover.
+        neutral = copy(presentation)
+        neutral.thumbnail_url = None
+        panel.show_loan(neutral)
+    return True
+
+
+__all__ = ["loan_embedded_cover_for_host", "show_attested_loan_cover"]
