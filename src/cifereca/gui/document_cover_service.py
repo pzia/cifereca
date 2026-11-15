@@ -134,6 +134,7 @@ class CoverReadRequest:
         # at the N3 worker callback (which may queue an idle beforehand).
         self._is_selected: Callable[[], bool] | None = None
         self._paint_receipt: tuple[Path, Callable[[], bool]] | None = None
+        self._cancel_source_subscription: Callable[[], None] | None = None
 
     @property
     def source_uri(self) -> str | None:
@@ -173,8 +174,12 @@ class CoverReadRequest:
             self._active = False
             self._paint_receipt = None
             child = self._child
+            unsubscribe = self._cancel_source_subscription
+            self._cancel_source_subscription = None
         if child is not None:
             child.cancel()
+        if unsubscribe is not None:
+            unsubscribe()
 
     @property
     def active(self) -> bool:
@@ -239,7 +244,15 @@ class DocumentCoverService:
             "n2_hit": 0, "n2_miss": 0, "n2_source_unknown": 0,
             "n2_resolution_miss": 0, "n2_register_new": 0,
             "n2_register_changed": 0, "n2_register_reused": 0,
-        }
+        }        # N2 documentary source events for currently bound GTK consumers.
+        # A newly admitted Notice C value can update an already visible
+        # placeholder without a new Search selection or provider request.
+        self._source_subscriptions: dict[
+            CoverDocumentScope,
+            dict[int, tuple[CoverReadRequest, Callable[[], None]]],
+        ] = {}
+        self._source_subscription_id = 0
+        self._source_subscription_count = 0
         self._resolving: set[CoverDocumentScope] = set()
         # Optional Core-only read-through on an exact N2 source MISS. The
         # reader must return cached, already-admitted documentary evidence;
@@ -306,6 +319,51 @@ class DocumentCoverService:
                 subscription = self._trace_subscriptions.pop(old_scope, None)
                 if subscription is not None:
                     subscription.cancel()
+            # Source notifications are separate from N2 invalidation events:
+            # the first-ever source registration has no prior N2 decision.
+            # Each visible list/detail handle owns one cancelable listener.
+            listeners = tuple(self._source_subscriptions.get(snapshot.scope, {}).values())
+        for handle, callback in listeners:
+            if not handle.active:
+                continue
+            try:
+                callback()  # GTK callback posts its own GLib idle.
+            except Exception:
+                # One disposed panel must not suppress other subscribers.
+                pass
+
+    def _subscribe_source(
+        self, document: CoverDocumentScope, handle: CoverReadRequest,
+        callback: Callable[[], None],
+    ) -> None:
+        """Attach only a bounded, cancelable observer to an exact N2 ref.
+
+        Called while the service owns its lock in get_cover so an admission
+        cannot slip between an initial MISS and subscription registration.
+        """
+        with self._lock:
+            if self._source_subscription_count >= self._max_documents * 8:
+                return
+            bucket = self._source_subscriptions.get(document)
+            if bucket is not None and len(bucket) >= 32:
+                return
+            if bucket is None:
+                bucket = {}
+                self._source_subscriptions[document] = bucket
+            self._source_subscription_id += 1
+            key = self._source_subscription_id
+            bucket[key] = (handle, callback)
+            self._source_subscription_count += 1
+            handle._cancel_source_subscription = lambda: self._unsubscribe_source(document, key)
+
+    def _unsubscribe_source(self, document: CoverDocumentScope, key: int) -> None:
+        with self._lock:
+            bucket = self._source_subscriptions.get(document)
+            if bucket is None or bucket.pop(key, None) is None:
+                return
+            self._source_subscription_count -= 1
+            if not bucket:
+                self._source_subscriptions.pop(document, None)
 
     def cover_trace_snapshot(self, document: CoverDocumentScope) -> CoverTraceSnapshot | None:
         """Return the last observed steps for this registered document."""
@@ -523,7 +581,11 @@ class DocumentCoverService:
                 )
 
         if current_source_raced:
-            if source_changed is not None and handle.active:
+            # A registered subscription already saw that source transition.
+            # Preserve the explicit callback for capacity-limited viewers
+            # unable to acquire a subscription, without double GTK rebind.
+            if (source_changed is not None and handle.active
+                    and handle._cancel_source_subscription is None):
                 try:
                     source_changed()
                 except Exception:
@@ -557,10 +619,13 @@ class DocumentCoverService:
                     self._read_cooldown.pop(document, None)
             if live:
                 for waiting_handle, callback in waiters:
-                    if not waiting_handle.active:
+                    if (not waiting_handle.active
+                            or waiting_handle._cancel_source_subscription is not None):
+                        # register() already notified each live subscription;
+                        # an extra notification would rebind list/detail twice.
                         continue
                     try:
-                        callback()  # GTK subscriber queues its own idle rebind.
+                        callback()  # Unsubscribed/capacity-limited viewer.
                     except Exception:
                         pass
 
@@ -601,6 +666,8 @@ class DocumentCoverService:
         with self._lock:
             if self._closed:
                 raise RuntimeError("cover service is closed")
+            if on_source_changed is not None:
+                self._subscribe_source(document, handle, on_source_changed)
             snapshot = self._snapshots.get(document)
             if snapshot is None:
                 self._stats["n2_miss"] += 1
@@ -773,6 +840,8 @@ class DocumentCoverService:
         with self._lock:
             self._closed = True
             self._snapshots.clear()
+            self._source_subscriptions.clear()
+            self._source_subscription_count = 0
             for subscription in self._trace_subscriptions.values():
                 subscription.cancel()
             self._trace_subscriptions.clear()

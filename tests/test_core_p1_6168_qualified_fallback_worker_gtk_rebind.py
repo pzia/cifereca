@@ -144,14 +144,21 @@ def test_old_generation_failure_must_not_launch_a_new_qualification(prepared):
         return NS(cancel=lambda: None)
     loader.load_exact_epub = pending
     changed = Event()
+    notified = []
     old = svc.get_cover(
         scope, "detail", lambda _path: None,
-        on_source_changed=changed.set,
+        on_source_changed=lambda: (notified.append("source"), changed.set()),
     )
     _register(state, revision=8)
+    # #6325: a live subscriber MUST be told immediately about a newer
+    # source revision, independently of the old EPUB materialization result.
+    assert changed.wait(1)
+    assert notified == ["source"]
     callbacks[0](None)
     assert not old.still_current
-    assert not changed.wait(0.1)
+    # The late callback from the now-stale revision 7 must NOT issue a second
+    # rebind or start its old physical fallback under revision 8.
+    assert notified == ["source"]
     assert not svc._qualify_active
     assert svc.decisions.peek(scope, revision=8) is None
 
