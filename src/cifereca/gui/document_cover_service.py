@@ -339,6 +339,10 @@ class DocumentCoverService:
         with self._lock:
             if (self._closed or self._snapshots.get(document) is not snapshot
                     or key in self._qualify_active
+                    # Bound queued SHA/ZIP jobs as well as live workers.
+                    # A fast scroll must not queue hundreds of large EPUB
+                    # full-file validations behind one worker.
+                    or len(self._qualify_active) >= 16
                     or self._clock() < self._qualify_cooldown.get(key, 0)):
                 return
             if self.decisions.selected_token(
