@@ -200,3 +200,56 @@ def test_gtk_rebind_stays_on_main_and_never_reuses_old_uri():
     assert "self.bind_document(" in body
     assert "cover.bind_url(" not in body
     assert "self._url = request.source_uri" in body
+
+
+def test_actual_coverview_bind_restarts_on_gtk_main_with_new_origin_token(prepared):
+    """Replay the real GTK binding method with an event-loop queue, no GI."""
+    from queue import Empty, Queue
+    from tests.test_core_p1_6168_gtk_documentref_binding import method
+
+    state = prepared
+    _, scope, embedded, origin, loader, svc = state
+    image = epub_metadata.cover_cache_dir() / embedded.resource.cache_name
+    image.unlink(missing_ok=True)
+    _register(state, member="OPS/no-such-cover.png")
+    queue = Queue()
+    events = []
+    GLib = NS(
+        PRIORITY_DEFAULT=0,
+        idle_add=lambda fn, *args, **kw: queue.put((fn, args)),
+    )
+    bind = method("CoverView", "bind_document", namespace={"GLib": GLib})
+    host = NS(
+        _generation=0, _request=None, _url=None, _loader=None,
+        _width=112, _height=168, _priority=0,
+        show_loading=lambda: None,
+        get_scale_factor=lambda: 1,
+        _apply_result=lambda _generation, _loader, _path: False,
+        _show_missing=lambda: events.append("missing"),
+    )
+
+    def reset():
+        host._generation += 1
+        if host._request is not None:
+            host._request.cancel()
+        host._request = None
+        host._url = None
+
+    host.reset = reset
+    host.bind_document = lambda service, doc, **kw: bind(host, service, doc, **kw)
+    host.bind_document(svc, scope, variant="detail")
+    original = host._request
+    assert original.source_uri == embedded.candidate.url
+
+    deadline = time.monotonic() + 10
+    while host._url != ORIGIN and time.monotonic() < deadline:
+        try:
+            fn, args = queue.get(timeout=0.2)
+        except Empty:
+            continue
+        fn(*args)  # Exactly the GTK idle-main-context boundary.
+    assert host._url == ORIGIN
+    assert not original.still_current
+    assert host._generation == 2
+    assert host._request.source_uri == ORIGIN
+    assert host._request.still_current
