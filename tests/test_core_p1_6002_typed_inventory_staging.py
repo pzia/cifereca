@@ -144,11 +144,15 @@ def test_mutated_loan_after_snapshot_creation_invalidates_stage():
     assert staging(receipt=receipt) is None
 
 
-@pytest.mark.parametrize("timestamp", [
-    None, "2026-11-15T07:00:00.000",
-])
-def test_missing_or_naive_provider_timestamp_never_becomes_receipt(timestamp):
-    assert staging(receipt=snapshot(observed_at=timestamp)) is None
+def test_missing_or_naive_provider_timestamp_never_becomes_receipt():
+    assert staging(receipt=snapshot(observed_at=None)) is None
+    naive = "2026-11-15T07:00:00.000"
+    with pytest.raises(ValueError, match="invalid_loan_inventory_timestamp"):
+        snapshot(observed_at=naive)
+    # Defensive recheck in case an imported envelope was corrupted in memory.
+    corrupted = snapshot()
+    object.__setattr__(corrupted, "observed_at", naive)
+    assert staging(receipt=corrupted) is None
 
 
 @pytest.mark.parametrize("upstreams", [
