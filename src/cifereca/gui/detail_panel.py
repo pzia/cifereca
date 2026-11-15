@@ -65,6 +65,7 @@ class DetailPanel(Gtk.Box):
         super().__init__()
         self.window = window
         self._meta_request = None
+        self._active_cover_view = None  # only the latest GTK detail picture
         # Exact last rendered remote Search detail; never an authorization cache.
         self._rendered_search_detail = None
         self._pending_action_focus_key = ""
@@ -106,6 +107,7 @@ class DetailPanel(Gtk.Box):
 
     def empty(self, title: str, description: str, icon: str = "book-open-symbolic") -> None:
         self._rendered_search_detail = None
+        self._active_cover_view = None
         self._cancel_meta_request()
         self._pending_action_focus_key = ""
         clear_box(self.content)
@@ -129,14 +131,12 @@ class DetailPanel(Gtk.Box):
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         header.add_css_class("detail-heading")
         cover = CoverView(112, 168)
+        self._active_cover_view = cover
         cover.set_missing_size(40, 60)
         cover.set_halign(Gtk.Align.START)
         cover.set_valign(Gtk.Align.START)
         header.append(cover)
-        cover.bind_url(
-            self.window.covers, thumbnail, priority=0,
-            on_image_applied=getattr(self, "_cover_image_applied_callback", None),
-        )
+        cover.bind_url(self.window.covers, thumbnail, priority=0)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.START)
@@ -732,34 +732,28 @@ class DetailPanel(Gtk.Box):
         self._cancel_meta_request()
         source = self.window.service.provider_display_name(str(loan.source_provider or loan.provider))
         state = "En retard" if loan.is_late else (loan.state or "Emprunté")
-        self._cover_image_applied_callback = getattr(
-            loan, "_on_cover_applied", None,
-        )
-        try:
-            self.show_presentation(book_detail_presentation(
-                title=loan.title,
-                subtitle=loan.author or "",
-                thumbnail=loan.thumbnail_url,
-                badges=[],
-                section_rows=[
-                    ("Essentiel", [
-                        ("Source", source),
-                        ("Format", file_format(loan.media_format).upper()),
-                        ("Langue", detail_language(loan.raw)),
-                        ("Disponibilité", compact_availability_label(state)),
-                    ]),
-                    ("Prêt", [
-                        ("Retour prévu", loan_due_detail_value(
-                            loan.due_at, is_late=bool(loan.is_late),
-                        )),
-                        ("Bibliothèque", loan.library or ""),
-                        ("État", state),
-                        ("Support", loan.access_medium or loan.document_type or ""),
-                    ]),
-                ],
-            ))
-        finally:
-            self._cover_image_applied_callback = None
+        self.show_presentation(book_detail_presentation(
+            title=loan.title,
+            subtitle=loan.author or "",
+            thumbnail=loan.thumbnail_url,
+            badges=[],
+            section_rows=[
+                ("Essentiel", [
+                    ("Source", source),
+                    ("Format", file_format(loan.media_format).upper()),
+                    ("Langue", detail_language(loan.raw)),
+                    ("Disponibilité", compact_availability_label(state)),
+                ]),
+                ("Prêt", [
+                    ("Retour prévu", loan_due_detail_value(
+                        loan.due_at, is_late=bool(loan.is_late),
+                    )),
+                    ("Bibliothèque", loan.library or ""),
+                    ("État", state),
+                    ("Support", loan.access_medium or loan.document_type or ""),
+                ]),
+            ],
+        ))
         buttons: list[Gtk.Button] = []
         downloadable = (
             self.window.service.can_download_loan(loan)
