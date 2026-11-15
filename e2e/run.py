@@ -1055,7 +1055,10 @@ def main() -> int:
                     closed_phases = frozenset({
                         "preflight", "core", "fixture", "gtk", "reader",
                         "selection", "reservation", "reservation_commit",
-                        "repaint", "profile_b", "profile_a", "finish",
+                        "repaint", "intent_cancel", "intent_confirm",
+                        "intent_repaint", "execute_prepare", "execute_cancel",
+                        "execute_confirm", "execute_result",
+                        "profile_b", "profile_a", "finish",
                     })
                     phase = report_data.get("closed_failure_phase")
                     if type(phase) is str and phase in closed_phases:
