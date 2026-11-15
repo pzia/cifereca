@@ -534,6 +534,18 @@ class BookListCell(Gtk.Box):
         silently to a lower-priority supplier URL.
         """
         facts = getattr(item, "_cover_local_evidence", None)
+        history = getattr(item, "_cover_history_evidence", None)
+        if facts is not None and history is not None:
+            return False  # Two incompatible provenance families on one row.
+        if history is not None:
+            from .history_document_cover_bridge import (
+                register_exact_history_document,
+            )
+            return register_exact_history_document(
+                self.window,
+                getattr(item, "_history_source_item", None),
+                service, history, document,
+            )
         if facts is None:
             # Other producers can pre-register their own exact DocumentRef.
             return True
