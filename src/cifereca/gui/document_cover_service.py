@@ -378,6 +378,23 @@ class DocumentCoverService:
                 and decision.status == "selected" else None
             )
         if snapshot is None or decision is None or selected_token is None:
+            # An unselected/pending placeholder must not paint AFTER a
+            # valid source arrived without a new GTK bind. This predicate
+            # is documentary only, and does no N3/media access.
+            def still_unselected() -> bool:
+                with self._lock:
+                    return (
+                        not self._closed
+                        and self._snapshots.get(document) is snapshot
+                        and (
+                            snapshot is None
+                            or self.decisions.peek(
+                                document, revision=snapshot.revision,
+                            ) is decision
+                        )
+                    )
+
+            handle._current_check = still_unselected
             callback(None)
             return handle
         # The return handle exposes the N2 source before any synchronous
