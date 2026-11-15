@@ -354,14 +354,17 @@ def _loan_selected(self, row: BookListItem | None) -> None:
 
 
 def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -> None:
-    identity = self.service.current_identity
+    # Pin the service and explicit identity before TaskRunner queues the GET.
+    # A later MainWindow service rebind must not execute this request for B.
+    service = self.service
+    identity = service.current_identity
     identity_id = identity.identity_id if identity else None
     # An A -> B -> A round trip has the same identity ID but invalidates an
     # earlier refresh. Guard the GTK callback by the Core account epoch too.
-    account_epoch = getattr(self.service, "_account_context_epoch", None)
+    account_epoch = getattr(service, "_account_context_epoch", None)
     library_revision = getattr(self, "_loan_cover_library_revision", 0)
     def work():
-        rows = self.service.refresh_identity_loans(
+        rows = service.refresh_identity_loans(
             force=force, identity_id=identity_id,
         )
         # Resolve a missing loan cover only on this existing background
@@ -373,7 +376,7 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
                and not loan.thumbnail_url for loan in rows):
             try:
                 cover_rows = materialized_loan_cover_rows(
-                    self.service.library_entries(identity_id=identity_id, scan=False)
+                    service.library_entries(identity_id=identity_id, scan=False)
                 )
             except (OSError, RuntimeError, ValueError):
                 # Cover enrichment is optional. A valid loan inventory must
@@ -382,9 +385,13 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
         return rows, cover_rows
 
     def done(payload):
-        current = self.service.current_identity
+        # Only display in the same Core/UI owner; the completed provider
+        # read is not cancelled merely because navigation changed.
+        if getattr(self, "_closed", False) or self.service is not service:
+            return
+        current = service.current_identity
         if (current.identity_id if current else None) == identity_id:
-            if getattr(self.service, "_account_context_epoch", None) != account_epoch:
+            if getattr(service, "_account_context_epoch", None) != account_epoch:
                 return
             rows, cover_rows = payload
             if getattr(self, "_loan_cover_library_revision", 0) == library_revision:
