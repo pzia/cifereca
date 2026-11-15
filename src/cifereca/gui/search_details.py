@@ -221,6 +221,7 @@ def _search_detail_context_current(
 
 def _publish_search_detail_cover(
     self: SearchDetailHost, item: SearchResult, detail: ItemDetail,
+    *, row: BookListItem | None = None,
 ) -> None:
     """Apply a *same-notice* cover to the visible Search row, without reselect.
 
@@ -241,9 +242,12 @@ def _publish_search_detail_cover(
     cover = candidate(detail.thumbnail_url, tier="catalog", source="search-holdings")
     if cover is None:
         return  # Never publish a signed, private, local or malformed URL.
-    page = getattr(self, "search_page", None)
-    selection = getattr(page, "selection", None)
-    row = selection.get_selected_item() if selection is not None else None
+    if row is None:
+        page = getattr(self, "search_page", None)
+        selection = getattr(page, "selection", None)
+        row = selection.get_selected_item() if selection is not None else None
+    elif mode != "global":
+        return
     if not isinstance(row, BookListItem):
         return
     if mode == "global":
