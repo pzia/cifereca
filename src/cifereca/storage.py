@@ -2789,23 +2789,21 @@ class Storage:
                     )
                 ):
                     raise ValueError("relocate_scope_conflict")
-                # #3196 W5: a legacy path is not authority over an edition
-                # already represented by a typed Core SourceReference. The
-                # 0.7 row has no borrower/branch; even another canonical
-                # account on the same credential is an ambiguity, not a
-                # permit to rebind its historical path. A separate attested
-                # canonical relink operator handles such a migration.
-                # Refuse before changing either the backup or its Placement.
-                if old_text != new_text and provider_id == "kobo":
+                # #3196 W5: an unverified historical locator is not authority
+                # over any typed SourceReference (including unknown providers).
+                # A backup lacks borrower/branch; a matching source on even
+                # another account is ambiguous. Preserve the negative veto
+                # without granting a positive right or moving the archive.
+                if old_text != new_text:
                     if db.execute(
                         "SELECT 1 FROM backup_items AS b WHERE "
-                        "b.provider_id='kobo' AND b.identity_id=? "
+                        "b.provider_id=? AND b.identity_id=? "
                         "AND b.local_path=? AND EXISTS ("
                         "SELECT 1 FROM source_references AS s "
-                        "WHERE s.provider_id='kobo' "
+                        "WHERE s.provider_id=b.provider_id "
                         "AND s.credential_id=b.credential_id "
                         "AND s.edition_id=b.item_id) LIMIT 1",
-                        (identity_id, old_text),
+                        (provider_id, identity_id, old_text),
                     ).fetchone() is not None:
                         raise ValueError("relocate_canonical_source_requires_core_relink")
                 # #3196 W5: backup_items is a passive historical archive
