@@ -57,6 +57,7 @@ class _Slot:
     token: CoverCacheToken
     decision: ResolvedBookCover | None = None
     expires_at: float = 0.0
+    published: bool = False
 
 
 class CoverSubscription:
@@ -203,7 +204,7 @@ class CoverDecisionCache:
             raise TypeError("expected cover cache token")
         with self._lock:
             current = self._slots.get(token.scope)
-            if current is None or current.token != token:
+            if current is None or current.token != token or current.published:
                 return False
         decision = resolve_book_cover(
             token.scope, candidates, revision=token.revision,
@@ -213,8 +214,9 @@ class CoverDecisionCache:
         )
         with self._lock:
             current = self._slots.get(token.scope)
-            if current is None or current.token != token:
+            if current is None or current.token != token or current.published:
                 return False
+            current.published = True
             current.decision = decision
             current.expires_at = self._clock() + self._ttl[decision.status]
             self._slots.move_to_end(token.scope)
