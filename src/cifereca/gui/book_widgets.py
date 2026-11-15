@@ -270,8 +270,11 @@ class CoverView(Gtk.Overlay):
             except Exception:
                 current = False
             if not current:
-                # Drop a queued N3 response invalidated AFTER its callback
-                # but BEFORE GDK creates a texture. Never paint stale bytes.
+                # The N2 source changed after N3's worker result. Don't
+                # decode the obsolete image or keep a spinner forever.
+                self.spinner.stop()
+                self.spinner.set_visible(False)
+                self._show_missing()
                 loader.note_ui_stale()
                 return False
         self.spinner.stop()
@@ -287,7 +290,6 @@ class CoverView(Gtk.Overlay):
             self._set_logical_size(self._width, self._height)
             self.picture.set_paintable(texture)
             self.placeholder.set_visible(False)
-            loader.note_ui_applied()
             applied = True
         except Exception:
             loader.note_ui_failed()
@@ -308,6 +310,21 @@ class CoverView(Gtk.Overlay):
                 self._start_cover_request(force=True)
             else:
                 self._show_missing()
+        if applied and check is not None:
+            try:
+                current = check() is True
+            except Exception:
+                current = False
+            if not current:
+                # N2 can change even during GDK decoding. The resulting
+                # texture and N0 paint receipt are not authorized.
+                self._show_missing()
+                loader.note_ui_stale()
+                return False
+        if applied:
+            # A decoded physical file is not a successful GTK cover until
+            # its exact N2 selection survived the FINAL paint-time check.
+            loader.note_ui_applied()
         if (applied and generation == self._generation
                 and self._loader is loader and self._url):
             # A 'resolved' source or cache hit is NOT a GTK paint. Emit only
