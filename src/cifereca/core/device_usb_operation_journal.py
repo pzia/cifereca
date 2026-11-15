@@ -261,4 +261,75 @@ def completed_usb_managed_receipts(
         return {}
 
 
-__all__ = ["SqliteUsbOperationJournal", "completed_usb_managed_receipts"]
+
+def completed_usb_managed_copy_operations(
+    *, storage: Any, identity_id: str, device_id: str, fingerprint: str,
+) -> dict[str, str]:
+    """Return exact completed copy operation IDs, never execution permits.
+
+    The shared Core receipt selector owns ambiguity, pending removal, and
+    malformed-payload rejection. This read-only accessor adds the opaque
+    operation ID needed to prepare a *separate* one-book removal confirmation.
+    Nothing here proves the USB file still exists, is unchanged, or can be
+    deleted; the physical preview and removal supervisor must reattest it.
+    """
+    from .device_usb_copy_supervisor import UsbCopyJournalEntry
+    import re
+
+    receipts = completed_usb_managed_receipts(
+        storage=storage, identity_id=identity_id, device_id=device_id,
+        fingerprint=fingerprint,
+    )
+    if not receipts:
+        return {}
+    try:
+        with storage._lock, storage._connect() as db:
+            records = db.execute(
+                "SELECT operation_id, payload, phase FROM device_usb_operations "
+                "WHERE device_id=? ORDER BY operation_id LIMIT ?",
+                (device_id, _MAX_PREVIEW_OPERATIONS + 1),
+            ).fetchall()
+        if len(records) > _MAX_PREVIEW_OPERATIONS:
+            return {}
+        matched: dict[str, list[str]] = {}
+        for operation_id, payload, phase in records:
+            if (type(operation_id) is not str
+                    or re.fullmatch(r"[0-9a-f]{32}", operation_id) is None
+                    or type(payload) is not str or type(phase) is not str):
+                return {}
+            entry = _decode(payload)
+            if (type(entry) is not UsbCopyJournalEntry
+                    or phase != "completed" or entry.phase != "completed"):
+                continue
+            consent = entry.consent
+            if (consent.operation_id != operation_id
+                    or consent.identity_id != identity_id
+                    or consent.device_id != device_id
+                    or consent.usb_fingerprint != fingerprint):
+                continue
+            receipt = receipts.get(consent.artifact_id)
+            if (receipt is not None
+                    and entry.receipt == receipt
+                    and consent.target_relative_path == receipt.relative_path
+                    and consent.sha256 == receipt.sha256):
+                matched.setdefault(consent.artifact_id, []).append(operation_id)
+        # Detect journal mutations while producing the advisory lookup.
+        if completed_usb_managed_receipts(
+            storage=storage, identity_id=identity_id,
+            device_id=device_id, fingerprint=fingerprint,
+        ) != receipts:
+            return {}
+        return {
+            artifact_id: options[0]
+            for artifact_id, options in matched.items()
+            if len(options) == 1
+        }
+    except (sqlite3.Error, OSError, ValueError, TypeError, AttributeError,
+            KeyError, OverflowError):
+        return {}
+
+
+__all__ = [
+    "SqliteUsbOperationJournal", "completed_usb_managed_receipts",
+    "completed_usb_managed_copy_operations",
+]
