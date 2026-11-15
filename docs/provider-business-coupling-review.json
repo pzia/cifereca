@@ -1922,7 +1922,7 @@
       "tests": [
         "tests/test_automatic_loan_admission.py"
       ],
-      "pr": "#TBD"
+      "pr": "#6222"
     }
   ],
   "retained_legacy_migrations": [
