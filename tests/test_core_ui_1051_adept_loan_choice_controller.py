@@ -457,3 +457,36 @@ def test_queued_binding_pins_selected_ids_despite_option_mutation():
     assert [event for event in events if event[0] == "attach"] == [
         ("attach", "acq-1", "exact-profile", "exact-loan"),
     ]
+
+
+def test_adept_dialog_from_replaced_core_cannot_submit_without_generation_change():
+    window, adw, events, dialogs = _window()
+    _open(window, adw)
+    _dropdown(dialogs[0]).select(0)
+    foreign_calls = []
+    window.service = NS(
+        attach_adept_loan=lambda *args: foreign_calls.append(args),
+    )
+    dialogs[0].respond("attach")
+    assert window.runner.submissions == [] and foreign_calls == []
+
+
+def test_adept_binding_result_from_old_core_cannot_refresh_replaced_window():
+    window, adw, events, dialogs = _window()
+    _open(window, adw)
+    _dropdown(dialogs[0]).select(0)
+    dialogs[0].respond("attach")
+    task = window.runner.submissions[0]
+    events.clear()
+    window.service = NS(
+        attach_adept_loan=lambda *a: (_ for _ in ()).throw(
+            AssertionError("wrong Core"),
+        ),
+    )
+    assert task.work() == {"status": "resolved"}
+    # GTK generations intentionally remain unchanged: Core identity alone
+    # must make every old-window completion callback inert.
+    events.clear()
+    task.done({"status": "resolved"})
+    task.error(RuntimeError("private path"))
+    assert events == []
