@@ -485,10 +485,49 @@ def _renew_result(self, result: Any) -> None:
 
 
 def _renew(self, loan: Loan, control: Gtk.Widget) -> None:
+    """One admitted loan/owner; late navigation changes presentation only."""
+    service = self.service
+    identity = service.current_identity
+    owner = getattr(identity, "identity_id", None)
+    account_epoch = getattr(service, "_account_context_epoch", None)
+    source_epoch = getattr(service, "_source_context_epoch", None)
+    ui_identity_epoch = getattr(self, "_identity_context_generation", None)
+    ui_account_epoch = getattr(self, "_account_context_generation", None)
+
+    def view_current() -> bool:
+        try:
+            return bool(
+                not getattr(self, "_closed", False)
+                and self.service is service
+                and service.current_identity is identity
+                and type(owner) is str and owner
+                and type(loan) is Loan and loan.identity_id == owner
+                and type(account_epoch) is int and account_epoch >= 0
+                and type(source_epoch) is int and source_epoch >= 0
+                and service._account_context_epoch == account_epoch
+                and service._source_context_epoch == source_epoch
+                and getattr(self, "_identity_context_generation", None)
+                    == ui_identity_epoch
+                and getattr(self, "_account_context_generation", None)
+                    == ui_account_epoch
+            )
+        except Exception:
+            return False
+
+    if not view_current():
+        return
+
+    def completed(result: Any) -> None:
+        # Only the original loans view can show the renewal receipt or
+        # refresh its selected identity. The Core-owned one-shot request
+        # is not reinterpreted or cancelled by GTK navigation.
+        if view_current():
+            self._renew_result(result)
+
     self.runner.submit(
         "Demande de prolongation…",
-        lambda: self.service.renew(loan, confirmed=True),
-        self._renew_result,
+        lambda: service.renew(loan, confirmed=True),
+        completed,
         control=control, priority=TaskPriority.USER_ACTION, kind="loan-renew",
     )
 
