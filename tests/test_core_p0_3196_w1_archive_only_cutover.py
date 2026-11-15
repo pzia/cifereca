@@ -1,6 +1,10 @@
 """#3196 W1: Kobo 0.7 storage writes are archive-only after #4858 cutover."""
 from __future__ import annotations
 
+import ast
+import inspect
+import textwrap
+
 import pytest
 
 from cifereca.storage import Storage
@@ -81,3 +85,17 @@ def test_non_kobo_legacy_provider_keeps_existing_compatibility_behavior(tmp_path
         assert store.backup_get("other", "card", "book") is not None
     finally:
         store.close()
+
+
+def test_w1_generic_mirror_contains_no_supplier_literal():
+    """The inactive typed Kobo veto must not return to the publication path.
+
+    Kobo v2 archives skip the v3 importer and Kobo backup_put always passes
+    archive_only=True; those runtime contracts are covered by the SQLite
+    archive and migration tests, including unknown/non-Kobo compatibility.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(Storage._mirror_backup_row)))
+    assert not any(
+        isinstance(node, ast.Constant) and node.value == "kobo"
+        for node in ast.walk(tree)
+    )
