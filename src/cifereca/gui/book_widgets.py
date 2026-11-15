@@ -493,12 +493,34 @@ class BookListCell(Gtk.Box):
         self._thumbnail_item = None
         self._thumbnail_handler_id = None
 
+    def _admit_core_local_cover(self, item: BookListItem, service, document) -> bool:
+        """Publish a Core-attested N1 packet lazily for this visible GTK cell.
+
+        Do not read every Library row, infer by URL/title, or make a source
+        decision from cached N3 media. A rejected packet never falls back
+        silently to a lower-priority supplier URL.
+        """
+        facts = getattr(item, "_cover_local_evidence", None)
+        if facts is None:
+            # Other producers can pre-register their own exact DocumentRef.
+            return True
+        adapter = getattr(self.window, "local_cover_adapter", None)
+        if adapter is None:
+            return False
+        try:
+            return adapter.register(service, facts) == document
+        except (TypeError, ValueError, RuntimeError):
+            return False
+
     def _thumbnail_changed(self, item: BookListItem) -> None:
         if self._thumbnail_item is not item or self._bound_key != item.key:
             return
         document = getattr(item, "_cover_document_ref", None)
         service = getattr(self.window, "document_covers", None)
         if document is not None and service is not None:
+            if not self._admit_core_local_cover(item, service, document):
+                self.cover.bind_url(self.cover_loader, None, priority=10)
+                return
             self.cover.bind_document(
                 service, document, variant="list", priority=10,
                 on_texture_applied=getattr(item, "_cover_paint_observer", None),
@@ -583,13 +605,15 @@ class BookListCell(Gtk.Box):
         document = getattr(item, "_cover_document_ref", None)
         service = getattr(self.window, "document_covers", None)
         if document is not None and service is not None:
-            # A source selected by N1/N2 is resolved ONCE; a warm URL cache
-            # cannot displace a proved EPUB, nor can a recycled row reuse a
-            # stale DocumentRef from a different account/Placement.
-            self.cover.bind_document(
-                service, document, variant="list", priority=10,
-                on_texture_applied=getattr(item, "_cover_paint_observer", None),
-            )
+            # An exact Core packet is registered only for a mapped cell.
+            # A physical N3 hit never creates a book/cover association.
+            if not self._admit_core_local_cover(item, service, document):
+                self.cover.bind_url(self.cover_loader, None, priority=10)
+            else:
+                self.cover.bind_document(
+                    service, document, variant="list", priority=10,
+                    on_texture_applied=getattr(item, "_cover_paint_observer", None),
+                )
         elif item.thumbnail_url:
             self.cover.bind_url(
                 self.cover_loader, item.thumbnail_url, priority=10,
