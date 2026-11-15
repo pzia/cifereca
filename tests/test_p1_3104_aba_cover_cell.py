@@ -35,7 +35,9 @@ def _real_callback():
         ), body=[resolved, ast.Return(value=ast.Name(id="resolved", ctx=ast.Load()))],
         decorator_list=[],
     )
-    scope = {}
+    # The production closure captures an optional verified history context.
+    # This ABA-only test deliberately exercises the unscoped case.
+    scope = {"context": None}
     tree = ast.fix_missing_locations(ast.Module(body=[factory], type_ignores=[]))
     exec(compile(tree, str(SOURCE), "exec"), scope)
     return scope["callback_for"]
@@ -44,6 +46,7 @@ def _real_callback():
 def test_rebound_same_key_cannot_accept_prior_cover_result():
     calls = []
     host = SimpleNamespace(
+        window=SimpleNamespace(),
         _bound_key="edition-1", _bind_epoch=2, cover_loader=object(),
         cover=SimpleNamespace(
             bind_url=lambda *args, **kwargs: calls.append((args, kwargs))
