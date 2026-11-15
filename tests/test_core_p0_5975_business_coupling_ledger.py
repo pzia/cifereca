@@ -606,7 +606,7 @@ def test_w1_sourcekey_preflight_is_provider_neutral_and_physically_reviewed():
     assert retired[0]["retired_at_sha"] == (
         "f9efeabf8358e268d7bfcc71e5b9e1358acecd0c"
     )
-    assert retired[0]["pr"] == "#6142"
+    assert retired[0]["pr"] == "#6145"
     guards = [row for row in ledger["guard_installations"] if row["id"] ==
               "guard-w1-all-provider-legacy-sourcekey-path-admission"]
     assert len(guards) == 1
