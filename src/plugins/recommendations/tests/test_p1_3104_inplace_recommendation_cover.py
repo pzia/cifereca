@@ -73,3 +73,24 @@ def test_same_ranked_object_bibliography_change_refreshes_selected_detail():
     assert views[-1][0].title == details[-1].title
     assert views[-1][0].subtitle == details[-1].subtitle
     assert searches == []
+
+
+def test_inplace_cover_does_not_resurrect_stale_detail_while_ranking_busy():
+    view, ranked, views, details, searches = _loaded_view()
+    previous_count = len(details)
+    view._generation += 1
+    view._busy = True
+    view._reset_llm_selection(None)  # old actions revoked for new generation
+    ranked.item.thumbnail_url = PUBLIC_COVER
+    view._render(preserve_summary=True)
+    assert views[-1][0].thumbnail_url == PUBLIC_COVER
+    assert len(details) == previous_count  # no stale detail/actions during load
+    assert view._exact_notice_state["generation"] != view._generation
+    assert searches == []
+
+    view._busy = False
+    view._render(preserve_summary=True)
+    assert len(details) == previous_count + 1
+    assert details[-1].thumbnail_url == PUBLIC_COVER
+    assert view._exact_notice_state["generation"] == view._generation
+    assert searches == []
