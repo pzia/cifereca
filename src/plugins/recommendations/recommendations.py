@@ -1880,9 +1880,18 @@ class UxRecommendationsView:
                 # *already loaded* public bibliography. Never index provider
                 # record IDs, file paths, URLs, raw metadata or access tokens.
                 # ISBNs retain the exact selected-catalogue variant guard.
+                # Apply the SAME non-secret, non-URL indexing boundary
+                # to title and author as to subjects/publisher. These are
+                # public display strings, but a malformed provider title or
+                # author can still contain a signed URL or access token.
+                # Rendering a bibliographic label does not authorize making
+                # its credential-like contents searchable in "Tous".
                 values = [
-                    _candidate_public_field(item, "title", limit=2048),
-                    *_public_candidate_authors(item),
+                    safe for raw in (
+                        _candidate_public_field(item, "title", limit=2048),
+                        *_public_candidate_authors(item),
+                    )
+                    if (safe := _safe_local_bibliography_value(raw))
                 ]
                 for category in (
                     "subject", "series", "collection", "language",
