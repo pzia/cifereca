@@ -304,6 +304,48 @@ class TaskRunner:
             return "failed"
         return "success"
 
+    @staticmethod
+    def _loan_acquisition_outcome(value: Any) -> str:
+        """Only Core's confirmed completed recovery is an acquired book."""
+        if type(value) is not dict:
+            return "failed"
+        status = value.get("status")
+        if type(status) is not str:
+            return "failed"
+        if status == "complete":
+            return "success"
+        if status == "attention_required":
+            return "pending"
+        if status in {"blocked", "refused"}:
+            return "blocked"
+        if status == "cancelled":
+            return "cancelled"
+        return "failed"
+
+    @staticmethod
+    def _explicit_acsm_stage_outcome(value: Any) -> str:
+        """A staged ACSM is never an acquired book or fulfilled ADEPT loan."""
+        if type(value) is not dict:
+            return "failed"
+        status = value.get("status")
+        if type(status) is not str:
+            return "failed"
+        if status == "candidate_acsm":
+            path = value.get("path")
+            return (
+                "success"
+                if type(path) is str and 0 < len(path) <= 4096
+                and chr(0) not in path and path.lower().endswith(".acsm")
+                else "failed"
+            )
+        if status == "attention_required":
+            return "pending"
+        if status == "blocked":
+            return "blocked"
+        if status == "cancelled":
+            return "cancelled"
+        return "failed"
+
     def _business_outcome(self, value: Any, kind: str) -> str:
         """One exact Core receipt for worker metrics and GTK task feedback."""
         if kind == "borrow":
@@ -318,6 +360,10 @@ class TaskRunner:
             return self._materialize_outcome(value)
         if kind == "borrow-verification":
             return self._borrow_verification_outcome(value)
+        if kind == "loan-acquisition":
+            return self._loan_acquisition_outcome(value)
+        if kind == "acsm-stage":
+            return self._explicit_acsm_stage_outcome(value)
         return self._source_sync_outcome(value, kind)
 
     def is_active_automatic_opening(self) -> bool:
@@ -395,10 +441,29 @@ class TaskRunner:
             # Previously these appeared as "other" in local TRACE, making
             # timing samples impossible to attribute (#1741).
             "history", "bookings", "search-known", "detail-cache", "transfer", "materialize", "acsm-import", "lender-local-send",
-            "adept-inventory", "adept-return", "loan-acquisition", "borrow", "borrow-verification",
+            "adept-inventory", "adept-return", "loan-acquisition", "acsm-stage", "borrow", "borrow-verification",
             "obtain", "index", "provider-connect", "sync-audit", "source-consent",
             "identity", "maintenance-inspection",
         } else "other"
+        def classify_business(value: Any) -> str:
+            """Use the exact TaskRunner classifier; isolated submit adapters
+            may only retain generic, non-authorizing compatibility tasks.
+            """
+            classify = getattr(self, "_business_outcome", None)
+            if callable(classify):
+                return classify(value, trace_kind)
+            # Historical AST-only submit() adapters are not Core authorities.
+            # A missing typed classifier cannot mint a successful supplier
+            # loan, physical copy, acquisition or DRM staging receipt.
+            if trace_kind in {
+                "borrow", "transfer", "acsm-import", "acsm-stage",
+                "lender-local-send", "lender-placement-check",
+                "borrow-verification", "loan-acquisition", "materialize",
+            }:
+                return "failed"
+            legacy = getattr(self, "_source_sync_outcome", None)
+            return legacy(value, trace_kind) if callable(legacy) else "failed"
+
         # An explicit user request must always run, including callers that
         # deliberately have no GTK control (keyboard actions, headless host).
         # A missing widget is not evidence that a task is automatic (#981).
@@ -489,7 +554,7 @@ class TaskRunner:
             outcome_status = "success"
             try:
                 value = fn(report) if with_progress else fn()
-                business = self._business_outcome(value, trace_kind)
+                business = classify_business(value)
                 if business != "success":
                     outcome_status = "failed"
                     if trace_kind in {"borrow", "opening-sync", "deep-sync"}:
@@ -562,7 +627,7 @@ class TaskRunner:
             business_status = (
                 ("cancelled" if isinstance(outcome[1], Cancelled) else "failed")
                 if outcome[0] == "error"
-                else self._business_outcome(outcome[1], trace_kind)
+                else classify_business(outcome[1])
             )
             # Isolated legacy submit() adapters do not carry the class's
             # helper methods. Those adapters cannot attest lock contention,
@@ -588,7 +653,7 @@ class TaskRunner:
             # a partial result or a genuine source-sync failure (#2888).
             detail = (
                 f" business_status={business_status}"
-                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "materialize", "opening-sync", "deep-sync"} else ""
+                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "opening-sync", "deep-sync"} else ""
             )
             # Only Core's explicitly closed BnF reason vocabulary may enter
             # the generic task receipt. Ignore arbitrary provider detail.
@@ -682,6 +747,14 @@ class TaskRunner:
                     if trace_kind == "lender-local-send"
                     else "Envoi du fichier local non confirmé"
                     if trace_kind == "materialize"
+                    else "Récupération du livre en attente"
+                    if trace_kind == "loan-acquisition" and business_status == "pending"
+                    else "Récupération du livre non confirmée"
+                    if trace_kind == "loan-acquisition"
+                    else "Jeton ACSM en attente"
+                    if trace_kind == "acsm-stage" and business_status == "pending"
+                    else "Jeton ACSM non confirmé"
+                    if trace_kind == "acsm-stage"
                     else "Prêt non encore vérifié — aucune nouvelle demande envoyée"
                     if trace_kind == "borrow-verification" and business_status == "pending"
                     else "Vérification du prêt bloquée"
@@ -712,7 +785,7 @@ class TaskRunner:
                     business_status == "success", feedback_error,
                 )
                 if (business_status in {"pending", "partial", "blocked", "busy", "cancelled"}
-                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "materialize", "opening-sync", "deep-sync"}):
+                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "opening-sync", "deep-sync"}):
                     self.window._task_finished(*finish_args, business_status)
                 else:
                     self.window._task_finished(*finish_args)
