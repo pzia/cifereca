@@ -16,7 +16,8 @@ def _add_owned_download(window, detail, item, TaskPriority):
     silently omitting the action leaves the user unable to distinguish that
     state from a missing GUI feature (#3848).
     """
-    resolve = getattr(window.service, 'owned_library_download_target', None)
+    service = window.service
+    resolve = getattr(service, 'owned_library_download_target', None)
     target = None
     if callable(resolve):
         try:
@@ -89,19 +90,20 @@ def _add_owned_download(window, detail, item, TaskPriority):
     from ..core.source_context import source_context_epoch
     generation = getattr(window, '_identity_context_generation', None)
     try:
-        source_epoch = source_context_epoch(window.service)
+        source_epoch = source_context_epoch(service)
     except ValueError:
         # A malformed Core source generation is not an acquisition grant.
         return
 
     def current():
         if (getattr(window, '_closed', False)
-                or getattr(window.service.current_identity, 'identity_id', None) != target.identity_id
+                or window.service is not service
+                or getattr(service.current_identity, 'identity_id', None) != target.identity_id
                 or getattr(window, '_identity_context_generation', None) != generation
                 or getattr(button, '_cifereca_action_context_revoked', False)):
             return False
         try:
-            return source_context_epoch(window.service) == source_epoch
+            return source_context_epoch(service) == source_epoch
         except ValueError:
             return False
 
@@ -114,11 +116,14 @@ def _add_owned_download(window, detail, item, TaskPriority):
         mapped = getattr(_button, 'get_mapped', None)
         if callable(mapped) and not mapped():
             return
+        # The button and target were admitted against this exact Core.
+        # A queued worker may never resolve a replacement MainWindow.service.
+        obtain = service.obtain_owned_library_item
         def work():
             if not current():
                 raise RuntimeError('Le contexte du téléchargement a changé.')
             try:
-                return window.service.obtain_owned_library_item(target)
+                return obtain(target)
             except Cancelled:
                 raise
             except Exception:
