@@ -326,10 +326,14 @@ class DocumentCoverService:
         cannot slip between an initial MISS and subscription registration.
         """
         with self._lock:
-            bucket = self._source_subscriptions.setdefault(document, {})
-            if (len(bucket) >= 32
-                    or self._source_subscription_count >= self._max_documents * 8):
+            if self._source_subscription_count >= self._max_documents * 8:
                 return
+            bucket = self._source_subscriptions.get(document)
+            if bucket is not None and len(bucket) >= 32:
+                return
+            if bucket is None:
+                bucket = {}
+                self._source_subscriptions[document] = bucket
             self._source_subscription_id += 1
             key = self._source_subscription_id
             bucket[key] = (handle, callback)
@@ -552,7 +556,11 @@ class DocumentCoverService:
                 )
 
         if current_source_raced:
-            if source_changed is not None and handle.active:
+            # A registered subscription already saw that source transition.
+            # Preserve the explicit callback for capacity-limited viewers
+            # unable to acquire a subscription, without double GTK rebind.
+            if (source_changed is not None and handle.active
+                    and handle._cancel_source_subscription is None):
                 try:
                     source_changed()
                 except Exception:
@@ -586,10 +594,13 @@ class DocumentCoverService:
                     self._read_cooldown.pop(document, None)
             if live:
                 for waiting_handle, callback in waiters:
-                    if not waiting_handle.active:
+                    if (not waiting_handle.active
+                            or waiting_handle._cancel_source_subscription is not None):
+                        # register() already notified each live subscription;
+                        # an extra notification would rebind list/detail twice.
                         continue
                     try:
-                        callback()  # GTK subscriber queues its own idle rebind.
+                        callback()  # Unsubscribed/capacity-limited viewer.
                     except Exception:
                         pass
 
