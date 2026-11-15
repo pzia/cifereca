@@ -288,6 +288,20 @@ class TaskRunner:
             return "blocked"
         return "failed"
 
+    @staticmethod
+    def _materialize_outcome(value: Any) -> str:
+        """Physical local A→B copy succeeded only with a Core placement."""
+        if type(value) is not dict:
+            return "failed"
+        status = value.get("status")
+        target = value.get("target_identity_id")
+        placement = value.get("placement_id")
+        if (type(status) is not str or status not in ("complete", "unchanged")
+                or type(target) is not str or not target
+                or type(placement) is not str or not placement):
+            return "failed"
+        return "success"
+
     def is_active_automatic_opening(self) -> bool:
         """Passive GTK-side gate for periodic inventories during opening Sync.
 
@@ -362,7 +376,7 @@ class TaskRunner:
             # Fixed, Core-owned task kinds already used by MainWindow.
             # Previously these appeared as "other" in local TRACE, making
             # timing samples impossible to attribute (#1741).
-            "history", "bookings", "search-known", "detail-cache", "transfer", "acsm-import", "lender-local-send",
+            "history", "bookings", "search-known", "detail-cache", "transfer", "materialize", "acsm-import", "lender-local-send",
             "adept-inventory", "adept-return", "loan-acquisition", "borrow", "borrow-verification",
             "obtain", "index", "provider-connect", "sync-audit", "source-consent",
             "identity", "maintenance-inspection",
@@ -461,6 +475,8 @@ class TaskRunner:
                     self._borrow_outcome(value) if trace_kind == "borrow"
                     else self._borrow_verification_outcome(value)
                     if trace_kind == "borrow-verification"
+                    else self._materialize_outcome(value)
+                    if trace_kind == "materialize"
                     else self._source_sync_outcome(value, trace_kind)
                 )
                 if business != "success":
@@ -542,6 +558,8 @@ class TaskRunner:
                       if trace_kind == "acsm-import"
                       else self._lender_local_send_outcome(outcome[1])
                       if trace_kind == "lender-local-send"
+                      else self._materialize_outcome(outcome[1])
+                      if trace_kind == "materialize"
                       else self._borrow_verification_outcome(outcome[1])
                       if trace_kind == "borrow-verification"
                       else self._source_sync_outcome(outcome[1], trace_kind))
@@ -570,7 +588,7 @@ class TaskRunner:
             # a partial result or a genuine source-sync failure (#2888).
             detail = (
                 f" business_status={business_status}"
-                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "opening-sync", "deep-sync"} else ""
+                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "materialize", "opening-sync", "deep-sync"} else ""
             )
             # Only Core's explicitly closed BnF reason vocabulary may enter
             # the generic task receipt. Ignore arbitrary provider detail.
@@ -662,6 +680,8 @@ class TaskRunner:
                     if trace_kind == "lender-local-send" and business_status == "blocked"
                     else "Copie du prêteur non confirmée"
                     if trace_kind == "lender-local-send"
+                    else "Envoi du fichier local non confirmé"
+                    if trace_kind == "materialize"
                     else "Prêt non encore vérifié — aucune nouvelle demande envoyée"
                     if trace_kind == "borrow-verification" and business_status == "pending"
                     else "Vérification du prêt bloquée"
@@ -692,7 +712,7 @@ class TaskRunner:
                     business_status == "success", feedback_error,
                 )
                 if (business_status in {"pending", "partial", "blocked", "busy", "cancelled"}
-                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "opening-sync", "deep-sync"}):
+                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "borrow-verification", "materialize", "opening-sync", "deep-sync"}):
                     self.window._task_finished(*finish_args, business_status)
                 else:
                     self.window._task_finished(*finish_args)
