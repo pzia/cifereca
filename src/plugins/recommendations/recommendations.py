@@ -2506,9 +2506,13 @@ class UxRecommendationsView:
                 if (
                     selection["ranked"] is not mapping[key]
                     or selection.get("catalogue_sources") != catalogue_sources
-                    or selection.get("row_presentation") != presentation
                     or (not self._busy and (
-                        selection["generation"] != self._generation
+                        # While a newer ranking generation is loading, the
+                        # previous selection's callbacks stay revoked. Do
+                        # not reopen that detail solely because public row
+                        # metadata was enriched on the same ranked object.
+                        selection.get("row_presentation") != presentation
+                        or selection["generation"] != self._generation
                         or selection["provisional"] != self._provisional_active
                     ))
                 ):
