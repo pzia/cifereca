@@ -164,10 +164,12 @@ class CoverLifecycleTrace:
                 status=previous.status,
                 evidence_present=previous.evidence_present,
                 resolved=True,
-                media_cached=source_cached or previous.media_cached,
-                preview_cached=preview_cached or previous.preview_cached,
-                list_painted=previous.list_painted,
-                detail_painted=previous.detail_painted,
+                media_cached=source_cached,
+                preview_cached=preview_cached,
+                # A missing/corrupt physical source revokes earlier paint
+                # confirmations, without changing the N1 documentary choice.
+                list_painted=source_cached and previous.list_painted,
+                detail_painted=source_cached and previous.detail_painted,
                 sequence=previous.sequence,
             )
             self._record(token.scope, state)
