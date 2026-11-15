@@ -1640,11 +1640,41 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def prepare_pnb_for_loan(self, loan: Loan, send: bool = False, control: Gtk.Widget | None = None) -> None:
+        # This task operates on the explicitly selected loan. Only the GTK
+        # completion view depends on the still-visible identity/account:
+        # A→B→A must not reopen an older loan detail or publish a late toast.
+        selected_identity = getattr(
+            getattr(self.service, "current_identity", None), "identity_id", None,
+        )
+        selected_loan_identity = getattr(loan, "identity_id", None)
+        identity_generation = getattr(self, "_identity_context_generation", None)
+        account_epoch = getattr(self.service, "_account_context_epoch", None)
+
+        def ui_current() -> bool:
+            current_identity = getattr(
+                getattr(self.service, "current_identity", None), "identity_id", None,
+            )
+            current_generation = getattr(self, "_identity_context_generation", None)
+            current_epoch = getattr(self.service, "_account_context_epoch", None)
+            return (
+                not getattr(self, "_closed", False)
+                and type(selected_identity) is str and bool(selected_identity)
+                and type(selected_loan_identity) is str
+                and selected_loan_identity == selected_identity
+                and type(current_identity) is str and current_identity == selected_identity
+                and type(identity_generation) is int
+                and type(current_generation) is int and current_generation == identity_generation
+                and type(account_epoch) is int
+                and type(current_epoch) is int and current_epoch == account_epoch
+            )
+
         def work():
             if send:
                 raise RuntimeError("L’envoi vers une liseuse nécessite un plugin storage.target.")
             return self.service.reacquire_digital_loan(loan)
         def ok(result):
+            if not ui_current():
+                return
             self.refresh_library(False); self.refresh_recent(); self._render_dashboard()
             self.loan_page.detail.show_loan(loan)
             # A completed TaskRunner callback is not evidence of a completed
@@ -1676,8 +1706,13 @@ class MainWindow(Adw.ApplicationWindow):
                 reporter(result_message)
             else:
                 self.toast(result_message, 6)
+        def failed(_exc):
+            if ui_current():
+                # Provider exceptions may contain signed URLs and credentials.
+                self.show_error("Acquisition indisponible", "Acquisition impossible")
+
         self.runner.submit("Acquisition du livre numérique…", work, ok,
-            lambda exc: self.show_error(str(exc), "Acquisition impossible"), control=control,
+            failed, control=control,
             priority=TaskPriority.USER_ACTION, kind="loan-acquisition")
 
     def can_borrow_item(self, item: SearchResult) -> bool:

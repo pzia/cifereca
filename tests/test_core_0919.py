@@ -118,7 +118,7 @@ class Core0919(unittest.TestCase):
   for a in fn.args.args+fn.args.kwonlyargs:a.annotation=None
   fn.returns=None;out={'TaskPriority':TaskPriority,**(ns or {})};exec(compile(ast.fix_missing_locations(ast.Module(body=[fn],type_ignores=[])),str(path),'exec'),out);return out[name]
  def test_download_ui_calls_full_recovery_and_refreshes_binding(self):
-  w=NS(service=NS(reacquire_digital_loan=Mock(return_value={'status':'complete','adept_return_available':True})),runner=Mock(),refresh_library=Mock(),refresh_recent=Mock(),_render_dashboard=Mock(),loan_page=NS(detail=NS(show_loan=Mock())),toast=Mock(),show_error=Mock())
+  w=NS(service=NS(current_identity=NS(identity_id='default'),_account_context_epoch=1,reacquire_digital_loan=Mock(return_value={'status':'complete','adept_return_available':True})),_identity_context_generation=1,runner=Mock(),refresh_library=Mock(),refresh_recent=Mock(),_render_dashboard=Mock(),loan_page=NS(detail=NS(show_loan=Mock())),toast=Mock(),show_error=Mock())
   self.extract('prepare_pnb_for_loan')(w,self.loan);args=w.runner.submit.call_args.args
   result=args[1]();args[2](result);w.service.reacquire_digital_loan.assert_called_once_with(self.loan)
   w.loan_page.detail.show_loan.assert_called_once_with(self.loan);self.assertIn('Livre récupéré',w.toast.call_args.args[0]);self.assertNotIn('restitution',w.toast.call_args.args[0])

@@ -31,7 +31,7 @@ def prepare_callback(window):
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[method], type_ignores=[],
     )), str(MAIN), "exec"), ns)
-    loan = SimpleNamespace(id="synthetic-loan")
+    loan = SimpleNamespace(id="synthetic-loan", identity_id="alice")
     ns["prepare_pnb_for_loan"](window, loan)
     submit = window.runner.submit
     assert submit.call_count == 1
@@ -41,7 +41,12 @@ def prepare_callback(window):
 
 def window_with_outcome(outcome, *, reporter=True):
     window = SimpleNamespace(
-        service=SimpleNamespace(reacquire_digital_loan=Mock(return_value=outcome)),
+        service=SimpleNamespace(
+            current_identity=SimpleNamespace(identity_id="alice"),
+            _account_context_epoch=4,
+            reacquire_digital_loan=Mock(return_value=outcome),
+        ),
+        _identity_context_generation=9,
         runner=Mock(), refresh_library=Mock(), refresh_recent=Mock(),
         _render_dashboard=Mock(), loan_page=SimpleNamespace(
             detail=SimpleNamespace(show_loan=Mock()),
