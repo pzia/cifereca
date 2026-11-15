@@ -36,6 +36,14 @@ def _private_destination(folder: Path, name: str) -> Path:
     return target
 
 
+def _regular_capture(path: Path, *, max_bytes: int) -> None:
+    """Never follow links or read unbounded external/private review inputs."""
+    if (path.is_symlink() or not path.is_file()
+            or path.stat().st_nlink != 1
+            or path.stat().st_size > max_bytes):
+        raise ValueError("Fichier de capture non sûr ou trop volumineux")
+
+
 def verify_capture_folder(
     folder: Path, *, width: int, size: tuple[int, int],
     stages: tuple[str, ...] = STAGES,
@@ -43,8 +51,12 @@ def verify_capture_folder(
     """Reject missing, swapped, edited, non-GTK or unsafe screenshots."""
     from PIL import Image
 
+    if folder.is_symlink() or not folder.is_dir():
+        raise ValueError("Répertoire GTK privé absent ou lié")
     folder = folder.resolve(strict=True)
-    report = json.loads((folder / "screen.json").read_text(encoding="utf-8"))
+    report_file = folder / "screen.json"
+    _regular_capture(report_file, max_bytes=4 * 1024 * 1024)
+    report = json.loads(report_file.read_text(encoding="utf-8"))
     if report.get("status") != "PASS" or report.get("width") != width:
         raise ValueError(f"{folder.name}: verdict/largeur de capture incorrect")
     if report.get("backend") != "GTK4/X11":
@@ -106,6 +118,7 @@ def verify_capture_folder(
         candidate = folder / name
         if candidate.is_symlink():
             raise ValueError("Capture liée symboliquement")
+        _regular_capture(candidate, max_bytes=40 * 1024 * 1024)
         path = candidate.resolve(strict=True)
         if path.parent != folder:
             raise ValueError("Capture extérieure au répertoire de recette")
