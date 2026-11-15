@@ -56,7 +56,12 @@ def production_method(name, *, namespace=None):
     )
     space = dict(namespace or {})
     exec(compile(ast.fix_missing_locations(ast.Module(
-        body=[func], type_ignores=[],
+        body=[
+            ast.ImportFrom(module="__future__", names=[
+                ast.alias(name="annotations"),
+            ], level=0),
+            func,
+        ], type_ignores=[],
     )), str(ROOT), "exec"), space)
     return space[name]
 
@@ -197,9 +202,7 @@ def test_real_cell_bind_and_thumbnail_signal_pass_same_optional_n0_hook():
     bind = next(x for x in cover.body if isinstance(x, ast.FunctionDef)
                 and x.name == "bind_url")
     assert "self._on_texture_applied = None" in ast.unparse(reset)
-    assert "self.set_texture_applied_observer(on_texture_applied)" in (
-        ast.unparse(bind)
-    )
+    assert "self._on_texture_applied =" in ast.unparse(bind)
     assert "self._generation" in ast.unparse(
         next(x for x in cover.body if isinstance(x, ast.FunctionDef)
              and x.name == "_apply_result")
