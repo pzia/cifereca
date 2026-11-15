@@ -578,3 +578,38 @@ def test_real_081_migration_is_explicitly_retained_after_genericization():
     assert actual["retained_non_ast_legacy_migration_writers"] == 1
     assert actual["active_legacy_writers_to_retire"] >= 1
     assert not actual["stale_reviews"]
+
+
+def test_w1_sourcekey_preflight_is_provider_neutral_and_physically_reviewed():
+    import inspect
+    from pathlib import Path
+    from cifereca.storage import Storage
+
+    source = inspect.getsource(Storage.backup_put)
+    admission = source.split('now = int(item.get("updated_at")', 1)[0]
+    assert 'if item.get("provider_id") == "kobo"' not in admission
+    assert "backup_legacy_item_id_invalid" in admission
+    assert "backup_legacy_path_invalid" in admission
+    assert "type(key) is not str" in admission
+
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads((root / "docs/provider-business-coupling-review.json")
+                        .read_text(encoding="utf-8"))
+    old = "site-dd2ac28f46a8a720315de122"
+    assert all(row["id"] != old for row in ledger["reviews"])
+    retired = [row for row in ledger["retirements"] if row["id"] ==
+               "struct-w1-all-provider-sourcekey-admission-supplier-predicate-retired"]
+    assert len(retired) == 1
+    assert retired[0]["original_site_id"] == old
+    assert retired[0]["original_classification"] == "safety_guard_pending_contract"
+    assert retired[0]["in_ast_metric"] is True
+    assert retired[0]["retired_at_sha"] == (
+        "f9efeabf8358e268d7bfcc71e5b9e1358acecd0c"
+    )
+    assert retired[0]["pr"] == "#6142"
+    guards = [row for row in ledger["guard_installations"] if row["id"] ==
+              "guard-w1-all-provider-legacy-sourcekey-path-admission"]
+    assert len(guards) == 1
+    assert guards[0]["classification"] == "safety_guard_pending_contract"
+    assert "non-Kobo" in guards[0]["remaining_debt"]
+    assert all((root / test).is_file() for test in retired[0]["tests"])
