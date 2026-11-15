@@ -524,6 +524,12 @@ class TaskRunner:
             """Use the exact TaskRunner classifier; isolated submit adapters
             may only retain generic, non-authorizing compatibility tasks.
             """
+            # Old AST-only hosts inject a permissive generic dispatcher.
+            # Without this class-owned typed renewal classifier, that mock
+            # must never turn HTTP POST acceptance into a renewed loan.
+            if (trace_kind == "loan-renew"
+                    and not callable(getattr(self, "_loan_renew_outcome", None))):
+                return "failed"
             classify = getattr(self, "_business_outcome", None)
             if callable(classify):
                 return classify(value, trace_kind)
