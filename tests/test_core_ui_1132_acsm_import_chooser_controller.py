@@ -398,7 +398,7 @@ def test_known_adept_attention_code_is_preserved_without_provider_text():
 
 @pytest.mark.parametrize("path", [
     HostileIdentity("/tmp/explicit.acsm"),
-    "/tmp/invalid\\x00.acsm",
+    "/tmp/invalid\x00.acsm",
 ])
 def test_bad_chooser_path_does_not_queue_import(path):
     host, Gtk, events, created, submitted, identities = _setup()
