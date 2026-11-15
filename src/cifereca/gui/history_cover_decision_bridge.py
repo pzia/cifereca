@@ -134,9 +134,13 @@ def history_cover_presentation(
     )
     account_epoch = getattr(service, "_account_context_epoch", None)
     producer_revision = getattr(window, "_history_cover_revision", None)
+    live = getattr(window, "history_objects", None)
     if (type(identity_id) is not str or not identity_id
             or type(account_epoch) is not int or account_epoch < 0
-            or type(producer_revision) is not int or producer_revision < 1):
+            or type(producer_revision) is not int or producer_revision < 1
+            or type(live) is not dict or live.get(item.id) is not item):
+        # A former row (or duplicate ID replaced in the active model) must
+        # never be re-projected using the latest account/revision after ABA.
         return item
     bridge = getattr(window, "_history_cover_decisions", None)
     if bridge is None:
