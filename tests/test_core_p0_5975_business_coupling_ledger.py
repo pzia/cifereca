@@ -248,7 +248,7 @@ def test_reviewed_groups_require_explicit_reachability_and_never_merge_unreviewe
         inventory(tmp_path, registry=ledger)
 
 
-def test_storage_remaining_guards_and_retired_w5_writer_are_visible():
+def test_storage_remaining_w1_guards_and_retired_w5_branches_are_visible():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -262,17 +262,19 @@ def test_storage_remaining_guards_and_retired_w5_writer_are_visible():
         "site-d88574f6e28d059189c71da5",
         "site-5a3051124e11f87bf24ccfb6",
         "site-c668504ada66eace309e3e7f",
-        "site-b4a6753e2f0ac2d6b78c0992",
     }
     removed_writer = "site-1220521b4d5dc767addb6d29"
+    removed_supplier_guard = "site-b4a6753e2f0ac2d6b78c0992"
     reviews = [row for row in ledger["reviews"] if row["id"] in guards]
     assert {row["id"] for row in reviews} == guards
-    assert all(row["id"] != removed_writer for row in ledger["reviews"])
-    assert len(reviews) == 5
+    assert all(
+        row["id"] not in (removed_writer, removed_supplier_guard)
+        for row in ledger["reviews"]
+    )
+    assert len(reviews) == 4
     assert {row["decision_group_id"] for row in reviews} == {
         "legacy-backup.w1-canonical-publication-veto",
         "legacy-backup.w1-owner-archive-protection",
-        "legacy-backup.w5-path-relocation-cutover",
     }
     assert {row["reachability"] for row in reviews} == {
         "legacy_only", "productive",
@@ -297,6 +299,32 @@ def test_storage_remaining_guards_and_retired_w5_writer_are_visible():
     assert retirement["pr"] == "#6118"
     assert retirement["replacement"] and retirement["evidence"]
     assert all((root / test).is_file() for test in retirement["tests"])
+
+    typed_veto = [
+        row for row in ledger["retirements"]
+        if row["id"] == "struct-w5-neutral-typed-source-filename-veto"
+    ]
+    assert len(typed_veto) == 1
+    assert typed_veto[0]["original_classification"] == (
+        "safety_guard_pending_contract"
+    )
+    assert typed_veto[0]["original_site_id"] == removed_supplier_guard
+    assert typed_veto[0]["retired_at_sha"] == (
+        "a4807403f58faf4911a706d71d6453595021af2f"
+    )
+    assert typed_veto[0]["in_ast_metric"] is True
+    assert typed_veto[0]["pr"] == "#6122"
+    assert all((root / test).is_file() for test in typed_veto[0]["tests"])
+    neutral_guard = [
+        row for row in ledger["guard_installations"]
+        if row["id"] == "guard-w5-neutral-typed-source-old-path-veto"
+    ]
+    assert len(neutral_guard) == 1
+    assert neutral_guard[0]["classification"] == (
+        "safety_guard_pending_contract"
+    )
+    assert neutral_guard[0]["pr"] == "#6122"
+    assert all((root / test).is_file() for test in neutral_guard[0]["tests"])
 
 
 def test_fixed_anchor_cohort_keeps_unproven_removed_sites_visible():
