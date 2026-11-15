@@ -964,3 +964,67 @@ class DiagnosticsFocusAndFileChooserPrivacyTests(unittest.TestCase):
 
     def test_file_chooser_allowlist_is_enforced(self):
         test_p0_5376_diagnostics_file_selector_timeout_exports_only_closed_booleans()
+
+
+
+def test_bnf_covers_failure_exports_only_closed_synthetic_stage():
+    """Never publish private GTK screenshots, exceptions or provider text."""
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "bnf-covers-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        # The workflow passes --out e2e-artifacts/<scenario> to run.py,
+        # and run.py appends <scenario>. Never read a one-level decoy.
+        shallow = root / scenario / "screen.json"
+        shallow.write_text(json.dumps({"last_stage": "startup"}))
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        for value, accepted in (
+            ("embedded_loan_list_over_remote", True),
+            ("embedded_loan_detail_over_remote", True),
+            ("remote_loan_detail_cover", True),
+            ("startup", True),
+            ("PRIVATE_SIGNED_URL", False),
+            (123, False),
+            (True, False),
+        ):
+            report.write_text(json.dumps({
+                "last_stage": value,
+                "error": "PRIVATE_BORROWER_TOKEN",
+                "user_path": "/home/private/loan",
+            }))
+            row = module.safe_summary(source)["results"][0]
+            if accepted:
+                assert row["bnf_covers_last_stage"] == value
+            else:
+                assert "bnf_covers_last_stage" not in row
+            assert "PRIVATE" not in repr(row)
+            assert "/home/private" not in repr(row)
+
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        report.write_text(json.dumps({"last_stage": "embedded_loan_detail_over_remote"}))
+        assert "bnf_covers_last_stage" not in module.safe_summary(source)["results"][0]
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        report.unlink()
+        report.symlink_to(root / "secret.json")
+        assert "bnf_covers_last_stage" not in module.safe_summary(source)["results"][0]
+
+
+
+def test_bnf_probe_checkpoints_are_saved_before_asynchronous_gtk_wait():
+    import ast
+    source = (ROOT / "e2e/bnf_cover_probe.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    condition = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "await_condition"
+    )
+    lines = [
+        ast.unparse(stmt) for stmt in condition.body
+        if isinstance(stmt, (ast.Assign, ast.Expr))
+    ]
+    assert 'report[\'last_stage\'] = label' in lines
+    assert 'save()' in lines
+    assert lines.index('report[\'last_stage\'] = label') < lines.index('save()')

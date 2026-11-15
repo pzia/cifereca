@@ -229,3 +229,60 @@ def test_shared_score_cache_cannot_bypass_normal_ownership_exclusion():
     assert admitted[0] > 0
     assert guarded == (0.0, ())
     assert score_candidate_cached(profile, owned, shared, known_absent=True) == admitted
+
+
+def test_reused_content_cache_keeps_identical_description_editions_distinct():
+    """Same author/title/theme, but a different ISBN is not an owned edition."""
+    book = _library("owned", "Autrice Rouge", "robotique")
+    book["isbn"] = "9780306406157"
+    profile = build_profile([book])
+    owned = _offer("owned-edition", "Autrice Rouge", "robotique")
+    owned["isbn"] = "9780306406157"
+    different = _offer("other-edition", "Autrice Rouge", "robotique")
+    different["isbn"] = "9780140328721"
+    assert is_already_present(profile, owned)
+    assert not is_already_present(profile, different)
+    assert score_candidate_cached(profile, different, {})[0] > 0
+
+    for notices in ((different, owned), (owned, different)):
+        shared = {}
+        results = [score_candidate_cached(profile, item, shared) for item in notices]
+        assert results[notices.index(owned)] == (0.0, ())
+        assert results[notices.index(different)][0] > 0
+        assert score_candidate_cached(profile, owned, shared) == (0.0, ())
+        assert score_candidate_cached(profile, different, shared)[0] > 0
+
+
+def test_reused_content_cache_still_checks_legacy_title_pair_scope():
+    """Adding a source scope must not reuse a fuzzy-title ownership result."""
+    book = _library("existing", "Autrice Rouge", "robotique")
+    profile = build_profile([book])
+    unscoped = {
+        "title": book["title"], "author": book["author"],
+        "subjects": ["robotique"],
+    }
+    scoped = dict(unscoped, source_credential="a-specific-credential")
+    assert is_already_present(profile, unscoped)
+    assert not is_already_present(profile, scoped)
+    assert score_candidate_cached(profile, scoped, {})[0] > 0
+
+    shared = {}
+    assert score_candidate_cached(profile, scoped, shared)[0] > 0
+    assert score_candidate_cached(profile, unscoped, shared) == (0.0, ())
+    assert score_candidate_cached(profile, scoped, shared)[0] > 0
+
+
+def test_edition_rebound_after_cached_score_revokes_positive_scoring():
+    """Cache entries cannot authorize stale scoring after changing an ISBN."""
+    book = _library("existing", "Autrice Rouge", "robotique")
+    book["isbn"] = "9780306406157"
+    profile = build_profile([book])
+    candidate = _offer("candidate", "Autrice Rouge", "robotique")
+    candidate["isbn"] = "9780140328721"
+    shared = {}
+    assert score_candidate_cached(profile, candidate, shared)[0] > 0
+    candidate["isbn"] = "9780306406157"
+    assert is_already_present(profile, candidate)
+    assert score_candidate_cached(profile, candidate, shared) == (0.0, ())
+    candidate["isbn"] = "9780140328721"
+    assert score_candidate_cached(profile, candidate, shared)[0] > 0

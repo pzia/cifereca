@@ -5,6 +5,8 @@ No provider calls, storage writes or remaining-quota estimates are allowed.
 """
 from __future__ import annotations
 
+import pytest
+
 from cifereca.core.digital_loan_availability import digital_loan_availability
 from cifereca.plugin_api import digital_loan_availability_lines
 from tests.test_core_p1_6002_digital_loan_availability import (
@@ -92,3 +94,75 @@ def test_registry_key_collision_is_case_insensitive_for_provider_only():
     assert one.borrower_id is None
     assert one.observed_loans is None
     assert one.personal_ceiling is None
+
+
+@pytest.mark.parametrize("bad_owner", [None, "", 123])
+@pytest.mark.parametrize("alternate_provider_case", [False, True])
+@pytest.mark.parametrize("reverse_order", [False, True])
+def test_malformed_connection_owner_cannot_hide_duplicate_session_registry_key(
+    bad_owner, alternate_provider_case, reverse_order,
+):
+    """Every saved row with this key counts, including an ownerless/corrupt one."""
+    shared = account("demo", "shared", "sensitive-reader")
+    healthy = account("demo", "healthy", "independent-reader")
+    legitimate = configured(
+        "demo", "shared", options={"primary_digital": "4"},
+    )
+    malformed = configured(
+        "DEMO" if alternate_provider_case else "demo",
+        "shared", identity="bob",
+        options={"primary_digital": "99"},
+    )
+    if bad_owner is None:
+        del malformed["identity_id"]
+    else:
+        malformed["identity_id"] = bad_owner
+    colliding = [legitimate, malformed]
+    if reverse_order:
+        colliding.reverse()
+    rows = digital_loan_availability(
+        runtime(
+            [shared, healthy],
+            [*colliding, configured(
+                "demo", "healthy", options={"primary_digital": "7"},
+            )],
+            [spec("demo")],
+            [active_loan(shared, "private"), active_loan(healthy, "public")],
+        ),
+        "alice",
+    )
+    assert len(rows) == 2
+    by_credential = {record.credential_id: record for record in rows}
+    bad = by_credential["shared"]
+    assert bad.reason == "scope_ambiguous"
+    assert bad.borrower_id is None
+    assert bad.observed_loans is None
+    assert bad.personal_ceiling is None
+    assert bad.remaining is None
+    good = by_credential["healthy"]
+    assert good.reason == "inventory_unverified"
+    assert good.observed_loans == 1 and good.personal_ceiling == 7
+    assert good.remaining is None
+    visible = " ".join(digital_loan_availability_lines(rows, identity_id="alice"))
+    assert "plafond personnel 99" not in visible
+    assert "CREDENTIAL_SECRET" not in visible
+
+
+def test_invalid_owner_on_different_registry_key_does_not_poison_valid_account():
+    reader = account("demo", "personal", "reader")
+    malformed = configured("DEMO", "other", identity="bob")
+    malformed["identity_id"] = None
+    rows = digital_loan_availability(
+        runtime(
+            [reader],
+            [configured("demo", "personal"), malformed],
+            [spec("demo")],
+            [active_loan(reader, "legitimate")],
+        ),
+        "alice",
+    )
+    one, = rows
+    assert one.reason == "inventory_unverified"
+    assert one.observed_loans == 1
+    assert one.personal_ceiling == 4
+    assert one.remaining is None

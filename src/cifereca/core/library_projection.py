@@ -1341,9 +1341,25 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
                 )
                 if value:
                     cover_candidates.append(value)
-        cover = resolve_cover(cover_candidates)
+        # Both catalog descriptions are now attached to the same exact
+        # canonical Artifact/OriginLink or scoped entitlement key, never
+        # joined by book title, ISBN, or an unscoped provider hint.
+        cover = resolve_cover(
+            cover_candidates, attested_book_identity=canonical_key,
+        )
         thumbnail = cover.url or None
         combined_meta = {**existing_meta, **meta}
+        if cover.tier == "catalog":
+            # Preserve the *selected* catalogue source in the cached row.
+            # Otherwise a later, lower-ranked source could overwrite
+            # catalog_cover and make an ordinary UI refresh flip the image.
+            for source_meta in (existing_meta, meta):
+                raw_catalog = source_meta.get("catalog_cover")
+                if (type(raw_catalog) is dict
+                        and raw_catalog.get("url") == cover.url
+                        and raw_catalog.get("source") == cover.source):
+                    combined_meta["catalog_cover"] = dict(raw_catalog)
+                    break
         combined_meta["cover_resolution"] = cover.metadata()
         from .loan_cover_fallback import attested_local_loan_cover_proof
         proof = (
