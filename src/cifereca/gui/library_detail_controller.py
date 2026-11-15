@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from .local_book_detail_sections import local_book_detail_sections
 from .detail_selection_perf import current_detail_trace
+from .local_cover_detail_binding import admit_local_detail_cover
 
 
 def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_presentation, detail_language, document_links) -> None:
@@ -53,13 +54,19 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
             return
 
     detail = window.library_page.detail
+    # Same exact N2 book/source as the list cell, registered only on
+    # visible selection. No preliminary legacy URL fetch on an EPUB proof.
+    cover_selection = admit_local_detail_cover(window, item)
     description = window._book_description(item)
     trace = current_detail_trace()
     projection_started = trace.clock() if trace else None
     presentation = book_detail_presentation(
         title=str(item.get("title") or "Sans titre"),
         subtitle=str(item.get("author") or ""),
-        thumbnail=item.get("thumbnail_url"),
+        thumbnail=(
+            None if cover_selection.block_legacy
+            else item.get("thumbnail_url")
+        ),
         badges=[],
         section_rows=local_book_detail_sections(
             item,
@@ -74,7 +81,11 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
     )
     if trace is not None:
         trace.record("projection", projection_started)
-    detail.show_presentation(presentation, description=description)
+    detail.show_presentation(
+        presentation, description=description,
+        **({"cover_document": cover_selection.binding}
+           if cover_selection.binding is not None else {}),
+    )
     window._add_local_book_actions(detail,item)
     if not foreign:
         # Preserve original action ordering for current-profile details.
