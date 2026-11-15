@@ -198,7 +198,7 @@ def test_v8_supplier_sql_retirement_does_not_hide_active_historical_writer():
     assert records[0]["classification"] == "replaced_supplier_selector_without_retiring_historical_writer"
     assert records[0]["in_ast_metric"] is False
     assert records[0]["pr"] == "#6170"
-    assert records[0]["retired_at_sha"] == "7a4b2647a3495f09a26a50e417be0aa157f428e5"
+    assert records[0]["retired_at_sha"] == "31724a9ed64ff2ee8999fddce5e5ed5598cda5e2"
     assert all((root / name).is_file() for name in records[0]["tests"])
     retained = [row for row in ledger["retained_legacy_migrations"]
                 if row["id"] == "legacy-sqlite-v8-paris-primary-account-receipt-repair"]
