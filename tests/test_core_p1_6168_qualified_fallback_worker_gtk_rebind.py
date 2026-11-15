@@ -163,7 +163,8 @@ def test_single_flight_for_two_list_detail_failed_epub_requests(prepared, monkey
     image = epub_metadata.cover_cache_dir() / embedded.resource.cache_name
     image.unlink(missing_ok=True)
     _register(state, member="OPS/no-such-cover.png")
-    started, release, notified = Event(), Event(), Event()
+    started, release = Event(), Event()
+    notified_list, notified_detail = Event(), Event()
     calls = []
     def verifier(resource, *, source_path):
         calls.append((resource, source_path))
@@ -174,17 +175,20 @@ def test_single_flight_for_two_list_detail_failed_epub_requests(prepared, monkey
         )
     monkeypatch.setattr(module, "qualify_failed_epub_cover", verifier)
     first = svc.get_cover(
-        scope, "list", lambda _p: None, on_source_changed=notified.set,
+        scope, "list", lambda _p: None, on_source_changed=notified_list.set,
     )
     assert started.wait(5)
     second = svc.get_cover(
-        scope, "detail", lambda _p: None, on_source_changed=notified.set,
+        scope, "detail", lambda _p: None, on_source_changed=notified_detail.set,
     )
     assert first.source_uri == second.source_uri
     assert len(calls) == 1  # One physical verifier for both N4 consumers.
     release.set()
-    assert notified.wait(5)
+    assert notified_list.wait(5)
+    assert notified_detail.wait(5)
     assert svc.decisions.peek(scope, revision=7).uri == ORIGIN
+    assert not first.still_current and not second.still_current
+    assert len(calls) == 1
 
 
 def test_gtk_rebind_stays_on_main_and_never_reuses_old_uri():
