@@ -1,0 +1,140 @@
+"""#6002: stage a *non-authoritative*, typed digital inventory observation.
+
+A provider's LoanInventorySnapshot is never itself a durable, all-branch
+Core receipt. In particular, success for one provider branch must not become
+a quota estimate, and loaded loans are not proof of a complete inventory.
+
+This pure adapter deliberately has NO parameter to mark a receipt committed.
+A later Core transaction boundary must verify origin, expected branches,
+session/identity epoch and durable storage before upgrading it. Home cannot
+consume a provisional receipt as available headroom.
+"""
+from __future__ import annotations
+
+from datetime import datetime
+
+from ..plugin_api.loan_inventory import (
+    LoanBranchCoverage, LoanInventorySnapshot, _loan_matches_scope,
+)
+from .digital_loan_remaining_policy import (
+    DigitalCapacityScope, DigitalInventoryReceipt,
+)
+
+
+def _stamp(observed_at: object) -> datetime | None:
+    if type(observed_at) is not str:
+        return None
+    try:
+        value = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    except (ValueError, OverflowError):
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return None
+    return value
+
+
+def stage_uncommitted_digital_inventory(
+    scope: DigitalCapacityScope,
+    snapshot: LoanInventorySnapshot, *,
+    expected_upstreams: tuple[str, ...],
+    epoch: int,
+) -> DigitalInventoryReceipt | None:
+    """Project one source-scoped typed snapshot, never declare a durable sync.
+
+    The expected upstream branches must be supplied from an independently
+    installed, trusted descriptor, not from the snapshot's self-reported list.
+    Even when every branch claims completeness the result remains
+    durably_committed=False; it cannot feed positive remaining availability.
+    """
+    if (type(scope) is not DigitalCapacityScope
+            or type(snapshot) is not LoanInventorySnapshot
+            or type(epoch) is not int or epoch < 0
+            or type(expected_upstreams) is not tuple
+            or not 1 <= len(expected_upstreams) <= 32
+            or any(type(upstream) is not str
+                   or not 1 <= len(upstream) <= 48
+                   or not upstream.isascii()
+                   or not upstream[0].isalpha()
+                   or any(not (char.islower() or char.isdigit() or char in "_-")
+                          for char in upstream)
+                   for upstream in expected_upstreams)
+            or len(set(expected_upstreams)) != len(expected_upstreams)):
+        raise ValueError("digital_inventory_staging_invalid_contract")
+
+    upstream_scope = snapshot.scope
+    if (scope.identity_id != upstream_scope.identity_id
+            or scope.provider_id != upstream_scope.provider_id
+            or scope.credential_id != upstream_scope.credential_id
+            or scope.account_id != upstream_scope.account_id
+            or scope.borrower_id != upstream_scope.account_id):
+        # A credential alone is not a borrower; missing exact account scope
+        # cannot be normalized to the profile's first or primary account.
+        return None
+    observed_at = _stamp(snapshot.observed_at)
+    if observed_at is None:
+        return None
+
+    # Snapshot.loans is a tuple but the legacy Loan rows are mutable. Validate
+    # their exact scope *again* before copying only immutable identifiers;
+    # an upstream row modified since the envelope was built is not evidence.
+    seen_rows = []
+    active: set[str] = set()
+    trustworthy_states = True
+    for loan in snapshot.loans:
+        if not _loan_matches_scope(loan, upstream_scope):
+            return None
+        fields = (
+            loan.id, loan.identity_id, loan.source_provider,
+            loan.source_credential, loan.source_account_id,
+            loan.medium, loan.state,
+        )
+        seen_rows.append(fields)
+        if (type(loan.state) is not str
+                or loan.state not in ("active", "returned", "expired", "inactive")
+                or loan.medium == "unknown"):
+            trustworthy_states = False
+        if loan.medium == "digital" and loan.state == "active":
+            active.add(loan.id)
+    if tuple(seen_rows) != tuple((
+        loan.id, loan.identity_id, loan.source_provider,
+        loan.source_credential, loan.source_account_id,
+        loan.medium, loan.state,
+    ) for loan in snapshot.loans):
+        return None
+
+    declared = {
+        row.upstream: row
+        for row in snapshot.branches if type(row) is LoanBranchCoverage
+        and row.medium == "digital"
+    }
+    expected = set(expected_upstreams)
+    observed = set(declared)
+    # Unknown-medium branches could contain digital loans and must not be
+    # ignored merely because every declared digital branch is complete.
+    uncertain_medium = any(
+        type(row) is not LoanBranchCoverage or row.medium == "unknown"
+        for row in snapshot.branches
+    )
+    complete = (
+        snapshot.status == "success"
+        and trustworthy_states and not uncertain_medium
+        and observed == expected
+        and all(
+            declared[name].completeness == "complete"
+            and declared[name].pagination_complete is True
+            for name in expected_upstreams
+        )
+    )
+    status = (
+        snapshot.status if snapshot.status in ("failed", "cancelled")
+        else "success" if complete else "partial"
+    )
+    return DigitalInventoryReceipt(
+        scope=scope, active_loan_ids=tuple(sorted(active)),
+        observed_at=observed_at, epoch=epoch,
+        status=status, pagination_complete=complete,
+        durably_committed=False,
+    )
+
+
+__all__ = ["stage_uncommitted_digital_inventory"]
