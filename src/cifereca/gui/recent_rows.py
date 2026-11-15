@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from .recent_time import format_recent_timestamp
+from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 
 
 def project_recent_rows(
@@ -45,12 +46,23 @@ def project_recent_rows(
                 )
             except Exception:
                 label = "Source"
-        rows.append(row_factory(
-            key,
-            str(item.get("title") or "Sans titre"),
-            str(item.get("author") or ""),
-            temporal,
-            label,
-            item.get("thumbnail_url"),
-        ))
+        title = str(item.get("title") or "Sans titre")
+        author = str(item.get("author") or "")
+        image = item.get("thumbnail_url")
+        row = row_factory(key, title, author, temporal, label, image)
+        # Récents contains an exact local Artifact+Placement Core snapshot.
+        # Same DocumentRef as Bibliothèque, but never inferred from the
+        # recent row key or a matching public image URL.
+        facts = item.get("_exact_local_cover_evidence")
+        if (hasattr(row, "__dict__")
+                and type(facts) is VerifiedLocalCoverEvidence
+                and facts.scope.identity_id == item.get("identity_id")
+                and facts.scope.artifact_id == item.get("artifact_id")
+                and facts.scope.placement_id == item.get("placement_id")):
+            row._cover_local_evidence = facts
+            row._cover_document_ref = facts.scope
+            row._public_row_content = (
+                "recent", key, title, author, temporal, label, image, facts,
+            )
+        rows.append(row)
     return rows, objects
