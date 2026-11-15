@@ -3745,7 +3745,16 @@ class LibraryService:
             candidates.append(row)
 
         if not candidates:
-            return {"status": borrower_code or "no_acquisition", "return_available": False}
+            # Only the native None means no borrower refusal. A falsey,
+            # malformed or private callback code must not be interpreted as
+            # approval, or escape into the public status of a historical loan.
+            return {
+                "status": (
+                    adept_borrower.public_borrower_refusal_code(borrower_code)
+                    if borrower_code is not None else "no_acquisition"
+                ),
+                "return_available": False,
+            }
         if len(candidates) != 1:
             return {"status": "adept_return_acquisition_ambiguous", "return_available": False}
 
@@ -3756,8 +3765,11 @@ class LibraryService:
         if type(binding) is not dict:
             binding = {}
         origin_attested = inventory_attests_return_origin(binding)
-        if borrower_code and not origin_attested:
-            return {"status": borrower_code, "return_available": False}
+        if borrower_code is not None and not origin_attested:
+            return {
+                "status": adept_borrower.public_borrower_refusal_code(borrower_code),
+                "return_available": False,
+            }
         # Grants/current identity profile govern NEW fulfillment. Historical
         # inventory attestation preserves a completed license's own origin.
         # Exact Paris provenance and cross-identity/duplicate guards above stay.
