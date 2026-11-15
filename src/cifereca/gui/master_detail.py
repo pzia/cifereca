@@ -32,10 +32,11 @@ def _same_book_row_presentation(old: BookListItem, new: BookListItem) -> bool:
     """Preserve append-fast only for unchanged on-screen book presentation."""
     old_revision = getattr(old, "_public_row_content", None)
     new_revision = getattr(new, "_public_row_content", None)
-    if old_revision is not None or new_revision is not None:
-        # Rich adapters own their full version, including changes in action
-        # scope that ordinary visual fields cannot express.
-        return old_revision == new_revision
+    # Rich adapters may encode additional action/source context, but a
+    # mistakenly incomplete revision must never authorize stale visual
+    # content. Compare ordinary book fields too, for *every* surface.
+    if old_revision != new_revision:
+        return False
     return all(
         getattr(old, field, None) == getattr(new, field, None)
         for field in _BOOK_ROW_VISIBLE_FIELDS
