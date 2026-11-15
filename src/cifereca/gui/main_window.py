@@ -1300,6 +1300,7 @@ class MainWindow(Adw.ApplicationWindow):
             row.cover_provider, row.cover_record_id,
             row.cover_title, row.cover_author, row.cover_year,
             x.source_provider, x.source_credential,
+            x.source_account_id, x.identity_id,
         )
         return row
 
