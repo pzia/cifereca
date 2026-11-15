@@ -1037,6 +1037,18 @@ def main() -> int:
                     stage = report_data.get("p1_4664_phase")
                     if type(stage) is str and stage in allowed:
                         print("P1_4664_CLOSED_FAILURE_STAGE=" + stage, flush=True)
+                if (scenario.get("runner") == "gtk-reader-target-refresh"
+                        and report_data.get("status") != "PASS"):
+                    # Only the fixture probe's fixed public phase may reach
+                    # CI logs; never its traceback, labels, paths or snapshots.
+                    closed_phases = frozenset({
+                        "preflight", "core", "fixture", "gtk", "reader",
+                        "selection", "reservation", "repaint",
+                        "profile_b", "profile_a", "finish",
+                    })
+                    phase = report_data.get("closed_failure_phase")
+                    if type(phase) is str and phase in closed_phases:
+                        print("P1_4985_CLOSED_FAILURE_STAGE=" + phase, flush=True)
                 visual_change_ratio = report_data.get("visual_change_ratio")
                 if scenario.get("runner") in {"gtk-probe", "gtk-diagnostics", "gtk-diagnostics-raw-export", "gtk-diagnostics-structured", "gtk-diagnostics-volume", "gtk-diagnostics-states", "gtk-diagnostics-navigation", "gtk-detail", "gtk-llm-settings", "gtk-maintenance", "gtk-constellations", "gtk-recommendations", "gtk-public-fault", "gtk-bnf-covers", "gtk-optimizer-handoff", "gtk-reader-inspection", "gtk-reader-target-refresh", "gtk-capture-session", "gtk-modern-light"} and report_data.get("status") != "PASS":
                     assertion_error = report_data.get("error") or "Recette GTK P0 incomplète"
