@@ -111,6 +111,30 @@ def test_aba_source_epoch_or_history_refresh_revokes_old_occurrence(selected):
     assert gateway.get_cover(two.document, "detail", lambda _: None).still_current
 
 
+def test_source_epoch_only_advances_documentary_n2_token(selected):
+    window, item, gateway, _loader = selected
+    first = exact_history_document_evidence(window, item)
+    assert first is not None
+    assert register_exact_history_document(
+        window, item, gateway, first, first.document,
+    )
+    old = gateway.get_cover(first.document, "detail", lambda _: None)
+    assert old.still_current
+    window.service._source_context_epoch += 1  # Account and URL unchanged.
+    assert not register_exact_history_document(
+        window, item, gateway, first, first.document,
+    )
+    second = exact_history_document_evidence(window, item)
+    assert second is not None
+    assert second.document == first.document
+    assert second.snapshot.revision > first.snapshot.revision
+    assert register_exact_history_document(
+        window, item, gateway, second, second.document,
+    )
+    assert not old.still_current
+    assert gateway.get_cover(second.document, "detail", lambda _: None).still_current
+
+
 @pytest.mark.parametrize("mutate", [
     {"identity_id": "bob"},
     {"source_credential": "changed-credential"},
