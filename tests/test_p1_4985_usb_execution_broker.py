@@ -106,7 +106,7 @@ def test_confirmed_remove_delegates_exact_book_to_locked_core(rig, monkeypatch):
     monkeypatch.setattr(mod, "synchronize_usb_reader", run)
     original = local.read_bytes()
     result = mod.ReaderUsbExecutionBrokerImpl(service).execute_one(
-        confirmation=consent, mountpoint=mount,
+        confirmation=consent, mountpoint=mount, expected_profile_epoch=1,
     )
     assert result == UsbSyncResult("completed", removed=1, observed=True)
     assert len(captured) == 1
@@ -131,7 +131,7 @@ def test_upload_never_derives_rights_from_file_or_user_consent(rig, monkeypatch)
         "c" * 32, int(time()), int(time()) + 240,
     )
     assert mod.ReaderUsbExecutionBrokerImpl(service).execute_one(
-        confirmation=upload, mountpoint=mount,
+        confirmation=upload, mountpoint=mount, expected_profile_epoch=1,
     ) == UsbSyncResult("blocked")
 
 
@@ -170,7 +170,7 @@ def test_stale_or_invalid_scope_refuses_to_execute(rig, monkeypatch, change):
         lambda **_: pytest.fail("unexpected execution"),
     )
     assert mod.ReaderUsbExecutionBrokerImpl(service).execute_one(
-        confirmation=c, mountpoint=mount,
+        confirmation=c, mountpoint=mount, expected_profile_epoch=1,
     ) == UsbSyncResult("blocked")
 
 
@@ -186,7 +186,7 @@ def test_no_managed_removal_candidate_never_calls_executor(rig, monkeypatch, act
         lambda **_: pytest.fail("not a managed remove"),
     )
     assert mod.ReaderUsbExecutionBrokerImpl(service).execute_one(
-        confirmation=c, mountpoint=mount,
+        confirmation=c, mountpoint=mount, expected_profile_epoch=1,
     ) == UsbSyncResult("unavailable")
 
 
@@ -199,7 +199,7 @@ def test_aba_during_scan_revokes_execution(rig, monkeypatch):
     monkeypatch.setattr(mod, "synchronize_usb_reader",
                         lambda **_: pytest.fail("ABA not revoked"))
     assert mod.ReaderUsbExecutionBrokerImpl(service).execute_one(
-        confirmation=c, mountpoint=mount,
+        confirmation=c, mountpoint=mount, expected_profile_epoch=1,
     ) == UsbSyncResult("unavailable")
 
 
@@ -317,3 +317,50 @@ def test_broker_copy_attribution_refuses_epoch_aba_during_journal_read(
         identity_id="alice", device_id="reader-a",
         artifact_id=consent.artifact_id,
     ) is None
+
+
+@pytest.mark.parametrize("epoch", [0, 2, True, "1", -1])
+def test_confirmation_epoch_must_match_original_profile_generation(
+    rig, monkeypatch, epoch,
+):
+    db, service, mount, consent, report, local = rig
+    monkeypatch.setattr(
+        mod, "synchronize_usb_reader",
+        lambda **_: pytest.fail("stale confirmation must not execute"),
+    )
+    assert mod.ReaderUsbExecutionBrokerImpl(service).execute_one(
+        confirmation=consent, mountpoint=mount,
+        expected_profile_epoch=epoch,
+    ) == UsbSyncResult("blocked")
+
+
+def test_profile_aba_before_worker_begins_never_attests_mount_or_unlinks(
+    rig, monkeypatch,
+):
+    db, service, mount, consent, report, local = rig
+    original = local.read_bytes()
+    service.current_identity = NS(identity_id="bob")
+    service._account_context_epoch += 1
+    service.current_identity = NS(identity_id="alice")
+    service._account_context_epoch += 1
+    monkeypatch.setattr(
+        mod, "observe_linux_usb_mount",
+        lambda **_: pytest.fail("no USB access after A-B-A"),
+    )
+    monkeypatch.setattr(
+        mod, "synchronize_usb_reader",
+        lambda **_: pytest.fail("no stale USB removal"),
+    )
+    assert mod.ReaderUsbExecutionBrokerImpl(service).execute_one(
+        confirmation=consent, mountpoint=mount,
+        expected_profile_epoch=1,
+    ) == UsbSyncResult("blocked")
+    assert local.read_bytes() == original
+
+
+def test_profile_epoch_cannot_be_omitted(rig):
+    _, service, mount, consent, report, local = rig
+    with pytest.raises(TypeError):
+        mod.ReaderUsbExecutionBrokerImpl(service).execute_one(
+            confirmation=consent, mountpoint=mount,
+        )
