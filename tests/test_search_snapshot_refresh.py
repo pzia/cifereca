@@ -46,16 +46,17 @@ def _window(service=None):
     host.search_page = Page(host)
     tree = ast.parse((ROOT / 'master_detail.py').read_text())
     method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'show_rows')
-    row_fields = next(n for n in tree.body if isinstance(n, ast.Assign)
-                      and any(isinstance(target, ast.Name) and target.id == '_BOOK_ROW_VISIBLE_FIELDS'
-                              for target in n.targets))
-    row_presentation = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
-                            and n.name == '_same_book_row_presentation')
-    env = {'BookListItem': Row, 'time': time}
-    # Exercise the real production predicate along with the extracted method.
-    exec(compile(ast.fix_missing_locations(
-        ast.Module(body=[row_fields, row_presentation, method], type_ignores=[])),
-        '<actual-show-rows>', 'exec'), env)
+    # AST replay must include pure helpers referenced by the production method;
+    # importing master_detail would require GTK in this headless contract.
+    helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                  and n.name == '_same_book_row_presentation')
+    fields = next(n for n in tree.body if isinstance(n, ast.Assign)
+                  and any(isinstance(t, ast.Name) and t.id == '_BOOK_ROW_VISIBLE_FIELDS'
+                          for t in n.targets))
+    env = {'BookListItem': Row, '_BOOK_ROW_VISIBLE_FIELDS': ast.literal_eval(fields.value),
+           'time': time}
+    exec(compile(ast.fix_missing_locations(ast.Module(body=[helper, method], type_ignores=[])),
+                 '<actual-show-rows>', 'exec'), env)
     host.search_page.show_rows = env['show_rows'].__get__(host.search_page)
     return host
 
@@ -65,30 +66,31 @@ def _row(key='source:numilog:purchase', **kw):
             'item_id': 'purchase', 'source_refs': [{'provider_id': 'numilog', 'item_id': 'purchase', 'identity_id': 'alice'}], **kw}
 
 
-def test_same_key_widgets_repaint_on_changed_presentation_but_keep_append_fast():
+def test_same_key_visual_refresh_and_progressive_append_are_both_preserved():
     host = _window()
     page = host.search_page
     old = Row('same', 'old', '', '', '', None, action_label='Télécharger')
-    same = Row('same', 'old', '', '', '', None, action_label='Télécharger')
-    new = Row('same', 'new', '', '', '', None, action_label='Ouvrir')
     page.show_rows([old]); page.selection.set_selected(0)
-    page.show_rows([same])
-    assert page.rows[0] is old  # unchanged presentation keeps append-fast
+    unchanged = Row('same', 'old', '', '', '', None, action_label='Télécharger')
+    page.show_rows([unchanged])
+    assert page.rows[0] is old  # unchanged presentation still uses append-fast
+    new = Row('same', 'new', '', '', '', None, action_label='Ouvrir')
     page.show_rows([new])
     assert page.rows[0] is new and page.selection.get_selected_item() is new
-    # Search invalidation still forces refresh for a different object with
-    # otherwise identical visible content, preserving selection by stable key.
+    # The dirty snapshot forces a refresh even for otherwise identical content.
     host._search_local_snapshot_dirty = True
     refreshed = Row('same', 'new', '', '', '', None, action_label='Ouvrir')
     page.show_rows([refreshed])
     assert page.rows[0] is refreshed and page.selection.get_selected_item() is refreshed
-    # Other pages keep the fast path for unchanged rows despite Search's flag,
-    # but must repaint when the content behind the same key genuinely changes.
+    # Other pages ignore Search's dirty flag, but still refresh changed content.
     other = Page(host); other.show_rows = page.show_rows.__func__.__get__(other)
-    other.show_rows([old]); other.show_rows([same])
+    other.show_rows([old]); other.show_rows([unchanged])
     assert other.rows[0] is old
     other.show_rows([new])
     assert other.rows[0] is new
+    extra = Row('other', 'additional', '', '', '', None)
+    other.show_rows([new, extra])
+    assert other.rows == [new, extra]
 
 
 @pytest.mark.parametrize('count', [1, 2, 4])
