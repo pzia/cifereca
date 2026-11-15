@@ -446,6 +446,11 @@ class SelectionTests(unittest.TestCase):
         assert '"reservation_commit"' in source
         assert 'reserve_deadline[0] = monotonic() + 5.0' in source
         assert 'if len(found) != 1 or not found[0].get_mapped():' in source
+        # A 1366px detail may put the secondary reservation action behind
+        # the real overflow menu; the E2E must open it before clicking.
+        assert 'found[0].get_parent() is getattr(bar, "overflow_box", None)' in source
+        assert 'bar.overflow_popover.popup()' in source
+        assert 'bar.overflow_button.get_mapped()' in source
         assert "P1_4985_GTK_CLOSED_STAGE=" in source
 
     def test_p1_4985_real_mainwindow_reader_target_refresh_at_1366_and_1600(self):
