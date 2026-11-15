@@ -180,42 +180,6 @@
       "rationale": "Supplier whitelist within a read-only audit is a necessary historical safety gate pending a neutral proven substitute; not an active canonical producer."
     },
     {
-      "id": "site-dd2ac28f46a8a720315de122",
-      "classification": "safety_guard_pending_contract",
-      "journey": "W1 historical Kobo backup archive-only return without canonical mirror",
-      "decision_group_id": "legacy-backup.w1-canonical-publication-veto",
-      "reachability": "legacy_only",
-      "productive_caller": "Storage.backup_put after one legacy backup_items UPSERT and exact persisted-row read, before Storage._mirror_backup_row",
-      "effect": "Routes Kobo archives to archive_only=True and returns before non-Kobo mirroring; Kobo backup status/SHA alone cannot create Entitlement, Acquisition, Artifact or Placement. The archive row is still writable and remains a separate residual legacy debt",
-      "authority": "No canonical A/B receipt can be derived from a v0.7 backup snapshot, even for complete rows or when canonical source is absent",
-      "replacement_contract": "Physically retire backup_put write surface after W2/D1-D5 migration with exact source and owner proofs; preserve archive readers and anti-resurrection SQL",
-      "tests": [
-        "tests/test_core_p0_3196_w1_archive_only_cutover.py",
-        "tests/test_core_p0_3196_w1_live_mirror_retired.py",
-        "tests/test_core_p0_3196_w2_interrupted_no_reget.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Protective Kobo archive-only exclusion remains executable after the preflight became provider-neutral in #6145. The earlier same-shape supplier predicate was physically removed but its first ordinal AST identity is now inherited by this later Kobo archive-only decision. Reassign review to this surviving site, not a retirement; the non-Kobo mirror and historical writer remain."
-    },
-    {
-      "id": "site-c668504ada66eace309e3e7f",
-      "classification": "safety_guard_pending_contract",
-      "journey": "W1 historical archive collision validation against canonical owner and checkpoint",
-      "decision_group_id": "legacy-backup.w1-owner-archive-protection",
-      "reachability": "legacy_only",
-      "productive_caller": "Storage.backup_put calls Storage._check_kobo_legacy_canonical_owner for persisted Kobo archive under the same SQLite write transaction",
-      "effect": "Vetoes reassignment of historical provider/credential/edition archive to foreign canonical identity/account or same deterministic acquisition ID; still no right or placement published",
-      "authority": "Existing exact canonical right/acquisition owner and loan/edition coordinate; incomplete three-part legacy key cannot override it",
-      "replacement_contract": "Versioned historical archive reader with owner/identity collision veto and immutable retirement tombstone before final writer removal",
-      "tests": [
-        "tests/test_core_p0_3196_w1_archive_only_cutover.py",
-        "tests/test_core_p0_3196_legacy_kobo_item_write_admission.py",
-        "tests/test_legacy_backup_canonical_write_fence.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Specific safety validation call is invoked before an archive return. It cannot be marked false positive, nor deleted without equivalent cross-owner collision guards."
-    },
-    {
       "id": "site-48985b6dd27a2ea911e7026d",
       "classification": "presentation_only",
       "journey": "Settings ADEPT profile binding status subtitle",
@@ -1237,6 +1201,56 @@
       "retired_at_sha": "f9efeabf8358e268d7bfcc71e5b9e1358acecd0c",
       "rebound_site_id": "site-dd2ac28f46a8a720315de122",
       "retained_guard_previous_id": "site-d88574f6e28d059189c71da5"
+    },
+    {
+      "id": "struct-w1-all-provider-live-canonical-mirror-retired",
+      "original": "Storage.backup_put W1 compatibility path generated entitlements, acquisition ledger, unverified artifacts/placements and local catalogue entries for non-Kobo sources without an independent typed source",
+      "original_classification": "legacy_mutating_cutover",
+      "replacement": "Provider-neutral archive-only W1 path; all provider checkpoints remain in backup_items but never enter the positive canonical publication portion of _mirror_backup_row",
+      "classification": "removed_executable_legacy_canonical_writer",
+      "evidence": "Installed Core/plugins have zero direct backup_put callers (enforced by AST regression). The public legacy API remains for historical recovery, but every call to _mirror_backup_row from backup_put now carries archive_only=True. Four-provider offline SQLite SQL-INSERT-trigger tests prove no new canonical A/B/physical claims, including on repeated complete status. Separate v2->v3 non-Kobo migration writer remains executable and independently counted.",
+      "tests": [
+        "tests/test_core_p0_5975_w1_provider_neutral_archive_only.py",
+        "tests/test_core_p0_3196_residual_writer_surface.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6149",
+      "in_ast_metric": false,
+      "retired_at_sha": "d503d0659f5707544828df5dffaa1bdd85815111"
+    },
+    {
+      "id": "struct-w1-supplier-only-archive-veto-replaced-neutral",
+      "original": "W1 Kobo-only archive-only exclusion and Kobo-specific canonical owner validation method call",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Single provider-neutral archive_only=True invocation and exact owner collision vetting for every public W1 call",
+      "classification": "replaced_supplier_scoped_guard_with_generic",
+      "evidence": "The branch on the Kobo provider ID and the supplier-named helper are removed. Guard behavior is not retired: typed-source admission, cross-owner vetoes, completed-receipt JSON checks and legacy archive-only restriction continue for all providers. Two old AST IDs disappear or rebind: neither earns cohort review credit without matching semantic proof.",
+      "tests": [
+        "tests/test_core_p0_5975_w1_provider_neutral_archive_only.py",
+        "tests/test_core_p0_3196_residual_writer_surface.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6149",
+      "in_ast_metric": false,
+      "original_site_id": "site-dd2ac28f46a8a720315de122",
+      "retired_at_sha": "d503d0659f5707544828df5dffaa1bdd85815111"
+    },
+    {
+      "id": "struct-w1-supplier-collision-helper-generalized",
+      "original": "Storage._check_kobo_legacy_canonical_owner called solely on Kobo archives",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Storage._check_legacy_canonical_owner called for every provider archive after persisted-row merge",
+      "classification": "replaced_supplier_scoped_guard_with_generic",
+      "evidence": "This is a guard replacement, not removal of owner or receipt collision validation; no provider ID remains in the callsite or helper name. The legacy writer's archive UPSERT still enforces exact owner/account/loan scope.",
+      "tests": [
+        "tests/test_core_p0_5975_w1_provider_neutral_archive_only.py",
+        "tests/test_core_p0_3196_residual_writer_surface.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6149",
+      "in_ast_metric": false,
+      "original_site_id": "site-c668504ada66eace309e3e7f",
+      "retired_at_sha": "d503d0659f5707544828df5dffaa1bdd85815111"
     }
   ],
   "guard_installations": [
@@ -1295,6 +1309,19 @@
         "tests/test_core_p0_3196_legacy_kobo_item_write_admission.py"
       ],
       "pr": "#6145"
+    },
+    {
+      "id": "guard-w1-universal-archive-only-and-owner-validation",
+      "journey": "W1 public backup_put from all providers, including synthetic",
+      "classification": "safety_guard_pending_contract",
+      "effect": "No canonical right/acquisition/artifact/placement/catalog publication; no owner rebind; receipt collision veto; incoming typed SourceReference excludes archive mutation",
+      "remaining_debt": "Historical v2->v3 non-Kobo SQLite import still projects into generic legacy Core tables; non-canonical archive SQL UPSERT is retained for manual compatibility; W2 archive readers must not imply authority",
+      "tests": [
+        "tests/test_core_p0_5975_w1_provider_neutral_archive_only.py",
+        "tests/test_core_p0_3196_residual_writer_surface.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6149"
     }
   ],
   "retained_legacy_migrations": [
@@ -1311,6 +1338,20 @@
         "tests/test_core_p0_5975_business_coupling_ledger.py"
       ],
       "pr": "#6141"
+    },
+    {
+      "id": "legacy-sqlite-v3-non-kobo-backup-import-writer",
+      "classification": "legacy_mutating_cutover",
+      "journey": "Versioned SQLite migration v2->v3 legacy non-Kobo backup projection into generic entitlements/acquisition/artifacts/placements",
+      "productive_caller": "Storage.__init__ -> Storage._migrate, only when schema_version < 3; _mirror_backup_row(db,row,migration=True) for historical non-Kobo rows",
+      "effect": "Reads historical backup_items, writes generic legacy Core entitlement and acquisition records, optional unverified Artifact/Placement and catalogue placeholders, but cannot synthesize canonical SourceReference/OriginLink",
+      "authority": "Historical 0.7 archive data is not fresh provider rights or independently verified bytes; preserved compatibility projection until evidence-based historical migration redesign",
+      "replacement_contract": "Versioned neutral archiving migration for old supported schemas, historical display and rollback; verify old-state data preservation, no fake entitlement/readiness, and install path before retiring this writer",
+      "tests": [
+        "tests/test_core_p0_5975_w1_provider_neutral_archive_only.py",
+        "tests/test_core_p0_3196_residual_writer_surface.py"
+      ],
+      "pr": "#6149"
     }
   ]
 }
