@@ -588,14 +588,15 @@ def test_real_081_migration_is_explicitly_retained_after_genericization():
     assert physical[0]["in_ast_metric"] is False
     assert physical[0]["original_site_id"] == "site-e3fc978e29d69c2c875be9dc"
     actual = inventory(root)
-    # The Config 0.8.1 and SQLite v5 repairs still mutate old databases;
+    # Config 0.8.1, SQLite v5 and newly inventoried v8 mutate old data;
     # the unrelated SQLite v3 importer was physically retired in #6152.
-    # v5 is a previously uncounted writer, not a regression in this PR.
-    assert actual["retained_non_ast_legacy_migration_writers"] == 2
-    assert actual["active_legacy_writers_to_retire"] >= 2
+    # v5 and v8 are historical writers; none is a new regression.
+    assert actual["retained_non_ast_legacy_migration_writers"] == 3
+    assert actual["active_legacy_writers_to_retire"] >= 3
     assert actual["retained_non_ast_legacy_migration_ids"] == [
         "legacy-config-081-cardinality-versioned-writer",
         "legacy-sqlite-v5-kobo-cardinality-identity-repair",
+        "legacy-sqlite-v8-paris-primary-account-receipt-repair",
     ]
     assert not actual["stale_reviews"]
 
@@ -729,10 +730,11 @@ def test_legacy_positive_mirror_body_retired_without_double_writer_credit():
     assert guards[0]["pr"] == "#6154"
     assert all((root / test).is_file() for test in guards[0]["tests"])
     current = inventory(root)
-    assert current["retained_non_ast_legacy_migration_writers"] == 2
+    assert current["retained_non_ast_legacy_migration_writers"] == 3
     assert current["retained_non_ast_legacy_migration_ids"] == [
         "legacy-config-081-cardinality-versioned-writer",
         "legacy-sqlite-v5-kobo-cardinality-identity-repair",
+        "legacy-sqlite-v8-paris-primary-account-receipt-repair",
     ]
     assert not current["stale_reviews"]
 
@@ -764,7 +766,7 @@ def test_sqlite_v5_historical_data_repair_is_counted_separately_from_v3():
     ]
     assert any("update provider_connections set identity_id" in s for s in sql_literals)
     assert any("delete from provider_accounts" in s for s in sql_literals)
-    assert inventory(root)["active_legacy_writers_to_retire"] >= 2
+    assert inventory(root)["active_legacy_writers_to_retire"] >= 3
 
 
 def test_v5_supplier_selector_neutralized_without_legacy_writer_retirement():
@@ -802,5 +804,5 @@ def test_v5_supplier_selector_neutralized_without_legacy_writer_retirement():
             if entry["id"] == "legacy-sqlite-v5-kobo-cardinality-identity-repair"]
     assert len(live) == 1
     assert live[0]["classification"] == "legacy_mutating_cutover"
-    assert len(ledger["retained_legacy_migrations"]) == 2
-    assert inventory(root)["retained_non_ast_legacy_migration_writers"] == 2
+    assert len(ledger["retained_legacy_migrations"]) == 3
+    assert inventory(root)["retained_non_ast_legacy_migration_writers"] == 3
