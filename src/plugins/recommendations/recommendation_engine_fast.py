@@ -64,6 +64,27 @@ def _score_signature(item: Any) -> tuple[Any, ...]:
     )
 
 
+def _representative_source_key(item: Any) -> tuple[Any, ...]:
+    """Deterministic *display* representative for one bibliographic edition.
+
+    Candidate deduplication already uses a checksum-valid ISBN or scoped
+    documentary key. Equal content scores should prefer an exact provider
+    notice over an unscoped one, then pick an order-independent source.
+    This never grants an entitlement, download, borrow or source consent.
+    """
+    fields = (
+        "source_provider", "source_credential", "record_id",
+        "docbase", "source_collection",
+    )
+    coords = tuple(
+        value if type(value) is str and 0 < len(value) <= 1024
+        and value.isprintable() else ""
+        for name in fields
+        for value in (get_field(item, name),)
+    )
+    return (not all(coords[:4]), *coords)
+
+
 def score_candidate_cached(
     profile: ProfileVector,
     item: Any,
@@ -177,7 +198,13 @@ def rank_candidates_prepared(
                 profile, item, score_cache, known_absent=True
             )
             previous = merged.get(key)
-            if previous is None or cscore > previous[1]:
+            if (previous is None or cscore > previous[1]
+                    or (cscore == previous[1]
+                        and _representative_source_key(item)
+                        < _representative_source_key(previous[0]))):
+                # Do not let catalogue scheduling select the representative
+                # when identical ISBNs yield an identical content score.
+                # All exact original variants remain in notices_by_key.
                 merged[key] = (item, cscore, reasons)
 
     ranked: list[RankedCandidate] = []
