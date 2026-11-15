@@ -389,3 +389,46 @@ def test_callback_identity_missing_or_stale_generation_is_noop():
     window._identity_context_generation += 1
     task.done(["private"])
     assert events == []
+
+
+def test_queued_identity_load_uses_original_core_after_service_rebind():
+    window, events = _window()
+    activate_identity(window, "bob")
+    original = window.service
+    job = window.runner.submitted[-1]
+    # A later MainWindow service has the *same visible identity* but cannot
+    # become the executing Core of a job admitted on the original instance.
+    window.service = NS(
+        current_identity=NS(identity_id="bob"),
+        refresh_identity_loans=lambda **_kw: (_ for _ in ()).throw(
+            AssertionError("work rebound to another Core service")
+        ),
+    )
+    events.clear()
+    rows = job.work()
+    assert rows == ["loan-bob"]
+    assert ("work", "bob", False) in events
+    assert original is not window.service
+    events.clear()
+    job.done(rows)
+    assert events == []  # Never paint a result from another Core owner.
+
+
+def test_already_queued_identity_load_survives_aba_and_close_without_retarget():
+    window, events = _window()
+    activate_identity(window, "bob")
+    bob = window.runner.submitted[-1]
+    activate_identity(window, "alice")
+    alice = window.runner.submitted[-1]
+    activate_identity(window, "bob")
+    window._closed = True
+    events.clear()
+    assert bob.work() == ["loan-bob"]
+    assert alice.work() == ["loan-alice"]
+    assert [event for event in events if event[0] == "work"] == [
+        ("work", "bob", False), ("work", "alice", False),
+    ]
+    events.clear()
+    bob.done(["old bob"])
+    alice.done(["old alice"])
+    assert events == []
