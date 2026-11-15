@@ -60,7 +60,9 @@ def test_installed_source_primary_alias_proves_only_one_empty_primary():
         service._account_for_loan(_loan("primary"))
 
 
-@pytest.mark.parametrize("alias", [None, "", object(), "x" * 129])
+@pytest.mark.parametrize("alias", [
+    None, "", object(), "x" * 129, "UPPERCASE", "reader/main", "has space",
+])
 def test_invalid_or_absent_alias_does_not_admit_primary_by_name(alias):
     service = _service([_account()], alias=alias)
     with pytest.raises(ProviderConfigurationError):
