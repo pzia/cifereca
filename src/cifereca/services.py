@@ -2213,6 +2213,7 @@ class LibraryService:
             expected_source_context_epoch=expected_source_context_epoch,
             confirmed=confirmed, requester_identity=selected,
             scope_current=scope_current,
+            admitted_scope=admitted_requester_identity is not None,
         )
 
     def enrich_provider_search_result(self, item: SearchResult, *, expected_identity_id: str) -> SearchResult:
