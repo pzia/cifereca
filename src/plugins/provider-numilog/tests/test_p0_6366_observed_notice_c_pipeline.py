@@ -48,20 +48,17 @@ def real_search(monkeypatch):
         credentials={}, options={},
     )
     session.connect()
-    try:
-        results = session.search("loup", scope="all", field="all")
-        assert results and len(fetches) == 1
-        assert all(
-            row.source_provider == "numilog-catalog"
-            and row.source_credential == "__public__"
-            and row.source_collection == "public_catalog"
-            and row.owned is False and row.downloadable is False
-            and row.download_url is None
-            for row in results
-        )
-        yield session, results, fetches
-    finally:
-        session.close()
+    results = session.search("loup", scope="all", field="all")
+    assert results and len(fetches) == 1
+    assert all(
+        row.source_provider == "numilog-catalog"
+        and row.source_credential == "__public__"
+        and row.source_collection == "public_catalog"
+        and row.owned is False and row.downloadable is False
+        and row.download_url is None
+        for row in results
+    )
+    return session, results, fetches
 
 
 def active_window(row, *, identity_id="alice", context=(1, 2, 3, 4)):
@@ -91,7 +88,7 @@ def test_observed_numilog_session_to_persisted_notice_and_same_list_detail_n2(
 ):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "covers"))
     monkeypatch.setattr(search_orchestration.time, "time", lambda: 200)
-    session, rows, fetches = next(real_search(monkeypatch))
+    session, rows, fetches = real_search(monkeypatch)
     db = Storage(tmp_path / "notices.sqlite")
     loader = CoverLoader(max_workers=2)
     reads, paint = [], []
@@ -166,7 +163,7 @@ def test_observed_source_edition_changes_not_joined_by_image_and_no_rights(
     tmp_path, monkeypatch,
 ):
     monkeypatch.setattr(search_orchestration.time, "time", lambda: 200)
-    session, rows, fetches = next(real_search(monkeypatch))
+    session, rows, fetches = real_search(monkeypatch)
     db = Storage(tmp_path / "notices.sqlite")
     try:
         item = rows[0]
