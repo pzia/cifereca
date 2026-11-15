@@ -235,7 +235,31 @@ def test_library_reader_and_shared_detail_have_explicit_evidence_handoff():
     assert 'getattr(window, "_reader_source_items", {}).get(row.key)' in reader
     assert "artifact_id=item.artifact_id" in reader
     assert "placement_id=item.placement_id" in reader
-    assert "cover_evidence=exact_local_detail_cover(" in reader
+    assert "cover_evidence = exact_local_detail_cover(" in reader
+    assert "detail.show_local_presentation(" in lib
+    assert "page.detail.show_local_presentation(" in reader
     assert "self._bind_cover(" in panel
     assert "cover_evidence=cover_evidence" in panel
     assert 'variant="detail"' in panel
+
+
+def test_detail_public_facade_signatures_remain_stable_for_all_consumers():
+    panel = (ROOT / "detail_panel.py").read_text(encoding="utf-8")
+    tree = ast.parse(panel)
+    owner = next(x for x in tree.body
+                 if isinstance(x, ast.ClassDef) and x.name == "DetailPanel")
+    methods = {x.name: x for x in owner.body
+               if isinstance(x, ast.FunctionDef)}
+    for name in ("_cover_and_title", "show_presentation", "show_summary"):
+        method = methods[name]
+        args = [arg.arg for arg in method.args.kwonlyargs]
+        assert "cover_evidence" not in args, name
+    assert "show_local_presentation" in methods
+    body = ast.unparse(methods["show_local_presentation"])
+    assert "self._next_cover_evidence = cover_evidence" in body
+    assert "finally:" in body
+    assert "self._next_cover_evidence = None" in body
+    assert "essential=essential" in ast.unparse(methods["show_presentation"])
+    # Existing plugin and search detail widgets have exactly their legacy
+    # facade signature. New local proof is never a required public argument.
+
