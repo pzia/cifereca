@@ -525,7 +525,7 @@ class LaRochelleSession(ProviderSession):
                         # Same authenticated MyLoans row and same Book anchor
                         # already attested this public image. Descriptive
                         # thumbnail only: never a transfer or loan right.
-                        thumbnail_url=row.thumbnail_url,
+                        thumbnail_url=getattr(row, "thumbnail_url", None),
                         can_return=False, renewable=False, ebook_url=None,
                         # The Core needs only positive offer presence. Do not
                         # publish a signed link or attest a downloadable book
