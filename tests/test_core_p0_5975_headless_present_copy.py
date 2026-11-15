@@ -140,3 +140,97 @@ def test_core_worker_has_no_selected_identity_navigation():
         isinstance(node, ast.Attribute) and node.attr == "current_identity"
         for node in ast.walk(tree)
     )
+
+
+def test_headless_copy_does_not_treat_navigation_epoch_as_authority(monkeypatch):
+    host = Headless()
+    host._account_context_epoch = 27  # Navigated A→B→A after consent.
+    monkeypatch.setattr(worker, "InterProcessLock", lambda _path: FakeLock())
+    monkeypatch.setattr(worker, "acquisition_lock_file", lambda: Path("/synthetic/lock"))
+    monkeypatch.setattr(worker, "_materialize_to_identity_locked",
+                        lambda *_args: {
+                            "status": "complete",
+                            "target_identity_id": "bob",
+                            "placement_id": "target",
+                        })
+    result = worker.send_present_placement_copy(
+        host, **_kwargs(host, lambda: True),
+    )
+    assert result["status"] == "complete"
+    assert result["copy"] == "created"
+
+
+def test_admitted_facade_never_resolves_mutable_selected_identity(monkeypatch):
+    host = Headless()  # current_identity property forbids access.
+    observed = []
+
+    def capture(_service, **kwargs):
+        observed.append(kwargs)
+        assert kwargs["requester_identity"] is host.requester
+        assert kwargs["scope_current"]() is True
+        host._account_context_epoch += 2  # Ordinary UI navigation.
+        assert kwargs["scope_current"]() is True
+        host._source_context_epoch += 1  # Real source binding revocation.
+        assert kwargs["scope_current"]() is False
+        return {"status": "blocked"}
+
+    monkeypatch.setattr(worker, "send_present_placement_copy", capture)
+    result = LibraryService.send_present_placement_copy(
+        host, source_placement_id="source",
+        source_identity_id="alice", source_artifact_id="artifact-A",
+        requesting_identity_id="bob", expected_account_context_epoch=7,
+        expected_source_context_epoch=9, confirmed=True,
+        admitted_requester_identity=host.requester,
+    )
+    assert result["status"] == "blocked"
+    assert len(observed) == 1
+
+
+def test_admitted_facade_is_revoked_by_real_identity_registry_rebind(monkeypatch):
+    host = Headless()
+    checks = []
+
+    def capture(_service, **kwargs):
+        current = kwargs["scope_current"]
+        assert current() is True
+        host.requester = NS(identity_id="bob")  # Same ID, different object.
+        assert current() is False
+        checks.append(True)
+        return {"status": "blocked"}
+
+    monkeypatch.setattr(worker, "send_present_placement_copy", capture)
+    old = host.requester
+    result = LibraryService.send_present_placement_copy(
+        host, source_placement_id="source",
+        source_identity_id="alice", source_artifact_id="artifact-A",
+        requesting_identity_id="bob", expected_account_context_epoch=7,
+        expected_source_context_epoch=9, confirmed=True,
+        admitted_requester_identity=old,
+    )
+    assert result["status"] == "blocked"
+    assert checks == [True]
+
+
+def test_admitted_facade_is_revoked_by_sender_identity_deletion(monkeypatch):
+    host = Headless()
+    live = {"sender": host.sender}
+    host.identity_by_id = lambda name: (
+        live["sender"] if name == "alice" else
+        host.requester if name == "bob" else None
+    )
+
+    def capture(_service, **kwargs):
+        assert kwargs["scope_current"]() is True
+        live["sender"] = None
+        assert kwargs["scope_current"]() is False
+        return {"status": "blocked"}
+
+    monkeypatch.setattr(worker, "send_present_placement_copy", capture)
+    outcome = LibraryService.send_present_placement_copy(
+        host, source_placement_id="source",
+        source_identity_id="alice", source_artifact_id="artifact-A",
+        requesting_identity_id="bob", expected_account_context_epoch=7,
+        expected_source_context_epoch=9, confirmed=True,
+        admitted_requester_identity=host.requester,
+    )
+    assert outcome["status"] == "blocked"
