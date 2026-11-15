@@ -81,8 +81,13 @@ def test_missing_option_still_uses_declared_legacy_fallback_in_correct_order():
     from_provider, _, _, _ = _render(
         "future-provider", data={"id": "future-account", "options": {}},
         descriptor_options=[OPTION],
-        provider_values={("future-provider", "endpoint", "future-account"): "https://provider.example"},
-        legacy_values={"deprecated.endpoint": "https://global.example"},
+        legacy_values={
+            "deprecated.endpoint": "https://global.example",
+            "providers.accounts": [{
+                "provider": "future-provider", "id": "future-account",
+                "options": {"endpoint": "https://provider.example"},
+            }],
+        },
     )
     assert from_provider["option_fields"]["endpoint"].text == "https://provider.example"
     from_global, _, _, _ = _render(

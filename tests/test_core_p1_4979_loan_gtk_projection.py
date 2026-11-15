@@ -72,11 +72,76 @@ def test_local_cover_changes_only_display_copy_not_actionable_loan():
     assert loan.thumbnail_url is None
 
 
-def test_supplier_cover_has_priority_and_never_gets_overwritten():
+def test_exact_embedded_loan_cover_beats_valid_supplier_thumbnail():
+    """An attested local Placement takes priority without mutating the loan."""
     adapt = ui_method()
     loan = a_loan(image="https://bnf.example/current.png")
     host = NS(service=NS(current_identity=NS(identity_id="alice")),
               _library_entries_cache=[a_row(loan)])
+    displayed = adapt(host, loan)
+    assert displayed is not loan
+    assert displayed.thumbnail_url == "file:///home/alice/.cache/cifereca/cover.png"
+    assert displayed.source_account_id == loan.source_account_id
+    assert loan.thumbnail_url == "https://bnf.example/current.png"
+    assert adapt(host, loan).thumbnail_url == displayed.thumbnail_url
+
+
+def test_supplier_cover_remains_when_no_stronger_exact_proof():
+    adapt = ui_method()
+    loan = a_loan(image="https://bnf.example/current.png")
+    host = NS(service=NS(current_identity=NS(identity_id="alice")),
+              _library_entries_cache=[])
+    assert adapt(host, loan) is loan
+
+    # Even a proven *other* catalog candidate cannot displace a direct
+    # already-valid thumbnail from this exact loan.
+    row = a_row(loan)
+    catalog_url = "https://public.example/catalog.jpg"
+    row["thumbnail_url"] = catalog_url
+    row["metadata"]["cover_resolution"].update(tier="catalog", url=catalog_url)
+    row["_exact_loan_cover_proofs"][0].update(tier="catalog", url=catalog_url)
+    host._library_entries_cache = [row]
+    assert adapt(host, loan) is loan
+    row["metadata"]["cover_resolution"]["status"] = "missing"
+    assert adapt(host, loan) is loan
+    assert loan.thumbnail_url == "https://bnf.example/current.png"
+
+
+def test_exact_origin_outranks_supplier_catalog_and_bad_proof_does_not():
+    adapt = ui_method()
+    loan = a_loan(image="https://bnf.example/current.png")
+    row = a_row(loan)
+    origin_url = "https://public.example/source-cover.jpg"
+    row["thumbnail_url"] = origin_url
+    row["metadata"]["cover_resolution"].update(tier="origin", url=origin_url)
+    row["_exact_loan_cover_proofs"][0].update(tier="origin", url=origin_url)
+    host = NS(service=NS(current_identity=NS(identity_id="alice")),
+              _library_entries_cache=[row])
+    assert adapt(host, loan).thumbnail_url == origin_url
+    row["_exact_loan_cover_proofs"][0]["placement_id"] = "wrong-placement"
+    assert adapt(host, loan) is loan
+
+
+def test_ambiguous_or_cross_account_embedded_cannot_replace_supplier():
+    from copy import deepcopy
+    adapt = ui_method()
+    loan = a_loan(image="https://bnf.example/current.png")
+    one = a_row(loan)
+    other = deepcopy(one)
+    other["placement_id"] = "placement-2"
+    other["_exact_loan_cover_proofs"][0]["placement_id"] = "placement-2"
+    second_url = "file:///home/alice/.cache/cifereca/second.png"
+    other["thumbnail_url"] = second_url
+    other["metadata"]["cover_resolution"]["url"] = second_url
+    other["_exact_loan_cover_proofs"][0]["url"] = second_url
+    host = NS(service=NS(current_identity=NS(identity_id="alice")),
+              _library_entries_cache=[one, other])
+    assert adapt(host, loan) is loan  # equal embedded strengths: ambiguous
+
+    other_account = a_loan(account="account-b", image=loan.thumbnail_url)
+    host._library_entries_cache = [one]
+    assert adapt(host, other_account) is other_account
+    host.service.current_identity.identity_id = "bob"
     assert adapt(host, loan) is loan
     assert loan.thumbnail_url == "https://bnf.example/current.png"
 
