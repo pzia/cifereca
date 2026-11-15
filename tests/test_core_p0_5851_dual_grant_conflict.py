@@ -188,3 +188,31 @@ def test_revoked_primary_exception_cannot_fallback_to_connection_identity(tmp_pa
         ) == (None, "adept_borrower_binding_required")
     finally:
         service.close()
+
+
+def test_direct_sql_v16_delete_retires_v15_authority(tmp_path):
+    """The invariant holds for SQLite consumers bypassing the Python API."""
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        _persist_account(service.storage)
+        seed_historical_adept_binding(
+            service, credential_id="alice-paris", account_id="linked-123",
+            borrower_identity_id="bob", confirmed=True,
+        )
+        service.bind_adept_borrower_grant(
+            **SCOPE, borrower_identity_id="bob", confirmed=True,
+        )
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute(
+                "DELETE FROM adept_borrower_grants "
+                "WHERE provider_id=? AND credential_id=? AND account_id=?",
+                (SCOPE["provider_id"], SCOPE["credential_id"], SCOPE["account_id"]),
+            )
+        assert service.storage.paris_borrower_adept_binding_get(
+            credential_id="alice-paris", account_id="linked-123",
+        )["retired_for_authority"] is True
+        assert service._paris_adept_identity_for_loan(
+            loan, connection_identity_id="alice",
+        ) == (None, "adept_borrower_binding_required")
+    finally:
+        service.close()
