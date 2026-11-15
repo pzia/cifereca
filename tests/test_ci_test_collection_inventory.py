@@ -231,3 +231,18 @@ def test_explicit_audited_accounting_and_security_classifications(pytestconfig):
         assert tuple(record[key] for key in (
             "owner_architecture", "business_object", "test_level"
         )) == expected_values
+
+
+def test_ci_evidence_fragment_does_not_duplicate_accounting_claims(pytestconfig):
+    """Do not let independent CI-quality reviews invalidate collection."""
+    root = pytestconfig.rootpath
+    fragment_dir = root / "docs/test-classification-manifest.d"
+    evidence = json.loads((fragment_dir / "ci-evidence.json").read_text(encoding="utf-8"))
+    accounting = json.loads((fragment_dir / "ci-accounting.json").read_text(encoding="utf-8"))
+    evidence_paths = {row["path"] for row in evidence["files"]}
+    accounting_paths = {row["path"] for row in accounting["files"]}
+    assert evidence_paths == {"tests/test_ci_test_nested_core_consumers.py"}
+    assert evidence_paths.isdisjoint(accounting_paths)
+    mapping = load_classifications(root / "docs/test-classification-manifest.json",
+                                   fragments=fragment_dir)
+    assert mapping["tests/test_ci_test_collection_inventory.py"]["test_level"] == "contract"
