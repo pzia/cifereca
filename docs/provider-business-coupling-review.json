@@ -1428,6 +1428,20 @@
         "tests/test_core_p0_5975_v5_historical_cardinality_scope.py"
       ],
       "pr": "#6154"
+    },
+    {
+      "id": "legacy-sqlite-v8-paris-primary-account-receipt-repair",
+      "classification": "legacy_mutating_cutover",
+      "journey": "Historical SQLite v7->v8 primary-borrower alias normalization of Paris loan rights and acquisition receipts",
+      "productive_caller": "Storage.__init__ -> Storage._migrate(db) for databases with schema_version < 8; the v8 savepoint rewrites and deduplicates historical Paris entitlements and loan_auto acquisition_ledger rows",
+      "effect": "Rekeys old NULL/empty/primary account_id to primary, merges duplicate entitlement and acquisition IDs, rebinds their linked receipts, preserves highest attempt count and most advanced status; existing v8+ databases are not rewritten",
+      "authority": "Versioned Paris 0.8.3 historical borrower key and exact stored provider/credential/account/item/identity/loan coordinates; no runtime descriptor, network, ADEPT call, user-selected GTK identity or new B right",
+      "replacement_contract": "Keep counting this executable data migration separately from v5 and Config 0.8.1. Version-neutral historical normalization or eventual sunset requires exact old-v7 fixtures with duplicate receipts, competing borrower/identity scopes, unknown providers, rollback and idempotence; never delete old receipts or misattribute rights merely to reduce AST.",
+      "tests": [
+        "tests/test_core_p0_5975_v8_historical_primary_account.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#new-pr"
     }
   ]
 }

@@ -1,5 +1,16 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+> **Delta P0 #5975 (2026-11-15) — inventaire honnête du writer v8.**
+> La migration historique SQLite **v7→v8** réécrit encore les droits
+> Paris et reçus `loan_auto` d'anciennes bases (alias emprunteur
+> `NULL/''/primary`, fusion des doublons, compteurs de tentatives).
+> Elle n'était pas incluse dans les deux writers non-AST inventoriés.
+> Elle est désormais comptée explicitement : **3 writers historiques actifs**
+> (Config 0.8.1, SQLite v5, SQLite v8), indépendamment des retraits W1/v3.
+> Test de reconstruction v7→v17 : périmètre Paris exact, compte primaire,
+> préservation fournisseur inconnu, absence de preuve synthétique et
+> idempotence. Aucun code productif v8 n'est supprimé dans cette tranche.
+
 > **Delta P0 #6162 (15/11/2026) — cohorte historique v5 en donnée.**
 > Les sélecteurs SQL de réparation des anciennes connexions/comptes
 > `provider_id='kobo'` ne sont plus dans la boucle mutatrice v4→v5 :
