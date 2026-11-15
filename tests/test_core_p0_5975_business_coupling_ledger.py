@@ -582,12 +582,14 @@ def test_real_081_migration_is_explicitly_retained_after_genericization():
     assert physical[0]["in_ast_metric"] is False
     assert physical[0]["original_site_id"] == "site-e3fc978e29d69c2c875be9dc"
     actual = inventory(root)
-    # The Config 0.8.1 repair still mutates pre-tombstone histories.
-    # The unrelated SQLite v3 importer was physically retired in #6152.
-    assert actual["retained_non_ast_legacy_migration_writers"] == 1
-    assert actual["active_legacy_writers_to_retire"] >= 1
+    # The Config 0.8.1 and SQLite v5 repairs still mutate old databases;
+    # the unrelated SQLite v3 importer was physically retired in #6152.
+    # v5 is a previously uncounted writer, not a regression in this PR.
+    assert actual["retained_non_ast_legacy_migration_writers"] == 2
+    assert actual["active_legacy_writers_to_retire"] >= 2
     assert actual["retained_non_ast_legacy_migration_ids"] == [
         "legacy-config-081-cardinality-versioned-writer",
+        "legacy-sqlite-v5-kobo-cardinality-identity-repair",
     ]
     assert not actual["stale_reviews"]
 
@@ -721,8 +723,39 @@ def test_legacy_positive_mirror_body_retired_without_double_writer_credit():
     assert guards[0]["pr"] == "#6154"
     assert all((root / test).is_file() for test in guards[0]["tests"])
     current = inventory(root)
-    assert current["retained_non_ast_legacy_migration_writers"] == 1
+    assert current["retained_non_ast_legacy_migration_writers"] == 2
     assert current["retained_non_ast_legacy_migration_ids"] == [
-        "legacy-config-081-cardinality-versioned-writer"
+        "legacy-config-081-cardinality-versioned-writer",
+        "legacy-sqlite-v5-kobo-cardinality-identity-repair",
     ]
     assert not current["stale_reviews"]
+
+
+def test_sqlite_v5_historical_data_repair_is_counted_separately_from_v3():
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads((root / "docs/provider-business-coupling-review.json")
+                        .read_text(encoding="utf-8"))
+    live = [row for row in ledger["retained_legacy_migrations"] if row["id"] ==
+            "legacy-sqlite-v5-kobo-cardinality-identity-repair"]
+    assert len(live) == 1
+    assert live[0]["classification"] == "legacy_mutating_cutover"
+    assert live[0]["pr"] == "#6154"
+    assert all((root / test).is_file() for test in live[0]["tests"])
+    assert "legacy-sqlite-v3-non-kobo-backup-import-writer" not in {
+        row["id"] for row in ledger["retained_legacy_migrations"]
+    }
+    source = (root / "src/cifereca/storage.py").read_text(encoding="utf-8")
+    migrate = next(node for node in ast.walk(ast.parse(source))
+                   if isinstance(node, ast.FunctionDef) and node.name == "_migrate")
+    v5 = next(node for node in ast.walk(migrate)
+              if isinstance(node, ast.If) and ast.unparse(node.test) == "version < 5")
+    sql_literals = [
+        node.value.lower() for node in ast.walk(v5)
+        if isinstance(node, ast.Constant) and type(node.value) is str
+    ]
+    assert any("update provider_connections set identity_id" in s for s in sql_literals)
+    assert any("delete from provider_accounts" in s for s in sql_literals)
+    assert inventory(root)["active_legacy_writers_to_retire"] >= 2
