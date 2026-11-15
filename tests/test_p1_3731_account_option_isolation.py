@@ -135,3 +135,79 @@ def test_corrupt_or_unattributable_global_endpoint_fails_closed(tmp_path, accoun
         "options": {},
     }
     assert _render(config, row, "first") == "https://descriptor.example"
+
+
+@pytest.mark.parametrize("reversed_rows", [False, True])
+@pytest.mark.parametrize("disabled_second", [False, True])
+@pytest.mark.parametrize("provider_case", ["future-provider", "FUTURE-PROVIDER"])
+def test_reused_credential_across_profiles_never_inherits_first_account_url(
+    tmp_path, reversed_rows, disabled_second, provider_case,
+):
+    """Config.provider_option picks first match; GTK must not copy that URL."""
+    config = Config(tmp_path / "settings.json")
+    alice = {
+        "id": "shared", "provider": "future-provider", "identity_id": "alice",
+        "enabled": True, "options": {"endpoint": "https://alice-private.example"},
+    }
+    bob = {
+        "id": "shared", "provider": provider_case, "identity_id": "bob",
+        "enabled": not disabled_second, "options": {},
+    }
+    independent = {
+        "id": "independent", "provider": "future-provider",
+        "identity_id": "alice", "enabled": True,
+        "options": {"endpoint": "https://independent.example"},
+    }
+    rows = [alice, bob]
+    if reversed_rows:
+        rows.reverse()
+    config.set("providers.accounts", [*rows, independent])
+    config.set("old_endpoint", "https://global-secret.example")
+    before = deepcopy(config.data)
+    # The direct reader is allowed to retain old first-match semantics.
+    # GTK must not inherit any URL under an ambiguous shared key.
+    assert _render(config, bob, "shared") == "https://descriptor.example"
+    assert _render(config, {**alice, "options": {}}, "shared") == "https://descriptor.example"
+    assert _render(config, independent, "independent") == "https://independent.example"
+    assert config.data == before and not config.path.exists()
+
+
+@pytest.mark.parametrize("owner", ["alice", "bob", None])
+def test_edited_account_owner_mismatch_never_reads_original_saved_url(
+    tmp_path, owner,
+):
+    config = Config(tmp_path / "settings.json")
+    account = {
+        "id": "personal", "provider": "future-provider",
+        "identity_id": "alice", "enabled": True,
+        "options": {"endpoint": "https://alice-private.example"},
+    }
+    config.set("providers.accounts", [account])
+    config.set("old_endpoint", "https://old-unknown-owner.example")
+    edited = {
+        "id": "personal", "provider": "future-provider", "options": {},
+    }
+    if owner is not None:
+        edited["identity_id"] = owner
+    before = deepcopy(config.data)
+    expected = (
+        "https://alice-private.example" if owner == "alice"
+        else "https://descriptor.example"
+    )
+    assert _render(config, edited, "personal") == expected
+    assert config.data == before and not config.path.exists()
+
+
+def test_single_legacy_global_url_fallback_rejects_rebound_profile(tmp_path):
+    config = Config(tmp_path / "settings.json")
+    config.set("providers.accounts", [{
+        "id": "only", "provider": "future-provider",
+        "identity_id": "alice", "options": {},
+    }])
+    config.set("old_endpoint", "https://alice-legacy.example")
+    assert _render(config, {
+        "id": "only", "identity_id": "alice", "options": {},
+    }, "only") == "https://alice-legacy.example"
+    assert _render(config, {
+        "id": "only", "identity_id": "bob", "options": {},
+    }, "only") == "https://descriptor.example"
