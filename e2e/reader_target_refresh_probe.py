@@ -207,6 +207,15 @@ def main() -> int:
         if reserve_deadline[0] is None:
             reserve_deadline[0] = monotonic() + 5.0
         found = actions()
+        if len(found) == 1 and not found[0].get_mapped():
+            # On narrower windows, AdaptiveActionBar moves secondary actions
+            # into the real GTK "Plus d’actions" popover. A hidden popover
+            # button is not a user-clickable action until that menu is opened.
+            bar = state["window"].readers_page.detail.action_scroll
+            if (found[0].get_parent() is getattr(bar, "overflow_box", None)
+                    and bar.overflow_button.get_mapped()
+                    and not bar.overflow_popover.get_mapped()):
+                bar.overflow_popover.popup()
         if len(found) != 1 or not found[0].get_mapped():
             if monotonic() < reserve_deadline[0]:
                 later(120, reserve)
