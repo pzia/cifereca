@@ -11,9 +11,10 @@ ItemDetail DTO is changed and no provider requests are made.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
-from ..models import SearchResult
+from ..models import ItemDetail, SearchResult
 from .search_cover_bridge import SearchCoverBridge
 
 
@@ -78,4 +79,33 @@ def cached_exact_selected_search_cover(window: Any, item: SearchResult) -> str |
     )
 
 
-__all__ = ["cached_exact_selected_search_cover"]
+def visual_search_item(window: Any, item: SearchResult) -> SearchResult:
+    """Presentation-only copy for the initial detail while holdings loads."""
+    cover = cached_exact_selected_search_cover(window, item)
+    if cover is None or item.thumbnail_url:
+        return item
+    return replace(item, thumbnail_url=cover)
+
+
+def visual_search_detail(
+    window: Any, item: SearchResult, detail: ItemDetail,
+) -> ItemDetail:
+    """Do not overwrite newer actual holdings evidence or the supplier DTO."""
+    if type(item) is not SearchResult or type(detail) is not ItemDetail:
+        return detail
+    if (detail.thumbnail_url
+            or detail.source_provider != item.source_provider
+            or detail.source_credential != item.source_credential
+            or detail.record_id != item.record_id
+            or detail.docbase != item.docbase):
+        return detail
+    cover = cached_exact_selected_search_cover(window, item)
+    if cover is None:
+        return detail
+    return replace(detail, thumbnail_url=cover)
+
+
+__all__ = [
+    "cached_exact_selected_search_cover",
+    "visual_search_item", "visual_search_detail",
+]
