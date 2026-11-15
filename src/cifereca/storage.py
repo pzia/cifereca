@@ -3223,6 +3223,19 @@ class Storage:
             raise ValueError("Paris borrower and ADEPT identity/profile required")
         now = int(time.time())
         with self._lock, self._connect() as db:
+            # A LibraryService preflight is only a snapshot: another process
+            # may commit the canonical v16 grant between that read and this
+            # legacy UPSERT. Lock the SQLite writer BEFORE checking the raw
+            # v16 row, so even a revoked/unreadable v16 proof cannot be
+            # replaced by an independent historical Paris grant.
+            db.execute("BEGIN IMMEDIATE")
+            v16 = db.execute(
+                "SELECT 1 FROM adept_borrower_grants "
+                "WHERE provider_id='paris' AND credential_id=? AND account_id=?",
+                (credential, borrower),
+            ).fetchone()
+            if v16 is not None:
+                raise ValueError("ADEPT borrower grant requires v16 binding")
             connection = db.execute(
                 "SELECT identity_id FROM provider_connections WHERE provider_id='paris' AND credential_id=?",
                 (credential,),
