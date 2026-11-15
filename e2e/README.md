@@ -176,42 +176,53 @@ python3 e2e/run.py --scenario search-filter-1366
 python3 e2e/run.py --scenario recommendations-detail-1366
 ```
 
-### P1 #774 — revue UX jumelée, privée et liée au commit
+### P1 #774 — revue UX jumelée, privée, HEAD et clair/sombre attestés
 
-Après les six scénarios réels (Recherche et Recommandations à 1024, 1366 et
-1600 px), sur **le même HEAD**, l'hôte GTK habilité prépare trois planches
-côte à côte sans transférer de captures ni de détails métier :
+Les scénarios Search/Recommandations 1024, 1366 et 1600 px, exécutés sur
+**le même HEAD et dans le même thème GTK réellement observé**, alimentent
+trois planches privées côte à côte **par thème**. Après passage des recettes
+sur l'hôte GTK/X11 habilité :
 
-    for w in 1024 1366 1600; do
-      python3 e2e/run.py --scenario "search-filter-$w"
-      python3 e2e/run.py --scenario "recommendations-detail-$w"
+    for mode in light dark; do
+      for w in 1024 1366 1600; do
+        python3 e2e/run.py --appearance "$mode" --out "e2e-artifacts/$mode" --scenario "search-filter-$w"
+        python3 e2e/run.py --appearance "$mode" --out "e2e-artifacts/$mode" --scenario "recommendations-detail-$w"
+      done
+      python3 e2e/search_recommendations_review.py --root "e2e-artifacts/$mode" --appearance "$mode"
     done
-    python3 e2e/search_recommendations_review.py --root e2e-artifacts
 
-Le script compare une capture réelle de Recherche avec une capture réelle
-de Recommandations **à largeur identique**. Il refuse les rapports non PASS,
-les absences de preuves de géométrie GTK, les fichiers PNG altérés ou liés,
-les scénarios HiDPI substitués au 1×, les résolutions incohérentes et les
-commits différents du HEAD local. Les deux fixtures restent différentes :
-**aucun résultat de parité bibliographique ni même contenu de livre n'est
-revendiqué par ces planches**.
+Le runner force **explicitement** `Adw.ColorScheme.FORCE_LIGHT/FORCE_DARK`
+uniquement sur la recette demandée. Les vrais probes Search et
+Recommandations enregistrent **`Adw.StyleManager.get_default().get_dark()`**
+au moment de chaque PNG ; une étiquette CLI seule ne constitue pas une
+preuve d'apparence. Le runner E2E CI historique sans `--appearance` ne
+change pas de comportement, mais les rapports indiquent désormais
+l'apparence réelle (et non présumée).
 
-Les fichiers de e2e-artifacts/search-recommendations-private-review/ restent
-privés (0700 pour le dossier, 0600 pour les planches et reçus). La grille
-ux-checklist.csv contient une ligne par largeur et des axes de densité,
-filtres, focus, détail, couverture, clipping et états partiels/erreur. La
-revue doit être faite sur **les PNG originaux pleine taille**, pas seulement
-sur les planches réduites. Pour contrôler une grille remplie explicitement :
+Le script de revue refuse : rapport non PASS, contrôle géométrique absent,
+PNG lié ou altéré, résolution physique incohérente, substitution HiDPI,
+différence de HEAD, mode clair/sombre absent ou différent entre les deux
+vues **ou entre largeurs**, ou mode différent de `--appearance`. Les
+fixtures restent différentes : **aucune comparaison bibliographique du
+même livre ou validation d'un fournisseur réel n'est revendiquée**.
 
-    python3 e2e/search_recommendations_review.py --root e2e-artifacts --verify-checklist
+Les dossiers `e2e-artifacts/light/search-recommendations-private-review/`
+et `e2e-artifacts/dark/search-recommendations-private-review/` sont
+**séparés et privés** (0700 pour les dossiers, 0600 pour planches, manifestes
+et reçus). La grille `ux-checklist.csv` comporte densité, filtres, focus,
+détail, couverture, clipping et états partiels/erreur par largeur.
+Examiner **les PNG originaux pleine taille dans les deux thèmes** avant de
+remplir `OK/KO/N/A` avec justifications locales :
 
-Le verdict refuse toute capture régénérée, y compris au **même SHA Git**,
-et préserve les notes locales d'une grille précédente. Un statut
-CHECKLIST_VERIFIED n'est **pas** une approbation UX : la présence de KO/N/A
-reste visible via des compteurs bornés. La validation finale de #774/#4761
-exige encore une revue visuelle effective et les écarts sont à ventiler ;
-aucune capture, annotation, URL ou donnée de compte ne doit partir vers un
-artefact CI public.
+    python3 e2e/search_recommendations_review.py --root e2e-artifacts/light --appearance light --verify-checklist
+    python3 e2e/search_recommendations_review.py --root e2e-artifacts/dark --appearance dark --verify-checklist
+
+Même si le commit et les octets PNG sont inchangés, une divergence de
+thème invalide l'ancienne grille. `CHECKLIST_VERIFIED` n'est **pas** une
+approbation UX ; des observations humaines/agent concrètes, sur le même
+objet bibliographique quand cette fixture sera disponible, sont
+nécessaires pour clore #774/#4761. **Ne jamais publier** captures, notes,
+identifiants, URL ni données de compte dans un artefact CI public.
 
 ### P1 #942 — compteur réel et données exclues (GTK 1366)
 
