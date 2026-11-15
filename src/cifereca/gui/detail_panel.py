@@ -94,6 +94,7 @@ class DetailPanel(Gtk.Box):
         self.content.set_margin_start(16)
         self.content.set_margin_end(16)
         self.body_scroll.set_child(self.content)
+        self._next_cover_document = None
         self.empty("Sélectionnez un livre", "Les détails et actions apparaîtront ici.")
 
     def _cancel_meta_request(self) -> None:
@@ -108,6 +109,7 @@ class DetailPanel(Gtk.Box):
         self._rendered_search_detail = None
         self._cancel_meta_request()
         self._pending_action_focus_key = ""
+        self._next_cover_document = None
         clear_box(self.content)
         self._clear_actions()
         status = Adw.StatusPage()
@@ -117,6 +119,18 @@ class DetailPanel(Gtk.Box):
         status.set_vexpand(True)
         self._append_content(status)
 
+    def prepare_document_cover(self, document) -> None:
+        """Stage one Core-registered N2 reference for the next detail render.
+
+        Keep the public neutral show_presentation/show_summary signatures
+        unchanged. This staging is consumed exactly once by the header;
+        no legacy URL is requested before the N2 choice is materialized.
+        """
+        from ..core.book_cover_projection import CoverDocumentScope
+        if type(document) is not CoverDocumentScope:
+            raise TypeError("expected exact DocumentRef")
+        self._next_cover_document = document
+
     def _cover_and_title(
         self,
         title: str,
@@ -125,7 +139,6 @@ class DetailPanel(Gtk.Box):
         badges: Iterable[str] = (),
         *,
         essential=(),
-        cover_document=None,
     ) -> CoverView:
         header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         header.add_css_class("detail-heading")
@@ -134,6 +147,8 @@ class DetailPanel(Gtk.Box):
         cover.set_halign(Gtk.Align.START)
         cover.set_valign(Gtk.Align.START)
         header.append(cover)
+        cover_document = getattr(self, "_next_cover_document", None)
+        self._next_cover_document = None
         service = getattr(self.window, "document_covers", None)
         if cover_document is not None and service is not None:
             # The exact source was registered from Core before this detail
@@ -582,7 +597,6 @@ class DetailPanel(Gtk.Box):
         presentation: UiBookDetailPresentation,
         *,
         description: object | None = None,
-        cover_document=None,
     ) -> None:
         """Render the shared neutral book-detail projection.
 
@@ -600,15 +614,12 @@ class DetailPanel(Gtk.Box):
         sections = sorted(presentation.sections, key=lambda item: item.order)
         essential = [field for section in sections if section.title == "Essentiel"
                      for field in section.fields]
-        cover_kwargs = {"essential": essential}
-        if cover_document is not None:
-            cover_kwargs["cover_document"] = cover_document
         self._cover_and_title(
             presentation.title,
             presentation.subtitle or None,
             presentation.thumbnail_url,
             presentation.badges,
-            **cover_kwargs,
+            essential=essential,
         )
         self._show_description(description)
         for section in sections:
@@ -655,23 +666,16 @@ class DetailPanel(Gtk.Box):
         badges: Iterable[str] = (),
         group_title: str | None = None,
         rows: list[tuple[str, str]] | None = None,
-        cover_document=None,
     ) -> None:
         """Compatibility helper backed by the shared detail projection."""
-        presentation = book_detail_presentation(
+        self.show_presentation(book_detail_presentation(
             title=title,
             subtitle=subtitle,
             thumbnail=thumbnail,
             badges=badges,
             group_title=group_title,
             rows=rows or (),
-        )
-        if cover_document is None:
-            self.show_presentation(presentation)
-        else:
-            self.show_presentation(
-                presentation, cover_document=cover_document,
-            )
+        ))
 
     def update_cached_book_details(self, contributions) -> None:
         """Replace only cached plugin groups/actions; preserve the base detail."""
