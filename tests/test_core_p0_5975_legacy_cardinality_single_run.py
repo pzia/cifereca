@@ -122,3 +122,50 @@ def test_new_empty_configuration_does_not_gain_legacy_migration_marker(tmp_path)
     loaded = Config(tmp_path / "fresh.json")
     assert loaded.get(f"migration_history.{_LEGACY_CARDINALITY_V1}") is None
     assert "sync" not in loaded.data
+
+
+def test_historical_repair_is_data_driven_and_scoped_per_provider(tmp_path, monkeypatch):
+    """A synthetic historical cohort follows the same repair, without new Core dispatch."""
+    import hashlib
+    import cifereca.config as config_module
+
+    path = tmp_path / "historical-synthetic.json"
+    original = _old(path, provider="future-source")
+    original["providers"]["accounts"].extend([
+        {"id": "source-c", "provider": "future-source",
+         "identity_id": "alice", "label": "Source C",
+         "enabled": True, "credentials": {}, "options": {}},
+        {"id": "source-a", "provider": "kobo",
+         "identity_id": "alice", "label": "Kobo A",
+         "enabled": True, "credentials": {}, "options": {}},
+    ])
+    path.write_text(json.dumps(original), encoding="utf-8")
+    monkeypatch.setattr(
+        config_module, "_LEGACY_081_SINGLE_CONNECTION_SOURCES",
+        frozenset({"future-source", "kobo"}),
+    )
+    cfg = Config(path)
+    accounts = cfg.provider_accounts()
+    assert [row["identity_id"] for row in accounts] == [
+        "alice",
+        "alice-future-source-" + hashlib.sha256(b"source-b").hexdigest()[:8],
+        "alice-future-source-" + hashlib.sha256(b"source-c").hexdigest()[:8],
+        "alice",
+    ]
+    assert cfg.get(f"migration_history.{_LEGACY_CARDINALITY_V1}") == {
+        "schema_version": 1, "status": "completed", "split_count": 2,
+    }
+    assert len([i for i in cfg.identities()
+                if i.get("adept_profile") == "ade-alice"]) == 1
+    assert "sync" not in cfg.data
+    assert json.loads(path.read_text(encoding="utf-8")) == original
+
+    cfg.save()
+    stable = deepcopy(cfg.data)
+    # A completion tombstone, not the mutable historical cohort, is authoritative.
+    monkeypatch.setattr(
+        config_module, "_LEGACY_081_SINGLE_CONNECTION_SOURCES", frozenset(),
+    )
+    reloaded = Config(path)
+    assert reloaded.data == stable
+    assert reloaded.provider_accounts() == accounts
