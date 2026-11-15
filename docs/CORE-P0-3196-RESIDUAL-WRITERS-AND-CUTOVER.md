@@ -1,5 +1,22 @@
 # P0 #3196 — Points résiduels 0.7 et contrat de retrait (05/11/2026)
 
+> **Delta P0 #6138 (15/11/2026) — SourceReference neutralisée à l'entrée W1.**
+> Un `backup_put` historique ne peut désormais ni créer, ni modifier
+> `backup_items`, ni reprojeter un droit, acquisition, Artifact ou Placement
+> dès qu'une `SourceReference` canonique existe pour le tuple exact
+> `(provider_id,credential_id,edition_id)`, **pour tout fournisseur**
+> (Kobo, Paris, Numilog ou inconnu), y compris avec un autre emprunteur
+> ou profil. Le garde Kobo seul est retiré et remplacé par une décision
+> générique sous transaction SQLite (`BEGIN IMMEDIATE` hors transaction
+> déjà ouverte). En absence de source typée, l'archive Kobo reste
+> `archive_only` et le miroir legacy non-Kobo reste temporairement
+> exécutable. Aucune migration v5, suppression d'archive, GET ou nouvelle
+> preuve de droit n'est créée. Tests SQLite : diversité fournisseurs,
+> ancienne archive stable, double connexion, collision et non-collision
+> par les trois coordonnées. Le registre AST distingue retrait du garde
+> fournisseur et installation du garde neutre : aucune disparition de
+> fonction de sûreté ne doit être comptée comme suppression de dette active.
+
 > **Delta #6136 (P0 #5975 / #3196, 15/11/2026) :**
 > `Storage.backup_put(kobo)` n'écrit plus la clé
 > `core.kobo.completed-legacy-archive.v1.*` dans `metadata`. Ce writer
