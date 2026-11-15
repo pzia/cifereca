@@ -34,6 +34,29 @@ def _exact(value: object, *, allow_empty: bool = False) -> bool:
     )
 
 
+def exact_loan_cover_scope(loan: Loan) -> CoverDocumentScope | None:
+    """Qualify the borrower before ANY decision-cache lookup or evidence read.
+
+    Shares precisely the same SourceKey and account rules as the N1 producer;
+    neither a display ID, a title nor a Library thumbnail can mint a scope.
+    """
+    if (type(loan) is not Loan
+            or not _exact(loan.identity_id)
+            or not _exact(loan.source_provider)
+            or not _exact(loan.source_credential)
+            or not _exact(loan.source_account_id, allow_empty=True)
+            or not _exact(loan.id)
+            or not _exact(loan.record_id)):
+        return None
+    return CoverDocumentScope(
+        kind="loan", identity_id=loan.identity_id,
+        source_key=loan_source_key(loan),
+        provider_id=loan.source_provider,
+        credential_id=loan.source_credential,
+        account_id=loan.source_account_id, loan_id=loan.id,
+    )
+
+
 def project_exact_loan_cover(
     loan: Loan, library_snapshot: tuple[Mapping[str, object], ...], *,
     revision: int, snapshot_complete: bool,
@@ -44,24 +67,12 @@ def project_exact_loan_cover(
     snapshot, not an unbounded generator; `complete=False` covers failed or
     partial reads and must not turn a missing local fallback into certainty.
     """
-    if (type(loan) is not Loan
-            or not _exact(loan.identity_id)
-            or not _exact(loan.source_provider)
-            or not _exact(loan.source_credential)
-            or not _exact(loan.source_account_id, allow_empty=True)
-            or not _exact(loan.id)
-            or not _exact(loan.record_id)):
+    scope = exact_loan_cover_scope(loan)
+    if scope is None:
         return None
     if (type(library_snapshot) is not tuple or len(library_snapshot) > 10000
             or any(type(row) is not dict for row in library_snapshot)):
         raise TypeError("loan cover needs a bounded, materialized Core snapshot")
-    scope = CoverDocumentScope(
-        kind="loan", identity_id=loan.identity_id,
-        source_key=loan_source_key(loan),
-        provider_id=loan.source_provider,
-        credential_id=loan.source_credential,
-        account_id=loan.source_account_id, loan_id=loan.id,
-    )
     if not snapshot_complete:
         return resolve_book_cover(
             scope, (), revision=revision, snapshot_complete=False,
@@ -144,5 +155,6 @@ def project_verified_local_library_cover(
 
 
 __all__ = [
-    "project_exact_loan_cover", "project_verified_local_library_cover",
+    "exact_loan_cover_scope", "project_exact_loan_cover",
+    "project_verified_local_library_cover",
 ]
