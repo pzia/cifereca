@@ -680,7 +680,7 @@ def main() -> int:
         # and Langue. Assert the *rendered* text in either representation,
         # not only the intentionally emptied ActionRow.get_subtitle().
         # A detached or hidden button does not count as visual evidence.
-        def rendered_compact_values(row, field):
+        def rendered_compact_values(row):
             subtitle = row.get_subtitle()
             if subtitle:
                 return [subtitle]
@@ -688,10 +688,13 @@ def main() -> int:
             stack = [row]
             while stack:
                 current = stack.pop()
+                # The enclosing ActionRow already identifies the facet
+                # field. PyGObject can return another wrapper for a child,
+                # so the Python-only _cifereca_facet_field attribute is NOT
+                # durable GTK evidence. Read the mapped native button/label.
                 if (isinstance(current, Gtk.Button)
                         and current.get_mapped()
-                        and current.has_css_class("facet-value")
-                        and getattr(current, "_cifereca_facet_field", None) == field):
+                        and current.has_css_class("facet-value")):
                     label = current.get_child()
                     if isinstance(label, Gtk.Label) and label.get_mapped():
                         values.append(label.get_text())
@@ -702,8 +705,7 @@ def main() -> int:
             return values
 
         compact_rows = []
-        field_names = {"Source": "source", "Format": "format",
-                       "Langue": "language"}
+        field_names = {"Source", "Format", "Langue"}
         stack = [compact_heads[0]]
         while stack:
             current = stack.pop()
@@ -713,7 +715,7 @@ def main() -> int:
                 title = current.get_title()
                 if title in field_names:
                     compact_rows.append(
-                        (title, rendered_compact_values(current, field_names[title]))
+                        (title, rendered_compact_values(current))
                     )
             child = current.get_first_child()
             while child is not None:
