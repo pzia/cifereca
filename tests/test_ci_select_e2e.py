@@ -443,6 +443,9 @@ class SelectionTests(unittest.TestCase):
         assert 'type(phase) is str and phase in closed_phases' in runner
         assert '"profile_b", "profile_a", "finish"' in runner
         assert '"closed_failure_phase"] = phase[0]' in source
+        assert '"reservation_commit"' in source
+        assert 'reserve_deadline[0] = monotonic() + 5.0' in source
+        assert 'if len(found) != 1 or not found[0].get_mapped():' in source
         assert "P1_4985_GTK_CLOSED_STAGE=" in source
 
     def test_p1_4985_real_mainwindow_reader_target_refresh_at_1366_and_1600(self):
