@@ -221,7 +221,7 @@ def test_duplicate_exact_registration_is_idempotent_and_changed_same_rev_refused
             replace(first, candidates=(b["catalog"],)),
         )
     with pytest.raises(ValueError, match="stale"):
-        b["service"].register(replace(first, revision=6))
+        _register(b, revision=6)
 
 
 def test_cross_scope_embedded_resource_cannot_be_registered(prepared):
