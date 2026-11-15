@@ -151,3 +151,58 @@ def test_other_explicit_fields_keep_their_own_filter_semantics():
     assert not matches(row, "Chroniques", field="collection")
     assert matches(row, ISBN_A, field="isbn", sources=("alpha",))
     assert not matches(row, ISBN_B, field="isbn", sources=("alpha",))
+
+
+@pytest.mark.parametrize("query", [
+    "botanique autrice",
+    "AUTRICE BOTANIQUE",
+    "de botanique",
+    "chroniques autrice",
+    "livre nebuleuse",
+    "9780306406157 botanique",
+])
+def test_all_terms_match_independently_across_attested_fields(query):
+    assert matches(ranked(), query)
+
+
+@pytest.mark.parametrize(("query", "expected"), [
+    ('"botanique abyssale"', True),
+    ('"botanique abyssale" autrice', True),
+    ('autrice "botanique abyssale"', True),
+    ('"botanique" "autrice"', True),
+    ('"botanique autrice"', False),
+    ('"livre nebuleuse"', False),
+    ('"botanique introuvable"', False),
+    ("botanique introuvable", False),
+    ('"botanique abyssale" introuvable', False),
+])
+def test_all_quoted_phrases_stay_within_one_attested_field(query, expected):
+    assert matches(ranked(), query) is expected
+
+
+def test_all_stopwords_do_not_select_every_unrelated_book():
+    row = ranked()
+    assert not matches(row, "du")
+    assert not matches(row, "de le des")
+    assert not matches(row, '"..."')
+    assert not matches(row, "---")
+    assert matches(row, 'de botanique')
+
+
+def test_all_never_joins_two_different_fields_to_forge_a_quoted_phrase():
+    row = ranked(title="Planetes", metadata={"subjects": ["Difficiles"]})
+    assert matches(row, "Planetes difficiles")
+    assert not matches(row, '"Planetes difficiles"')
+
+
+def test_quoted_phrase_and_terms_preserve_source_exact_isbn_guard():
+    row = ranked()
+    assert matches(row, '"botanique abyssale" 9780306406157', sources=("alpha",))
+    assert not matches(row, '"botanique abyssale" 9780140328721', sources=("alpha",))
+    assert matches(row, '"botanique abyssale" 9780140328721', sources=("beta",))
+
+
+def test_explicit_subject_field_still_requires_all_terms_not_phrase_parser():
+    row = ranked()
+    assert matches(row, "abyssale botanique", field="subject")
+    assert not matches(row, "autrice botanique", field="subject")

@@ -53,6 +53,45 @@ reste inconnue, jamais transformée en texte à indexer. Les valeurs de
 métadonnées volumineuses sont bornées ; ce filtre n'est pas un moteur de
 recherche globale ni une autorisation d'opération fournisseur.
 
+## Sémantique des mots et expressions du filtre global (P1-FINALISATION)
+
+Le filtre par défaut **Champ = Tous les champs** reprend la grammaire
+locale de Recherche : les mots non cités sont recherchés sans dépendre de
+leur ordre et peuvent se trouver dans **plusieurs champs bibliographiques
+distincts** du même candidat (ex. auteur et sujet). Les mots-outils français
+courants ne masquent pas les termes significatifs ; une requête composée
+uniquement de mots-outils conserve ses mots et ne sélectionne pas
+automatiquement toutes les lignes.
+
+Une **expression entre guillemets** doit apparaître de façon contiguë
+dans **une même valeur publique attestée** ; juxtaposer deux champs
+différents ne crée pas une expression bibliographique artificielle.
+Les termes et expressions peuvent être combinés, mais chaque terme doit
+être attesté pour que le résultat reste visible.
+
+Il n'y a **aucune recherche réseau ni reclassement** : le filtre utilise
+uniquement les champs déjà chargés et bornés par l'adaptateur Plugin. Les
+ISBN de variantes restent conditionnés au catalogue explicitement
+sélectionné ; les champs privés, URI et identifiants fournisseur ne sont
+pas indexés. Les champs explicitement choisis (Titre, Sujet, ISBN, etc.)
+gardent leurs restrictions propres. Ce correctif ne prétend pas reproduire
+le *score* de pertinence de la Recherche Core : il préserve l'ordre diversifié
+de Recommandations.
+
+### Preuve dans la vraie interface GTK (suite #6184)
+
+Le scénario existant `recommendations-detail-1024/1366/1600` exerce
+désormais `Gtk.SearchEntry` et le vrai `LocalQueryControls` : sujet
+« Astronomie » + auteur « Autrice Attestée » retrouvent la même ligne avec
+`astronomie autrice`, l'ordre inverse ou `"astronomie" autrice`.
+`"astronomie autrice"` n'en retrouve aucune : deux valeurs distinctes
+ne forment pas une expression citée. Après rétablissement de la recherche
+simple, le filtre explicite Titre doit toujours masquer le sujet. Les
+compteurs réels, la sélection et l'invariance du compteur de requêtes et de
+la génération sont vérifiés dans **la vraie interface**, sous Xvfb/XTEST.
+Les données restent synthétiques ; ceci ne remplace pas la revue visuelle
+sur les mêmes notices entre pages (#774).
+
 ## Recette et frontières
 
 `e2e/recommendations_detail_probe.py` vérifie le vrai widget GTK aux

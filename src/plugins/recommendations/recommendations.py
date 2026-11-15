@@ -344,6 +344,44 @@ def _local_recommendation_field_values(item: Any, field: str) -> tuple[str, ...]
     return tuple(observed)
 
 
+# Keep only the query grammar of Core Search's local all-fields filter.
+# Plugin code cannot import cifereca.core.search or its private GTK adapters.
+# Matching is over a bounded projection of already-loaded public values.
+_LOCAL_SEARCH_STOPWORDS = frozenset({
+    "a", "au", "aux", "d", "de", "des", "du", "en", "et", "l", "la",
+    "le", "les", "un", "une",
+})
+
+
+def _local_all_field_match(query: str, values: list[str]) -> bool:
+    """All query terms may span fields; quoted phrases must stay in one.
+
+    A phrase is never fabricated by concatenating different book fields.
+    Do not relax an all-stopword query into a match on every local book.
+    The caller is responsible for source-exact ISBNs and safe public values.
+    """
+    phrases = [
+        phrase for raw in re.findall(r'"([^"]+)"', query)
+        if (phrase := normalize(raw))
+    ]
+    remainder = re.sub(r'"[^"]+"', " ", query)
+    all_terms = normalize(remainder).split()
+    significant = [
+        term for term in all_terms if term not in _LOCAL_SEARCH_STOPWORDS
+    ]
+    terms = significant or (all_terms if not phrases else [])
+    if not terms and not phrases:
+        return False
+    fields = [
+        normalized for value in values
+        if type(value) is str and (normalized := normalize(value))
+    ]
+    return all(
+        any(token in field for field in fields)
+        for token in (*terms, *phrases)
+    )
+
+
 def _candidate_mapping_text(row: Mapping[str, Any], key: str) -> str:
     try:
         return _public_candidate_text(row.get(key), limit=2048)
@@ -1737,8 +1775,7 @@ class UxRecommendationsView:
                     return False
             except Exception:
                 return False
-        needle = normalize(text)
-        if needle:
+        if text.strip():
             item = ranked.item
             selected_field = getattr(controls, "filter_field", None)
             try:
@@ -1777,8 +1814,11 @@ class UxRecommendationsView:
                     "://", "?", "@", "=",
                 )):
                     values.append(publisher)
-                haystack = normalize(" ".join(values))
-                if needle not in haystack:
+                # Core Search accepts order-independent words across
+                # attested fields, but requires quoted phrases to occur in a
+                # single bibliographic value. Keep the current diversified
+                # ranking and never run a remote query from this local filter.
+                if not _local_all_field_match(text, values):
                     return False
             else:
                 values = (
@@ -1789,7 +1829,7 @@ class UxRecommendationsView:
                 if not values:
                     return False
                 haystack = normalize(" ".join(values))
-                tokens = needle.split()
+                tokens = normalize(text).split()
                 if field == "subject":
                     # Same one-character whole-word guard as Core Search.
                     if not all(

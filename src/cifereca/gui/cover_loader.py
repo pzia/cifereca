@@ -63,6 +63,21 @@ class CoverRequest:
         if child is not None:child.cancel()
 
 
+@dataclass(frozen=True, slots=True)
+class CoverMediaState:
+    """N3 physical evidence only; never a book, source or entitlement join.
+
+    `source_cached` and `preview_cached` mean validated signatures on disk,
+    not a GTK decode success. No URL, path, profile or cache key is exported.
+    """
+
+    source_kind: str
+    source_cached: bool
+    preview_cached: bool
+    width: int | None = None
+    height: int | None = None
+
+
 class CoverLoader:
     """Pipeline de couvertures asynchrone, borné, validé et mis en cache.
 
@@ -243,6 +258,67 @@ class CoverLoader:
             return self._supported_image_bytes(head)
         except OSError:
             return False
+
+    def probe_media(
+        self, url: str | None, *, width: int | None = None,
+        height: int | None = None,
+    ) -> CoverMediaState:
+        """Read-only N3 cache snapshot for an already-resolved cover URI.
+
+        Checks the same binary cache namespace and HiDPI preview key used
+        by load()/load_preview(). The probe never downloads, scans an EPUB,
+        caches a decision or associates any book with the image. A source
+        file can disappear between this snapshot and its GTK consumption.
+        """
+        if ((width is None) != (height is None)
+                or (width is not None and (
+                    type(width) is not int or not 1 <= width <= 2048
+                    or type(height) is not int or not 1 <= height <= 2048))):
+            raise ValueError("invalid cover preview dimensions")
+        if type(url) is not str or not url:
+            return CoverMediaState("none", False, False, width, height)
+
+        path: Path | None = None
+        kind = "unsupported"
+        try:
+            if url.startswith("data:"):
+                kind = "data"
+                # A data URI can occupy substantial memory; probing only
+                # tests the already-built content-hash path, never decodes it.
+                path = self._path(url)
+            elif url.startswith("file:"):
+                kind = "embedded"
+                parsed = urlsplit(url)
+                local = Path(unquote(parsed.path))
+                root = cover_cache_dir().resolve()
+                if (not parsed.netloc and not parsed.query
+                        and not parsed.fragment and not local.is_symlink()
+                        and local.resolve().parent == root
+                        and re.fullmatch(
+                            r"[a-f0-9]{64}\.(png|jpg|gif|webp|svg)", local.name,
+                        )):
+                    path = local
+            else:
+                absolute = self._absolute(url)
+                parsed = urlsplit(absolute)
+                if (parsed.scheme in ("http", "https") and parsed.hostname
+                        and parsed.username is None and parsed.password is None):
+                    kind = "remote"
+                    path = self._path(absolute)
+        except (OSError, ValueError, TypeError):
+            path = None
+
+        source_cached = bool(path is not None and self._valid_cache_file(path))
+        preview_cached = False
+        if source_cached and width is not None and height is not None:
+            try:
+                preview = preview_path(path, self.preview_root, width, height)
+                preview_cached = self._valid_cache_file(preview)
+            except (OSError, ValueError):
+                pass
+        return CoverMediaState(
+            kind, source_cached, preview_cached, width, height,
+        )
 
     def note_ui_applied(self) -> None:
         with self._lock:
