@@ -709,10 +709,13 @@ def _refresh_sync_page(self) -> None:
                 refreshed = capture_sync_action_scope(self, page_token=page_token)
                 if refreshed is not None and refreshed.identity_id == scope.identity_id:
                     self.refresh_library(False)
+            # After admission, sid is the immutable exact source route.
+            # Navigation invalidates GTK delivery, not the already accepted
+            # Core operation. The broker rechecks source/account ownership,
+            # enablement and consent when the queued worker actually runs.
             self.runner.submit(
                 f"Synchronisation {label}…",
-                lambda: broker.synchronize_source(sid)
-                if sync_action_scope_current(self, scope) else None,
+                lambda: broker.synchronize_source(sid),
                 completed, control=_button,
                 priority=TaskPriority.USER_ACTION, kind="source-sync",
             )
@@ -799,8 +802,9 @@ def _refresh_sync_page(self) -> None:
                         )
                 self.runner.submit(
                     "Prévisualisation locale…",
-                    lambda: broker.preview_local_materialization(sid)
-                    if sync_action_scope_current(self, scope) else None,
+                    # This is an admitted, exact-source read. Navigation
+                    # only invalidates the GTK projection in completed().
+                    lambda: broker.preview_local_materialization(sid),
                     completed, failed, control=button,
                     priority=TaskPriority.USER_ACTION, kind="sync-preflight",
                 )
@@ -965,12 +969,16 @@ def _refresh_sync_page(self) -> None:
                         def work(report):
                             # No widget access from the worker. Scope is a
                             # GTK-free identity/page generation predicate.
-                            if cancellation.is_set() or not current():
+                            # Authorization is the clicked, confirmed source
+                            # plus the Core broker's live source/grant lease.
+                            # A different GTK-selected profile is NOT
+                            # revocation of this already admitted operation.
+                            if cancellation.is_set():
                                 return None
 
                             class ScopedControl:
                                 def cancelled(self):
-                                    return cancellation.is_set() or not current()
+                                    return cancellation.is_set()
 
                                 def check_cancelled(self):
                                     if self.cancelled():
@@ -1061,8 +1069,9 @@ def _refresh_sync_page(self) -> None:
                         )
 
                 def prepare_work():
-                    if not current():
-                        return None
+                    # A queued, explicitly requested preparation keeps its
+                    # captured source; a stale GTK page cannot mint a
+                    # confirmation because prepared() still checks current().
                     try:
                         return broker.prepare_local_materialization(sid)
                     except Exception:
