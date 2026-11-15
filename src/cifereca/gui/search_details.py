@@ -161,8 +161,9 @@ def _publish_search_detail_cover(
     matching provider, credential, edition and docbase; homonymous results
     and duplicate supplier IDs are not image provenance.
     """
+    mode = getattr(self, "_search_mode", None)
     if (type(item) is not SearchResult or type(detail) is not ItemDetail
-            or getattr(self, "_search_mode", None) != "global"
+            or mode not in ("global", "local")
             or detail.source_provider != item.source_provider
             or detail.source_credential != item.source_credential
             or detail.record_id != item.record_id
@@ -175,9 +176,38 @@ def _publish_search_detail_cover(
     page = getattr(self, "search_page", None)
     selection = getattr(page, "selection", None)
     row = selection.get_selected_item() if selection is not None else None
-    if (not isinstance(row, BookListItem)
-            or getattr(self, "search_objects", {}).get(row.key) is not item):
+    if not isinstance(row, BookListItem):
         return
+    if mode == "global":
+        if getattr(self, "search_objects", {}).get(row.key) is not item:
+            return
+    else:
+        # A known-catalogue Search entry stays in local mode even after the
+        # user explicitly opens its provider holdings. Re-admit its *exact*
+        # Core v2 notice before publishing the resulting cover to that row.
+        # A title, ISBN, legacy catalogue row or foreign credential is NOT
+        # sufficient. The query/account generations were already checked in
+        # _apply_search_detail before reaching this publisher.
+        from ..core.known_catalog_provenance import known_catalog_search_result
+        current_identity = getattr(
+            getattr(self.service, "current_identity", None), "identity_id", None,
+        )
+        raw_known = getattr(self, "_search_local_objects", {}).get(row.key)
+        qualified = known_catalog_search_result(
+            raw_known, identity_id=current_identity,
+        )
+        if (qualified is None or (
+            qualified.id, qualified.source_provider, qualified.source_credential,
+            qualified.record_id, qualified.docbase,
+            qualified.source_collection, qualified.source_account_id,
+            qualified.revision_id,
+        ) != (
+            item.id, item.source_provider, item.source_credential,
+            item.record_id, item.docbase,
+            item.source_collection, item.source_account_id,
+            item.revision_id,
+        )):
+            return
     # Exactly scoped to the current row object and Core search/account epochs.
     record = (
         item, cover.url,

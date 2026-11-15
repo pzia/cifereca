@@ -178,11 +178,42 @@ def _render_search_results(self) -> int:
             media_format = str(item.get("media_format") or "").casefold()
             content_type = "audiobook" if media_format in audio_formats else "ebook"
             provider = str(item.get("provider_id") or "local")
+            cover_url = item.get("thumbnail_url")
+            # The selected *known catalogue v2* notice may have acquired a
+            # safe holdings image after this local Search list was built.
+            # Reuse N2 only after Core requalifies the exact same source under
+            # the captured reading identity; no title/ISBN/legacy-row join.
+            bridge = getattr(self, "_search_cover_bridge", None)
+            if bridge is not None:
+                from cifereca.gui.search_cover_bridge import SearchCoverBridge
+                from cifereca.core.known_catalog_provenance import (
+                    known_catalog_search_result,
+                )
+                identity_id = getattr(
+                    getattr(self.service, "current_identity", None),
+                    "identity_id", None,
+                )
+                if isinstance(bridge, SearchCoverBridge):
+                    exact_notice = known_catalog_search_result(
+                        item, identity_id=identity_id,
+                    )
+                    if exact_notice is not None:
+                        resolved_uri = bridge.selected_url(
+                            exact_notice, identity_id=identity_id,
+                            context=(
+                                getattr(self, "_identity_context_generation", None),
+                                getattr(self, "_search_generation", None),
+                                getattr(self.service, "_account_context_epoch", None),
+                                getattr(self.service, "_source_context_epoch", None),
+                            ),
+                        )
+                        if resolved_uri is not None:
+                            cover_url = resolved_uri
             local_rows.append(BookListItem(
                 key, str(item.get("title") or "Sans titre"), str(item.get("author") or ""),
                 " · ".join(x for x in [self._library_state_label(item), local_match_explanation(item, state.text, field=state.field)] if x),
                 self.service.provider_display_name(provider) if provider != "local" else "Local",
-                item.get("thumbnail_url"),
+                cover_url,
             ))
         self._attach_row_facets(local_rows, self._search_local_objects, self.search_controls)
         for row in local_rows:
