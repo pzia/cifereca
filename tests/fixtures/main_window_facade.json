@@ -18,7 +18,7 @@
     "async": false
   },
   "HistoryCoverResolver._key": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='provider', annotation=Name(id='str', ctx=Load())), arg(arg='record_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='author', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='year', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "args": "arguments(posonlyargs=[], args=[arg(arg='provider', annotation=Name(id='str', ctx=Load())), arg(arg='record_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='author', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='year', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='scope', annotation=Name(id='str', ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='')])",
     "returns": "Name(id='str', ctx=Load())",
     "decorators": [
       "staticmethod"
@@ -26,7 +26,7 @@
     "async": false
   },
   "HistoryCoverResolver.request": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='provider', annotation=Name(id='str', ctx=Load())), arg(arg='record_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='author', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='year', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='default_url', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='callback', annotation=Subscript(value=Name(id='Callable', ctx=Load()), slice=Tuple(elts=[List(elts=[BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))], ctx=Load()), Constant(value=None)], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='provider', annotation=Name(id='str', ctx=Load())), arg(arg='record_id', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='author', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='year', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='default_url', annotation=BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='callback', annotation=Subscript(value=Name(id='Callable', ctx=Load()), slice=Tuple(elts=[List(elts=[BinOp(left=Name(id='str', ctx=Load()), op=BitOr(), right=Constant(value=None))], ctx=Load()), Constant(value=None)], ctx=Load()), ctx=Load()))], kwonlyargs=[arg(arg='scope', annotation=Name(id='str', ctx=Load()))], kw_defaults=[Constant(value='')], defaults=[])",
     "returns": "Name(id='_MetaRequest', ctx=Load())",
     "decorators": [],
     "async": false
