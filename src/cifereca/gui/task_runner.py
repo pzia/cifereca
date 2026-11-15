@@ -223,6 +223,31 @@ class TaskRunner:
             else "failed"
         )
 
+    @staticmethod
+    def _manual_acsm_outcome(value: Any) -> str:
+        """Closed Core manual-import receipt; staging is not acquisition."""
+        if type(value) is not dict:
+            return "failed"
+        status = value.get("status")
+        if type(status) is not str:
+            return "failed"
+        if status == "attention_required":
+            return "pending"
+        if status in {"complete", "unchanged"}:
+            # A complete/unchanged receipt always carries a bounded path
+            # and acquisition reference from the Core's local ledger.
+            path = value.get("path")
+            acquisition = value.get("acquisition_id")
+            if (type(path) is str and 0 < len(path) <= 4096
+                    and "\\x00" not in path
+                    and type(acquisition) is str
+                    and acquisition.startswith("manual-acsm:")
+                    and len(acquisition) == len("manual-acsm:") + 32
+                    and all(char in "0123456789abcdef"
+                            for char in acquisition[len("manual-acsm:"):])):
+                return "success"
+        return "failed"
+
     def is_active_automatic_opening(self) -> bool:
         """Passive GTK-side gate for periodic inventories during opening Sync.
 
@@ -297,7 +322,7 @@ class TaskRunner:
             # Fixed, Core-owned task kinds already used by MainWindow.
             # Previously these appeared as "other" in local TRACE, making
             # timing samples impossible to attribute (#1741).
-            "history", "bookings", "search-known", "detail-cache", "transfer",
+            "history", "bookings", "search-known", "detail-cache", "transfer", "acsm-import",
             "adept-inventory", "adept-return", "loan-acquisition", "borrow",
             "obtain", "index", "provider-connect", "sync-audit", "source-consent",
             "identity", "maintenance-inspection",
@@ -471,6 +496,8 @@ class TaskRunner:
                 else (self._borrow_outcome(outcome[1]) if trace_kind == "borrow"
                       else self._local_transfer_outcome(outcome[1])
                       if trace_kind == "transfer"
+                      else self._manual_acsm_outcome(outcome[1])
+                      if trace_kind == "acsm-import"
                       else self._source_sync_outcome(outcome[1], trace_kind))
             )
             # Isolated legacy submit() adapters do not carry the class's
@@ -497,7 +524,7 @@ class TaskRunner:
             # a partial result or a genuine source-sync failure (#2888).
             detail = (
                 f" business_status={business_status}"
-                if trace_kind in {"source-sync", "borrow", "transfer", "opening-sync", "deep-sync"} else ""
+                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "opening-sync", "deep-sync"} else ""
             )
             # Only Core's explicitly closed BnF reason vocabulary may enter
             # the generic task receipt. Ignore arbitrary provider detail.
@@ -581,6 +608,10 @@ class TaskRunner:
                     if trace_kind == "transfer" and business_status == "blocked"
                     else "Copie locale non confirmée"
                     if trace_kind == "transfer"
+                    else "Import ACSM en attente — configuration DRM nécessaire"
+                    if trace_kind == "acsm-import" and business_status == "pending"
+                    else "Import ACSM non confirmé"
+                    if trace_kind == "acsm-import"
                     else "Synchronisation déjà en cours" if business_status == "busy"
                     else "Synchronisation en attente de livraison" if business_status == "pending"
                     else "Synchronisation bloquée" if business_status == "blocked"
@@ -605,7 +636,7 @@ class TaskRunner:
                     business_status == "success", feedback_error,
                 )
                 if (business_status in {"pending", "partial", "blocked", "busy", "cancelled"}
-                        and trace_kind in {"source-sync", "borrow", "transfer", "opening-sync", "deep-sync"}):
+                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "opening-sync", "deep-sync"}):
                     self.window._task_finished(*finish_args, business_status)
                 else:
                     self.window._task_finished(*finish_args)
