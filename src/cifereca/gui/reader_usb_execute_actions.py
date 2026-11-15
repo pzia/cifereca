@@ -246,7 +246,7 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
         def worker_scope_current() -> None:
             # Worker-thread check: read only atomic Python scope tokens, no
             # GTK widgets, models, signals or visual state. The originating
-            # button's unroot signal revokes the token on detail replacement.
+            # button's root-property notification revokes a detached detail.
             if (getattr(window, "_closed", False)
                     or getattr(window, "_reader_usb_execute_nonce", None) is not nonce
                     or getattr(window, "_reader_usb_execute_control", None) is not button
@@ -353,13 +353,16 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
             kind="maintenance-inspection", origin="user",
         )
 
-    def unrooted(_button):
-        # GTK main thread: replacing or leaving the selected detail revokes
-        # the exact clicked control. Closing a modal does not unroot it.
-        if getattr(window, "_reader_usb_execute_control", None) is button:
+    def root_changed(_button, _pspec):
+        # Gtk.Widget:root is an observable property, not a GObject signal
+        # named "unroot". Replacing a selected detail detaches its control.
+        root = getattr(button, "get_root", None)
+        if (callable(root) and root() is None
+                and getattr(window, "_reader_usb_execute_control", None)
+                    is button):
             window._reader_usb_execute_nonce = None
 
-    button.connect("unroot", unrooted)
+    button.connect("notify::root", root_changed)
     button.connect("clicked", clicked)
     detail.add_actions([button])
     return True
