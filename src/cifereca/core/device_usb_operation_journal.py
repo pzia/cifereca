@@ -153,4 +153,112 @@ class SqliteUsbOperationJournal:
             return result.rowcount == 1
 
 
-__all__ = ["SqliteUsbOperationJournal"]
+_MAX_PREVIEW_OPERATIONS = 1000
+
+
+def completed_usb_managed_receipts(
+    *, storage: Any, identity_id: str, device_id: str, fingerprint: str,
+) -> dict[str, UsbManagedReceipt]:
+    """Read exact *past* USB writes for a fresh advisory removal preview.
+
+    A completed journal record is historical provenance, NOT current presence
+    or a delete capability. The independent physical scan must also observe
+    the matching bytes/path before a removal candidate may be displayed.
+    Pending or completed removals invalidate their original copy receipt.
+    """
+    from .device_usb_copy_supervisor import UsbCopyJournalEntry, _coordinates
+    from .device_usb_preview import _sha
+
+    if (any(type(value) is not str or not value or len(value) > 128
+            for value in (identity_id, device_id, fingerprint))
+            or storage is None):
+        return {}
+    try:
+        # Do not initialize the journal or mutate SQLite during an advisory
+        # projection. The table might legitimately not exist yet.
+        with storage._lock, storage._connect() as db:
+            rows = db.execute(
+                "SELECT operation_id, payload, phase, target_path, fingerprint "
+                "FROM device_usb_operations WHERE device_id=? "
+                "ORDER BY operation_id LIMIT ?",
+                (device_id, _MAX_PREVIEW_OPERATIONS + 1),
+            ).fetchall()
+        if len(rows) > _MAX_PREVIEW_OPERATIONS:
+            return {}
+        copies: dict[str, list[tuple[str, UsbManagedReceipt]]] = {}
+        retired: set[str] = set()
+        pending_targets: set[str] = set()
+        for operation_id, payload, phase, target_path, stored_fingerprint in rows:
+            if (type(operation_id) is not str or type(payload) is not str
+                    or type(phase) is not str or type(target_path) is not str
+                    or type(stored_fingerprint) is not str):
+                return {}
+            entry = _decode(payload)
+            consent = entry.consent
+            if (consent.operation_id != operation_id
+                    or consent.device_id != device_id
+                    or consent.usb_fingerprint != stored_fingerprint
+                    or consent.target_relative_path.casefold() != target_path
+                    or entry.phase != phase):
+                return {}
+            if stored_fingerprint != fingerprint:
+                continue
+            if phase != "completed":
+                pending_targets.add(target_path)
+            if type(entry) is UsbRemovalJournalEntry:
+                if consent.identity_id == identity_id:
+                    retired.add(consent.copy_operation_id)
+                continue
+            if type(entry) is not UsbCopyJournalEntry or phase != "completed":
+                continue
+            rights = entry.rights
+            receipt = entry.receipt
+            pin = entry.pin
+            digest = consent.sha256
+            if (consent.identity_id != identity_id
+                    or type(consent.artifact_id) is not str
+                    or not _sha(digest)
+                    or consent.artifact_id != "sha256:" + digest
+                    or type(rights) is not UsbCopyRightsEvidence
+                    or rights.personal_usb_copy_permitted is not True
+                    or _coordinates(rights) != _coordinates(consent)
+                    or type(receipt) is not UsbManagedReceipt
+                    or receipt != UsbManagedReceipt(
+                        identity_id, device_id, fingerprint,
+                        consent.target_relative_path, digest,
+                    )
+                    or type(pin) is not UsbCopyRecoveryPin
+                    or (pin.identity_id, pin.device_id, pin.usb_fingerprint)
+                       != (identity_id, device_id, fingerprint)
+                    or (pin.target_relative_path, pin.sha256, pin.size)
+                       != (consent.target_relative_path, digest, entry.size)
+                    or pin.staged_name != ".cifereca-usb-" + operation_id + ".part"
+                    or type(entry.size) is not int or entry.size <= 0
+                    or type(pin.stage_version) is not tuple
+                    or len(pin.stage_version) != 5
+                    or type(entry.final_version) is not tuple
+                    or len(entry.final_version) != 5
+                    or entry.final_version[:-1] != pin.stage_version[:-1]):
+                # A corrupted completed proof is not a reason to erase other
+                # devices, but is never an admissible matching receipt.
+                continue
+            copies.setdefault(consent.artifact_id, []).append((operation_id, receipt))
+
+        result: dict[str, UsbManagedReceipt] = {}
+        for artifact_id, options in copies.items():
+            valid = [
+                receipt for operation_id, receipt in options
+                if operation_id not in retired
+                and receipt.relative_path.casefold() not in pending_targets
+            ]
+            # No arbitrary 'latest' winner across multiple completed copies.
+            if len(valid) == 1:
+                result[artifact_id] = valid[0]
+        return result
+    except (sqlite3.Error, OSError, ValueError, TypeError, AttributeError,
+            KeyError, OverflowError):
+        # Malformed SQLite state or a stale file never grants an operation.
+        return {}
+
+
+__all__ = ["SqliteUsbOperationJournal", "completed_usb_managed_receipts"]

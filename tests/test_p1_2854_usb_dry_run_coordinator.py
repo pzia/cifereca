@@ -754,3 +754,51 @@ def test_no_explicit_hardware_validation_is_claimed(tmp_path):
     assert result.status in ("device_unverified", "scope_unverified")
     assert result.scan_attested is False
     assert all(row.observed == "unknown" for row in result.rows)
+
+
+def test_explicit_usb_scan_joins_completed_receipt_for_remove_only(
+    tmp_path, monkeypatch,
+):
+    """The Core dry-run sees real managed receipts, but never deletes."""
+    from cifereca.core import device_usb_operation_journal as journal
+    from cifereca.core.device_usb_preview import UsbManagedReceipt
+
+    db, root, book, mount = setup(tmp_path, desired="remove")
+    observed = fake_scan(
+        files={ARTIFACT: UsbObservedFile(TARGET, DIGEST, True)},
+    )
+    monkeypatch.setattr(run, "scan_managed_usb", lambda **_: observed)
+    calls = []
+
+    def attested(**kwargs):
+        calls.append(kwargs)
+        return {ARTIFACT: UsbManagedReceipt(
+            "alice", "reader-a", "uuid-alice-0001", TARGET, DIGEST,
+        )}
+
+    monkeypatch.setattr(journal, "completed_usb_managed_receipts", attested)
+    before = deepcopy(db.device_placements(device_id="reader-a"))
+    result = inspect(db, root, mount)
+    assert result.status == "scanned" and result.scan_attested
+    assert len(result.rows) == 1
+    assert result.rows[0].action == "remove_candidate"
+    assert result.rows[0].reason == "managed_removal_requires_confirmation"
+    assert result.rows[0].executable is False
+    assert result.executable is False
+    assert len(calls) == 1
+    assert calls[0]["storage"] is db
+    assert (calls[0]["identity_id"], calls[0]["device_id"],
+            calls[0]["fingerprint"]) == (
+                "alice", "reader-a", "uuid-alice-0001",
+            )
+    assert db.device_placements(device_id="reader-a") == before
+    assert book.read_bytes() == PAYLOAD
+
+    # An unsupported/absent receipt cannot be promoted by the same scan.
+    monkeypatch.setattr(
+        journal, "completed_usb_managed_receipts", lambda **_: {},
+    )
+    blocked = inspect(db, root, mount)
+    assert blocked.rows[0].action == "blocked"
+    assert blocked.rows[0].reason == "unmanaged_or_changed_file"
+    assert blocked.rows[0].executable is False

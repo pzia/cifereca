@@ -330,7 +330,7 @@ def test_summary_never_mints_transfer_rights_or_leaks_raw_fields():
         report(rows=(row("upload_candidate"), row("skip"), row("blocked"))))
     assert "Support USB non attesté" in _summary(
         report(status="device_unverified", attested=False))
-    assert "indisponible" in _summary(
+    assert "retrait(s) à examiner" in _summary(
         report(rows=(row("remove_candidate"),)))
     assert "indisponible" in _summary(
         report(rows=(row("upload_candidate", executable=True),)))

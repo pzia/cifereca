@@ -20,6 +20,7 @@ _MAX_ROWS = 1000
 _MAX_BOOKS = 30000
 _ACTION_LABELS = {
     "upload_candidate": "Envoi à examiner · aucune copie effectuée",
+    "remove_candidate": "Retrait à examiner · confirmation distincte requise",
     "skip": "Aucune opération nécessaire",
     "verify": "Vérification nécessaire · aucune opération",
     "blocked": "Bloqué · aucune opération autorisée",
@@ -28,6 +29,10 @@ _REASON_LABELS = {
     "revalidate_before_usb_write": "Livre local et absence observés ; autorisation d'envoi non vérifiée",
     "identical_sha_observed": "Empreintes identiques lors de cet examen",
     "already_missing": "Absence observée à la destination prévue",
+    "managed_removal_requires_confirmation": (
+        "Reçu historique de copie Cifereca et fichier de même empreinte "
+        "observé ; propriété actuelle et retrait à revalider"
+    ),
     "device_observation_required": "Support non attesté ; présence inconnue",
     "target_path_unqualified": "Destination à définir avant tout envoi",
     "target_path_occupied": "Destination occupée par un autre fichier",
@@ -167,8 +172,6 @@ def project_reader_usb_decisions(
                 or row.observed not in _CURRENT
                 or type(row.observed) is not str):
             return fail()
-        # The Core currently never issues removals without a managed-write
-        # receipt; a synthetic future remove_candidate must not be presented.
         by_artifact[row.artifact_id] = row
     # Library may be filtered, showing fewer books than a full device scan.
     # Unknown/hidden artifacts are ignored entirely (no title, SHA or path).
@@ -201,6 +204,11 @@ def project_reader_usb_decisions(
         # text, raw paths or diagnostic identifiers from future consumers.
         reason = _REASON_LABELS.get(row.reason, "Vérification complémentaire nécessaire")
         if row.action == "upload_candidate" and row.observed != "missing":
+            return fail()
+        if row.action == "remove_candidate" and (
+            row.desired != "remove" or row.observed != "present"
+            or row.reason != "managed_removal_requires_confirmation"
+        ):
             return fail()
         if row.action == "skip" and row.observed == "unknown":
             return fail()
