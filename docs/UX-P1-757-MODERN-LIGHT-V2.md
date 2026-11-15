@@ -156,6 +156,14 @@ planches et la vérification du verdict refusent alors l'opération, sans
 revue dans l'espace privé, puis créer une grille neuve pour ces nouveaux PNG ;
 ne rien téléverser vers les artefacts CI publics.
 
+Le manifeste privé lie également la grille au `probe_evidence_sha256`,
+empreinte des **deux `screen.json` complets** après vérification des
+assertions GTK. Modifier les observations du probe sur le même HEAD et
+avec des PNG identiques invalide désormais une grille déjà remplie ;
+un ancien manifeste sans cette empreinte est refusé et requiert une
+nouvelle revue locale. L'empreinte du rapport ne remplace pas celle des
+PNG : les deux sont obligatoires.
+
 La valeur `capture_fingerprint_sha256` ne certifie pas l'accessibilité ni
 l'absence d'écarts visuels. Elle lie uniquement les observations humaines à
 la collection exacte des PNG vérifiés.
