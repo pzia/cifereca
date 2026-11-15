@@ -209,12 +209,32 @@ def _render_search_results(self) -> int:
                         )
                         if resolved_uri is not None:
                             cover_url = resolved_uri
-            local_rows.append(BookListItem(
+            view_row = BookListItem(
                 key, str(item.get("title") or "Sans titre"), str(item.get("author") or ""),
                 " · ".join(x for x in [self._library_state_label(item), local_match_explanation(item, state.text, field=state.field)] if x),
                 self.service.provider_display_name(provider) if provider != "local" else "Local",
                 cover_url,
-            ))
+            )
+            # Search-local only reuses an explicit Core owner+Artifact+
+            # Placement cover packet. An identical URL/title/ISBN/SHA does
+            # not let a catalogue notice or another identity borrow N2.
+            # Import inside this method: headless adapters replay its AST
+            # without module imports or GTK runtime.
+            from cifereca.core.local_cover_evidence import VerifiedLocalCoverEvidence
+            proof = item.get("_exact_local_cover_evidence")
+            owner = getattr(
+                getattr(self.service, "current_identity", None),
+                "identity_id", None,
+            )
+            if (type(proof) is VerifiedLocalCoverEvidence
+                    and proof.scope.identity_id == owner
+                    and proof.scope.identity_id == item.get("identity_id")
+                    and proof.scope.source_key == item.get("key")
+                    and proof.scope.artifact_id == item.get("artifact_id")
+                    and proof.scope.placement_id == item.get("placement_id")):
+                view_row._cover_local_evidence = proof
+                view_row._cover_document_ref = proof.scope
+            local_rows.append(view_row)
         self._attach_row_facets(local_rows, self._search_local_objects, self.search_controls)
         for row in local_rows:
             row._public_row_content = (
@@ -225,6 +245,14 @@ def _render_search_results(self) -> int:
                 bool(getattr(row, "action_callback", None)),
                 getattr(row, "thumbnail_url", None),
             )
+            proof = getattr(row, "_cover_local_evidence", None)
+            if proof is not None:
+                # The URI remains LAST for BookListItem.set_thumbnail_url's
+                # in-place presentation update, even when source changes.
+                signature = row._public_row_content
+                row._public_row_content = (
+                    *signature[:-1], proof, signature[-1],
+                )
         self.search_page.show_rows(local_rows)
         self._search_local_snapshot_dirty = False
         shown = len(local_rows)
