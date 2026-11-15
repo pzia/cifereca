@@ -27,6 +27,36 @@ _PAGINATION_CLASSES = frozenset({
     "next-page", "nextpage",
 })
 _PAGE_QUERY = re.compile(r"(?:^|&)(?:page|p|pageindex|offset)=[0-9]+(?:&|$)", re.I)
+_IMAGE_EXT = re.compile(r"\.(?:jpe?g|png|gif|webp)$", re.I)
+_MAX_ROW_IMAGES = 8
+
+
+def _public_same_tenant_cover(src: object) -> str | None:
+    """Accept only an exact book-anchor image on the observed 1409 host.
+
+    A relative cover is resolved against the already observed MyLoans page,
+    never a guessed CDN or a rewritten entitlement. HTTP, other tenants,
+    signed URLs and unknown image endpoints are not an image attestation.
+    """
+    if (type(src) is not str or not 0 < len(src) <= 1024
+            or src != src.strip()
+            or any(ord(ch) < 33 or ord(ch) == 127 or ch == "\\" for ch in src)):
+        return None
+    try:
+        uri = urljoin(MY_LOANS_URL, src)
+        parsed = urlsplit(uri)
+        if (len(uri) > 1024 or parsed.scheme != "https"
+                or parsed.hostname != "www.biblioaccess.com"
+                or parsed.username is not None or parsed.password is not None
+                or parsed.port not in (None, 443)
+                or parsed.query or parsed.fragment or "%" in parsed.path
+                or not _IMAGE_EXT.search(parsed.path)
+                or any(part in ("account", "fulfillment", "myloans", "download")
+                       for part in parsed.path.casefold().split("/"))):
+            return None
+        return uri
+    except (ValueError, TypeError):
+        return None
 
 
 class LoanPageError(ValueError):
@@ -50,6 +80,9 @@ class ObservedLoanRow:
     # Memory-only exact action URL from an authenticated MyLoans response.
     # The token is never repr()'d, persisted, or attached to a Core Loan.
     acsm_url: str | None = field(default=None, repr=False, compare=False)
+    # Optional descriptive image from the exact same catalogue book anchor.
+    # A thumbnail is never a delivery/entitlement or proof of a file.
+    thumbnail_url: str | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -130,6 +163,8 @@ class _ObservedRows(HTMLParser):
         self.logout_form_observed = False
         self.pagination_observed = False
         self._seen_refs = set()
+        self.anchor_depth = 0
+        self.anchor_book_id = None
 
     def handle_starttag(self, tag, attrs):
         values = dict(attrs)
@@ -173,8 +208,11 @@ class _ObservedRows(HTMLParser):
                 if len(self.rows) + self.partial_rows >= MAX_LOAN_ROWS:
                     raise LoanPageError("loans_page_row_limit")
                 self.row_depth = self.div_depth
+                self.anchor_depth = 0
+                self.anchor_book_id = None
                 self.row = {
                     "ref": ids[0], "titles": [], "dates": [], "book_ids": set(),
+                    "covers": set(), "cover_overflow": False,
                     "acsm": False, "acsm_url": None,
                     "delivery_kind": None, "ambiguous": False,
                 }
@@ -188,7 +226,18 @@ class _ObservedRows(HTMLParser):
             self._start_capture("title")
         elif tag == "span" and "jsDateEnd" in classes:
             self._start_capture("date")
+        elif tag == "img" and self.anchor_depth == 1 and self.anchor_book_id:
+            # No image from the menu, other books, download icon, or page
+            # exterior can become a loan cover. Keep the optional read bounded.
+            cover = _public_same_tenant_cover(values.get("src"))
+            if cover:
+                if len(self.row["covers"]) >= _MAX_ROW_IMAGES:
+                    self.row["cover_overflow"] = True
+                else:
+                    self.row["covers"].add((self.anchor_book_id, cover))
         elif tag == "a":
+            self.anchor_depth += 1
+            self.anchor_book_id = None
             href = values.get("href")
             if type(href) is not str or len(href) > 4096:
                 return
@@ -197,6 +246,8 @@ class _ObservedRows(HTMLParser):
                 book_id = book_id_from_url(target)
                 if book_id is not None:
                     self.row["book_ids"].add(book_id)
+                    if self.anchor_depth == 1:
+                        self.anchor_book_id = book_id
                 if self.download_depth:
                     kind = classify_loan_delivery(href)
                     if kind is not None:
@@ -233,6 +284,9 @@ class _ObservedRows(HTMLParser):
                 self.row["titles" if self.capture == "title" else "dates"].append(text)
                 self.capture = None
                 self.capture_data = []
+        if tag == "a" and self.row is not None:
+            self.anchor_depth = max(0, self.anchor_depth - 1)
+            self.anchor_book_id = None
         if tag == "div":
             if self.download_depth == self.div_depth:
                 self.download_depth = 0
@@ -245,6 +299,8 @@ class _ObservedRows(HTMLParser):
         self.row = None
         self.row_depth = 0
         self.download_depth = 0
+        self.anchor_depth = 0
+        self.anchor_book_id = None
         # A repeated product reference could contain different notice,
         # deadline or entitlement data. Never stage the first occurrence
         # and silently discard the conflicting second one: the entire
@@ -264,13 +320,24 @@ class _ObservedRows(HTMLParser):
         if (not row["ambiguous"]
                 and len(titles) == 1 and bool(titles[0])
                 and len(row["book_ids"]) == 1 and valid_date):
+            book_id = next(iter(row["book_ids"]))
+            admissible_images = {
+                url for linked_book, url in row["covers"]
+                if linked_book == book_id
+            }
+            image = (
+                next(iter(admissible_images))
+                if not row["cover_overflow"] and len(admissible_images) == 1
+                else None
+            )
             self.rows.append(ObservedLoanRow(
                 product_ref=row["ref"],
-                book_id=next(iter(row["book_ids"])),
+                book_id=book_id,
                 title=titles[0], due_at_local=dates[0],
                 acsm_offer_present=row["acsm"],
                 delivery_kind=row["delivery_kind"],
                 acsm_url=row["acsm_url"],
+                thumbnail_url=image,
             ))
         else:
             self.partial_rows += 1
