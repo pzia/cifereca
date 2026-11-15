@@ -400,6 +400,46 @@ class TaskRunner:
                 return "blocked"
         return "failed"
 
+    @staticmethod
+    def _loan_renew_outcome(value: Any) -> str:
+        """A submitted RenewLoans POST is never a verified new due date.
+
+        The Core returns only closed, no-private-data states. No renewal
+        worker can mint a completed-loan success from HTTP acceptance.
+        """
+        if type(value) is not dict:
+            return "failed"
+        status = value.get("status")
+        code = value.get("code")
+        retry = value.get("retry")
+        if (type(status) is not str or type(code) is not str
+                or type(retry) is not str
+                or type(value.get("provider_request_accepted")) is not bool
+                or value.get("provider_verified") is not False):
+            return "failed"
+        if (status == "submitted"
+                and code in ("renewal_provider_submitted",
+                             "renewal_previous_submission")
+                and value["provider_request_accepted"] is True
+                and retry == "verification_only"):
+            return "pending"
+        if (status == "verification_unavailable"
+                and code in ("renewal_previous_attempt_unverified",
+                             "loan_scope_changed",
+                             "renewal_provider_response_unverified",
+                             "renewal_checkpoint_unavailable")
+                and retry == "verification_only"):
+            return "pending"
+        if (status == "blocked"
+                and code in ("renewal_confirmation_required",
+                             "loan_scope_unverified", "loan_scope_changed",
+                             "loan_permission_unverified", "loan_read_unavailable",
+                             "renewal_checkpoint_unavailable", "loan_action_busy")
+                and value["provider_request_accepted"] is False
+                and retry == "explicit_only"):
+            return "blocked"
+        return "failed"
+
     def _business_outcome(self, value: Any, kind: str) -> str:
         """One exact Core receipt for worker metrics and GTK task feedback."""
         if kind == "borrow":
@@ -418,6 +458,8 @@ class TaskRunner:
             return self._borrow_verification_outcome(value)
         if kind == "loan-acquisition":
             return self._loan_acquisition_outcome(value)
+        if kind == "loan-renew":
+            return self._loan_renew_outcome(value)
         if kind == "acsm-stage":
             return self._explicit_acsm_stage_outcome(value)
         return self._source_sync_outcome(value, kind)
@@ -497,7 +539,7 @@ class TaskRunner:
             # Previously these appeared as "other" in local TRACE, making
             # timing samples impossible to attribute (#1741).
             "history", "bookings", "search-known", "detail-cache", "transfer", "materialize", "acsm-import", "lender-local-send", "lender-placement-check",
-            "adept-inventory", "adept-return", "loan-acquisition", "acsm-stage", "borrow", "borrow-verification",
+            "adept-inventory", "adept-return", "loan-acquisition", "acsm-stage", "borrow", "borrow-verification", "loan-renew",
             "obtain", "index", "provider-connect", "sync-audit", "source-consent",
             "identity", "maintenance-inspection",
         } else "other"
@@ -505,6 +547,12 @@ class TaskRunner:
             """Use the exact TaskRunner classifier; isolated submit adapters
             may only retain generic, non-authorizing compatibility tasks.
             """
+            # Old AST-only hosts inject a permissive generic dispatcher.
+            # Without this class-owned typed renewal classifier, that mock
+            # must never turn HTTP POST acceptance into a renewed loan.
+            if (trace_kind == "loan-renew"
+                    and not callable(getattr(self, "_loan_renew_outcome", None))):
+                return "failed"
             classify = getattr(self, "_business_outcome", None)
             if callable(classify):
                 return classify(value, trace_kind)
@@ -514,7 +562,7 @@ class TaskRunner:
             if trace_kind in {
                 "borrow", "transfer", "acsm-import", "acsm-stage",
                 "lender-local-send", "lender-placement-check",
-                "borrow-verification", "loan-acquisition", "materialize",
+                "borrow-verification", "loan-acquisition", "loan-renew", "materialize",
             }:
                 return "failed"
             legacy = getattr(self, "_source_sync_outcome", None)
@@ -709,7 +757,7 @@ class TaskRunner:
             # a partial result or a genuine source-sync failure (#2888).
             detail = (
                 f" business_status={business_status}"
-                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "lender-placement-check", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "opening-sync", "deep-sync"} else ""
+                if trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "lender-placement-check", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "loan-renew", "opening-sync", "deep-sync"} else ""
             )
             # Only Core's explicitly closed BnF reason vocabulary may enter
             # the generic task receipt. Ignore arbitrary provider detail.
@@ -827,6 +875,12 @@ class TaskRunner:
                     if trace_kind == "borrow-verification" and business_status == "blocked"
                     else "Vérification du prêt non confirmée"
                     if trace_kind == "borrow-verification"
+                    else "Prolongation transmise — échéance non vérifiée"
+                    if trace_kind == "loan-renew" and business_status == "pending"
+                    else "Demande de prolongation bloquée"
+                    if trace_kind == "loan-renew" and business_status == "blocked"
+                    else "Prolongation non confirmée"
+                    if trace_kind == "loan-renew"
                     else "Synchronisation déjà en cours" if business_status == "busy"
                     else "Synchronisation en attente de livraison" if business_status == "pending"
                     else "Synchronisation bloquée" if business_status == "blocked"
@@ -851,7 +905,7 @@ class TaskRunner:
                     business_status == "success", feedback_error,
                 )
                 if (business_status in {"pending", "partial", "blocked", "busy", "cancelled"}
-                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "lender-placement-check", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "opening-sync", "deep-sync"}):
+                        and trace_kind in {"source-sync", "borrow", "transfer", "acsm-import", "lender-local-send", "lender-placement-check", "borrow-verification", "materialize", "loan-acquisition", "acsm-stage", "loan-renew", "opening-sync", "deep-sync"}):
                     self.window._task_finished(*finish_args, business_status)
                 else:
                     self.window._task_finished(*finish_args)
