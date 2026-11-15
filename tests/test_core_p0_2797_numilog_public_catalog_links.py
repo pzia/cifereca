@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-from cifereca.core.search_orchestration import _numilog_public_catalog_url
+from functools import partial
+from cifereca.core.search_orchestration import _public_catalog_url
+
+project_public_url = partial(_public_catalog_url, provider_id="numilog")
 
 
 PROOF = "numilog.library_title_link"
@@ -25,8 +28,8 @@ PROOF = "numilog.library_title_link"
     "https://books.new-publisher.org/public/title.ebook",
 ])
 def test_exact_adapter_proof_retains_safe_public_https_without_domain_whitelist(url):
-    assert _numilog_public_catalog_url(url, evidence=PROOF) == url
-    assert _numilog_public_catalog_url(url) is None
+    assert project_public_url(url, evidence=PROOF) == url
+    assert project_public_url(url) is None
 
 
 @pytest.mark.parametrize("url", [
@@ -48,7 +51,7 @@ def test_exact_adapter_proof_retains_safe_public_https_without_domain_whitelist(
     "https://books.new-publisher.org/1234/valid-book.ebook\r\nHost: x",
 ])
 def test_unsafe_or_signed_notice_rejected_even_with_source_marker(url):
-    assert _numilog_public_catalog_url(url, evidence=PROOF) is None
+    assert project_public_url(url, evidence=PROOF) is None
 
 
 @pytest.mark.parametrize("evidence", [
@@ -56,13 +59,13 @@ def test_unsafe_or_signed_notice_rejected_even_with_source_marker(url):
     True, 1, "legacy_receipt",
 ])
 def test_unattested_or_weak_product_evidence_does_not_persist(evidence):
-    assert _numilog_public_catalog_url(
+    assert project_public_url(
         "https://www.numilog.com/1234/valid-book.ebook", evidence=evidence,
     ) is None
 
 
 def test_query_free_public_covers_remain_generic_but_signed_covers_do_not():
-    assert _numilog_public_catalog_url(
+    assert project_public_url(
         "https://cdn.another-publisher.org/cover/abc.webp", cover=True,
     ) == "https://cdn.another-publisher.org/cover/abc.webp"
     for url in (
@@ -71,7 +74,7 @@ def test_query_free_public_covers_remain_generic_but_signed_covers_do_not():
         "https://127.0.0.1/cover.jpg",
         "https://cdn.another-publisher.org/../private.jpg",
     ):
-        assert _numilog_public_catalog_url(url, cover=True) is None
+        assert project_public_url(url, cover=True) is None
 
 
 @pytest.mark.parametrize("provider", [
@@ -164,3 +167,9 @@ def test_generic_public_cover_keeps_nonprivate_paths(path):
     from cifereca.core.search_orchestration import _shared_catalogue_cover_url
     url = "https://cdn.new-publisher.org" + path
     assert _shared_catalogue_cover_url(url) == url
+
+
+def test_supplier_specific_compatibility_bridge_is_retired_from_core():
+    from cifereca.core import search_orchestration
+    assert not hasattr(search_orchestration, "_numilog_public_catalog_url")
+    # All retained public-URL proof tests use the generic producer-qualified API.
