@@ -92,9 +92,10 @@ def test_stale_review_is_visible_and_invalidates_cli(tmp_path, capsys):
     assert result["stale_reviews"] == ["site-nonexistent"]
     assert main(["--root", str(tmp_path), "--registry", str(ledger),
                  "--json"]) == 1
-    assert json.loads(capsys.readouterr().out)["stale_reviews"] == [
-        "site-nonexistent"
-    ]
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["stale_reviews"] == ["site-nonexistent"]
+    assert "Stale business-review IDs:" in captured.err
+    assert "site-nonexistent" in captured.err
 
 
 def test_move_is_not_counted_as_executed_debt_removed(tmp_path):
