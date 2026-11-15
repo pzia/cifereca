@@ -541,6 +541,27 @@ def main():
         state["p1_774_filter_retry"] = 0
         report["p1_774_phase"] = "keyboard_focus"
         assert query.entry.get_mapped()
+        # #4761: a physical Ctrl+F from the list must focus THIS plugin's
+        # LocalQueryControls, not the Core Search view's hidden entry.
+        page = view._master._page
+        assert page.listview.get_mapped()
+        assert page.listview.grab_focus()
+        assert not search_entry_has_native_focus(query.entry)
+        state["device"].key("Control_L", True)
+        state["device"].key("f", True)
+        state["device"].key("f", False)
+        state["device"].key("Control_L", False)
+        later(220, verify_page_local_ctrl_f)
+
+    def verify_page_local_ctrl_f():
+        view = state["view"]
+        query = view._query_controls
+        assert search_entry_has_native_focus(query.entry)
+        assert query.entry.get_text() == ""
+        assert view._generation == state["p1_774_filter_generation"]
+        assert not state["searches"]
+        report["checks"]["P1_4761_ctrl_f_focuses_local_filter_real_gtk"] = True
+        # Keep the established physical XTEST typing probe unchanged.
         state["device"].click_widget(query.entry)
         later(160, type_filter_by_keyboard)
 
