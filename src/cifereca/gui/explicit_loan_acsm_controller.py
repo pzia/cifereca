@@ -210,7 +210,7 @@ def prepare_explicit_loan_acsm(
                 action_error_message(error), "Téléchargement ACSM",
             ),
             control=control, priority=TaskPriority.USER_ACTION,
-            kind="loan-acquisition",
+            kind="acsm-stage",
         )
 
     first.connect("response", chosen)
