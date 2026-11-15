@@ -590,7 +590,12 @@ class DetailPanel(Gtk.Box):
                 continue
             rows = [(field.label, text_or_dash(field.value)) for field in section.fields]
             if rows:
-                if section.title == "Détail":
+                # The neutral plugin model already declares per-value
+                # affordances (author, language, copy). Preserve those types
+                # in Catalogue as well as Search's Détail; otherwise the
+                # shared renderer silently drops its own copy/search actions.
+                # Other contextual sections remain passive.
+                if section.title == "Détail" or section.title == "Catalogue":
                     self._group(section.title, rows, fields=section.fields)
                 else:
                     self._group(section.title, rows)

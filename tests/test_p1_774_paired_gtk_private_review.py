@@ -53,6 +53,9 @@ def _one(root: Path, surface: str, sha: str = SHA, appearance: str = "light") ->
                 if surface == "search" else
                 "P1_4761_recommendations_public_subject_in_real_gtk_detail"
             ): True,
+            **({
+                "P1_4761_recommendations_typed_catalogue_author_gtk": True,
+            } if surface == "recommendations" else {}),
         },
         "p1_774_paired_book": module.verified_fixture_receipt(),
         geom_key: {
@@ -232,6 +235,31 @@ def test_missing_real_gtk_subject_prevents_same_book_visual_receipt(tmp_path, su
     with pytest.raises(module.ReviewError, match="sujet commun"):
         module.build_review(tmp_path, sizes=SIZES)
     assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+def test_missing_real_gtk_catalogue_author_action_refuses_review(tmp_path):
+    _pair(tmp_path)
+    report_path = tmp_path / "recommendations-detail-1024/screen.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["checks"].pop("P1_4761_recommendations_typed_catalogue_author_gtk")
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="détail GTK"):
+        module.build_review(tmp_path, sizes=SIZES)
+    assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+def test_stale_catalogue_author_action_invalidates_completed_review(tmp_path):
+    _pair(tmp_path)
+    module.build_review(tmp_path, sizes=SIZES)
+    checklist = _human_review(tmp_path)
+    before = checklist.read_bytes()
+    report_path = tmp_path / "recommendations-detail-1024/screen.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["checks"]["P1_4761_recommendations_typed_catalogue_author_gtk"] = False
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="détail GTK"):
+        module.verify_completed_review(tmp_path, sizes=SIZES)
+    assert checklist.read_bytes() == before
 
 
 def test_stale_detail_assertion_must_not_reuse_completed_human_review(tmp_path):

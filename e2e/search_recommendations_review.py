@@ -140,9 +140,19 @@ def _report_and_image(
             if surface == "search"
             else "P1_4761_recommendations_public_subject_in_real_gtk_detail"
         )
+        # Search exposes a real author facet; Recommendations must also
+        # keep a keyboard-usable public author query affordance in its
+        # Catalogue fields. Only the Recommendations probe emits this check.
+        catalogue_actions_ok = (
+            surface != "recommendations"
+            or report["checks"].get(
+                "P1_4761_recommendations_typed_catalogue_author_gtk"
+            ) is True
+        )
         if (report["checks"].get(paired_check) is not True
                 or report["checks"].get(heading_check) is not True
                 or report["checks"].get(subject_check) is not True
+                or not catalogue_actions_ok
                 or report.get("p1_774_paired_book") != verified_fixture_receipt()):
             raise ReviewError(
                 "Source/édition, détail GTK ou sujet commun non attesté"
