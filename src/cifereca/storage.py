@@ -3197,11 +3197,21 @@ class Storage:
             account_id=account_id,
         )
         with self._lock, self._connect() as db:
-            db.execute(
+            db.execute("BEGIN IMMEDIATE")
+            revoked = db.execute(
                 "DELETE FROM adept_borrower_grants WHERE provider_id=? "
                 "AND credential_id=? AND account_id=?",
                 scope,
             )
+            # A v16 revocation must never reactivate an archived Paris v15
+            # grant for the same source. Keep that row readable as historical
+            # evidence, but retire its *authority* in the same transaction.
+            if scope[0] == "paris" and revoked.rowcount:
+                db.execute(
+                    "INSERT OR IGNORE INTO paris_adept_grant_retirements "
+                    "(credential_id,account_id,retired_at) VALUES (?,?,?)",
+                    (scope[1], scope[2], int(time.time())),
+                )
 
     def paris_borrower_adept_binding_put(
         self, *, credential_id: str, account_id: str, borrower_identity_id: str,
@@ -3224,16 +3234,23 @@ class Storage:
             return None
         with self._lock, self._connect() as db:
             row = db.execute(
-                "SELECT connection_identity_id,borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at "
-                "FROM paris_borrower_adept_bindings WHERE credential_id=? AND account_id=?",
+                "SELECT b.connection_identity_id,b.borrower_identity_id,"
+                "b.profile_id,b.confirmed_by,b.confirmed_at,b.updated_at,"
+                "EXISTS(SELECT 1 FROM paris_adept_grant_retirements AS r "
+                "WHERE r.credential_id=b.credential_id AND r.account_id=b.account_id) "
+                "FROM paris_borrower_adept_bindings AS b "
+                "WHERE b.credential_id=? AND b.account_id=?",
                 (credential, borrower),
             ).fetchone()
         if row is None:
             return None
-        return dict(zip(
-            ("connection_identity_id", "borrower_identity_id", "profile_id", "confirmed_by", "confirmed_at", "updated_at"),
-            row,
-        ))
+        return {
+            **dict(zip(
+                ("connection_identity_id", "borrower_identity_id", "profile_id",
+                 "confirmed_by", "confirmed_at", "updated_at"), row[:6],
+            )),
+            "retired_for_authority": bool(row[6]),
+        }
 
     def paris_borrower_adept_bindings(
         self, *, credential_id: str | None = None,
