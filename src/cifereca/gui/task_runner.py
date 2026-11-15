@@ -186,6 +186,43 @@ class TaskRunner:
             return "cancelled"
         return "failed"
 
+    @staticmethod
+    def _local_transfer_outcome(value: Any) -> str:
+        """Only the Core's closed independent local-copy receipt may succeed.
+
+        A GTK callback can receive a normal return value on refused copy,
+        stale source or failed physical verification. Those are *business*
+        outcomes, not proof of successful transfer. Never trust arbitrary
+        plugin truthiness or status subclasses.
+        """
+        if type(value) is not dict:
+            return "failed"
+        status = value.get("status")
+        if type(status) is not str:
+            return "failed"
+        if status == "blocked":
+            return "blocked"
+        if status != "complete" or value.get("retry_borrow") is not False:
+            return "failed"
+        # Validate every source-controlled scalar before equality, not just
+        # status: a str subclass can override __eq__ or __hash__.
+        expected = (
+            ("loan", "not_attempted"),
+            ("delivery", "present"),
+            ("transfer", "completed"),
+            ("reason_code", "independent_local_copy_completed"),
+        )
+        for field, wanted in expected:
+            candidate = value.get(field)
+            if type(candidate) is not str or candidate != wanted:
+                return "failed"
+        copy = value.get("copy")
+        return (
+            "success"
+            if type(copy) is str and copy in {"created", "already_present"}
+            else "failed"
+        )
+
     def is_active_automatic_opening(self) -> bool:
         """Passive GTK-side gate for periodic inventories during opening Sync.
 
@@ -260,7 +297,7 @@ class TaskRunner:
             # Fixed, Core-owned task kinds already used by MainWindow.
             # Previously these appeared as "other" in local TRACE, making
             # timing samples impossible to attribute (#1741).
-            "history", "bookings", "search-known", "detail-cache",
+            "history", "bookings", "search-known", "detail-cache", "transfer",
             "adept-inventory", "adept-return", "loan-acquisition", "borrow",
             "obtain", "index", "provider-connect", "sync-audit", "source-consent",
             "identity", "maintenance-inspection",
@@ -432,6 +469,8 @@ class TaskRunner:
                 ("cancelled" if isinstance(outcome[1], Cancelled) else "failed")
                 if outcome[0] == "error"
                 else (self._borrow_outcome(outcome[1]) if trace_kind == "borrow"
+                      else self._local_transfer_outcome(outcome[1])
+                      if trace_kind == "transfer"
                       else self._source_sync_outcome(outcome[1], trace_kind))
             )
             # Isolated legacy submit() adapters do not carry the class's
@@ -458,7 +497,7 @@ class TaskRunner:
             # a partial result or a genuine source-sync failure (#2888).
             detail = (
                 f" business_status={business_status}"
-                if trace_kind in {"source-sync", "borrow", "opening-sync", "deep-sync"} else ""
+                if trace_kind in {"source-sync", "borrow", "transfer", "opening-sync", "deep-sync"} else ""
             )
             # Only Core's explicitly closed BnF reason vocabulary may enter
             # the generic task receipt. Ignore arbitrary provider detail.
@@ -538,6 +577,10 @@ class TaskRunner:
                     if trace_kind == "borrow" and business_status == "cancelled"
                     else "Emprunt non confirmé"
                     if trace_kind == "borrow" and business_status != "success"
+                    else "Copie locale bloquée"
+                    if trace_kind == "transfer" and business_status == "blocked"
+                    else "Copie locale non confirmée"
+                    if trace_kind == "transfer"
                     else "Synchronisation déjà en cours" if business_status == "busy"
                     else "Synchronisation en attente de livraison" if business_status == "pending"
                     else "Synchronisation bloquée" if business_status == "blocked"
@@ -562,7 +605,7 @@ class TaskRunner:
                     business_status == "success", feedback_error,
                 )
                 if (business_status in {"pending", "partial", "blocked", "busy", "cancelled"}
-                        and trace_kind in {"source-sync", "borrow", "opening-sync", "deep-sync"}):
+                        and trace_kind in {"source-sync", "borrow", "transfer", "opening-sync", "deep-sync"}):
                     self.window._task_finished(*finish_args, business_status)
                 else:
                     self.window._task_finished(*finish_args)
