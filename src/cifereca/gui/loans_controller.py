@@ -252,6 +252,15 @@ def _render_loans(self) -> None:
             # the permission to display this exact owner-specific source.
             item._cover_document_ref = evidence.scope
             item._cover_local_evidence = evidence
+        else:
+            # The Loan DTO itself may attest its direct supplier image. A
+            # stronger origin/EPUB from Library never gets downgraded to it.
+            from .loan_supplier_document_cover_bridge import exact_supplier_loan_cover
+            supplier = exact_supplier_loan_cover(self, loan, displayed=display)
+            if supplier is not None:
+                item._cover_document_ref = supplier.document
+                item._cover_loan_supplier_evidence = supplier
+                item._loan_source_item = loan
         # MasterDetailPage.show_rows has an append-only fast path when keys
         # stay identical. A new exact local cover for the same loan must
         # invalidate that presentation (and repaint the mapped Gtk.ListView),
@@ -265,6 +274,8 @@ def _render_loans(self) -> None:
             # Do not run the URL-only in-place repaint optimization when a
             # documentary association changes. Force cell rebind at N2.
             item._public_row_content += (evidence,)
+        elif getattr(item, "_cover_loan_supplier_evidence", None) is not None:
+            item._public_row_content += (item._cover_loan_supplier_evidence,)
         ranked_rows.append((due.sort_key, item))
     ranked_rows.sort(key=lambda item: item[0])
     rows = [row for _rank, row in ranked_rows]
@@ -315,7 +326,11 @@ def _render_loans(self) -> None:
             if not show_attested_loan_cover(
                 self, fresh, lambda: _loan_display_cover(self, fresh),
             ):
-                self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
+                from .loan_supplier_document_cover_bridge import show_supplier_loan_cover
+                if not show_supplier_loan_cover(
+                    self, fresh, lambda: _loan_display_cover(self, fresh),
+                ):
+                    self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
 
 
 def _loan_selected(self, row: BookListItem | None) -> None:
@@ -327,7 +342,11 @@ def _loan_selected(self, row: BookListItem | None) -> None:
         if not show_attested_loan_cover(
             self, loan, lambda: _loan_display_cover(self, loan),
         ):
-            self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
+            from .loan_supplier_document_cover_bridge import show_supplier_loan_cover
+            if not show_supplier_loan_cover(
+                self, loan, lambda: _loan_display_cover(self, loan),
+            ):
+                self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
         self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
             'source_credential':loan.source_credential,'record_id':loan.record_id})
         self._add_facets(self.loan_page.detail, {'source_provider':loan.source_provider,
@@ -402,7 +421,11 @@ def _loans_refreshed(self, rows):
             if not show_attested_loan_cover(
                 self, fresh, lambda: _loan_display_cover(self, fresh),
             ):
-                self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
+                from .loan_supplier_document_cover_bridge import show_supplier_loan_cover
+                if not show_supplier_loan_cover(
+                    self, fresh, lambda: _loan_display_cover(self, fresh),
+                ):
+                    self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
         else:self.loan_page.detail.empty(
             "Prêt non retrouvé dans cette actualisation",
             "La réponse peut être vide ou partielle ; la disparition du prêt "
