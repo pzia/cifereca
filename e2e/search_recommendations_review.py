@@ -47,7 +47,7 @@ def _regular(path: Path, *, limit: int | None = None) -> None:
 
 def _report_and_image(
     root: Path, width: int, size: tuple[int, int], surface: str,
-) -> tuple[str, Path, str]:
+) -> tuple[str, Path, str, str]:
     from PIL import Image
 
     prefix, stage, field, backend, required_check, geometry_key = SURFACES[surface]
@@ -77,6 +77,11 @@ def _report_and_image(
     sha = report.get("git_sha")
     if not isinstance(sha, str) or SHA_PATTERN.fullmatch(sha) is None:
         raise ReviewError("SHA Git de recette absent ou invalide")
+    # The probes record the *observed* Adw.StyleManager state at capture
+    # time; Search and Recommendations must NOT be compared across themes.
+    appearance = report.get("appearance")
+    if type(appearance) is not str or appearance not in ("light", "dark"):
+        raise ReviewError("Apparence GTK de capture non attestée")
     if not isinstance(report.get("checks"), dict) or (
         report["checks"].get(required_check) is not True
     ):
@@ -101,6 +106,8 @@ def _report_and_image(
     if len(captures) != 1:
         raise ReviewError("Capture de référence absente ou dupliquée")
     entry = captures[0]
+    if entry.get("appearance") != appearance:
+        raise ReviewError("Apparence GTK incohérente entre étapes et rapport")
     name = entry.get(field)
     digest = entry.get("sha256")
     if name != f"{stage}.png" or not isinstance(digest, str) or (
@@ -119,31 +126,37 @@ def _report_and_image(
             image.verify()
     except (OSError, ValueError) as exc:
         raise ReviewError("Image de capture illisible") from exc
-    return sha, image_path, actual
+    return sha, image_path, actual, appearance
 
 
 def verified_pair(
     root: Path, *, sizes: dict[int, tuple[int, int]] = SIZES,
     expected_sha: str | None = None,
-) -> tuple[str, str, dict[int, dict[str, Path]]]:
+    expected_appearance: str | None = None,
+) -> tuple[str, str, str, dict[int, dict[str, Path]]]:
     root = root.resolve(strict=True)
     all_images: dict[int, dict[str, Path]] = {}
     commits: set[str] = set()
+    appearances: set[str] = set()
     fingerprint = hashlib.sha256()
     for width, size in sorted(sizes.items()):
         images = {}
         for surface in ("search", "recommendations"):
-            sha, path, image_sha = _report_and_image(root, width, size, surface)
+            sha, path, image_sha, appearance = _report_and_image(root, width, size, surface)
             commits.add(sha)
+            appearances.add(appearance)
             images[surface] = path
             fingerprint.update(
-                f"{width}:{surface}:{image_sha}\n".encode("ascii")
+                f"{width}:{surface}:{appearance}:{image_sha}\n".encode("ascii")
             )
         all_images[width] = images
     if len(commits) != 1 or (expected_sha is not None
                              and commits != {expected_sha}):
         raise ReviewError("Captures issues de HEAD différents ou périmés")
-    return next(iter(commits)), fingerprint.hexdigest(), all_images
+    if len(appearances) != 1 or (expected_appearance is not None
+                                 and appearances != {expected_appearance}):
+        raise ReviewError("Captures GTK clair/sombre incompatibles")
+    return next(iter(commits)), fingerprint.hexdigest(), next(iter(appearances)), all_images
 
 
 def _private_file(folder: Path, name: str) -> Path:
@@ -155,7 +168,7 @@ def _private_file(folder: Path, name: str) -> Path:
     return path
 
 
-def _sheet(images: dict[str, Path], target: Path, width: int) -> None:
+def _sheet(images: dict[str, Path], target: Path, width: int, appearance: str) -> None:
     from PIL import Image, ImageDraw
 
     tile_width, margin, header = 660, 16, 36
@@ -169,7 +182,7 @@ def _sheet(images: dict[str, Path], target: Path, width: int) -> None:
     for index, surface in enumerate(("search", "recommendations")):
         left = margin + index * (tile_width + margin)
         draw.text((left + 4, margin + 8),
-                  f"{width} px - {surface} - GTK X11", fill=(20, 30, 40))
+                  f"{width} px - {surface} - GTK X11 - {appearance}", fill=(20, 30, 40))
         with Image.open(images[surface]) as picture:
             tile = picture.convert("RGB").resize(
                 (tile_width, tile_height), Image.Resampling.LANCZOS,
@@ -182,9 +195,11 @@ def _sheet(images: dict[str, Path], target: Path, width: int) -> None:
 def build_review(
     root: Path, *, sizes: dict[int, tuple[int, int]] = SIZES,
     expected_sha: str | None = None,
+    expected_appearance: str | None = None,
 ) -> dict[str, object]:
-    sha, fingerprint, images = verified_pair(
+    sha, fingerprint, appearance, images = verified_pair(
         root, sizes=sizes, expected_sha=expected_sha,
+        expected_appearance=expected_appearance,
     )
     output = root.resolve(strict=True) / "search-recommendations-private-review"
     if output.is_symlink():
@@ -200,15 +215,17 @@ def build_review(
             recorded = json.loads(manifest.read_text(encoding="utf-8"))
             if (recorded.get("git_sha") != sha
                     or recorded.get("capture_fingerprint_sha256") != fingerprint
+                    or recorded.get("appearance") != appearance
                     or recorded.get("widths") != sorted(sizes)):
                 raise ReviewError("Recette modifiée : préserver la grille privée antérieure")
         elif checklist.exists():
             raise ReviewError("Grille de revue privée sans manifeste")
         for width, paths in images.items():
-            _sheet(paths, _private_file(output, f"pair-{width}.png"), width)
+            _sheet(paths, _private_file(output, f"pair-{width}.png"), width, appearance)
         receipt: dict[str, object] = {
             "status": "VISUAL_REVIEW_REQUIRED",
             "git_sha": sha, "capture_fingerprint_sha256": fingerprint,
+            "appearance": appearance,
             "widths": sorted(sizes), "verified_source_captures": 2 * len(sizes),
         }
         manifest.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
@@ -228,9 +245,11 @@ def build_review(
 def verify_completed_review(
     root: Path, *, sizes: dict[int, tuple[int, int]] = SIZES,
     expected_sha: str | None = None,
+    expected_appearance: str | None = None,
 ) -> dict[str, object]:
-    sha, fingerprint, _images = verified_pair(
+    sha, fingerprint, appearance, _images = verified_pair(
         root, sizes=sizes, expected_sha=expected_sha,
+        expected_appearance=expected_appearance,
     )
     output = root.resolve(strict=True) / "search-recommendations-private-review"
     if output.is_symlink() or not output.is_dir():
@@ -243,6 +262,7 @@ def verify_completed_review(
     if (manifest.get("status") != "VISUAL_REVIEW_REQUIRED"
             or manifest.get("git_sha") != sha
             or manifest.get("capture_fingerprint_sha256") != fingerprint
+            or manifest.get("appearance") != appearance
             or manifest.get("widths") != sorted(sizes)
             or manifest.get("verified_source_captures") != 2 * len(sizes)):
         raise ReviewError("Grille et captures ne correspondent plus")
@@ -276,6 +296,7 @@ def verify_completed_review(
         raise ReviewError("Revue humaine incomplète")
     receipt: dict[str, object] = {
         "status": "CHECKLIST_VERIFIED", "git_sha": sha,
+        "appearance": appearance,
         "capture_fingerprint_sha256": fingerprint,
         "checklist_sha256": hashlib.sha256(raw).hexdigest(),
         "reviewed_widths": len(seen), "findings": failures,
@@ -296,6 +317,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path("e2e-artifacts"))
     parser.add_argument("--verify-checklist", action="store_true")
+    parser.add_argument("--appearance", choices=("light", "dark"), required=True,
+                        help="Apparence GTK réellement attendue : jamais inférée de la demande")
     args = parser.parse_args()
     try:
         sha = subprocess.check_output(
@@ -305,9 +328,13 @@ def main() -> int:
         if SHA_PATTERN.fullmatch(sha) is None:
             raise ReviewError("HEAD Git invalide")
         if args.verify_checklist:
-            result = verify_completed_review(args.root, expected_sha=sha)
+            result = verify_completed_review(
+                args.root, expected_sha=sha, expected_appearance=args.appearance,
+            )
         else:
-            result = build_review(args.root, expected_sha=sha)
+            result = build_review(
+                args.root, expected_sha=sha, expected_appearance=args.appearance,
+            )
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         # Errors are closed strings, not raw report bodies or GTK exceptions.
         detail = str(exc) if isinstance(exc, ReviewError) else "entrée privée invalide"

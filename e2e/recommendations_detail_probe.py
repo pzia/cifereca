@@ -84,6 +84,7 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--width", type=int, choices=(1024, 1366, 1600), required=True)
     parser.add_argument("--scale", type=int, choices=(1, 2), default=1)
+    parser.add_argument("--appearance", choices=("light", "dark"))
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -136,6 +137,12 @@ def main():
         )
 
     def capture(stage):
+        # Observe Adwaita's active theme for the actual capture. Merely
+        # passing a command-line label would not prove the GTK state.
+        appearance = "dark" if Adw.StyleManager.get_default().get_dark() else "light"
+        if args.appearance is not None:
+            assert appearance == args.appearance, "GTK appearance mismatch"
+        report["appearance"] = appearance
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"]).convert("RGB")
         expected_height = {1024: 768, 1366: 900, 1600: 1000}[args.width]
         report["p1_774_phase"] = "display_geometry"
@@ -166,6 +173,7 @@ def main():
         view = state["view"]
         report["steps"].append({
             "stage": stage, "image": image_path.name,
+            "appearance": appearance,
             "sha256": hashlib.sha256(image_path.read_bytes()).hexdigest(),
             "identity": view.selected_identity_id(),
             "rows": view._master._page.store.get_n_items(),
@@ -1463,6 +1471,11 @@ def main():
 
     def activate(_app):
         nonlocal cover_loader
+        if args.appearance is not None:
+            Adw.StyleManager.get_default().set_color_scheme(
+                Adw.ColorScheme.FORCE_LIGHT if args.appearance == "light"
+                else Adw.ColorScheme.FORCE_DARK
+            )
         window = Adw.ApplicationWindow(application=app)
         window.set_default_size(args.width - 40, {1024: 720, 1366: 850, 1600: 930}[args.width])
         window._closed = False
