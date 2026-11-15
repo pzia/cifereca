@@ -347,17 +347,20 @@ def main() -> int:
         from cifereca.core.device_usb_dry_run import UsbDryRun
         from cifereca.core.device_usb_preview import UsbPreviewRow
         from cifereca.core.device_usb_sync_engine import UsbSyncResult
-        from cifereca.core import device_usb_operation_journal as operation_journal
         from cifereca.gui import reader_usb_preview_actions as preview_actions
         fake_volume[0] = MountedUsbVolume(
             "uuid-alice-0001", work / "synthetic-unmounted-volume",
             "vfat", "Synthetic (not hardware)", 100_000_000, 8, 5, 71,
         )
         preview_actions._discover_mounted_binding = lambda **_: fake_volume[0]
-        operation_journal.completed_usb_managed_copy_operations = lambda **_: {
-            artifact_id: "a" * 32,
-        }
         class FakeOnlyUsbBroker:
+            def completed_copy_operation(self, **kwargs):
+                assert kwargs == {
+                    "identity_id": "alice", "device_id": "reader-a",
+                    "artifact_id": artifact_id,
+                }
+                return "a" * 32
+
             def preview(self, **kwargs):
                 assert kwargs["identity_id"] == "alice"
                 assert kwargs["device_id"] == "reader-a"
