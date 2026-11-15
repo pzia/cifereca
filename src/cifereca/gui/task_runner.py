@@ -304,6 +304,22 @@ class TaskRunner:
             return "failed"
         return "success"
 
+    def _business_outcome(self, value: Any, kind: str) -> str:
+        """One exact Core receipt for worker metrics and GTK task feedback."""
+        if kind == "borrow":
+            return self._borrow_outcome(value)
+        if kind == "transfer":
+            return self._local_transfer_outcome(value)
+        if kind == "acsm-import":
+            return self._manual_acsm_outcome(value)
+        if kind == "lender-local-send":
+            return self._lender_local_send_outcome(value)
+        if kind == "materialize":
+            return self._materialize_outcome(value)
+        if kind == "borrow-verification":
+            return self._borrow_verification_outcome(value)
+        return self._source_sync_outcome(value, kind)
+
     def is_active_automatic_opening(self) -> bool:
         """Passive GTK-side gate for periodic inventories during opening Sync.
 
@@ -473,23 +489,7 @@ class TaskRunner:
             outcome_status = "success"
             try:
                 value = fn(report) if with_progress else fn()
-                # Worker-phase telemetry must use the same exact Core
-                # receipt as GTK delivery. A normal-returning blocked or
-                # unverified operation is not a successful worker.
-                business = (
-                    self._borrow_outcome(value) if trace_kind == "borrow"
-                    else self._local_transfer_outcome(value)
-                    if trace_kind == "transfer"
-                    else self._manual_acsm_outcome(value)
-                    if trace_kind == "acsm-import"
-                    else self._lender_local_send_outcome(value)
-                    if trace_kind == "lender-local-send"
-                    else self._materialize_outcome(value)
-                    if trace_kind == "materialize"
-                    else self._borrow_verification_outcome(value)
-                    if trace_kind == "borrow-verification"
-                    else self._source_sync_outcome(value, trace_kind)
-                )
+                business = self._business_outcome(value, trace_kind)
                 if business != "success":
                     outcome_status = "failed"
                     if trace_kind in {"borrow", "opening-sync", "deep-sync"}:
@@ -562,18 +562,7 @@ class TaskRunner:
             business_status = (
                 ("cancelled" if isinstance(outcome[1], Cancelled) else "failed")
                 if outcome[0] == "error"
-                else (self._borrow_outcome(outcome[1]) if trace_kind == "borrow"
-                      else self._local_transfer_outcome(outcome[1])
-                      if trace_kind == "transfer"
-                      else self._manual_acsm_outcome(outcome[1])
-                      if trace_kind == "acsm-import"
-                      else self._lender_local_send_outcome(outcome[1])
-                      if trace_kind == "lender-local-send"
-                      else self._materialize_outcome(outcome[1])
-                      if trace_kind == "materialize"
-                      else self._borrow_verification_outcome(outcome[1])
-                      if trace_kind == "borrow-verification"
-                      else self._source_sync_outcome(outcome[1], trace_kind))
+                else self._business_outcome(outcome[1], trace_kind)
             )
             # Isolated legacy submit() adapters do not carry the class's
             # helper methods. Those adapters cannot attest lock contention,
