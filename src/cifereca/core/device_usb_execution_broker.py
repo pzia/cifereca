@@ -220,7 +220,7 @@ class ReaderUsbExecutionBrokerImpl:
 
     def execute_one(
         self, *, confirmation: UsbRemovalConsent | UsbCopyConsent,
-        mountpoint: Path,
+        mountpoint: Path, expected_profile_epoch: int,
         check_cancelled: Callable[[], None] | None = None,
     ) -> UsbSyncResult:
         """Run *one* confirmed managed removal; no broad implicit sync.
@@ -229,15 +229,22 @@ class ReaderUsbExecutionBrokerImpl:
         Uploads are fail-closed until an independent Core source-rights
         authority can issue their proof, rather than deriving rights from
         the local file, acquisition history or selected reader.
+
+        The UI-pinned account/profile epoch is mandatory. It must be the
+        generation *at confirmation*, not the current value looked up in
+        this worker: switching A→B→A before execution revokes consent.
         """
         blocked = UsbSyncResult("blocked")
         if type(confirmation) is UsbCopyConsent:
             return blocked
         if (type(confirmation) is not UsbRemovalConsent
+                or type(expected_profile_epoch) is not int
+                or expected_profile_epoch < 0
                 or (check_cancelled is not None and not callable(check_cancelled))):
             return blocked
         scope = self._scope(confirmation.identity_id, confirmation.device_id)
-        if (scope is None or confirmation.usb_fingerprint != scope.fingerprint
+        if (scope is None or scope.epoch != expected_profile_epoch
+                or confirmation.usb_fingerprint != scope.fingerprint
                 or not self._mount_attested(scope, mountpoint)):
             return blocked
         try:
