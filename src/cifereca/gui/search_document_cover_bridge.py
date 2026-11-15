@@ -150,8 +150,12 @@ def exact_remote_search_document(
         # the producer's private stamp; do not borrow another edition's N2.
         from ..core.notice_search_cover_producer import admit_public_search_cover
         from ..core.notice_cover_projection import notice_cover_document_ref
+        viewer_id = getattr(
+            getattr(getattr(window, "service", None), "current_identity", None),
+            "identity_id", None,
+        )
         expected = admit_public_search_cover(
-            item, identity_id=scope.identity_id or "",
+            item, identity_id=viewer_id,
             observed_at=1, public_cover_url=catalogue_facts.catalogue.url,
         )
         if (expected is not None
