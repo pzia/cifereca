@@ -42,6 +42,7 @@ def host(row, *, identity="alice", capable=True):
     events = []
     detail = NS(
         show_summary=lambda **k: events.append(("url", k)),
+        empty=lambda title, description: events.append(("empty", title, description)),
     )
     if capable:
         detail.show_local_presentation = lambda presentation, *, cover_evidence: (
@@ -81,8 +82,9 @@ def test_read_only_foreign_profile_never_uses_exact_local_packet(exact):
     window, events = host(row, identity="bob")
     recent_selected(window, NS(key="placement:alice"), Path=Path,
                     format_recent_timestamp=lambda *_a, **_kw: "Date")
-    assert events[0][0] == "url"  # No Core admission for foreign profile.
-    assert events[0][1]["thumbnail"] is None  # No downgrade to foreign origin.
+    assert events[0][0] == "empty"  # Stale profile cannot reveal title/path.
+    assert "Exact" not in repr(events)
+    assert row["thumbnail_url"] not in repr(events)
 
 
 @pytest.mark.parametrize("mutation", [
