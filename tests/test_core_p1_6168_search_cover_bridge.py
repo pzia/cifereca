@@ -213,3 +213,39 @@ def test_search_result_renderer_consumes_exact_cache_after_legacy_fast_path():
     assert "self._render_search_results()" not in actual
     port = (ROOT / "search_host_port.py").read_text(encoding="utf-8")
     assert '"_search_cover_bridge"' in port
+
+
+def test_actual_global_search_renderer_uses_core_decision_after_row_rebuild():
+    from tests.test_search_results_view import _host, Row
+
+    class CaptureRow(Row):
+        def __init__(self, key, title, author, meta, source, thumbnail, **options):
+            super().__init__(key, title, author, meta, source, thumbnail, **options)
+            self.thumbnail_url = thumbnail
+
+    window = _host()
+    window._identity_context_generation = CONTEXT[0]
+    window._search_generation = CONTEXT[1]
+    window.service._account_context_epoch = CONTEXT[2]
+    window.service._source_context_epoch = CONTEXT[3]
+    window._search_local_objects = {}
+    window._remote_search_results = [item()]
+    window._search_cover_bridge = SearchCoverBridge()
+    assert window._search_cover_bridge.publish(
+        window._remote_search_results[0],
+        detail(window._remote_search_results[0]),
+        identity_id=IDENTITY, context=CONTEXT,
+    )
+    window._render_search_results.__func__.__globals__["BookListItem"] = CaptureRow
+    # A freshly projected DTO with the same exact source must receive the
+    # already admitted cover, without a new holdings request or selection.
+    window._remote_search_results = [replace(window._remote_search_results[0])]
+    window._render_search_results()
+    rows = window.search_page.show_rows.call_args.args[0]
+    assert len(rows) == 1 and rows[0].thumbnail_url == COVER
+
+    # The same source after a switched account epoch must be blank.
+    window.service._account_context_epoch = CONTEXT[2] + 1
+    window._render_search_results()
+    rows = window.search_page.show_rows.call_args.args[0]
+    assert len(rows) == 1 and rows[0].thumbnail_url is None
