@@ -11,26 +11,46 @@ from inspect import getattr_static
 from types import SimpleNamespace
 
 
-def account_for_loan(loan, *, accounts, configuration_error):
-    """Resolve an explicitly recorded borrower; never guess from navigation."""
-    borrower = getattr(loan, 'source_account_id', None)
-    # Historical missing provenance is descriptive only. In particular,
-    # current_account/primary/first account must never supply a borrower to a
-    # later provider GET, ACSM acquisition or return mutation.
-    if type(borrower) is not str:
+def account_for_loan(
+    loan, *, accounts, configuration_error, primary_alias: str | None = None,
+):
+    """Resolve one exact borrower under an installed source alias convention.
+
+    A provider-declared primary alias is descriptive only. It maps to an
+    *empty-ID* primary account; it cannot override a real upstream reader
+    with that literal ID. Duplicate matches are never first-row-wins.
+    """
+    borrower = getattr(loan, "source_account_id", None)
+    provider = getattr(loan, "source_provider", None)
+    credential = getattr(loan, "source_credential", None)
+    if (type(borrower) is not str or type(provider) is not str or not provider
+            or type(credential) is not str or not credential):
         raise configuration_error('Compte emprunteur non attesté pour ce prêt')
-    candidates = [a for a in accounts if a.provider_id == loan.source_provider and a.credential_id == loan.source_credential]
-    # Paris stores a stable sentinel while the real primary Account has an empty UID.
-    if borrower == 'primary':
-        primary = next((a for a in candidates if a.is_primary), None)
-        if primary is not None:
-            return primary
-    for account in candidates:
-        if account.unique_id == borrower:
-            return account
-    # The original lookup error interpolated borrower ID, credential,
-    # provider and loan ID directly into a UI-facing exception. This
-    # information may include signed URLs or personal account data.
+    # A malformed optional alias grants no special lookup. An exact upstream
+    # account ID can still match, independently of this display convention.
+    if (type(primary_alias) is not str or not primary_alias
+            or len(primary_alias) > 128 or "\x00" in primary_alias):
+        primary_alias = None
+    matches = []
+    for account in accounts:
+        account_provider = getattr(account, "provider_id", None)
+        account_credential = getattr(account, "credential_id", None)
+        account_id = getattr(account, "unique_id", None)
+        if (type(account_provider) is not str or account_provider != provider
+                or type(account_credential) is not str or account_credential != credential
+                or type(account_id) is not str):
+            continue
+        exact = account_id == borrower
+        aliased = (
+            primary_alias is not None and borrower == primary_alias
+            and account_id == "" and getattr(account, "is_primary", None) is True
+        )
+        if exact or aliased:
+            matches.append(account)
+    if len(matches) == 1:
+        return matches[0]
+    # Never leak a loan ID, credential, borrower ID or signed URL through
+    # the public exception; duplicate and missing are equally unproven.
     raise configuration_error('Compte emprunteur introuvable pour ce prêt')
 
 
