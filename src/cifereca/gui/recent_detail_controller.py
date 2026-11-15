@@ -32,8 +32,13 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
     cover_document = None
     thumbnail = item.get("thumbnail_url")
     facts = item.get("_exact_local_cover_evidence")
-    owner = getattr(getattr(window.service, "current_identity", None), "identity_id", None)
     if facts is not None:
+        # Most headless and historical Recent rows have no Core cover packet
+        # and no connected service. Never touch account context for them.
+        owner = getattr(
+            getattr(getattr(window, "service", None), "current_identity", None),
+            "identity_id", None,
+        )
         if (type(facts) is VerifiedLocalCoverEvidence
                 and facts.scope.identity_id == owner
                 and facts.scope.artifact_id == item.get("artifact_id")
@@ -61,7 +66,9 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
         ],
     )
     if cover_document is not None:
-        summary_kwargs["cover_document"] = cover_document
+        prepare = getattr(detail, "prepare_document_cover", None)
+        if callable(prepare):
+            prepare(cover_document)
     detail.show_summary(**summary_kwargs)
     window._add_book_notice(detail,item)
     window._add_local_book_actions(detail,item)
