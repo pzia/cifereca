@@ -53,7 +53,8 @@ def test_confirmed_placement_requires_distinct_send_confirmation():
     assert display() is True
     assert display() is False
     assert native.call_count == 0 and Dialog.made == []
-    _, work, completed, _fail, _kw = h.window.runner.jobs[0]
+    _, work, completed, _fail, kw = h.window.runner.jobs[0]
+    assert kw["kind"] == "lender-placement-check"
     result = work()
     lookup.assert_called_once_with(
         requesting_identity_id="bob", borrowing_account=w.account,
@@ -67,7 +68,8 @@ def test_confirmed_placement_requires_distinct_send_confirmation():
     Dialog.made[0].respond("send")
     assert len(h.window.runner.jobs) == 2
     assert native.call_count == 0
-    _, send_work, done, _failed, _kw = h.window.runner.jobs[1]
+    _, send_work, done, _failed, send_kw = h.window.runner.jobs[1]
+    assert send_kw["kind"] == "lender-local-send"
     assert send_work()["status"] == "complete"
     native.assert_called_once_with(
         requesting_identity_id="bob", borrowing_account=w.account,
