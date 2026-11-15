@@ -45,10 +45,11 @@ def _summary(result: object) -> str:
     ):
         return "Aperçu indisponible. Aucun transfert effectué."
     tally = Counter(row.action for row in rows)
-    if set(tally) - {"upload_candidate", "skip", "verify", "blocked"}:
+    if set(tally) - {"upload_candidate", "remove_candidate", "skip", "verify", "blocked"}:
         return "Aperçu indisponible. Aucun transfert effectué."
     return (
         f"Aperçu USB ponctuel · {tally['upload_candidate']} envoi(s) à examiner · "
+        f"{tally['remove_candidate']} retrait(s) à examiner · "
         f"{tally['skip']} identique(s) · {tally['verify']} à vérifier · "
         f"{tally['blocked']} bloqué(s). "
         "Aucun transfert ni retrait ; toute opération exige une nouvelle vérification."
