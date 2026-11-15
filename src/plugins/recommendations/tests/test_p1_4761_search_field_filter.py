@@ -49,7 +49,10 @@ def test_field_filter_only_reads_selected_book_fact_and_is_reversible():
     field[0] = "title"
     assert not view._matches(astronomy) and view._matches(other)
     field[0] = "all"
-    assert not view._matches(astronomy) and view._matches(other)
+    # The default Search-style all-fields scope now includes the safe
+    # bibliographic subject as well as title/author; explicit Sujet/Titre
+    # above remain selective and must not leak into each other.
+    assert view._matches(astronomy) and view._matches(other)
     text[0] = "alice"
     assert view._matches(astronomy)
     text[0] = ""
