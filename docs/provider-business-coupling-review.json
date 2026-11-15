@@ -455,7 +455,7 @@
       "reachability": "productive"
     },
     {
-      "id": "site-8a3bfdc2f84626252dc83278",
+      "id": "site-60a9d11031d9610ffda9a089",
       "classification": "safety_guard_pending_contract",
       "journey": "Explicit reacquisition of a protected Paris digital loan",
       "productive_caller": "LibraryService.reacquire_digital_loan -> _reacquire_digital_loan_impl under acquisition lock",
@@ -467,12 +467,12 @@
         "tests/test_core_p0_5851_dual_grant_conflict.py"
       ],
       "retirement_pr": "",
-      "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto.",
+      "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto. Revue réancrée après la garde native de réacquisition explicite #6245 : exigence d'admission Paris conservée, aucun retrait AST ni permission nouvelle.",
       "decision_group_id": "loan.explicit-reacquire-adept-borrower",
       "reachability": "productive"
     },
     {
-      "id": "site-49e03148fdc5ed80a1610367",
+      "id": "site-6eb4621cd5425b09c6a9cee5",
       "classification": "safety_guard_pending_contract",
       "journey": "Explicit reacquisition of a protected Paris digital loan",
       "productive_caller": "LibraryService.reacquire_digital_loan -> _reacquire_digital_loan_impl under acquisition lock",
@@ -484,7 +484,7 @@
         "tests/test_core_p0_5851_dual_grant_conflict.py"
       ],
       "retirement_pr": "",
-      "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto.",
+      "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto. Revue réancrée après la garde native de réacquisition explicite #6245 : exigence d'admission Paris conservée, aucun retrait AST ni permission nouvelle.",
       "decision_group_id": "loan.explicit-reacquire-adept-borrower",
       "reachability": "productive"
     },
@@ -1948,6 +1948,19 @@
         "tests/test_core_p0_1120_profile_receipt_projection.py"
       ],
       "pr": "#6218"
+    },
+    {
+      "id": "guard-explicit-reacquisition-native-source-lease-before-staging",
+      "journey": "Explicit digital-loan reacquisition: pinned source and borrower grant from eligibility through rights staging and historical acquisition receipts",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Capture native provider/credential/borrower/loan/edition/medium before eligibility; revalidate after all storage and ADEPT borrower callbacks and after initial rights staging, never select a mismatched previous acquisition or invoke fulfillment under another loan's scope. Preserve historical complete-acquisition artifact metadata only for an exact native source and path.",
+      "remaining_debt": "Provider-specific Paris borrower admission and historical storage migration writers remain; no new grant/GET/POST, no AST retirement or migration retirement.",
+      "tests": [
+        "tests/test_core_p0_5975_explicit_reacquire_native_scope.py",
+        "tests/test_core_p0_5975_explicit_reacquire_borrower_refusal.py",
+        "tests/test_core_0919.py"
+      ],
+      "pr": "#6245"
     }
   ],
   "retained_legacy_migrations": [

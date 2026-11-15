@@ -4011,22 +4011,22 @@ class LibraryService:
             return result
 
     def _reacquire_digital_loan_impl(self, loan: Loan) -> dict[str, Any]:
-        """Explicit full recovery, serialized with automatic acquisitions.
+        """Explicit recovery of one pinned native borrower and loan source.
 
-        Preserve a usable previous acquisition/binding on failed re-acquisition.
-        A successful re-acquisition publishes a distinct file if one exists.
+        Read-only eligibility is not a grant. Never persist new rights, query
+        the provider, or rewrite an old acquisition when an external callback
+        has retargeted the loan, credential, borrower or edition.
         """
-        # Keep the existing can_download_loan admission contract: other
-        # real callers/test fixtures may override it to authorize an explicit
-        # action. Only AFTER that boolean rejects the action do we inspect
-        # the read-only eligibility explanation. This is local state only,
-        # never an extra provider GET or a new eligibility veto.
+        from .core.explicit_reacquire_source import ExplicitReacquireSource
+
+        # Pin BEFORE eligibility: even a read-only eligibility callback may
+        # mutate the caller-owned Loan. Preserve all historical eligibility
+        # refusal codes and avoid a second provider GET.
+        source = ExplicitReacquireSource.capture(loan)
         if not self.can_download_loan(loan):
             try:
                 eligibility = self.loan_download_eligibility(loan)
             except Exception:
-                # The diagnostic explanation must never change the existing
-                # business refusal, including legacy overrides/mocks.
                 eligibility = None
             code = eligibility.get("code") if type(eligibility) is dict else None
             if (
@@ -4038,63 +4038,146 @@ class LibraryService:
                     "provider_disconnected", "download_unsupported",
                 }
             ):
-                # State can change between the boolean decision and its
-                # explanation. Do not invent a more specific provider cause.
                 code = "unclassified_error"
             raise _LoanDownloadAdmissionRefused(code)
+
+        def source_refusal() -> dict[str, Any]:
+            return {
+                "status": "attention_required",
+                "loan_id": source.loan_id if source is not None else None,
+                "code": "adept_identity_unproven",
+                "reason": "source_scope_changed" if source is not None
+                          else "source_scope_unproven",
+                "retry": "explicit_only",
+            }
+
+        def source_intact() -> bool:
+            return source is not None and source.current(loan)
+
+        if not source_intact():
+            return source_refusal()
         try:
             with InterProcessLock(acquisition_lock_file()):
+                if not source_intact():
+                    return source_refusal()
                 bound_identity_id = self.storage.identity_for_connection(
-                    loan.source_provider, loan.source_credential
+                    source.provider_id, source.credential_id,
                 )
-                identity = self.identity_by_id(bound_identity_id)
-                if identity is None:
+                if not source_intact():
+                    return source_refusal()
+                identity = (
+                    self.identity_by_id(bound_identity_id)
+                    if type(bound_identity_id) is str and bound_identity_id
+                    else None
+                )
+                if not source_intact():
+                    return source_refusal()
+                if (identity is None
+                        or type(getattr(identity, "identity_id", None)) is not str
+                        or identity.identity_id != bound_identity_id):
                     return {
-                        "status": "attention_required", "loan_id": loan.id,
+                        "status": "attention_required", "loan_id": source.loan_id,
                         "code": "adept_identity_unproven", "retry": "explicit_only",
                     }
-                if str(loan.source_provider).lower() == "paris":
-                    _, borrower_code = self._paris_adept_identity_for_loan(
-                        loan, connection_identity_id=identity.identity_id,
+
+                def admission_intact() -> bool:
+                    return (
+                        source_intact()
+                        and type(getattr(identity, "identity_id", None)) is str
+                        and identity.identity_id == bound_identity_id
                     )
-                    # Only None attests successful borrower admission.
-                    # A falsey/malformed external refusal must never bypass
-                    # the veto or enter the public receipt unfiltered.
+
+                if source.provider_id.casefold() == "paris":
+                    _, borrower_code = self._paris_adept_identity_for_loan(
+                        loan, connection_identity_id=bound_identity_id,
+                    )
+                    if not admission_intact():
+                        return source_refusal()
+                    # Literal None is the only approved borrower grant.
                     if borrower_code is not None:
                         return {
-                            "status": "attention_required", "loan_id": loan.id,
+                            "status": "attention_required", "loan_id": source.loan_id,
                             "code": adept_borrower.public_borrower_refusal_code(
-                                borrower_code
+                                borrower_code,
                             ), "retry": "explicit_only",
                         }
-                    if self._cross_identity_loan_conflict(
-                        self.storage.acquisitions(provider_id=loan.source_provider),
-                        provider_loan_id=loan.id, identity_id=identity.identity_id,
-                        entitlements=self.storage.entitlements(
-                            provider_id=loan.source_provider, state="active"
-                        ),
-                    ):
+                    conflict_rows = self.storage.acquisitions(
+                        provider_id=source.provider_id,
+                    )
+                    if not admission_intact():
+                        return source_refusal()
+                    active_rights = self.storage.entitlements(
+                        provider_id=source.provider_id, state="active",
+                    )
+                    if not admission_intact():
+                        return source_refusal()
+                    conflict = self._cross_identity_loan_conflict(
+                        conflict_rows, provider_loan_id=source.loan_id,
+                        identity_id=bound_identity_id, entitlements=active_rights,
+                    )
+                    if not admission_intact():
+                        return source_refusal()
+                    if conflict:
                         return {
-                            "status": "attention_required", "loan_id": loan.id,
-                            "code": "adept_loan_identity_conflict", "retry": "explicit_only",
+                            "status": "attention_required", "loan_id": source.loan_id,
+                            "code": "adept_loan_identity_conflict",
+                            "retry": "explicit_only",
                         }
-                previous = [r for r in self.storage.acquisitions(provider_id=loan.source_provider)
-                            if r.get("identity_id") == identity.identity_id and r.get("credential_id") == loan.source_credential
-                            and str(r.get("account_id") or "") == str(loan.source_account_id or "")
-                            and str(r.get("item_id") or "") == str(loan.record_id or loan.id) and r.get("status") == "complete"]
-                self._persist_active_loans(identity.identity_id, [loan], reconcile_missing=False)
-                result = self._acquire_active_loan_automatically(loan, force_refresh=True)
+
+                previous_rows = self.storage.acquisitions(
+                    provider_id=source.provider_id,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                previous = [
+                    row for row in previous_rows
+                    if source.matches_previous(row, identity_id=bound_identity_id)
+                ]
+                if not admission_intact():
+                    return source_refusal()
+                # The last durable pre-staging check: a mutated Loan must not
+                # put a right in another borrower's catalogue.
+                self._persist_active_loans(
+                    bound_identity_id, [loan], reconcile_missing=False,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                result = self._acquire_active_loan_automatically(
+                    loan, force_refresh=True,
+                )
+                if not admission_intact():
+                    return source_refusal()
                 if result.get("status") != "complete":
                     for row in previous:
-                        path = Path(str((row.get("metadata") or {}).get("path") or ""))
+                        meta = row.get("metadata")
+                        if type(meta) is not dict:
+                            continue
+                        path_value = meta.get("path")
+                        if type(path_value) is not str or not path_value:
+                            continue
+                        path = Path(path_value)
                         if path.is_file() and inspect_artifact(path).valid:
-                            metadata = dict(row.get("metadata") or {})
-                            metadata["last_reacquisition_failure"] = {"code": result.get("code"), "error": result.get("error"), "at": int(time.time())}
-                            self.storage.acquisition_put({**row, "metadata": metadata})
-                    raise AttentionRequired(result.get("error") or "Acquisition non terminée", code=result.get("code") or "reacquisition_failed")
+                            if not admission_intact():
+                                return source_refusal()
+                            metadata = dict(meta)
+                            metadata["last_reacquisition_failure"] = {
+                                "code": result.get("code"),
+                                "error": result.get("error"),
+                                "at": int(time.time()),
+                            }
+                            self.storage.acquisition_put({
+                                **row, "metadata": metadata,
+                            })
+                    raise AttentionRequired(
+                        result.get("error") or "Acquisition non terminée",
+                        code=result.get("code") or "reacquisition_failed",
+                    )
                 return result
         except LockBusyError as exc:
-            raise AttentionRequired("Une acquisition ou synchronisation est déjà en cours. Réessayez après sa fin.", code="acquisition_busy") from exc
+            raise AttentionRequired(
+                "Une acquisition ou synchronisation est déjà en cours. "
+                "Réessayez après sa fin.", code="acquisition_busy",
+            ) from exc
 
     @staticmethod
     def _borrower_identity_conflict(
