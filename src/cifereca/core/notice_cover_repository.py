@@ -36,6 +36,9 @@ _ROW_FIELDS = frozenset((
     "status", "source_revision", "raw_json", "field_path",
     "cover_inventory_complete", "epoch",
 ))
+# Optional watermark allows readers to replay pre-upgrade schema-1 records.
+# This tracks source freshness, NOT a second documentary revision or N2 epoch.
+_LAST_SEEN = "last_seen_at"
 _EXACT_SOURCE = re.compile(r"notice-c:v1:[0-9a-f]{64}\Z")
 
 
@@ -81,7 +84,8 @@ def _decode(raw: object, document: CoverDocumentScope) -> PersistedNoticeCover:
         raise ValueError("notice_c_persisted_corrupt")
     try:
         row = json.loads(raw, object_pairs_hook=_unique_object)
-        if (type(row) is not dict or set(row) != _ROW_FIELDS
+        if (type(row) is not dict
+                or set(row) not in (_ROW_FIELDS, _ROW_FIELDS | {_LAST_SEEN})
                 or type(row["schema"]) is not int or row["schema"] != 1):
             raise ValueError
         key_values = row["key"]
@@ -93,7 +97,9 @@ def _decode(raw: object, document: CoverDocumentScope) -> PersistedNoticeCover:
                 or type(row["source_revision"]) is not str
                 or type(row["raw_json"]) is not str
                 or type(row["field_path"]) is not list
-                or type(row["cover_inventory_complete"]) is not bool):
+                or type(row["cover_inventory_complete"]) is not bool
+                or type(row.get(_LAST_SEEN, row["observed_at"])) is not int
+                or not row["observed_at"] <= row.get(_LAST_SEEN, row["observed_at"]) <= _MAX_EPOCH):
             raise ValueError
         observation = NoticeSourceObservation(
             key=key, parser_id=row["parser_id"],
@@ -111,6 +117,27 @@ def _decode(raw: object, document: CoverDocumentScope) -> PersistedNoticeCover:
             OverflowError, RecursionError) as exc:
         raise ValueError("notice_c_persisted_corrupt") from exc
     return PersistedNoticeCover(observation, attribute, row["epoch"])
+
+
+def _advance_seen_watermark(db: Any, key: str, encoded: str, seen_at: int) -> None:
+    """Persist freshness without changing source evidence or N2 epoch.
+
+    The enclosing BEGIN IMMEDIATE + storage lock serializes concurrent
+    writers. A newer partial or identical source must prevent an older
+    *changed* complete observation from winning on worker-completion order.
+    """
+    row = json.loads(encoded)
+    previous = row.get(_LAST_SEEN, row["observed_at"])
+    if seen_at <= previous:
+        return
+    row[_LAST_SEEN] = seen_at
+    updated = json.dumps(
+        row, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False,
+    )
+    if len(updated.encode("utf-8")) > _MAX_BYTES:
+        raise ValueError("notice_c_persisted_too_large")
+    db.execute("UPDATE metadata SET value=? WHERE key=?", (updated, key))
 
 
 def read_notice_cover(storage: Any, document: CoverDocumentScope) -> PersistedNoticeCover | None:
@@ -163,27 +190,31 @@ def persist_notice_cover(
             raise ValueError("notice_c_persisted_epoch_changed")
         if previous is not None:
             old = previous.observation
+            seen_at = json.loads(existing[0]).get(_LAST_SEEN, old.observed_at)
+            # A delayed worker must not replace a newer accepted observation,
+            # even if the latter was partial and kept an older valid cover.
+            changed = (old.source_revision != observation.source_revision
+                       or previous.attribute != attribute)
+            if observation.observed_at < seen_at and changed:
+                raise ValueError("notice_c_persisted_stale_source")
             if (previous.attribute.state != "pending"
                     and (observation.status == "partial"
                          or (attribute.state == "pending"
                              and attribute.field_path == previous.attribute.field_path))):
-                # 'Complete' describes the source observation; a parser may
-                # still declare its cover-field inventory incomplete, or
-                # produce a malformed image. Neither proves the prior cover
-                # absent. Retain last attested cover/absence and its N2 epoch.
-                # A changed field mapping (new contract) is different: it
-                # may intentionally invalidate the old selected source.
+                # Incomplete parsing/cover inventory is no tombstone. Persist
+                # its *time* (not its untrusted media) to reject older work.
+                _advance_seen_watermark(
+                    db, key, existing[0], observation.observed_at,
+                )
                 return previous
-            if (old.source_revision == observation.source_revision
-                    and previous.attribute == attribute):
+            if not changed:
+                _advance_seen_watermark(
+                    db, key, existing[0], observation.observed_at,
+                )
                 return previous
-            # Sources may change twice within one timestamp second. An
-            # explicit epoch CAS can order those writes without inventing a
-            # finer provider timestamp; otherwise equal-time changes fail
-            # closed rather than relying on worker completion order.
-            if (observation.observed_at < old.observed_at
-                    or (observation.observed_at == old.observed_at
-                        and expected_epoch is None)):
+            # Same-second source changes require the explicit writer CAS.
+            # The watermark is durable even if the current source is older.
+            if observation.observed_at == seen_at and expected_epoch is None:
                 raise ValueError("notice_c_persisted_stale_source")
             if previous_epoch >= _MAX_EPOCH:
                 raise ValueError("notice_c_persisted_epoch_overflow")
@@ -199,6 +230,7 @@ def persist_notice_cover(
             "field_path": list(field_path),
             "cover_inventory_complete": cover_inventory_complete,
             "epoch": epoch,
+            _LAST_SEEN: observation.observed_at,
         }
         encoded = json.dumps(
             payload, sort_keys=True, separators=(",", ":"),
