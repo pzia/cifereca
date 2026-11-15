@@ -623,7 +623,11 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
                     if verified_source.is_file():
                         recent_cover_facts = project_verified_local_cover_evidence(
                             identity_id=row_identity,
-                            book_key=recent_placement_id,
+                            # Canonical Library key for this very Artifact.
+                            # Placement remains explicit in the DocumentRef,
+                            # so equal EPUB bytes in two placements do NOT
+                            # manufacture an ownership/documentary join.
+                            book_key=f"artifact:sha256:{digest}",
                             artifact_id=recent_artifact_id,
                             placement_id=recent_placement_id,
                             artifact_sha256=digest,
