@@ -2285,11 +2285,11 @@ class Storage:
         key = item.get("item_id")
         if (type(key) is not str or not key.strip()
                 or key != key.strip() or len(key) > 1024
-                or any(char in key for char in "\\x00\\r\\n")):
+                or any(char in key for char in "\x00\r\n")):
             raise ValueError("backup_legacy_item_id_invalid")
         # A poisoned pathname must not be archived for a later compatibility
         # reader, even if this provider's W1 row is currently archive-only.
-        if "\\x00" in str(item.get("local_path") or ""):
+        if "\x00" in str(item.get("local_path") or ""):
             raise ValueError("backup_legacy_path_invalid")
         now = int(item.get("updated_at") or time.time())
         attempt_count = item.get("attempt_count")
