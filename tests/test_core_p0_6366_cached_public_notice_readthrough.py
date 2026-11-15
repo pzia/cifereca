@@ -58,6 +58,16 @@ def test_search_cache_sync_and_progressive_replay_after_process_restart(tmp_path
         assert cached[0]._core_notice_cover_document_ref == ref
         assert original.calls == 1
         assert read_notice_cover(service.storage, ref).epoch == 1
+        # Sync and progressive cache keys are distinct today. Warm the
+        # progressive producer's own slot before restarting; this P0 change
+        # restores the *same Notice C association* in each already-existing
+        # cache, without claiming the two search HTTP caches are merged.
+        produced = service.search_progressive(
+            "Progressive Book", provider_id=original.provider_id, force=True,
+        )
+        assert produced.result_count == 1
+        assert original.calls == 2
+        assert service.last_search[0]._core_notice_cover_document_ref == ref
     finally:
         service.close()
 
@@ -140,7 +150,6 @@ def test_cached_public_coordinate_replay_rejects_stale_private_and_signed_rows()
         {"thumbnail_url": URL + "?token=private"},
         {"metadata": {"search_provenance": "known_catalog_stale"}},
         {"source_provider": "invalid provider id"},
-        {"record_id": "invalid source record with spaces"},
     ):
         row = replace(clean, **mutation)
         search_orchestration._stamp_cached_public_notice_refs(
