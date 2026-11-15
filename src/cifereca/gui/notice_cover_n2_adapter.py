@@ -73,14 +73,11 @@ class NoticeCoverN2Adapter:
                     self._published.move_to_end(attribute.document)
                     return attribute.document
                 if (previous.attribute.snapshot_complete
-                        and not attribute.snapshot_complete
-                        and (observation.status == "partial"
-                             or attribute.field_path == previous.attribute.field_path)):
-                    # A partial reading or malformed value under the SAME
-                    # field mapping is UNKNOWN, never documentary absence.
-                    # A producer's explicit new field mapping is a new
-                    # contract and must be allowed to invalidate old N2.
-                    # Advance the seen-time watermark to reject older retries.
+                        and not attribute.snapshot_complete):
+                    # Incomplete evidence cannot revoke an attested cover
+                    # even when the parser moves the cover field. A new
+                    # mapping becomes authoritative only after its inventory
+                    # is complete. Keep N2's token; advance only freshness.
                     self._published[attribute.document] = _Published(
                         previous.attribute, previous.revision,
                         observation.observed_at,
