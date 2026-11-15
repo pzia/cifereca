@@ -131,6 +131,62 @@ def test_independent_provenance_sources_and_format_use_public_field_kinds():
     assert presentation.actions == ()  # source labels never confer rights
 
 
+def test_attested_public_facts_use_shared_core_compact_detail_header():
+    """Public 'Essentiel' is rendered inside Core DetailPanel's cover/title."""
+    item = {
+        "title": "Notice synthétique", "author": "Alice", "format": "EPUB",
+        "languages": ["fr", "en", "de"],
+    }
+    view, rows, details, _ = _make_view(item)
+    view._provider_labels = {
+        "kobo": "Kobo", "gallica": "Gallica", "bnf": "BnF",
+    }
+    view._ranked = [RankedCandidate(
+        item=item, score=87, reasons=("Public",),
+        sources=("kobo", "gallica", "bnf"),
+    )]
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+    shown = details[0]
+    essential = next(s for s in shown.sections if s.id == "essential")
+    assert essential.title == "Essentiel" and essential.order == 0
+    assert [(f.id, f.label, f.value, f.kind) for f in essential.fields] == [
+        ("essential-source-0", "Source", "Kobo", "text"),
+        ("essential-source-1", "Source", "Gallica", "text"),
+        ("essential-format", "Format", "EPUB", "text"),
+        ("essential-language-0", "Langue", "fr", "text"),
+        ("essential-language-1", "Langue", "en", "text"),
+    ]
+    # The compact summary has finite density, the detailed source evidence
+    # remains independently copyable/filterable and must not be truncated.
+    catalogue = next(s for s in shown.sections if s.id == "catalogue")
+    assert [f.value for f in catalogue.fields if f.label == "Source"] == [
+        "Kobo", "Gallica", "BnF",
+    ]
+    assert [f.value for f in catalogue.fields if f.label == "Langue"] == [
+        "fr", "en", "de",
+    ]
+    assert shown.actions == ()
+    assert all(
+        f.label not in {"Disponibilité", "Prêt", "Téléchargement", "Droit"}
+        for f in essential.fields
+    )
+
+
+def test_missing_public_bibliographic_evidence_does_not_create_fake_essential():
+    item = {"title": "Sans source attestée"}
+    view, rows, details, _ = _make_view(item)
+    view._ranked = [RankedCandidate(
+        item=item, score=64, reasons=(), sources=(),
+    )]
+    view._render(preserve_summary=True)
+    view._selected_row(rows[0])
+    shown = details[0]
+    assert not any(s.title == "Essentiel" for s in shown.sections)
+    assert next(s for s in shown.sections if s.id == "recommendation")
+    assert shown.actions == ()
+
+
 def test_attested_languages_are_projected_individually_with_public_field_kind():
     item = {
         "title": "Livre multilingue",
