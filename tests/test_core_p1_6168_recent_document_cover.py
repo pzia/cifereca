@@ -79,7 +79,7 @@ def test_recent_detail_requires_same_current_owner_not_just_same_n3_image():
     assert 'facts.scope.artifact_id == item.get("artifact_id")' in detail
     assert 'facts.scope.placement_id == item.get("placement_id")' in detail
     assert "publisher.register(bridge, facts)" in detail
-    assert 'summary_kwargs["cover_document"] = cover_document' in detail
+    assert 'prepare(cover_document)' in detail
 
 
 def test_core_recent_uses_verified_local_path_not_catalogue_epub_member():
