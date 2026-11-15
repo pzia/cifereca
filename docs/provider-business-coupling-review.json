@@ -1960,7 +1960,7 @@
         "tests/test_core_p0_5975_explicit_reacquire_borrower_refusal.py",
         "tests/test_core_0919.py"
       ],
-      "pr": "#pending"
+      "pr": "#6245"
     }
   ],
   "retained_legacy_migrations": [
