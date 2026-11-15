@@ -1441,7 +1441,7 @@
         "tests/test_core_p0_5975_v8_historical_primary_account.py",
         "tests/test_core_p0_5975_business_coupling_ledger.py"
       ],
-      "pr": "#new-pr"
+      "pr": "#6169"
     }
   ]
 }
