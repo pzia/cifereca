@@ -1668,13 +1668,17 @@ class MainWindow(Adw.ApplicationWindow):
         account_epoch = getattr(admitted_core, "_account_context_epoch", None)
 
         def ui_current():
+            live_loan_owner = getattr(loan, "identity_id", None)
+            live_selection = getattr(
+                getattr(admitted_core, "current_identity", None),
+                "identity_id", None,
+            )
             return (
                 not getattr(self, "_closed", False)
                 and self.service is admitted_core
                 and type(loan_identity) is str and bool(loan_identity)
-                and getattr(loan, "identity_id", None) == loan_identity
-                and getattr(getattr(admitted_core, "current_identity", None),
-                            "identity_id", None) == loan_identity
+                and type(live_loan_owner) is str and live_loan_owner == loan_identity
+                and type(live_selection) is str and live_selection == loan_identity
                 and identity_generation == getattr(self, "_identity_context_generation", None)
                 and account_generation == getattr(self, "_account_context_generation", None)
                 and account_epoch == getattr(admitted_core, "_account_context_epoch", None)
@@ -1708,13 +1712,17 @@ class MainWindow(Adw.ApplicationWindow):
         account_epoch = getattr(admitted_core, "_account_context_epoch", None)
 
         def ui_current():
+            live_loan_owner = getattr(loan, "identity_id", None)
+            live_selection = getattr(
+                getattr(admitted_core, "current_identity", None),
+                "identity_id", None,
+            )
             return (
                 not getattr(self, "_closed", False)
                 and self.service is admitted_core
                 and type(loan_identity) is str and bool(loan_identity)
-                and getattr(loan, "identity_id", None) == loan_identity
-                and getattr(getattr(admitted_core, "current_identity", None),
-                            "identity_id", None) == loan_identity
+                and type(live_loan_owner) is str and live_loan_owner == loan_identity
+                and type(live_selection) is str and live_selection == loan_identity
                 and identity_generation == getattr(self, "_identity_context_generation", None)
                 and account_generation == getattr(self, "_account_context_generation", None)
                 and account_epoch == getattr(admitted_core, "_account_context_epoch", None)
@@ -1760,7 +1768,7 @@ class MainWindow(Adw.ApplicationWindow):
         # A→B→A must not reopen an older loan detail or publish a late toast.
         admitted_core = self.service
         # Capture the bound producer before TaskRunner queues the request.
-        reacquire = admitted_core.reacquire_digital_loan
+        reacquire = admitted_core.reacquire_digital_loan if not send else None
         selected_identity = getattr(
             getattr(admitted_core, "current_identity", None), "identity_id", None,
         )
