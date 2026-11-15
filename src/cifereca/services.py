@@ -4740,6 +4740,20 @@ class LibraryService:
                         and descriptor.id == source_provider
                         else None
                     )
+        # Registry callbacks are outside this method's trust boundary.
+        # A provider/binding edit during alias discovery must not turn an
+        # initially admitted source into a different borrower's lookup.
+        if (
+            type(loan.source_provider) is not str
+            or loan.source_provider != source_provider
+            or type(loan.source_credential) is not str
+            or loan.source_credential != source_credential
+            or type(loan.source_account_id) is not str
+            or loan.source_account_id != source_borrower
+        ):
+            raise ProviderConfigurationError(
+                "Compte emprunteur non attesté pour ce prêt"
+            )
         return loan_accounts.account_for_loan(
             loan, accounts=self.accounts,
             configuration_error=ProviderConfigurationError,
