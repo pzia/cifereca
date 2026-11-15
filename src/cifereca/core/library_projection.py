@@ -626,7 +626,9 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
                     verified_path = self.local_book_path(
                         placement_id, identity_id=row_identity,
                     )
-                except ProviderConfigurationError:
+                except (ProviderConfigurationError, OSError, ValueError):
+                    # A removed/unmounted Placement cannot publish an N2
+                    # source; keep the existing Recent row and reconcile.
                     verified_path = None
                 if verified_path is not None:
                     local_facts = project_verified_local_cover_evidence(
