@@ -94,6 +94,17 @@ def test_url_like_publisher_is_not_indexed_as_a_bibliographic_name():
     assert matches(row, "Botanique")
 
 
+def test_url_like_subject_is_not_indexed_by_default_all():
+    row = ranked(metadata={
+        "subjects": [
+            "https://cdn.invalid/cover?token=PRIVATE_SUBJECT_TOKEN",
+            "Botanique abyssale",
+        ],
+    })
+    assert not matches(row, "PRIVATE_SUBJECT_TOKEN")
+    assert matches(row, "Botanique")
+
+
 def test_all_rejects_untrusted_opaque_metadata_without_string_coercion():
     class Secret:
         def __str__(self):
