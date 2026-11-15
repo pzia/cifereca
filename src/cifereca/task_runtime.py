@@ -177,7 +177,7 @@ class TaskBrokerImpl:
         trace_kind = kind if type(kind) is str and kind in {
             "core", "plugin", "task", "source-sync", "opening-sync",
             "deep-sync", "sync-preflight", "source-materialize",
-            "kobo-acquisition", "maintenance",
+            "maintenance",
             "library", "recent", "search", "other",
             # Installed plugins already use these fixed public task kinds.
             # Keep arbitrary names, tokens and account-specific kind strings
