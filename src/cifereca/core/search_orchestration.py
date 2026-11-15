@@ -697,6 +697,9 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         cached = self.storage.cache_get("search", cache_key)
         if isinstance(cached, list):
             rows = [_provider_search_row(SearchResult(**x)) for x in cached]
+            _stamp_cached_public_notice_refs(
+                rows, identity_id=identity.identity_id if identity else None,
+            )
             with self._search_generation_lock:
                 if (self._search_generation != search_generation
                         or self.current_identity is not identity
@@ -1362,6 +1365,12 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     break
                 groups.setdefault(owner, []).append(row)
             if not ambiguous:
+                # Cache rows are not new documentary observations: compute
+                # only exact source coordinates. N2 must still find an already
+                # persisted Notice C source before selecting any image.
+                _stamp_cached_public_notice_refs(
+                    rows, identity_id=identity.identity_id if identity else None,
+                )
                 # An empty 200 also earns a cached verdict; session ownership
                 # remains observable for the same selected provider set.
                 delivered = 0
@@ -1864,6 +1873,49 @@ def _mirrored_catalogue_key(identity_id: str, row: SearchResult) -> tuple[str, b
         return scoped, True
     legacy = f"mirror\0{identity_id}\0{row.source_provider}\0{row.record_id}"
     return hashlib.sha256(legacy.encode()).hexdigest(), False
+
+
+def _stamp_cached_public_notice_refs(
+    rows: list[SearchResult], *, identity_id: str | None,
+) -> None:
+    """Route Core search-cache replay to an *already persisted* Notice C.
+
+    The cache contains source-coordinate metadata only; it never serializes
+    the nonpersistent producer stamp. Re-derive that same opaque public key
+    without mutating SQLite or making a supplier/image GET. A ref here is
+    NOT proof that a cover exists: N2's bounded worker must replay and verify
+    the exact Notice C source before returning an image. Private/stale/source-
+    ambiguous cached rows never gain a public reference.
+    """
+    if type(identity_id) is not str or not identity_id:
+        return
+    from .notice_search_cover_producer import admit_public_search_cover
+    from .notice_cover_projection import notice_cover_document_ref
+
+    for row in rows:
+        if type(row) is not SearchResult:
+            continue
+        row.__dict__.pop("_core_notice_cover_document_ref", None)
+        safe_url = _shared_catalogue_cover_url(row.thumbnail_url)
+        if safe_url is None:
+            continue
+        # Only a *candidate* coordinate is constructed here (observed_at=1
+        # is intentionally not an upstream freshness timestamp). No
+        # observation is stored; read_notice_cover remains the only authority.
+        try:
+            snapshot = admit_public_search_cover(
+                row, identity_id=identity_id, observed_at=1,
+                public_cover_url=safe_url,
+            )
+            if snapshot is not None:
+                row._core_notice_cover_document_ref = notice_cover_document_ref(
+                    snapshot.key,
+                )
+        except (ValueError, TypeError, UnicodeError):
+            # A malformed cached supplier coordinate must not abort search
+            # or be interpreted as an absent/negative source in Notice C.
+            # Do not log untrusted source strings or sensitive image URLs.
+            continue
 
 
 def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None=None) -> int:
