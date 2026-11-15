@@ -91,22 +91,20 @@ def test_legacy_cannot_rewrite_canonical_unverified_placeholder(tmp_path):
         before = physical_rows(store)
         store.backup_put(legacy(path, "b" * 64))
         assert physical_rows(store) == before
-        assert store.acquisitions()[0]["artifact_id"] is None
+        assert store.acquisitions() == []
     finally:
         store.close()
 
 
-def test_untouched_legacy_placeholder_still_accepts_legacy_refresh(tmp_path):
+def test_legacy_archive_refresh_never_creates_a_placeholder(tmp_path):
     store = Storage(tmp_path / "state.sqlite")
     try:
         path = tmp_path / "book.pdf"
         store.backup_put(legacy(path, "a" * 64))
         store.backup_put(legacy(path, "b" * 64))
-        placement = store.placements()[0]
-        assert placement["artifact_id"] == "sha256:" + "b" * 64
-        assert placement["state"] == "unverified"
-        assert placement["last_seen_at"] is None
-        assert len(store.catalog_entries()) == 1
+        assert store.backup_get("seller", "card", "edition")["sha256"] == "b" * 64
+        assert store.placements() == store.catalog_entries() == []
+        assert store.entitlements() == store.acquisitions() == []
     finally:
         store.close()
 
@@ -133,15 +131,14 @@ def test_unverified_legacy_sha_cannot_poison_real_final_artifact_publication(tmp
         path.write_bytes(b"%PDF-1.7\nFinal confirmed bytes\n")
         sha = hashlib.sha256(path.read_bytes()).hexdigest()
 
-        # The v0.7 compatibility record claims an impossible EPUB format and
+        # The archive-only 0.7 record claims an impossible EPUB format and
         # size for the real PDF at this path. Its claim is NOT an Artifact.
         store.backup_put(legacy(path, sha))
         artifact_id = "sha256:" + sha
-        legacy_artifact = store.artifact_get(artifact_id)
-        assert legacy_artifact["metadata"] == {"imported_from": "backup_items"}
-        assert legacy_artifact["size"] == 999999
+        assert store.artifact_get(artifact_id) is None
         assert store.backup_get("seller", "card", "edition")["sha256"] == sha
-        assert store.placements()[0]["state"] == "unverified"
+        assert store.placements() == []
+        assert store.entitlements() == store.acquisitions() == []
 
         scope = ProviderRightsScope("A", "seller", "card", "buyer")
         source = SourceKey(scope, "edition", "right", "purchase", "purchases")
@@ -177,12 +174,9 @@ def test_legacy_sha_without_existing_file_does_not_create_artifact(tmp_path):
     try:
         target = tmp_path / "nonexistent.epub"
         store.backup_put(legacy(target, "a" * 64))
-        assert store.artifact_get("sha256:" + "a" * 64)["metadata"] == {
-            "imported_from": "backup_items"
-        }
+        assert store.artifact_get("sha256:" + "a" * 64) is None
         assert len(store.backup_list("seller")) == 1
-        assert store.placements()[0]["state"] == "unverified"
-        assert store.acquisitions()[0]["status"] == "complete"
+        assert store.placements() == store.entitlements() == store.acquisitions() == []
         # Historical receipt state is not a provider OriginLink or bytes.
         with store._lock, store._connect() as db:
             assert db.execute("SELECT COUNT(*) FROM origin_links").fetchone()[0] == 0
