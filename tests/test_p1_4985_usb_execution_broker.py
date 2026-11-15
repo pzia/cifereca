@@ -222,3 +222,98 @@ def test_preview_discards_post_scan_profile_change(rig, monkeypatch):
     assert mod.ReaderUsbExecutionBrokerImpl(service).preview(
         identity_id="alice", device_id="reader-a", mountpoint=mount,
     ).status == "unavailable"
+
+
+def test_exact_managed_copy_id_is_only_exposed_by_core_broker(rig, monkeypatch):
+    db, service, mount, consent, report, local = rig
+    from cifereca.core import device_usb_operation_journal as journal
+    from cifereca.core.device_usb_preview import UsbManagedReceipt
+
+    receipt = UsbManagedReceipt(
+        "alice", "reader-a", "UUID-ALICE-001",
+        consent.target_relative_path, consent.sha256,
+    )
+    monkeypatch.setattr(
+        journal, "completed_usb_managed_receipts",
+        lambda **_: {consent.artifact_id: receipt},
+    )
+    monkeypatch.setattr(
+        journal, "completed_usb_managed_copy_operations",
+        lambda **_: {consent.artifact_id: consent.copy_operation_id},
+        raising=False,
+    )
+    instance = mod.ReaderUsbExecutionBrokerImpl(service)
+    assert instance.completed_copy_operation(
+        identity_id="alice", device_id="reader-a",
+        artifact_id=consent.artifact_id,
+    ) == consent.copy_operation_id
+    assert instance.completed_copy_operation(
+        identity_id="bob", device_id="reader-a",
+        artifact_id=consent.artifact_id,
+    ) is None
+    service._account_context_epoch += 1
+    assert instance.completed_copy_operation(
+        identity_id="alice", device_id="reader-a",
+        artifact_id="sha256:not-a-sha",
+    ) is None
+    # A receipt is historical, not a positive physical device scan.
+    assert list(mount.iterdir()) == []
+
+
+def test_core_broker_copy_attribution_refuses_changed_target_or_bad_receipt(
+    rig, monkeypatch,
+):
+    db, service, mount, consent, report, local = rig
+    from cifereca.core import device_usb_operation_journal as journal
+    from cifereca.core.device_usb_preview import UsbManagedReceipt
+    receipt = UsbManagedReceipt(
+        "alice", "reader-a", "UUID-ALICE-001",
+        consent.target_relative_path, consent.sha256,
+    )
+    monkeypatch.setattr(
+        journal, "completed_usb_managed_receipts",
+        lambda **_: {consent.artifact_id: receipt},
+    )
+    monkeypatch.setattr(
+        journal, "completed_usb_managed_copy_operations",
+        lambda **_: {consent.artifact_id: consent.copy_operation_id},
+        raising=False,
+    )
+    instance = mod.ReaderUsbExecutionBrokerImpl(service)
+    key = dict(identity_id="alice", device_id="reader-a",
+               artifact_id=consent.artifact_id)
+    assert instance.completed_copy_operation(**key) == consent.copy_operation_id
+    db.device_placement_put({
+        "device_id": "reader-a", "artifact_id": consent.artifact_id,
+        "desired_state": "remove", "observed_state": "unknown",
+        "target_relative_path": "Books/Cifereca/other.epub",
+        "metadata": {"intent_identity_id": "alice"},
+    })
+    assert instance.completed_copy_operation(**key) is None
+
+
+def test_broker_copy_attribution_refuses_epoch_aba_during_journal_read(
+    rig, monkeypatch,
+):
+    db, service, mount, consent, report, local = rig
+    from cifereca.core import device_usb_operation_journal as journal
+    from cifereca.core.device_usb_preview import UsbManagedReceipt
+
+    monkeypatch.setattr(
+        journal, "completed_usb_managed_receipts",
+        lambda **_: {consent.artifact_id: UsbManagedReceipt(
+            "alice", "reader-a", "UUID-ALICE-001",
+            consent.target_relative_path, consent.sha256,
+        )},
+    )
+    def change(**_):
+        service._account_context_epoch += 2
+        return {consent.artifact_id: consent.copy_operation_id}
+    monkeypatch.setattr(
+        journal, "completed_usb_managed_copy_operations", change,
+        raising=False,
+    )
+    assert mod.ReaderUsbExecutionBrokerImpl(service).completed_copy_operation(
+        identity_id="alice", device_id="reader-a",
+        artifact_id=consent.artifact_id,
+    ) is None
