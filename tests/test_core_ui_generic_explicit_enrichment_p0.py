@@ -194,3 +194,36 @@ def test_ambiguous_remote_row_object_does_not_offer_action():
     host.search_objects["duplicate"] = host.search_objects["synthetic-private:book"]
     assert not build(host)
     assert host.actions == []
+
+
+def test_explicit_enrichment_worker_keeps_admitted_core_after_service_replacement():
+    host = Host()
+    build(host)
+    original = host.service
+    host.actions[0].click()
+    args, _kwargs = host.tasks[0]
+    wrong = []
+    host.service = SimpleNamespace(
+        enrich_provider_search_result=lambda *_a, **_kw: wrong.append("wrong"),
+    )
+    # Simulate an A→B→A UI context that superficially retains the same key.
+    assert host.active is True and host.context[3] == "id-A"
+    enriched = args[1]()
+    assert host.network_requests == 1 and wrong == []
+    args[2](enriched)
+    args[3](RuntimeError("PRIVATE_TOKEN"))
+    assert host.refresh == [] and host.toasts == []
+    assert host.search_objects["synthetic-private:book"].author is None
+    assert original.enrich_provider_search_result != host.service.enrich_provider_search_result
+
+
+def test_stale_enrichment_button_cannot_rebind_itself_to_new_core_before_click():
+    host = Host()
+    build(host)
+    host.service = SimpleNamespace(
+        enrich_provider_search_result=lambda *_a, **_kw: (_ for _ in ()).throw(
+            AssertionError("stale action targeted replacement Core")
+        ),
+    )
+    host.actions[0].click()
+    assert host.tasks == [] and host.network_requests == 0
