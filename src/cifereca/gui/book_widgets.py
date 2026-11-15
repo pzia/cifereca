@@ -192,11 +192,38 @@ class CoverView(Gtk.Overlay):
                 priority=GLib.PRIORITY_DEFAULT,
             )
 
+        def rebind_after_qualified_source() -> bool:
+            # N2 CAS already revoked the old EPUB token. The next URI must
+            # be obtained by a FRESH DocumentRef read on GTK main, not by
+            # painting URL bytes through the old request's source_uri.
+            if generation != self._generation:
+                loader.note_ui_stale()
+                return False
+            old = getattr(self, "_request", None)
+            if old is None or not old.active:
+                return False
+            try:
+                self.bind_document(
+                    service, document, variant=variant, priority=priority,
+                    on_texture_applied=on_texture_applied,
+                )
+            except (RuntimeError, ValueError, TypeError):
+                self._show_missing()
+            return False
+
+        def source_changed() -> None:
+            # The EPUB qualification and N2 CAS run on a dedicated worker.
+            # There is NEVER a GDK decode or GTK widget mutation there.
+            GLib.idle_add(
+                rebind_after_qualified_source, priority=GLib.PRIORITY_DEFAULT,
+            )
+
         scale = max(3, int(self.get_scale_factor()))
         request = service.get_cover(
             document, variant, received,
             width=self._width * scale if variant == "list" else self._width,
             height=self._height * scale if variant == "list" else self._height,
+            on_source_changed=source_changed,
         )
         self._request = request
         # The worker already checked N2, but idle dispatch can run LATER
