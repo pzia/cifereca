@@ -71,17 +71,24 @@ def test_explicit_missing_is_retained_against_incomplete_observation(tmp_path):
         db.close()
 
 
-def test_new_field_contract_can_invalidate_previous_complete_cover(tmp_path):
+def test_new_field_contract_requires_complete_inventory_before_invalidation(tmp_path):
     db = Storage(tmp_path / "c.sqlite")
     try:
         first = write(db, A, 10)
-        newer = write(
+        incomplete = write(
             db, B, 11, path=("unmapped", "cover"), complete=False,
         )
-        assert newer.epoch == first.epoch + 1
-        assert newer.attribute.state == "pending"
-        assert newer.attribute.candidates == ()
-        assert read_notice_cover(db, first.document) == newer
+        # Changing the parser's field mapping does not attest absence. N2
+        # keeps its old image/revision until a complete new source arrives.
+        assert incomplete == first
+        assert read_notice_cover(db, first.document) == first
+        attested_missing = write(
+            db, B, 12, path=("unmapped", "cover"), complete=True,
+        )
+        assert attested_missing.epoch == first.epoch + 1
+        assert attested_missing.attribute.state == "missing"
+        assert attested_missing.attribute.candidates == ()
+        assert read_notice_cover(db, first.document) == attested_missing
     finally:
         db.close()
 
