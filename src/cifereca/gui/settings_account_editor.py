@@ -61,6 +61,41 @@ class _AccountBooleanText:
         return self.get_text()
 
 
+
+def _sole_owner_of_legacy_provider_setting(
+    config: Any, provider_id: str, account_id: str,
+) -> bool:
+    """Unscoped legacy values may migrate to exactly one saved connection.
+
+    A former global endpoint has no credential/identity provenance. If more
+    than one account exists for this provider (even disabled or under a
+    different profile), assigning that endpoint to any row leaks settings
+    across accounts. Malformed/oversized config also fails closed.
+    """
+    if (type(provider_id) is not str or not provider_id
+            or type(account_id) is not str or not account_id):
+        return False
+    getter = getattr(config, "get", None)
+    if not callable(getter):
+        return False
+    try:
+        accounts = getter("providers.accounts")
+    except (ValueError, TypeError, AttributeError):
+        return False
+    if type(accounts) not in (list, tuple) or len(accounts) > 4096:
+        return False
+    owner = None
+    for row in accounts:
+        if type(row) is not dict or type(row.get("provider")) is not str:
+            return False
+        if row["provider"].casefold() != provider_id.casefold():
+            continue
+        if owner is not None:
+            return False
+        owner = row
+    return owner is not None and type(owner.get("id")) is str and owner["id"] == account_id
+
+
 def build_provider_account_editor(
     *, data: dict[str, Any], provider_id: str, account_id: str,
     descriptor: Any, configured_identities: list[dict[str, Any]],
@@ -166,7 +201,12 @@ def build_provider_account_editor(
                     fallback = provider_option(
                         provider_id, field.key, None, credential_id=account_id,
                     )
-                if not fallback and hasattr(config, "get"):
+                if (not fallback and _sole_owner_of_legacy_provider_setting(
+                        config, provider_id, account_id)):
+                    # A retired global value has no owner metadata. Keep
+                    # it only for the unique historical connection; the
+                    # next account and all other profiles use their own
+                    # defaults until explicitly configured.
                     fallback = config.get(field.legacy_config_key)
             # Missing optional text has no value; never display "None".
             default = field.default if type(field.default) is str else ""
