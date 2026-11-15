@@ -46,17 +46,23 @@ def execute_usb_removal(
     removal_journal: UsbRemovalJournal | None = None, lock_root: Path, mountpoint: Path,
     consent: UsbRemovalConsent,
     current_profile: Callable[[], tuple[str, int]],
+    check_cancelled: Callable[[], None] | None = None,
 ) -> UsbRemovalExecution:
     """Withdraw only the exact copy inode whose receipt was committed by Core.
 
     The trusted caller provides a durable journal; persistence of begin/CAS
     is required. No automatic retry of a pending deletion can delete another
     file. A crash after unlink remains a recoverable uncertainty.
+    The caller's revocable selection/operation lease is rechecked after
+    physical review and again immediately before the destructive unlink.
+    A cancellation after journal reservation is uncertain and remains
+    explicitly pending: never silently retry the old consent.
     """
     if (type(consent) is not UsbRemovalConsent or not isinstance(lock_root, Path)
             or not lock_root.is_absolute()
             or not isinstance(mountpoint, Path) or not mountpoint.is_absolute()
             or not callable(current_profile)
+            or (check_cancelled is not None and not callable(check_cancelled))
             or not _sha(consent.sha256)):
         return UsbRemovalExecution("blocked", "usb_removal_request_invalid")
 
@@ -117,6 +123,11 @@ def execute_usb_removal(
                 consent=consent, current_profile=current_profile,
             ).status != "review":
                 return UsbRemovalExecution("blocked", "usb_removal_scope_changed")
+            # The physical review can hash for a long time. A previously
+            # valid selection must not reserve a destructive operation after
+            # the user cancels it or changes readers while hashing.
+            if check_cancelled is not None:
+                check_cancelled()
             entry = UsbRemovalJournalEntry(consent)
             if removal_journal.begin(entry) is not True:
                 return UsbRemovalExecution("blocked", "usb_removal_journal_conflict")
@@ -125,6 +136,10 @@ def execute_usb_removal(
             if (removal_journal.get(consent.operation_id) != entry
                     or not _same_file_at(fd, target_name, before, mount.mount_id)):
                 return UsbRemovalExecution("recovery_required", "usb_removal_pending_changed")
+            # After reservation, cancellation leaves a durable pending
+            # checkpoint instead of deleting a file for a revoked GTK action.
+            if check_cancelled is not None:
+                check_cancelled()
             os.unlink(target_name, dir_fd=fd)
             os.fsync(fd)
             completed = replace(entry, phase="completed")
