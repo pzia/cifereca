@@ -148,7 +148,12 @@ class PublicBookMasterDetailView:
         influence a borrowing or acquisition decision.
         """
         panel = self._page.detail
-        panel.show_item_detail(item, detail)
+        from .recommendation_exact_cover import loaded_recommendation_cover
+        proof = loaded_recommendation_cover(self._window, item, detail)
+        if proof is None:
+            panel.show_item_detail(item, detail)
+        else:
+            panel.show_search_document(item, detail=detail, cover_evidence=proof)
         # Search appends these same Core local/open/send/owned actions after
         # the same renderer. Rights remain with the common controller.
         from .query_model import result_row
@@ -173,7 +178,12 @@ class PublicBookMasterDetailView:
         explicitly unverified; local/owned actions reuse Search's admission.
         """
         panel = self._page.detail
-        panel.show_search(item, loading=False)
+        from .recommendation_exact_cover import loaded_recommendation_cover
+        proof = loaded_recommendation_cover(self._window, item)
+        if proof is None:
+            panel.show_search(item, loading=False)
+        else:
+            panel.show_search_document(item, cover_evidence=proof)
         from .query_model import result_row
         self._window._add_local_book_actions(panel, result_row(
             item, purchase_evidence=getattr(self._window, "_search_purchase_evidence", None),
