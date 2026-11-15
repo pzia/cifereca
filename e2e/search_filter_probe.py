@@ -632,9 +632,31 @@ def main() -> int:
         assert mapped_heading(page.detail.content, "detail-title") == [
             PAIRED_BOOK["title"],
         ]
-        assert mapped_heading(page.detail.content, "detail-subtitle") == [
-            PAIRED_BOOK["author"],
-        ]
+        # Search's production facet adapter turns the plain author label
+        # into a keyboard-accessible Gtk.FlowBox of author chips. The
+        # original Gtk.Label is intentionally hidden, not missing/stale.
+        subtitle = page.detail._subtitle_label
+        assert subtitle is not None and not subtitle.get_visible()
+        author_group = getattr(subtitle, "_cifereca_author_facets", None)
+        assert isinstance(author_group, Gtk.FlowBox)
+        assert author_group.get_mapped()
+        assert author_group.has_css_class("detail-subtitle")
+        author_buttons = []
+        stack = [author_group]
+        while stack:
+            current = stack.pop()
+            if (isinstance(current, Gtk.Button)
+                    and current.get_mapped()
+                    and current.has_css_class("facet-value")
+                    and getattr(current, "_cifereca_facet_field", None) == "author"):
+                child = current.get_child()
+                assert isinstance(child, Gtk.Label) and child.get_mapped()
+                author_buttons.append(child.get_text())
+            child = current.get_first_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_next_sibling()
+        assert author_buttons == [PAIRED_BOOK["author"]]
         result["checks"]["P1_774_search_mapped_same_book_detail"] = True
         result["p1_774_paired_book"] = verified_fixture_receipt()
         result["checks"]["P1_774_search_selected_same_synthetic_book"] = True
