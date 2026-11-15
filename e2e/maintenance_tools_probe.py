@@ -133,6 +133,7 @@ def _native_transfer_fixture(root):
     config.set('identities', [
         {'id': 'alice', 'label': 'Alice', 'directory_name': 'alice'},
         {'id': 'bob', 'label': 'Bob', 'directory_name': 'bob'},
+        {'id': 'charlie', 'label': 'Charlie', 'directory_name': 'charlie'},
     ])
     service = LibraryService(config, Storage(root / 'state.sqlite'), Diagnostics())
     source = library / 'alice/local/book.pdf'
@@ -214,17 +215,39 @@ def exercise_native_transfer(*, parent, Gtk, Adw, device, until, report, capture
     while child is not None:
         buttons.append(child)
         child = child.get_next_sibling()
-    send = next(b for b in buttons if getattr(b, '_cifereca_action_id', '') == 'send-local:bob')
+    # #3692: two potential recipients must produce exactly one toolbar action.
+    send_actions = [b for b in buttons if
+                    getattr(b, '_cifereca_action_id', '').startswith('send-local')]
+    assert len(send_actions) == 1
+    menu = send_actions[0]
+    assert menu._cifereca_action_id == 'send-local-menu'
+    popover = menu.get_popover()
+    assert popover is not None
+    choices = list(walk(popover.get_child()))
+    recipients = [b for b in choices if isinstance(b, Gtk.Button) and
+                  getattr(b, '_cifereca_action_id', '').startswith('send-local:')]
+    assert {b._cifereca_action_id for b in recipients} == {
+        'send-local:bob', 'send-local:charlie',
+    }
+    send = next(b for b in recipients if b._cifereca_action_id == 'send-local:bob')
 
     def start():
         assert len(service.storage.placements()) == 1
         capture('08-native-send-before')
+        device.click_widget(menu)
+        until(lambda: send.get_mapped() and send.get_sensitive(), choose_recipient)
+
+    def choose_recipient():
+        # A real XTEST click on the popover choice, not an emitted signal.
         device.click_widget(send)
         until(lambda: status.get_text() == 'Livre envoyé', finished)
 
     def finished():
         recipients = [p for p in service.storage.placements() if p['identity_id'] == 'bob']
         assert len(recipients) == 1
+        assert not [p for p in service.storage.placements()
+                    if p['identity_id'] == 'charlie']
+        report['checks']['P2_3692_one_popover_send_recipient'] = True
         received = Path(recipients[0]['path'])
         assert received == (
             source.parents[2] / 'bob' / 'Acquisitions' / 'Synthetic native transfer.pdf'
@@ -248,19 +271,19 @@ def exercise_native_transfer(*, parent, Gtk, Adw, device, until, report, capture
         done()
 
     def ready():
-        if not send.get_mapped() or not send.get_sensitive():
+        if not menu.get_mapped() or not menu.get_sensitive():
             return False
-        ok, box = send.compute_bounds(host)
+        ok, box = menu.compute_bounds(host)
         if not ok or box.get_width() <= 0 or box.get_height() <= 0:
             return False
         picked = host.pick(box.get_x() + box.get_width()/2,
                            box.get_y() + box.get_height()/2, Gtk.PickFlags.DEFAULT)
-        while picked is not None and picked is not send:
+        while picked is not None and picked is not menu:
             picked = picked.get_parent()
-        if picked is not send:
+        if picked is not menu:
             return False
         try:
-            x, y = device.widget_point(send)
+            x, y = device.widget_point(menu)
             return x >= 0 and y >= 0
         except RuntimeError:
             return False
