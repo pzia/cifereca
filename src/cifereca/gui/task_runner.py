@@ -530,9 +530,9 @@ class TaskRunner:
         # kind and label for routing and on-screen progress; sanitize TRACE only.
         trace_kind = kind if type(kind) is str and kind in {
             "task", "opening-sync", "deep-sync", "source-sync", "source-materialize",
-            # Historical trace label is bounded read-only compatibility;
-            # producers use source-materialize for new work.
-            "sync-preflight", "kobo-acquisition", "maintenance", "library",
+            # Retired supplier-named tasks have no active CoreUI producer;
+            # diagnostics use the neutral "other" bucket for legacy inputs.
+            "sync-preflight", "maintenance", "library",
             "recent", "search", "plugin", "other",
             "maintenance-plan", "maintenance-tool",
             # Fixed, Core-owned task kinds already used by MainWindow.
@@ -989,8 +989,8 @@ class TaskRunner:
             # its final GTK receipt even under sustained repaint/progress
             # traffic. This priority is bound to the generic task contract,
             # never the provider ID; unrelated task kinds retain idle order.
-            # The old supplier-named kind remains a passive TRACE compatibility
-            # label only and cannot select expedited execution here.
+            # Expedited GTK materialization delivery belongs solely to the
+            # supplier-neutral Core kind; unknown/retired names stay generic.
             normal_priority = (
                 getattr(GLib, "PRIORITY_DEFAULT", None)
                 if trace_kind == "source-materialize" else None

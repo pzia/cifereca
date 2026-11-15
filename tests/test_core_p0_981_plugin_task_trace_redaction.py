@@ -105,7 +105,7 @@ def test_progress_callback_is_still_delivered_unmodified(broker):
 
 @pytest.mark.parametrize("kind", (
     "diagnostics", "recommendations", "browser-recorder",
-    "source-materialize", "kobo-acquisition",
+    "source-materialize",
 ))
 def test_installed_plugin_task_kind_has_attributable_private_safe_trace(
     caplog, broker, kind,
@@ -119,4 +119,16 @@ def test_installed_plugin_task_kind_has_attributable_private_safe_trace(
         assert task.result(timeout=2) == kind
     assert f"kind={kind}" in caplog.text
     assert "kind=other" not in caplog.text
+    assert private not in caplog.text
+
+
+def test_retired_supplier_kind_is_generic_without_leaking_plugin_payload(caplog, broker):
+    private = "Bearer PRIVATE_LEGACY_TOKEN"
+    with caplog.at_level(logging.INFO, logger="cifereca"):
+        job = broker.for_plugin("plugin.safe").submit(
+            lambda _control: "done", kind="kobo-acquisition", label=private,
+        )
+        assert job.result(timeout=2) == "done"
+    assert "kind=other" in caplog.text
+    assert "kind=kobo-acquisition" not in caplog.text
     assert private not in caplog.text
