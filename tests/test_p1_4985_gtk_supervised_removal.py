@@ -370,3 +370,44 @@ def test_profile_aba_after_user_confirmed_is_pinned_in_core_worker(rig):
     assert rig.db.device_placement_get(
         "reader-alice", rig.book["artifact_id"],
     )["desired_state"] == "remove"
+
+
+@pytest.mark.parametrize("missing", ["plugin_manager", "broker", "copy_facet", "disabled"])
+def test_missing_backend_or_disabled_reader_never_offers_destructive_action(
+    rig, missing,
+):
+    host = rig.host
+    if missing == "plugin_manager":
+        host.plugin_manager = None
+    elif missing == "broker":
+        host.plugin_manager = NS(broker=lambda _: None)
+    elif missing == "copy_facet":
+        rig.backend.completed_copy_operation = None
+    else:
+        rig.db.device_usb_binding_declare(
+            identity_id="alice", device_id="reader-alice",
+            label="Lecteur Alice", usb_fingerprint="uuid-alice-0001",
+            enabled=False,
+        )
+    buttons = []
+    candidate = host._reader_items[host.selected_row.key]
+    offered = controller.append_reader_usb_execute_action(
+        host, NS(add_actions=lambda items: buttons.extend(items)),
+        candidate, Gtk=host._reader_gtk,
+    )
+    assert offered is False and buttons == []
+    assert rig.backend.previews == []
+    assert rig.backend.execution == []
+    assert host.runner.jobs == []
+
+
+def test_only_latest_of_two_overlapping_explicit_requests_can_prompt_user(rig):
+    click(rig)
+    click(rig)
+    assert len(rig.host.runner.jobs) == 2
+    rig.host.runner.advance()
+    assert rig.dialogs == []
+    rig.host.runner.advance()
+    assert len(rig.dialogs) == 1
+    rig.dialogs[0].answer("cancel")
+    assert rig.backend.execution == []
