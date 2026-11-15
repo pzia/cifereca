@@ -190,7 +190,7 @@ def test_recover_interrupted_generic_acquisition_is_retryable():
         assert row["error_code"] == "interrupted"
 
 
-def test_v3_migration_rolls_back_atomically_when_data_projection_fails():
+def test_v3_migration_rolls_back_atomically_when_version_write_fails():
     with tempfile.TemporaryDirectory() as td:
         db_path = Path(td) / "legacy-broken.sqlite3"
         db = sqlite3.connect(db_path)
@@ -212,16 +212,21 @@ def test_v3_migration_rolls_back_atomically_when_data_projection_fails():
         """)
         db.commit(); db.close()
 
+        # v3 is now a structural migration: projecting v0.7 data would be
+        # an unauthorized canonical writer. Inject an exact version-commit
+        # failure instead and assert schema + archived bytes rollback.
         class BrokenStorage(Storage):
-            @classmethod
-            def _mirror_backup_row(cls, db, row, **kwargs):
-                raise RuntimeError("projection failed")
+            @staticmethod
+            def _write_schema_version(db, version):
+                if version == 3:
+                    raise RuntimeError("version-write-failed")
+                return Storage._write_schema_version(db, version)
 
         try:
             BrokenStorage(db_path)
             assert False, "migration should fail"
         except RuntimeError as exc:
-            assert "projection failed" in str(exc)
+            assert "version-write-failed" in str(exc)
 
         db = sqlite3.connect(db_path)
         version = db.execute("SELECT value FROM metadata WHERE key='schema_version'").fetchone()[0]
