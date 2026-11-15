@@ -211,7 +211,7 @@
       "rationale": "This AST anchor is inside backup_put, not Storage._migrate. It is a necessary input veto on a residual, non-productively called legacy writer surface, not an active Core acquisition producer."
     },
     {
-      "id": "site-5a3051124e11f87bf24ccfb6",
+      "id": "site-d88574f6e28d059189c71da5",
       "classification": "safety_guard_pending_contract",
       "journey": "W1 historical Kobo backup archive-only return without canonical mirror",
       "decision_group_id": "legacy-backup.w1-canonical-publication-veto",
@@ -226,7 +226,7 @@
         "tests/test_core_p0_3196_w2_interrupted_no_reget.py"
       ],
       "retirement_pr": "",
-      "rationale": "Protective provider-specific exclusion in an existing writer, not evidence that this old writer is gone. A generic archive/provenance contract must replace it."
+      "rationale": "Protective provider-specific exclusion in an existing writer, not evidence that this old writer is gone. A generic archive/provenance contract must replace it. On #6138's HEAD this unchanged Kobo archive-only branch inherits the prior second ordinal ID after the distinct earlier Kobo-only typed-source admission branch was removed; the previous third-ordinal ID is no longer a candidate. It is a stable business guard, NOT a newly retired guard."
     },
     {
       "id": "site-c668504ada66eace309e3e7f",
@@ -1220,11 +1220,11 @@
     },
     {
       "id": "struct-w1-kobo-only-source-archive-veto-replaced-neutral",
-      "original": "Storage.backup_put fenced typed SourceReferences and BEGIN IMMEDIATE only inside its Kobo-specific branch. A non-Kobo archived receipt for the same typed provider/credential/edition could still be UPSERTed and mirrored into synthetic entitlements, acquisitions, artifacts or placements despite an existing Core SourceReference.",
+      "original": "(Legacy AST ordinal identifier site-d88574f6e28d059189c71da5, later rebound to the unchanged archive-only predicate; not eligible for per-site retirement credit.) Storage.backup_put fenced typed SourceReferences and BEGIN IMMEDIATE only inside its Kobo-specific branch. A non-Kobo archived receipt for the same typed provider/credential/edition could still be UPSERTed and mirrored into synthetic entitlements, acquisitions, artifacts or placements despite an existing Core SourceReference.",
       "original_classification": "safety_guard_pending_contract",
       "replacement": "Move the exact typed-source existence check and serialized legacy-write lease ahead of the archive UPSERT for every provider, matching provider_id/credential_id/edition_id without borrowing account/identity/branch from the untrusted legacy row. Retire the Kobo-only gate; preserve Kobo archive-only and non-Kobo untyped compatibility, v2→v3 migration and all existing canonical owner/receipt vetoes.",
       "classification": "replaced_provider_specific_w1_source_veto_with_neutral_transactional_cutover",
-      "evidence": "The literal Kobo-only W1 admission branch before backup_items UPSERT is physically removed and replaced by a provider-neutral three-coordinate typed SourceReference veto in Storage.backup_put. A BEGIN IMMEDIATE write lease protects the source check and any subsequent UPSERT when no outer transaction is already open; an existing transaction remains the SQLite snapshot. Offline multi-provider SQL tests verify that typed editions block both creation and mutation of historical archives for Kobo, Paris, Numilog and an unknown provider; canonical records including SourceReferences/OriginLinks and metadata are unchanged. Unrelated provider, credential or edition retains non-Kobo compatibility; a separate SQLite BEFORE INSERT trigger detects bypass. This is a narrow cutover of an active non-Kobo legacy path, not a global retirement of its untyped mirror.",
+      "evidence": "The literal Kobo-only W1 admission branch before backup_items UPSERT is physically removed and replaced by a provider-neutral three-coordinate typed SourceReference veto in Storage.backup_put. A BEGIN IMMEDIATE write lease protects the source check and any subsequent UPSERT when no outer transaction is already open; an existing transaction remains the SQLite snapshot. Offline multi-provider SQL tests verify that typed editions block both creation and mutation of historical archives for Kobo, Paris, Numilog and an unknown provider; canonical records including SourceReferences/OriginLinks and metadata are unchanged. Unrelated provider, credential or edition retains non-Kobo compatibility; a separate SQLite BEFORE INSERT trigger detects bypass. This is a narrow cutover of an active non-Kobo legacy path, not a global retirement of its untyped mirror. Audit limitation: the source scan assigns ordinal-based identical-AST IDs to three separate Kobo predicates in backup_put. Removing the middle source check reassigns the earlier second-ordinal ID to the surviving archive-only guard and the old third-ordinal ID disappears; this is an AST-ID rebinding, NOT separately proved retirement of either ID. The structural cutover is reviewed independently, without per-site cohort retirement credit.",
       "tests": [
         "tests/test_core_p0_5975_w1_all_provider_typed_source_cutover.py",
         "tests/test_core_p0_3196_w1_archive_only_cutover.py",
@@ -1232,8 +1232,7 @@
         "tests/test_core_p0_5975_business_coupling_ledger.py"
       ],
       "pr": "#6138",
-      "in_ast_metric": true,
-      "original_site_id": "site-d88574f6e28d059189c71da5",
+      "in_ast_metric": false,
       "retired_at_sha": "4d29509441374a11ac51e7a6a8a474ee963b73b4"
     }
   ],
