@@ -76,7 +76,7 @@ class PublicBookMasterDetailView:
             # The common GTK cell owns N2 lookup by exact DocumentRef. Only
             # an already attested Core scope may cross this UI boundary:
             # plugin URL, title, ISBN and public row key cannot create one.
-            from ..core.book_cover_projection import CoverDocumentScope
+            from cifereca.core.book_cover_projection import CoverDocumentScope
             document = getattr(row, "_cover_document_ref", None)
             if type(document) is CoverDocumentScope:
                 item._cover_document_ref = document
