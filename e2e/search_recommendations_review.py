@@ -105,11 +105,17 @@ def _report_and_image(
         if surface == "search"
         else "P1_774_recommendations_mapped_same_book_detail"
     )
+    subject_check = (
+        "P1_4761_search_public_subject_in_real_gtk_detail"
+        if surface == "search"
+        else "P1_4761_recommendations_public_subject_in_real_gtk_detail"
+    )
     if (report["checks"].get(paired_check) is not True
             or report["checks"].get(heading_check) is not True
+            or report["checks"].get(subject_check) is not True
             or report.get("p1_774_paired_book") != verified_fixture_receipt()):
         raise ReviewError(
-            "Source/édition ou détail GTK synthétique commun non attesté"
+            "Source/édition, détail GTK ou sujet commun non attesté"
         )
     geometry = report.get(geometry_key)
     if (not isinstance(geometry, dict)

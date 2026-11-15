@@ -657,6 +657,32 @@ def main() -> int:
                 stack.append(child)
                 child = child.get_next_sibling()
         assert author_buttons == [PAIRED_BOOK["author"]]
+        # The same public Subject is already rendered in the canonical
+        # Search DetailPanel metadata. Verify its actual GTK ActionRow
+        # before comparing with Recommendations' new metadata section.
+        detail_expanders = []
+        stack = [page.detail.content]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, Adw.ExpanderRow) and current.get_title() == "Détail":
+                detail_expanders.append(current)
+            child = current.get_first_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_next_sibling()
+        assert len(detail_expanders) == 1
+        subject_rows = []
+        stack = [detail_expanders[0]]
+        while stack:
+            current = stack.pop()
+            if isinstance(current, Adw.ActionRow) and current.get_title() == "Sujet":
+                subject_rows.append(current.get_subtitle())
+            child = current.get_first_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_next_sibling()
+        assert subject_rows == [PAIRED_BOOK["subject"]]
+        result["checks"]["P1_4761_search_public_subject_in_real_gtk_detail"] = True
         result["checks"]["P1_774_search_mapped_same_book_detail"] = True
         result["p1_774_paired_book"] = verified_fixture_receipt()
         result["checks"]["P1_774_search_selected_same_synthetic_book"] = True

@@ -350,6 +350,45 @@ def _local_recommendation_field_values(item: Any, field: str) -> tuple[str, ...]
     return tuple(observed)
 
 
+# Search's canonical DetailPanel exposes the same attested public
+# bibliography below its leading heading. The recommendations plugin must
+# not keep those facts search-only while showing a poorer detail for the
+# very same book. Provider rights, private IDs and ISBNs are intentionally
+# excluded: source-exact editions have their own existing section/actions.
+_PUBLIC_RECOMMENDATION_DETAIL_FIELDS = (
+    ("subject", "Sujet", "subject"),
+    ("series", "Série", "series"),
+    ("collection", "Collection", "collection"),
+    ("publisher", "Éditeur", "copy"),
+    ("award", "Prix littéraire", "copy"),
+)
+
+
+def _public_recommendation_detail_fields(item: Any) -> tuple[DetailField, ...]:
+    """Project only bounded, safe facts into Core's standard detail widgets.
+
+    This builds no network request or provider action. The DetailPanel also
+    validates each value at its final GTK sink and keeps long facts collapsed.
+    """
+    fields: list[DetailField] = []
+    for category, label, kind in _PUBLIC_RECOMMENDATION_DETAIL_FIELDS:
+        observed: set[str] = set()
+        for raw in _local_recommendation_field_values(item, category)[:32]:
+            value = _safe_local_bibliography_value(raw)
+            key = normalize(value) if value else ""
+            if not key or key in observed:
+                continue
+            observed.add(key)
+            fields.append(DetailField(
+                f"public-{category}-{len(observed)}", label, value, kind=kind,
+            ))
+            if len(observed) >= 8 or len(fields) >= 40:
+                break
+        if len(fields) >= 40:
+            break
+    return tuple(fields)
+
+
 # Keep only the query grammar of Core Search's local all-fields filter.
 # Plugin code cannot import cifereca.core.search or its private GTK adapters.
 # Matching is over a bounded projection of already-loaded public values.
@@ -2753,6 +2792,14 @@ class UxRecommendationsView:
             sections.append(
                 DetailSection("catalogue", "Catalogue", tuple(catalogue_fields), 20)
             )
+        # Reuse the same GTK DetailPanel's collapsible, per-value metadata
+        # presentation as Search. A book's public subjects/series/collections
+        # and awards must not disappear simply because this view ranks it.
+        public_details = _public_recommendation_detail_fields(item)
+        if public_details:
+            sections.append(DetailSection(
+                "public-bibliography", "Détail", public_details, 25,
+            ))
         if description:
             sections.append(
                 DetailSection(

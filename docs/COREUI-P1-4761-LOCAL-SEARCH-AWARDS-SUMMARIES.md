@@ -51,3 +51,31 @@ Ce n'est **pas** la comparaison visuelle d'une même édition/source dans
 les deux vraies pages GTK : les captures et la revue UX restent #774 et
 les couvertures transverses #3104/#6168. Ne pas clore #4761 sur cette
 tranche seule ; pas de PU nouveau requis.
+
+
+## Restitution dans le même DetailPanel CoreUI — P1-FINALISATION
+
+La fiche Recommandations projetait déjà titre, auteur, langues, format,
+éditions source-exactes et synthèse, mais **pas les faits bibliographiques
+qu'elle venait de rendre recherchables**. La section standard **Détail**
+présente désormais les sujets/thèmes, série, collection, éditeur et prix
+littéraires publics, par élément, via la même `DetailPanel._group("Détail")`
+que Recherche. Les faits sont déjà présents dans les résultats du
+classement : aucune consultation de fournisseur, recalcul, acquisition,
+mutation ou modification de classement.
+
+La projection ne transporte jamais d'identifiant fournisseur, d'ISBN
+déclaré non attesté par une variante de catalogue, de droits, d'URI, de
+chemin ou de valeur de type credential. Les ISBN et les actions de notices
+exactes restent dans la section **Éditions et sources distinctes**
+existante. Les champs sont bornés à 8 valeurs par catégorie et 40 valeurs
+au total, chaque valeur à 512 caractères, avec dédoublonnage normalisé.
+Le moteur de présentation Core conserve sa validation de sécurité finale
+et la section `Détail` repliable, avec actions de facettes explicites.
+
+La vraie recette GTK sur la même fixture `gallica/camille-003` contrôle
+désormais l'existence de la valeur **Sujet = Astronomie** dans les
+`Adw.ActionRow` du `DetailPanel` des deux vues, en plus de leur titre,
+auteur, source et édition. Le validateur des PNG privés refuse cette
+preuve lorsqu'elle manque. Le contrôle des widgets ne remplace pas
+l'inspection des captures originales ni les tests fournisseur réels.
