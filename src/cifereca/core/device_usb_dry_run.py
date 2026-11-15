@@ -17,7 +17,7 @@ from pathlib import Path
 import time
 from typing import Any, Mapping
 
-from .device_usb_local_source import attest_local_usb_source
+from .device_usb_local_source import inspect_local_usb_source
 from .device_usb_content_snapshot import (
     MAX_RUN_SNAPSHOT_BYTES, MAX_SNAPSHOT_BYTES,
     snapshot_local_usb_content,
@@ -111,21 +111,29 @@ def _local_sources(
     sources = {}
     artifacts = {}
     owned_placements = {}
+    refusals = {}
     for artifact_id, candidates in matched.items():
+        if not candidates:
+            refusals[artifact_id] = "owned_source_placement_missing"
+            continue
         if len(candidates) != 1:
+            refusals[artifact_id] = "owned_source_placement_ambiguous"
             continue
         artifact = storage.artifact_get(artifact_id)
         if type(artifact) is not dict or artifact.get("artifact_id") != artifact_id:
+            refusals[artifact_id] = "owned_source_artifact_unverified"
             continue
-        proof = attest_local_usb_source(
+        inspected = inspect_local_usb_source(
             identity_id=identity_id, identity_root=identity_root,
             artifact=artifact, placement=candidates[0],
         )
-        if proof is not None:
-            sources[artifact_id] = proof
+        if inspected.local is not None:
+            sources[artifact_id] = inspected.local
             artifacts[artifact_id] = artifact
             owned_placements[artifact_id] = candidates[0]
-    return sources, artifacts, owned_placements
+        else:
+            refusals[artifact_id] = inspected.reason
+    return sources, artifacts, owned_placements, refusals
 
 
 def inspect_usb_dry_run(
@@ -192,12 +200,12 @@ def inspect_usb_dry_run(
             fingerprint=fingerprint, now=check_time, max_age_seconds=300,
         ):
             scan = None
-        local, artifacts, owned_placements = (
+        local, artifacts, owned_placements, source_refusals = (
             _local_sources(
                 storage=storage, identity_id=identity_id,
                 identity_root=identity_root, intentions=selected,
             )
-            if scan is not None else ({}, {}, {})
+            if scan is not None else ({}, {}, {}, {})
         )
         # Re-read owner/target/intent fields after the costly scan/hash.
         # Changed final snapshots are refused; byte-identical A→B→A
@@ -224,6 +232,16 @@ def inspect_usb_dry_run(
             identity_id=identity_id, binding=binding,
             placements=selected, local=local,
             scan=scan, receipts=receipts, now=check_time,
+        )
+        # Only narrow an *already blocked* local-source decision. Do not
+        # turn a rejected source into an upload candidate or disclose any
+        # private path, SHA, account or filesystem exception in a reason.
+        rows = tuple(
+            replace(row, reason=source_refusals[row.artifact_id])
+            if row.action == "blocked" and row.reason == "owned_source_unverified"
+            and row.artifact_id in source_refusals
+            else row
+            for row in rows
         )
         # A verified local SHA and a missing USB target do not establish
         # reader compatibility. Use only the stored *declaration* and exact
