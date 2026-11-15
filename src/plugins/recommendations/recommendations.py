@@ -2769,7 +2769,8 @@ class UxRecommendationsView:
         # Use the exact same normalized, source-attested values as the
         # existing language filter. A recommendation never invents a
         # language merely from its title or provider.
-        for index, language in enumerate(_candidate_languages(item)):
+        attested_languages = _candidate_languages(item)
+        for index, language in enumerate(attested_languages):
             catalogue_fields.append(DetailField(
                 f"language-{index}", "Langue", language, kind="language",
             ))
@@ -2780,14 +2781,34 @@ class UxRecommendationsView:
                 DetailField("published", "Publication", published)
             )
 
-        sections = [
-            DetailSection(
-                "recommendation",
-                "Recommandation",
-                tuple(recommendation_fields),
-                10,
-            )
+        # P1 #4761: the canonical DetailPanel renders the Core "Essentiel"
+        # section INSIDE its cover/title header. Recommendations previously
+        # skipped that common compact surface, putting all public source,
+        # language and format evidence below the recommendation scoring.
+        # Show ONLY validated bibliographic declarations already present in
+        # the full Catalogue section. Never infer availability, ownership,
+        # media rights, locale or download from a ranked source.
+        essential_fields = [
+            DetailField(f"essential-source-{index}", "Source", source)
+            for index, source in enumerate(source_labels[:2])
         ]
+        if fmt:
+            essential_fields.append(DetailField(
+                "essential-format", "Format", fmt,
+            ))
+        essential_fields.extend(
+            DetailField(f"essential-language-{index}", "Langue", language)
+            for index, language in enumerate(attested_languages[:2])
+        )
+        sections = []
+        if essential_fields:
+            sections.append(DetailSection(
+                "essential", "Essentiel", tuple(essential_fields), 0,
+            ))
+        sections.append(DetailSection(
+            "recommendation", "Recommandation",
+            tuple(recommendation_fields), 10,
+        ))
         if catalogue_fields:
             sections.append(
                 DetailSection("catalogue", "Catalogue", tuple(catalogue_fields), 20)
