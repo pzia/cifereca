@@ -83,19 +83,19 @@ def append_reader_target_action(window, detail, book: ReaderLibraryBook, *, Gtk)
                     getattr(window, "_route_display_token", None),
                     getattr(window, "_reader_selection_generation", None))
                    != generation):
-            return intent_action
+            return False
         page = getattr(window, "readers_page", None)
         selection = getattr(page, "selection", None)
         get = getattr(selection, "get_selected_item", None)
         selected = get() if callable(get) else None
         if selected is None or getattr(selected, "key", None) != book.key:
-            return intent_action
+            return False
         root = getattr(button, "get_root", None)
         if callable(root) and root() is None:
-            return intent_action
+            return False
         mapped = getattr(button, "get_mapped", None)
         if callable(mapped) and not mapped():
-            return intent_action
+            return False
         return True
 
     def commit(_button) -> None:
