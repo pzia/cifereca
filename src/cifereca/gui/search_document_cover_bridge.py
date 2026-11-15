@@ -138,8 +138,12 @@ class SearchDocumentCoverRegistry:
             if self._closed:
                 raise RuntimeError("Search document registry closed")
             known = self._known.get(evidence.document)
-            if (known is not None and known[0] == evidence
-                    and known[0].source_item is evidence.source_item):
+            if (known is not None
+                    and known[0].source_item is evidence.source_item
+                    and known[0].row_key == evidence.row_key
+                    and known[0].document == evidence.document
+                    and known[0].context == evidence.context
+                    and known[0].candidates == evidence.candidates):
                 revision = known[1]
             else:
                 revision = self._issued + 1
@@ -179,8 +183,11 @@ def register_exact_search_document(
     current = exact_remote_search_document(
         window, item, evidence.row_key,
     )
-    if (current is None or current != evidence
-            or current.source_item is not item):
+    if (current is None or current.source_item is not item
+            or current.row_key != evidence.row_key
+            or current.document != evidence.document
+            or current.context != evidence.context
+            or current.candidates != evidence.candidates):
         return False
     adapter = getattr(window, "search_document_cover_registry", None)
     if type(adapter) is not SearchDocumentCoverRegistry:
