@@ -108,6 +108,24 @@ def _current(observed: datetime, *, now: datetime, max_age: timedelta) -> bool:
     return timedelta(0) <= age <= max_age
 
 
+
+def _revalidate_fact(record: ProviderCapacityEvidence | DigitalInventoryReceipt) -> bool:
+    """Recheck a frozen DTO at consumption, including its mutable-by-escape scope.
+
+    Dataclass frozen/slots only blocks ordinary assignment: upstream Python
+    adapters may still mutate fields with object.__setattr__. A stale valid
+    constructor verdict must not turn a boolean, list or naïve timestamp into
+    a displayed numeric capacity, nor crash the read-only Home projection.
+    This is structural validation, NOT provider authenticity or durable proof.
+    """
+    try:
+        record.__post_init__()
+        record.scope.__post_init__()
+    except (ValueError, TypeError, AttributeError, OverflowError):
+        return False
+    return True
+
+
 def evaluate_digital_remaining(
     scope: DigitalCapacityScope, *, now: datetime, epoch: int,
     max_age: timedelta, provider_remaining: ProviderCapacityEvidence | None = None,
@@ -126,6 +144,10 @@ def evaluate_digital_remaining(
             or type(max_age) is not timedelta
             or not timedelta(0) < max_age <= timedelta(days=14)):
         raise ValueError("invalid_capacity_evaluation_context")
+    try:
+        scope.__post_init__()
+    except (ValueError, TypeError, AttributeError, OverflowError):
+        raise ValueError("invalid_capacity_evaluation_context") from None
     if (manual_total is not None
             and (type(manual_total) is not int or not 0 <= manual_total <= 99)):
         raise ValueError("invalid_manual_loan_limit")
@@ -136,7 +158,8 @@ def evaluate_digital_remaining(
         raise ValueError("invalid_inventory_evidence_type")
 
     def admissible(record: ProviderCapacityEvidence | None, kind: str) -> bool:
-        return bool(record is not None and record.scope == scope
+        return bool(record is not None and _revalidate_fact(record)
+                    and record.scope == scope
                     and record.kind == kind and record.epoch == epoch
                     and _current(record.observed_at, now=now, max_age=max_age))
 
@@ -144,7 +167,8 @@ def evaluate_digital_remaining(
         return DigitalRemainingDecision("provider_direct", provider_remaining.value,
                                         "provider_remaining")
     receipt_good = (
-        inventory is not None and inventory.scope == scope
+        inventory is not None and _revalidate_fact(inventory)
+        and inventory.scope == scope
         and inventory.epoch == epoch and inventory.status == "success"
         and inventory.pagination_complete is True
         and inventory.durably_committed is True
