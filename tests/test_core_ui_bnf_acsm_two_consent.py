@@ -81,7 +81,7 @@ def test_retrieval_does_not_automatically_import_without_second_consent():
     w.service.import_bnf_loan_acsm.assert_not_called()
     Dialog.shown[1].respond("cancel")
     w.service.import_bnf_loan_acsm.assert_not_called()
-    assert actions == [("Récupération du jeton ACSM…", "loan-acquisition")]
+    assert actions == [("Récupération du jeton ACSM…", "acsm-stage")]
 
 
 def test_double_consent_imports_via_manual_adept_without_creating_bnf_right():
@@ -95,7 +95,7 @@ def test_double_consent_imports_via_manual_adept_without_creating_bnf_right():
     assert kwargs.kwargs["title"] == "Fiction"
     assert kwargs.kwargs["loan"].id == "loan-a"
     assert actions == [
-        ("Récupération du jeton ACSM…", "loan-acquisition"),
+        ("Récupération du jeton ACSM…", "acsm-stage"),
         ("Import ADEPT du prêt…", "acsm-import"),
     ]
     w.refresh_library.assert_called_once_with(False)
@@ -152,7 +152,7 @@ def test_both_dialogs_reject_replayed_positive_responses():
     Dialog.shown[1].respond("import")
     assert w.service.import_bnf_loan_acsm.call_count == 1
     assert actions == [
-        ("Récupération du jeton ACSM…", "loan-acquisition"),
+        ("Récupération du jeton ACSM…", "acsm-stage"),
         ("Import ADEPT du prêt…", "acsm-import"),
     ]
 
@@ -232,7 +232,7 @@ def test_synthetic_lender_uses_same_two_consent_contract_without_supplier_dispat
     Dialog.shown[1].respond("import")
     assert w.service.import_bnf_loan_acsm.call_count == 1
     assert actions == [
-        ("Récupération du jeton ACSM…", "loan-acquisition"),
+        ("Récupération du jeton ACSM…", "acsm-stage"),
         ("Import ADEPT du prêt…", "acsm-import"),
     ]
 

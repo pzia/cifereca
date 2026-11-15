@@ -174,6 +174,9 @@ class CoverLoader:
         self.client.close()
 
     def stats(self) -> dict[str, int | float | str]:
+        # N3 EPUB counters are installation-wide media observations, never
+        # document ownership or provider-account statistics.
+        physical = self._epub_physical.stats()
         with self._lock:
             stats = dict(self._stats)
             count = int(stats.get("ui_decode_count") or 0)
@@ -186,6 +189,8 @@ class CoverLoader:
                 "inflight_urls": len(self._callbacks),
                 "workers": self.max_workers,
                 "cache_schema": CACHE_SCHEMA,
+                **{key: value for key, value in physical.items()
+                   if key.startswith("n3_epub_")},
             }
 
     def _absolute(self, url: str) -> str:
@@ -366,8 +371,43 @@ class CoverLoader:
         if value >= 30.0:
             _TRACE_LOG.info("TRACE ui-perf slow operation=cover_decode duration_ms=%.1f", value)
 
+    def _owned_n3_path(self, path: Path) -> bool:
+        """Reject arbitrary filesystem deletion from an image decode failure.
+
+        A returned N3 path is a physical file *inside* the application's
+        URL, preview or content-addressed EPUB cache. Path existence and
+        image validity are irrelevant here: a corrupt image must still be
+        removable, but another user file must never be unlinked.
+        """
+        if not isinstance(path, Path) or not path.is_absolute():
+            return False
+        try:
+            parent = path.parent
+            # A symlinked cache root must not redirect deletions elsewhere.
+            if parent.is_symlink():
+                return False
+            root = parent.resolve(strict=True)
+            if (root == self.root.resolve()
+                    and not self.root.is_symlink()
+                    and re.fullmatch(r"[a-f0-9]{64}\.img", path.name)):
+                return True
+            if (root == self.preview_root.resolve()
+                    and not self.preview_root.is_symlink()
+                    and re.fullmatch(r"[a-f0-9]{64}\.png", path.name)):
+                return True
+            epub_root = cover_cache_dir()
+            if (root == epub_root.resolve()
+                    and not epub_root.is_symlink()
+                    and re.fullmatch(
+                        r"[a-f0-9]{64}\.(?:png|jpg|gif|webp|svg)", path.name,
+                    )):
+                return True
+        except (OSError, ValueError):
+            return False
+        return False
+
     def invalidate(self, path: Path | None, *, decode_failure: bool = False) -> None:
-        if path is None:
+        if not self._owned_n3_path(path):
             return
         try:
             path.unlink(missing_ok=True)

@@ -46,7 +46,10 @@ def test_hot_epub_n3_never_reopens_or_reparses_source(prepared, monkeypatch):
         monkeypatch.setattr(materializer, "_restore", not_called)
         answer = materializer.request(ref, source_path=book)
         assert answer.done() and answer.result(timeout=5) == image.resolve().as_uri()
-        assert materializer.stats() == {"inflight": 0}
+        stats = materializer.stats()
+        assert stats["inflight"] == 0
+        assert stats["n3_epub_hit"] == 1
+        assert stats["n3_epub_miss"] == 0
     finally:
         materializer.close()
 
