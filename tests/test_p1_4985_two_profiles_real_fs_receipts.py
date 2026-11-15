@@ -9,6 +9,7 @@ Only Linux block-device attestation is synthesized for the two tmp volumes.
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 from types import SimpleNamespace as NS
 
 import pytest
@@ -162,16 +163,50 @@ def test_identical_files_on_two_profiles_never_share_copy_receipt_or_unlink(
     )["desired_state"] == "remove"
 
 
-def test_same_uuid_claimed_by_two_profiles_blocks_both_readers(
+def test_storage_refuses_duplicate_uuid_across_profiles_atomically(
     two_profiles,
 ):
     t = two_profiles
     a, b = t.alice, t.bob_consent
     original_a, original_b = a.final.read_bytes(), t.bob_file.read_bytes()
-    a.storage.device_usb_binding_declare(
-        identity_id="bob", device_id="reader-bob", label="Reader Bob",
-        usb_fingerprint=a.consent.usb_fingerprint, enabled=True,
-    )
+    with pytest.raises(ValueError, match="USB volume already bound"):
+        a.storage.device_usb_binding_declare(
+            identity_id="bob", device_id="reader-bob", label="Reader Bob",
+            usb_fingerprint=a.consent.usb_fingerprint, enabled=True,
+        )
+    assert a.storage.device_binding_get("reader-bob")[
+        "metadata"
+    ]["usb_fingerprint"] == "uuid-bob-0001"
+    assert a.facade.completed_copy_operation(
+        identity_id="alice", device_id=a.consent.device_id,
+        artifact_id=a.consent.artifact_id,
+    ) == a.consent.copy_operation_id
+    assert a.final.read_bytes() == original_a
+    assert t.bob_file.read_bytes() == original_b
+    assert a.journal.get(a.consent.operation_id) is None
+    assert a.journal.get(b.operation_id) is None
+
+
+def test_corrupt_legacy_duplicate_uuid_blocks_both_core_brokers(
+    two_profiles,
+):
+    """A malformed historical SQLite row cannot bypass Core uniqueness."""
+    t = two_profiles
+    a, b = t.alice, t.bob_consent
+    original_a, original_b = a.final.read_bytes(), t.bob_file.read_bytes()
+    # Deliberately bypass the public declaration guard to simulate a
+    # pre-existing corrupted/legacy database, not a normal Settings save.
+    with a.storage._lock, a.storage._connect() as db:
+        row = db.execute(
+            "SELECT metadata_json FROM device_bindings WHERE device_id=?",
+            ("reader-bob",),
+        ).fetchone()
+        metadata = json.loads(row[0])
+        metadata["usb_fingerprint"] = a.consent.usb_fingerprint
+        db.execute(
+            "UPDATE device_bindings SET metadata_json=? WHERE device_id=?",
+            (json.dumps(metadata), "reader-bob"),
+        )
     assert a.facade.completed_copy_operation(
         identity_id="alice", device_id=a.consent.device_id,
         artifact_id=a.consent.artifact_id,
