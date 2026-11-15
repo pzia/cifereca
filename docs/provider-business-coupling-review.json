@@ -1885,6 +1885,19 @@
         "tests/test_adept_attested_historical_return.py"
       ],
       "pr": "#6206"
+    },
+    {
+      "id": "guard-loan-auto-entitlement-native-unique-exact-right",
+      "journey": "Automatic loan binding to one persisted entitlement after exact provider/credential/borrower/identity/edition/loan selection",
+      "classification": "safety_guard_pending_contract",
+      "effect": "Reject non-native persisted read-model coordinates before comparison, never invoke foreign __eq__ / __bool__, link only a nonempty native entitlement ID, and include corrupt-ID exact duplicates in the ambiguity count. No new entitlement, ADEPT grant, provider call or write.",
+      "remaining_debt": "The read-only entitlement picker and Paris borrower admission remain active pending typed provider-neutral grant contracts; this is not retired AST/provider decision credit. All three frozen mutating migrations remain outstanding.",
+      "tests": [
+        "tests/test_core_p0_5975_auto_entitlement_native_fields.py",
+        "tests/test_automatic_loan_admission.py",
+        "tests/test_core_p0_5048_provider_neutral_identity_veto.py"
+      ],
+      "pr": "#6220"
     }
   ],
   "retained_legacy_migrations": [
