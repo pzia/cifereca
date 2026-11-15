@@ -213,6 +213,30 @@ def test_fallback_lease_expires_and_restores_epub_priority(state):
     observer.cancel()
 
 
+def test_physical_epub_repaired_after_qualification_blocks_url_fallback(state):
+    item = state
+    original = item["image"].read_bytes()
+    item["image"].unlink()
+    broken = _register(item, broken=True)
+    token = _choose_epub(item)
+    proof = qualify_failed_epub_cover(
+        broken.resource, source_path=item["book"],
+    )
+    assert proof.permits_url_fallback
+    # A different profile can restore exact content-addressed N3 media.
+    # Shared N3 wins: no N2 source change despite an older error proof.
+    item["image"].write_bytes(original)
+    assert item["service"].apply_qualified_epub_fallback(
+        item["scope"], proof, expected_token=token,
+    ) is None
+    assert item["decisions"].selected_token(
+        item["scope"], revision=7, uri=broken.candidate.url,
+    ) == token
+    assert item["decisions"].peek(
+        item["scope"], revision=7,
+    ).tier == "embedded"
+
+
 def test_no_unique_remote_candidate_keeps_embedded_n2(state):
     item = state
     item["image"].unlink()
