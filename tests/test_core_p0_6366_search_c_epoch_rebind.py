@@ -12,7 +12,7 @@ from types import SimpleNamespace as NS
 
 from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
 from tests.test_core_p1_3104_master_detail_visual_signature import (
-    page_with, production_methods,
+    BookRow, page_with, production_methods,
 )
 
 
@@ -20,14 +20,14 @@ ROOT = Path(__file__).resolve().parents[1] / "src/cifereca/gui"
 SEARCH = ROOT / "search_results.py"
 
 
-class Row:
+class Row(BookRow):
     def __init__(self, key, title, subtitle, meta, badge, thumbnail):
-        self.key = key
-        self.title = title
-        self.subtitle = subtitle
+        # MasterDetailPage uses isinstance(item, BookListItem) to restore
+        # selection. Reuse the test harness's BookRow class for both methods.
+        super().__init__(
+            key, cover=thumbnail, title=title, author=subtitle, badge=badge,
+        )
         self.meta = meta
-        self.badge = badge
-        self.thumbnail_url = thumbnail
         self.action_callback = None
 
 
