@@ -28,9 +28,10 @@ def public_borrower_refusal_code(value: Any) -> str:
 def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: str) -> tuple[str | None, str | None]:
     """Resolve the Adobe borrower for one exact provider connection.
 
-    v16 source grants work for any installed library; v15 has fixed,\n    historical source provenance. The primary account uses its proven\n    connection identity unless an explicit exceptional grant overrides it.
-    An explicit exceptional grant takes precedence without changing that
-    identity's normal profile. Linked accounts always require a grant.
+    Confirmed source-scoped v16 grants work for any library. Historical v15
+    records retain a fixed provenance and can only veto contradictions.
+    The primary account normally uses its proven connection identity, while
+    linked accounts require an explicit source-bound ADEPT borrower grant.
     """
     # A malformed provider loan cannot attest a borrower by coercing
     # arbitrary objects (or str subclasses) into a stored account key.
