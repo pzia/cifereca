@@ -1744,6 +1744,54 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
         providers=provider_ids, content_types=content_types,
         age=age, age_kind=age_kind,
     )
+    # A known Search is already executed off the GTK thread by its existing
+    # TaskRunner. Read the durable public C index HERE, before any explicit
+    # online extension, instead of doing SQLite work in a row/widget binder.
+    # This source-only cursor is bounded/partial and cannot grant a right.
+    # Preserve the legacy path for fake backends and unsupported fields.
+    if (type(query) is str and 2 <= len(query.strip()) <= 160
+            and field in ("all", "title", "author", "publisher")
+            and scope in ("all", "digital", "physical", "unknown")
+            and age is None):
+        from ..storage import Storage
+        if isinstance(getattr(self, "storage", None), Storage):
+            from .notice_c_public_search import search_public_notice_c
+            from .notice_c_known_projection import merge_public_notice_c_known_rows
+            from .search import filter_loaded_results
+            from sqlite3 import Error as SQLiteError
+            try:
+                c_page = search_public_notice_c(
+                    self.storage, query, field=field, scope=scope,
+                    provider_ids=tuple(provider_ids or ()),
+                )
+                c_rows = merge_public_notice_c_known_rows(
+                    [], c_page, identity_id=resolved_identity,
+                )
+                if content_types:
+                    c_rows = filter_loaded_results(
+                        c_rows, "", content_types=content_types,
+                    )
+                # Suppress an existing mirror only for a C hit ACTUALLY
+                # admitted into the result after format filtering.
+                if len(c_rows) == len(c_page.hits):
+                    rows = merge_public_notice_c_known_rows(
+                        rows, c_page, identity_id=resolved_identity,
+                    )
+                    if content_types:
+                        selected = {row["key"] for row in c_rows}
+                        rows = [
+                            row for row in rows
+                            if row.get("source") != "notice_c_public"
+                            or row.get("key") in selected
+                        ]
+                else:
+                    # No lossy dedup: a format-hidden C hit must not suppress
+                    # its otherwise visible legacy/local result.
+                    rows = c_rows + rows
+            except (SQLiteError, ValueError, TypeError, AttributeError):
+                # Unknown/broken public C does not erase the independently
+                # scoped local library, rights or historical Search results.
+                pass
     logger.info(
         "TRACE search known identity=%s query_len=%s scope=%s field=%s results=%s",
         resolved_identity, len(str(query or "")), scope, field, len(rows),
