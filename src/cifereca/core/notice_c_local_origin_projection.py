@@ -1,8 +1,9 @@
 """#6366: Core-attested public C cover from a local completed OriginLink.
 
 Library and Recent are *owner-scoped local* views. Their catalogue fallback
-may reuse a canonical PUBLIC Notice C only when a real completed provider
-OriginLink relates that same Artifact/Placement to the exact supplier record
+may reuse a canonical PUBLIC Notice C for completed purchases **or loans**
+only when a real completed provider OriginLink relates the Artifact/Placement
+to the exact supplier record
 retained inside the C. No catalogue match by title, ISBN, URL, SHA alone or
 foreign profile. This runs on Library/Recent's existing worker, never GTK.
 No right is acquired, inferred, or copied from C. EPUB N1 always wins.
@@ -64,8 +65,17 @@ def project_local_origin_public_c(
     additional bounded read neither looks up files nor consults a supplier.
     Invalid/ambiguous provenance simply leaves the existing cover path.
     """
-    if (type(identity_id) is not str or not identity_id
-            or type(rows) is not list or not rows or len(rows) > _MAX_ROWS):
+    if type(rows) is not list:
+        return
+    # A repeated worker projection may receive previously annotated rows.
+    # A proof from an earlier origin/C inventory cannot survive failed or
+    # conflicting fresh evidence, a profile switch, or a removed Placement.
+    # Always revoke the old binding before attempting the new admission.
+    for row in rows:
+        if type(row) is dict:
+            row.pop("_public_canonical_cover_link", None)
+    if (len(rows) > _MAX_ROWS or type(identity_id) is not str
+            or not identity_id or not rows):
         return
     wanted = {
         (row.get("artifact_id"), row.get("placement_id"))
@@ -93,7 +103,10 @@ def project_local_origin_public_c(
     by_artifact: dict[str, set[tuple[str, str]]] = {}
     origin_memberships: dict[tuple[str, str], set[str]] = {}
     for artifact, owner, provider, _credential, _account, edition, kind in verified:
-        if owner != identity_id or kind != "purchase":
+        # A completed *loan* acquisition also proves the source-to-Artifact
+        # relationship. C remains descriptive, never a borrowing entitlement;
+        # an unmaterialized/remote loan still has no Placement and cannot join.
+        if owner != identity_id or kind not in ("purchase", "loan"):
             continue
         coord = (provider, edition)
         by_artifact.setdefault(artifact, set()).add(coord)
@@ -119,10 +132,13 @@ def project_local_origin_public_c(
     if len(indexed) > _MAX_CANONICAL:
         return
 
-    # For every real public canonical C, ALL its source bibliographies
-    # must be independently proven to belong to this Artifact. Otherwise
-    # no single local file may borrow another edition's public thumbnail.
-    candidates: dict[str, list[tuple[object, int]]] = {}
+    # The completed OriginLink only attests provider + upstream record ID.
+    # It cannot identify a distinct docbase/medium/revision of that record.
+    # Across ALL durable public C records, require those coarse coordinates
+    # to designate exactly one independently admitted source edition.
+    # A self-C and a multi-source C for the same exact edition are compatible.
+    exact_editions: dict[tuple[str, str], set[str]] = {}
+    qualified: list[tuple[object, tuple[tuple[str, str], ...]]] = []
     for key, raw in indexed:
         try:
             value = _json(raw)
@@ -141,27 +157,46 @@ def project_local_origin_public_c(
                 (source.provider_id, source.public_bibliography.record_id)
                 for source in sources
             )
+            for coord, source in zip(coords, sources):
+                exact_editions.setdefault(coord, set()).add(
+                    source.public_bibliography.edition_id
+                )
             if len(set(coords)) != len(coords):
                 continue
-            for artifact in eligible_artifacts:
-                trusted = by_artifact.get(artifact, set())
-                if all(coord in trusted
-                       and origin_memberships.get(coord) == {artifact}
-                       for coord in coords):
-                    candidates.setdefault(artifact, []).append(
-                        (c, len(coords)),
-                    )
+            qualified.append((c, coords))
         except (ValueError, KeyError, TypeError, AttributeError):
             continue
 
+    candidates: dict[str, list[tuple[object, int]]] = {}
+    for c, coords in qualified:
+        # A provider + record shared by two distinct exact public catalogue
+        # editions is insufficient to relate either to the local Artifact.
+        if any(len(exact_editions[coord]) != 1 for coord in coords):
+            continue
+        # Each completed OriginLink must belong to the same one Artifact,
+        # independently of SHA matches or rights held by another identity.
+        linked = origin_memberships.get(coords[0], set())
+        if len(linked) != 1:
+            continue
+        artifact = next(iter(linked))
+        if artifact not in eligible_artifacts:
+            continue
+        trusted = by_artifact.get(artifact, set())
+        if all(coord in trusted and origin_memberships.get(coord) == linked
+               for coord in coords):
+            candidates.setdefault(artifact, []).append((c, len(coords)))
+
     selected: dict[str, object] = {}
     for artifact, options in candidates.items():
-        # A shared C with two exact sources supersedes each self-edition C.
-        # Equal-strength contradictory canonical links remain ambiguous.
-        strongest = max(score for _c, score in options)
-        best = [c for c, score in options if score == strongest]
-        if len(best) == 1:
-            selected[artifact] = best[0]
+        # Source-count is not evidence that one *contradictory* canonical C
+        # is truer than another. One multi-source relation supersedes the
+        # automatic self-C rows; any two multi-source relations for this
+        # Artifact are ambiguous, even when their sizes differ (3 vs 2).
+        relations = [c for c, count in options if count > 1]
+        if len(relations) == 1:
+            selected[artifact] = relations[0]
+        elif not relations and len(options) == 1:
+            selected[artifact] = options[0][0]
 
     for row in rows:
         if (type(row) is not dict

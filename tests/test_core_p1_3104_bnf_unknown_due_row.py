@@ -49,7 +49,8 @@ def _render_actual(loans):
     host = NS(
         service=NS(current_identity=NS(identity_id="alice"), last_loans=loans),
         loan_filter="all",
-        loan_objects={},
+        # Render only DTOs owned by the same current action inventory.
+        loan_objects={loan_source_key(loan): loan for loan in loans},
         loan_page=NS(show_rows=lambda rows, **_kw: rendered.extend(rows)),
         _known_item_languages=lambda *a: set(),
         _attach_row_facets=lambda *a: None,

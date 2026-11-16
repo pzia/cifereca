@@ -1111,7 +1111,29 @@ class DetailPanel(Gtk.Box):
         finally:
             self._next_cover_evidence = None
 
+    def show_public_c_search_document(
+        self, item: SearchResult, *, public_c_document,
+        loading: bool = False, detail: ItemDetail | None = None,
+    ) -> None:
+        """Render a verified C reference without changing the Search facade ABI."""
+        from cifereca.core.notice_c_cover_index import is_canonical_cover_document
+        if not is_canonical_cover_document(public_c_document):
+            raise ValueError("unverified public C document")
+        if getattr(self, "_next_public_c_document", None) is not None:
+            raise RuntimeError("nested public C detail render")
+        self._next_public_c_document = public_c_document
+        try:
+            if detail is None:
+                self.show_search(item, loading=loading)
+            else:
+                self.show_item_detail(item, detail)
+        finally:
+            self._next_public_c_document = None
+
     def show_search(self, item: SearchResult, loading: bool = False) -> None:
+        from cifereca.core.notice_c_cover_index import is_canonical_cover_document
+        candidate = getattr(self, "_next_public_c_document", None)
+        document = candidate if is_canonical_cover_document(candidate) else None
         medium = search_detail_support_label(item)
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
@@ -1147,6 +1169,7 @@ class DetailPanel(Gtk.Box):
                 ]),
             ],
             metadata=item.metadata,
+            cover_document_ref=document,
         ), description=item.description)
         if stale_known:
             # A public cache row is neither a current download offer nor a
@@ -1255,6 +1278,9 @@ class DetailPanel(Gtk.Box):
         self._append_content(group)
 
     def show_item_detail(self, item: SearchResult, detail: ItemDetail) -> None:
+        from cifereca.core.notice_c_cover_index import is_canonical_cover_document
+        candidate = getattr(self, "_next_public_c_document", None)
+        document = candidate if is_canonical_cover_document(candidate) else None
         medium = search_detail_support_label(item)
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
@@ -1292,6 +1318,7 @@ class DetailPanel(Gtk.Box):
                    account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
                    source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))),
             metadata=item.metadata,
+            cover_document_ref=document,
         ), description=getattr(detail, "description", None) or item.description)
         from cifereca.gui.offer_actions import private_notice_download_hint_allowed
         private_hint_ok = private_notice_download_hint_allowed(

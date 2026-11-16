@@ -216,24 +216,6 @@
       "reachability": "unproven"
     },
     {
-      "id": "site-10c7380b69f3ae55dce5dab6",
-      "classification": "false_positive",
-      "journey": "Explicitly requested ADEPT runtime diagnostic in the saved Paris binding context",
-      "productive_caller": "LibraryService.check_normal_paris_adept_runtime -> _kobo_adapter",
-      "effect": "Obtains technical ADEPT runtime readiness only; the separate Paris source-ownership checks remain live safety vetoes.",
-      "authority": "Saved identity and profile binding gate this inspection; runtime availability never authorizes loan delivery.",
-      "replacement_contract": "Retain the user-triggered profile check and saved-binding fences, independent of future runtime adapter naming.",
-      "tests": [
-        "tests/test_core_1063_normal_paris_adept_status.py",
-        "tests/test_core_p1_1063_adept_runtime_check.py",
-        "tests/test_core_p0_5048_adept_source_binding_status.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "The Kobo token denotes Kobo-ADEPT runtime discovery, not a Kobo provider rights or acquisition branch.",
-      "decision_group_id": "adept.runtime-explicit-readiness-probe",
-      "reachability": "unproven"
-    },
-    {
       "id": "site-2337f2c628b0365c1fe6ff68",
       "classification": "false_positive",
       "journey": "Technical Kobo-ADEPT runtime feature/state discovery",
@@ -319,33 +301,17 @@
       "reachability": "productive"
     },
     {
-      "id": "site-60a9d11031d9610ffda9a089",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Explicit reacquisition of a protected Paris digital loan",
-      "productive_caller": "LibraryService.reacquire_digital_loan -> _reacquire_digital_loan_impl under acquisition lock",
-      "effect": "Calls exact Paris ADEPT borrower resolver and blocks any non-None refusal BEFORE ledger inspection, rights update or automatic acquisition; codes are allowlisted.",
-      "authority": "Source-bound connection owner, existing borrower grant and cross-identity ledger conflict; user intent alone cannot choose ADEPT identity.",
-      "replacement_contract": "Source-neutral typed borrower/profile admission whose refusal is mandatory before protected reacquisition; preserve one-shot/retry guards.",
-      "tests": [
-        "tests/test_core_p0_5975_explicit_reacquire_borrower_refusal.py",
-        "tests/test_core_p0_5851_dual_grant_conflict.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto. Revue réancrée après la garde native de réacquisition explicite #6245 : exigence d'admission Paris conservée, aucun retrait AST ni permission nouvelle.",
-      "decision_group_id": "loan.explicit-reacquire-adept-borrower",
-      "reachability": "productive"
-    },
-    {
       "id": "site-6eb4621cd5425b09c6a9cee5",
       "classification": "safety_guard_pending_contract",
-      "journey": "Explicit reacquisition of a protected Paris digital loan",
-      "productive_caller": "LibraryService.reacquire_digital_loan -> _reacquire_digital_loan_impl under acquisition lock",
-      "effect": "Calls exact Paris ADEPT borrower resolver and blocks any non-None refusal BEFORE ledger inspection, rights update or automatic acquisition; codes are allowlisted.",
+      "journey": "source-neutral explicit loan reacquisition borrower veto",
+      "productive_caller": "LibraryService._reacquire_digital_loan_impl -> source-scoped v16 borrower grant check before acquisitions/rights and provider staging",
+      "effect": "Checks native exact borrower for every provider before any staging; historical _paris_ facade is retained for ABI but emits no provider-name decision",
       "authority": "Source-bound connection owner, existing borrower grant and cross-identity ledger conflict; user intent alone cannot choose ADEPT identity.",
-      "replacement_contract": "Source-neutral typed borrower/profile admission whose refusal is mandatory before protected reacquisition; preserve one-shot/retry guards.",
+      "replacement_contract": "Rename the legacy facade to neutral typed borrower-grant reader once all external ABI consumers are migrated; source-scoped v16 lookup already active",
       "tests": [
         "tests/test_core_p0_5975_explicit_reacquire_borrower_refusal.py",
-        "tests/test_core_p0_5851_dual_grant_conflict.py"
+        "tests/test_core_p0_5851_dual_grant_conflict.py",
+        "tests/test_core_p0_5975_explicit_reacquire_neutral_borrower.py"
       ],
       "retirement_pr": "",
       "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto. Revue réancrée après la garde native de réacquisition explicite #6245 : exigence d'admission Paris conservée, aucun retrait AST ni permission nouvelle.",
@@ -383,60 +349,6 @@
       "rationale": "Provider check and borrower callback belong to one source-specific status fence. Direct productive reachability is not established from an exported facade alone. Site reviewed again after typed native-scope guard extraction in #6206; this is a retained read-only safety fence, not an AST retirement.",
       "decision_group_id": "adept.return-source-provenance-status",
       "reachability": "unproven"
-    },
-    {
-      "id": "site-a99f3f4da32247a6a6efec04",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Saved Paris primary connection / ADEPT identity readiness and explicit runtime check",
-      "productive_caller": "LibraryService.normal_paris_adept_status -> check_normal_paris_adept_runtime; Settings reads normal status and user-triggered runtime probe rechecks binding before/after",
-      "effect": "Checks active configured primary Paris source, saved identity and binding freshness. An explicit ADEPT runtime probe cannot use a stale or foreign profile; status is read-only.",
-      "authority": "Persisted source identity/credential and exact ADEPT profile binding; runtime successful probe is not a grant.",
-      "replacement_contract": "Typed source-neutral primary DRM binding status and revocable explicit diagnostic lease, preserving refusal after ABA changes.",
-      "tests": [
-        "tests/test_core_1063_normal_paris_adept_status.py",
-        "tests/test_core_p1_1063_adept_runtime_check.py",
-        "tests/test_core_p0_5048_adept_source_binding_status.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Three anchors form one readiness/freshness context at read and diagnostic boundaries, not three independent acquisition decisions.",
-      "decision_group_id": "adept.normal-paris-primary-binding-readiness",
-      "reachability": "productive"
-    },
-    {
-      "id": "site-ad1126c55bb2a396a4efeaf8",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Saved Paris primary connection / ADEPT identity readiness and explicit runtime check",
-      "productive_caller": "LibraryService.normal_paris_adept_status -> check_normal_paris_adept_runtime; Settings reads normal status and user-triggered runtime probe rechecks binding before/after",
-      "effect": "Checks active configured primary Paris source, saved identity and binding freshness. An explicit ADEPT runtime probe cannot use a stale or foreign profile; status is read-only.",
-      "authority": "Persisted source identity/credential and exact ADEPT profile binding; runtime successful probe is not a grant.",
-      "replacement_contract": "Typed source-neutral primary DRM binding status and revocable explicit diagnostic lease, preserving refusal after ABA changes.",
-      "tests": [
-        "tests/test_core_1063_normal_paris_adept_status.py",
-        "tests/test_core_p1_1063_adept_runtime_check.py",
-        "tests/test_core_p0_5048_adept_source_binding_status.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Three anchors form one readiness/freshness context at read and diagnostic boundaries, not three independent acquisition decisions.",
-      "decision_group_id": "adept.normal-paris-primary-binding-readiness",
-      "reachability": "productive"
-    },
-    {
-      "id": "site-27ca4e2cb71815ea92df3fd2",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Saved Paris primary connection / ADEPT identity readiness and explicit runtime check",
-      "productive_caller": "LibraryService.normal_paris_adept_status -> check_normal_paris_adept_runtime; Settings reads normal status and user-triggered runtime probe rechecks binding before/after",
-      "effect": "Checks active configured primary Paris source, saved identity and binding freshness. An explicit ADEPT runtime probe cannot use a stale or foreign profile; status is read-only.",
-      "authority": "Persisted source identity/credential and exact ADEPT profile binding; runtime successful probe is not a grant.",
-      "replacement_contract": "Typed source-neutral primary DRM binding status and revocable explicit diagnostic lease, preserving refusal after ABA changes.",
-      "tests": [
-        "tests/test_core_1063_normal_paris_adept_status.py",
-        "tests/test_core_p1_1063_adept_runtime_check.py",
-        "tests/test_core_p0_5048_adept_source_binding_status.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Three anchors form one readiness/freshness context at read and diagnostic boundaries, not three independent acquisition decisions.",
-      "decision_group_id": "adept.normal-paris-primary-binding-readiness",
-      "reachability": "productive"
     },
     {
       "id": "site-ad2f06a6ca9b22ee1e32194b",
@@ -1688,6 +1600,85 @@
       "in_ast_metric": true
     },
     {
+      "id": "struct-explicit-reacquire-paris-only-borrower-cutover",
+      "original": "src/cifereca/services.py::_reacquire_digital_loan_impl if source.provider_id.casefold() == 'paris'",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Existing source-scoped v16 borrower preflight for every explicit reacquisition via stable historic facade ABI",
+      "classification": "removed_from_executable_core_provider_dispatch",
+      "evidence": "The Paris-only condition is removed; exact borrower grant is mandatory before acquisitions/rights inventory and provider staging for all sources, including BiblioAccess; native owner and source mutation checks remain.",
+      "tests": [
+        "tests/test_core_p0_5975_explicit_reacquire_borrower_refusal.py",
+        "tests/test_core_p0_5975_explicit_reacquire_owner_fence.py",
+        "tests/test_core_p0_5975_explicit_reacquire_neutral_borrower.py"
+      ],
+      "pr": "#6449",
+      "in_ast_metric": true,
+      "original_site_id": "site-60a9d11031d9610ffda9a089"
+    },
+    {
+      "id": "struct-p0-5975-source-adept-readiness-1",
+      "original": "src/cifereca/services.py::normal_paris_adept_status (branded primary source binding site 1)",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "LibraryService.normal_source_adept_status and check_source_adept_runtime, with historical Paris facade forwarding an exact saved primary connection and retaining readiness/probe fencing",
+      "classification": "neutral_core_source_binding_cutover",
+      "evidence": "Provider selection and configured-login validation moved to source_provider_id argument; all suppliers use the same read-only readiness and one-user-invoked ADEPT runtime check, while Paris facade remains a compatibility adapter. AST inventory must confirm changed/retired original anchors before merging.",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_adept_readiness.py",
+        "tests/test_core_1063_normal_paris_adept_status.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py"
+      ],
+      "pr": "#6456",
+      "in_ast_metric": true,
+      "original_site_id": "site-a99f3f4da32247a6a6efec04"
+    },
+    {
+      "id": "struct-p0-5975-source-adept-readiness-2",
+      "original": "src/cifereca/services.py::normal_paris_adept_status (branded primary source binding site 2)",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "LibraryService.normal_source_adept_status and check_source_adept_runtime, with historical Paris facade forwarding an exact saved primary connection and retaining readiness/probe fencing",
+      "classification": "neutral_core_source_binding_cutover",
+      "evidence": "Provider selection and configured-login validation moved to source_provider_id argument; all suppliers use the same read-only readiness and one-user-invoked ADEPT runtime check, while Paris facade remains a compatibility adapter. AST inventory must confirm changed/retired original anchors before merging.",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_adept_readiness.py",
+        "tests/test_core_1063_normal_paris_adept_status.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py"
+      ],
+      "pr": "#6456",
+      "in_ast_metric": true,
+      "original_site_id": "site-ad1126c55bb2a396a4efeaf8"
+    },
+    {
+      "id": "struct-p0-5975-source-adept-readiness-3",
+      "original": "src/cifereca/services.py::normal_paris_adept_status (branded primary source binding site 3)",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "LibraryService.normal_source_adept_status and check_source_adept_runtime, with historical Paris facade forwarding an exact saved primary connection and retaining readiness/probe fencing",
+      "classification": "neutral_core_source_binding_cutover",
+      "evidence": "Provider selection and configured-login validation moved to source_provider_id argument; all suppliers use the same read-only readiness and one-user-invoked ADEPT runtime check, while Paris facade remains a compatibility adapter. AST inventory must confirm changed/retired original anchors before merging.",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_adept_readiness.py",
+        "tests/test_core_1063_normal_paris_adept_status.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py"
+      ],
+      "pr": "#6456",
+      "in_ast_metric": true,
+      "original_site_id": "site-27ca4e2cb71815ea92df3fd2"
+    },
+    {
+      "id": "struct-observed-loan-display-bnf-provider-selector-cutover",
+      "original": "src/cifereca/core/library_projection.py::library_entries hardcoded 'bnf-pret' and 'bnf_observed_loan' to associate manual-import display hints",
+      "original_classification": "presentation_only",
+      "replacement": "observed_import_links_for_sources over exact stored loan-entitlement provider coordinates and shared writer metadata-field grammar, still requiring exact local Placement/artifact/borrower and manual import receipt",
+      "classification": "neutral_display_projection_cutover",
+      "evidence": "Core no longer chooses BnF by supplier name; it reads the same already-written provider-scoped metadata grammar for all eligible observed providers, bounded to 64 providers with no new entitlement or GET. Existing BnF historical rows and URI scopes remain byte-for-byte compatible.",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_observed_import_display.py",
+        "tests/test_core_p0_5055_generic_import_display_links.py",
+        "tests/test_bnf_import_library_link.py"
+      ],
+      "pr": "#6459",
+      "in_ast_metric": true
+    },
+    {
       "id": "struct-canonical-selected-runtime-provider-allowlist-cutover-6447",
       "original": "src/cifereca/core/canonical_selected_delivery.py::complete_selected_delivery.execute_selected_runtime (source type in kobo/acsm)",
       "original_classification": "safety_guard_pending_contract",
@@ -1981,6 +1972,19 @@
         "tests/test_core_p1_1063_adept_runtime_check.py"
       ],
       "pr": "#6364"
+    },
+    {
+      "id": "guard-adept-borrower-native-source-account-snapshot",
+      "journey": "ADEPT borrower negative source ownership admission before source-scoped v16/v15 grant checks",
+      "classification": "native_source_owner_refusal",
+      "effect": "Replace stringification, truth-testing and potentially dynamic account equality with static native account coordinates for provider/credential/borrower/identity/primary. Reject malformed matching-provider rows, conflicting identities, duplicate primary accounts and failed inventories.",
+      "remaining_debt": "This is a guard replacement, not a grant or a claim that the legacy historical Paris borrower facade has been removed. Keep exact v16 grant and source-epoch protections.",
+      "tests": [
+        "tests/test_core_p0_5975_native_borrower_conflict.py",
+        "tests/test_adept_borrower_identity_guard.py",
+        "tests/test_core_p0_1120_paris_borrower_typed_input.py"
+      ],
+      "pr": "#6460"
     }
   ],
   "retained_legacy_migrations": [
