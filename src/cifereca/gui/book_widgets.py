@@ -589,6 +589,29 @@ class BookListCell(Gtk.Box):
                 self.window, getattr(item, "_loan_source_item", None),
                 service, supplier, document,
             )
+        public_link = getattr(item, "_cover_public_c_link", None)
+        if public_link is not None:
+            from ..core.notice_c_local_origin_projection import (
+                valid_local_public_c_link,
+            )
+            # Core created this packet on the owner-pinned Library/Recent
+            # worker. Recheck the selected identity on each recycled cell.
+            active = getattr(
+                getattr(
+                    getattr(self.window, "service", None),
+                    "current_identity", None,
+                ), "identity_id", None,
+            )
+            return (
+                getattr(item, "_cover_local_evidence", None) is None
+                and getattr(item, "_cover_history_evidence", None) is None
+                and document == public_link.document
+                and valid_local_public_c_link(
+                    public_link, identity_id=active,
+                    artifact_id=public_link.artifact_id,
+                    placement_id=public_link.placement_id,
+                )
+            )
         facts = getattr(item, "_cover_local_evidence", None)
         history = getattr(item, "_cover_history_evidence", None)
         if facts is not None and history is not None:
