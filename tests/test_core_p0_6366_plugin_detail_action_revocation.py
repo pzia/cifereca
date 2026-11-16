@@ -105,3 +105,98 @@ def test_unrevoked_plugin_button_keeps_existing_callback_behavior():
     button.click()
     button.click()
     assert count == ["once", "once"]
+
+
+def cached_extension():
+    source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/detail_panel.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    cls = next(
+        stmt for stmt in tree.body
+        if isinstance(stmt, ast.ClassDef) and stmt.name == "DetailPanel"
+    )
+    method = next(
+        stmt for stmt in cls.body
+        if isinstance(stmt, ast.FunctionDef)
+        and stmt.name == "update_cached_book_details"
+    )
+    module = ast.fix_missing_locations(ast.Module(
+        body=[
+            ast.ImportFrom(module="__future__",
+                           names=[ast.alias(name="annotations")], level=0),
+            method,
+        ], type_ignores=[],
+    ))
+    namespace = {}
+    exec(compile(module, str(source), "exec"), namespace)
+    update = namespace["update_cached_book_details"]
+    panel = NS(
+        _cached_section_widgets=[],
+        _cached_action_ids=set(),
+        _action_buttons=[],
+        window=NS(action_button=lambda title, icon: FakeButton(title)),
+    )
+
+    def clear_actions():
+        for button in panel._action_buttons:
+            button._cifereca_action_context_revoked = True
+        panel._action_buttons.clear()
+
+    panel._clear_actions = clear_actions
+    panel._actions = lambda buttons: panel._action_buttons.extend(buttons)
+    return update, panel
+
+
+def contribution(callback):
+    return NS(
+        plugin_id="catalogue",
+        detail=NS(
+            source=None, stale=False, updated_at=None, sections=(),
+            actions=(NS(
+                id="open-book", title="Ouvrir", icon_name="document-open-symbolic",
+                uri="", callback=callback,
+            ),),
+        ),
+    )
+
+
+def test_cached_detail_actions_are_revoked_on_refresh_or_removal():
+    update, panel = cached_extension()
+    events = []
+    update(panel, [contribution(lambda: events.append("old"))])
+    old = panel._action_buttons[0]
+    old.click()
+    assert events == ["old"]
+
+    update(panel, [contribution(lambda: events.append("new"))])
+    assert old._cifereca_action_context_revoked is True
+    old.click()
+    assert events == ["old"]
+    fresh = panel._action_buttons[0]
+    assert fresh is not old
+    fresh.click()
+    assert events == ["old", "new"]
+
+    update(panel, [])
+    assert fresh._cifereca_action_context_revoked is True
+    fresh.click()
+    assert events == ["old", "new"]
+
+
+def test_cached_detail_refresh_keeps_unrelated_current_base_action():
+    update, panel = cached_extension()
+    events = []
+    base = FakeButton("Open local")
+    base._cifereca_action_id = "open-local"
+    base.connect("clicked", lambda _: events.append("base"))
+    panel._action_buttons.append(base)
+
+    update(panel, [contribution(lambda: events.append("cached"))])
+    cached = next(
+        b for b in panel._action_buttons if b._cifereca_action_id.startswith("book-cache:")
+    )
+    update(panel, [])
+    assert cached._cifereca_action_context_revoked is True
+    assert base._cifereca_action_context_revoked is False
+    cached.click()
+    base.click()
+    assert events == ["base"]
