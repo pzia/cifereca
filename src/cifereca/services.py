@@ -840,7 +840,9 @@ class LibraryService:
             except Exception:
                 raise LoanActionError(reason('loan_scope_unproven')) from None
             from .core.observed_loan_scope import observed_loan
-            from .core.observed_import_provenance import remember_observed_import
+            from .core.observed_import_provenance import (
+                remember_observed_import, observed_loan_provenance_field,
+            )
             display_scope = observed_loan(loan)
             observation.at('adept_import')
             result = self.import_acsm(source, identity_id=expected_identity_id,
@@ -848,7 +850,7 @@ class LibraryService:
                                       placement_provider_id=loan.source_provider)
             remember_observed_import(
                 self, result, display_scope, provider_id=loan.source_provider,
-                provenance_field=prefix + '_observed_loan',
+                provenance_field=observed_loan_provenance_field(loan.source_provider),
             )
         except LoanActionError as exc:
             observation.emit('failed', exc.code)
