@@ -137,10 +137,12 @@ def test_missing_or_positive_readiness_keeps_old_compatibility(profile_row):
     store.assert_not_called()
 
 
-def test_nonparis_profile_resolution_does_not_change_borrower_account():
-    invoke, store, borrower, resolver, profiles, *_ = _fixture(provider="kobo")
+def test_nonparis_profile_resolution_also_requires_exact_borrower_proof():
+    invoke, store, borrower, resolver, profiles, loan, _ = _fixture(
+        provider="synthetic-library",
+    )
     assert invoke() == ("identity-1", "reader-a")
-    borrower.assert_not_called()
+    borrower.assert_called_once_with(loan, connection_identity_id="identity-1")
     store.assert_not_called()
 
 
