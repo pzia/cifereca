@@ -1697,6 +1697,103 @@ class Storage:
             END
         """)
 
+        # Provider-neutral, v17-compatible *auxiliary* generation witness.
+        # Keep schema_version=17 so existing full-release rollback/reader
+        # binaries can open the database. The sidecar is idempotent and all
+        # mutations (including raw SQLite and older Core writers) are fenced
+        # by DB triggers. The tombstones never delete when a connection goes
+        # away, so A -> B -> A or delete -> insert cannot recover an epoch.
+        #
+        # Seed pre-existing rows as generation=1. No historical generation
+        # can be reconstructed from a v17 database; new captures start only
+        # after triggers have been installed in this transaction.
+        db.execute("SAVEPOINT provider_source_epoch_v17")
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS provider_connection_epochs (
+                    provider_id TEXT NOT NULL,
+                    credential_id TEXT NOT NULL,
+                    epoch INTEGER NOT NULL
+                        CHECK (typeof(epoch)='integer' AND epoch > 0
+                               AND epoch < 9223372036854775807),
+                    PRIMARY KEY(provider_id, credential_id)
+                )
+            """)
+            db.execute("""
+                INSERT OR IGNORE INTO provider_connection_epochs
+                    (provider_id, credential_id, epoch)
+                SELECT provider_id, credential_id, 1
+                FROM provider_connections
+            """)
+            # No routine may roll back or erase a historical generation,
+            # including direct SQL cleanup and legacy connection writers.
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_provider_epoch_no_delete
+                BEFORE DELETE ON provider_connection_epochs
+                BEGIN
+                    SELECT RAISE(ABORT, 'source_epoch_retirement_forbidden');
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_provider_epoch_no_rewind
+                BEFORE UPDATE ON provider_connection_epochs
+                WHEN NEW.provider_id != OLD.provider_id
+                     OR NEW.credential_id != OLD.credential_id
+                     OR typeof(NEW.epoch) != 'integer'
+                     OR NEW.epoch <= OLD.epoch
+                BEGIN
+                    SELECT RAISE(ABORT, 'source_epoch_rewind_forbidden');
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_provider_epoch_insert
+                AFTER INSERT ON provider_connections
+                BEGIN
+                    INSERT INTO provider_connection_epochs
+                        (provider_id, credential_id, epoch)
+                    VALUES (NEW.provider_id, NEW.credential_id, 1)
+                    ON CONFLICT(provider_id, credential_id)
+                    DO UPDATE SET epoch=epoch+1;
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_provider_epoch_update
+                AFTER UPDATE ON provider_connections
+                BEGIN
+                    -- Retire the previous scope even if a row was re-keyed.
+                    INSERT INTO provider_connection_epochs
+                        (provider_id, credential_id, epoch)
+                    VALUES (OLD.provider_id, OLD.credential_id, 1)
+                    ON CONFLICT(provider_id, credential_id)
+                    DO UPDATE SET epoch=epoch+1;
+                    -- A move to another previously retired scope must also
+                    -- invalidate every old generation of that new scope.
+                    INSERT INTO provider_connection_epochs
+                        (provider_id, credential_id, epoch)
+                    SELECT NEW.provider_id, NEW.credential_id, 1
+                    WHERE NEW.provider_id != OLD.provider_id
+                       OR NEW.credential_id != OLD.credential_id
+                    ON CONFLICT(provider_id, credential_id)
+                    DO UPDATE SET epoch=epoch+1;
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_provider_epoch_delete
+                AFTER DELETE ON provider_connections
+                BEGIN
+                    INSERT INTO provider_connection_epochs
+                        (provider_id, credential_id, epoch)
+                    VALUES (OLD.provider_id, OLD.credential_id, 1)
+                    ON CONFLICT(provider_id, credential_id)
+                    DO UPDATE SET epoch=epoch+1;
+                END
+            """)
+            db.execute("RELEASE SAVEPOINT provider_source_epoch_v17")
+        except Exception:
+            db.execute("ROLLBACK TO SAVEPOINT provider_source_epoch_v17")
+            db.execute("RELEASE SAVEPOINT provider_source_epoch_v17")
+            raise
+
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
         raw = "\x1f".join(str(part or "") for part in parts).encode("utf-8", "surrogatepass")
@@ -2894,6 +2991,58 @@ class Storage:
         for record in values:
             row=dict(zip(columns,record)); row["enabled"]=bool(row["enabled"]); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
         return out
+
+    def provider_connection_epoch(
+        self, provider_id: str, credential_id: str, identity_id: str,
+    ) -> int | None:
+        """Return a live, owner-scoped *negative fence* with a durable epoch.
+
+        A successful read attests only the current enabled connection owner;
+        it is NOT proof of an account, loan, entitlement, ADEPT grant or user
+        consent. Callers must pin the returned epoch before external callbacks
+        and recheck it before acting. The JOIN uses one SQLite read snapshot.
+        """
+        values = (provider_id, credential_id, identity_id)
+        if any(
+            type(value) is not str or not value or len(value) > 1024
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+            for value in values
+        ):
+            return None
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT c.identity_id,c.enabled,e.epoch "
+                "FROM provider_connections AS c "
+                "JOIN provider_connection_epochs AS e "
+                "ON e.provider_id=c.provider_id "
+                "AND e.credential_id=c.credential_id "
+                "WHERE c.provider_id=? AND c.credential_id=? LIMIT 2",
+                (provider_id.casefold(), credential_id),
+            ).fetchall()
+        if len(rows) != 1:
+            return None
+        owner, enabled, epoch = rows[0]
+        if (type(owner) is not str or owner != identity_id
+                or type(enabled) is not int or enabled != 1
+                or type(epoch) is not int or epoch < 1):
+            return None
+        return epoch
+
+    def provider_connection_epoch_current(
+        self, provider_id: str, credential_id: str, identity_id: str,
+        expected_epoch: int,
+    ) -> bool:
+        """Detect A->B->A, disable/re-enable and delete/recreate across calls.
+
+        An epoch captured before staging cannot become valid again when the
+        connection regains the same owner or account descriptor. No provider
+        operation, profile lookup, or write is performed by this predicate.
+        """
+        if type(expected_epoch) is not int or expected_epoch < 1:
+            return False
+        return self.provider_connection_epoch(
+            provider_id, credential_id, identity_id,
+        ) == expected_epoch
 
     def provider_scope_account_bound(
         self, *, identity_id: str, provider_id: str,
