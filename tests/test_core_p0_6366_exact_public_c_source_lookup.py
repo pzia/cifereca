@@ -15,7 +15,7 @@ URL_A = "https://covers.example.org/a.jpg"
 URL_B = "https://covers.example.org/b.jpg"
 
 
-def make(db, provider, record, *, docbase="public-catalog", revision=None):
+def make(db, provider, record, *, docbase="digital-books", revision=None):
     return persist(db, verified_public(
         source_provider=provider, record_id=record, docbase=docbase,
         revision_id=revision, title="Titre identique",
@@ -24,12 +24,12 @@ def make(db, provider, record, *, docbase="public-catalog", revision=None):
 
 
 def find(db, source):
-    bibliography = source.observation.public_bibliography
+    bibliography = source.observation.fields_copy()["search_result"]["public_bibliography"]
     return exact_public_source_c(
         db, provider_id=source.observation.key.provider_id,
-        record_id=bibliography.record_id, docbase=bibliography.docbase,
-        medium=bibliography.medium,
-        source_revision=bibliography.source_revision,
+        record_id=bibliography["record_id"], docbase=bibliography["docbase"],
+        medium=bibliography["medium"],
+        source_revision=bibliography["revision_id"],
     )
 
 
