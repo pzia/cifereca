@@ -18,20 +18,6 @@
       "rationale": "The Kobo/acsm allowlist is a presently necessary fail-closed restriction, but is still an active Core source-brand policy; it is not a justified permanent endpoint"
     },
     {
-      "id": "site-80fb78a9237ff64b17daf909",
-      "classification": "safety_guard_pending_contract",
-      "journey": "BnF observed-loan local declaration inspection",
-      "productive_caller": "LocalInspection.__init__ -> _declared_right_scopes -> read-only declaration candidate/preflight",
-      "effect": "For BnF only, rejects expired, owned or loan-id-missing provider rows as valid exact-loan declarations; never creates an acquisition right",
-      "authority": "SQLite historical loan state, loan_id and exact identity/provider/borrower scope; not Web catalogue search or ISBN",
-      "replacement_contract": "Provider-originated typed loan branch coverage and source-proof validity for all providers, preserving BnF fail-closed cases",
-      "tests": [
-        "tests/test_core_p0_2797_source_aware_preflight.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "A currently executed provider-specific veto; do not remove until the same negative behavior is represented by a typed source contract"
-    },
-    {
       "id": "site-9a427643ffc95bcc036e10d7",
       "classification": "safety_guard_pending_contract",
       "journey": "automatic digital-loan ADEPT admission for exact borrower",
@@ -1663,6 +1649,22 @@
         "tests/test_core_p0_5048_neutral_local_provenance_projection.py"
       ],
       "pr": "#6426",
+      "in_ast_metric": true
+    },
+    {
+      "id": "struct-local-declaration-scope-source-neutral",
+      "original_site_id": "site-80fb78a9237ff64b17daf909",
+      "original": "LocalInspection.__init__ admitted BnF local declarations only for provider `bnf-pret` with active loan and loan_id, unlike all other suppliers. This was a live Core-specific provider policy for the *display/user-statement candidate* stage.",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Uniform CoreUI declaration candidate requires a unique, active, exact native identity/provider/credential/account/edition scope. The candidate is a lower-trust user declaration, never a lending/provenance/fulfillment right; any provider-native loan or DRM grant stays in adapter + immutable attestation gates.",
+      "classification": "replaced_active_provider_only_local_declaration_veto",
+      "evidence": "The literal bnf-pret comparison is physically removed from library_local_inspection. Active BnF and synthetic future-provider rows (including missing loan_id) may be inspected and explicitly described, but no entitlement, origin, placement or provider request is minted; inactive rights of EVERY provider are refused for a NEW declaration. Tests assert cross-provider positive/negative scopes, no historical provider-specific proof cache. Existing recorded user declarations stay inspectable/revocable even if their source becomes inactive.",
+      "tests": [
+        "tests/test_core_p0_2797_source_aware_preflight.py",
+        "tests/test_library_declared_link_inspection.py",
+        "tests/test_library_declared_links.py"
+      ],
+      "pr": "#6432",
       "in_ast_metric": true
     },
     {
