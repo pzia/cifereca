@@ -284,6 +284,9 @@ def _render_search_results(self) -> int:
                         and ref.identity_id is None
                         and is_notice_cover_document(ref)):
                     view_row._cover_document_ref = ref
+                    epoch = (item.get("metadata") or {}).get("notice_c_epoch")
+                    if type(epoch) is int and epoch > 0:
+                        view_row._cover_public_c_epoch = epoch
             # Search-local only reuses an explicit Core owner+Artifact+
             # Placement cover packet. An identical URL/title/ISBN/SHA does
             # not let a catalogue notice or another identity borrow N2.
@@ -312,6 +315,7 @@ def _render_search_results(self) -> int:
                 getattr(row, "badge", ""), getattr(row, "action_label", ""),
                 getattr(row, "action_icon_name", ""),
                 bool(getattr(row, "action_callback", None)),
+                getattr(row, "_cover_public_c_epoch", None),
                 getattr(row, "thumbnail_url", None),
             )
             proof = getattr(row, "_cover_local_evidence", None)
@@ -429,6 +433,12 @@ def _render_search_results(self) -> int:
                         "provider_id") or "local")), None,
                 )
                 view._cover_document_ref = document
+                # The canonical C can select newer candidates without
+                # changing its opaque edition DocumentRef or visible text.
+                # Repaint the cell rather than retaining old N4 pixels.
+                epoch = (known.get("metadata") or {}).get("notice_c_epoch")
+                if type(epoch) is int and epoch > 0:
+                    view._cover_public_c_epoch = epoch
                 ui_rows.append(view)
             # An invalid C ref never falls back to a direct image URL or
             # opens a private provider action during online extension.
@@ -589,6 +599,7 @@ def _render_search_results(self) -> int:
             bool(getattr(row, "action_callback", None)),
             (proof.row_signature if proof is not None else
              getattr(row, "_cover_document_ref", None)),
+            getattr(row, "_cover_public_c_epoch", None),
             getattr(row, "thumbnail_url", None),
         )
     self.search_page.show_rows(ui_rows)
