@@ -660,6 +660,13 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         rows.append(entry_view)
         if len(rows) >= max(1, limit):
             break
+    # Existing worker-only Core read; attach exact PUBLIC C fallback only
+    # when a completed provider OriginLink proves this owner/Artifact/
+    # Placement association. Never substitute it for an extracted EPUB.
+    from .notice_c_local_origin_projection import project_local_origin_public_c
+    project_local_origin_public_c(
+        self.storage, rows, identity_id=identity_id,
+    )
     return rows
 
 
@@ -1628,5 +1635,9 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
         row["source_count"] = len(row.get("source_refs") or [])
         result.append(row)
     result.sort(key=lambda row: (str(row.get("title") or "").casefold(), str(row.get("provider_id") or "")))
+    from .notice_c_local_origin_projection import project_local_origin_public_c
+    project_local_origin_public_c(
+        self.storage, result, identity_id=identity_id,
+    )
     logger.info("TRACE library-entries end identity=%s count=%s dt=%.3fs", identity_id, len(result), time.monotonic()-_lib_started)
     return result
