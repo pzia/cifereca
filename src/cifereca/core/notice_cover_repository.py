@@ -141,6 +141,33 @@ def _advance_seen_watermark(db: Any, key: str, encoded: str, seen_at: int) -> No
     db.execute("UPDATE metadata SET value=? WHERE key=?", (updated, key))
 
 
+def notice_cover_source_freshness(
+    persisted: PersistedNoticeCover, *, now: int,
+    refresh_after_seconds: int = 86400,
+) -> str:
+    """Classify observation freshness without expiring a durable C notice.
+
+    Cache TTLs belong exclusively to HTTP/search/provider response caches.
+    A stale complete source stays present and readable after 24h, including
+    its exact source/edition provenance. A partial reply must not refresh the
+    previous complete evidence by merely advancing a last-seen watermark.
+
+    No provider I/O, source deletion, inferred negative fact, viewer identity
+    or rights changes. The Core supplies the explicit clock for repeatability.
+    """
+    if (type(persisted) is not PersistedNoticeCover
+            or type(now) is not int or not 0 <= now <= _MAX_EPOCH
+            or type(refresh_after_seconds) is not int
+            or not 1 <= refresh_after_seconds <= _MAX_EPOCH):
+        raise ValueError("notice_c_freshness_invalid")
+    if not persisted.attribute.snapshot_complete:
+        return "pending"
+    observed_at = persisted.observation.observed_at
+    if now < observed_at or now - observed_at >= refresh_after_seconds:
+        return "stale"
+    return "fresh"
+
+
 def read_notice_cover(storage: Any, document: CoverDocumentScope) -> PersistedNoticeCover | None:
     """Read one exact persisted source in O(1), even after process restart.
 
@@ -329,5 +356,5 @@ def persist_notice_cover_many(
 __all__ = [
     "PersistedNoticeCover", "read_notice_cover", "persist_notice_cover",
     "persist_notice_cover_many",
-    "is_notice_cover_document",
+    "is_notice_cover_document", "notice_cover_source_freshness",
 ]
