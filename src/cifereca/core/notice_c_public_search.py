@@ -335,8 +335,13 @@ def search_public_notice_c(
                         and stored.sources[0].source_ref == hit.document.source_key
                         and stored.sources[0].source_epoch == hit.epoch
                         and stored.sources[0].visibility == "public"
-                        and stored.sources[0].state == "available"
-                        and stored.candidates):
+                        and (
+                            (stored.sources[0].state == "available"
+                             and bool(stored.candidates))
+                            or (stored.sources[0].state == "pending"
+                                and hit.cover_state == "pending"
+                                and not stored.candidates)
+                        )):
                     hit = replace(
                         hit, document=canonical_ref, epoch=stored.epoch,
                     )

@@ -503,16 +503,23 @@ def _public_rows_from_response(
             )
             if anonymous:
                 image = _shared_catalogue_cover_url(row.thumbnail_url)
+                # An omitted image may attest a public edition, but an
+                # unsafe REJECTED image cannot launder its revision into a
+                # public result or become a Core same-call witness.
+                valid_public_occurrence = (
+                    image is not None or row.thumbnail_url is None
+                )
                 revision = (
                     row.revision_id
-                    if image is not None and type(row.revision_id) is str
+                    if valid_public_occurrence
+                    and type(row.revision_id) is str
                     and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", row.revision_id)
                     else None
                 )
                 projected = replace(
                     projected, thumbnail_url=image, revision_id=revision,
                 )
-                if image is not None:
+                if valid_public_occurrence:
                     # Core-only same-call witness; not serialized into the
                     # shared Search cache or assigned by provider plugins.
                     from .notice_search_cover_producer import _CORE_PUBLIC_C_WITNESS
@@ -2360,7 +2367,10 @@ def _mirror_remote_results(
                 # Do not promote an arbitrary legacy/private SearchResult to C.
                 continue
             public_url = _shared_catalogue_cover_url(row.thumbnail_url)
-            if public_url is None:
+            # A genuine same-call anonymous PUBLIC notice without any
+            # thumbnail still belongs in C. A rejected unsafe URL does not:
+            # that is not a verified absent image and cannot be a C producer.
+            if public_url is None and row.thumbnail_url is not None:
                 continue
             try:
                 observed = admit_public_search_catalogue(
