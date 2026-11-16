@@ -139,6 +139,12 @@ def test_explicit_reacquire_refuses_revalidated_owner_after_hidden_aba(
                 lambda *_a, **_kw: rotate(),
             )
         if stage == "nested_auto":
+            # Let execution reach the nested entrypoint, but never write a
+            # real ledger or issue a provider request in this synthetic test.
+            monkeypatch.setattr(
+                service, "_persist_active_loans",
+                lambda *_a, **_kw: None,
+            )
             def nested(*_args, **kwargs):
                 assert kwargs["force_refresh"] is True
                 assert type(kwargs["source_lease"]) is SourceEpochLease
