@@ -162,7 +162,9 @@ def test_live_list_detail_shared_canonical_n2_reader_and_foreign_ref_rejected(
         cached_source_scope=is_notice_cover_document,
     )
     try:
-        live = witnessed(anonymous_catalogue())
+        # Use a producer-qualified public Search card rather than the
+        # unrelated legacy gateway fixture (non-C source coordinates).
+        live = witnessed(public_row())
         window, _, key = host(live)
         assert mirror(db, [live]) == 1
         ref = live._core_notice_canonical_cover_document_ref
