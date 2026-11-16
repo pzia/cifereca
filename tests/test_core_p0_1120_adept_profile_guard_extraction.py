@@ -15,11 +15,12 @@ from unittest.mock import Mock
 import pytest
 
 from cifereca.core import adept_acsm_plan, loan_adept_profile_guard
+from cifereca.core.loan_source_epoch import SourceEpochLease
 from cifereca.identities import AdeptProfileResolutionError
 
 
 def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
-             profiles=None):
+             profiles=None, source_epoch_current=None):
     loan = NS(source_provider=provider, source_credential="reader", source_account_id="primary", id="loan-1", record_id="edition-1")
     borrower = Mock(return_value=("identity-1", borrower_code))
     resolver = Mock(return_value=("reader-a", "explicit_binding"))
@@ -30,7 +31,13 @@ def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
     ])
     store = Mock()
     owner = NS(
-        storage=NS(acquisition_put=store),
+        storage=NS(
+            acquisition_put=store,
+            provider_connection_epoch_current=(
+                source_epoch_current if source_epoch_current is not None
+                else Mock(return_value=True)
+            ),
+        ),
         _paris_adept_identity_for_loan=borrower,
         resolve_adept_profile_for_identity=resolver,
         kobo_profiles=provider_profiles,
@@ -48,6 +55,11 @@ def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
         retained_acsm=Path("/synthetic/staged.acsm"),
         trace_ref="0123456789abcdef0123",
         expected_loan_id="loan-1", expected_record_id="edition-1",
+        source_lease=SourceEpochLease(
+            provider_id=provider, credential_id="reader", account_id="primary",
+            loan_id="loan-1", record_id="edition-1",
+            identity_id="identity-1", epoch=1,
+        ),
         AdeptProfileResolutionError=AdeptProfileResolutionError,
         adept_acsm_plan=adept_acsm_plan,
         _TRACE_LOG=logging.getLogger("cifereca.tests.loan-guard"),
