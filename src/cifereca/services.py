@@ -3812,11 +3812,11 @@ class LibraryService:
         self.diagnostics.add("ADEPT", "loan binding", "ok" if binding_complete else "warning", detail=detail, level="normal")
 
     def adept_return_status_for_loan(self, loan: Loan) -> dict[str, Any]:
-        """Read-only ADEPT return status from the exact Paris borrower provenance.
+        """Read-only ADEPT return status from exact source borrower provenance.
 
-        Never infer the Adobe owner from the selected UI identity or the Paris
-        connection owner for a linked account. Keep return actions unavailable
-        when the source, loan transaction or origin profile is ambiguous.
+        Never infer the Adobe owner from GTK selection or a different
+        provider's connection. Return actions remain permanently unavailable
+        when the borrower, transaction or origin profile is ambiguous.
         """
         from .core.adept_return_origin import inventory_attests_return_origin
         from .core.adept_return_source_scope import HistoricalLoanSource
@@ -3825,24 +3825,18 @@ class LibraryService:
         scope = HistoricalLoanSource.capture(loan)
         if scope is None:
             return denied
-        borrower_code = None
-        is_paris = scope.provider_id.casefold() == "paris"
-        if is_paris:
-            connection_identity_id = self.storage.identity_for_connection(
-                scope.provider_id, scope.credential_id,
-            )
-            if type(connection_identity_id) is not str or not connection_identity_id:
-                return denied
-            identity = self.identity_by_id(connection_identity_id)
-            if identity is None:
-                return denied
-        else:
-            try:
-                identity = self.identity_for_connection(
-                    scope.provider_id, scope.credential_id,
-                )
-            except ProviderConfigurationError:
-                return denied
+        # Source ownership is exact SQLite provenance for every supplier.
+        # The facade or selected GTK identity is not an alternate owner,
+        # even if a legacy identity_for_connection override returns one.
+        connection_identity_id = self.storage.identity_for_connection(
+            scope.provider_id, scope.credential_id,
+        )
+        if type(connection_identity_id) is not str or not connection_identity_id:
+            return denied
+        identity = self.identity_by_id(connection_identity_id)
+        if (identity is None or type(getattr(identity, "identity_id", None)) is not str
+                or identity.identity_id != connection_identity_id):
+            return denied
         # Source lookup may call a plugin or storage shim. Do not let it
         # retarget the loan, and never read ledger rows with unknown borrower.
         if (not scope.current(loan) or not scope.borrower_proven
@@ -3850,13 +3844,14 @@ class LibraryService:
                 or not identity.identity_id):
             return denied
         bound_identity_id = identity.identity_id
-        borrower_identity_id = bound_identity_id
-        if is_paris:
-            borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
-                loan, connection_identity_id=bound_identity_id,
-            )
-            if not scope.current(loan):
-                return denied
+        # The historical facade name is retained, but the actual resolver
+        # enforces matching source-scoped v16 borrower proof for all libraries.
+        # Historical v15 Paris rows cannot authorize another provider.
+        borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+            loan, connection_identity_id=bound_identity_id,
+        )
+        if not scope.current(loan):
+            return denied
 
         all_rights = self.storage.entitlements(provider_id=scope.provider_id)
         if not scope.current(loan):
@@ -3864,7 +3859,11 @@ class LibraryService:
         all_acquisitions = self.storage.acquisitions(provider_id=scope.provider_id)
         if not scope.current(loan):
             return denied
-        if is_paris and self._cross_identity_loan_conflict(
+        # Historical ADEPT origin is descriptive, but a foreign owner of
+        # the same provider loan remains a veto for *every* source. Neither
+        # an inventory receipt nor a previously indexed file authorizes an
+        # ADEPT operation; no return mutation is offered by this status.
+        if self._cross_identity_loan_conflict(
             all_acquisitions, provider_loan_id=scope.loan_id,
             identity_id=bound_identity_id,
             entitlements=[
@@ -4159,48 +4158,74 @@ class LibraryService:
                     }
 
                 def admission_intact() -> bool:
-                    return (
-                        source_intact()
-                        and type(getattr(identity, "identity_id", None)) is str
-                        and identity.identity_id == bound_identity_id
-                    )
+                    # A pinned Loan and the owner found at entry are not
+                    # evidence that the SQLite connection remains enabled
+                    # and attached to the same identity after callbacks.
+                    # This is a source-neutral veto, not an ADEPT grant.
+                    if (not source_intact()
+                            or type(getattr(identity, "identity_id", None)) is not str
+                            or identity.identity_id != bound_identity_id):
+                        return False
+                    try:
+                        return self.storage.provider_connection_owner_current(
+                            source.provider_id, source.credential_id,
+                            bound_identity_id,
+                        ) is True
+                    except Exception:
+                        return False
 
-                if source.provider_id.casefold() == "paris":
-                    _, borrower_code = self._paris_adept_identity_for_loan(
-                        loan, connection_identity_id=bound_identity_id,
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    # Literal None is the only approved borrower grant.
-                    if borrower_code is not None:
-                        return {
-                            "status": "attention_required", "loan_id": source.loan_id,
-                            "code": adept_borrower.public_borrower_refusal_code(
-                                borrower_code,
-                            ), "retry": "explicit_only",
-                        }
-                    conflict_rows = self.storage.acquisitions(
-                        provider_id=source.provider_id,
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    active_rights = self.storage.entitlements(
-                        provider_id=source.provider_id, state="active",
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    conflict = self._cross_identity_loan_conflict(
-                        conflict_rows, provider_loan_id=source.loan_id,
-                        identity_id=bound_identity_id, entitlements=active_rights,
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    if conflict:
-                        return {
-                            "status": "attention_required", "loan_id": source.loan_id,
-                            "code": "adept_loan_identity_conflict",
-                            "retry": "explicit_only",
-                        }
+                # Refuse a disabled/rebound source BEFORE even asking the
+                # historical ADEPT borrower resolver for a grant. Its callback
+                # must never be used to revive a revoked connection.
+                if not admission_intact():
+                    return source_refusal()
+
+                # The legacy facade name is ABI compatibility only: its
+                # v16 borrower-grant resolver is scoped to *any* lender.
+                # A linked borrower cannot bypass the pre-staging veto merely
+                # because the source is not Paris. No extra GET/POST occurs.
+                _, borrower_code = self._paris_adept_identity_for_loan(
+                    loan, connection_identity_id=bound_identity_id,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                # Literal None is the only approved borrower grant.
+                if borrower_code is not None:
+                    return {
+                        "status": "attention_required", "loan_id": source.loan_id,
+                        "code": adept_borrower.public_borrower_refusal_code(
+                            borrower_code,
+                        ), "retry": "explicit_only",
+                    }
+                # A persisted acquisition or active entitlement for this
+                # upstream loan can veto a different identity for *any*
+                # source. This is not positive permission to GET or fulfill
+                # ADEPT; the guarded auto-acquisition independently checks
+                # the exact borrower/grant, even after provider staging.
+                # Keep the source-neutral borrower refusal ahead of this
+                # inventory to preserve public/attention precedence.
+                conflict_rows = self.storage.acquisitions(
+                    provider_id=source.provider_id,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                active_rights = self.storage.entitlements(
+                    provider_id=source.provider_id, state="active",
+                )
+                if not admission_intact():
+                    return source_refusal()
+                conflict = self._cross_identity_loan_conflict(
+                    conflict_rows, provider_loan_id=source.loan_id,
+                    identity_id=bound_identity_id, entitlements=active_rights,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                if conflict:
+                    return {
+                        "status": "attention_required", "loan_id": source.loan_id,
+                        "code": "adept_loan_identity_conflict",
+                        "retry": "explicit_only",
+                    }
 
                 previous_rows = self.storage.acquisitions(
                     provider_id=source.provider_id,
