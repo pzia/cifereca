@@ -575,3 +575,46 @@ def test_real_numilog_search_writes_public_bibliography_inside_same_notice_c(
         assert supplier_gets == [1]
     finally:
         db.close()
+
+
+def test_real_numilog_notice_c_is_first_known_search_across_profiles_no_get(
+    tmp_path, monkeypatch,
+):
+    """Observed supplier HTML -> C source -> known Search list/detail source.
+
+    This is the actual asynchronous Search worker's Core API, independent of
+    the legacy per-viewer catalogue mirror and public page cache. GTK never
+    needs a supplier call, owner session or guessed URL to show the C cover.
+    """
+    service, session, supplier_gets = build(tmp_path, monkeypatch)
+    try:
+        observed = service.search(
+            "loup", provider_id=session.provider_id, force=True,
+        )
+        assert observed and supplier_gets == [1]
+        c_ref = observed[0]._core_notice_cover_document_ref
+        assert read_notice_cover(service.storage, c_ref) is not None
+
+        # A public-only source is shared across readers but never shares
+        # rights. Bob has no per-profile historical mirror of Alice's row.
+        service.storage.cache_delete_namespace("search")
+        session._public_cache.clear()
+        service.select_identity("bob")
+        known = service.search_known_catalog("loup", identity_id="bob")
+        public = [r for r in known if r.get("source") == "notice_c_public"]
+        assert len(public) == 1
+        assert public[0]["_cover_document_ref"] == c_ref
+        assert public[0]["thumbnail_url"] is None
+        assert public[0]["metadata"]["notice_c_query_status"] == "partial"
+        assert public[0]["identity_id"] == "bob"
+        assert public[0]["state"] == "remote_catalog"
+        assert not public[0].get("download_url")
+        assert not public[0].get("placement_id")
+        assert supplier_gets == [1]
+        assert service.storage.entitlements() == []
+        assert service.storage.acquisitions() == []
+        # An offline known C read never launches a new online session.
+        assert supplier_gets == [1]
+    finally:
+        service.close()
+        session.close()
