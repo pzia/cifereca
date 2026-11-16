@@ -43,13 +43,22 @@ def test_invalid_exact_cas_vetoes_old_on_before_get_and_at_commit(
         storage.metadata_set(switch, active)
         storage.metadata_set(revision_key, "a" * 32)
 
-        # A real historical switch is initially readable, not a fabricated
-        # stale fixture that was already denied before the CAS override.
+        # The persisted historical switch is still readable. Only old
+        # purchase switches retain compatibility authority; an old loan ON
+        # may never stage a one-use signed ACSM GET without explicit CAS.
         assert read_policy(storage, scope).mode == "unset"
-        assert bridge.legacy_source_auto_current(storage, source, "a" * 32)
+        assert bridge.legacy_source_auto_policy(storage, scope, kind) == (
+            "on", "a" * 32,
+        )
+        old_purchase_authorized = kind == "purchase"
+        assert bridge.legacy_source_auto_current(storage, source, "a" * 32) is old_purchase_authorized
         with storage._lock, storage._connect() as db:
-            assert bridge.toggle_state(db, source) == "on"
-            assert bridge.legacy_source_auto_in_transaction(db, source, "a" * 32)
+            assert bridge.toggle_state(db, source) == (
+                "on" if old_purchase_authorized else "off"
+            )
+            assert bridge.legacy_source_auto_in_transaction(
+                db, source, "a" * 32,
+            ) is old_purchase_authorized
 
         payload = {
             "schema": "cifereca.source-sync-consent/1",
