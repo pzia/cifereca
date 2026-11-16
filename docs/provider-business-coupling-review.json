@@ -1698,7 +1698,7 @@
         "tests/test_core_p0_5975_explicit_reacquire_owner_fence.py",
         "tests/test_core_p0_5975_explicit_reacquire_neutral_borrower.py"
       ],
-      "pr": "pending",
+      "pr": "#6449",
       "in_ast_metric": true,
       "original_site_id": "site-60a9d11031d9610ffda9a089"
     }
