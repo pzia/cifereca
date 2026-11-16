@@ -1824,7 +1824,7 @@ def test_adept_source_pair_is_saved_exact_without_provider_guess_or_legacy_write
     ("", "alice-reader"),
     ("Future-Library", "alice-reader"),
     ("future-library", " reader "),
-    ("future-library", "reader\\nother"),
+    ("future-library", "reader\nother"),
     (True, "alice-reader"),
     ("future-library", 123),
     ("future-library", "x" * 257),
@@ -1902,8 +1902,9 @@ def test_clearing_saved_explicit_adept_source_never_resurrects_legacy_paris(edit
 
     # The tombstone is not merely a transient draft flag: a real Save +
     # Config reload must not erase it and resurrect the old Paris source.
-    draft.save()
-    reopened = Config(draft.path)
+    config.data = deepcopy(draft.data)
+    config.save()
+    reopened = Config(config.path)
     restored = reopened.identity("alice")
     assert restored["adept_source_provider_id"] == ""
     assert restored["adept_source_connection_id"] == ""
