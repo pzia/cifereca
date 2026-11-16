@@ -400,7 +400,12 @@ def persist_consolidated_cover_source(
                     "publisher": hit.publisher,
                     "media_format": hit.media_format,
                     "description": hit.description,
-                    "last_seen_at": hit.last_seen_at,
+                    # The canonical durable snapshot tracks the timestamp
+                    # of the actual published *content observation*, not
+                    # short-lived provider cache HITs. Otherwise a replay
+                    # of unchanged C would churn the N2 epoch and wrongly
+                    # make an old source look freshly re-parsed.
+                    "last_seen_at": source.observation.observed_at,
                 }
         if rows.get(source_ref) == incoming:
             return _decode(old[0], document)
