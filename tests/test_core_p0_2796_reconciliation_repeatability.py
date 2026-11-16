@@ -75,9 +75,11 @@ def test_same_six_hundred_files_and_snapshot_remain_identical_across_runs():
     assert first.reasons == second.reasons == set()
     assert first.files == second.files
     assert first.edges == second.edges
-    assert first.unverified_rights == second.unverified_rights == []
+    assert first.unverified_rights == second.unverified_rights == list(range(600))
     assert _counts(first) == _counts(second)
-    assert _counts(first)["confirmed_link"] == 600
+    assert _counts(first).get("confirmed_link", 0) == 0
+    assert _counts(first)["local_file_without_attested_right"] == 600
+    assert first.redacted()["edge_counts"]["explicit_placement_sha_size"] == 600
     assert tables == original  # evidence is never rewritten or normalized
     public = json.dumps(first.redacted())
     assert "PRIVATE_LIBRARY" not in public
@@ -85,17 +87,23 @@ def test_same_six_hundred_files_and_snapshot_remain_identical_across_runs():
     assert "entitlement-0000" not in public
 
 
-def test_twenty_nine_missing_path_proofs_change_exactly_twenty_nine_links():
+def test_twenty_nine_missing_path_proofs_change_exactly_twenty_nine_byte_edges():
     inventory, tables = _fixture()
     baseline = _run(inventory, tables)
     altered = deepcopy(tables)
     for placement in altered["placements"][:29]:
         placement["path"] += ".historical"
     after = _run(inventory, altered)
-    assert _counts(baseline)["confirmed_link"] == 600
-    assert _counts(after)["confirmed_link"] == 571
-    assert _counts(after)["local_file_without_attested_right"] == 29
-    assert len(after.unverified_rights) == 29
+    # The previous historic entitlement/ledger pairs are no longer rights
+    # attestations. A changed pathname removes 29 placement-byte leads,
+    # not 29 authoritatively "owned" books or local file bytes.
+    assert _counts(baseline).get("confirmed_link", 0) == 0
+    assert _counts(after).get("confirmed_link", 0) == 0
+    assert _counts(baseline)["local_file_without_attested_right"] == 600
+    assert _counts(after)["local_file_without_attested_right"] == 600
+    assert baseline.redacted()["edge_counts"]["explicit_placement_sha_size"] == 600
+    assert after.redacted()["edge_counts"]["explicit_placement_sha_size"] == 571
+    assert len(after.unverified_rights) == 600
     assert "comparison_budget" not in after.reasons
     assert _run(inventory, altered).redacted() == after.redacted()
     assert tables["placements"][0]["path"] == inventory.files[0].path
@@ -119,7 +127,9 @@ def test_same_file_count_with_changed_cohort_can_mimic_missing_path_proof_counts
     changed_snapshot = _run(inventory, missing_paths)
     assert len(replaced.files) == len(inventory.files) == 600
     assert _counts(changed_cohort) == _counts(changed_snapshot)
-    assert len(changed_cohort.unverified_rights) == 29
-    # These two distinct causes are observationally indistinguishable from
-    # *aggregate* counts: only a scoped private cohort/snapshot comparison
-    # can explain a production drift, not a guessed timeout or missing book.
+    assert len(changed_cohort.unverified_rights) == 600
+    assert (changed_cohort.redacted()["edge_counts"]["explicit_placement_sha_size"]
+            == changed_snapshot.redacted()["edge_counts"]["explicit_placement_sha_size"]
+            == 571)
+    # These two distinct causes are indistinguishable at an aggregated
+    # byte-edge level; private scoped inspection still distinguishes them.

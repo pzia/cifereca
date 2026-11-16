@@ -76,10 +76,10 @@ def test_six_numilog_rights_have_candidates_but_never_a_bijection(
     before = filesystem(tmp_path)
     audit = audit_library(database, {'alice': (root,)})
     session = LocalInspection(audit, lambda: True, 'alice')
-    assert session.overview()['confirmed_files'] == 3
-    assert session.overview()['unverified_rights'] == 3
-    assert session.overview()['unattributed_files'] == 3
-    assert session.page(provider='numilog', state='confirmed_link').total == 3
+    assert session.overview()['confirmed_files'] == 0
+    assert session.overview()['unverified_rights'] == 6
+    assert session.overview()['unattributed_files'] == 6
+    assert session.page(provider='numilog', state='confirmed_link').total == 0
 
     # Inverted metadata_only catalogue matches for the same exact edition:
     # two different rights can both show the same two EPUB candidates.

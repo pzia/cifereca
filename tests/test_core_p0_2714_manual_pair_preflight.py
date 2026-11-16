@@ -189,9 +189,9 @@ def test_invalid_confirmed_foreign_selection_and_revocation_return_no_authority(
     root, db = six_numilog
     _audit, session = session_for(root, db)
     right, file = select_pair(session)
-    confirmed = session.page(state="confirmed_link").cases[0]
+    # The old Numilog ledger no longer creates a confirmed-file case.
+    assert session.page(state="confirmed_link").total == 0
     for rights, files in (
-        (right.key, confirmed.key),
         ("right:PRIVATE_FOREIGN", file.key),
         (file.key, right.key),
         (right.key, "file:999999"),

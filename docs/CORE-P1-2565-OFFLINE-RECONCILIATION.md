@@ -97,10 +97,17 @@ permettant une réparation ultérieure.
   les limites des candidats et des chemins, même si le graphe a réussi. Les
   racines autorisées sont copiées avant les callbacks. Il s'agit d'une primitive
   privée Core, pas encore du broker public Maintenance.
-- `confirmed_link` exige un droit actif d'achat attesté par le manifeste personnel
-  Kobo ou la bibliothèque authentifiée Numilog, le même compte/credential/identité/
-  achat, un unique ledger `complete`, un placement explicite et un artefact
-  `sha256:` de même SHA/taille, et structure/CRC EPUB validés. Aucun droit n'est attribué par nom, ISBN ou SHA.
+- **Contrat actuel P0 #5975** : `confirmed_link` exige exclusivement
+  un **OriginLink d'achat canonique** lié à une référence de source vérifiable
+  (identifiants stables, propriétaire, compte, édition, justification de
+  publication, artefact/placement uniques et structure/CRC EPUB validés).
+  Les anciennes chaînes `entitlements → acquisition_ledger → placements`,
+  y compris un `ledger complete` et les marqueurs historiques Kobo/Numilog,
+  ne confirment plus une provenance. Elles restent des indices locaux
+  `present_unlinked` et des droits non vérifiés, sans suppression de
+  fichier ni réécriture SQLite. Il est possible qu'un ancien lien confirmé
+  disparaisse jusqu'à réacquisition/publication canonique. Une empreinte
+  SHA ou un ISBN n'attestent jamais le fournisseur ni le droit.
   Les snapshots incomplets ne produisent pas de confirmation.
 - `present_unlinked` est une correspondance d'octets avec un artefact ou une
   sauvegarde de la même identité, sans attribution de droits. Les liens refusés
@@ -121,9 +128,9 @@ permettant une réparation ultérieure.
   catalogue (pas les blobs JSON, jetons ou URL). Budgets de références/candidats
   et annulation sont visibles.
 - La CLI restreint les lignes privées aux identités explicitement sélectionnées.
-  Les acquisitions contradictoires du même droit/compte restent conservées pour
-  ne pas transformer un conflit en confirmation. Les artefacts globaux, dépourvus
-  de compte ou de titre, servent seulement à comparer les octets.
+  Les anciennes acquisitions contradictoires restent consultables uniquement
+  comme constats, jamais comme preuve d'origine ou de propriété. Les artefacts
+  globaux, dépourvus de compte ou de titre, servent seulement à comparer les octets.
 - Les compteurs par identité/fournisseur utilisent des indices d'identité
   éphémères ; leur correspondance est uniquement dans le rapport privé local.
   Un fichier sans lien confirmé reste `unattributed`, jamais Kobo/Numilog par
@@ -639,3 +646,8 @@ la comparaison des seules observations positives va jusqu'au bout.
 L'annulation, le changement de compte/identité/racines et les erreurs
 de lecture restent des causes explicites de refus ; aucun téléchargement
 ni réparation n'est effectué.
+
+
+### Recette de compatibilité du panneau Numilog après extinction de l'attestation legacy (#5975)
+
+Dans le jeu de six droits historiques Numilog, les six lignes restent visibles comme droits enregistrés mais **non vérifiés**, y compris si le titre du droit correspond à un EPUB local. L'ancien compteur de trois liens présumés attestés n'est plus applicable : `unverified_rights == 6` et `confirmed_files == 0` sans OriginLink canonique. La navigation et les métadonnées descriptives demeurent accessibles ; aucun droit, placement ou octet EPUB n'est effacé. Seule une provenance canonique exacte, et non le texte du droit ou un ledger `complete`, peut rétablir le lien confirmé. Test : `test_core_p0_2714_numilog_right_metadata_panel.py::test_entitlement_text_is_not_a_verified_link_even_if_it_matches_a_local_epub`.
