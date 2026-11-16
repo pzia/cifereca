@@ -230,3 +230,58 @@ def test_historical_adept_status_does_not_publish_after_source_drift(
         }
     finally:
         service.close()
+
+
+
+@pytest.mark.parametrize("provider", ["synthetic-library", "another-library"])
+def test_historical_adept_status_never_uses_legacy_facade_owner_fallback(
+    tmp_path, monkeypatch, provider,
+):
+    service, loan = _setup(tmp_path, monkeypatch, provider=provider)
+    try:
+        service.current_identity = service.identity_by_id("alex")
+        # A forgotten/disconnected source has no owner. A poisoned legacy
+        # facade fallback must not turn the selected GTK identity into one.
+        def no_persisted_owner(*_a, **_kw):
+            return None
+        def poisoned_facade(*_a, **_kw):
+            pytest.fail("historical status must use exact persisted owner")
+        monkeypatch.setattr(
+            service.storage, "identity_for_connection", no_persisted_owner,
+        )
+        monkeypatch.setattr(service, "identity_for_connection", poisoned_facade)
+        monkeypatch.setattr(
+            service.storage, "acquisitions",
+            lambda **_kw: pytest.fail("missing owner reached acquisition ledger"),
+        )
+        monkeypatch.setattr(
+            service.storage, "entitlements",
+            lambda **_kw: pytest.fail("missing owner reached rights ledger"),
+        )
+        assert service.adept_return_status_for_loan(loan) == {
+            "status": "adept_identity_unproven",
+            "return_available": False,
+        }
+    finally:
+        service.close()
+
+
+def test_historical_adept_status_refuses_swapped_persisted_owner(
+    tmp_path, monkeypatch,
+):
+    service, loan = _setup(tmp_path, monkeypatch)
+    try:
+        original = service.identity_by_id
+        def swapped_lookup(key):
+            return original("alex") if key == "default" else original(key)
+        monkeypatch.setattr(service, "identity_by_id", swapped_lookup)
+        monkeypatch.setattr(
+            service.storage, "acquisitions",
+            lambda **_kw: pytest.fail("foreign owner reached acquisition ledger"),
+        )
+        assert service.adept_return_status_for_loan(loan) == {
+            "status": "adept_identity_unproven",
+            "return_available": False,
+        }
+    finally:
+        service.close()
