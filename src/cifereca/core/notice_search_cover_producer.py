@@ -43,16 +43,33 @@ def admit_public_search_cover(
     base, collection, medium and optional supplier revision/edition marker.
     They do not merge editions or assign rights.
     """
-    if (type(row) is not SearchResult
-            or type(public_cover_url) is not str or not public_cover_url):
+    if type(row) is not SearchResult:
         return None
-    qualified = project_exact_search_catalogue_cover(
-        row, identity_id=identity_id, share_public=True,
-    )
-    if (qualified is None
-            or qualified.scope.kind != "public_catalogue"
-            or qualified.catalogue.url != public_cover_url):
-        return None
+    if public_cover_url is None:
+        # A provider-declared PUBLIC bibliographic notice may legitimately
+        # have no image. It is a C with an UNKNOWN cover inventory, not an
+        # invented 'missing' negative and never an N3 image candidate.
+        from .search_cover_provenance import exact_search_cover_scope
+        scope = exact_search_cover_scope(row, identity_id)
+        if (scope is None or scope.credential_id != "__public__"
+                or row.source_collection != "public_catalog"
+                or row.source_account_id is not None
+                or row.owned is not False or row.downloadable is not False
+                or row.download_url is not None
+                or row.thumbnail_url is not None
+                or type(row.metadata) is not dict
+                or row.metadata.get("search_provenance") == "known_catalog_stale"):
+            return None
+    else:
+        if type(public_cover_url) is not str or not public_cover_url:
+            return None
+        qualified = project_exact_search_catalogue_cover(
+            row, identity_id=identity_id, share_public=True,
+        )
+        if (qualified is None
+                or qualified.scope.kind != "public_catalogue"
+                or qualified.catalogue.url != public_cover_url):
+            return None
     key = NoticeSourceKey(
         provider_id=row.source_provider,
         visibility="public",
@@ -76,7 +93,7 @@ def admit_public_search_cover(
         key=key, parser_id="core.search.public-cover",
         parser_version="1", observed_at=observed_at,
         raw_fields={"search_result": {"thumbnail_url": public_cover_url}},
-        status="complete",
+        status="complete" if public_cover_url is not None else "partial",
     )
 
 
@@ -155,7 +172,7 @@ def admit_public_search_catalogue(
             "thumbnail_url": public_cover_url,
             "public_bibliography": fields,
         }},
-        status="complete",
+        status="complete" if public_cover_url is not None else "partial",
     )
 
 __all__ = ["admit_public_search_cover", "admit_public_search_catalogue"]
