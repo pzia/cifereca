@@ -393,22 +393,6 @@
       "reachability": "productive"
     },
     {
-      "id": "site-af9a4882484f55e85f232552",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Exact primary Paris lender preflight for cross-identity manual borrow",
-      "productive_caller": "core.borrow_for_identity_live._witness -> configured_primary_source_current in admitted lender choice calculation",
-      "effect": "Rejects a lender whose saved primary Paris connection no longer matches the observed exact account; does not itself authorize borrowing.",
-      "authority": "Installed explicit lender identity, source/credential/account coordinates and saved primary connection option.",
-      "replacement_contract": "Typed versioned primary-source lender witness from the installed provider, rechecked with Core owner/session lease before action.",
-      "tests": [
-        "tests/test_core_p0_5975_headless_lender_admission.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "The Paris predicate guards a live source selection; eliminating it without a neutral witness would admit a stale or foreign lender.",
-      "decision_group_id": "lending.borrower-paris-primary-witness",
-      "reachability": "productive"
-    },
-    {
       "id": "site-60a9d11031d9610ffda9a089",
       "classification": "safety_guard_pending_contract",
       "journey": "Explicit reacquisition of a protected Paris digital loan",
@@ -1679,6 +1663,21 @@
         "tests/test_core_p0_5975_business_coupling_ledger.py"
       ],
       "pr": "#6414",
+      "in_ast_metric": true
+    },
+    {
+      "id": "struct-headless-lender-paris-witness-neutral-manual-policy",
+      "original_site_id": "site-af9a4882484f55e85f232552",
+      "original": "core.borrow_for_identity_live._witness checked provider_id == 'paris' and hardcoded 'primary_paris_connection_id' before exposing a cross-profile lender choice, regardless of the already installed typed ManualBorrowPolicy.",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Read-only exact ManualBorrowPolicy from the active ProviderSession's ProviderDescriptor, schema cifereca.manual-borrow/1. Require documentary branch and optional primary borrower ID equality, and use its optional source_selection_key with configured_primary_source_current under the same exact observed provider identity.",
+      "classification": "replaced_active_supplier_witness_by_installed_provider_declared_primary_selection",
+      "evidence": "No literal Paris branch or saved primary_paris_connection_id key remains in the live Core witness. The existing Paris installed descriptor supplies that key; a synthetic future lender supplies an independent key and receives the same strict refusal after an account selection change. Rebind/saved-source checks, installed manifest capability, borrower+edition evidence and claim-state are unchanged. The outcome remains read-only and non-executable.",
+      "tests": [
+        "tests/test_core_p1_4662_live_lender_preview.py",
+        "tests/test_core_p0_5975_headless_lender_admission.py"
+      ],
+      "pr": "#6425",
       "in_ast_metric": true
     }
   ],

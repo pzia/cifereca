@@ -11,7 +11,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.models import Account, SearchResult
-from cifereca.providers.base import ProviderSession, ProviderDescriptor, ProviderCapabilities
+from cifereca.providers.base import ProviderSession, ProviderDescriptor, ProviderCapabilities, ManualBorrowPolicy
 from cifereca.plugin_api.lending_capabilities import BorrowerOperationEvidence
 from cifereca.plugin_api.lending_borrower_eligibility import (
     BorrowerOperationEvidence as ExactEditionBorrowerEvidence,
@@ -28,6 +28,15 @@ class ParisOffline(ProviderSession):
                 id="paris", display_name="Paris", description="fixture no I/O",
                 state="ready", capabilities=ProviderCapabilities(
                     search=True, borrow=True,
+                ),
+                # Mirror the real installed Paris descriptor: its selected
+                # primary credential is a provider-declared, versioned rule,
+                # not a Core hardcoded exception.
+                manual_borrow_policy=ManualBorrowPolicy(
+                    docbase="DILICOM", primary_borrower_id="",
+                    source_selection_key="primary_paris_connection_id",
+                    verification="provider_observed",
+                    observed_loan_account_alias="primary",
                 ),
             ),
             credential_id=account.credential_id, label="Fixture",
