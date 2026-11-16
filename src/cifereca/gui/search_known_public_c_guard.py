@@ -105,7 +105,8 @@ def attach_filtered_known_public_c(
     source_meta = source.get("metadata") if type(source) is dict else None
     projected_meta = projected.get("metadata")
     matching = (
-        type(source) is dict
+        projected.get("source") == "notice_c_public"
+        and type(source) is dict
         and source.get("source") == "notice_c_public"
         and source.get("key") == key
         and source.get("identity_id") == projected.get("identity_id")
