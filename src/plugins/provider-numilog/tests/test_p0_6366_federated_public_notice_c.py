@@ -573,6 +573,21 @@ def test_real_numilog_search_writes_public_bibliography_inside_same_notice_c(
         second = service.search_public_notice_c("loup")
         assert second.hits == page.hits
         assert supplier_gets == [1]
+        # Genuine parsed Numilog C must survive the *provider-source*
+        # metadata purge, not only a Search HTTP cache clear. The same
+        # canonical N2 provenance is retained across the service reboot.
+        from cifereca.core.notice_cover_repository import _opaque_key
+        with service.storage._lock, service.storage._connect() as conn:
+            conn.execute(
+                "DELETE FROM metadata WHERE key=?",
+                (_opaque_key(document),),
+            )
+        assert read_notice_cover(service.storage, document) is None
+        after_source_purge = service.search_public_notice_c("loup")
+        assert len(after_source_purge.hits) == 1
+        assert after_source_purge.hits[0].document == canonical
+        assert after_source_purge.hits[0].title == original.title
+        assert supplier_gets == [1]
         # Availability, ownership, account and provider action remain absent.
         assert not hasattr(first, "download_url")
         assert not hasattr(first, "owned")
