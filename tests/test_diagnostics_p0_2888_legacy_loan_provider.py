@@ -32,6 +32,8 @@ def opening_issue(provider="paris", status="attention_required", code="adept_err
     ("bnf-pret", "attention_required", "adept_error", "warning"),
     ("numilog", "retryable_error", "provider_failure", "error"),
     ("synthetic-pnb", "attention_required", "adept_error", "warning"),
+    ("biblioaccess.la-rochelle", "attention_required", "adept_error", "warning"),
+    ("future.books", "retryable_error", "provider_failure", "error"),
     ("paris", "retryable_error", "provider_failure", "error"),
 ])
 def test_core_opening_loan_issue_is_filterable_by_exact_observed_provider(
@@ -68,7 +70,10 @@ def test_core_opening_loan_issue_is_filterable_by_exact_observed_provider(
     {"status": "success"},
     {"provider": ""},
     {"provider": "Paris"},
-    {"provider": "bad.provider"},
+    {"provider": "bad..provider"},
+    {"provider": "all"},
+    {"provider": "other"},
+    {"provider": "unattributed"},
     {"provider": "../escape"},
     {"provider": "credential_123"},
     {"provider": "électronique"},
