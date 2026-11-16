@@ -399,6 +399,30 @@ def _private_search_owner(self, session: ProviderSession) -> str | None:
     return owner if type(owner) is str and owner else None
 
 
+# In-process, nonserializable Core admission witness. Do not use a provider
+# DTO flag/metadata field (or a cache hit) as permission to publish Notice C.
+_CORE_PUBLIC_COVER_WITNESS = object()
+
+
+def _public_cover_witness_coordinates(row: SearchResult) -> tuple:
+    # Exact same-call source + edition + image; no title, ISBN or N3 SHA join.
+    return (
+        row.id, row.source_provider, row.source_credential,
+        row.source_collection, row.source_account_id, row.record_id,
+        row.docbase, row.medium, row.revision_id, row.scenario,
+        row.thumbnail_url, row.owned, row.downloadable, row.download_url,
+    )
+
+
+def _verified_public_cover_witness(row: SearchResult) -> bool:
+    witness = getattr(row, "_core_same_call_public_cover_witness", None)
+    return (
+        type(witness) is tuple and len(witness) == 2
+        and witness[0] is _CORE_PUBLIC_COVER_WITNESS
+        and witness[1] == _public_cover_witness_coordinates(row)
+    )
+
+
 def _public_rows_from_response(
     response: ProviderSearchResponse, session: ProviderSession,
 ) -> list[SearchResult]:
@@ -473,6 +497,12 @@ def _public_rows_from_response(
                     # shared Search cache or assigned by provider plugins.
                     from .notice_search_cover_producer import _CORE_PUBLIC_C_WITNESS
                     projected._core_notice_c_public_bibliography = _CORE_PUBLIC_C_WITNESS
+                    # Independent proof for durable public cover admission.
+                    # Keep the existing v2 bibliography witness intact.
+                    projected._core_same_call_public_cover_witness = (
+                        _CORE_PUBLIC_COVER_WITNESS,
+                        _public_cover_witness_coordinates(projected),
+                    )
             admitted.append(projected)
     return admitted
 
@@ -966,7 +996,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                 row for row in rows
                 if not isinstance(row.metadata, dict)
                 or row.metadata.get("search_provenance") != "known_catalog_stale"
-            ], identity_id=identity.identity_id)
+            ], identity_id=identity.identity_id,
+            require_public_cover_witness=True)
         except Exception:
             # Mirror exceptions may be dynamically named by untrusted plugins.
             logger.warning("TRACE catalog mirror search code=mirror_failed")
@@ -1692,7 +1723,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             row for row in rows
             if row.metadata.get("search_provenance") != "known_catalog_stale"
         ]
-        try: self._mirror_remote_results(live_results, identity_id=identity.identity_id)
+        try: self._mirror_remote_results(
+            live_results, identity_id=identity.identity_id,
+            require_public_cover_witness=True,
+        )
         except Exception: logger.warning("TRACE catalog mirror progressive search code=mirror_failed")
     cancelled = cancelled or request_cancelled()
     if not cancelled and not warnings and failed == 0:
@@ -2103,7 +2137,10 @@ def _stamp_cached_public_notice_refs(
             continue
 
 
-def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None=None) -> int:
+def _mirror_remote_results(
+    self, rows: list[SearchResult], *, identity_id: str | None = None,
+    require_public_cover_witness: bool = False,
+) -> int:
     """Persist remote notices only for an identity pinned at admission.
 
     A catalogue observation is not a right, and GTK navigation is not an
@@ -2252,6 +2289,10 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
         producing_rows = []
         observations = []
         for _key, row, _state, _qualified in keyed:
+            if (require_public_cover_witness
+                    and not _verified_public_cover_witness(row)):
+                # Do not promote an arbitrary legacy/private SearchResult to C.
+                continue
             public_url = _shared_catalogue_cover_url(row.thumbnail_url)
             if public_url is None:
                 continue
