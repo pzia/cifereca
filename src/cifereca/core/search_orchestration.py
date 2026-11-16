@@ -471,7 +471,8 @@ def _public_rows_from_response(
                 if image is not None:
                     # Core-only same-call witness; not serialized into the
                     # shared Search cache or assigned by provider plugins.
-                    projected._core_notice_c_public_bibliography = True
+                    from .notice_search_cover_producer import _CORE_PUBLIC_C_WITNESS
+                    projected._core_notice_c_public_bibliography = _CORE_PUBLIC_C_WITNESS
             admitted.append(projected)
     return admitted
 
