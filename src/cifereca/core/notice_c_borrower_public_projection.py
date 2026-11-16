@@ -29,6 +29,35 @@ _MAX_CANONICAL = 4096
 _MAX_ITEMS = 2048
 _BORROWER_PUBLIC_C_TOKEN = object()
 
+# Positive same-edition *source* contracts, independently visible on both
+# the borrower inventory and the public catalogue:
+#   Paris ListLoans/ListHandings DILICOM.RecordId == Search.Resource.RscId
+#     and Search.Resource.RscBase == "DILICOM".
+#   BnF active-loans.resource_id == public Search record.resource_id,
+#     both on the native BNF_PRET branch.
+# No generic provider+record equivalence is assumed for other adapters.
+# None means the public Search source did not advertise an edition revision;
+# if a future revision is observed, an old private DTO cannot attest it.
+_PRIVATE_PUBLIC_BRANCH = {
+    ("paris", "DILICOM", "digital"): ("DILICOM", None),
+    ("bnf-pret", "BNF_PRET", "digital"): ("BNF_PRET", None),
+}
+
+
+def _attested_public_edition(item: Loan | HistoryItem):
+    """Return only an exact native branch -> public source edition contract."""
+    if (type(item.source_provider) is not str
+            or type(item.provider) is not str
+            or type(item.medium) is not str
+            or type(item.record_id) is not str):
+        return None
+    source = _PRIVATE_PUBLIC_BRANCH.get((
+        item.source_provider, item.provider, item.medium,
+    ))
+    if source is None:
+        return None
+    return (item.source_provider, item.record_id, item.medium, *source)
+
 
 def _fold(value: str) -> str:
     return "".join(
@@ -48,6 +77,7 @@ def _coordinate(item: object, identity_id: str):
             or not 0 < len(item.record_id) <= 160
             or type(item.medium) is not str or item.medium != "digital"
             or type(item.provider) is not str or not item.provider
+            or _attested_public_edition(item) is None
             or type(item.title) is not str or not item.title.strip()
             or type(item.source_credential) is not str
             or not item.source_credential
@@ -55,9 +85,9 @@ def _coordinate(item: object, identity_id: str):
             or type(item.source_account_id) not in (str, type(None))
             or item.thumbnail_url is not None):
         return None
-    # Distinct upstream borrower occurrences can reference a common book
-    # record. The original private occurrence ID is still mandatory and is
-    # not used as the public edition identity.
+    # Only a provider branch with a proven Search mapping may link
+    # a private occurrence to a public edition. The occurrence ID is
+    # mandatory but does not itself identify any public book.
     return (item.source_provider, item.record_id, item.medium)
 
 
@@ -112,13 +142,12 @@ def attach_borrower_public_c(
     storage, rows: list, *, identity_id: str,
     account_epoch: int, source_epoch: int,
 ) -> int:
-    """Admit only unique source-coordinate matches, in one bounded Core read.
+    """Admit only native-branch-proven public editions in one bounded read.
 
-    The same upstream provider+record must have a single exact public
-    source edition (no overlapping docbases or revisions). If the same
-    independently attested source also belongs to a genuine two-provider C,
-    prefer that C over its legacy own-edition copy. Equal-strength competing
-    C memberships are ambiguous and rejected.
+    Private provider+record alone is insufficient: an explicit native
+    branch contract must also match public docbase and edition revision.
+    Preserve the unique strong relation > own C rule, and fail closed on
+    contradictory strong edition relationships.
     """
     if (type(rows) is not list or not 0 < len(rows) <= _MAX_ITEMS
             or type(identity_id) is not str or not identity_id
@@ -131,8 +160,9 @@ def attach_borrower_public_c(
         if type(item) in (Loan, HistoryItem):
             item.__dict__.pop("_core_public_c_cover_receipt", None)
     wanted = {
-        coord for item in rows
-        if (coord := _coordinate(item, identity_id)) is not None
+        edition for item in rows
+        if _coordinate(item, identity_id) is not None
+        if (edition := _attested_public_edition(item)) is not None
     }
     if not wanted:
         return 0
@@ -167,7 +197,12 @@ def attach_borrower_public_c(
                 continue
             for src in c.sources:
                 bio = src.public_bibliography
-                coords = (src.provider_id, bio.record_id, bio.medium)
+                # A private DILICOM RecordId can never match an unrelated
+                # public docbase, or a Search source with a newer revision.
+                coords = (
+                    src.provider_id, bio.record_id, bio.medium,
+                    bio.docbase, bio.source_revision,
+                )
                 if coords in wanted:
                     indexed.setdefault(coords, []).append(
                         (c, src, bio.docbase),
@@ -177,8 +212,9 @@ def attach_borrower_public_c(
 
     admitted = {}
     for coords, options in indexed.items():
-        # A provider may reuse a record ID across multiple source docbases
-        # or revisions. The private DTO lacks docbase, so fail closed.
+        # The private branch establishes the docbase and admissible public
+        # revision; a competing C source with different coordinates never
+        # enters these options. Multiple refs for this exact edition veto.
         source_refs = {src.source_ref for _c, src, _db in options}
         docbases = {db for _c, _src, db in options}
         if len(source_refs) != 1 or len(docbases) != 1:
@@ -208,9 +244,11 @@ def attach_borrower_public_c(
     count = 0
     for item in rows:
         coords = _coordinate(item, identity_id)
-        if coords is None or coords not in admitted:
+        edition = (_attested_public_edition(item)
+                   if coords is not None else None)
+        if edition is None or edition not in admitted:
             continue
-        c, source = admitted[coords]
+        c, source = admitted[edition]
         bibliography = source.public_bibliography
         # A contradictory provider source is not the same book even when
         # an upstream record ID was recycled. Text is NEGATIVE evidence only,
