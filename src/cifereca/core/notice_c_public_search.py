@@ -1,9 +1,10 @@
 """#6366/#2385: bounded SQLite-first public search over admitted Notice C facts.
 
 Read the SAME immutable source observation that owns the N2 cover; never read
-the legacy per-profile mirror as documentary authority. This is an initial
-exact-source index cursor, not yet a consolidated multi-provider Notice C, an
-attestation of full query coverage, or a provider/rights search.
+the legacy per-profile mirror as documentary authority. This bounded
+cursor reads source-specific public text plus already-admitted canonical
+multi-provider C relations. It does not establish a new same-edition link,
+consolidate conflicting descriptions, attest full query coverage or grant rights.
 
 No network, UI, cache mutation, retrieval of private notices, or book/image
 association by title, ISBN, URL or physical-cache HIT. The caller executes
