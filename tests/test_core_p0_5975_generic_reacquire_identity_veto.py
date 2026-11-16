@@ -170,3 +170,63 @@ def test_nonparis_same_owner_loan_is_not_positive_permission(
         assert len(call_count) == 1
     finally:
         service.close()
+
+
+
+@pytest.mark.parametrize("provider", ["synthetic-library", "another-library"])
+@pytest.mark.parametrize("ledger", ["acquisition", "right"])
+def test_historical_adept_status_vetoes_other_identity_for_any_source(
+    tmp_path, monkeypatch, provider, ledger,
+):
+    service, loan = _setup(tmp_path, monkeypatch, provider=provider)
+    try:
+        _foreign_loan(service, loan, ledger=ledger)
+        rows = service.storage.acquisitions()
+        rights = service.storage.entitlements()
+        def forbidden(*_a, **_kw):
+            pytest.fail("read-only ADEPT status cannot mutate rights or run provider")
+        monkeypatch.setattr(service.storage, "acquisition_put", forbidden)
+        monkeypatch.setattr(service.storage, "entitlement_put", forbidden)
+        monkeypatch.setattr(service, "_acquire_active_loan_automatically", forbidden)
+        assert service.adept_return_status_for_loan(loan) == {
+            "status": "adept_loan_identity_conflict",
+            "return_available": False,
+        }
+        assert service.storage.acquisitions() == rows
+        assert service.storage.entitlements() == rights
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("ledger", ["acquisition", "right"])
+def test_historical_adept_status_does_not_veto_unrelated_scope(
+    tmp_path, monkeypatch, ledger,
+):
+    service, loan = _setup(tmp_path, monkeypatch)
+    try:
+        _foreign_loan(service, loan, ledger=ledger, provider="foreign-provider")
+        _foreign_loan(service, loan, ledger=ledger, loan_id="unrelated-loan")
+        assert service.adept_return_status_for_loan(loan) == {
+            "status": "no_acquisition", "return_available": False,
+        }
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("inventory", ["acquisitions", "entitlements"])
+def test_historical_adept_status_does_not_publish_after_source_drift(
+    tmp_path, monkeypatch, inventory,
+):
+    service, loan = _setup(tmp_path, monkeypatch)
+    try:
+        original = getattr(service.storage, inventory)
+        def mutate(*args, **kwargs):
+            result = original(*args, **kwargs)
+            loan.record_id = "another-edition"
+            return result
+        monkeypatch.setattr(service.storage, inventory, mutate)
+        assert service.adept_return_status_for_loan(loan) == {
+            "status": "adept_identity_unproven", "return_available": False,
+        }
+    finally:
+        service.close()
