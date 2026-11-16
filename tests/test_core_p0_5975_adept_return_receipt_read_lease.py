@@ -209,10 +209,12 @@ def test_frozen_empty_primary_alias_keeps_readable_historical_receipt():
     )
 
 
-def test_unrelated_provider_is_not_an_adept_return_operation():
+def test_foreign_provider_without_its_exact_borrower_cannot_select_receipt():
     loan = _loan(source_provider="synthetic")
     service, calls = _reader(loan, _account())
     assert service.verify_loan_return(loan) == {
-        "status": "not_requested", "scope": "adobe_first_paris",
+        "status": "failed", "scope": "adobe_first_paris",
+        "code": "loan_return_borrower_unproven", "retry": "none",
     }
-    assert calls == []
+    # A branded shortcut must not mask the absent exact borrower evidence.
+    assert calls == [("preflight", True)]
