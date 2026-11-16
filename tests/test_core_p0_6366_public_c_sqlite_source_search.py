@@ -173,3 +173,33 @@ def test_search_c_rejects_invalid_queries(tmp_path, invalid):
             search_public_notice_c(db, **invalid)
     finally:
         db.close()
+
+
+def test_legacy_replay_cannot_downgrade_same_call_c_bibliography(tmp_path):
+    db = Storage(tmp_path / "downgrade.sqlite")
+    try:
+        live = verified_public(title="La forêt des loups")
+        rich = persist(db, live, at=100)
+        assert rich.observation.parser_version == "2"
+        assert rich.epoch == 1
+
+        # Cached SearchResult loses the nonserialized Core same-call stamp.
+        cached = replace(live)
+        plain = admit_public_search_cover(
+            cached, identity_id="bob",
+            observed_at=101, public_cover_url=cached.thumbnail_url,
+        )
+        assert plain is not None and plain.parser_version == "1"
+        replay = persist_notice_cover(
+            db, plain, field_path=("search_result", "thumbnail_url"),
+            cover_inventory_complete=True,
+        )
+        assert replay == rich
+        assert read_notice_cover(db, rich.document) == rich
+        c = search_public_notice_c(db, "forêt", now=102)
+        assert len(c.hits) == 1
+        assert c.hits[0].document == rich.document
+        assert c.hits[0].epoch == 1
+        assert c.hits[0].title == live.title
+    finally:
+        db.close()
