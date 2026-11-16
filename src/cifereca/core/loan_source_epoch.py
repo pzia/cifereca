@@ -6,6 +6,8 @@ by Storage's SQLite triggers, not by the current UI identity or a plugin.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any
 
@@ -96,3 +98,37 @@ class SourceEpochLease:
             ) is True
         except Exception:
             return False
+
+
+# Keep LibraryService's public acquisition method signatures unchanged.
+# The explicit recovery and nested automatic loan acquire are synchronous in
+# one logical Python execution context. A ContextVar is task/thread-isolated,
+# reset in finally, and cannot act as a permission by itself.
+_INHERITED_EXPLICIT_LEASE: ContextVar[SourceEpochLease | None] = ContextVar(
+    "cifereca_inherited_explicit_source_epoch", default=None,
+)
+
+
+def inherited_explicit_source_epoch() -> SourceEpochLease | None:
+    """Read the currently pinned recovery lease, not GUI/current identity."""
+    return _INHERITED_EXPLICIT_LEASE.get()
+
+
+@contextmanager
+def pin_explicit_source_epoch(lease: SourceEpochLease):
+    """Transmit one immutable recovery epoch without changing facade ABI.
+
+    Refuse a nested call trying to replace a different transaction's epoch,
+    and unconditionally restore the prior context even if provider/ADEPT fails.
+    The caller must still check lease.current() at every sensitive boundary.
+    """
+    if type(lease) is not SourceEpochLease:
+        raise ValueError("invalid_explicit_source_epoch")
+    existing = _INHERITED_EXPLICIT_LEASE.get()
+    if existing is not None and existing is not lease:
+        raise ValueError("explicit_source_epoch_conflict")
+    token = _INHERITED_EXPLICIT_LEASE.set(lease)
+    try:
+        yield
+    finally:
+        _INHERITED_EXPLICIT_LEASE.reset(token)
