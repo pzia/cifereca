@@ -1968,7 +1968,7 @@
         "tests/test_adept_borrower_identity_guard.py",
         "tests/test_core_p0_1120_paris_borrower_typed_input.py"
       ],
-      "pr": "pending"
+      "pr": "#6460"
     }
   ],
   "retained_legacy_migrations": [
