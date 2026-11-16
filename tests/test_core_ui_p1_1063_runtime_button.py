@@ -321,3 +321,85 @@ def test_invalid_historical_primary_stays_non_authorizing(monkeypatch):
     invalid = {"primary_paris_connection_id": True}
     assert _selected_adept_source(invalid) == (False, None, None)
     assert _saved_adept_status(Core(), "alice", invalid)["status"] == "to_configure"
+
+
+def test_neutral_runtime_result_rejected_when_sqlite_adept_profile_changes(monkeypatch):
+    """An external SQLite mutation must veto even unchanged UI epochs/status."""
+    for source in (None, ("future-library", "reader-b")):
+        host, editor, button, submits, reads, _ = _harness(
+            monkeypatch, source=source,
+        )
+        old_core = host.service
+        button.emit("clicked")
+        assert len(submits) == 1
+        args, _ = submits[0]
+        observed = args[1]()
+        assert observed["status"] == "observed"
+        assert reads == ["alice"]
+        # The mock status remains READY and the same source/GTK fields stay
+        # visible; only the durable ADEPT profile binding has changed.
+        old_core.storage.adept_profile_binding_get = lambda *_args: "adept-b"
+        args[2](observed)
+        assert not hasattr(editor["normal_adept_status"], "subtitle")
+        assert button.sensitive is True
+
+
+def test_neutral_runtime_result_rejected_on_saved_source_and_profile_read_errors(monkeypatch):
+    """Provider-neutral callback is fail-closed even when persistence is down."""
+    for source in (None, ("future-library", "reader-b")):
+        for failed_reader in ("config", "sqlite"):
+            host, editor, button, submits, _reads, _ = _harness(
+                monkeypatch, source=source,
+            )
+            button.emit("clicked")
+            assert len(submits) == 1
+            args, _ = submits[0]
+            observed = args[1]()
+            if failed_reader == "config":
+                host.config.identity = lambda _id: (_ for _ in ()).throw(
+                    OSError("synthetic external config outage")
+                )
+            else:
+                host.service.storage.adept_profile_binding_get = (
+                    lambda *_args: (_ for _ in ()).throw(
+                        OSError("synthetic SQLite outage")
+                    )
+                )
+            args[2](observed)
+            assert not hasattr(editor["normal_adept_status"], "subtitle")
+
+
+def test_neutral_runtime_result_rejected_if_saved_primary_mutates_but_status_stays_ready(
+    monkeypatch,
+):
+    for source in (None, ("future-library", "reader-b")):
+        host, editor, button, submits, reads, _ = _harness(
+            monkeypatch, source=source,
+        )
+        button.emit("clicked")
+        args, _ = submits[0]
+        observed = args[1]()
+        old_identity = host.config.identity
+        host.config.identity = lambda _id: dict(
+            old_identity(_id), primary_paris_connection_id="paris-b",
+        )
+        args[2](observed)
+        assert reads == ["alice"]
+        assert not hasattr(editor["normal_adept_status"], "subtitle")
+
+
+def test_neutral_runtime_result_rejected_if_external_saved_provider_pair_changes(
+    monkeypatch,
+):
+    host, editor, button, submits, _reads, _ = _harness(
+        monkeypatch, source=("future-library", "reader-b"),
+    )
+    button.emit("clicked")
+    args, _ = submits[0]
+    observed = args[1]()
+    old_identity = host.config.identity
+    host.config.identity = lambda _id: dict(
+        old_identity(_id), adept_source_provider_id="other-library",
+    )
+    args[2](observed)
+    assert not hasattr(editor["normal_adept_status"], "subtitle")
