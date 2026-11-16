@@ -177,8 +177,17 @@ def attach_borrower_public_c(
         docbases = {db for _c, _src, db in options}
         if len(source_refs) != 1 or len(docbases) != 1:
             continue
-        # An authorized cross-provider C is preferable to the exact
-        # source's own C, but never to two contradictory equally strong Cs.
+        # Strong relations are not ranked by source count. Two canonical
+        # multisource claims for this exact public record are contradictory
+        # even when one contains 3 providers and another only 2. Mirror the
+        # fail-closed rule in exact_public_source_c (#6454).
+        related_documents = {
+            c.document for c, _src, _db in options if len(c.sources) > 1
+        }
+        if len(related_documents) > 1:
+            continue
+        # One unambiguous cross-provider C may supersede the automatic
+        # self-edition source row. The source ID alone is not new proof.
         max_sources = max(len(c.sources) for c, _src, _db in options)
         strongest = [(c, src) for c, src, _db in options
                      if len(c.sources) == max_sources]
