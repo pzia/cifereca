@@ -17,7 +17,7 @@ from tests.test_core_p0_6366_same_call_public_cover_writer import (
     witnessed, mirror,
 )
 from tests.test_core_p0_6366_real_search_notice_c_ingestion import (
-    public_row, URL,
+    public_row, URL, source_count,
 )
 from types import SimpleNamespace as NS
 
@@ -105,6 +105,9 @@ def test_coverless_forged_or_private_row_cannot_publish_c(tmp_path):
         assert mirror(db, [private]) == 1
         assert not hasattr(private, "_core_notice_canonical_cover_document_ref")
         assert search_public_notice_c(db, "Même titre").hits == ()
+        # An image-less provider-shaped row/clone cannot publish even a
+        # cover-only pending source without fresh Core same-call proof.
+        assert source_count(db) == 0
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
