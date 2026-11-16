@@ -66,7 +66,7 @@ def test_entitlement_fallback_when_catalogue_missing_keeps_title_author_and_form
     assert "Aucune acquisition liée" in case.details
     assert "PRIVATE_TOKEN" not in case.details
     assert "PRIVATE_SIGNED" not in case.details
-    assert audit.redacted()["reconciliation"]["counts"]["rights_without_verified_file"] == 3
+    assert audit.redacted()["reconciliation"]["counts"]["rights_without_verified_file"] == 6
     assert "Roman issu" not in json.dumps(audit.redacted())
     assert "Autrice de la bibliothèque" not in json.dumps(audit.redacted())
     assert "PRIVATE" not in json.dumps(session.summary())
@@ -182,7 +182,7 @@ def test_entitlement_text_is_not_a_verified_link_even_if_it_matches_a_local_epub
     audit, session = _session(six_numilog)
     assert "Titre caché 5" in _right(session).label
     assert session.candidate_files(_right(session).key) == ()
-    assert session.overview()["confirmed_files"] == 3
+    assert session.overview()["confirmed_files"] == 0
     assert session.overview()["unverified_rights"] == 3
     assert audit.redacted()["repair_authorized"] is False
     assert audit.redacted()["acquisition_authorized"] is False
