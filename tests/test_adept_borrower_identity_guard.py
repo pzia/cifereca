@@ -203,6 +203,16 @@ def test_manual_reacquisition_rejects_shared_borrower_before_ledger_update(monke
         provider_connection_owner_current=lambda provider, credential, identity: (
             provider, credential, identity
         ) == ("paris", "paris-a", "alice"),
+        # Both owner and the original SQLite epoch are needed before this
+        # fixture may exercise its independent borrower-conflict refusal.
+        provider_connection_epoch=lambda provider, credential, identity: (
+            1 if (provider, credential, identity)
+            == ("paris", "paris-a", "alice") else None
+        ),
+        provider_connection_epoch_current=lambda provider, credential, identity, epoch: (
+            (provider, credential, identity, epoch)
+            == ("paris", "paris-a", "alice", 1)
+        ),
     )
     service.identity_by_id = lambda identity_id: SimpleNamespace(identity_id=identity_id)
     service.accounts = [account("alice", "borrower-a"), account("bob", "borrower-a")]
