@@ -161,3 +161,74 @@ def test_invalid_or_unknown_source_is_never_a_runtime_admission(tmp_path):
         )
     finally:
         service.close()
+
+
+def test_generic_selected_config_revocation_during_runtime_rejects_stale_positive(
+    tmp_path,
+):
+    service, _ = service_with_linked_borrower(tmp_path)
+    try:
+        provider = "future-library"
+        _add_source(service, provider, "card-a")
+        service.config.set("providers.accounts", [{
+            "id": "card-a", "provider": provider,
+            "identity_id": "alice", "enabled": True,
+        }])
+        coordinates = dict(
+            source_provider_id=provider, primary_connection_id="card-a",
+        )
+        assert service.normal_source_adept_status(
+            "alice", **coordinates,
+        )["status"] == "ready"
+
+        def disabled_mid_probe():
+            service.config.set("providers.accounts", [{
+                "id": "card-a", "provider": provider,
+                "identity_id": "alice", "enabled": False,
+            }])
+            return [{"profile_id": "alice-profile", "fetch_capable": True}]
+
+        service.kobo_profiles = disabled_mid_probe
+        assert service.check_source_adept_runtime(
+            "alice", **coordinates,
+        ) == {
+            "identity_id": "alice", "status": "to_verify",
+            "reason": "local_binding_changed", "acsm_ready": None,
+        }
+    finally:
+        service.close()
+
+
+def test_historical_paris_runtime_facade_reloads_saved_primary_choice(
+    tmp_path,
+):
+    service, _ = service_with_linked_borrower(tmp_path)
+    try:
+        _add_source(service, "paris", "other-paris")
+        service.config.set("providers.accounts", [
+            {"id": "alice-paris", "provider": "paris",
+             "identity_id": "alice", "enabled": True},
+            {"id": "other-paris", "provider": "paris",
+             "identity_id": "alice", "enabled": True},
+        ])
+        service.config.upsert_identity({
+            "id": "alice", "label": "Alice", "directory_name": "alice",
+            "primary_paris_connection_id": "alice-paris",
+        })
+        assert service.normal_paris_adept_status("alice")["status"] == "ready"
+
+        def changed_saved_choice():
+            service.config.upsert_identity({
+                "id": "alice", "label": "Alice",
+                "directory_name": "alice",
+                "primary_paris_connection_id": "other-paris",
+            })
+            return [{"profile_id": "alice-profile", "fetch_capable": True}]
+
+        service.kobo_profiles = changed_saved_choice
+        assert service.check_normal_paris_adept_runtime("alice") == {
+            "identity_id": "alice", "status": "to_verify",
+            "reason": "local_binding_changed", "acsm_ready": None,
+        }
+    finally:
+        service.close()
