@@ -15,7 +15,10 @@ def host_type(**factories):
     tree = ast.parse(path.read_text())
     declaration = next(n for n in tree.body if isinstance(n,ast.ClassDef) and n.name=='_UiHost')
     future = ast.ImportFrom(module='__future__',names=[ast.alias(name='annotations')],level=0)
-    env = dict(BookRef=BookRef, **factories)
+    env = dict(
+        BookRef=BookRef, __name__="cifereca.gui.plugin_ui_host",
+        __package__="cifereca.gui", **factories,
+    )
     exec(compile(ast.fix_missing_locations(ast.Module(body=[future,declaration],type_ignores=[])),str(path),'exec'),env)
     return env['_UiHost']
 
@@ -208,3 +211,40 @@ def test_optional_search_provider_scope_preserves_legacy_host_signature():
     assert calls[-1] == (
         "9780140328721", "isbn", False, "alice", ("paris",),
     )
+
+
+def test_public_notice_cover_host_only_admits_same_call_core_c_for_active_identity(
+    tmp_path,
+):
+    from cifereca.plugin_api import UiPublicNoticeCoverHost
+    from cifereca.core.search_orchestration import _mirror_remote_results
+    from cifereca.storage import Storage
+    from tests.test_core_p0_6366_same_call_public_cover_writer import witnessed
+    from tests.test_core_p0_6366_real_search_notice_c_ingestion import public_row
+    from dataclasses import replace
+
+    db = Storage(tmp_path / "public.sqlite")
+    try:
+        item = witnessed(public_row())
+        assert _mirror_remote_results(
+            NS(storage=db), [item], identity_id="alice",
+            require_public_cover_witness=True,
+        ) == 1
+        current = NS(identity_id="alice")
+        window = NS(_closed=False, service=NS(current_identity=current))
+        host = host_type()(window)
+        assert isinstance(host, UiPublicNoticeCoverHost)
+        expected = item._core_notice_canonical_cover_document_ref
+        assert host.public_notice_cover_ref(item, identity_id="alice") == expected
+        assert host.public_notice_cover_ref(item, identity_id="bob") is None
+        assert host.public_notice_cover_ref(replace(item), identity_id="alice") is None
+        assert host.public_notice_cover_ref(
+            replace(item, record_id="foreign"), identity_id="alice",
+        ) is None
+        current.identity_id = "bob"
+        assert host.public_notice_cover_ref(item, identity_id="alice") is None
+        window._closed = True
+        assert host.public_notice_cover_ref(item, identity_id="bob") is None
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
