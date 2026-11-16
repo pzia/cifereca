@@ -160,7 +160,9 @@ def test_public_multi_source_outweighs_own_c_with_exact_paris_record(tmp_path):
     {"source_provider": "bnf"},
     {"source_credential": "card-b"},
     {"source_account_id": "buyer-b"},
+    {"source_account_id": None},
     {"identity_id": "bob"},
+    {"identity_id": None},
     {"record_id": "different-edition"},
     {"record_id": None},
     {"record_id": "https://signed.example.org/token"},
@@ -427,5 +429,45 @@ def test_history_actual_list_and_selection_use_one_exact_c_without_get(
         assert not hasattr(stale, "_cover_paris_public_c")
         select(host, stale)
         assert events[-1] == ("legacy",)
+    finally:
+        db.close()
+
+
+def test_actual_live_paris_history_lease_stamps_borrower_before_cache(tmp_path):
+    """Only the live, source-lease-fenced Paris History read can fill owner."""
+    from cifereca.core.library_projection import refresh_history, _history_cache_key
+
+    db = Storage(tmp_path / "live-history.sqlite")
+    try:
+        own, _ = public(db)
+        account = paris_account()
+        _, original = personal_items()
+        missing_owner = replace(
+            original, identity_id=None, source_account_id=None,
+        )
+        session = NS(
+            capabilities=NS(history=True),
+            history=lambda _account: [missing_owner],
+        )
+        diagnostics = NS(add=lambda *_a, **_k: None)
+        fake = NS(
+            storage=db, config={"cache.history_seconds": 1800},
+            _account_context_epoch=3, _source_context_epoch=7,
+            current_account=account,
+            diagnostics=diagnostics,
+            last_history=[],
+            _session_for_account=lambda _account: session,
+            _history_source_lease_current=lambda *_a, **_k: True,
+        )
+        returned = refresh_history(fake, force=True, account=account)
+        assert returned == [missing_owner]
+        assert missing_owner.identity_id == "alice"
+        assert missing_owner.source_account_id == "buyer-a"
+        assert missing_owner._core_notice_c_paris_public_link.document == own.document
+        replay = db.cache_get("account", _history_cache_key(account))
+        assert replay[0]["identity_id"] == "alice"
+        assert replay[0]["source_account_id"] == "buyer-a"
+        assert "_core_notice_c_paris_public_link" not in replay[0]
+        assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
