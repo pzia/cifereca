@@ -54,9 +54,12 @@ def _check(tmp_path, monkeypatch, rows):
     service, loan = _setup(tmp_path)
     try:
         _forbid_work(service, monkeypatch)
+        # Isolate the entitlement selector *after* a positively attested
+        # borrower. (None, None) is not positive authority and now correctly
+        # fails closed before inventory is queried.
         monkeypatch.setattr(
             service, "_paris_adept_identity_for_loan",
-            lambda *_args, **_kwargs: (None, None),
+            lambda *_args, **_kwargs: ("default", None),
         )
         # Cross-identity veto is independently tested; exercise only the
         # final entitlement selector with exact read-only inventory rows.
