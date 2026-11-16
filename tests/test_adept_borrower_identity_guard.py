@@ -193,7 +193,15 @@ def test_manual_reacquisition_rejects_shared_borrower_before_ledger_update(monke
     monkeypatch.setattr(services, "acquisition_lock_file", lambda: Path("/tmp/acquisition.lock"))
     service = object.__new__(LibraryService)
     service.can_download_loan = lambda loan: True
-    service.storage = SimpleNamespace(identity_for_connection=lambda *args: "alice")
+    service.storage = SimpleNamespace(
+        identity_for_connection=lambda *args: "alice",
+        # Explicit recovery now requires an independently attested live
+        # connection; the test is about a borrower conflict, not a stale
+        # or disabled source.
+        provider_connection_owner_current=lambda provider, credential, identity: (
+            provider, credential, identity
+        ) == ("paris", "paris-a", "alice"),
+    )
     service.identity_by_id = lambda identity_id: SimpleNamespace(identity_id=identity_id)
     service.accounts = [account("alice", "borrower-a"), account("bob", "borrower-a")]
     loan = SimpleNamespace(id="loan-1", source_provider="paris",
