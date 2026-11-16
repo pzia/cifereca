@@ -4096,7 +4096,7 @@ class LibraryService:
         has retargeted the loan, credential, borrower or edition.
         """
         from .core.explicit_reacquire_source import ExplicitReacquireSource
-        from .core.loan_source_epoch import SourceEpochLease
+        from .core.loan_source_epoch import SourceEpochLease, pin_explicit_source_epoch
 
         # Pin BEFORE eligibility: even a read-only eligibility callback may
         # mutate the caller-owned Loan. Preserve all historical eligibility
@@ -4247,9 +4247,12 @@ class LibraryService:
                 # Propagate the SAME epoch into nested automatic admission,
                 # ACSM staging, ADEPT profile and one-shot fulfillment.
                 # A fresh nested epoch may be stricter, never a replacement.
-                result = self._acquire_active_loan_automatically(
-                    loan, force_refresh=True, source_lease=source_lease,
-                )
+                # Task/thread-scoped handoff with unconditional restoration.
+                # Both public LibraryService acquisition signatures stay fixed.
+                with pin_explicit_source_epoch(source_lease):
+                    result = self._acquire_active_loan_automatically(
+                        loan, force_refresh=True,
+                    )
                 if not admission_intact():
                     return source_refusal()
                 if result.get("status") != "complete":
@@ -4511,10 +4514,7 @@ class LibraryService:
         """
         return adept_borrower._cross_identity_loan_conflict(acquisitions, provider_loan_id=provider_loan_id, identity_id=identity_id, entitlements=entitlements)
 
-    def _acquire_active_loan_automatically(
-        self, loan: Loan, *, force_refresh: bool = False,
-        source_lease=None,
-    ) -> dict[str, Any]:
+    def _acquire_active_loan_automatically(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
         """Serialize automatic acquisition across threads and processes per loan.
 
         Do not reuse the global acquisition lock: opening_sync already holds it.
@@ -4529,6 +4529,8 @@ class LibraryService:
         source_credential = getattr(loan, "source_credential", None)
         source_account = getattr(loan, "source_account_id", None)
         source_record = getattr(loan, "record_id", None)
+        from .core.loan_source_epoch import inherited_explicit_source_epoch
+        source_lease = inherited_explicit_source_epoch()
         # Web-observed BnF does not confer permission to stage an ACSM. Test
         # only exact native strings: plugin-owned __eq__ is not a grant.
         if type(loan) is Loan and type(source_provider) is str and source_provider == "bnf-pret":
@@ -4596,10 +4598,6 @@ class LibraryService:
                             "reason": "source_scope_changed",
                             "retry": "explicit_only",
                         }
-                    return self._acquire_active_loan_automatically_guarded(
-                        loan, force_refresh=force_refresh,
-                        source_lease=source_lease,
-                    )
                 return self._acquire_active_loan_automatically_guarded(
                     loan, force_refresh=force_refresh
                 )
@@ -4611,10 +4609,7 @@ class LibraryService:
                 "code": "acquisition_busy", "retry": "explicit_only",
             }
 
-    def _acquire_active_loan_automatically_guarded(
-        self, loan: Loan, *, force_refresh: bool = False,
-        source_lease=None,
-    ) -> dict[str, Any]:
+    def _acquire_active_loan_automatically_guarded(self, loan: Loan, *, force_refresh: bool = False) -> dict[str, Any]:
         """Acquire one active digital loan and fulfill ACSM through Kobo-Adept.
 
         Provider download remains responsible for obtaining the ACSM. Paris owns
@@ -4636,6 +4631,8 @@ class LibraryService:
         # connection has no persisted owner. Keep this fail-closed at the
         # automatic acquisition boundary; unrelated UI navigation may still
         # use the historical identity_for_connection fallback.
+        from .core.loan_source_epoch import inherited_explicit_source_epoch
+        source_lease = inherited_explicit_source_epoch()
         admission = loan_acquisition_admission.resolve(self, loan, _TRACE_LOG=_TRACE_LOG)
         if admission.refusal is not None:
             return admission.refusal
@@ -4647,12 +4644,15 @@ class LibraryService:
             from .core.loan_source_epoch import SourceEpochLease
             if (type(source_lease) is not SourceEpochLease
                     or type(admission.source_lease) is not SourceEpochLease
+                    or not source_lease.current(self.storage, loan)
+                    or type(admission.source_lease.epoch) is not int
                     or source_lease.identity_id != identity.identity_id
-                    or source_lease.epoch != admission.source_lease.epoch
-                    or not source_lease.current(self.storage, loan)):
+                    or source_lease.epoch != admission.source_lease.epoch):
                 return {
                     "status": "attention_required",
-                    "loan_id": admission.source_lease.loan_id,
+                    "loan_id": (admission.source_lease.loan_id
+                                if type(admission.source_lease) is SourceEpochLease
+                                else None),
                     "code": "adept_identity_unproven",
                     "reason": "source_scope_changed",
                     "retry": "explicit_only",
