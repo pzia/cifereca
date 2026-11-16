@@ -754,6 +754,12 @@ class DetailPanel(Gtk.Box):
                 continue
             button = Gtk.LinkButton(uri=uri, label=str(link.label))
             button.set_tooltip_text(str(link.label))
+            button.connect(
+                "activate-link",
+                lambda clicked: getattr(
+                    clicked, "_cifereca_action_context_revoked", False,
+                ) is True,
+            )
             button._cifereca_action_id = f"document-link:{link.id}"
             button._cifereca_action_priority = 30
             link_buttons.append(button)
@@ -825,6 +831,12 @@ class DetailPanel(Gtk.Box):
                     if not uri:
                         continue
                     button = Gtk.LinkButton(uri=uri, label=str(action.title))
+                    button.connect(
+                        "activate-link",
+                        lambda clicked: getattr(
+                            clicked, "_cifereca_action_context_revoked", False,
+                        ) is True,
+                    )
                 elif callable(action.callback):
                     button = self.window.action_button(str(action.title), str(action.icon_name))
                     def activate_cached(clicked, cb=action.callback):
