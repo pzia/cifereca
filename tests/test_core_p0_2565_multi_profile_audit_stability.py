@@ -12,7 +12,7 @@ from cifereca.core import library_audit_stability as stability
 from cifereca.core.library_audit_stability import (
     begin_audit_stability, finish_audit_stability,
 )
-from tests.test_core_p0_2796_private_audit_stability import _audit
+from tests.test_core_p0_2796_private_audit_stability import _audit, _canonicalize
 from tests.test_core_p0_2796_reconciliation_repeatability import _fixture
 
 
@@ -28,6 +28,9 @@ def _run(identity="alice", *, changed=False):
                 row["identity_id"] = identity
     if changed:
         tables["placements"][0]["path"] += ".obsolete"
+    # Build positively attested, source-neutral origins *after* retargeting
+    # identity coordinates; no Paris/Numilog metadata becomes authority.
+    _canonicalize(tables)
     return _audit(inventory, tables)
 
 
