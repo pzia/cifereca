@@ -177,6 +177,43 @@ def test_two_completed_real_provider_origins_publish_shared_c_on_live_search(
         restored.close()
 
 
+def test_origin_linked_c_keeps_pending_public_source_and_upgrades_same_ref(
+    tmp_path,
+):
+    db = Storage(tmp_path / "pending-upgrade.sqlite")
+    try:
+        _origins(db, tmp_path)
+        absent = witnessed(public_row(
+            source_provider="seller-a", record_id="edition-a",
+            title="L'ouvrage commun", thumbnail_url=None,
+        ))
+        _, b = _source_rows()
+        assert _mirror(db, absent) == 1
+        assert _mirror(db, b) == 1
+        ref = b._core_notice_canonical_cover_document_ref
+        partial = read_consolidated_notice_cover(db, ref)
+        assert partial is not None
+        assert len(partial.sources) == 2
+        assert {c.url for c in partial.candidates} == {B_URL}
+        assert any(s.state == "pending" for s in partial.sources)
+        assert b._core_notice_canonical_cover_document_ref == ref
+
+        # Actual newly attested Search observation: one provider now has
+        # its own cover. The second provider's C association survives.
+        present, _ = _source_rows()
+        assert _mirror(db, present) == 1
+        assert present._core_notice_canonical_cover_document_ref == ref
+        expanded = read_consolidated_notice_cover(db, ref)
+        assert expanded.epoch > partial.epoch
+        assert {c.url for c in expanded.candidates} == {A_URL, B_URL}
+        assert cached_notice_cover_snapshot(
+            NS(storage=db), ref,
+        ).revision == expanded.epoch
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
 def test_same_artifact_sha_in_two_profiles_is_not_same_owner_proof(tmp_path):
     db = Storage(tmp_path / "two-profiles.sqlite")
     try:
