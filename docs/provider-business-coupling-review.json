@@ -3,20 +3,6 @@
   "purpose": "Reviewed execution/authority evidence only; absent reviews remain unclassified. No automatic reachability claims.",
   "reviews": [
     {
-      "id": "site-ec3bd8bf2ee3527ef2c55dd0",
-      "classification": "legitimate_readonly_compat",
-      "journey": "diagnostics_and_historical_observation",
-      "productive_caller": "query_journal → _events → _make_event (historical Core ACQUISITION/loan sync logs)",
-      "effect": "Read-only projection of legacy log field 'provider' to filterable provider_id; no GET/POST, file write or rights grant",
-      "authority": "Observed historic log payload, constrained by logger/category/operation/status/code/loan_id; never business entitlement",
-      "replacement_contract": "Canonical structured diagnostic.provider_id for new events; preserve bounded legacy reader for existing logs",
-      "tests": [
-        "tests/test_diagnostics_p0_2888_legacy_loan_provider.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Removal would lose truthful provider filtering in archived 29/10 loan-sync diagnostics; compatibility is restricted, descriptive and covered by negative tests"
-    },
-    {
       "id": "site-9b7a3e896db6ff1e346f2365",
       "classification": "safety_guard_pending_contract",
       "journey": "confirmed Paris DILICOM first-offer ACSM staging",
@@ -1678,6 +1664,22 @@
       "pr": "#6418",
       "in_ast_metric": true,
       "original_site_id": "site-3677c84c35a55a9626000d6e"
+    },
+    {
+      "id": "struct-legacy-loan-diagnostics-source-neutral-projection",
+      "original_site_id": "site-ec3bd8bf2ee3527ef2c55dd0",
+      "original": "core.diagnostic_journal._make_event promoted historical Core ACQUISITION/loan sync provider provenance only when the native provider literal was Paris or BnF, hiding the same exact diagnostic shape from Numilog and future providers",
+      "original_classification": "legitimate_readonly_compat",
+      "replacement": "Shared Core provider_identifier.valid_provider_identifier ABI, exact installed-grammar identifier (including multi-segment source IDs) within the unchanged Core logger/category/operation/severity/status/code/loan_id envelope; reserved/invalid source IDs rejected. No new log writer, provider request or permission.",
+      "classification": "replaced_historical_supplier_allowlist_with_source_neutral_readonly_projection",
+      "evidence": "A real Core historical loan-sync diagnostic from Numilog, a future synthetic provider, or a dot-separated installed source such as biblioaccess.la-rochelle is filterable without declaring names in Core. Malformed/reserved provider IDs, plugin logger impostors, wrong category/operation/status/severity and malformed issue envelope stay untrusted; compatibility never implies an entitlement, runtime credential or GET. Paris/BnF historical events retain payload and provider filtering.",
+      "tests": [
+        "tests/test_diagnostics_p0_2888_legacy_loan_provider.py",
+        "tests/test_diagnostics_acquisition_fidelity.py",
+        "tests/test_core_p0_5975_business_coupling_ledger.py"
+      ],
+      "pr": "#6414",
+      "in_ast_metric": true
     }
   ],
   "guard_installations": [
