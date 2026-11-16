@@ -539,9 +539,9 @@ def _search_presentation_cache_scope(
                 and not session._accounts
                 and isinstance(session, ProviderSearchWithFacets)):
             # Source and owner scopes are independently in the cache key.
-            # Deliberate distinct domain from an identity literally named
-            # "anonymous-v1", so no cross-scope key collision is possible.
-            return "source-anonymous-public-v1:" + ranking
+            # A NUL domain marker cannot occur in validated identity IDs;
+            # it also prevents a private or malformed source cache collision.
+            return "\0source-anonymous-public-v1:" + ranking
     return f"{identity.identity_id}:" + ranking
 
 
