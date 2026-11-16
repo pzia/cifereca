@@ -12,6 +12,7 @@ from types import SimpleNamespace as NS
 
 from cifereca.core import search_orchestration
 from cifereca.core.notice_cover_repository import read_notice_cover
+from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
 from cifereca.core.search_orchestration import _public_rows_from_response
 from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 from cifereca.models import SearchResult
@@ -54,7 +55,13 @@ def test_legacy_provider_public_shaped_row_cannot_write_core_notice_c(tmp_path):
         assert mirror(db, [safe]) == 1
         doc = safe._core_notice_cover_document_ref
         assert doc.identity_id is None
-        persisted = read_notice_cover(db, doc)
+        canonical = read_consolidated_notice_cover(db, doc)
+        assert canonical is not None and len(canonical.sources) == 1
+        source_doc = replace(
+            doc, source_key=canonical.sources[0].source_ref,
+            provider_id=safe.source_provider,
+        )
+        persisted = read_notice_cover(db, source_doc)
         assert persisted.attribute.candidates[0].url == URL
         # The existing v2 bibliographic witness must survive this cover gate.
         bibliography = persisted.observation.fields_copy()["search_result"]["public_bibliography"]
@@ -91,14 +98,14 @@ def test_witness_is_bound_to_exact_row_edition_url_not_equal_looking_copy(
 
         assert mirror(db, [accepted]) == 1
         original = accepted._core_notice_cover_document_ref
-        assert read_notice_cover(db, original).epoch == 1
+        assert read_consolidated_notice_cover(db, original).epoch == 1
         # Mutate the already-witnessed live object between parse and write.
         # A stale epoch/source/image cannot reuse its former same-call proof.
         accepted.thumbnail_url = OTHER_URL
         assert mirror(db, [accepted]) == 1
         assert source_count(db) == 1
         assert read_notice_cover(db, original).epoch == 1
-        assert read_notice_cover(db, original).attribute.candidates[0].url == URL
+        assert read_consolidated_notice_cover(db, original).candidates[0].url == URL
     finally:
         db.close()
 
