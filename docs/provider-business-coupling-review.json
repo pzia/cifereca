@@ -1697,7 +1697,7 @@
         "tests/test_core_p0_2975_typed_return_inventory_absence.py",
         "tests/test_core_p0_3121_return_inventory_inert_recheck.py"
       ],
-      "pr": "pending",
+      "pr": "#6434",
       "in_ast_metric": true
     }
   ],
