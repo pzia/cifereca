@@ -41,6 +41,13 @@ Les documents historiques ne sont **ni réécrits en masse ni supprimés** par c
 
 L'ABI cible [ARCHITECTURE.md](ARCHITECTURE.md) ne change pas. Le cadrage prioritaire et les exceptions de clôture sont décrits dans [#5975](https://github.com/pzia/cifereca/issues/5975), [AGENTS.md](../AGENTS.md#5975--recentrage-opposable-du-16112026--découplage-dabord) et [la politique de livraison](AGENT-DELIVERY-POLICY.md#application-particulière--p0-découplage-5975-arbitrage-du-16112026). L'audit #5376 peut rester ouvert sans bloquer la sortie du découplage.
 
+## Réception P0 Notices C + miniatures #6366 — 16/11/2026
+
+La preuve minimale [#6366](https://github.com/pzia/cifereca/issues/6366) est un chemin **fournisseur réel → observation C persistante et indexée → Search C-first progressif → même get_cover(DocumentRef, variant) avec N1/N2/N3 dans les six vues liste/détail**. Un rapprochement multi-source exige une même édition fortement attestée ; à défaut, deux C distinctes et placeholder si nécessaire. La C survit au TTL source/HTTP, au redémarrage et à une recherche offline stale.
+
+Le P0 ne bloque plus sur toutes les combinaisons multi-profils/caches/ABA/TTL, le GET strictement unique en tout scénario, les raffinements UX/invalidations ou un scheduler général #4982. **Les invariants restent** : pas de rapprochement fictif, mauvaise couverture, faux droit, contamination entre comptes, secret persisté, mutation fournisseur sans admission, perte du seul EPUB ou corruption. Ces exceptions P0 bornent la preuve de clôture, pas l'architecture A/B/C ni le contenu à livrer dans les P1 #2385/#4552/#3724/#6168/#3104/#4979.
+
+
 ## Mesures de découplage — ne pas confondre les catégories
 
 Le [ticket #5519](https://github.com/pzia/cifereca/issues/5519) rapporte pour le **11 novembre 2026** une photographie de **2 670 LOC spécialisées historiques** et **302 lignes génériques uniques portant un signal AST** (après reclassement). Dans les 2 670 LOC : BnF 997, Kobo 653, Numilog 531, Paris 489. L'ancien compteur lexical générique de 1 958 lignes comprend des noms dans les commentaires/chaînes : **il ne représente pas 1 958 LOC métier**. Les catégories ont des recouvrements ; ne pas additionner sans méthode.
