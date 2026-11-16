@@ -96,10 +96,10 @@ def test_unversioned_bnf_legacy_on_cannot_trigger_canonical_get(
 
 
 @pytest.mark.parametrize("opening", [False, True])
-def test_bnf_legacy_source_on_uses_single_canonical_executor_and_verified_placement(
+def test_versioned_bnf_legacy_on_needs_explicit_cas_for_canonical_download(
     connected_core, monkeypatch, tmp_path, opening,
 ):
-    """Legacy preference is consent only, never an archived supplier right."""
+    """Old source-wide ON is never a new irreversible GET permission."""
     service, session, account, loan, state, downloaded = connected_core
     register(service.storage, account.identity_id, account.provider_id,
              account.credential_id, account=account.unique_id)
@@ -132,25 +132,37 @@ def test_bnf_legacy_source_on_uses_single_canonical_executor_and_verified_placem
     monkeypatch.setattr(
         service, "_canonical_right_delivery", delivered, raising=False,
     )
-    if opening:
-        result = service.opening_sync()
-        result = next(row for row in result["identities"]
-                      if row["identity_id"] == account.identity_id)
-    else:
-        result = service.synchronize_account_source(account)
+
+    def refresh():
+        if opening:
+            outcome = service.opening_sync()
+            return next(row for row in outcome["identities"]
+                        if row["identity_id"] == account.identity_id)
+        return service.synchronize_account_source(account)
+
+    # A legacy ON plus the proper persisted old generation is still refused.
+    prior = refresh()
+    assert prior["canonical_execution"]["downloaded"] == 0
+    assert calls == [] and downloaded == []
+    assert service.storage.placements() == []
+
+    # Only a user-confirmed source-wide CAS policy can resume delivery.
+    granted = broker.set_source_sync_consent(
+        sid, enabled=True, expected_revision=None,
+    )
+    assert granted["configured"] and granted["enabled"]
+    result = refresh()
     assert result["canonical_execution"]["downloaded"] == 1
     assert len(calls) == 1 and downloaded == []
     assert len(service.storage.placements()) == 1
-
     if not opening:
-        again = service.synchronize_account_source(account)
+        again = refresh()
         assert again["canonical_execution"]["present_attested"] == 1
         assert again["canonical_execution"]["downloaded"] == 0
         assert len(calls) == 1
 
-
 @pytest.mark.parametrize("mutation", ["off", "off_on"])
-def test_bnf_legacy_consent_revoked_during_canonical_delivery_never_publishes(
+def test_bnf_cas_revoked_during_canonical_delivery_never_publishes(
     connected_core, monkeypatch, tmp_path, mutation,
 ):
     service, session, account, loan, _state, downloaded = connected_core
@@ -160,6 +172,10 @@ def test_bnf_legacy_consent_revoked_during_canonical_delivery_never_publishes(
     broker = SynchronizationBrokerImpl(service)
     sid = broker._source_id(account)
     assert _write_historical_bnf_choice(service, account, True)
+    granted = broker.set_source_sync_consent(
+        sid, enabled=True, expected_revision=None,
+    )
+    assert granted["enabled"]
     for module in (
         "sync_coordination", "canonical_selected_offers",
         "canonical_selected_delivery", "convergence_execution",
@@ -173,9 +189,15 @@ def test_bnf_legacy_consent_revoked_during_canonical_delivery_never_publishes(
 
     def delivery(key, offer):
         calls.append(key)
-        assert _write_historical_bnf_choice(service, account, False) is False
+        off = broker.set_source_sync_consent(
+            sid, enabled=False, expected_revision=granted["revision"],
+        )
+        assert not off["enabled"]
         if mutation == "off_on":
-            assert _write_historical_bnf_choice(service, account, True) is True
+            newer = broker.set_source_sync_consent(
+                sid, enabled=True, expected_revision=off["revision"],
+            )
+            assert newer["revision"] != granted["revision"]
         path = tmp_path / "ephemeral.pdf"
         path.write_bytes(BYTES)
         return CompletedDelivery(
@@ -189,6 +211,7 @@ def test_bnf_legacy_consent_revoked_during_canonical_delivery_never_publishes(
     assert result["canonical_execution"]["downloaded"] == 0
     assert len(service.storage.placements()) == 0
     assert downloaded == []
+
 
 def test_kobo_canonical_off_never_falls_back_after_missing_typed_inventory(tmp_path, monkeypatch):
     from tests.test_kobo_backup_guard import _service
