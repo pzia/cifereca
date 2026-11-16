@@ -2351,7 +2351,8 @@ def _mirror_remote_results(
                     # producer-attested edition. No title/ISBN/URL or cross-
                     # provider identity is inferred here. The canonical
                     # index retains its own N2 revision and source proofs.
-                    if persisted.observation.parser_version == "2":
+                    if (persisted.observation.parser_version == "2"
+                            and _verified_public_cover_witness(row)):
                         try:
                             canonical = persist_exact_public_search_cover(
                                 self.storage, persisted,
