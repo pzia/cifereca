@@ -11,7 +11,7 @@ this bounded read away from the GTK main thread.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import re
 import time
@@ -57,6 +57,8 @@ class PublicNoticeCHit:
     epoch: int
     cover_state: str
     stale: bool
+    # Internal, producer-verified exact edition coordinate. No title/ISBN join.
+    edition_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +161,7 @@ def _public_observation(
             last_seen_at=last_seen, epoch=persisted.epoch,
             cover_state=persisted.attribute.state,
             stale=now - last_seen > _STALE_AFTER,
+            edition_id=key.edition_id,
         )
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError,
             UnicodeError, RecursionError):
@@ -234,8 +237,40 @@ def search_public_notice_c(
         _fold(item.title), item.provider_id, item.document.source_key,
     ))
     offset = page * page_size
+    selected = matches[offset:offset + page_size]
+    if selected:
+        from .notice_c_cover_index import (
+            canonical_cover_document_ref, read_consolidated_notice_cover,
+        )
+        canonical_hits = []
+        for hit in selected:
+            # Keep each bibliographic C source distinct. In the absence of
+            # an installed, vetted type-specific text consolidator, a
+            # multi-provider cover relation must NOT silently deduplicate
+            # differently authored descriptive records. Upgrade N2 only
+            # when the canonical index contains exactly THIS source.
+            try:
+                canonical_ref = canonical_cover_document_ref(hit.edition_id)
+                stored = read_consolidated_notice_cover(
+                    storage, canonical_ref,
+                )
+                if (stored is not None and len(stored.sources) == 1
+                        and stored.sources[0].source_ref == hit.document.source_key
+                        and stored.sources[0].source_epoch == hit.epoch
+                        and stored.sources[0].visibility == "public"
+                        and stored.sources[0].state == "available"
+                        and stored.candidates):
+                    hit = replace(
+                        hit, document=canonical_ref, epoch=stored.epoch,
+                    )
+            except (ValueError, TypeError, AttributeError):
+                # A corrupt/unrelated canonical index cannot remove a valid
+                # exact-source C hit or reassign its bibliography.
+                pass
+            canonical_hits.append(hit)
+        selected = canonical_hits
     return PublicNoticeCPage(
-        hits=tuple(matches[offset:offset + page_size]),
+        hits=tuple(selected),
         known_matches=len(matches), scanned_sources=scanned,
         unindexed_sources=unindexed,
         status="budget_exceeded" if exceeded else "partial",
