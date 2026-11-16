@@ -47,6 +47,7 @@ def _coordinate(item: object, identity_id: str):
             or type(item.record_id) is not str
             or not 0 < len(item.record_id) <= 160
             or type(item.medium) is not str or item.medium != "digital"
+            or type(item.provider) is not str or not item.provider
             or type(item.title) is not str or not item.title.strip()
             or type(item.source_credential) is not str
             or not item.source_credential
@@ -75,6 +76,7 @@ class VerifiedBorrowerPublicC:
     provider_id: str
     record_id: str
     medium: str
+    upstream_branch: str
     title: str
     author: str | None
     witness: object
@@ -91,6 +93,10 @@ class VerifiedBorrowerPublicC:
                 self.provider_id, self.record_id, self.medium,
             )
             and source_item.id == self.occurrence_id
+            # DILICOM, SYRACUSE or another supplier branch can reuse an
+            # upstream record string. A native branch switch must revoke C.
+            and type(source_item.provider) is str
+            and source_item.provider == self.upstream_branch
             and source_item.source_credential == self.source_credential
             and source_item.source_account_id == self.source_account_id
             and source_item.title == self.title
@@ -222,6 +228,7 @@ def attach_borrower_public_c(
             source_credential=item.source_credential,
             source_account_id=item.source_account_id,
             provider_id=coords[0], record_id=coords[1], medium=coords[2],
+            upstream_branch=item.provider,
             title=item.title, author=item.author,
             witness=_BORROWER_PUBLIC_C_TOKEN,
         )
