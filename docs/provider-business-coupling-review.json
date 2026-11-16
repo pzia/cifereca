@@ -1677,7 +1677,7 @@
         "tests/test_diagnostics_acquisition_fidelity.py",
         "tests/test_core_p0_5975_business_coupling_ledger.py"
       ],
-      "pr": "#TBD",
+      "pr": "#6414",
       "in_ast_metric": true
     }
   ],
