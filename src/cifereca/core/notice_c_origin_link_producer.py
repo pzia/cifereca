@@ -20,7 +20,7 @@ import sqlite3
 
 from .notice_c_cover_index import persist_consolidated_cover_source
 from .notice_cover_repository import (
-    PersistedNoticeCover, _PREFIX as _SOURCE_PREFIX, read_notice_cover,
+    PersistedNoticeCover, _PREFIX as _SOURCE_PREFIX, _decode as _decode_source,
 )
 from .notice_c_public_search import _public_observation, _fold
 
@@ -83,8 +83,11 @@ def _admitted_public_sources(storage) -> dict[tuple[str, str], PersistedNoticeCo
         )
         if hit is None or hit.medium != "digital":
             continue
-        source = read_notice_cover(storage, hit.document)
-        if source is None:
+        # Reuse the already fetched indexed source payload; one bounded
+        # SQLite cursor instead of one extra connection per public result.
+        try:
+            source = _decode_source(raw, hit.document)
+        except (ValueError, TypeError, UnicodeError, RecursionError):
             continue
         coords = _public_source_coordinates(source)
         if coords is None:
