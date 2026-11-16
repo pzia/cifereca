@@ -429,24 +429,6 @@
       "reachability": "unproven"
     },
     {
-      "id": "site-b2c28295eb915336e054f6f1",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Historical exact-borrower inventory absence verification after ADEPT observation",
-      "productive_caller": "core.loan_return_verification._paris_inventory_exact_borrower and LibraryService.verify_paris_return_inventory -> verify_paris_return_inventory",
-      "effect": "Rejects mixed/partial/non-exhaustive or foreign borrower inventories as proof of returned loan; the facade delegates a bounded exact-account read, NEVER issues ReturnDigitalLoan POST.",
-      "authority": "Exact provider/credential/borrower/identity, branch completeness and connected session proof, not empty rows or a different credential.",
-      "replacement_contract": "Provider-neutral complete typed loan-inventory snapshot with exact borrower/branch coverage and pre/post-read lease. Keep historical refusal until independently proven.",
-      "tests": [
-        "tests/test_core_p0_2975_return_borrower_scope.py",
-        "tests/test_core_p0_1120_paris_inventory_completeness.py",
-        "tests/test_core_p0_2975_typed_return_inventory_absence.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "These are a guarded historical read and its delegate, not a current return mutation. Public API reachability alone is unproven.",
-      "decision_group_id": "loan.return-exact-inventory-absence",
-      "reachability": "unproven"
-    },
-    {
       "id": "site-a99f3f4da32247a6a6efec04",
       "classification": "safety_guard_pending_contract",
       "journey": "Saved Paris primary connection / ADEPT identity readiness and explicit runtime check",
@@ -1696,6 +1678,22 @@
         "tests/test_core_p0_2975_return_borrower_scope.py",
         "tests/test_core_p0_2975_typed_return_inventory_absence.py",
         "tests/test_core_p0_3121_return_inventory_inert_recheck.py"
+      ],
+      "pr": "#6434",
+      "in_ast_metric": true
+    },
+    {
+      "id": "struct-historical-paris-return-facade-delegate-neutralized",
+      "original_site_id": "site-b2c28295eb915336e054f6f1",
+      "original": "LibraryService.verify_paris_return_inventory delegated to the provider-named core.loan_return_verification.verify_paris_return_inventory, creating a Core-to-Core supplier-specific call even though voluntary return mutation is retired.",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "LibraryService keeps its public historical method for installed callers but delegates to core.loan_return_verification.verify_loan_return_inventory, which consumes a typed source-neutral account/branch inventory. The old module-level function remains an alias for code compatibility and has no independent provider-specific branch.",
+      "classification": "replaced_supplier_named_facade_dispatch_by_neutral_core_delegate",
+      "evidence": "The executable provider-named attribute call was retired without moving it elsewhere. Historical service ABI remains callable; the private module-level legacy alias shares the neutral implementation. Confirmation of absence still requires exact account/session scope, live typed branch pagination completion and zero ReturnDigitalLoan POST. No positive origin/entitlement or local file is created by the read.",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_return_inventory.py",
+        "tests/test_core_p0_2975_typed_return_inventory_absence.py",
+        "tests/test_core_p0_2975_paris_return_branch_collision.py"
       ],
       "pr": "#6434",
       "in_ast_metric": true
