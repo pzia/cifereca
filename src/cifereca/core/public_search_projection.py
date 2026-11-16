@@ -107,7 +107,16 @@ def project_public_search_result(
             matches.append(notice.result)
     if len(matches) != 1:
         return None
-    public = matches[0]
+    return _project_public_notice(key, matches[0])
+
+
+def _project_public_notice(
+    key: tuple, public: SearchResult,
+) -> SearchResult | None:
+    """Sanitize exactly one unique public declaration, without source I/O.
+
+    Used by both direct one-row projection and the bounded batch index.
+    """
     # Contradictory declarations are not silently laundered into public rows.
     if (type(public.owned) not in (bool, type(None)) or public.owned is True
             or type(public.downloadable) not in (bool, type(None))
@@ -139,3 +148,48 @@ def project_public_search_result(
         thumbnail_url=None, friendly_url=None,
         owned=False, downloadable=False, download_url=None, metadata=metadata,
     )
+
+
+def project_public_search_results(
+    response: ProviderSearchResponse,
+) -> dict[int, SearchResult] | None:
+    """Project one same-call public envelope in O(rows + public notices).
+
+    The existing single-row API scans the response for an arbitrary caller.
+    Federated Core already owns the entire response and must not repeat that
+    scan once per result (10,000 rows previously caused quadratic work).
+    This local index is keyed by *object identity* and is discarded after
+    the same call. It is neither persisted nor a new documentary cache.
+    Malformed declarations invalidate the entire envelope exactly as before;
+    duplicate source coordinates are ambiguous, never silently selected.
+    """
+    if (type(response) is not ProviderSearchResponse
+            or type(response.results) is not list
+            or len(response.results) > 10000
+            or type(response.public_notices) is not tuple
+            or len(response.public_notices) > 10000):
+        return None
+    declarations: dict[tuple, list[SearchResult]] = {}
+    for declaration in response.public_notices:
+        if (type(declaration) is not PublicSearchNotice
+                or type(declaration.schema_version) is not int
+                or declaration.schema_version != 1):
+            return None
+        key = _key(declaration.result)
+        if key is None:
+            return None
+        declarations.setdefault(key, []).append(declaration.result)
+    results: dict[int, SearchResult] = {}
+    for row in response.results:
+        if type(row) is not SearchResult:
+            return None
+        key = _key(row)
+        if key is None:
+            continue
+        candidates = declarations.get(key, ())
+        if len(candidates) != 1:
+            continue
+        projected = _project_public_notice(key, candidates[0])
+        if projected is not None:
+            results[id(row)] = projected
+    return results

@@ -407,7 +407,7 @@ def _public_rows_from_response(
     A list-only legacy provider or a response without notices cannot authorize
     foreign-profile publication. Never turn private rows into public notices.
     """
-    from .public_search_projection import project_public_search_result
+    from .public_search_projection import project_public_search_results
     if (type(response) is not ProviderSearchResponse
             or type(response.results) is not list
             or len(response.results) > 10000
@@ -418,8 +418,11 @@ def _public_rows_from_response(
         return []
     from collections import Counter
     from ..plugin_api import PublicSearchNotice
-    # Build identity counts once; a 10,000-row catalogue must not add another
-    # O(rows * notices) pass to the existing public projection.
+    # Every declaration belongs to this one response. Validate and index
+    # it once; each result then consumes an O(1) source/edition candidate.
+    projections = project_public_search_results(response)
+    if projections is None:
+        return []
     exact_public_rows = Counter(
         id(claim.result)
         for claim in response.public_notices
@@ -427,12 +430,7 @@ def _public_rows_from_response(
     )
     admitted: list[SearchResult] = []
     for row in response.results:
-        if type(row) is not SearchResult:
-            return []
-        projected = project_public_search_result(
-            response, row, provider_id=row.source_provider,
-            credential_id=row.source_credential,
-        )
+        projected = projections.get(id(row))
         if (
             projected is not None
             and row.source_provider == session.provider_id
