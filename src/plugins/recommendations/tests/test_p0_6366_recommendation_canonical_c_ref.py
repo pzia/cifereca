@@ -9,6 +9,7 @@ from dataclasses import replace
 from types import SimpleNamespace as NS
 
 from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+from cifereca.core.notice_c_known_projection import matching_live_public_canonical_ref
 from cifereca.core.search_orchestration import (
     _public_rows_from_response, _mirror_remote_results,
 )
@@ -19,6 +20,13 @@ from recommendation_engine import CatalogNoticeVariant, RankedCandidate
 from recommendations import _attested_recommendation_c_cover
 
 from .recommendations_catalogue_test_fixtures import _view
+
+
+def _host():
+    return NS(public_notice_cover_ref=lambda item, *, identity_id:
+              matching_live_public_canonical_ref(
+                  item, identity_id=identity_id,
+              ))
 
 
 def _ranked(item, variants=None):
@@ -77,6 +85,7 @@ def test_witnessed_search_result_populates_real_recommendations_list_and_detail(
         ranked = _ranked(live)
         view, _, _, _, _ = _view(ranked.notices)
         view._ranked = [ranked]
+        view.host.public_notice_cover_ref = _host().public_notice_cover_ref
         view._exact_notice_state = None
         view._matches = lambda candidate: candidate is ranked
         view._candidate_key = lambda _: "canonical:one"
@@ -100,7 +109,8 @@ def test_witnessed_search_result_populates_real_recommendations_list_and_detail(
         # No supplier re-query; the raw thumbnail is only the legacy
         # fallback and MUST NOT own the documentary N2 decision.
         assert _attested_recommendation_c_cover(
-            ranked, identity_id="reader-1", catalogue_sources=(),
+            ranked, host=view.host, identity_id="reader-1",
+            catalogue_sources=(),
         ) == canonical
         assert db.entitlements() == []
     finally:
@@ -116,12 +126,14 @@ def test_ambiguous_aggregates_cache_replays_and_wrong_scope_never_borrow_c(
         original = _ranked(live)
         ref = live._core_notice_canonical_cover_document_ref
         assert _attested_recommendation_c_cover(
-            original, identity_id="bob", catalogue_sources=(),
+            original, host=_host(), identity_id="bob",
+            catalogue_sources=(),
         ) == ref
 
         def check_none(ranked, sources=()):
             assert _attested_recommendation_c_cover(
-                ranked, identity_id="bob", catalogue_sources=sources,
+                ranked, host=_host(), identity_id="bob",
+                catalogue_sources=sources,
             ) is None
 
         check_none(original, ("kobo",))
