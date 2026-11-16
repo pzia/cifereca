@@ -132,6 +132,68 @@ def test_six_files_all_legacy_rights_unverified_and_three_byte_placements(
     assert session.overview() == {}
 
 
+def test_three_canonical_purchase_origins_confirm_same_epubs_without_legacy_whitelist(
+    six_numilog,
+):
+    """Only the canonical proof may restore the three historically linked books."""
+    from cifereca.core.canonical_publication import _stable
+    from cifereca.core.library_reconciliation import reconcile
+    from cifereca.core.library_evidence_scope import group_evidence
+
+    root, database = six_numilog
+    audit = audit_library(database, {'alice': (root,)})
+    assert audit.reconciliation.redacted()['counts'].get('confirmed_link', 0) == 0
+    before = filesystem(root.parent)
+    rights = {
+        row['item_id']: row
+        for row in audit.snapshot.tables['entitlements']
+    }
+    canonical = []
+    for placement in audit.snapshot.tables['placements']:
+        right = rights[placement['source_item_id']]
+        origin = {
+            'identity_id': 'alice', 'provider_id': 'numilog',
+            'credential_id': right['credential_id'],
+            'account_id': right['account_id'],
+            'branch_id': 'personal_library',
+            'edition_id': right['item_id'],
+            'right_id': right['entitlement_id'],
+            'reference_kind': 'purchase', 'state': 'active',
+            'evidence_kind': 'provider_response',
+            'evidence_ref': 'source-verified-' + right['entitlement_id'],
+            'receipt_ref': 'completed-' + right['entitlement_id'],
+            'observed_at': '2026-11-16T09:00:00Z',
+            'artifact_id': placement['artifact_id'],
+        }
+        coordinates = (
+            'identity_id', 'provider_id', 'credential_id', 'account_id',
+            'branch_id', 'edition_id', 'right_id', 'reference_kind',
+        )
+        origin['source_reference_id'] = _stable(
+            'source', *(origin[key] for key in coordinates),
+        )
+        origin['origin_link_id'] = _stable(
+            'origin', 'provider', origin['identity_id'],
+            origin['artifact_id'], origin['source_reference_id'],
+            origin['receipt_ref'],
+        )
+        canonical.append(origin)
+    audit.snapshot.tables['provider_origins'] = canonical
+    audit.reconciliation = reconcile(audit.inventory, audit.snapshot)
+    audit.groups = group_evidence(
+        audit.inventory, audit.snapshot, audit.reconciliation, ('alice',),
+    )
+    session = LocalInspection(audit, lambda: True, 'alice', roots=(root,))
+    assert session.overview()['confirmed_files'] == 3
+    assert session.page(state='confirmed_link').total == 3
+    assert session.unconfirmed_files().total == 3
+    assert all(edge.table == 'provider_origins' for edge in
+               audit.reconciliation.edges if edge.certainty == 'attested')
+    assert filesystem(root.parent) == before
+    assert audit.redacted()['repair_authorized'] is False
+    session.close()
+
+
 def test_search_and_nonnumeric_queries_cannot_leak_or_crash(six_numilog):
     root, database = six_numilog
     session = LocalInspection(audit_library(database, {'alice': (root,)}),
