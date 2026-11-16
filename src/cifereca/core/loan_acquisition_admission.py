@@ -19,6 +19,8 @@ class AutomaticLoanAdmission:
     identity: Any = None
     entitlement_id: str | None = None
     refusal: dict[str, Any] | None = None
+    # Pinned enabled-source epoch; never an ADEPT grant or an entitlement.
+    source_epoch: int | None = None
 
 
 def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
@@ -111,9 +113,19 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
             "reason": "unbound_connection_identity",
             "retry": "explicit_only",
         })
+    # Pin one persistent source epoch at admission. A connection may change
+    # A→B→A (or ON→OFF→ON) during the long provider staging and return to
+    # identical visible values. A current-owner comparison alone misses it.
+    try:
+        source_epoch = self.storage.source_connection_epoch_get(
+            pinned_provider, pinned_credential, bound_identity_id,
+        )
+    except Exception:
+        source_epoch = None
+    if type(source_epoch) is not int or source_epoch < 1:
+        return source_changed()
     # The resolved object must continue to attest the same storage owner
-    # after each callback. A frozen native Identity is expected; a mutated
-    # object or a foreign replacement must fail closed, not retarget a right.
+    # and epoch after each callback. An identical final owner is not enough.
     def admission_intact() -> bool:
         # A retained connection owner ID is insufficient once another
         # callback has disabled, deleted or rebound that SQLite connection.
@@ -124,9 +136,14 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
                 or identity.identity_id != bound_identity_id):
             return False
         try:
-            return self.storage.provider_connection_owner_current(
-                pinned_provider, pinned_credential, bound_identity_id,
-            ) is True
+            return (
+                self.storage.provider_connection_owner_current(
+                    pinned_provider, pinned_credential, bound_identity_id,
+                ) is True
+                and self.storage.source_connection_epoch_get(
+                    pinned_provider, pinned_credential, bound_identity_id,
+                ) == source_epoch
+            )
         except Exception:
             return False
 
@@ -225,4 +242,7 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
         and bool(entitlement_rows[0]["entitlement_id"])
         else None
     )
-    return AutomaticLoanAdmission(identity=identity, entitlement_id=entitlement_id)
+    return AutomaticLoanAdmission(
+        identity=identity, entitlement_id=entitlement_id,
+        source_epoch=source_epoch,
+    )
