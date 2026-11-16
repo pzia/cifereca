@@ -28,7 +28,8 @@ def _session(fixture):
 
 def _right(session, number=5):
     cases = session.page(provider="numilog", state="rights_without_verified_file")
-    assert cases.total == 3
+    # Every legacy entitlement is now a descriptive, non-attested right.
+    assert cases.total == 6
     return next(case for case in cases.cases if f"item-{number}" in case.details)
 
 
