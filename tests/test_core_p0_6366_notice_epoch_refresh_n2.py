@@ -236,3 +236,129 @@ def test_cached_rows_have_no_forged_revision_hint(tmp_path, monkeypatch):
     assert not hasattr(row, "_core_notice_cover_document_epoch")
     assert is_notice_cover_document(row._core_notice_cover_document_ref)
     # The cache only reproduces coordinates, never authority over the epoch.
+
+
+def test_newer_core_epoch_is_not_lost_behind_in_flight_first_n2_miss(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "images"))
+    clock = [200]
+    monkeypatch.setattr(search_orchestration.time, "time", lambda: clock[0])
+    db = Storage(tmp_path / "notices.sqlite")
+    loader = CoverLoader(max_workers=2)
+    monkeypatch.setattr(
+        loader, "load", lambda url, cb, **kw: NS(cancel=lambda: None),
+    )
+    reads = []
+    entered, release, fresh = Event(), Event(), Event()
+
+    def reader(document):
+        snapshot = cached_notice_cover_snapshot(NS(storage=db), document)
+        reads.append(snapshot.revision if snapshot else None)
+        if len(reads) == 1:
+            entered.set()
+            assert release.wait(10)
+        return snapshot
+
+    covers = DocumentCoverService(
+        loader, cached_source_reader=reader,
+        cached_source_scope=is_notice_cover_document,
+    )
+    try:
+        source = anonymous_catalogue()
+        window, _, key = host(source)
+        assert mirror(db, source) == 1
+        document = admitted(window, source, key, covers)
+
+        def notified():
+            read = covers.get_cover(
+                document, "detail", lambda _: None,
+            )
+            if read.source_uri == NEW_COVER:
+                fresh.set()
+
+        covers.get_cover(
+            document, "detail", lambda _: None,
+            on_source_changed=notified,
+        )
+        assert entered.wait(10)
+
+        updated = replace(source, thumbnail_url=NEW_COVER)
+        clock[0] = 201
+        assert mirror(db, updated) == 1
+        window.search_objects[key] = updated
+        assert updated._core_notice_cover_document_epoch == 2
+        assert admitted(window, updated, key, covers) == document
+        release.set()
+
+        assert fresh.wait(10)
+        assert covers.get_cover(document, "detail", lambda _: None).source_uri == NEW_COVER
+        assert reads == [1, 2]
+        assert covers.stats()["n2_source_refresh_scheduled"] == 1
+    finally:
+        release.set()
+        covers.close()
+        loader.close()
+        db.close()
+
+
+def test_positive_producer_epoch_retries_a_preexisting_unknown_n2_miss_once(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "images"))
+    monkeypatch.setattr(search_orchestration.time, "time", lambda: 200)
+    db = Storage(tmp_path / "notices.sqlite")
+    loader = CoverLoader(max_workers=2)
+    monkeypatch.setattr(
+        loader, "load", lambda url, cb, **kw: NS(cancel=lambda: None),
+    )
+    source = anonymous_catalogue()
+    window, _, key = host(source)
+    # The producer C coordinate is already deterministic before its first
+    # persistence, but a cache HOT never infers that C source exists.
+    from cifereca.core.notice_search_cover_producer import admit_public_search_cover
+    from cifereca.core.notice_cover_projection import notice_cover_document_ref
+    observation = admit_public_search_cover(
+        source, identity_id="alice", observed_at=1,
+        public_cover_url=CATALOG,
+    )
+    assert observation is not None
+    doc = notice_cover_document_ref(observation.key)
+    entered, release, fresh = Event(), Event(), Event()
+    reads = []
+
+    def reader(document):
+        observed = cached_notice_cover_snapshot(NS(storage=db), document)
+        reads.append(observed.revision if observed else None)
+        if len(reads) == 1:
+            entered.set()
+            assert release.wait(10)
+        return observed
+
+    covers = DocumentCoverService(
+        loader, cached_source_reader=reader,
+        cached_source_scope=is_notice_cover_document,
+    )
+    try:
+        def notified():
+            if covers.get_cover(doc, "detail", lambda _: None).source_uri == CATALOG:
+                fresh.set()
+
+        covers.get_cover(
+            doc, "detail", lambda _: None,
+            on_source_changed=notified,
+        )
+        assert entered.wait(10)
+        assert mirror(db, source) == 1
+        assert source._core_notice_cover_document_ref == doc
+        assert source._core_notice_cover_document_epoch == 1
+        assert admitted(window, source, key, covers) == doc
+        release.set()
+        assert fresh.wait(10)
+        assert reads == [None, 1]
+        assert covers.get_cover(doc, "detail", lambda _: None).source_uri == CATALOG
+    finally:
+        release.set()
+        covers.close()
+        loader.close()
+        db.close()
