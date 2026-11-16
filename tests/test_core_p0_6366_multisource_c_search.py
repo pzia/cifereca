@@ -1,0 +1,206 @@
+"""#6366: read a previously attested multi-provider C without losing text.
+
+These tests exercise the real persisted source observations, canonical index,
+and Search cursor. The strong edition relation is explicitly supplied by the
+fixture to the existing Core writer: this does NOT implement its live producer.
+No edition merge from title, ISBN, cover URL or physical N3 bytes.
+"""
+from __future__ import annotations
+
+from types import SimpleNamespace as NS
+
+from cifereca.core.notice_c_cover_index import (
+    persist_consolidated_cover_source, persist_exact_public_search_cover,
+    read_consolidated_notice_cover,
+)
+from cifereca.core.notice_c_public_search import search_public_notice_c
+from cifereca.core.notice_cover_repository import _opaque_key
+from cifereca.core.notice_c_known_projection import merge_public_notice_c_known_rows
+from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
+from cifereca.storage import Storage
+from tests.test_core_p0_6366_public_c_sqlite_source_search import (
+    verified_public, persist,
+)
+
+URL_A = "https://covers.example.org/paris-public.jpg"
+URL_B = "https://covers.example.org/numilog-public.jpg"
+
+
+def sources(db):
+    first = persist(db, verified_public(
+        source_provider="bnf", record_id="bnf-source-1",
+        title="Deux sources: BNF", author="Une autrice",
+        description="Description spécifique BNF",
+        thumbnail_url=URL_A,
+    ), at=100)
+    second = persist(db, verified_public(
+        source_provider="numilog-catalog", record_id="numilog-source-9",
+        title="Deux sources: Numilog", author="Une autrice",
+        description="Description spécifique Numilog",
+        thumbnail_url=URL_B,
+    ), at=100)
+    assert first.document != second.document
+    return first, second
+
+
+def shared(db, first, second):
+    # This explicit fixture relation is NOT inferred by the Search reader.
+    # A separate trusted Core producer must establish same-edition authority.
+    target = first.observation.key.edition_id
+    persist_consolidated_cover_source(
+        db, canonical_edition_id=target, source=first,
+        relation_proof_id="strong:fixture:bnf",
+    )
+    return persist_consolidated_cover_source(
+        db, canonical_edition_id=target, source=second,
+        relation_proof_id="strong:fixture:numilog",
+    )
+
+
+def purge(db, *sources):
+    with db._lock, db._connect() as sql:
+        for source in sources:
+            sql.execute("DELETE FROM metadata WHERE key=?", (
+                _opaque_key(source.document),
+            ))
+
+
+def test_multisource_public_c_keeps_separate_source_text_and_one_n2_ref(
+    tmp_path,
+):
+    filename = tmp_path / "two-sources.sqlite"
+    db = Storage(filename)
+    first, second = sources(db)
+    consolidated = shared(db, first, second)
+    canonical = consolidated.document
+    try:
+        assert len(consolidated.sources) == 2
+        assert {c.url for c in consolidated.candidates} == {URL_A, URL_B}
+        online = search_public_notice_c(db, "deux sources", now=100)
+        assert online.known_matches == 2
+        assert len(online.hits) == 2
+        assert {hit.document for hit in online.hits} == {canonical}
+        assert {hit.provider_id for hit in online.hits} == {
+            "bnf", "numilog-catalog",
+        }
+        assert {hit.description for hit in online.hits} == {
+            "Description spécifique BNF", "Description spécifique Numilog",
+        }
+        assert search_public_notice_c(
+            db, "numilog", provider_ids=("bnf",), now=100,
+        ).hits == ()
+        snapshot = cached_notice_cover_snapshot(NS(storage=db), canonical)
+        assert snapshot is not None
+        assert {c.url for c in snapshot.candidates} == {URL_A, URL_B}
+
+        purge(db, first, second)
+        offline = search_public_notice_c(db, "deux sources", now=100)
+        assert offline.known_matches == 2
+        assert {hit.document for hit in offline.hits} == {canonical}
+        assert {hit.title for hit in offline.hits} == {
+            "Deux sources: BNF", "Deux sources: Numilog",
+        }
+        assert {hit.epoch for hit in offline.hits} == {consolidated.epoch}
+        assert search_public_notice_c(
+            db, "numilog", provider_ids=("numilog-catalog",),
+            now=100,
+        ).hits[0].document == canonical
+        known = merge_public_notice_c_known_rows(
+            [], offline, identity_id="alice",
+        )
+        assert {row["_cover_document_ref"] for row in known} == {canonical}
+        assert all(not row.get("download_url") for row in known)
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+    reopened = Storage(filename)
+    try:
+        old = search_public_notice_c(
+            reopened, "deux sources", now=100 + 90000,
+        )
+        assert len(old.hits) == 2
+        assert {hit.document for hit in old.hits} == {canonical}
+        assert all(hit.stale for hit in old.hits)
+        assert read_consolidated_notice_cover(
+            reopened, canonical,
+        ).candidates == consolidated.candidates
+        assert reopened.entitlements() == []
+    finally:
+        reopened.close()
+
+
+def test_multi_source_relation_outranks_singleton_but_conflict_fails_closed(
+    tmp_path,
+):
+    db = Storage(tmp_path / "ambiguous.sqlite")
+    try:
+        a, b = sources(db)
+        a_self = persist_exact_public_search_cover(db, a).document
+        b_self = persist_exact_public_search_cover(db, b).document
+        assert a_self != b_self
+        group = shared(db, a, b)
+        # B has both its original singleton and the admitted multi-source
+        # relation. Use the unique stronger group; never take DB row order.
+        purge(db, a, b)
+        found = search_public_notice_c(db, "deux sources", now=100)
+        assert len(found.hits) == 2
+        assert {x.document for x in found.hits} == {group.document}
+
+        # Reintroduce B's same attested source; a contradictory SECOND
+        # same-strength group cannot quietly choose another canonical C.
+        b = sources_in_same_db_with_fresh_second(db, b)
+        c = persist(db, verified_public(
+            source_provider="paris", record_id="paris-source-1",
+            title="Deux sources: Paris", thumbnail_url=URL_A,
+        ), at=100)
+        third = persist_consolidated_cover_source(
+            db, canonical_edition_id=c.observation.key.edition_id,
+            source=c, relation_proof_id="strong:fixture:paris",
+        )
+        persist_consolidated_cover_source(
+            db, canonical_edition_id=c.observation.key.edition_id,
+            source=b, relation_proof_id="strong:fixture:numilog-second",
+        )
+        purge(db, b, c)
+        uncertain = search_public_notice_c(db, "deux sources", now=100)
+        assert {hit.provider_id for hit in uncertain.hits} == {"bnf", "paris"}
+        assert all(hit.provider_id != "numilog-catalog" for hit in uncertain.hits)
+        assert {hit.document for hit in uncertain.hits} == {
+            group.document, third.document,
+        }
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def sources_in_same_db_with_fresh_second(db, old):
+    # Reconstitute a persisted source with the exact same coordinates;
+    # source must exist at the transactional index writer admission.
+    return persist(db, verified_public(
+        source_provider="numilog-catalog", record_id="numilog-source-9",
+        title="Deux sources: Numilog", author="Une autrice",
+        description="Description spécifique Numilog",
+        thumbnail_url=URL_B,
+    ), at=100)
+
+
+def test_stale_canonical_epoch_never_rebinds_changed_live_source(tmp_path):
+    db = Storage(tmp_path / "stale.sqlite")
+    try:
+        source = persist(db, verified_public(
+            record_id="same-coordinates", title="Édition initiale",
+        ), at=100)
+        indexed = persist_exact_public_search_cover(db, source)
+        new_source = persist(db, verified_public(
+            record_id="same-coordinates", title="Édition modifiée",
+        ), at=101)
+        assert new_source.epoch > source.epoch
+        fresh = search_public_notice_c(db, "modifiée", now=101)
+        assert len(fresh.hits) == 1
+        assert fresh.hits[0].document == new_source.document
+        assert fresh.hits[0].document != indexed.document
+        assert fresh.hits[0].epoch == new_source.epoch
+        assert db.entitlements() == []
+    finally:
+        db.close()
