@@ -1794,6 +1794,98 @@ class Storage:
             db.execute("RELEASE SAVEPOINT provider_source_epoch_v17")
             raise
 
+        # A confirmed ADEPT v16 grant is mutable and can be revoked and
+        # re-confirmed with the same (identity, borrower, profile) inside one
+        # timestamp tick. Capture a separate, monotone generation by SOURCE
+        # account. Keep tombstones for deleted grants and old v17 databases.
+        #
+        # This is an additive post-v17 invariant; do not change the schema
+        # version or promote archived v15 Paris bindings to live authority.
+        db.execute("SAVEPOINT adept_v16_grant_generation")
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS adept_borrower_grant_generations (
+                    provider_id TEXT NOT NULL,
+                    credential_id TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    generation INTEGER NOT NULL
+                        CHECK (typeof(generation)='integer' AND generation > 0
+                               AND generation < 9223372036854775807),
+                    PRIMARY KEY(provider_id, credential_id, account_id)
+                )
+            """)
+            db.execute("""
+                INSERT OR IGNORE INTO adept_borrower_grant_generations
+                    (provider_id,credential_id,account_id,generation)
+                SELECT provider_id,credential_id,account_id,1
+                FROM adept_borrower_grants
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_generation_no_delete
+                BEFORE DELETE ON adept_borrower_grant_generations
+                BEGIN
+                    SELECT RAISE(ABORT,'adept_grant_generation_tombstone');
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_generation_no_rewind
+                BEFORE UPDATE ON adept_borrower_grant_generations
+                WHEN NEW.provider_id IS NOT OLD.provider_id
+                  OR NEW.credential_id IS NOT OLD.credential_id
+                  OR NEW.account_id IS NOT OLD.account_id
+                  OR typeof(NEW.generation) != 'integer'
+                  OR NEW.generation <= OLD.generation
+                BEGIN
+                    SELECT RAISE(ABORT,'adept_grant_generation_rewind');
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_generation_insert
+                AFTER INSERT ON adept_borrower_grants
+                BEGIN
+                    INSERT INTO adept_borrower_grant_generations
+                        (provider_id,credential_id,account_id,generation)
+                    VALUES (NEW.provider_id,NEW.credential_id,NEW.account_id,1)
+                    ON CONFLICT(provider_id,credential_id,account_id)
+                    DO UPDATE SET generation=generation+1;
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_generation_update
+                AFTER UPDATE ON adept_borrower_grants
+                BEGIN
+                    INSERT INTO adept_borrower_grant_generations
+                        (provider_id,credential_id,account_id,generation)
+                    VALUES (OLD.provider_id,OLD.credential_id,OLD.account_id,1)
+                    ON CONFLICT(provider_id,credential_id,account_id)
+                    DO UPDATE SET generation=generation+1;
+                    INSERT INTO adept_borrower_grant_generations
+                        (provider_id,credential_id,account_id,generation)
+                    SELECT NEW.provider_id,NEW.credential_id,NEW.account_id,1
+                    WHERE NEW.provider_id IS NOT OLD.provider_id
+                       OR NEW.credential_id IS NOT OLD.credential_id
+                       OR NEW.account_id IS NOT OLD.account_id
+                    ON CONFLICT(provider_id,credential_id,account_id)
+                    DO UPDATE SET generation=generation+1;
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_generation_delete
+                AFTER DELETE ON adept_borrower_grants
+                BEGIN
+                    INSERT INTO adept_borrower_grant_generations
+                        (provider_id,credential_id,account_id,generation)
+                    VALUES (OLD.provider_id,OLD.credential_id,OLD.account_id,1)
+                    ON CONFLICT(provider_id,credential_id,account_id)
+                    DO UPDATE SET generation=generation+1;
+                END
+            """)
+            db.execute("RELEASE SAVEPOINT adept_v16_grant_generation")
+        except Exception:
+            db.execute("ROLLBACK TO SAVEPOINT adept_v16_grant_generation")
+            db.execute("RELEASE SAVEPOINT adept_v16_grant_generation")
+            raise
+
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
         raw = "\x1f".join(str(part or "") for part in parts).encode("utf-8", "surrogatepass")
@@ -3377,6 +3469,85 @@ class Storage:
             ("connection_identity_id", "borrower_identity_id", "profile_id",
              "confirmed_by", "confirmed_at", "updated_at"), row,
         )) if row is not None else None)
+
+    def adept_borrower_grant_generation(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        connection_identity_id: str, borrower_identity_id: str,
+        profile_id: str,
+    ) -> int | None:
+        """One exact, live and explicit ADEPT grant snapshot plus generation.
+
+        A generation is necessary *revocation evidence*, never an independent
+        grant. It can only be obtained for the same positively confirmed,
+        connected, account-attested, borrower/profile-bound v16 row. A v15
+        Paris row, entitlement, UI profile or cache cannot supply authority.
+        """
+        values = (provider_id, credential_id, account_id,
+                  connection_identity_id, borrower_identity_id, profile_id)
+        if any(
+            type(v) is not str or not v or len(v) > 1024
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in v)
+            for v in values
+        ):
+            return None
+        try:
+            scope = self._adept_grant_scope(
+                provider_id=provider_id, credential_id=credential_id,
+                account_id=account_id,
+            )
+        except ValueError:
+            return None
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT version.generation "
+                "FROM adept_borrower_grants AS g "
+                "JOIN adept_borrower_grant_generations AS version "
+                "ON version.provider_id=g.provider_id "
+                "AND version.credential_id=g.credential_id "
+                "AND version.account_id=g.account_id "
+                "JOIN provider_connections AS c "
+                "ON c.provider_id=g.provider_id "
+                "AND c.credential_id=g.credential_id "
+                "AND c.identity_id=g.connection_identity_id "
+                "AND c.enabled=1 "
+                "JOIN provider_accounts AS a "
+                "ON a.provider_id=g.provider_id "
+                "AND a.credential_id=g.credential_id "
+                "AND a.account_id=g.account_id "
+                "AND a.connection_id=c.connection_id "
+                "AND a.identity_id=g.connection_identity_id "
+                "JOIN identities AS i ON i.identity_id=g.borrower_identity_id "
+                "JOIN adept_profile_bindings AS p "
+                "ON p.scope_type='identity' "
+                "AND p.scope_id=g.borrower_identity_id "
+                "AND p.profile_id=g.profile_id "
+                "WHERE g.provider_id=? AND g.credential_id=? "
+                "AND g.account_id=? AND g.confirmed_by='explicit' "
+                "AND g.connection_identity_id=? AND g.borrower_identity_id=? "
+                "AND g.profile_id=? LIMIT 2",
+                (*scope, connection_identity_id, borrower_identity_id,
+                 profile_id),
+            ).fetchall()
+        if len(rows) != 1:
+            return None
+        generation = rows[0][0]
+        return generation if type(generation) is int and generation > 0 else None
+
+    def adept_borrower_grant_generation_current(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        connection_identity_id: str, borrower_identity_id: str,
+        profile_id: str, expected_generation: int,
+    ) -> bool:
+        """Veto revoked/reconfirmed/swap-back grants, including same-second ABA."""
+        if type(expected_generation) is not int or expected_generation < 1:
+            return False
+        return self.adept_borrower_grant_generation(
+            provider_id=provider_id, credential_id=credential_id,
+            account_id=account_id,
+            connection_identity_id=connection_identity_id,
+            borrower_identity_id=borrower_identity_id,
+            profile_id=profile_id,
+        ) == expected_generation
 
     def adept_borrower_grant_delete(
         self, *, provider_id: str, credential_id: str, account_id: str,
