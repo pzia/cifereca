@@ -636,6 +636,31 @@ class DocumentCoverService:
                         self._read_cooldown.popitem(last=False)
                 else:
                     self._read_cooldown.pop(document, None)
+                # A later Core producer may have persisted a newer epoch
+                # while this first MISS worker was reading an old snapshot.
+                # Defer the *targeted* re-read until after its flight clears.
+                target = self._refresh_targets.get(document, 0)
+                current_snapshot = self._snapshots.get(document)
+                retry_newer = bool(
+                    target and current_snapshot is not None
+                    and current_snapshot.revision < target
+                )
+                retry_missing = bool(
+                    target and current_snapshot is None and handle.active
+                )
+                if target and not retry_newer:
+                    self._refresh_targets.pop(document, None)
+                if retry_missing:
+                    # The old MISS may have returned unknown just before C
+                    # was written. A positive producer epoch allows ONE
+                    # immediate retry, not a permanent negative cache.
+                    self._read_cooldown.pop(document, None)
+            if retry_newer:
+                self.refresh_cached_source_if_newer(document, target)
+            elif retry_missing:
+                self._read_source_on_n2_miss(
+                    document, handle, source_changed,
+                )
             if live:
                 for waiting_handle, callback in waiters:
                     if (not waiting_handle.active
@@ -683,10 +708,17 @@ class DocumentCoverService:
             if self._closed:
                 return False
             current = self._snapshots.get(document)
-            if current is None or current.revision >= minimum_revision:
-                # No source: the ordinary get_cover MISS will read Notice C.
-                # Current source: no SQLite work merely for another GTK bind.
+            if current is None:
+                # A first N2 MISS may already be reading epoch v1 while the
+                # Core writes v2. Preserve that newer producer hint until the
+                # in-flight worker completes; do not enqueue a second read.
+                if document in self._read_active:
+                    self._refresh_targets[document] = max(
+                        self._refresh_targets.get(document, 0), minimum_revision,
+                    )
                 return False
+            if current.revision >= minimum_revision:
+                return False  # Routine hot bind: no SQLite I/O.
             self._refresh_targets[document] = max(
                 self._refresh_targets.get(document, 0), minimum_revision,
             )
