@@ -11,7 +11,7 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.models import Account, SearchResult
-from cifereca.providers.base import ProviderSession, ProviderDescriptor, ProviderCapabilities
+from cifereca.providers.base import ProviderSession, ProviderDescriptor, ProviderCapabilities, ManualBorrowPolicy
 from cifereca.plugin_api.lending_capabilities import BorrowerOperationEvidence
 from cifereca.plugin_api.lending_borrower_eligibility import (
     BorrowerOperationEvidence as ExactEditionBorrowerEvidence,
@@ -28,6 +28,12 @@ class ParisOffline(ProviderSession):
                 id="paris", display_name="Paris", description="fixture no I/O",
                 state="ready", capabilities=ProviderCapabilities(
                     search=True, borrow=True,
+                ),
+                manual_borrow_policy=ManualBorrowPolicy(
+                    "DILICOM", primary_borrower_id="",
+                    source_selection_key="primary_paris_connection_id",
+                    verification="provider_observed",
+                    observed_loan_account_alias="primary",
                 ),
             ),
             credential_id=account.credential_id, label="Fixture",
@@ -145,6 +151,99 @@ def test_alex_exact_observation_is_visible_under_default_but_not_executable(harn
     assert session.calls == 0
     assert service.current_identity.identity_id == "default"
     assert "card-alex" not in repr(preview)
+
+
+
+
+
+@pytest.mark.parametrize("change", [
+    "missing_policy", "foreign_branch", "malformed_key", "foreign_primary",
+])
+def test_lender_preview_does_not_fallback_when_declared_policy_changes(
+    harness, change,
+):
+    service, account, session = harness
+    if change == "missing_policy":
+        session.descriptor = replace(session.descriptor, manual_borrow_policy=None)
+    elif change == "foreign_branch":
+        session.descriptor = replace(
+            session.descriptor,
+            manual_borrow_policy=ManualBorrowPolicy("OTHER"),
+        )
+    elif change == "malformed_key":
+        # A dataclass frozen at construction is still mutable through
+        # object.__setattr__; the Core must revalidate at the use site.
+        object.__setattr__(
+            session.descriptor.manual_borrow_policy,
+            "source_selection_key", "private/unsafe/key",
+        )
+    else:
+        saved = service.config.identity("alex")
+        saved["primary_paris_connection_id"] = "another"
+        service.config.upsert_identity(saved)
+    preview = _preview(service, _candidate())
+    assert preview.options == ()
+    assert preview.rejection_reasons == (
+        ("lender_unavailable",)
+        if change == "foreign_primary" else ("capability_unverified",)
+    )
+    assert session.calls == 0
+
+
+def test_lender_preview_uses_non_paris_installed_primary_source_contract(harness):
+    """A second provider may declare its own key, without Core brand dispatch."""
+    service, account, session = harness
+    provider = "synthetic-library"
+    key = "primary_synthetic_connection_id"
+    account.provider_id = provider
+    session.provider_id = provider
+    session.descriptor = replace(
+        session.descriptor, id=provider,
+        manual_borrow_policy=ManualBorrowPolicy(
+            "DILICOM", primary_borrower_id="",
+            source_selection_key=key, verification="provider_observed",
+        ),
+    )
+    service._sessions[service._session_key(provider, "card-alex")] = session
+    service._provider_plugin_ids[provider] = "fixture.synthetic"
+    service._plugin_manager.status = lambda _id: NS(
+        enabled=True, state="ready",
+        descriptor=NS(
+            id="fixture.synthetic", type="provider.library",
+            capabilities=("acquisition.borrow",),
+        ),
+    )
+    service.storage.provider_connection_put({
+        "identity_id": "alex", "provider_id": provider,
+        "credential_id": "card-alex", "label": "Synthetic",
+        "enabled": True, "metadata": {},
+    })
+    saved = service.config.identity("alex")
+    saved[key] = "card-alex"
+    service.config.upsert_identity(saved)
+    service.config.upsert_provider_account({
+        "id": "card-alex", "provider": provider,
+        "identity_id": "alex", "enabled": True,
+    })
+    original = _candidate()
+    candidate = replace(
+        original,
+        notice=replace(original.notice, source_provider=provider),
+        evidence=replace(original.evidence, provider_id=provider),
+        edition_evidence=replace(original.edition_evidence, provider_id=provider),
+    )
+    preview = _preview(service, candidate)
+    assert len(preview.options) == 1
+    assert preview.options[0].borrowing_identity_id == "alex"
+    # The provider's own setting, not any Paris-specific key, revokes this
+    # descriptive option even though the observed book is unchanged.
+    saved = service.config.identity("alex")
+    saved[key] = "another"
+    service.config.upsert_identity(saved)
+    revoked = _preview(service, candidate)
+    assert revoked.options == ()
+    assert revoked.rejection_reasons == ("lender_unavailable",)
+    assert session.calls == 0
 
 
 def test_missing_supplier_evidence_is_never_a_borrowable_offer(harness):
