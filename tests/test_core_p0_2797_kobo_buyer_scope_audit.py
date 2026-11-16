@@ -71,7 +71,7 @@ def test_same_edition_second_buyer_without_receipt_blocks_attestation(
     ("numilog", "numilog.authenticated_library"),
 ])
 @pytest.mark.parametrize("foreign_dimension", ["identity", "edition", "provider"])
-def test_unrelated_scope_does_not_block_unique_owned_chain(
+def test_unrelated_scope_does_not_promote_old_owned_chain(
     provider, source, foreign_dimension,
 ):
     inventory, tables = _fixture(1)
@@ -89,7 +89,12 @@ def test_unrelated_scope_does_not_block_unique_owned_chain(
         other["provider_id"] = "kobo" if provider == "numilog" else "numilog"
     tables["entitlements"].append(other)
     report = reconcile(inventory, EvidenceSnapshot(tables))
-    assert report.files[0] == {"confirmed_link"}
-    assert len([e for e in report.edges if e.certainty == "attested"]) == 1
-    assert report.unverified_rights == [1]
+    # Different identities/editions/providers do not fabricate an owner
+    # conflict, but neither can the historical source metadata give a
+    # positive attestation without a canonical OriginLink.
+    assert report.files[0] == {
+        "present_unlinked", "local_file_without_attested_right",
+    }
+    assert [e for e in report.edges if e.certainty == "attested"] == []
+    assert report.unverified_rights == [0, 1]
     assert report.reasons == set()
