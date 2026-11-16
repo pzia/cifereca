@@ -11,55 +11,85 @@ from typing import Any
 
 from .adept_borrower import public_borrower_refusal_code
 from .loan_adept_profile_receipt import attention_receipt
+from .loan_source_epoch import SourceEpochLease
+
+
+def refuse_staged_source(
+    self: Any, *, ledger_base: dict[str, Any], previous_meta: dict[str, Any],
+    retained_acsm: Any, trace_ref: str, expected_loan_id: str,
+    raw_code: Any, _TRACE_LOG: Any,
+) -> dict[str, Any]:
+    """Retain staged ACSM with the exact loan receipt, never a new grant."""
+    code = public_borrower_refusal_code(raw_code)
+    self.storage.acquisition_put(
+        attention_receipt(
+            ledger_base=ledger_base, previous_meta=previous_meta,
+            loan_id=expected_loan_id, retained_acsm=retained_acsm, code=code,
+        )
+    )
+    _TRACE_LOG.warning(
+        "TRACE download loan_auto blocked reason=ambiguous_borrower_account loan_ref=%s",
+        trace_ref,
+    )
+    return {
+        "status": "attention_required", "loan_id": expected_loan_id,
+        "code": code, "retry": "explicit_only",
+    }
 
 
 def check(
     self: Any, loan: Any, *, identity: Any, ledger_base: dict[str, Any],
     previous_meta: dict[str, Any], retained_acsm: Any, trace_ref: str,
     expected_loan_id: str, expected_record_id: str | None,
+    source_lease: SourceEpochLease | None,
     AdeptProfileResolutionError: type, adept_acsm_plan: Any, _TRACE_LOG: Any,
 ) -> tuple[str, str] | dict[str, Any]:
     """Exact pre-ADEPT grant/profile sequence; dict is the existing refusal."""
     # Check the exact source-scoped borrower grant again immediately before
     # ADEPT for EVERY ACSM provider: staging can take time and grants can
     # change. Direct EPUB/PDF acquisitions do not enter this helper.
-    adept_borrower_identity_id = identity.identity_id
+    try:
+        adept_borrower_identity_id = identity.identity_id
+    except Exception:
+        adept_borrower_identity_id = None
     borrower_code = None
     # The loan may have crossed an external staging boundary since source
     # admission. Do not coerce plugin-owned coordinates, and never interpret
     # malformed provenance as an exemption from the grant guard.
     def source_intact() -> bool:
-        # Read live coordinates on each call; a borrower resolver is another
-        # external hook capable of mutating the staged Loan.
-        exact_source = (
-            type(expected_loan_id) is str and bool(expected_loan_id)
-            and type(expected_record_id) in (str, type(None))
-            and type(loan.id) is str and loan.id == expected_loan_id
-            and type(loan.record_id) in (str, type(None))
-            and loan.record_id == expected_record_id
-            and type(loan.source_provider) is str and bool(loan.source_provider)
-            and type(loan.source_credential) is str and bool(loan.source_credential)
-            and type(loan.source_account_id) in (str, type(None))
-            and loan.source_provider == ledger_base.get("provider_id")
-            and loan.source_credential == ledger_base.get("credential_id")
-            and loan.source_account_id == ledger_base.get("account_id")
-            and type(identity.identity_id) is str
-            and bool(identity.identity_id)
-            and identity.identity_id == ledger_base.get("identity_id")
-        )
-        if not exact_source:
+        # All coordinates are plain native values from the original staged
+        # transaction. An external getter or SQLite hook may mutate Loan;
+        # fail closed rather than using an updated provider/account.
+        if (type(expected_loan_id) is not str or not expected_loan_id
+                or type(expected_record_id) not in (str, type(None))
+                or type(ledger_base) is not dict
+                or type(source_lease) is not SourceEpochLease):
             return False
-        # Provider staging, borrower grants, ADEPT profile discovery and
-        # readiness callbacks may run after the source was first admitted.
-        # An unchanged Loan object is not proof that its SQLite connection
-        # still exists, is enabled or belongs to the pinned identity.
-        # Re-read its exact native owner after EACH callback, including the
-        # last check just before ADEPT fulfillment; never fall back to GTK.
         try:
-            return self.storage.provider_connection_owner_current(
-                loan.source_provider, loan.source_credential,
-                identity.identity_id,
-            ) is True
+            loan_id = loan.id
+            record_id = loan.record_id
+            provider = loan.source_provider
+            credential = loan.source_credential
+            account = loan.source_account_id
+            identity_id = identity.identity_id
+            if (type(loan_id) is not str or loan_id != expected_loan_id
+                    or type(record_id) not in (str, type(None))
+                    or record_id != expected_record_id
+                    or type(provider) is not str or not provider
+                    or provider != ledger_base.get("provider_id")
+                    or type(credential) is not str or not credential
+                    or credential != ledger_base.get("credential_id")
+                    or type(account) not in (str, type(None))
+                    or account != ledger_base.get("account_id")
+                    or type(identity_id) is not str or not identity_id
+                    or identity_id != ledger_base.get("identity_id")
+                    or source_lease.identity_id != identity_id):
+                return False
+            if self.storage.provider_connection_owner_current(
+                provider, credential, identity_id,
+            ) is not True:
+                return False
+            return source_lease.current(self.storage, loan)
         except Exception:
             return False
 
@@ -87,21 +117,12 @@ def check(
     # Profile resolution and inventory are external callbacks too: they must
     # not return a profile for a different staged loan after the first grant.
     def borrower_refusal(raw_code: Any) -> dict[str, Any]:
-        code = public_borrower_refusal_code(raw_code)
-        self.storage.acquisition_put(
-            attention_receipt(
-                ledger_base=ledger_base, previous_meta=previous_meta,
-                loan_id=expected_loan_id, retained_acsm=retained_acsm, code=code,
-            )
+        return refuse_staged_source(
+            self, ledger_base=ledger_base, previous_meta=previous_meta,
+            retained_acsm=retained_acsm, trace_ref=trace_ref,
+            expected_loan_id=expected_loan_id, raw_code=raw_code,
+            _TRACE_LOG=_TRACE_LOG,
         )
-        _TRACE_LOG.warning(
-            "TRACE download loan_auto blocked reason=ambiguous_borrower_account loan_ref=%s",
-            trace_ref,
-        )
-        return {
-            "status": "attention_required", "loan_id": expected_loan_id,
-            "code": code, "retry": "explicit_only",
-        }
 
     # Only literal None means approved. A profile resolver must never receive
     # an absent/foreign borrower identity even when the guard code was None.
