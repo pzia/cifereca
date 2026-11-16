@@ -177,3 +177,49 @@ def test_live_search_scope_uses_unchanged_facade_and_resets_after_callback(tmp_p
         assert search_orchestration._CORE_LIVE_PUBLIC_C_WRITER.get() is False
     finally:
         db.close()
+
+
+def test_same_call_live_writer_publishes_canonical_cover_for_shared_n2(tmp_path):
+    from cifereca.core.notice_c_cover_index import (
+        is_canonical_cover_document, read_consolidated_notice_cover,
+    )
+    from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
+
+    db = Storage(tmp_path / "canonical-live.sqlite")
+    try:
+        safe = witnessed(public_row())
+        assert mirror(db, [safe]) == 1
+        doc = safe._core_notice_cover_document_ref
+        assert is_canonical_cover_document(doc)
+        c = read_consolidated_notice_cover(db, doc)
+        assert c is not None and c.epoch == 1
+        assert len(c.sources) == 1
+        assert c.sources[0].relation_proof_id == "core:exact-source:v1"
+        assert c.candidates[0].url == URL
+        snapshot = cached_notice_cover_snapshot(NS(storage=db), doc)
+        assert snapshot.scope == doc
+        assert snapshot.attested_book_identity == doc.source_key
+        assert snapshot.candidates[0].url == URL
+        assert mirror(db, [safe]) == 1
+        assert read_consolidated_notice_cover(db, doc).epoch == 1
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def test_distinct_exact_editions_never_share_canonical_cover(tmp_path):
+    from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+
+    db = Storage(tmp_path / "canonical-isolation.sqlite")
+    try:
+        first = witnessed(public_row(revision_id="edition-v1"))
+        second = witnessed(public_row(revision_id="edition-v2"))
+        assert mirror(db, [first]) == 1
+        assert mirror(db, [second]) == 1
+        a = first._core_notice_cover_document_ref
+        b = second._core_notice_cover_document_ref
+        assert a != b
+        assert len(read_consolidated_notice_cover(db, a).sources) == 1
+        assert len(read_consolidated_notice_cover(db, b).sources) == 1
+    finally:
+        db.close()
