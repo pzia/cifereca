@@ -314,8 +314,7 @@
         "tests/test_core_p1_1063_adept_runtime_check.py"
       ],
       "retirement_pr": "",
-      "rationale": "A runtime-specific profile enumerator is a technical plugin diagnostic false positive, not a Core commerce-provider dispatch. Retain bounded before/after source lease.",
-      "reachability": "productive"
+      "rationale": "A runtime-specific profile enumerator is a technical plugin diagnostic false positive, not a Core commerce-provider dispatch. Retain bounded before/after source lease."
     },
     {
       "id": "site-9db736c5a6459afb19e60a9a",
@@ -331,8 +330,7 @@
         "tests/test_core_p0_5975_adept_return_status_borrower_refusal.py"
       ],
       "retirement_pr": "",
-      "rationale": "The Paris-named callback is only the legacy method signature. This is still an active safety refusal, not a supplier-specific execution branch to delete for AST metrics.",
-      "reachability": "productive"
+      "rationale": "The Paris-named callback is only the legacy method signature. This is still an active safety refusal, not a supplier-specific execution branch to delete for AST metrics."
     },
     {
       "id": "site-a99f3f4da32247a6a6efec04",
@@ -348,8 +346,7 @@
         "tests/test_core_ui_p1_1063_runtime_button.py"
       ],
       "retirement_pr": "",
-      "rationale": "A retained compatibility API and source-revalidation guard, not a new Paris-only DRM permission. Do not count as removed AST while callable or erase its stale-result veto.",
-      "reachability": "legacy_only"
+      "rationale": "A retained compatibility API and source-revalidation guard, not a new Paris-only DRM permission. Do not count as removed AST while callable or erase its stale-result veto."
     }
   ],
   "retirements": [
