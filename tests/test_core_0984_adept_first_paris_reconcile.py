@@ -13,7 +13,7 @@ from cifereca.models import Loan, Account
 from cifereca.core.return_adept_orchestrator import adept_return_key
 from cifereca.core.loan_return_guard import return_key
 from tests.historical_adept_seed import seed_historical_adept_binding
-from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
+from tests.test_paris_borrower_adept_binding import service_with_linked_borrower, confirm_borrower_v16
 
 
 class ParisSession:
@@ -35,10 +35,11 @@ class ParisSession:
 
 def setup(tmp_path, *, paris_active=False):
     service, loan = service_with_linked_borrower(tmp_path)
-    seed_historical_adept_binding(service, 
+    seed_historical_adept_binding(service,
         credential_id="alice-paris", account_id="linked-123",
         borrower_identity_id="bob", confirmed=True,
     )
+    confirm_borrower_v16(service)
     paris = ParisSession([loan] if paris_active else [])
     service._sessions["paris::alice-paris"] = paris
     service.kobo_profiles = lambda: [{"profile_id": "bob-profile", "name": "bob-cli"}]
@@ -194,8 +195,9 @@ def test_retired_return_cannot_bypass_revoked_borrower_binding(tmp_path):
     service, loan, paris = setup(tmp_path)
     try:
         calls = stub_adept(service)
-        service.storage.paris_borrower_adept_binding_delete(
-            credential_id="alice-paris", account_id="linked-123",
+        service.storage.adept_borrower_grant_delete(
+            provider_id="paris", credential_id="alice-paris",
+            account_id="linked-123",
         )
         with pytest.raises(AttentionRequired) as result:
             service.return_loan_prefer_adept(loan)

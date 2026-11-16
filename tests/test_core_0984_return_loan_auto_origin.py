@@ -11,15 +11,16 @@ import pytest
 from tests.test_core_0984_adept_return_status_provenance import _acquisition
 from tests.test_core_0984_adept_first_paris_reconcile import setup
 from tests.historical_adept_seed import seed_historical_adept_binding
-from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
+from tests.test_paris_borrower_adept_binding import service_with_linked_borrower, confirm_borrower_v16
 
 
 def _confirmed_service(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
-    seed_historical_adept_binding(service, 
+    seed_historical_adept_binding(service,
         credential_id="alice-paris", account_id="linked-123",
         borrower_identity_id="bob", confirmed=True,
     )
+    confirm_borrower_v16(service)
     service._adept_return_capability = lambda: True
     return service, loan
 
