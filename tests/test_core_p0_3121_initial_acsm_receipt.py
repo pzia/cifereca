@@ -457,3 +457,106 @@ def test_unmarked_posthook_cache_refuses_broken_initial_provenance(
     assert acsm_cache.reuse(
         directory, loan, "identity-A", "primary", now=102,
         claim_state=lambda _key: confirmed) is None
+
+
+@pytest.mark.parametrize("provider,docbase", [
+    ("paris", "DILICOM"),
+    ("biblioaccess.la-rochelle", "BIBLIOACCESS"),
+    ("future-lender", "FUTURE_BOOKS"),
+    ("bnf-pret", "SYRACUSE"),
+])
+def test_claimed_initial_receipt_v2_is_provider_neutral_and_branch_bound(
+    first_offer, provider, docbase,
+):
+    directory, path, base = first_offer
+    loan = replace(base, source_provider=provider, provider=docbase)
+    key = "loan.borrow.v1:" + "e" * 64
+    operation = "confirmed-synthetic-loan"
+    claim = {
+        "schema": 1, "operation": "loan.borrow",
+        "status": "confirmed", "operation_id": operation,
+        "request_accepted": True, "verification": "positive_active_loan",
+        "verified_loan_id": loan.id,
+    }
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary",
+        now=100, borrow_claim=(key, operation),
+    )
+    row = json.loads((directory / acsm_cache.INITIAL_MANIFEST).read_text())
+    assert row["schema"] == 2
+    assert row["scope"]["provider"] == provider
+    assert row["scope"]["branch"] == docbase
+    assert row["scope"]["loan"] == loan.id
+    assert "https://" not in json.dumps(row)
+    assert acsm_cache.reuse_initial(
+        directory, replace(loan, ebook_url=None), "identity-A", "primary",
+        now=101, claim_state=lambda candidate: claim if candidate == key else None,
+    ) == path
+    assert acsm_cache.reuse_initial(
+        directory, replace(loan, provider="OTHER_BRANCH"),
+        "identity-A", "primary", now=101,
+        claim_state=lambda _: claim,
+    ) is None
+    assert acsm_cache.reuse_initial(
+        directory, replace(loan, source_provider="another-lender"),
+        "identity-A", "primary", now=101,
+        claim_state=lambda _: claim,
+    ) is None
+    assert acsm_cache.reuse_initial(
+        directory, loan, "identity-A", "primary", now=101,
+        claim_state=lambda _: None,
+    ) is None
+
+
+@pytest.mark.parametrize("provider,docbase", [
+    ("all", "DILICOM"),
+    ("other", "DILICOM"),
+    ("invalid.provider.", "DILICOM"),
+    ("future-lender", ""),
+    ("future-lender", "invalid\nbranch"),
+])
+def test_initial_receipt_refuses_invalid_provider_or_branch_before_writing(
+    first_offer, provider, docbase,
+):
+    directory, path, base = first_offer
+    loan = replace(base, source_provider=provider, provider=docbase)
+    assert not acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100,
+    )
+    assert not (directory / acsm_cache.INITIAL_MANIFEST).exists()
+
+
+def test_existing_v1_first_offer_receipt_remains_readable_until_ttl(first_offer):
+    # The retired writer emitted this exact v1 shape, without the branch.
+    # It is not upgraded into a new grant or a new ACSM/provider GET.
+    directory, path, loan = first_offer
+    key = "loan.borrow.v1:" + "f" * 64
+    operation = "old-confirmed-claim"
+    assert acsm_cache.remember_initial(
+        path, directory, loan, "identity-A", "primary", now=100,
+        borrow_claim=(key, operation),
+    )
+    sidecar = directory / acsm_cache.INITIAL_MANIFEST
+    row = json.loads(sidecar.read_text())
+    row["schema"] = 1
+    row["scope"].pop("branch")
+    sidecar.write_text(json.dumps(row))
+    state = {
+        "schema": 1, "operation": "loan.borrow", "status": "confirmed",
+        "operation_id": operation, "request_accepted": True,
+        "verification": "positive_active_loan",
+        "verified_loan_id": loan.id,
+    }
+    verify = lambda candidate: state if candidate == key else None
+    assert acsm_cache.reuse_initial(
+        directory, loan, "identity-A", "primary", now=101,
+        claim_state=verify,
+    ) == path
+    assert acsm_cache.reuse_initial(
+        directory, loan, "identity-A", "primary", now=100 + acsm_cache.TTL,
+        claim_state=verify,
+    ) is None
+    assert acsm_cache.reuse_initial(
+        directory, loan, "identity-A", "primary", now=101,
+        claim_state=lambda _: None,
+    ) is None
