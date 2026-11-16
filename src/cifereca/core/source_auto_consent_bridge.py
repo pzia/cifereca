@@ -26,11 +26,11 @@ from .legacy_source_consent_metadata import (
 def toggle_state(db, source: SourceKey):
     """Read the current committed mode INSIDE the caller's SQLite snapshot.
 
-    Only the explicit source CAS 'on' grants a whole-source policy.
-    Historical purchase switches remain under their bounded compatibility
-    fence; a historical loan switch is now *negative evidence only*: both
-    its old ON and OFF require a fresh explicit CAS consent to resume.
-    None means there was no switch to veto an earlier exact-right grant.
+    Only explicit source CAS 'on' grants whole-source acquisition.
+    Any historical source-wide switch, purchase OR loan, is negative
+    compatibility evidence pending explicit re-consent. Old 'on' (even
+    with a valid epoch) must never admit a GET or override a revocation.
+    None means no legacy veto exists against an exact-right permission.
     This method never writes metadata.
     """
     if type(source) is not SourceKey:
@@ -80,39 +80,15 @@ def toggle_state(db, source: SourceKey):
         scope.provider_id, scope.credential_id, scope.account_id
     ):
         return "off"
-    prefix, active, epoch_prefix = spec
+    prefix, _active, _epoch_prefix = spec
     sid = _source_id(source.scope)
     row = db.execute(
-        "SELECT value FROM metadata WHERE key=?", (prefix + sid,),
+        "SELECT 1 FROM metadata WHERE key=?", (prefix + sid,),
     ).fetchone()
-    if row is None:
-        # No historical source-wide switch: retain independent exact-right
-        # opt-ins (still bound to their live source and provider offer).
-        return None
-    if source.kind == "loan":
-        # A legacy loan ON (+ epoch) used to become an automatic ACSM GET.
-        # Historical values cannot be reinterpreted as a fresh CAS grant,
-        # including on older databases and after an ON→OFF→ON cycle.
-        # Keep the row as a negative fence until deliberate re-consent.
-        return "off"
-    if row[0] != active:
-        return "off"
-    # Loan delivery is non-repeatable and cannot inherit the permissive
-    # unversioned legacy purchase switches. A missing loan-source epoch is
-    # never sufficient to authorize a signed ACSM GET.
-    revision_key = (
-        epoch_prefix + sid if epoch_prefix is not None
-        else prefix + sid + ".revision" if source.kind == "loan"
-        else None
-    )
-    if revision_key is not None:
-        revision = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (revision_key,),
-        ).fetchone()
-        if (revision is None or type(revision[0]) is not str
-                or _HEX.fullmatch(revision[0]) is None):
-            return "off"
-    return "on"
+    # Do not delete old metadata: rollback and migration readers retain it.
+    # Its mere existence must not override exact-right revocations or grant
+    # a source-wide purchase/loan acquisition. CAS ON takes precedence above.
+    return "off" if row is not None else None
 
 
 
@@ -206,53 +182,11 @@ def legacy_source_auto_policy(storage, scope, kind: str) -> tuple[str, str | Non
 
 
 def legacy_source_auto_current(storage, source: SourceKey, revision: str) -> bool:
-    """Historical purchase-only compatibility, never a loan GET grant.
-
-    The versioned source CAS is required for all automatic loan acquisition.
-    Do not re-admit a prior BnF ON merely because its old epoch still matches.
-    """
-    if (type(source) is not SourceKey or source.kind == "loan"
-            or type(revision) is not str or _HEX.fullmatch(revision) is None):
-        return False
-    try:
-        # A newly configured CAS source policy supersedes the old toggle,
-        # even if its legacy row still says ON (including ABA).
-        if read_policy(storage, source.scope).configured:
-            return False
-        mode, actual_revision = legacy_source_auto_policy(
-            storage, source.scope, source.kind,
-        )
-        return mode == "on" and actual_revision == revision
-    except Exception:
-        return False
+    """Retired compatibility ABI; historical ON never authorizes a GET."""
+    return False
 
 
 def legacy_source_auto_in_transaction(db, source: SourceKey, revision: str) -> bool:
-    """Historical purchase-only final fence, not a loan authorization."""
-    if (type(source) is not SourceKey or source.kind == "loan"
-            or type(revision) is not str or _HEX.fullmatch(revision) is None):
-        return False
-    try:
-        # An exact generic CAS source policy takes precedence, irrespective
-        # of a leftover ON row from a past broker UI generation.
-        if policy_in_transaction(db, source.scope).configured:
-            return False
-        from .source_sync_consent import source_enablement_key
-        from .source_enablement import source_enabled
-        enabled_row = db.execute(
-            "SELECT value FROM metadata WHERE key=?",
-            (source_enablement_key(source.scope),),
-        ).fetchone()
-        if not source_enabled(enabled_row[0] if enabled_row else None):
-            return False
-        if toggle_state(db, source) != "on":
-            return False
-        key = _consent_generation_key(source.scope)
-        if key is None:
-            return False
-        row = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (key,),
-        ).fetchone()
-        return row is not None and row[0] == revision
-    except Exception:
-        return False
+    """Retired transaction ABI; no old ON can publish a downloaded file."""
+    return False
+
