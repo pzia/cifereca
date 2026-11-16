@@ -8,6 +8,43 @@ from .settings_identity_editor import build_identity_settings_editor
 from .settings_account_editor import build_provider_account_editor
 
 
+def _selected_adept_source(saved: dict[str, Any]) -> tuple[bool, str | None, str | None]:
+    """Explicit source pair or an unambiguous marker for historical Settings.
+
+    Never repair a malformed new pair by silently selecting legacy Paris.
+    """
+    from ..core.provider_identifier import valid_provider_identifier
+
+    explicit = ("adept_source_provider_id" in saved
+                or "adept_source_connection_id" in saved)
+    if not explicit:
+        return False, None, None
+    provider = saved.get("adept_source_provider_id")
+    connection = saved.get("adept_source_connection_id")
+    if (not valid_provider_identifier(provider)
+            or type(connection) is not str or not connection
+            or len(connection) > 256 or connection != connection.strip()
+            or not connection.isprintable()):
+        return True, None, None
+    return True, provider, connection
+
+
+def _saved_adept_status(core, identity_id: str, saved: dict[str, Any]) -> dict[str, Any]:
+    """Read saved source only; never infer provider from an ADEPT profile."""
+    explicit, provider, credential = _selected_adept_source(saved)
+    if not explicit:
+        return core.normal_paris_adept_status(identity_id)
+    if provider is None:
+        return {
+            "identity_id": identity_id, "status": "to_configure",
+            "reason": "invalid_source_descriptor", "adept_profile_id": None,
+        }
+    return core.normal_source_adept_status(
+        identity_id, source_provider_id=provider, source_label=provider,
+        primary_connection_id=credential,
+    )
+
+
 def _local_adept_binding_caption(state: dict[str, Any]) -> str:
     """Non-authorizing local settings status, never a provider permission."""
     if state.get("status") == "ready":
@@ -164,7 +201,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
         )
         normal_subtitle = (
             _local_adept_binding_caption(
-                self.service.normal_paris_adept_status(identity_id)
+                _saved_adept_status(self.service, identity_id, data)
             )
             if data.get("id")
             else "À configurer · enregistrez l’identité pour vérifier ses liaisons."
@@ -206,20 +243,40 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 "identity", saved_id,
             ) or ""
             stored_primary = saved.get("primary_paris_connection_id") or ""
+            # A changed/half-filled source pair remains an unsaved draft,
+            # even when its ADEPT profile is unchanged.
+            provider = saved.get("adept_source_provider_id", "")
+            connection = saved.get("adept_source_connection_id", "")
+            provider_row = e.get("adept_source_provider_id")
+            connection_row = e.get("adept_source_connection_id")
             if (e["adept_profile"].get_text() != stored_profile
                     or e["primary_paris_connection_id"].get_text()
-                       != stored_primary):
+                       != stored_primary
+                    or (provider_row is not None
+                        and provider_row.get_text() != provider)
+                    or (connection_row is not None
+                        and connection_row.get_text() != connection)):
                 e["normal_adept_status"].set_subtitle(
                     "À vérifier · enregistrez les modifications avant le contrôle ADEPT."
                 )
                 return
-            start_status = admitted_core.normal_paris_adept_status(saved_id)
+            selected_source = _selected_adept_source(saved)
+            start_status = _saved_adept_status(admitted_core, saved_id, saved)
             if start_status.get("status") != "ready":
                 e["normal_adept_status"].set_subtitle(
                     _local_adept_binding_caption(start_status)
                 )
                 return
-            runtime_probe = admitted_core.check_normal_paris_adept_runtime
+            if selected_source[0]:
+                # Only this exact saved provider/connection is inspected.
+                runtime_method = admitted_core.check_source_adept_runtime
+                runtime_probe = lambda identity: runtime_method(
+                    identity, source_provider_id=selected_source[1],
+                    source_label=selected_source[1],
+                    primary_connection_id=selected_source[2],
+                )
+            else:
+                runtime_probe = admitted_core.check_normal_paris_adept_runtime
             generations = (
                 getattr(self, "_identity_context_generation", None),
                 getattr(self, "_account_context_generation", None),
@@ -241,8 +298,17 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     and e["adept_profile"].get_text() == stored_profile
                     and e["primary_paris_connection_id"].get_text()
                         == stored_primary
-                    and admitted_core.normal_paris_adept_status(saved_id)
-                        == start_status
+                    and (provider_row is None
+                         or provider_row.get_text() == provider)
+                    and (connection_row is None
+                         or connection_row.get_text() == connection)
+                    and _selected_adept_source(
+                        self.config.identity(saved_id) or {}
+                    ) == selected_source
+                    and _saved_adept_status(
+                        admitted_core, saved_id,
+                        self.config.identity(saved_id) or {},
+                    ) == start_status
                 )
 
             def release():
