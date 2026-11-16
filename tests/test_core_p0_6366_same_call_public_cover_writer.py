@@ -141,3 +141,39 @@ def test_private_or_unsigned_session_does_not_create_public_writer_witness(
         assert source_count(db) == 0
     finally:
         db.close()
+
+
+def test_live_search_scope_uses_unchanged_facade_and_resets_after_callback(tmp_path):
+    """The real two search paths use the legacy façade without a new kwarg."""
+    import pytest
+
+    db = Storage(tmp_path / "live-scope.sqlite")
+    try:
+        host = NS(storage=db)
+        def mirror_facade(rows, *, identity_id=None):
+            return search_orchestration._mirror_remote_results(
+                host, rows, identity_id=identity_id,
+            )
+        host._mirror_remote_results = mirror_facade
+        raw = public_row()
+        assert search_orchestration._mirror_live_search_results(
+            host, [raw], identity_id="alice",
+        ) == 1
+        assert source_count(db) == 0
+        safe = witnessed(raw)
+        assert search_orchestration._mirror_live_search_results(
+            host, [safe], identity_id="alice",
+        ) == 1
+        assert source_count(db) == 1
+        assert search_orchestration._CORE_LIVE_PUBLIC_C_WRITER.get() is False
+
+        def rejected(rows, *, identity_id=None):
+            raise ValueError("cancelled test callback")
+        host._mirror_remote_results = rejected
+        with pytest.raises(ValueError, match="cancelled test callback"):
+            search_orchestration._mirror_live_search_results(
+                host, [raw], identity_id="alice",
+            )
+        assert search_orchestration._CORE_LIVE_PUBLIC_C_WRITER.get() is False
+    finally:
+        db.close()
