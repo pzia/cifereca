@@ -267,3 +267,57 @@ def test_ambiguous_competing_two_provider_c_never_decorates_personal_dto(tmp_pat
         assert not hasattr(history, "_core_notice_c_paris_public_link")
     finally:
         db.close()
+
+
+def test_actual_cached_loan_worker_recreates_transient_public_c_receipt(tmp_path):
+    """The provider GET is deliberately absent: exact account cache replay."""
+    from cifereca.services import LibraryService, _loan_cache_key
+    db = Storage(tmp_path / "cached-loans.sqlite")
+    try:
+        own, _ = public(db)
+        account = paris_account()
+        loan, _ = personal_items()
+        db.cache_put("account", _loan_cache_key(account), [asdict(loan)], 3600)
+        fake = NS(
+            storage=db, config={"cache.dashboard_seconds": 300},
+            _sessions={}, _session_key=lambda *_: "unregistered",
+            _record_loan_statistics=lambda *_a, **_k: None,
+            _account_context_epoch=3, _source_context_epoch=7,
+        )
+        rows = LibraryService._loans_for_account(fake, account, force=False)
+        assert len(rows) == 1
+        assert rows[0] is not loan
+        assert rows[0]._core_notice_c_paris_public_link.document == own.document
+        assert "_core_notice_c_paris_public_link" not in asdict(rows[0])
+        assert db.entitlements() == []
+    finally:
+        db.close()
+
+
+def test_actual_cached_history_worker_recreates_scope_guarded_c_offline(tmp_path):
+    """No provider/history GET or GTK SQL on an already account-scoped cache."""
+    from cifereca.core.library_projection import refresh_history, _history_cache_key
+    db = Storage(tmp_path / "cached-history.sqlite")
+    try:
+        own, _ = public(db)
+        account = paris_account()
+        _, item = personal_items()
+        db.cache_put(
+            "account", _history_cache_key(account),
+            [asdict(item)], 3600,
+        )
+        fake = NS(
+            storage=db, config={"cache.history_seconds": 1800},
+            _account_context_epoch=3, _source_context_epoch=7,
+            current_account=account,
+            diagnostics=NS(add=lambda *_a, **_k: None),
+            last_history=[],
+        )
+        rows = refresh_history(fake, force=False, account=account)
+        assert len(rows) == 1
+        assert rows[0] is not item
+        assert rows[0]._core_notice_c_paris_public_link.document == own.document
+        assert fake.last_history == rows
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
