@@ -66,16 +66,33 @@ def merge_public_notice_c_known_rows(
 
     rows: list[dict[str, Any]] = []
     admitted: list[PublicNoticeCHit] = []
-    seen: set[str] = set()
+    by_document: dict[str, dict[str, Any]] = {}
     for hit in page.hits:
         if (type(hit) is not PublicNoticeCHit
                 or hit.document.kind != "public_catalogue"
                 or hit.document.identity_id is not None
-                or not is_notice_cover_document(hit.document)
-                or hit.document.source_key in seen):
+                or not is_notice_cover_document(hit.document)):
             continue
-        seen.add(hit.document.source_key)
         admitted.append(hit)
+        prior = by_document.get(hit.document.source_key)
+        if prior is not None:
+            # Distinct providers can contribute different public text to ONE
+            # canonical cover document. Keep their independently attested
+            # descriptions as alternatives; never silently treat the first
+            # source's words as a reconciled canonical bibliography.
+            alternatives = prior["metadata"].setdefault(
+                "notice_c_source_alternatives", [],
+            )
+            alternatives.append({
+                "provider_id": hit.provider_id,
+                "record_id": hit.record_id,
+                "source_revision": hit.source_revision,
+                "title": hit.title,
+                "author": hit.author,
+                "publisher": hit.publisher,
+                "description": hit.description,
+            })
+            continue
         rows.append({
             "key": "c-public:" + hit.document.source_key,
             "source": "notice_c_public",
@@ -101,6 +118,7 @@ def merge_public_notice_c_known_rows(
             },
             "_cover_document_ref": hit.document,
         })
+        by_document[hit.document.source_key] = rows[-1]
     for row in known:
         # Do not replace local placements, verified rights, private sources,
         # different revisions or medium with public descriptive metadata.
