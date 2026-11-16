@@ -80,7 +80,7 @@ def test_search_local_refuses_cross_scope_or_untrusted_packets(search_book, muta
     # #6472/#6473; they remain empty on an unqualified local EPUB packet.
     # The documentary source is still at [-2], URL at [-1].
     assert len(result._public_row_content) == 12
-    assert result._public_row_content[-4:-2] == (None, None)
+    assert result._public_row_content[-3:-1] == (None, None)
     assert result._public_row_content[-2:] == (None, None)
 
 
