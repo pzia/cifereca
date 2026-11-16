@@ -75,6 +75,13 @@ def refresh_history(
         cached = self.storage.cache_get("account", key)
         if isinstance(cached, list):
             rows = [HistoryItem(**x) for x in cached]
+            # C is public and independently indexed. Enrich the exact
+            # borrower DTOs on the existing Core worker, never at GTK bind.
+            from .notice_c_borrower_public_projection import attach_borrower_public_c
+            attach_borrower_public_c(
+                self.storage, rows, identity_id=account.identity_id,
+                account_epoch=epoch, source_epoch=source_epoch,
+            )
             if self._account_context_epoch == epoch and self.current_account is account:
                 self.last_history = rows
             self.diagnostics.add("CACHE", "history", detail={"hit": True, "count": len(rows)})
@@ -123,6 +130,13 @@ def refresh_history(
     ):
         raise ProviderConfigurationError("history_source_binding_changed")
     self.storage.cache_put("account", key, [asdict(x) for x in rows], ttl)
+    # Keep the immutable source's public-C receipt out of private cache
+    # serialization; associate it only with the current returned objects.
+    from .notice_c_borrower_public_projection import attach_borrower_public_c
+    attach_borrower_public_c(
+        self.storage, rows, identity_id=account.identity_id,
+        account_epoch=epoch, source_epoch=source_epoch,
+    )
     if self._account_context_epoch == epoch and self.current_account is account:
         self.last_history = rows
     return rows

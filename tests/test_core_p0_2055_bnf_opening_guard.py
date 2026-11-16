@@ -58,6 +58,77 @@ def test_automatic_acquisition_facade_refuses_bnf_before_any_io():
         )
         assert result == {
             "status": "attention_required",
-            "code": "bnf_web_explicit_only", "retry": "explicit_only",
+            "code": "loan_auto_explicit_only", "retry": "explicit_only",
         }
         assert "signed-private-url" not in repr(result)
+
+
+@pytest.mark.parametrize("provider", ["bnf-pret", "future-library", "paris"])
+def test_connected_provider_without_auto_contract_is_denied_before_lock(
+    provider, monkeypatch,
+):
+    """No source can stage an automatic loan merely because it has a Web row."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
+    from cifereca.core.automatic_loan_source_policy import auto_loan_refusal
+
+    caps = ProviderCapabilities(loans=True, digital_download=provider != "bnf-pret")
+    descriptor = ProviderDescriptor(
+        id=provider, display_name="Synthetic", description="Offline", state="ready",
+        capabilities=caps,
+    )
+    session = SimpleNamespace(
+        descriptor=descriptor, provider_id=provider, credential_id="fictional-credential",
+        connected=True,
+    )
+    registry = {provider + "::fictional-credential": session}
+    assert auto_loan_refusal(SimpleNamespace(_sessions=registry), provider,
+                            "fictional-credential") == "loan_auto_explicit_only"
+
+    # Capability declaration is not an independent right, but permits the
+    # preflight to continue for an exact installed, connected opt-in source.
+    opted = replace(descriptor, capabilities=replace(
+        caps, opening_loan_auto_acquisition=True, digital_download=True,
+    ))
+    session.descriptor = opted
+    assert auto_loan_refusal(SimpleNamespace(_sessions=registry), provider,
+                            "fictional-credential") is None
+    session.connected = False
+    assert auto_loan_refusal(SimpleNamespace(_sessions=registry), provider,
+                            "fictional-credential") == "loan_auto_explicit_only"
+    session.connected = True
+    session.provider_id = "foreign-source"
+    assert auto_loan_refusal(SimpleNamespace(_sessions=registry), provider,
+                            "fictional-credential") == "loan_auto_explicit_only"
+
+
+def test_bnf_registered_session_denied_without_lock_or_supplier_io(monkeypatch):
+    from types import SimpleNamespace
+    from cifereca.services import LibraryService
+    from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
+    import cifereca.services as facade
+
+    row = _loan("bnf-pret", ebook_url="https://example.invalid/private-acsm")
+    descriptor = ProviderDescriptor(
+        id="bnf-pret", display_name="Synthetic", description="Offline",
+        state="ready", capabilities=ProviderCapabilities(
+            loans=True, loan_auto_materialization=True,
+        ),
+    )
+    session = SimpleNamespace(
+        descriptor=descriptor, provider_id="bnf-pret",
+        credential_id=row.source_credential, connected=True,
+    )
+    host = SimpleNamespace(_sessions={
+        "bnf-pret::" + row.source_credential: session,
+    })
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("no lock, network, staging or rights mutation permitted")
+    monkeypatch.setattr(facade, "InterProcessLock", forbidden)
+    denied = LibraryService._acquire_active_loan_automatically(host, row)
+    assert denied == {
+        "status": "attention_required", "code": "loan_auto_explicit_only",
+        "retry": "explicit_only",
+    }
+    assert "private-acsm" not in repr(denied)

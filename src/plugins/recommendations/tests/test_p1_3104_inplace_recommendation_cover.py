@@ -46,6 +46,7 @@ def test_same_ranked_object_enriched_image_updates_both_surfaces():
     assert view._exact_notice_state is initial_state
     assert view._exact_notice_state["row_presentation"] == (
         views[-1][0].title, views[-1][0].subtitle, PUBLIC_COVER,
+        None,
     )
     assert view._generation == baseline_generation
     assert searches == []

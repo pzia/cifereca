@@ -2514,9 +2514,10 @@ class LibraryService:
         )
 
     def verify_loan_return(self, loan: Loan) -> dict[str, Any]:
-        """Project one historical ADEPT return receipt; never retry or return.
+        """Read exact source-scoped historical ADEPT receipts for any provider.
 
-        An old checkpoint cannot be selected through inferred borrower
+        This retained response uses the original adobe_first_paris namespace
+        for ABI compatibility, not as a supplier-specific permission. An old checkpoint cannot be selected through inferred borrower
         coordinates, coercible plugin objects or a source changed by a
         preflight/storage callback. This is a read-only compatibility path.
         """
@@ -2531,7 +2532,11 @@ class LibraryService:
         if scope is None or type(loan.medium) is not str:
             return refused
         medium = loan.medium
-        if scope.provider_id.casefold() != "paris" or medium != "digital":
+        # The checkpoint key already includes provider, credential, exact
+        # borrower and loan ID. Voluntary return has been removed for EVERY
+        # provider; this read-only legacy receipt lookup cannot enable it.
+        # Do not restrict a historical ADEPT diagnostic by a supplier name.
+        if medium != "digital":
             return {"status": "not_requested", "scope": "adobe_first_paris"}
         if not scope.borrower_proven:
             return refused
@@ -4621,13 +4626,6 @@ class LibraryService:
         source_credential = getattr(loan, "source_credential", None)
         source_account = getattr(loan, "source_account_id", None)
         source_record = getattr(loan, "record_id", None)
-        # Web-observed BnF does not confer permission to stage an ACSM. Test
-        # only exact native strings: plugin-owned __eq__ is not a grant.
-        if type(loan) is Loan and type(source_provider) is str and source_provider == "bnf-pret":
-            return {
-                "status": "attention_required",
-                "code": "bnf_web_explicit_only", "retry": "explicit_only",
-            }
         # The historical facade also accepts lightweight loan-like fixtures;
         # they can omit account/edition, but no hostile source value may
         # compute a lock key or change the lock's authorization scope.
@@ -4639,6 +4637,17 @@ class LibraryService:
             return {
                 "status": "attention_required", "loan_id": None,
                 "code": "adept_loan_identity_unproven", "retry": "explicit_only",
+            }
+        # A real, registered session must explicitly declare automatic
+        # acquisition support. No supplier name can override this admission.
+        # Offline test shims without sessions retain the historical path;
+        # deployed supplier I/O independently requires a connected session.
+        from .core.automatic_loan_source_policy import auto_loan_refusal
+        refusal_code = auto_loan_refusal(self, source_provider, source_credential)
+        if refusal_code is not None:
+            return {
+                "status": "attention_required",
+                "code": refusal_code, "retry": "explicit_only",
             }
         loan_key = hashlib.sha256(
             (source_provider.casefold() + "\\0" + source_loan_id.strip()).encode("utf-8")
