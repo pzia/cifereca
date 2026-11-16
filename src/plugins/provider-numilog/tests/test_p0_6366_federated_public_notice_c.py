@@ -230,3 +230,129 @@ def test_public_supplier_same_call_not_previous_page_and_no_duplicate_get(
     finally:
         service.close()
         session.close()
+
+
+def test_actual_anonymous_federated_cache_shared_across_a_b_a_without_new_supplier_call(
+    tmp_path, monkeypatch,
+):
+    """The reader is not a source-account namespace for a public catalogue.
+
+    Both sync and progressive caches are currently separate, but EACH must
+    be reusable by a second reader with the same ranking preferences.
+    A cache replay is only a source coordinate; Notice C remains its proof.
+    """
+    service, session, supplier_gets = build(tmp_path, monkeypatch)
+    calls = []
+    method = session.search_with_response_facets
+
+    def count(*args, **kwargs):
+        calls.append((args, kwargs))
+        return method(*args, **kwargs)
+
+    monkeypatch.setattr(session, "search_with_response_facets", count)
+    try:
+        a = service.search("loup", provider_id=session.provider_id, force=True)
+        assert len(a) == 1
+        document = a[0]._core_notice_cover_document_ref
+        assert len(calls) == len(supplier_gets) == 1
+
+        service.select_identity("bob")
+        b = service.search("loup", provider_id=session.provider_id, force=False)
+        assert len(b) == 1
+        assert b[0]._core_notice_cover_document_ref == document
+        assert len(calls) == 1  # Not just a plugin HTTP cache HIT.
+        assert read_notice_cover(service.storage, document).epoch == 1
+
+        progressive = service.search_progressive(
+            "loup", provider_id=session.provider_id, force=True,
+        )
+        assert not progressive.cancelled and progressive.result_count == 1
+        assert len(calls) == 2  # Existing sync/progressive source caches differ.
+
+        service.select_identity("alice")
+        batches = []
+        result = service.search_progressive(
+            "loup", provider_id=session.provider_id, force=False,
+            on_batch=batches.append,
+        )
+        assert not result.cancelled
+        assert batches and batches[0].cached is True
+        assert batches[0].results[0]._core_notice_cover_document_ref == document
+        assert len(calls) == 2  # Public progressive result cache reused.
+        assert len(supplier_gets) == 1
+        assert read_notice_cover(service.storage, document).epoch == 1
+        # Same source, different viewer. No source credentials/account rights.
+        assert b[0].source_account_id is None
+        assert b[0].downloadable is False and b[0].owned is False
+    finally:
+        service.close()
+        session.close()
+
+
+def test_cache_shared_only_for_exact_sole_anonymous_source_and_same_ranking(
+    tmp_path, monkeypatch,
+):
+    from cifereca.core.search_orchestration import _search_presentation_cache_scope
+
+    service, session, _calls = build(tmp_path, monkeypatch)
+    try:
+        a = service.identity_by_id("alice")
+        b = service.identity_by_id("bob")
+        assert _search_presentation_cache_scope(
+            a, [session], ((session, None),),
+        ) == _search_presentation_cache_scope(
+            b, [session], ((session, None),),
+        )
+        # A private or account-reassigned session never gets a shared key.
+        assert _search_presentation_cache_scope(
+            a, [session], ((session, "alice"),),
+        ) != _search_presentation_cache_scope(
+            b, [session], ((session, "bob"),),
+        )
+        mixed = NS(provider_id="private", credential_id="credential-b")
+        assert _search_presentation_cache_scope(
+            a, [session, mixed], ((session, None), (mixed, "bob")),
+        ) != _search_presentation_cache_scope(
+            b, [session, mixed], ((session, None), (mixed, "bob")),
+        )
+        private = NS(
+            provider_id=session.provider_id, credential_id="__public__",
+            credentials={"secret": "redacted"}, _accounts=[],
+            search_with_response_facets=session.search_with_response_facets,
+        )
+        assert _search_presentation_cache_scope(
+            a, [private], ((private, None),),
+        ) != _search_presentation_cache_scope(
+            b, [private], ((private, None),),
+        )
+        # Reordering depends on reading preferences: the cache cannot reuse
+        # a previously ordered presentation for a different reader ranking.
+        pref_fr = NS(
+            identity_id="a", preferences=NS(
+                reading_languages=("fr",), prefer_original_language=False,
+            ),
+        )
+        pref_en = NS(
+            identity_id="b", preferences=NS(
+                reading_languages=("en",), prefer_original_language=True,
+            ),
+        )
+        assert _search_presentation_cache_scope(
+            pref_fr, [session], ((session, None),),
+        ) != _search_presentation_cache_scope(
+            pref_en, [session], ((session, None),),
+        )
+        # An identity literally named as the anonymous key prefix cannot
+        # collide because that source-specific prefix begins with NUL.
+        adversary = NS(
+            identity_id="source-anonymous-public-v1",
+            preferences=pref_fr.preferences,
+        )
+        assert _search_presentation_cache_scope(
+            pref_fr, [session], ((session, None),),
+        ) != _search_presentation_cache_scope(
+            adversary, [private], ((private, None),),
+        )
+    finally:
+        service.close()
+        session.close()
