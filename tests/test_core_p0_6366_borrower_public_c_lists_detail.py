@@ -38,8 +38,8 @@ URL_A = "https://covers.example.org/edition-oeuvre-a.jpg"
 URL_B = "https://covers.example.org/edition-oeuvre-b.jpg"
 
 
-def bibliography(db, *, provider="bnf", record="book-42",
-                 title="Livre source", docbase="digital-books",
+def bibliography(db, *, provider="bnf-pret", record="book-42",
+                 title="Livre source", docbase="BNF_PRET",
                  thumbnail=URL_A, author="Autrice", revision=None):
     row = verified_public(
         source_provider=provider, record_id=record, title=title,
@@ -54,9 +54,9 @@ def bibliography(db, *, provider="bnf", record="book-42",
 
 def loan(**changed):
     item = Loan(
-        id="loan-88", provider="bnf", medium="digital",
+        id="loan-88", provider="BNF_PRET", medium="digital",
         record_id="book-42", title="Livre source", author="Autrice",
-        thumbnail_url=None, source_provider="bnf",
+        thumbnail_url=None, source_provider="bnf-pret",
         source_credential="card-a", source_account_id="reader-a",
         identity_id="alice",
     )
@@ -67,12 +67,12 @@ def loan(**changed):
 
 def history(**changed):
     item = HistoryItem(
-        id="history-88", provider="bnf", medium="digital",
+        id="history-88", provider="BNF_PRET", medium="digital",
         record_id="book-42", title="Livre source", author="Autrice",
         thumbnail_url=None,
         # A provider/default picture is not a direct documentary source.
         default_thumbnail_url="https://covers.example.org/generic-default.png",
-        source_provider="bnf", source_credential="card-a",
+        source_provider="bnf-pret", source_credential="card-a",
         source_account_id="reader-a", identity_id="alice",
     )
     for name, value in changed.items():
@@ -216,6 +216,8 @@ def test_verified_two_provider_c_selected_over_own_source_without_cross_join(tmp
 
 @pytest.mark.parametrize("change", [
     {"source_provider": "numilog"},
+    {"source_account_id": None},
+    {"source_account_id": False},
     {"record_id": "other-book"},
     {"medium": "physical"},
     {"identity_id": "bob"},
@@ -378,3 +380,108 @@ def test_gtk_wiring_stays_worker_only_and_keeps_actions(tmp_path):
     assert "def show_history_public_c(" in panel
     assert "self.show_loan(loan)" in panel
     assert "self.show_history(item)" in panel
+
+
+@pytest.mark.parametrize("source_provider,branch", [
+    ("paris", "DILICOM"),
+    ("bnf-pret", "BNF_PRET"),
+])
+def test_same_native_record_must_match_its_public_docbase_and_revision(
+    tmp_path, source_provider, branch,
+):
+    db = Storage(tmp_path / "native-branch-document-identity.sqlite")
+    try:
+        record = "book-42"
+        correct = {
+            "source_provider": source_provider, "provider": branch,
+        }
+        item_loan = loan(**correct)
+        item_history = history(**correct)
+        # Exactly the same upstream book record and title in another
+        # public docbase C is NOT the attested edition.
+        bibliography(db, provider=source_provider, record=record,
+                     docbase="WRONG_BRANCH")
+        assert admit(db, [item_loan, item_history]) == 0
+        # A provider revision on the public source is NOT attested by the
+        # existing private Loan/History DTO shape.
+        bibliography(db, provider=source_provider, record=record,
+                     docbase=branch, revision="revision-2")
+        assert admit(db, [item_loan, item_history]) == 0
+        # Add the native docbase without a revision. It is the only
+        # admissible edition regardless of homonymous competing sources.
+        observed, expected = bibliography(
+            db, provider=source_provider, record=record,
+            docbase=branch, revision=None,
+        )
+        assert admit(db, [item_loan, item_history]) == 2
+        for item in (item_loan, item_history):
+            packet = borrower_public_c_receipt(item, identity_id="alice")
+            assert packet is not None
+            assert packet.document == expected.document
+            assert packet.source_ref == observed.document.source_key
+        # A later supplier branch swap must invalidate an old packet even
+        # when the record/title/medium remain byte-identical.
+        item_loan.provider = "UNRELATED_BRANCH"
+        assert borrower_public_c_receipt(
+            item_loan, identity_id="alice",
+        ) is None
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("source_provider,branch", [
+    ("paris", "SYRACUSE"),
+    ("bnf-pret", "DILICOM"),
+    ("other-provider", "BNF_PRET"),
+    ("numilog", "DILICOM"),
+])
+def test_unsupported_native_branch_never_links_a_public_edition(
+    tmp_path, source_provider, branch,
+):
+    db = Storage(tmp_path / "unattested-provider-branch.sqlite")
+    try:
+        bibliography(
+            db, provider=source_provider, record="book-42",
+            docbase=branch,
+        )
+        for make in (loan, history):
+            item = make(source_provider=source_provider, provider=branch)
+            assert admit(db, [item]) == 0
+            assert borrower_public_c_receipt(
+                item, identity_id="alice",
+            ) is None
+    finally:
+        db.close()
+
+
+def test_positive_paris_branch_attested_relation_prefers_multisource_c(tmp_path):
+    db = Storage(tmp_path / "paris-multi-provider-edition.sqlite")
+    try:
+        source, own = bibliography(
+            db, provider="paris", record="book-42", docbase="DILICOM",
+        )
+        second, _ = bibliography(
+            db, provider="numilog", record="different-record",
+            docbase="NUMILOG", thumbnail=URL_B,
+        )
+        persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:paris-verified-pair",
+            source=source, relation_proof_id="strong:fixture:paris",
+        )
+        combined = persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:paris-verified-pair",
+            source=second, relation_proof_id="strong:fixture:numilog",
+        )
+        assert combined.document != own.document
+        item = history(source_provider="paris", provider="DILICOM")
+        assert admit(db, [item]) == 1
+        packet = borrower_public_c_receipt(item, identity_id="alice")
+        assert packet is not None
+        assert packet.document == combined.document
+        assert {x.url for x in cached_notice_cover_snapshot(
+            NS(storage=db), combined.document,
+        ).candidates} == {URL_A, URL_B}
+        assert db.entitlements() == []
+    finally:
+        db.close()
