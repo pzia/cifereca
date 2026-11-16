@@ -30,7 +30,7 @@ def exact_public_source_c(
 
     The source's own C and a stronger, explicitly persisted multi-source C
     may coexist. Prefer the unique C with the most independently admitted
-    public sources; ties across distinct canonical C refs are ambiguous.
+    public sources; contradictory multi-source canonical claims are ambiguous\n    regardless of their relative source counts.
     Fail closed on unbounded indices and corrupt matching canonical records.
     """
     from .notice_c_cover_index import _IDENTIFIER
@@ -90,9 +90,18 @@ def exact_public_source_c(
                     return None
         if not matches:
             return None
-        strength = max(len(x.sources) for x in matches)
-        winners = [x for x in matches if len(x.sources) == strength]
-        return winners[0] if len(winners) == 1 else None
+        # One-source C rows are automatic per-source projections. A
+        # multi-source C is an independently attested edition relationship.
+        # Prefer exactly ONE such relationship over the automatic source C.
+        # Two competing multi-source C records are contradictory proofs:
+        # counting suppliers must never decide which canonical edition wins.
+        related = [x for x in matches if len(x.sources) > 1]
+        if len(related) > 1:
+            return None
+        if related:
+            return related[0]
+        # A single source claimed by several canonical IDs is ambiguous.
+        return matches[0] if len(matches) == 1 else None
     except (sqlite3.Error, AttributeError, TypeError, ValueError):
         return None
 
