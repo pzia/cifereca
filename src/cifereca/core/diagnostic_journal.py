@@ -17,6 +17,7 @@ import unicodedata
 from typing import Any
 
 from .diagnostic_log_line import _LOG_LINE
+from .provider_identifier import valid_provider_identifier
 
 _MAX_FILE_BYTES = 2_000_000
 _MAX_EVENT_BYTES = 256_000
@@ -191,15 +192,16 @@ def _make_event(match, identity, offset):
           and type(detail) is dict):
         # Historical Core opening-loan diagnostics (#2888) emitted the
         # *observed source provider* under 'provider', not 'provider_id'.
-        # Restrict this compatibility projection to the precise Core message
-        # shape and the two supported loan sources. Never infer a provider
-        # from a free-text message, an ADEPT runtime, or an account label.
+        # Admit its native provider identifier from the complete, exact Core
+        # diagnostic envelope, regardless of the supplier that produced it.
+        # This is only a READ-ONLY journal projection, never proof of a
+        # configured source, ADEPT grant, entitlement or provider GET.
+        # Do not infer a provider from free text, runtime or account labels.
         legacy_provider = detail.get("provider")
         expected_outcome = (
             "attention_required" if status == "warning" else "retryable_error"
         )
-        if (type(legacy_provider) is str
-                and legacy_provider in {"paris", "bnf-pret"}
+        if (valid_provider_identifier(legacy_provider)
                 and detail.get("status") == expected_outcome
                 and type(detail.get("code")) is str
                 and 0 < len(detail["code"]) <= 90

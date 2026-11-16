@@ -75,8 +75,11 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
     from cifereca.core.search_owned_evidence import snapshot_search_owned_evidence
     # Use the same identity pinned for this search batch, not a second
     # selected-identity lookup after search results were admitted.
-    self._search_purchase_evidence = snapshot_search_owned_evidence(
-        self.service, identity_id=identity,
+    # A C-only preview has no remotely actionable row: do not read the
+    # entitlement ledger on GTK merely to show public descriptive notices.
+    self._search_purchase_evidence = (
+        snapshot_search_owned_evidence(self.service, identity_id=identity)
+        if rows else None
     )
     self.service.last_search = rows
     self.search_objects = dict(zip(_remote_result_row_keys(rows), rows))
@@ -338,7 +341,19 @@ def _render_search_results(self) -> int:
             account_context_epoch=getattr(self.service, "_account_context_epoch", None),
             source_context_epoch=getattr(self.service, "_source_context_epoch", None),
         )
-    linked = self.service.local_placements_for_sources(identity.identity_id) if identity else {}
+    # Only an already-present public C preview avoids the historical GTK
+    # placement read; other (including empty/error) Search paths keep ABI.
+    # This prevents redundant synchronous SQL while showing C before HTTP.
+    known_preview = getattr(self, "_search_local_objects", None)
+    has_c_preview = (
+        type(known_preview) is dict
+        and any(type(v) is dict and v.get("source") == "notice_c_public"
+                for v in known_preview.values())
+    )
+    linked = (
+        self.service.local_placements_for_sources(identity.identity_id)
+        if identity and (self._remote_search_results or not has_c_preview) else {}
+    )
     remote_keys = {
         (item.source_provider, item.source_credential, item.record_id)
         for item in self._remote_search_results
