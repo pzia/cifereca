@@ -56,10 +56,21 @@ def test_declaration_matching_never_copies_an_account_or_revision_to_foreign_vie
         results=[b],
         public_notices=(PublicSearchNotice(a),),
     )
-    assert project_public_search_results(mixed) == {}
+    # ONE public bibliography can legitimately be shared by a private
+    # source whose internal revision differs. No cover is attested when
+    # the declaration is not the same live source object.
+    projected = project_public_search_results(mixed)
+    assert projected is not None and len(projected) == 1
+    assert projected[id(b)].revision_id is None
     assert project_public_search_result(
         mixed, b, provider_id="bnf", credential_id="__public__",
-    ) is None
+    ) == projected[id(b)]
+    source = NS(
+        provider_id="bnf", credential_id="__public__",
+        credentials={}, _accounts=[],
+    )
+    rows = _public_rows_from_response(mixed, source)
+    assert len(rows) == 1 and rows[0].thumbnail_url is None
 
     claimed = replace(
         a, source_account_id="private-account-A",
@@ -115,4 +126,4 @@ def test_invalid_version_marker_does_not_become_shared_public_provenance():
             results=[bad],
             public_notices=(PublicSearchNotice(bad),),
         )
-        assert project_public_search_results(envelope) == {}
+        assert project_public_search_results(envelope) is None
