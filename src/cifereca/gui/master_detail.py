@@ -45,6 +45,13 @@ def _same_book_row_presentation(old: BookListItem, new: BookListItem) -> bool:
         for field in _BOOK_ROW_VISIBLE_FIELDS
     ):
         return False
+    # Action callbacks are live, source/identity-scoped capabilities. A new
+    # closure may still show the same label/icon but target another account,
+    # Placement or selected offer. The old GTK cell must be rebound instead
+    # of retaining a previously captured action. Identity, not __eq__, is
+    # the appropriate test for an executable callback.
+    if getattr(old, "action_callback", None) is not getattr(new, "action_callback", None):
+        return False
     # Exact Core evidence, not just its displayed source URL, determines
     # the N2 cache token. A progressive batch with the same key/title/URL
     # must not retain a cell bound to an older edition, Placement or proof.
