@@ -356,3 +356,74 @@ def test_cache_shared_only_for_exact_sole_anonymous_source_and_same_ranking(
     finally:
         service.close()
         session.close()
+
+
+def test_observed_numilog_federated_two_source_revisions_survive_search_and_c(
+    tmp_path, monkeypatch,
+):
+    """Future supplier revisions cannot collapse before persisted Notice C.
+
+    The first result is parsed from the observed HTML fixture by the REAL
+    provider. We then simulate an upstream response containing two revision
+    markers for that one source record; their common image is not a join.
+    """
+    service, session, supplier_gets = build(tmp_path, monkeypatch)
+    try:
+        observed = session.search_with_response_facets(
+            "loup", scope="catalog",
+        )
+        assert len(observed.results) == 1
+        original = observed.results[0]
+        first = replace(original, revision_id="upstream-rev-1")
+        second = replace(original, revision_id="upstream-rev-2")
+        envelope = ProviderSearchResponse(
+            results=[first, second],
+            public_notices=(
+                PublicSearchNotice(first), PublicSearchNotice(second),
+            ),
+        )
+        monkeypatch.setattr(
+            session, "search_with_response_facets",
+            lambda *args, **kwargs: envelope,
+        )
+        results = service.search(
+            "loup", provider_id=session.provider_id, force=True,
+        )
+        assert len(results) == 2
+        assert {r.revision_id for r in results} == {
+            "upstream-rev-1", "upstream-rev-2",
+        }
+        refs = [r._core_notice_cover_document_ref for r in results]
+        assert len(set(refs)) == 2
+        assert all(ref.identity_id is None for ref in refs)
+        assert len({r.record_id for r in results}) == 1
+        assert len({r.thumbnail_url for r in results}) == 1
+        assert all(read_notice_cover(service.storage, ref).epoch == 1 for ref in refs)
+
+        # Search cache contains both identities and restores their distinct
+        # Notice C refs from exact persisted coordinates, not an image URL.
+        cached = service.search(
+            "loup", provider_id=session.provider_id, force=False,
+        )
+        assert len(cached) == 2
+        assert [r._core_notice_cover_document_ref for r in cached] == refs
+
+        service.select_identity("bob")
+        batches = []
+        summary = service.search_progressive(
+            "loup", provider_id=session.provider_id, force=True,
+            on_batch=batches.append,
+        )
+        assert not summary.cancelled and summary.result_count == 2
+        assert batches and len(batches[0].results) == 2
+        assert {
+            r._core_notice_cover_document_ref
+            for r in service.last_search
+        } == set(refs)
+        assert all(read_notice_cover(service.storage, ref).epoch == 1 for ref in refs)
+        assert supplier_gets == [1]  # No extra provider HTML fetch.
+        assert service.storage.entitlements() == []
+        assert service.storage.acquisitions() == []
+    finally:
+        service.close()
+        session.close()

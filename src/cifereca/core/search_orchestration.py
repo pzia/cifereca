@@ -794,7 +794,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         if not request_current():
             return []
         provider_rows: list[SearchResult] = []
-        provider_seen: set[tuple[str, str, str, str, str]] = set()
+        provider_seen: set[tuple[str, ...]] = set()
         effective_field, contract_warning = _effective_search_field(
             session, field, provider_scope, facade_type=facade_type,
         )
@@ -1061,17 +1061,23 @@ def _search_batch_status(
     return "cached" if cached else "live"
 
 
-def _search_result_scope_key(row: SearchResult) -> tuple[str, str, str, str, str]:
-    """Deduplicate one *exact* supplier notice, never another account/edition.
+def _search_result_scope_key(row: SearchResult) -> tuple[str, ...]:
+    """Deduplicate a *source/edition*, not just its legacy catalogue record.
 
-    The same coordinates are authoritative in the SQLite mirror-v2: a
-    supplier may reuse record IDs across credentials, docbases or collections.
-    An absent collection is the same canonical empty component as mirror-v2.
-    This key is for search result de-duplication only; it grants no rights.
+    A supplier can reuse its record/docbase/collection for multiple revision
+    markers, accounts or physical/digital manifestations. Notice C, N2 and
+    the GTK list already distinguish those; discarding them in federated
+    search before Core ingestion silently loses genuine notices. This key is
+    read-only and grants neither catalogue provenance nor a right.
+
+    Mirror-v2 continues to use its historical storage key while that index is
+    replaced by the universal Notice C catalogue; never promote a dedup key
+    to an ownership/holding witness.
     """
     return (
         row.source_provider, row.source_credential, row.record_id,
         row.docbase, row.source_collection or "",
+        row.source_account_id or "", row.medium, row.revision_id or "",
     )
 
 
@@ -1129,7 +1135,7 @@ def _search_provider_session(
     """
     provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
     provider_rows: list[SearchResult] = []
-    provider_seen: set[tuple[str, str, str, str, str]] = set()
+    provider_seen: set[tuple[str, ...]] = set()
     warnings: list[str] = []
     effective_field, contract_warning = _effective_search_field(
         session, field, provider_scope, facade_type=facade_type,

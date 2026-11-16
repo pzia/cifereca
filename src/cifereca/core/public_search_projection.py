@@ -66,6 +66,25 @@ def _key(row: object) -> tuple | None:
     return values
 
 
+def _revision_marker(row: SearchResult) -> str | None:
+    """Validated, LOCAL tie-break for *ambiguous* same-record declarations.
+
+    A foreign private result may deliberately carry a different, private
+    source revision from its single sanitized public bibliography claim.
+    A revision is therefore NOT a mandatory match when exactly one public
+    declaration exists. With multiple claims for the same record, however,
+    only an exact and unique revision can disambiguate the public edition.
+    The marker is never copied into the generic public DTO.
+    """
+    revision = row.revision_id
+    if revision is None or revision == "":
+        return ""
+    if (type(revision) is not str
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", revision) is None):
+        return None
+    return revision
+
+
 def project_public_search_result(
     response: ProviderSearchResponse, row: SearchResult, *,
     provider_id: str, credential_id: str,
@@ -91,7 +110,9 @@ def project_public_search_result(
             or not _text(credential_id, required=True, limit=512)):
         return None
     key = _key(row)
-    if (key is None or row.source_provider != provider_id
+    revision = _revision_marker(row) if key is not None else None
+    if (key is None or revision is None
+            or row.source_provider != provider_id
             or row.source_credential != credential_id):
         return None
     matches = []
@@ -101,13 +122,23 @@ def project_public_search_result(
                 or notice.schema_version != 1):
             return None
         candidate_key = _key(notice.result)
-        if candidate_key is None:
+        if candidate_key is None or _revision_marker(notice.result) is None:
             return None
         if candidate_key == key:
             matches.append(notice.result)
-    if len(matches) != 1:
+    if len(matches) == 1:
+        chosen = matches[0]
+    elif len(matches) > 1:
+        exact = [
+            claim for claim in matches
+            if _revision_marker(claim) == revision
+        ]
+        if len(exact) != 1:
+            return None
+        chosen = exact[0]
+    else:
         return None
-    return _project_public_notice(key, matches[0])
+    return _project_public_notice(key, chosen)
 
 
 def _project_public_notice(
@@ -170,26 +201,41 @@ def project_public_search_results(
             or len(response.public_notices) > 10000):
         return None
     declarations: dict[tuple, list[SearchResult]] = {}
+    by_revision: dict[tuple, dict[str, list[SearchResult]]] = {}
     for declaration in response.public_notices:
         if (type(declaration) is not PublicSearchNotice
                 or type(declaration.schema_version) is not int
                 or declaration.schema_version != 1):
             return None
         key = _key(declaration.result)
-        if key is None:
+        revision = _revision_marker(declaration.result) if key is not None else None
+        if key is None or revision is None:
             return None
         declarations.setdefault(key, []).append(declaration.result)
+        by_revision.setdefault(key, {}).setdefault(
+            revision, [],
+        ).append(declaration.result)
     results: dict[int, SearchResult] = {}
     for row in response.results:
         if type(row) is not SearchResult:
             return None
         key = _key(row)
-        if key is None:
+        revision = _revision_marker(row) if key is not None else None
+        if key is None or revision is None:
             continue
         candidates = declarations.get(key, ())
-        if len(candidates) != 1:
+        if len(candidates) == 1:
+            chosen = candidates[0]
+        elif len(candidates) > 1:
+            # Same supplier ID can denote two public revisions. Use the
+            # edition marker only to break that ambiguity, in O(1) per row.
+            choices = by_revision[key].get(revision, ())
+            if len(choices) != 1:
+                continue
+            chosen = choices[0]
+        else:
             continue
-        projected = _project_public_notice(key, candidates[0])
+        projected = _project_public_notice(key, chosen)
         if projected is not None:
             results[id(row)] = projected
     return results
