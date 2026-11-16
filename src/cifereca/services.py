@@ -4589,6 +4589,15 @@ class LibraryService:
         if admission.refusal is not None:
             return admission.refusal
         identity, entitlement_id = admission.identity, admission.entitlement_id
+        # This is the original admission's durable epoch, not an epoch
+        # recaptured after staging. A->B->A cannot revive this lease.
+        source_lease = admission.source_lease
+        def source_epoch_refusal() -> dict[str, Any]:
+            return {
+                "status": "attention_required", "loan_id": source_lease.loan_id,
+                "code": "adept_identity_unproven",
+                "reason": "source_scope_changed", "retry": "explicit_only",
+            }
         trace_ref = loan_trace_ref(loan, identity.identity_id)
         local = loan_local_preparation.prepare(
             self, loan, identity=identity, entitlement_id=entitlement_id,
@@ -4597,6 +4606,11 @@ class LibraryService:
             blocked_automatic_adept_retry=blocked_automatic_adept_retry,
             time=time, _TRACE_LOG=_TRACE_LOG,
         )
+        # Local artifact inspection and preparation are callbacks too;
+        # a stale lease must never reuse an artifact or write an acquiring
+        # receipt for a connection that rotated while we prepared it.
+        if not source_lease.current(self.storage, loan):
+            return source_epoch_refusal()
         if local.outcome is not None:
             return local.outcome
         previous = local.previous_state.row
@@ -4614,6 +4628,8 @@ class LibraryService:
         ledger_base = loan_initial_receipt.ledger_base(
             loan, entitlement_id=entitlement_id, identity_id=identity.identity_id,
         )
+        if not source_lease.current(self.storage, loan):
+            return source_epoch_refusal()
         self.storage.acquisition_put(
             loan_initial_receipt.acquiring_receipt(ledger_base, loan, previous_meta)
         )
@@ -4640,6 +4656,7 @@ class LibraryService:
                     previous_meta=previous_meta, retained_acsm=retained_acsm,
                     trace_ref=trace_ref, expected_loan_id=expected_loan_id,
                     expected_record_id=expected_record_id,
+                    source_lease=source_lease,
                     AdeptProfileResolutionError=AdeptProfileResolutionError,
                     adept_acsm_plan=adept_acsm_plan, _TRACE_LOG=_TRACE_LOG,
                 )
@@ -4658,6 +4675,15 @@ class LibraryService:
                     previous_path=previous_path,
                     unique_suffix=lambda: uuid.uuid4().hex,
                 )
+                # Format detection and path planning are external callbacks.
+                # Deny revocation before even unlinking a local ADEPT target.
+                if not source_lease.current(self.storage, loan):
+                    return loan_adept_profile_guard.refuse_staged_source(
+                        self, ledger_base=ledger_base,
+                        previous_meta=previous_meta, retained_acsm=retained_acsm,
+                        trace_ref=trace_ref, expected_loan_id=expected_loan_id,
+                        raw_code="adept_borrower_ambiguous", _TRACE_LOG=_TRACE_LOG,
+                    )
                 try:
                     adept_destination.unlink(missing_ok=True)
                 except OSError:
@@ -4671,12 +4697,32 @@ class LibraryService:
                     title=loan.title,
                     loan_id=loan.id,
                 )
-                result, adept_binding = loan_adept_fulfillment.fulfill(
-                    self, request, profile_name=profile_name,
-                    adept_borrower_identity_id=adept_borrower_identity_id,
-                    trace_ref=trace_ref, time=time, _TRACE_LOG=_TRACE_LOG,
-                    trace_integer=trace_integer,
-                )
+                try:
+                    result, adept_binding = loan_adept_fulfillment.fulfill(
+                        self, request, profile_name=profile_name,
+                        adept_borrower_identity_id=adept_borrower_identity_id,
+                        trace_ref=trace_ref, time=time, _TRACE_LOG=_TRACE_LOG,
+                        trace_integer=trace_integer,
+                        source_epoch_current=lambda: source_lease.current(
+                            self.storage, loan,
+                        ),
+                    )
+                except loan_adept_fulfillment.SourceEpochRevoked:
+                    return loan_adept_profile_guard.refuse_staged_source(
+                        self, ledger_base=ledger_base,
+                        previous_meta=previous_meta, retained_acsm=retained_acsm,
+                        trace_ref=trace_ref, expected_loan_id=expected_loan_id,
+                        raw_code="adept_borrower_ambiguous", _TRACE_LOG=_TRACE_LOG,
+                    )
+                # ADEPT execution may observe connection changes while it is
+                # running. Never publish/index its result under a revoked loan.
+                if not source_lease.current(self.storage, loan):
+                    return loan_adept_profile_guard.refuse_staged_source(
+                        self, ledger_base=ledger_base,
+                        previous_meta=previous_meta, retained_acsm=retained_acsm,
+                        trace_ref=trace_ref, expected_loan_id=expected_loan_id,
+                        raw_code="adept_borrower_ambiguous", _TRACE_LOG=_TRACE_LOG,
+                    )
                 final_path, artifact_drm, artifact_format, artifact_protected, hook_info = adept_artifact_publication.publish(
                     result=result, adept_destination=adept_destination, identity_id=identity.identity_id,
                     acsm_format=acsm_format, loan=loan, repair_mode=repair_mode,
@@ -4685,6 +4731,13 @@ class LibraryService:
                     inspect_artifact=inspect_artifact, adept_acsm_plan=adept_acsm_plan,
                     uuid=uuid, _TRACE_LOG=_TRACE_LOG,
                 )
+                if not source_lease.current(self.storage, loan):
+                    return loan_adept_profile_guard.refuse_staged_source(
+                        self, ledger_base=ledger_base,
+                        previous_meta=previous_meta, retained_acsm=retained_acsm,
+                        trace_ref=trace_ref, expected_loan_id=expected_loan_id,
+                        raw_code="adept_borrower_ambiguous", _TRACE_LOG=_TRACE_LOG,
+                    )
             final_inspection, scan = loan_provider_delivery.index_local_loan_artifact(
                 self, loan, identity, final_path,
                 time=time, _TRACE_LOG=_TRACE_LOG,
