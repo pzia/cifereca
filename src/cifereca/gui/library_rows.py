@@ -10,6 +10,7 @@ from typing import Any
 
 from ..core.search import local_match_explanation
 from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
+from ..core.notice_c_local_origin_projection import valid_local_public_c_link
 
 
 def _received_local_file_label(item: dict[str, Any]) -> str | None:
@@ -162,9 +163,22 @@ def project_library_rows(
         # A rejected Core packet cannot silently downgrade to the
         # descriptive old URL. Only an unassociated legacy row may retain
         # that compatibility path; an attested row is N2-first.
+        link = item.get("_public_canonical_cover_link")
+        safe_link = (
+            item.get("_exact_local_cover_evidence") is None
+            and valid_local_public_c_link(
+                link, identity_id=item.get("identity_id"),
+                artifact_id=item.get("artifact_id"),
+                placement_id=item.get("placement_id"),
+            )
+            and item.get("_library_view_owner") in (
+                None, item.get("identity_id"),
+            )
+        )
         cover_url = (
             item.get("thumbnail_url")
-            if item.get("_exact_local_cover_evidence") is None else None
+            if item.get("_exact_local_cover_evidence") is None
+            and link is None else None
         )
         row = row_factory(key, title, author, meta, provider_label, cover_url)
         # MasterDetailPage.show_rows preserves same-key rows when presentation
@@ -197,5 +211,13 @@ def project_library_rows(
                 # A changed exact source must rebind an existing GTK row even
                 # if the visible thumbnail_url is unchanged (N3 still hot).
                 row._public_row_content = (*row._public_row_content, facts)
+            elif safe_link:
+                # This is a Core-vetted public catalogue fallback, not a
+                # different private Placement and never an N3 URL shortcut.
+                row._cover_public_c_link = link
+                row._cover_document_ref = link.document
+                row._public_row_content = (
+                    *row._public_row_content, link.document, link.epoch,
+                )
         rows.append(row)
     return rows, objects
