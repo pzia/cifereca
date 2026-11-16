@@ -82,7 +82,9 @@ def _coordinate(item: object, identity_id: str):
             or type(item.source_credential) is not str
             or not item.source_credential
             or type(item.id) is not str or not item.id
-            or type(item.source_account_id) not in (str, type(None))
+            # Unknown borrower is not the primary-account empty sentinel.
+            # Native provider session readers must supply a pinned owner.
+            or type(item.source_account_id) is not str
             or item.thumbnail_url is not None):
         return None
     # Only a provider branch with a proven Search mapping may link
