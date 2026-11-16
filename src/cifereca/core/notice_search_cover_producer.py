@@ -35,7 +35,8 @@ def admit_public_search_cover(
     does not attest a complete negative inventory.
 
     Coordinates preserve the producing provider, exact record, document
-    base, collection and medium. They do not merge editions or assign rights.
+    base, collection, medium and optional supplier revision/edition marker.
+    They do not merge editions or assign rights.
     """
     if (type(row) is not SearchResult
             or type(public_cover_url) is not str or not public_cover_url):
@@ -57,7 +58,7 @@ def admit_public_search_cover(
         ),
         edition_id="edition:" + _coordinate_digest(
             row.source_provider, row.source_collection, row.record_id,
-            row.docbase, row.medium,
+            row.docbase, row.medium, row.revision_id,
         ),
         manifestation_role=(
             "digital" if row.medium == "digital"
