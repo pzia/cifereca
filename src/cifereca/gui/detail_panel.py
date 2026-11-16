@@ -827,7 +827,14 @@ class DetailPanel(Gtk.Box):
                     button = Gtk.LinkButton(uri=uri, label=str(action.title))
                 elif callable(action.callback):
                     button = self.window.action_button(str(action.title), str(action.icon_name))
-                    button.connect("clicked", lambda _b, cb=action.callback: cb())
+                    def activate_cached(clicked, cb=action.callback):
+                        # The old cached-extension action is revoked by
+                        # _clear_actions() before replacing this contribution.
+                        # A queued GTK click cannot dispatch it afterward.
+                        if getattr(clicked, "_cifereca_action_context_revoked", False):
+                            return
+                        return cb()
+                    button.connect("clicked", activate_cached)
                 else:
                     continue
                 identifier = f"book-cache:{plugin_id}:{action.id}"
