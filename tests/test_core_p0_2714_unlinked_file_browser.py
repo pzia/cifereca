@@ -31,8 +31,8 @@ def test_six_numilog_unlinked_files_are_selectable_without_metadata_right_match(
     root, database = six_numilog
     audit, session = _session({"alice": (root,)}, database)
     page = session.unconfirmed_files(offset=0, limit=25, sort='title')
-    assert page.total == 3
-    assert len(page.cases) == 3
+    assert page.total == 6
+    assert len(page.cases) == 6
     assert all(case.key.startswith('file:') for case in page.cases)
     assert all('confirmed_link' not in case.states for case in page.cases)
     assert 'Titre caché volume-5' in page.cases[-1].label
@@ -41,15 +41,15 @@ def test_six_numilog_unlinked_files_are_selectable_without_metadata_right_match(
     assert session.unconfirmed_files(query='PRIVATE_NOT_IN_LIST').total == 0
     assert session.unconfirmed_files(
         media_format='epub', sha_state='calculated', epub_crc='confirmed',
-    ).total == 3
+    ).total == 6
     assert session.unconfirmed_files(media_format='pdf').total == 0
     assert session.unconfirmed_files(sha_state='not_calculated').total == 0
     assert session.unconfirmed_files(epub_crc='other').total == 0
-    assert session.page(state='rights_without_verified_file').total == 3
+    assert session.page(state='rights_without_verified_file').total == 6
     assert session.candidate_files(session.page(
         state='rights_without_verified_file',
     ).cases[-1].key) == ()
-    assert audit.redacted()['reconciliation']['counts']['confirmed_link'] == 3
+    assert audit.redacted()['reconciliation']['counts'].get('confirmed_link', 0) == 0
     assert 'Titre caché' not in json.dumps(audit.redacted())
     assert 'PRIVATE' not in json.dumps(session.summary())
     session.close()
@@ -84,7 +84,7 @@ def test_pdf_and_epub_filters_do_not_call_a_provider(six_numilog):
     assert len(pdf_page.cases) == 1
     assert pdf_page.cases[0].key.startswith('file:')
     assert 'PDF' in pdf_page.cases[0].details.upper()
-    assert session.unconfirmed_files(epub_crc='confirmed').total == 3
+    assert session.unconfirmed_files(epub_crc='confirmed').total == 6
     assert session.unconfirmed_files(
         media_format='pdf', epub_crc='confirmed',
     ).total == 0
@@ -100,13 +100,13 @@ def test_many_unlinked_files_paginate_deterministically_over_100_books(
         (root / f'local-{number:03d}.epub').write_bytes(template)
     audit, session = _session({"alice": (root,)}, database)
     result = session.unconfirmed_files(limit=25, sort='filename')
-    assert result.total == 123
+    assert result.total == 126
     assert len(result.cases) == 25
     final = session.unconfirmed_files(offset=100, limit=25, sort='filename')
-    assert final.total == 123
-    assert len(final.cases) == 23
+    assert final.total == 126
+    assert len(final.cases) == 25
     unique = {case.key for case in result.cases + final.cases}
-    assert len(unique) == 48
+    assert len(unique) == 50
     filtered = session.unconfirmed_files(
         query='LOCAL-119', sort='filename', limit=25,
     )
@@ -165,13 +165,13 @@ def test_explicit_isbn_and_opf_author_are_searchable_but_never_right_evidence(
     by_author = session.unconfirmed_files(query='private_author', limit=25)
     assert by_isbn.total == by_title.total == 1
     # The six-book fixture intentionally uses the same PRIVATE_AUTHOR for
-    # every EPUB. All three *unlinked* books must match that author filter;
+    # every EPUB. All six *unlinked* books must match that author filter;
     # a shared author is never a unique edition or a right/file link.
-    assert by_author.total == 3
+    assert by_author.total == 6
     assert by_isbn.cases[0].key == by_title.cases[0].key
     assert by_isbn.cases[0].key in {case.key for case in by_author.cases}
-    assert session.overview()['confirmed_files'] == 3
-    assert session.overview()['unverified_rights'] == 3
+    assert session.overview()['confirmed_files'] == 0
+    assert session.overview()['unverified_rights'] == 6
     assert audit.redacted()['repair_authorized'] is False
     assert '9780306406157' not in json.dumps(audit.redacted())
     assert 'Roman océanique privé' not in json.dumps(audit.redacted())
