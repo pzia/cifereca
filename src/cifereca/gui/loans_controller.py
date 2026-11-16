@@ -389,6 +389,7 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
     # An A -> B -> A round trip has the same identity ID but invalidates an
     # earlier refresh. Guard the GTK callback by the Core account epoch too.
     account_epoch = getattr(service, "_account_context_epoch", None)
+    source_epoch = getattr(service, "_source_context_epoch", None)
     library_revision = getattr(self, "_loan_cover_library_revision", 0)
     def work():
         rows = service.refresh_identity_loans(
@@ -402,6 +403,7 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
         )
         attach_borrower_public_c(
             service.storage, rows, identity_id=identity_id,
+            account_epoch=account_epoch, source_epoch=source_epoch,
         )
         # Resolve a missing loan cover only on this existing background
         # worker, once per refresh. Core's library_entries(scan=False) reads
@@ -427,7 +429,8 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
             return
         current = service.current_identity
         if (current.identity_id if current else None) == identity_id:
-            if getattr(service, "_account_context_epoch", None) != account_epoch:
+            if (getattr(service, "_account_context_epoch", None) != account_epoch
+                    or getattr(service, "_source_context_epoch", None) != source_epoch):
                 return
             rows, cover_rows = payload
             if getattr(self, "_loan_cover_library_revision", 0) == library_revision:
