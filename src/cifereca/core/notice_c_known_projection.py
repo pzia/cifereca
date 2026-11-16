@@ -110,4 +110,44 @@ def merge_public_notice_c_known_rows(
     return rows
 
 
-__all__ = ["merge_public_notice_c_known_rows"]
+def matching_live_public_canonical_ref(row: object, *, identity_id: str):
+    """Match one same-call live result to ITS OWN canonical public C ref.
+
+    A mutable provider-facing SearchResult may carry arbitrary attributes.
+    Re-derive both source and edition coordinates under the private Core
+    witness; a title/URL alone cannot retire a C-first row from the view.
+    Pure projection: no DB, GTK, entitlement, image IO or provider calls.
+    """
+    from ..models import SearchResult
+    from .search_orchestration import _verified_public_cover_witness
+    from .notice_search_cover_producer import admit_public_search_cover
+    from .notice_cover_projection import notice_cover_document_ref
+    from .notice_c_cover_index import (
+        canonical_cover_document_ref, is_canonical_cover_document,
+    )
+
+    if (type(row) is not SearchResult
+            or type(identity_id) is not str or not identity_id
+            or not _verified_public_cover_witness(row)):
+        return None
+    source = getattr(row, "_core_notice_cover_document_ref", None)
+    canonical = getattr(row, "_core_notice_canonical_cover_document_ref", None)
+    if not is_canonical_cover_document(canonical):
+        return None
+    try:
+        admitted = admit_public_search_cover(
+            row, identity_id=identity_id, observed_at=1,
+            public_cover_url=row.thumbnail_url,
+        )
+        if (admitted is not None
+                and notice_cover_document_ref(admitted.key) == source
+                and canonical_cover_document_ref(
+                    admitted.key.edition_id
+                ) == canonical):
+            return canonical
+    except (TypeError, ValueError, UnicodeError):
+        pass
+    return None
+
+
+__all__ = ["merge_public_notice_c_known_rows", "matching_live_public_canonical_ref"]
