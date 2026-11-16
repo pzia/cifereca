@@ -251,9 +251,13 @@ def persist_consolidated_cover_source(
         if expected_epoch is not None and expected_epoch != epoch:
             raise ValueError("canonical_cover_epoch_changed")
         rows = dict(previous["sources"]) if previous else {}
+        # A partial parser may expose a candidate while declaring its
+        # inventory incomplete. Preserve the source's pending provenance,
+        # but never promote that incomplete cover to an N1 decision.
         urls = (
             [x.url for x in source.attribute.candidates]
-            if visibility == "public" else []
+            if visibility == "public"
+            and source.attribute.state == "available" else []
         )
         incoming = {
             "provider": source.observation.key.provider_id,
