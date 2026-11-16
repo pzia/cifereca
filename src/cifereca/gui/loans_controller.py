@@ -253,14 +253,25 @@ def _render_loans(self) -> None:
             item._cover_document_ref = evidence.scope
             item._cover_local_evidence = evidence
         else:
-            # The Loan DTO itself may attest its direct supplier image. A
-            # stronger origin/EPUB from Library never gets downgraded to it.
-            from cifereca.gui.loan_supplier_document_cover_bridge import exact_supplier_loan_cover
-            supplier = exact_supplier_loan_cover(self, loan, displayed=display)
-            if supplier is not None:
-                item._cover_document_ref = supplier.document
-                item._cover_loan_supplier_evidence = supplier
-                item._loan_source_item = loan
+            from .notice_c_paris_personal_bridge import (
+                current_paris_personal_public_c,
+            )
+            public_c = current_paris_personal_public_c(self, loan)
+            if public_c is not None:
+                # One source-exact public C for list/detail; no unqualified
+                # direct supplier URL may displace its verified N2 packet.
+                item._cover_document_ref = public_c.document
+                item._cover_paris_public_c = public_c
+                item.thumbnail_url = None
+            else:
+                # The original Loan DTO still attests its own image where
+                # no actual public C source coordinates were proven.
+                from cifereca.gui.loan_supplier_document_cover_bridge import exact_supplier_loan_cover
+                supplier = exact_supplier_loan_cover(self, loan, displayed=display)
+                if supplier is not None:
+                    item._cover_document_ref = supplier.document
+                    item._cover_loan_supplier_evidence = supplier
+                    item._loan_source_item = loan
         # MasterDetailPage.show_rows has an append-only fast path when keys
         # stay identical. A new exact local cover for the same loan must
         # invalidate that presentation (and repaint the mapped Gtk.ListView),
@@ -274,6 +285,13 @@ def _render_loans(self) -> None:
             # Do not run the URL-only in-place repaint optimization when a
             # documentary association changes. Force cell rebind at N2.
             item._public_row_content += (evidence,)
+        elif getattr(item, "_cover_paris_public_c", None) is not None:
+            item._public_row_content += (
+                item._cover_paris_public_c.document,
+                item._cover_paris_public_c.canonical_epoch,
+                item._cover_paris_public_c.account_epoch,
+                item._cover_paris_public_c.source_epoch,
+            )
         elif getattr(item, "_cover_loan_supplier_evidence", None) is not None:
             item._public_row_content += (item._cover_loan_supplier_evidence,)
         ranked_rows.append((due.sort_key, item))
