@@ -1714,7 +1714,7 @@
         "tests/test_core_p0_5975_adept_return_receipt_read_lease.py",
         "tests/test_core_p0_1120_closure_gate.py"
       ],
-      "pr": "pending",
+      "pr": "#6458",
       "in_ast_metric": false
     }
   ],
