@@ -239,3 +239,16 @@ def test_supplier_branch_change_revokes_previously_admitted_history_c(tmp_path):
         assert db.entitlements() == []
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("change", [
+    {"provider": "SYRACUSE", "medium": "physical"},
+    {"provider": "UNSUPPORTED", "medium": "digital"},
+    {"thumbnail_url": "https://covers.example.org/direct-provider.jpg"},
+])
+def test_missing_native_edition_proof_does_not_rewrite_history_owner(change):
+    account = _account()
+    item = _provider_history(**change)
+    assert _pinned_history_c_rows([item], account) == []
+    assert item.identity_id is None
+    assert item.source_account_id is None
