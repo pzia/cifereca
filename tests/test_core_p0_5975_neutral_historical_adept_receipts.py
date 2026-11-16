@@ -107,3 +107,21 @@ def test_nonparis_rejected_preflight_does_not_fall_back_to_paris_or_ui():
     service, calls = _reader(loan, _account(provider_id="paris"))
     assert service.verify_loan_return(loan)["status"] == "failed"
     assert calls == [("preflight", True)]
+
+
+@pytest.mark.parametrize("method", [
+    "return_loan_prefer_adept", "return_digital",
+    "_return_loan_prefer_adept_guarded", "_return_digital_guarded",
+])
+def test_read_only_nonparis_receipt_never_reopens_retired_return_command(method):
+    from cifereca.plugin_api import AttentionRequired
+
+    loan = _loan(source_provider="future-library")
+    service, calls = _reader(loan, _account(provider_id="future-library"))
+    # Even a readable historical status is not an action authorization.
+    assert service.verify_loan_return(loan)["status"] == "request_sent"
+    before_calls = tuple(calls)
+    with pytest.raises(AttentionRequired) as failure:
+        getattr(service, method)(loan)
+    assert failure.value.code == "loan_return_removed"
+    assert tuple(calls) == before_calls
