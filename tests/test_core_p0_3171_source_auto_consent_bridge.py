@@ -125,7 +125,8 @@ def test_numilog_epoch_and_bnf_mode_cannot_leak_across_types(policy):
         assert bridge.toggle_state(conn, loan) == "off"  # no loan epoch
     db.metadata_set("sync.source.bnf_auto." + bnf_id + ".revision", "b" * 32)
     with db._lock, db._connect() as conn:
-        assert bridge.toggle_state(conn, loan) == "on"
+        # A historical loan ON, even with valid epoch, is no longer a grant.
+        assert bridge.toggle_state(conn, loan) == "off"
         assert bridge.toggle_state(conn, purchase) == "on"
 
 
@@ -235,8 +236,8 @@ def test_optional_right_state_does_not_veto_canonical_download(
 
 
 
-def test_legacy_bnf_source_opt_in_is_scope_and_revision_pinned(policy):
-    """Only the existing SOURCE consent transfers to canonical execution."""
+def test_legacy_bnf_source_opt_in_remains_readable_but_never_admits_a_get(policy):
+    """An old ON/revision is descriptive evidence, not CAS permission."""
     service, db, _ = policy
     loan = replace(
         service.source, kind="loan",
@@ -252,9 +253,10 @@ def test_legacy_bnf_source_opt_in_is_scope_and_revision_pinned(policy):
     assert bridge.legacy_source_auto_policy(db, loan.scope, "loan") == (
         "on", "a" * 32,
     )
-    assert bridge.legacy_source_auto_current(db, loan, "a" * 32)
+    assert not bridge.legacy_source_auto_current(db, loan, "a" * 32)
     with db._lock, db._connect() as conn:
-        assert bridge.legacy_source_auto_in_transaction(conn, loan, "a" * 32)
+        assert bridge.toggle_state(conn, loan) == "off"
+        assert not bridge.legacy_source_auto_in_transaction(conn, loan, "a" * 32)
     db.metadata_set(switch, "0")
     assert not bridge.legacy_source_auto_current(db, loan, "a" * 32)
     with db._lock, db._connect() as conn:
@@ -262,7 +264,11 @@ def test_legacy_bnf_source_opt_in_is_scope_and_revision_pinned(policy):
     db.metadata_set(switch + ".revision", "b" * 32)
     db.metadata_set(switch, "1")
     assert not bridge.legacy_source_auto_current(db, loan, "a" * 32)
-    assert bridge.legacy_source_auto_current(db, loan, "b" * 32)
+    assert not bridge.legacy_source_auto_current(db, loan, "b" * 32)
+    # The historical row itself is retained for upgrades and diagnostics.
+    assert bridge.legacy_source_auto_policy(db, loan.scope, "loan") == (
+        "on", "b" * 32,
+    )
 
 
 def test_legacy_bnf_opt_in_does_not_override_source_disable(policy):

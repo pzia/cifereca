@@ -402,6 +402,11 @@ def test_source_consent_accepts_guarded_only_v2_delivery_without_legacy_get(
 ):
     """A provider need not expose an unguarded content endpoint for Core Sync."""
     service, db, root, calls, broker = source
+    # Offline v2 runtime fixture must attest its exact provider-to-runtime binding.
+    service.runtime_acquisition_binding = (
+        lambda provider: "runtime.synthetic"
+        if provider == service.account.provider_id else None
+    )
     del service.session.downloadable_selected_delivery_candidate
     service.session.rights_selected_delivery_candidate = (
         lambda *_args, **_kwargs: pytest.fail("unguarded legacy GET called")
@@ -410,7 +415,7 @@ def test_source_consent_accepts_guarded_only_v2_delivery_without_legacy_get(
 
     def execute_runtime(request):
         assert request["schema_version"] == 2
-        assert request["source"]["type"] == "kobo"
+        assert request["source"]["type"] == service.account.provider_id
         assert request["format"] == "pdf"
         destination = request["destination"]
         from pathlib import Path
@@ -437,7 +442,7 @@ def test_source_consent_accepts_guarded_only_v2_delivery_without_legacy_get(
             assert set(extra) == {"execute_runtime"}
             extra["execute_runtime"]({
                 "schema_version": 2,
-                "source": {"type": "kobo", "provider": "synthetic"},
+                "source": {"type": service.account.provider_id, "provider": "synthetic"},
                 "destination": str(path),
                 "format": "pdf",
             })
