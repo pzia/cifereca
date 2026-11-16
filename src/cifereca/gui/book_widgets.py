@@ -577,6 +577,14 @@ class BookListCell(Gtk.Box):
             return register_exact_search_document(
                 self.window, search.source_item, service, search, document,
             )
+        paris_public = getattr(item, "_cover_paris_public_c", None)
+        if paris_public is not None:
+            from .notice_c_paris_personal_bridge import public_c_is_current
+            return (
+                getattr(item, "_cover_local_evidence", None) is None
+                and document == paris_public.document
+                and public_c_is_current(self.window, paris_public)
+            )
         supplier = getattr(item, "_cover_loan_supplier_evidence", None)
         if supplier is not None:
             # Supplier proof and EPUB Placement are incompatible owners.
@@ -637,6 +645,12 @@ class BookListCell(Gtk.Box):
             return False
 
     def _search_cover_guard(self, item: BookListItem) -> dict:
+        paris_public = getattr(item, "_cover_paris_public_c", None)
+        if paris_public is not None:
+            from .notice_c_paris_personal_bridge import public_c_is_current
+            return {
+                "is_current": lambda: public_c_is_current(self.window, paris_public),
+            }
         proof = getattr(item, "_cover_search_evidence", None)
         from .search_document_cover_bridge import search_document_is_current
         return {"is_current": lambda: search_document_is_current(self.window, proof)}
@@ -654,7 +668,9 @@ class BookListCell(Gtk.Box):
                 service, document, variant="list", priority=10,
                 on_texture_applied=getattr(item, "_cover_paint_observer", None),
                 **(self._search_cover_guard(item)
-                   if getattr(item, "_cover_search_evidence", None) is not None else {}),
+                   if (getattr(item, "_cover_search_evidence", None) is not None
+                           or getattr(item, "_cover_paris_public_c", None) is not None)
+                       else {}),
             )
             return
         self.cover.bind_url(
@@ -745,7 +761,9 @@ class BookListCell(Gtk.Box):
                     service, document, variant="list", priority=10,
                     on_texture_applied=getattr(item, "_cover_paint_observer", None),
                     **(self._search_cover_guard(item)
-                       if getattr(item, "_cover_search_evidence", None) is not None else {}),
+                       if (getattr(item, "_cover_search_evidence", None) is not None
+                           or getattr(item, "_cover_paris_public_c", None) is not None)
+                       else {}),
                 )
         elif item.thumbnail_url:
             self.cover.bind_url(
