@@ -1682,7 +1682,7 @@
         "tests/test_core_p0_2565_reconciliation_preindex_deadline.py",
         "tests/test_core_p0_5048_neutral_local_provenance_projection.py"
       ],
-      "pr": "#6423",
+      "pr": "#6426",
       "in_ast_metric": true
     }
   ],
