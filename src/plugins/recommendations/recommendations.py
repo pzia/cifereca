@@ -651,6 +651,52 @@ def _public_cover_url(item: Any) -> str | None:
     return None
 
 
+
+def _attested_recommendation_c_cover(
+    ranked: Any, *, identity_id: str | None,
+    catalogue_sources: tuple[str, ...],
+):
+    """Reuse an already published Core C, never a recommendation ISBN join.
+
+    A ranking may unify works from different suppliers for discovery; that
+    affinity cluster is NOT an edition identity. Only a single original
+    same-call public SearchResult, with its unforgeable Core source witness
+    and matching exact catalogue variant, can provide a canonical DocumentRef.
+    Pure projection: no DB, network, image I/O or right lookup on GTK.
+    """
+    if (type(ranked) is not RankedCandidate
+            or type(identity_id) is not str or not identity_id
+            or type(catalogue_sources) is not tuple
+            or len(catalogue_sources) > 128
+            or any(type(x) is not str for x in catalogue_sources)
+            or type(ranked.notices) is not tuple
+            or len(ranked.notices) != 1):
+        return None
+    original = ranked.notices[0]
+    if type(original) is not CatalogNoticeVariant:
+        return None
+    from cifereca.models import SearchResult
+    item = ranked.item
+    if (type(item) is not SearchResult
+            or original.item is not item
+            or original.source_provider != item.source_provider
+            or original.source_credential != item.source_credential
+            or original.record_id != item.record_id
+            or original.docbase != item.docbase
+            or original.source_collection != item.source_collection
+            or (catalogue_sources
+                and original.source_provider not in catalogue_sources)
+            or type(ranked.sources) is not tuple
+            or set(ranked.sources) != {original.source_provider}):
+        return None
+    from cifereca.core.notice_c_known_projection import (
+        matching_live_public_canonical_ref,
+    )
+    return matching_live_public_canonical_ref(
+        item, identity_id=identity_id,
+    )
+
+
 def _attested_catalogue_isbns(
     notices: Any, *, selected_sources: tuple[str, ...] = (), limit: int = 4,
 ) -> tuple[str, ...]:
@@ -2618,6 +2664,10 @@ class UxRecommendationsView:
             if reasons:
                 meta_parts.append("Pourquoi : " + reasons)
 
+            cover_ref = _attested_recommendation_c_cover(
+                ranked, identity_id=self.selected_identity_id(),
+                catalogue_sources=catalogue_sources,
+            )
             rows.append(
                 UiBookListEntry(
                     key=key,
@@ -2628,6 +2678,7 @@ class UxRecommendationsView:
                            if (score := _public_affinity_score(ranked.score)) is not None
                            else ""),
                     thumbnail_url=_public_cover_url(item),
+                    cover_document_ref=cover_ref,
                 )
             )
 
@@ -2664,7 +2715,10 @@ class UxRecommendationsView:
                 # constant, a progressive enrichment may mutate its public
                 # cover/title/author. Keep detail and list on the same view
                 # projection; do not request another supplier search.
-                presentation = (row.title, row.subtitle, row.thumbnail_url)
+                presentation = (
+                    row.title, row.subtitle, row.thumbnail_url,
+                    row.cover_document_ref,
+                )
                 if (
                     selection["ranked"] is not mapping[key]
                     or selection.get("catalogue_sources") != catalogue_sources
@@ -2748,7 +2802,10 @@ class UxRecommendationsView:
             }
             self._exact_notice_state = state
         state["provisional"] = self._provisional_active
-        state["row_presentation"] = (row.title, row.subtitle, row.thumbnail_url)
+        state["row_presentation"] = (
+            row.title, row.subtitle, row.thumbnail_url,
+            row.cover_document_ref,
+        )
         self._llm_selected_row = row
         if self._llm_button is not None:
             self._llm_button.set_sensitive(not self._busy and self._llm_handle is None)
@@ -3243,6 +3300,14 @@ class UxRecommendationsView:
                 title=title,
                 subtitle=author,
                 thumbnail_url=thumbnail,
+                cover_document_ref=(
+                    _attested_recommendation_c_cover(
+                        ranked, identity_id=exact_identity,
+                        catalogue_sources=catalogue_sources,
+                    )
+                    if row.cover_document_ref is not None
+                    else None
+                ),
                 badges=tuple(badges),
                 sections=tuple(sections),
                 actions=tuple(actions),
