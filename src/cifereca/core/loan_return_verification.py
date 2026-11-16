@@ -12,6 +12,7 @@ from inspect import getattr_static
 from types import SimpleNamespace
 from typing import Any
 from ..models import Account, Loan
+from .provider_identifier import valid_provider_identifier
 
 
 def _paris_inventory_rows_well_formed(rows: Any) -> bool:
@@ -34,8 +35,9 @@ def _paris_inventory_rows_well_formed(rows: Any) -> bool:
 def _paris_inventory_exact_borrower(rows: Any, account: Any) -> bool:
     """A complete source can prove absence ONLY for its intended borrower.
 
-    The normal Paris adapter stamps every row with the source credential and
-    borrower, including the primary account sentinel. A foreign member's
+    An installed adapter stamps every row with exact source and borrower
+    coordinates. The historical Paris primary sentinel remains a legacy
+    account convention, not an authority inferred from the provider name. A foreign member's
     rows (or rows missing these coordinates) cannot certify this member's
     loan as returned. A row may omit identity_id in the legacy Paris adapter;
     an explicitly *different* identity is never accepted.
@@ -43,7 +45,7 @@ def _paris_inventory_exact_borrower(rows: Any, account: Any) -> bool:
     if type(account) is not Account or not _paris_inventory_rows_well_formed(rows):
         return False
     if not (
-        type(account.provider_id) is str and account.provider_id == 'paris'
+        valid_provider_identifier(account.provider_id)
         and type(account.credential_id) is str and bool(account.credential_id)
         and type(account.unique_id) is str
         and type(account.identity_id) is str and bool(account.identity_id)
@@ -194,10 +196,13 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
         raise ValueError("return_inventory_branch_ambiguous")
     if not presence:
         if typed:
-            # Positive observations can prove a loan is still present under
-            # partial coverage. Absence requires an explicit end of DILICOM
-            # pagination for this *same* account and process context.
-            if not snapshot.branch_claims_complete("dilicom", "digital"):
+            # Positive observations can prove presence even under partial
+            # coverage. Absence instead needs an atomic, complete branch
+            # attestation for the exact *requested* documentary source and
+            # medium, never a Core hardcoded supplier or catalog branch.
+            if (loan.medium != "digital" or not snapshot.branch_claims_complete(
+                loan.provider.casefold(), loan.medium,
+            )):
                 raise ValueError("return_inventory_not_exhaustive")
         else:
             # No atomic pagination proof exists in a v1 list or error channel.
