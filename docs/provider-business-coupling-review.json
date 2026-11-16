@@ -300,6 +300,56 @@
       ],
       "retirement_pr": "",
       "rationale": "This is a read-only, bounded compatibility veto, not active Core policy for new providers. Removing it without removing v1 reading would permit cross-branch token replay. The scanner reports 1 retained historical signal, so #6422 is AST delta 0 despite retiring the active Paris/DILICOM v2 writer predicate."
+    },
+    {
+      "id": "site-ce18a3f96ffb1a6a1ca88708",
+      "classification": "false_positive",
+      "journey": "Source-neutral local ADEPT runtime profile observation after explicit Settings request",
+      "productive_caller": "LibraryService.check_source_adept_runtime -> _inspect_source_adept_runtime -> kobo_profiles (installed Adobe ADEPT runtime only)",
+      "effect": "Reads bounded local ADEPT profile inventory, compares the source-scoped status before/after, and describes ACSM capability; no provider commerce search, download, fulfillment, Adobe sign-in or entitlement",
+      "authority": "Exact persisted source/identity/profile through normal_source_adept_status, never supplier retail brand or GTK selection",
+      "replacement_contract": "Existing source-neutral check_source_adept_runtime is the productive entrypoint; the kobo_profiles name identifies a technical ADEPT runtime, not Kobo purchase eligibility",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_adept_readiness.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "A runtime-specific profile enumerator is a technical plugin diagnostic false positive, not a Core commerce-provider dispatch. Retain bounded before/after source lease.",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-9db736c5a6459afb19e60a9a",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Read-only historical ADEPT return status for an exact loan source across providers",
+      "productive_caller": "LibraryService.adept_return_status_for_loan -> _paris_adept_identity_for_loan (generic v16 source-scoped borrower resolver) before inspection of same-source historical receipts",
+      "effect": "Returns only a diagnostic status with return_available=False on uncertain borrower/source; verifies exact SQLite source owner, grant v16 and loan/receipt coordinates, never invokes return mutation or trusts historical v15 Paris for another supplier",
+      "authority": "Persisted connection identity, immutable loan source, source-scoped v16 grant, exact acquisition and entitlement receipts; not a Paris supplier authorization",
+      "replacement_contract": "Retain source-neutral v16 borrower recheck and legacy historical status ABI until generic ADEPT return-status facade/receipt evidence is fully migrated; no provider-specific positive grant",
+      "tests": [
+        "tests/test_core_p0_5975_adept_return_source_neutral.py",
+        "tests/test_core_p0_5975_adept_return_exact_source_scope.py",
+        "tests/test_core_p0_5975_adept_return_status_borrower_refusal.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "The Paris-named callback is only the legacy method signature. This is still an active safety refusal, not a supplier-specific execution branch to delete for AST metrics.",
+      "reachability": "productive"
+    },
+    {
+      "id": "site-a99f3f4da32247a6a6efec04",
+      "classification": "safety_guard_pending_contract",
+      "journey": "Legacy saved-Paris ADEPT runtime inspection compatibility facade",
+      "productive_caller": "LibraryService.check_normal_paris_adept_runtime -> _inspect_source_adept_runtime -> normal_paris_adept_status saved Config revalidation; historical direct callers/tests only after GUI #6464 cutover",
+      "effect": "Read-only explicit local Adobe runtime observation bound to historical saved Paris connection; rechecks the saved source before and after profile enumeration and fails closed on changed Config. No Adobe authorization, provider GET or private acquisition",
+      "authority": "Exact persisted historical primary_paris_connection_id and local ADEPT identity binding, not arbitrary provider selection or an automatic account grant",
+      "replacement_contract": "GUI Settings now calls check_source_adept_runtime with explicit saved provider+connection; preserve historical service method solely for API/upgrade compatibility until its callers are retired",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_adept_readiness.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py",
+        "tests/test_core_ui_p1_1063_runtime_button.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "A retained compatibility API and source-revalidation guard, not a new Paris-only DRM permission. Do not count as removed AST while callable or erase its stale-result veto.",
+      "reachability": "legacy_only"
     }
   ],
   "retirements": [
