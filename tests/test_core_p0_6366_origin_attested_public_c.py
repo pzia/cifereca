@@ -26,12 +26,14 @@ from cifereca.core.notice_c_origin_link_producer import (
 from cifereca.core.notice_cover_repository import read_notice_cover, _opaque_key
 from cifereca.core.search_orchestration import _mirror_remote_results
 from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
+from cifereca.gui.search_document_cover_bridge import exact_remote_search_document
 from cifereca.storage import Storage
 from tests.test_core_p0_3171_atomic_publication_v14 import (
     new_source, publish, register, target,
 )
 from tests.test_core_p0_6366_same_call_public_cover_writer import witnessed
 from tests.test_core_p0_6366_real_search_notice_c_ingestion import public_row
+from tests.test_core_p1_6168_search_remote_document_gateway import host
 
 
 A_URL = "https://covers.example.org/origin-bnf.jpg"
@@ -107,6 +109,12 @@ def test_two_completed_real_provider_origins_publish_shared_c_on_live_search(
         assert matching_live_public_canonical_ref(
             b, identity_id="A",
         ) == shared
+        # The *real* Search GUI list/detail gateway receives that exact
+        # canonical ref, not the provider's individual thumbnail scope.
+        window_b, _, key_b = host(b)
+        visible_b = exact_remote_search_document(window_b, b, key_b)
+        assert visible_b is not None and visible_b.document == shared
+        assert {c.url for c in visible_b.candidates} == {B_URL}
         stored = read_consolidated_notice_cover(db, shared)
         assert stored is not None and len(stored.sources) == 2
         assert {proof.provider_id for proof in stored.sources} == {
@@ -123,6 +131,10 @@ def test_two_completed_real_provider_origins_publish_shared_c_on_live_search(
         assert matching_live_public_canonical_ref(
             a_fresh, identity_id="A",
         ) == shared
+        window_a, _, key_a = host(a_fresh)
+        visible_a = exact_remote_search_document(window_a, a_fresh, key_a)
+        assert visible_a is not None and visible_a.document == shared
+        assert {c.url for c in visible_a.candidates} == {A_URL}
         assert matching_live_public_canonical_ref(
             replace(a_fresh), identity_id="A",
         ) is None
