@@ -192,3 +192,65 @@ def test_live_list_detail_shared_canonical_n2_reader_and_foreign_ref_rejected(
         covers.close()
         loader.close()
         db.close()
+
+
+def test_canonical_live_to_known_comparison_refuses_forged_or_cloned_claims(
+    tmp_path,
+):
+    from cifereca.core.notice_c_known_projection import (
+        matching_live_public_canonical_ref,
+    )
+
+    db = Storage(tmp_path / "preview.sqlite")
+    try:
+        row = witnessed(public_row())
+        assert mirror(db, [row]) == 1
+        canonical = row._core_notice_canonical_cover_document_ref
+        assert matching_live_public_canonical_ref(
+            row, identity_id="alice",
+        ) == canonical
+        assert matching_live_public_canonical_ref(
+            replace(row), identity_id="alice",
+        ) is None
+        row._core_notice_canonical_cover_document_ref = (
+            canonical_cover_document_ref("edition:someone-else")
+        )
+        assert matching_live_public_canonical_ref(
+            row, identity_id="alice",
+        ) is None
+        row.thumbnail_url = OTHER_URL
+        assert matching_live_public_canonical_ref(
+            row, identity_id="alice",
+        ) is None
+    finally:
+        db.close()
+
+
+def test_c_first_live_search_shows_one_row_for_same_attested_edition(
+    tmp_path,
+):
+    from tests.test_search_results_view import _host
+
+    db = Storage(tmp_path / "merged-view.sqlite")
+    try:
+        live = witnessed(public_row())
+        assert mirror(db, [live]) == 1
+        page = search_public_notice_c(db, "Même titre")
+        known = merge_public_notice_c_known_rows([], page, identity_id="alice")
+        assert len(known) == 1
+        view = _host()
+        view._search_local_objects = {known[0]["key"]: known[0]}
+        view._remote_search_results = [live]
+        view._populate_search([live], announce=False)
+        rows = view.search_page.show_rows.call_args.args[0]
+        assert len(rows) == 1
+        assert rows[0].key.startswith("bnf:")
+        # A forged canonical ref must not erase a different C-first card.
+        live._core_notice_canonical_cover_document_ref = (
+            canonical_cover_document_ref("edition:foreign-source")
+        )
+        view._populate_search([live], announce=False)
+        rows = view.search_page.show_rows.call_args.args[0]
+        assert len(rows) == 2
+    finally:
+        db.close()
