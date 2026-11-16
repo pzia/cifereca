@@ -135,3 +135,35 @@ def test_other_paris_borrower_keeps_existing_selected_right_path(setup):
         admission_current=lambda: True,
     ) is None
     assert list(attempt.iterdir()) == []
+
+
+@pytest.mark.parametrize("provider", [
+    "paris", "biblioaccess.la-rochelle", "future-lender",
+])
+def test_canonical_first_acsm_stages_any_exact_claimed_source_without_new_get(
+    setup, provider,
+):
+    service, session, account, _old_source, attempt, path, claim, loan = setup
+    key, operation = next(iter(claim.items()))[0], claim[next(iter(claim))]["operation_id"]
+    docbase = "FUTURE_LIBRARY" if provider != "paris" else "DILICOM"
+    account = replace(account, provider_id=provider)
+    loan = replace(
+        loan, source_provider=provider, provider=docbase,
+        ebook_url=None,
+    )
+    source, _ = new_source(
+        "identity-A", provider=provider, credential="credential-A",
+        account="", branch=docbase, edition=loan.record_id,
+        right=loan.id, kind="loan",
+    )
+    assert acsm_cache.remember_initial(
+        path, path.parent, loan, "identity-A", "primary",
+        borrow_claim=(key, operation),
+    )
+    session.loans = lambda _: [loan]
+    staged = stage_claimed_initial_acsm(
+        service, session, account, source, attempt=attempt,
+        admission_current=lambda: True,
+    )
+    assert staged == attempt / "first-offer.acsm"
+    assert staged.read_bytes() == path.read_bytes()
