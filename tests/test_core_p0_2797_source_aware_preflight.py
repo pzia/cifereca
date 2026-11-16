@@ -81,14 +81,15 @@ def test_read_only_refusal_has_no_provider_argument_or_authority(loan_inactive):
     assert "secret" not in report.explanation.lower()
 
 
-def test_bnf_exact_loan_declaration_guard_does_not_authorize_other_sources(
+def test_declared_pair_scope_is_provider_neutral_and_never_authorizes_rights(
     six_numilog,
 ):
-    """Freeze the current asymmetric proof boundary until B supplies a typed policy.
+    """Declaration eligibility is not provider authorization.
 
-    BnF declarations must name one active loan with a native loan ID. A
-    provider-neutral rewrite must not silently weaken that BnF guarantee or
-    disable existing non-BnF declarations without a migration contract.
+    An active BnF loan without a native loan ID can be *described* by an
+    explicit local user statement, just as a loan from a future provider can.
+    Neither is attested as a loan nor eligible for acquisition from this map.
+    Closed rights are not offered for NEW declarations, regardless of source.
     """
     root, database = six_numilog
     fixtures = [
@@ -98,6 +99,9 @@ def test_bnf_exact_loan_declaration_guard_does_not_authorize_other_sources(
         ("bnf-owned", "bnf-pret", "active", "owned", None),
         ("future-owned", "future-library", "active", "owned", None),
         ("future-loan", "future-library", "active", "loan", None),
+        ("future-exact-loan", "future-library", "active", "loan", "loan-future"),
+        ("future-expired-loan", "future-library", "expired", "loan", None),
+        ("future-expired-owned", "future-library", "expired", "owned", None),
     ]
     with sqlite3.connect(database) as db:
         for item, provider, state, kind, loan_id in fixtures:
@@ -114,14 +118,15 @@ def test_bnf_exact_loan_declaration_guard_does_not_authorize_other_sources(
     declared_items = {
         scope[4] for scope in session._declared_right_scopes.values()
     }
-    assert "bnf-exact-active" in declared_items
-    assert "bnf-missing-id" not in declared_items
-    assert "bnf-expired" not in declared_items
-    assert "bnf-owned" not in declared_items
-
-    # Existing other-source declarations are descriptive user statements
-    # only, not evidence of a provider grant or an authorized attachment.
-    assert {"future-owned", "future-loan"} <= declared_items
-    # No retired private receipt proof map exists for any supplier.
+    # The map records only an explicit user-declaration candidate. It never
+    # certifies an upstream loan, owned purchase, DRM grant or local EPUB.
+    assert {
+        "bnf-missing-id", "bnf-exact-active", "bnf-owned",
+        "future-owned", "future-loan", "future-exact-loan",
+    } <= declared_items
+    assert {
+        "bnf-expired", "future-expired-loan", "future-expired-owned",
+    }.isdisjoint(declared_items)
     assert not hasattr(session, "_manual_right_proofs")
+    assert not hasattr(session, "_kobo_right_proofs")
     session.close()
