@@ -128,3 +128,107 @@ def test_missing_loan_key_refuses_without_using_ui_identity(tmp_path, monkeypatc
         assert result.identity is None
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("provider", [
+    "biblioaccess.la-rochelle", "future-library",
+])
+def test_automatic_borrower_primary_is_neutral_to_provider_name(
+    tmp_path, monkeypatch, provider,
+):
+    """An exact source's PRIMARY borrower remains admissible without v16."""
+    service, loan = _source(tmp_path, provider)
+    try:
+        _forbid_work(service, monkeypatch)
+        result = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert result.refusal is None
+        assert result.identity.identity_id == "default"
+        assert result.entitlement_id is None
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("provider", [
+    "biblioaccess.la-rochelle", "future-library",
+])
+def test_nonparis_linked_borrower_is_refused_before_any_right_or_download(
+    tmp_path, monkeypatch, provider,
+):
+    """A live foreign-provider connection does not grant its linked reader ADEPT."""
+    service, loan = _source(tmp_path, provider)
+    try:
+        service.accounts = [Account(
+            provider_id=provider, credential_id="source-a",
+            identity_id="default", unique_id="linked-r", is_primary=False,
+        )]
+        loan = replace(loan, source_account_id="linked-r")
+        _forbid_work(service, monkeypatch)
+        result = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert result.identity is None and result.entitlement_id is None
+        assert result.refusal == {
+            "status": "attention_required", "loan_id": loan.id,
+            "code": "adept_borrower_binding_required", "retry": "explicit_only",
+        }
+        assert service.storage.acquisitions(provider_id=provider) == []
+    finally:
+        service.close()
+
+
+def test_other_provider_v16_grant_revocation_controls_pre_acsm_admission(
+    tmp_path, monkeypatch,
+):
+    """Source-scoped v16, not a historical Paris row, grants a linked borrower."""
+    from tests.test_core_p0_5975_poststaging_adept_all_sources import (
+        _foreign_linked_borrower,
+    )
+    from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        foreign = _foreign_linked_borrower(
+            service, loan, provider="biblioaccess.la-rochelle",
+        )
+        coords = dict(
+            provider_id="biblioaccess.la-rochelle",
+            credential_id=foreign.source_credential,
+            account_id=foreign.source_account_id,
+        )
+        _forbid_work(service, monkeypatch)
+        before = resolve(service, foreign, _TRACE_LOG=LOGGER)
+        assert before.refusal["code"] == "adept_borrower_binding_required"
+        service.storage.adept_borrower_grant_put(
+            **coords, connection_identity_id="alice",
+            borrower_identity_id="bob", profile_id="bob-profile",
+            confirmed=True,
+        )
+        admitted = resolve(service, foreign, _TRACE_LOG=LOGGER)
+        assert admitted.refusal is None
+        assert admitted.identity.identity_id == "alice"
+        assert admitted.entitlement_id is None
+        service.storage.adept_borrower_grant_delete(**coords)
+        after = resolve(service, foreign, _TRACE_LOG=LOGGER)
+        assert after.refusal["code"] == "adept_borrower_binding_required"
+        assert service.storage.acquisitions(provider_id=coords["provider_id"]) == []
+    finally:
+        service.close()
+
+
+def test_nonparis_borrower_callback_cannot_swap_loan_before_rights(
+    tmp_path, monkeypatch,
+):
+    service, loan = _source(tmp_path, "biblioaccess.la-rochelle")
+    try:
+        original = service._paris_adept_identity_for_loan
+
+        def swap(*args, **kwargs):
+            result = original(*args, **kwargs)
+            loan.record_id = "foreign-edition"
+            return result
+
+        monkeypatch.setattr(service, "_paris_adept_identity_for_loan", swap)
+        _forbid_work(service, monkeypatch)
+        refused = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert refused.identity is None and refused.entitlement_id is None
+        assert refused.refusal["code"] == "adept_identity_unproven"
+        assert refused.refusal["reason"] == "source_scope_changed"
+    finally:
+        service.close()
