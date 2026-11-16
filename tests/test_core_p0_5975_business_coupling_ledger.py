@@ -474,7 +474,7 @@ def test_fixed_anchor_cohort_refuses_unknown_revisions_or_missing_sha():
 
 
 def test_adept_settings_and_runtime_provenance_ast_review_is_traceable():
-    """Four live AST signals plus a bound-method call remain protected, not deleted."""
+    """Three Paris Settings brand sites retired; runtime producer guard remains."""
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
@@ -483,37 +483,47 @@ def test_adept_settings_and_runtime_provenance_ast_review_is_traceable():
             encoding="utf-8"
         )
     )
-    expected = {
+    provider_producer = "site-62d608c21d04153e918b5bb3"
+    remaining = {
+        row["id"]: row for row in payload["reviews"]
+        if row["id"] == provider_producer
+    }
+    assert len(remaining) == 1
+    row = remaining[provider_producer]
+    assert row["classification"] == "safety_guard_pending_contract"
+    assert row["reachability"] == "productive"
+    assert row["productive_caller"] and row["effect"]
+    assert row["replacement_contract"] and row["authority"]
+    assert all((root / path).is_file() for path in row["tests"])
+    assert not row["retirement_pr"]
+
+    removed = {
         "site-48985b6dd27a2ea911e7026d": "presentation_only",
         "site-0d55ea2282fddc404d954e89": "safety_guard_pending_contract",
-        
         "site-1e0a66caf63d7b19feef68dd": "safety_guard_pending_contract",
-        "site-62d608c21d04153e918b5bb3": "safety_guard_pending_contract",
     }
-    records = {
-        row["id"]: row for row in payload["reviews"] if row["id"] in expected
-    }
-    assert set(records) == set(expected)
-    assert {key: row["classification"] for key, row in records.items()} == expected
-    assert len({row["decision_group_id"] for row in records.values()}) == 3
-    assert {row["reachability"] for row in records.values()} == {"productive"}
-    for row in records.values():
-        assert row["productive_caller"] and row["effect"]
-        assert row["replacement_contract"] and row["authority"]
-        assert all((root / path).is_file() for path in row["tests"])
-    assert all(not row["retirement_pr"] for row in records.values())
-    # The old lexical TaskRunner lambda vanished after pinning the bound
-    # method, but its named runtime operation is still live: no fake
-    # provider-specific business retirement is credited to this AST delta.
+    assert not removed.keys() & {row["id"] for row in payload["reviews"]}
+    cutovers = [
+        row for row in payload["retirements"]
+        if row.get("original_site_id") in removed
+    ]
+    assert len(cutovers) == 3
+    assert {row["original_site_id"]: row["original_classification"]
+            for row in cutovers} == removed
+    assert all(row["pr"] == "#6464" and row["in_ast_metric"] is True
+               and row["classification"] == "neutral_source_scoped_coreui_cutover"
+               and all((root / path).is_file() for path in row["tests"])
+               for row in cutovers)
+    # The old lexical TaskRunner lambda was relocated by #6364; #6464
+    # retires the branded *business dispatch*, not the bound-method guard.
     old_call = "site-6df69f482e5a9d7f97c2be97"
-    assert old_call not in {row["id"] for row in payload["reviews"]}
     guard = next(
         row for row in payload["guard_installations"]
         if row["id"] == "guard-settings-adept-click-bound-runtime-probe-6364"
     )
     assert guard["classification"] == "safety_guard_pending_contract"
     assert old_call in guard["remaining_debt"]
-    assert "probe_method" in guard["effect"]
+    assert "check_source_adept_runtime" in guard["effect"]
     assert guard["pr"] == "#6364"
     assert all((root / path).is_file() for path in guard["tests"])
     assert not any(row.get("original_site_id") == old_call
@@ -822,3 +832,42 @@ def test_v5_supplier_selector_neutralized_without_legacy_writer_retirement():
     assert live[0]["classification"] == "legacy_mutating_cutover"
     assert len(ledger["retained_legacy_migrations"]) == 3
     assert inventory(root)["retained_non_ast_legacy_migration_writers"] == 3
+
+
+def test_residual_adept_facade_signals_have_source_scoped_reviews():
+    """Classification is not retirement: preserve actual active refusal sites."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads(
+        (root / "docs/provider-business-coupling-review.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    reviews = {row["id"]: row for row in ledger["reviews"]}
+    expected = {
+        "site-ce18a3f96ffb1a6a1ca88708": (
+            "false_positive", "check_source_adept_runtime",
+        ),
+        "site-9db736c5a6459afb19e60a9a": (
+            "safety_guard_pending_contract", "adept_return_status_for_loan",
+        ),
+        "site-a99f3f4da32247a6a6efec04": (
+            "safety_guard_pending_contract", "check_normal_paris_adept_runtime",
+        ),
+    }
+    for site_id, (classification, caller) in expected.items():
+        row = reviews[site_id]
+        assert row["classification"] == classification
+        assert caller in row["productive_caller"]
+        assert row["retirement_pr"] == ""
+        assert row["tests"]
+        assert all((root / path).is_file() for path in row["tests"])
+        assert row["authority"] and row["replacement_contract"]
+    # No new provider permission is earned by reviewing old names.
+    assert not any(
+        row["id"] in expected
+        for row in ledger["retirements"]
+    )
+    source = (root / "src/cifereca/services.py").read_text(encoding="utf-8")
+    for _classification, method in expected.values():
+        assert f"def {method}(" in source
