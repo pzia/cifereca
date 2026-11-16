@@ -126,15 +126,13 @@ def test_private_or_unsigned_session_does_not_create_public_writer_witness(
         wrong = ProviderSearchResponse(
             results=[source], public_notices=(PublicSearchNotice(replace(source)),),
         )
-        assert _public_rows_from_response(
+        projected = _public_rows_from_response(
             wrong, NS(provider_id="bnf", credential_id="__public__",
                       credentials={}, _accounts=[]),
-        ) == [] or all(
-            not hasattr(r, "_core_same_call_public_cover_witness")
-            for r in _public_rows_from_response(
-                wrong, NS(provider_id="bnf", credential_id="__public__",
-                          credentials={}, _accounts=[]),
-            )
+        )
+        assert all(
+            not hasattr(row, "_core_same_call_public_cover_witness")
+            for row in projected
         )
         assert source_count(db) == 0
     finally:
