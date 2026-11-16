@@ -840,7 +840,9 @@ class LibraryService:
             except Exception:
                 raise LoanActionError(reason('loan_scope_unproven')) from None
             from .core.observed_loan_scope import observed_loan
-            from .core.observed_import_provenance import remember_observed_import
+            from .core.observed_import_provenance import (
+                remember_observed_import, observed_loan_provenance_field,
+            )
             display_scope = observed_loan(loan)
             observation.at('adept_import')
             result = self.import_acsm(source, identity_id=expected_identity_id,
@@ -848,7 +850,7 @@ class LibraryService:
                                       placement_provider_id=loan.source_provider)
             remember_observed_import(
                 self, result, display_scope, provider_id=loan.source_provider,
-                provenance_field=prefix + '_observed_loan',
+                provenance_field=observed_loan_provenance_field(loan.source_provider),
             )
         except LoanActionError as exc:
             observation.emit('failed', exc.code)
@@ -3878,11 +3880,11 @@ class LibraryService:
         self.diagnostics.add("ADEPT", "loan binding", "ok" if binding_complete else "warning", detail=detail, level="normal")
 
     def adept_return_status_for_loan(self, loan: Loan) -> dict[str, Any]:
-        """Read-only ADEPT return status from the exact Paris borrower provenance.
+        """Read-only ADEPT return status from exact source borrower provenance.
 
-        Never infer the Adobe owner from the selected UI identity or the Paris
-        connection owner for a linked account. Keep return actions unavailable
-        when the source, loan transaction or origin profile is ambiguous.
+        Never infer the Adobe owner from GTK selection or a different
+        provider's connection. Return actions remain permanently unavailable
+        when the borrower, transaction or origin profile is ambiguous.
         """
         from .core.adept_return_origin import inventory_attests_return_origin
         from .core.adept_return_source_scope import HistoricalLoanSource
@@ -3891,8 +3893,6 @@ class LibraryService:
         scope = HistoricalLoanSource.capture(loan)
         if scope is None:
             return denied
-        borrower_code = None
-        is_paris = scope.provider_id.casefold() == "paris"
         # Source ownership is exact SQLite provenance for every supplier.
         # The facade or selected GTK identity is not an alternate owner,
         # even if a legacy identity_for_connection override returns one.
@@ -3912,13 +3912,14 @@ class LibraryService:
                 or not identity.identity_id):
             return denied
         bound_identity_id = identity.identity_id
-        borrower_identity_id = bound_identity_id
-        if is_paris:
-            borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
-                loan, connection_identity_id=bound_identity_id,
-            )
-            if not scope.current(loan):
-                return denied
+        # The historical facade name is retained, but the actual resolver
+        # enforces matching source-scoped v16 borrower proof for all libraries.
+        # Historical v15 Paris rows cannot authorize another provider.
+        borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+            loan, connection_identity_id=bound_identity_id,
+        )
+        if not scope.current(loan):
+            return denied
 
         all_rights = self.storage.entitlements(provider_id=scope.provider_id)
         if not scope.current(loan):
@@ -3951,7 +3952,7 @@ class LibraryService:
             if (row.get("status") != "complete"
                     or row.get("executor") != "kobo-adept"
                     # #989: a manual/imported ADEPT artifact is not proof of
-                    # this automatic Paris loan's fulfillment transaction.
+                    # this exact source loan's fulfillment transaction.
                     or row.get("strategy") != "loan_auto"
                     or not scope.matches_acquisition(
                         row, identity_id=bound_identity_id,
@@ -4004,8 +4005,8 @@ class LibraryService:
             }
         # Grants/current identity profile govern NEW fulfillment. Historical
         # inventory attestation preserves a completed license's own origin.
-        # Exact Paris provenance and cross-identity/duplicate guards above stay.
-        if is_paris and not origin_attested and binding.get("adept_profile_id") and (
+        # Exact provider provenance and cross-identity/duplicate vetoes stay.
+        if not origin_attested and binding.get("adept_profile_id") and (
             self.storage.adept_profile_binding_get(
                 "identity", borrower_identity_id
             ) != binding["adept_profile_id"]
@@ -4354,42 +4355,71 @@ class LibraryService:
         accounts: Any, *, provider_id: str, account_id: str | None,
         identity_id: str, credential_id: str | None = None,
     ) -> bool:
-        """Fail closed unless the borrower is bound to the requested identity.
+        """Veto unproven ADEPT borrower owners using exact native coordinates.
 
-        Paris uses the literal "primary" for its main-account provenance,
-        while the provider account can have unique_id="". These values
-        identify a borrower only inside the exact provider connection.
+        The primary sentinel is a historical source-account convention, not
+        a supplier-ID dispatch. Untrusted Account fields may never invoke
+        __str__, __bool__, custom equality or a property to create ownership.
+        The linked-borrower conflict still covers *all* credentials of the
+        same provider, so another connection cannot impersonate its identity.
         """
-        if account_id is None:
-            return True
-        borrower = str(account_id).strip()
-        provider = str(provider_id).lower()
-        matching = [
-            account for account in accounts
-            if str(account.provider_id).lower() == provider
-        ]
-        if borrower in {"", "primary"}:
-            if not credential_id:
-                return True
-            matching = [
-                account for account in matching
-                if str(account.credential_id) == str(credential_id)
-                and bool(account.is_primary)
-                and (borrower == "primary" or str(account.unique_id or "") == "")
-            ]
-            return len(matching) != 1 or str(matching[0].identity_id) != identity_id
+        from inspect import getattr_static
 
-        matching = [
-            account for account in matching
-            if str(account.unique_id or "").strip() == borrower
+        if (type(provider_id) is not str or not provider_id
+                or type(account_id) is not str
+                or type(identity_id) is not str or not identity_id
+                or (credential_id is not None and type(credential_id) is not str)):
+            return True
+        provider = provider_id.casefold()
+        borrower = account_id.strip()
+
+        # A malformed provider value cannot be claimed as the requested
+        # source. Once a row claims this provider, its remaining account
+        # fields must be native and complete; otherwise the full predicate
+        # refuses, not first-good-row-wins.
+        source_rows = []
+        try:
+            for account in accounts:
+                row_provider = getattr_static(account, "provider_id", None)
+                if type(row_provider) is not str:
+                    continue
+                if row_provider.casefold() != provider:
+                    continue
+                row_credential = getattr_static(account, "credential_id", None)
+                row_borrower = getattr_static(account, "unique_id", None)
+                row_owner = getattr_static(account, "identity_id", None)
+                row_primary = getattr_static(account, "is_primary", None)
+                if (type(row_credential) is not str or not row_credential
+                        or type(row_borrower) is not str
+                        or type(row_owner) is not str or not row_owner
+                        or type(row_primary) is not bool):
+                    return True
+                source_rows.append((
+                    row_credential, row_borrower, row_owner, row_primary,
+                ))
+        except Exception:
+            # A failed lazy account inventory cannot attest a unique owner.
+            return True
+
+        if borrower in {"", "primary"}:
+            if type(credential_id) is not str or not credential_id:
+                return True
+            matches = [
+                row for row in source_rows
+                if row[0] == credential_id and row[3] is True
+                and (borrower == "primary" or row[1] == "")
+            ]
+            return len(matches) != 1 or matches[0][2] != identity_id
+
+        matches = [
+            row for row in source_rows if row[1].strip() == borrower
         ]
         if credential_id is not None and not any(
-            str(account.credential_id) == str(credential_id)
-            and str(account.identity_id) == identity_id
-            for account in matching
+            row[0] == credential_id and row[2] == identity_id
+            for row in matches
         ):
             return True
-        return {str(account.identity_id) for account in matching} != {identity_id}
+        return {row[2] for row in matches} != {identity_id}
 
     def _write_adept_borrower_grant(
         self, *, provider_id: str, credential_id: str, account_id: str,

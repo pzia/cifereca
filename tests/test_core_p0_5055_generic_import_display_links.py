@@ -161,5 +161,11 @@ def test_library_projection_has_no_bnf_specific_loan_dispatch():
                 for value in [node.left, *node.comparators])
         for node in ast.walk(tree)
     )
-    assert "provider_scoped_observed_links" in source
+    assert "observed_import_links_for_sources" in source
+    assert "providers=(" in source
     assert "exact_source_alias.get(typed_scope) is None" in source
+    # The historical BnF field now comes from the same neutral grammar
+    # as the manual-import writer; the public library projection has no
+    # supplier-specific read path.
+    assert "'bnf-pret'" not in source
+    assert '"bnf-pret"' not in source

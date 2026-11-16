@@ -69,6 +69,10 @@ def test_protected_epub_after_selected_delivery_reports_drm_unresolved(
 ):
     service, db, root = rig
     _prepare(service)
+    service.runtime_acquisition_binding = (
+        lambda provider: "runtime.synthetic"
+        if provider == service.account.provider_id else None
+    )
     content = _protected_epub(marker)
     calls = []
 
@@ -91,7 +95,7 @@ def test_protected_epub_after_selected_delivery_reports_drm_unresolved(
             service.execute_acquisition_request = fake_runtime
             execute_runtime({
                 "schema_version": 2,
-                "source": {"type": "kobo", "provider": "synthetic"},
+                "source": {"type": service.account.provider_id, "provider": "synthetic"},
                 "format": "epub", "destination": str(target),
             })
             return DeliveryCandidate(
