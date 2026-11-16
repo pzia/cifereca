@@ -231,24 +231,6 @@
       "reachability": "unproven"
     },
     {
-      "id": "site-10c7380b69f3ae55dce5dab6",
-      "classification": "false_positive",
-      "journey": "Explicitly requested ADEPT runtime diagnostic in the saved Paris binding context",
-      "productive_caller": "LibraryService.check_normal_paris_adept_runtime -> _kobo_adapter",
-      "effect": "Obtains technical ADEPT runtime readiness only; the separate Paris source-ownership checks remain live safety vetoes.",
-      "authority": "Saved identity and profile binding gate this inspection; runtime availability never authorizes loan delivery.",
-      "replacement_contract": "Retain the user-triggered profile check and saved-binding fences, independent of future runtime adapter naming.",
-      "tests": [
-        "tests/test_core_1063_normal_paris_adept_status.py",
-        "tests/test_core_p1_1063_adept_runtime_check.py",
-        "tests/test_core_p0_5048_adept_source_binding_status.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "The Kobo token denotes Kobo-ADEPT runtime discovery, not a Kobo provider rights or acquisition branch.",
-      "decision_group_id": "adept.runtime-explicit-readiness-probe",
-      "reachability": "unproven"
-    },
-    {
       "id": "site-2337f2c628b0365c1fe6ff68",
       "classification": "false_positive",
       "journey": "Technical Kobo-ADEPT runtime feature/state discovery",
