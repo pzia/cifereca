@@ -67,6 +67,8 @@ class VerifiedBorrowerPublicC:
     document: CoverDocumentScope
     epoch: int
     source_ref: str
+    account_epoch: int
+    source_epoch: int
     occurrence_id: str
     source_credential: str
     source_account_id: str | None
@@ -100,7 +102,10 @@ class VerifiedBorrowerPublicC:
         )
 
 
-def attach_borrower_public_c(storage, rows: list, *, identity_id: str) -> int:
+def attach_borrower_public_c(
+    storage, rows: list, *, identity_id: str,
+    account_epoch: int, source_epoch: int,
+) -> int:
     """Admit only unique source-coordinate matches, in one bounded Core read.
 
     The same upstream provider+record must have a single exact public
@@ -110,7 +115,9 @@ def attach_borrower_public_c(storage, rows: list, *, identity_id: str) -> int:
     C memberships are ambiguous and rejected.
     """
     if (type(rows) is not list or not 0 < len(rows) <= _MAX_ITEMS
-            or type(identity_id) is not str or not identity_id):
+            or type(identity_id) is not str or not identity_id
+            or type(account_epoch) is not int or account_epoch < 0
+            or type(source_epoch) is not int or source_epoch < 0):
         return 0
     # Explicitly revoke an earlier worker receipt before re-indexing this
     # batch. A provider can reuse a mutable DTO across a newer inventory.
@@ -200,7 +207,9 @@ def attach_borrower_public_c(storage, rows: list, *, identity_id: str) -> int:
         packet = VerifiedBorrowerPublicC(
             source_item=item, identity_id=identity_id,
             document=c.document, epoch=c.epoch,
-            source_ref=source.source_ref, occurrence_id=item.id,
+            source_ref=source.source_ref,
+            account_epoch=account_epoch, source_epoch=source_epoch,
+            occurrence_id=item.id,
             source_credential=item.source_credential,
             source_account_id=item.source_account_id,
             provider_id=coords[0], record_id=coords[1], medium=coords[2],
@@ -214,13 +223,18 @@ def attach_borrower_public_c(storage, rows: list, *, identity_id: str) -> int:
     return count
 
 
-def borrower_public_c_receipt(item: object, *, identity_id: object):
+def borrower_public_c_receipt(
+    item: object, *, identity_id: object,
+    account_epoch: object = None, source_epoch: object = None,
+):
     """Return the Core-worker receipt only if still bound to this occurrence."""
     if type(item) not in (Loan, HistoryItem):
         return None
     receipt = item.__dict__.get("_core_public_c_cover_receipt")
     if (type(receipt) is VerifiedBorrowerPublicC
-            and receipt.current_for(item, identity_id=identity_id)):
+            and receipt.current_for(item, identity_id=identity_id)
+            and (account_epoch is None or receipt.account_epoch == account_epoch)
+            and (source_epoch is None or receipt.source_epoch == source_epoch)):
         return receipt
     return None
 
