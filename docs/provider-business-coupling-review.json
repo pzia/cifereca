@@ -121,21 +121,6 @@
       "rationale": "An active mandatory safety veto; removing provider comparison now would permit a destructive implicit GET and cannot be credited as decoupling"
     },
     {
-      "id": "site-8734b8047e04eb88d52753f3",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Offline reconciliation of historical provider rights and local placements",
-      "productive_caller": "core.library_reconciliation.reconcile on local SQLite/WAL images",
-      "effect": "Read-only retrospective classification of matching canonical receipts, bytes and historical attested_source for Kobo/Numilog; no right, OriginLink or Placement is granted",
-      "authority": "Exact provider/credential/account/item, Artifact SHA and producer-attested legacy origin; filenames and ISBNs are never authorization",
-      "replacement_contract": "A reviewed, versioned source-provenance classifier without Core provider-name decision, preserving mismatched-source/unknown-provider refusal",
-      "tests": [
-        "tests/test_library_reconciliation.py",
-        "tests/test_core_p0_3196_w5_passive_v2_migration.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Supplier whitelist within a read-only audit is a necessary historical safety gate pending a neutral proven substitute; not an active canonical producer."
-    },
-    {
       "id": "site-48985b6dd27a2ea911e7026d",
       "classification": "presentation_only",
       "journey": "Settings ADEPT profile binding status subtitle",
@@ -1679,6 +1664,25 @@
         "tests/test_core_p0_5975_business_coupling_ledger.py"
       ],
       "pr": "#6414",
+      "in_ast_metric": true
+    },
+    {
+      "id": "struct-offline-reconciliation-historical-kobo-numilog-attestation-retired",
+      "original_site_id": "site-8734b8047e04eb88d52753f3",
+      "original_classification": "safety_guard_pending_contract",
+      "original": "core.library_reconciliation.reconcile compared a completed legacy entitlement/acquisition/placement chain against a literal Kobo/Numilog source allowlist and promoted it to confirmed_link without any canonical OriginLink.",
+      "replacement": "The only positive file provenance is a stable canonical provider purchase OriginLink: exact source, receipt, owner, edition, artifact bytes and unique live Placement. Legacy entitlements/acquisitions and attested_source strings remain read-only inspection hints and never create an attested edge. Same-identity competing right rows are still marked ambiguous; strict bytes/structure, other authority and cancellation checks are retained.",
+      "classification": "retired_legacy_supplier_positive_link_classifier_canonical_only",
+      "evidence": "Physical supplier whitelist removed from Core reconcile() together with the obsolete entitlement/ledger promotion path, not hidden behind an alias or another module. An old buyer/right/receipt pair without OriginLink is downgraded from confirmed_link to present_unlinked/local_file_without_attested_right and its right stays unverified. The EPUB and all local SQLite, acquisition and entitlement rows remain untouched and recoverable. Provider-neutral canonical purchase origins still attest both bare and historically annotated placements. The change intentionally permits loss of an historical GUI link pending redownload or new canonical provenance; it never deletes private book bytes.",
+      "tests": [
+        "tests/test_library_reconciliation.py",
+        "tests/test_core_p0_2796_reconciliation_repeatability.py",
+        "tests/test_core_p0_2565_attested_edge_completeness.py",
+        "tests/test_core_p0_2797_kobo_buyer_scope_audit.py",
+        "tests/test_core_p0_2565_reconciliation_preindex_deadline.py",
+        "tests/test_core_p0_5048_neutral_local_provenance_projection.py"
+      ],
+      "pr": "#6423",
       "in_ast_metric": true
     }
   ],
