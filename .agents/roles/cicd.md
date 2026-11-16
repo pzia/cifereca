@@ -5,6 +5,12 @@
 ## Mission
 Posséder la CI/CD, les quality gates, le packaging, les releases, la **résolution technique des conflits de PR** et les merges.
 
+## Découplage #5975 — binôme autorisé, sans second implémenteur (16/11/2026)
+
+Avec un agent Focus chargé de **l'analyse et de l'implémentation uniques** du P0, CI/CD peut travailler en parallèle sur le suivi des checks, l'ordre des PR empilées, les conflits Git **mécaniques**, les problèmes de harnais/workflow et les fusions après contrôle du SHA effectif. Une correction de tests purement infrastructurels appartient à CI/CD ; un test métier rouge (source/compte, ADEPT, prêts, consensus d'ABI, écrivain SQLite) retourne au pilote, avec trace et reproduction. **Ne pas ajouter de durcissement métier de races/epochs hors cutover simplement pour faire progresser une PR**, ni contourner les protections de branche.
+
+La décision de clôture du P0 suit le recentrage du [#5975](https://github.com/pzia/cifereca/issues/5975) ; la présence d'améliorations différables (#5376 ou scénarios extrêmes) ne rend pas automatiquement toutes les PR fonctionnelles non fusionnables. Les gates réellement requis et l'absence de régression grave restent impératifs.
+
 ## Ordre d'itération
 1. Résoudre d'abord les problèmes CI/CD et de chaîne de tests.
 2. Ensuite **tenter de résoudre activement les conflits des PR bloquées** et leurs gates/dépendances, en sollicitant le rôle propriétaire uniquement pour les arbitrages métier ou architecturaux hors CI/CD ; merger les groupes atomiques prêts.

@@ -5,6 +5,12 @@ profils [`.agents/roles/`](../.agents/roles/README.md). En cas de doute, les
 contrats du code, les critères du ticket, les contrôles effectivement exécutés
 et les protections GitHub priment sur une interprétation optimiste.
 
+## Application particulière : P0 découplage #5975 (arbitrage du 16/11/2026)
+
+Le contrat de sortie [#5975](https://github.com/pzia/cifereca/issues/5975) privilégie la suppression **des décisions fournisseur actives en Core/CoreUI**, pas une preuve exhaustive de toutes les courses historiques, la remise en état parfaite des liens EPUB retéléchargeables ni le nettoyage de tous les AST bruts. La preuve proportionnée au risque consiste à tester le cutover réel, ses appels contractuels et l'absence de régression grave touchant identité, autorisation, consentement, double mutation, fichiers uniques, transactions et credentials.
+
+Une association EPUB manquante peut être présentée « à récupérer » **uniquement si un retéléchargement autorisé est encore possible** ; cela ne permet pas de supprimer un fichier local unique, d'inventer un prêt ou de masquer une corruption. Les scénarios extrêmes sans effet d'intégrité/autorisation actuel démontré peuvent être explicitement différés. **#5376 reste un audit qualité ultérieur non bloquant pour la clôture du parent**, même si son ticket reste ouvert. La CI requise sur le HEAD exact et les preuves de sécurité directement pertinentes ne sont jamais dispensées. Le binôme Focus implémenteur unique / CI-CD intégrateur respecte les rôles existants.
+
 ## Objectif
 
 Plusieurs fils ChatGPT travaillent **asynchroniquement**. Le dépôt GitHub est
