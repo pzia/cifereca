@@ -137,7 +137,7 @@ def test_detail_stage_always_clears_callback_even_on_render_exception():
     with staged_local_public_c_detail(detail, check):
         assert detail._next_local_public_c_check is check
         called.append("show")
-        with pytest.raises(ValueError, match="nested"):
+        with pytest.raises(ValueError, match="invalid_local_public_c_detail_stage"):
             with staged_local_public_c_detail(detail, check):
                 raise AssertionError("must not nest")
     assert called == ["show"]
