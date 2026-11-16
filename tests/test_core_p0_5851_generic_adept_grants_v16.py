@@ -31,7 +31,7 @@ def test_generic_grant_is_new_explicit_proof_not_legacy_projection(tmp_path):
     store = service.storage
     try:
         _persist_account(store)
-        assert store.schema_version() == 17
+        assert store.schema_version() == 18
         seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
@@ -159,7 +159,7 @@ def test_v15_upgrade_creates_empty_grants_without_copying_legacy(tmp_path):
         service.close()
     upgraded = Storage(dbpath)
     try:
-        assert upgraded.schema_version() == 17
+        assert upgraded.schema_version() == 18
         assert upgraded.adept_borrower_grant_get(
             provider_id="paris", credential_id="alice-paris",
             account_id="linked-123") is None

@@ -117,7 +117,7 @@ def test_v5_failure_after_repair_restores_v4_accounts_archives_and_adept(
     # losing any former credential/edition history.
     repaired = Storage(path)
     try:
-        assert repaired.schema_version() == 17
+        assert repaired.schema_version() == 18
         connections = {row["credential_id"]: row["identity_id"]
                        for row in repaired.provider_connections()}
         assert set(connections) == {"vault-a", "vault-b"}

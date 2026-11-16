@@ -118,7 +118,7 @@ def test_v4_historical_kobo_scope_repair_preserves_archives_and_rights(tmp_path)
     expected = colliding + "-2"
     store = Storage(path)
     try:
-        assert store.schema_version() == 17
+        assert store.schema_version() == 18
         con = {r["credential_id"]: r["identity_id"]
                for r in store.provider_connections()}
         assert con == {
@@ -169,7 +169,7 @@ def test_v4_historical_kobo_scope_repair_preserves_archives_and_rights(tmp_path)
 
     reopened = Storage(path)
     try:
-        assert reopened.schema_version() == 17
+        assert reopened.schema_version() == 18
         con = {r["credential_id"]: r["identity_id"]
                for r in reopened.provider_connections()}
         assert con["vault-b"] == expected
@@ -238,7 +238,7 @@ def test_v5_repair_algorithm_handles_frozen_synthetic_historical_cohort(
             )
     migrated = Storage(path)
     try:
-        assert migrated.schema_version() == 17
+        assert migrated.schema_version() == 18
         derived = "alice-synthetic-provider-" + hashlib.sha256(b"card-b").hexdigest()[:8]
         con = {r["credential_id"]: r["identity_id"]
                for r in migrated.provider_connections()}

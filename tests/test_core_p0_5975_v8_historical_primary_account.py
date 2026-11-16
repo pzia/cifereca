@@ -47,7 +47,7 @@ def test_v8_primary_borrower_legacy_repair_is_real_scoped_and_one_time(tmp_path)
         db.execute("UPDATE metadata SET value='7' WHERE key='schema_version'")
     migrated = Storage(path)
     try:
-        assert migrated.schema_version() == 17
+        assert migrated.schema_version() == 18
         with migrated._lock, migrated._connect() as db:
             rights = db.execute(
                 "SELECT entitlement_id,provider_id,account_id,identity_id "
@@ -269,7 +269,7 @@ def test_v8_savepoint_rollback_restores_all_old_receipts(tmp_path, monkeypatch):
 
     recovered = Storage(path)
     try:
-        assert recovered.schema_version() == 17
+        assert recovered.schema_version() == 18
         with recovered._lock, recovered._connect() as db:
             assert db.execute("SELECT COUNT(*) FROM entitlements").fetchone()[0] == 1
             assert db.execute("SELECT COUNT(*) FROM acquisition_ledger").fetchone()[0] == 1
