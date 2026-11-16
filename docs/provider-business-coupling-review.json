@@ -566,6 +566,22 @@
       "rationale": "Compatibility reader is not an active user-return permission or a new migration writer; the Paris filter remains a real read-only technical dependency. Following #6219, the scanned AST anchor moved from an unvalidated str() loan predicate to the native scoped medium gate; the same historical read-only obligation remains, without retirement credit.",
       "decision_group_id": "loan.historical-return-receipt",
       "reachability": "legacy_only"
+    },
+    {
+      "id": "site-cab20e1d25971659268c3e22",
+      "classification": "legitimate_readonly_compat",
+      "journey": "24-hour transitional read of historical first-borrow ACSM v1 receipts",
+      "productive_caller": "acsm_cache.reuse_initial -> stage_claimed_initial_acsm (read-only v1 scope fallback after a previously confirmed one-shot loan.borrow claim)",
+      "effect": "Accepts the only Paris/DILICOM branch that historically wrote v1 receipts without a branch field; rejects any other documentary branch reusing the same loan ID, edition and borrower. No new provider GET, loan POST, entitlement, ADEPT grant or rights publication.",
+      "authority": "Historical schema=1 provenance and exact native owner/provider/credential/account/loan/edition scope, bounded 24h TTL, XML/SHA validation and confirmed durable loan.borrow operation; the canonical reader additionally requires exactly one live matching branch/borrower loan.",
+      "replacement_contract": "Expire all historical v1 claim-bound receipts through a deployed 24h+ rollout window, then remove schema 1 consumption and this supplier literal. Only schema 2, containing immutable documentary branch provenance, remains supported. Any removal before expiry must explicitly account for one-shot ACSM tokens that cannot be re-downloaded.",
+      "tests": [
+        "tests/test_core_p0_3121_initial_acsm_receipt.py",
+        "tests/test_core_p0_3121_canonical_first_acsm.py",
+        "tests/test_core_p0_3121_canonical_first_acsm_flow.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "This is a read-only, bounded compatibility veto, not active Core policy for new providers. Removing it without removing v1 reading would permit cross-branch token replay. The scanner reports 1 retained historical signal, so #6422 is AST delta 0 despite retiring the active Paris/DILICOM v2 writer predicate."
     }
   ],
   "retirements": [
