@@ -216,6 +216,8 @@ def test_verified_two_provider_c_selected_over_own_source_without_cross_join(tmp
 
 @pytest.mark.parametrize("change", [
     {"source_provider": "numilog"},
+    {"source_account_id": None},
+    {"source_account_id": False},
     {"record_id": "other-book"},
     {"medium": "physical"},
     {"identity_id": "bob"},
