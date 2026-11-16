@@ -12,6 +12,7 @@ reopen a file or infer the mapping between distinct books.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import sqlite3
 import json
 import re
 from typing import Any
@@ -155,6 +156,81 @@ def read_notice_cover(storage: Any, document: CoverDocumentScope) -> PersistedNo
     return _decode(row[0], document) if row is not None else None
 
 
+def _persist_notice_cover_txn(
+    db: Any, observation: NoticeSourceObservation,
+    attribute: NoticeCoverAttribute, key: str,
+    field_path: tuple[str, ...],
+    cover_inventory_complete: bool,
+    expected_epoch: int | None,
+) -> PersistedNoticeCover:
+    """One exact source update inside the caller's locked SQLite transaction.
+
+    Shared by the one-source CAS writer and the bounded batched Core search
+    writer. The stale/partial/watermark logic MUST be identical in both paths.
+    """
+    existing = db.execute(
+        "SELECT value FROM metadata WHERE key=?", (key,),
+    ).fetchone()
+    previous = _decode(existing[0], attribute.document) if existing else None
+    previous_epoch = previous.epoch if previous is not None else 0
+    if expected_epoch is not None and expected_epoch != previous_epoch:
+        raise ValueError("notice_c_persisted_epoch_changed")
+    if previous is not None:
+        old = previous.observation
+        seen_at = json.loads(existing[0]).get(_LAST_SEEN, old.observed_at)
+        # A delayed worker must not replace a newer accepted observation,
+        # even if the latter was partial and kept an older valid cover.
+        changed = (old.source_revision != observation.source_revision
+                   or previous.attribute != attribute)
+        if observation.observed_at < seen_at and changed:
+            raise ValueError("notice_c_persisted_stale_source")
+        if (previous.attribute.snapshot_complete
+                and not attribute.snapshot_complete):
+            # Incomplete parsing/cover inventory is no tombstone. Persist
+            # its *time* (not its untrusted media) to reject older work.
+            _advance_seen_watermark(
+                db, key, existing[0], observation.observed_at,
+            )
+            return previous
+        if not changed:
+            _advance_seen_watermark(
+                db, key, existing[0], observation.observed_at,
+            )
+            return previous
+        # Same-second source changes require the explicit writer CAS.
+        # The watermark is durable even if the current source is older.
+        if observation.observed_at == seen_at and expected_epoch is None:
+            raise ValueError("notice_c_persisted_stale_source")
+        if previous_epoch >= _MAX_EPOCH:
+            raise ValueError("notice_c_persisted_epoch_overflow")
+    epoch = previous_epoch + 1
+    payload = {
+        "schema": 1, "key": asdict(observation.key),
+        "parser_id": observation.parser_id,
+        "parser_version": observation.parser_version,
+        "observed_at": observation.observed_at,
+        "status": observation.status,
+        "source_revision": observation.source_revision,
+        "raw_json": observation.raw_json,
+        "field_path": list(field_path),
+        "cover_inventory_complete": cover_inventory_complete,
+        "epoch": epoch,
+        _LAST_SEEN: observation.observed_at,
+    }
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False,
+    )
+    if len(encoded.encode("utf-8")) > _MAX_BYTES:
+        raise ValueError("notice_c_persisted_too_large")
+    db.execute(
+        "INSERT INTO metadata(key,value) VALUES(?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, encoded),
+    )
+    return PersistedNoticeCover(observation, attribute, epoch)
+
+
 def persist_notice_cover(
     storage: Any, observation: NoticeSourceObservation, *,
     field_path: tuple[str, ...],
@@ -181,70 +257,77 @@ def persist_notice_cover(
         raise ValueError("notice_c_persisted_epoch_invalid")
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        existing = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (key,),
-        ).fetchone()
-        previous = _decode(existing[0], attribute.document) if existing else None
-        previous_epoch = previous.epoch if previous is not None else 0
-        if expected_epoch is not None and expected_epoch != previous_epoch:
-            raise ValueError("notice_c_persisted_epoch_changed")
-        if previous is not None:
-            old = previous.observation
-            seen_at = json.loads(existing[0]).get(_LAST_SEEN, old.observed_at)
-            # A delayed worker must not replace a newer accepted observation,
-            # even if the latter was partial and kept an older valid cover.
-            changed = (old.source_revision != observation.source_revision
-                       or previous.attribute != attribute)
-            if observation.observed_at < seen_at and changed:
-                raise ValueError("notice_c_persisted_stale_source")
-            if (previous.attribute.snapshot_complete
-                    and not attribute.snapshot_complete):
-                # Incomplete parsing/cover inventory is no tombstone. Persist
-                # its *time* (not its untrusted media) to reject older work.
-                _advance_seen_watermark(
-                    db, key, existing[0], observation.observed_at,
-                )
-                return previous
-            if not changed:
-                _advance_seen_watermark(
-                    db, key, existing[0], observation.observed_at,
-                )
-                return previous
-            # Same-second source changes require the explicit writer CAS.
-            # The watermark is durable even if the current source is older.
-            if observation.observed_at == seen_at and expected_epoch is None:
-                raise ValueError("notice_c_persisted_stale_source")
-            if previous_epoch >= _MAX_EPOCH:
-                raise ValueError("notice_c_persisted_epoch_overflow")
-        epoch = previous_epoch + 1
-        payload = {
-            "schema": 1, "key": asdict(observation.key),
-            "parser_id": observation.parser_id,
-            "parser_version": observation.parser_version,
-            "observed_at": observation.observed_at,
-            "status": observation.status,
-            "source_revision": observation.source_revision,
-            "raw_json": observation.raw_json,
-            "field_path": list(field_path),
-            "cover_inventory_complete": cover_inventory_complete,
-            "epoch": epoch,
-            _LAST_SEEN: observation.observed_at,
-        }
-        encoded = json.dumps(
-            payload, sort_keys=True, separators=(",", ":"),
-            ensure_ascii=False, allow_nan=False,
+        return _persist_notice_cover_txn(
+            db, observation, attribute, key, field_path,
+            cover_inventory_complete, expected_epoch,
         )
-        if len(encoded.encode("utf-8")) > _MAX_BYTES:
-            raise ValueError("notice_c_persisted_too_large")
-        db.execute(
-            "INSERT INTO metadata(key,value) VALUES(?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, encoded),
-        )
-    return PersistedNoticeCover(observation, attribute, epoch)
+
+
+# Bound writer-lock hold time for 30,000-row catalogues while replacing one
+# SQLite transaction per source with a bounded set of shared transactions.
+_BATCH_LIMIT = 128
+
+
+def persist_notice_cover_many(
+    storage: Any, observations: list[NoticeSourceObservation], *,
+    field_path: tuple[str, ...],
+    cover_inventory_complete: bool,
+) -> list[PersistedNoticeCover | None]:
+    """Persist an already parsed Core batch, preserving each source's CAS.
+
+    Return one result (or None) per input. A malformed, stale or conflicting
+    row must not suppress another *independent* admitted source. Each entry
+    has a SAVEPOINT so the old single-source rejection semantics survive,
+    while only one BEGIN/commit and SQLite connection is used per 128 rows.
+    Source keys and bytes are never logged. An absent image is still UNKNOWN.
+    This never grants rights, downloads images, or copies N3 media.
+    """
+    if type(observations) is not list:
+        raise TypeError("expected Core Notice C batch")
+    prepared: list[
+        tuple[NoticeSourceObservation, NoticeCoverAttribute, str] | None
+    ] = []
+    for observation in observations:
+        try:
+            attribute = project_notice_cover_attribute(
+                observation, field_path=field_path,
+                cover_inventory_complete=cover_inventory_complete,
+            )
+            key = _opaque_key(attribute.document)
+            if key is None:
+                raise ValueError("notice_c_persisted_scope_invalid")
+            prepared.append((observation, attribute, key))
+        except (ValueError, TypeError, UnicodeError, OverflowError,
+                RecursionError):
+            prepared.append(None)
+
+    results: list[PersistedNoticeCover | None] = [None] * len(prepared)
+    for offset in range(0, len(prepared), _BATCH_LIMIT):
+        chunk = prepared[offset:offset + _BATCH_LIMIT]
+        if not any(item is not None for item in chunk):
+            continue
+        with storage._lock, storage._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for position, item in enumerate(chunk, offset):
+                if item is None:
+                    continue
+                observation, attribute, key = item
+                db.execute("SAVEPOINT notice_c_batch_row")
+                try:
+                    results[position] = _persist_notice_cover_txn(
+                        db, observation, attribute, key, field_path,
+                        cover_inventory_complete, None,
+                    )
+                except (ValueError, TypeError, UnicodeError, OverflowError,
+                        RecursionError, sqlite3.Error):
+                    db.execute("ROLLBACK TO SAVEPOINT notice_c_batch_row")
+                finally:
+                    db.execute("RELEASE SAVEPOINT notice_c_batch_row")
+    return results
 
 
 __all__ = [
     "PersistedNoticeCover", "read_notice_cover", "persist_notice_cover",
+    "persist_notice_cover_many",
     "is_notice_cover_document",
 ]
