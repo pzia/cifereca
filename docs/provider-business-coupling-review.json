@@ -429,24 +429,6 @@
       "reachability": "unproven"
     },
     {
-      "id": "site-2e131a36740d4dc492a02de3",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Historical exact-borrower inventory absence verification after ADEPT observation",
-      "productive_caller": "core.loan_return_verification._paris_inventory_exact_borrower and LibraryService.verify_paris_return_inventory -> verify_paris_return_inventory",
-      "effect": "Rejects mixed/partial/non-exhaustive or foreign borrower inventories as proof of returned loan; the facade delegates a bounded exact-account read, NEVER issues ReturnDigitalLoan POST.",
-      "authority": "Exact provider/credential/borrower/identity, branch completeness and connected session proof, not empty rows or a different credential.",
-      "replacement_contract": "Provider-neutral complete typed loan-inventory snapshot with exact borrower/branch coverage and pre/post-read lease. Keep historical refusal until independently proven.",
-      "tests": [
-        "tests/test_core_p0_2975_return_borrower_scope.py",
-        "tests/test_core_p0_1120_paris_inventory_completeness.py",
-        "tests/test_core_p0_2975_typed_return_inventory_absence.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "These are a guarded historical read and its delegate, not a current return mutation. Public API reachability alone is unproven.",
-      "decision_group_id": "loan.return-exact-inventory-absence",
-      "reachability": "unproven"
-    },
-    {
       "id": "site-b2c28295eb915336e054f6f1",
       "classification": "safety_guard_pending_contract",
       "journey": "Historical exact-borrower inventory absence verification after ADEPT observation",
@@ -1699,6 +1681,23 @@
         "tests/test_core_p0_5048_neutral_local_provenance_projection.py"
       ],
       "pr": "#6426",
+      "in_ast_metric": true
+    },
+    {
+      "id": "struct-return-inventory-exact-borrower-veto-genericized",
+      "original_site_id": "site-2e131a36740d4dc492a02de3",
+      "original": "loan_return_verification._paris_inventory_exact_borrower refused all sources other than literal Paris even when their typed inventory attested the exact connected borrower and documentary branch.",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Shared valid_provider_identifier plus exact native credential/identity/borrower row agreement; branch absence requires success+complete pagination on loan.provider.casefold() and loan.medium=digital, under unchanged registered session/epoch; v1 untyped inventories remain positive-only.",
+      "classification": "replaced_live_supplier_return_absence_veto_by_typed_branch_contract",
+      "evidence": "Provider-name comparison and DILICOM-only branch selection physically deleted from the executable read-only return verifier. A synthetic lender and biblioaccess.la-rochelle can attest exact absence only with typed complete single-branch coverage, whereas missing/partial/wrong-branch or foreign-borrower results fail closed; positive exact rows remain visible even on partial coverage. Provider GET remains one explicit inventory read, with zero voluntary return POST, ledger grant, entitlement or EPUB mutation. Historical public verify_paris_return_inventory facade is retained for ABI and separately inventoried as site-b2c28295eb915336e054f6f1.",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_return_inventory.py",
+        "tests/test_core_p0_2975_return_borrower_scope.py",
+        "tests/test_core_p0_2975_typed_return_inventory_absence.py",
+        "tests/test_core_p0_3121_return_inventory_inert_recheck.py"
+      ],
+      "pr": "pending",
       "in_ast_metric": true
     }
   ],
