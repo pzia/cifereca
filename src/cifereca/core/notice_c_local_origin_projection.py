@@ -65,7 +65,7 @@ def project_local_origin_public_c(
     additional bounded read neither looks up files nor consults a supplier.
     Invalid/ambiguous provenance simply leaves the existing cover path.
     """
-    if type(rows) is not list or len(rows) > _MAX_ROWS:
+    if type(rows) is not list:
         return
     # A repeated worker projection may receive previously annotated rows.
     # A proof from an earlier origin/C inventory cannot survive failed or
@@ -74,7 +74,8 @@ def project_local_origin_public_c(
     for row in rows:
         if type(row) is dict:
             row.pop("_public_canonical_cover_link", None)
-    if type(identity_id) is not str or not identity_id or not rows:
+    if (len(rows) > _MAX_ROWS or type(identity_id) is not str
+            or not identity_id or not rows):
         return
     wanted = {
         (row.get("artifact_id"), row.get("placement_id"))
@@ -131,10 +132,13 @@ def project_local_origin_public_c(
     if len(indexed) > _MAX_CANONICAL:
         return
 
-    # For every real public canonical C, ALL its source bibliographies
-    # must be independently proven to belong to this Artifact. Otherwise
-    # no single local file may borrow another edition's public thumbnail.
-    candidates: dict[str, list[tuple[object, int]]] = {}
+    # The completed OriginLink only attests provider + upstream record ID.
+    # It cannot identify a distinct docbase/medium/revision of that record.
+    # Across ALL durable public C records, require those coarse coordinates
+    # to designate exactly one independently admitted source edition.
+    # A self-C and a multi-source C for the same exact edition are compatible.
+    exact_editions: dict[tuple[str, str], set[str]] = {}
+    qualified: list[tuple[object, tuple[tuple[str, str], ...]]] = []
     for key, raw in indexed:
         try:
             value = _json(raw)
@@ -153,18 +157,34 @@ def project_local_origin_public_c(
                 (source.provider_id, source.public_bibliography.record_id)
                 for source in sources
             )
+            for coord, source in zip(coords, sources):
+                exact_editions.setdefault(coord, set()).add(
+                    source.public_bibliography.edition_id
+                )
             if len(set(coords)) != len(coords):
                 continue
-            for artifact in eligible_artifacts:
-                trusted = by_artifact.get(artifact, set())
-                if all(coord in trusted
-                       and origin_memberships.get(coord) == {artifact}
-                       for coord in coords):
-                    candidates.setdefault(artifact, []).append(
-                        (c, len(coords)),
-                    )
+            qualified.append((c, coords))
         except (ValueError, KeyError, TypeError, AttributeError):
             continue
+
+    candidates: dict[str, list[tuple[object, int]]] = {}
+    for c, coords in qualified:
+        # A provider + record shared by two distinct exact public catalogue
+        # editions is insufficient to relate either to the local Artifact.
+        if any(len(exact_editions[coord]) != 1 for coord in coords):
+            continue
+        # Each completed OriginLink must belong to the same one Artifact,
+        # independently of SHA matches or rights held by another identity.
+        linked = origin_memberships.get(coords[0], set())
+        if len(linked) != 1:
+            continue
+        artifact = next(iter(linked))
+        if artifact not in eligible_artifacts:
+            continue
+        trusted = by_artifact.get(artifact, set())
+        if all(coord in trusted and origin_memberships.get(coord) == linked
+               for coord in coords):
+            candidates.setdefault(artifact, []).append((c, len(coords)))
 
     selected: dict[str, object] = {}
     for artifact, options in candidates.items():
