@@ -248,6 +248,13 @@ def test_unequal_conflicting_multisource_groups_never_choose_borrower_cover(tmp_
     db = Storage(tmp_path / "borrower-conflicting-editions.sqlite")
     try:
         a, own = bibliography(db)
+        original_loan, original_history = loan(), history()
+        # Before any conflicting relation, the exact public self-C is valid.
+        assert admit(db, [original_loan, original_history]) == 2
+        for original in (original_loan, original_history):
+            assert borrower_public_c_receipt(
+                original, identity_id="alice",
+            ).document == own.document
         b, _ = bibliography(
             db, provider="numilog", record="source-b", thumbnail=URL_B,
         )
@@ -272,7 +279,8 @@ def test_unequal_conflicting_multisource_groups_never_choose_borrower_cover(tmp_
         assert len(large.sources) == 3
         assert len(small.sources) == 2
         assert len({own.document, large.document, small.document}) == 3
-        original_loan, original_history = loan(), history()
+        # Reproject the SAME private DTOs after two contradictory public
+        # canonical groups appear. Previously admitted N2 must be revoked.
         assert admit(db, [original_loan, original_history]) == 0
         for original in (original_loan, original_history):
             assert borrower_public_c_receipt(
