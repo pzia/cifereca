@@ -56,7 +56,9 @@ def _check(tmp_path, monkeypatch, rows):
         _forbid_work(service, monkeypatch)
         monkeypatch.setattr(
             service, "_paris_adept_identity_for_loan",
-            lambda *_args, **_kwargs: (None, None),
+            # The entitlement selector must run under a positive borrower
+            # grant; (None, None) is deliberately denied before rights.
+            lambda *_args, **_kwargs: ("default", None),
         )
         # Cross-identity veto is independently tested; exercise only the
         # final entitlement selector with exact read-only inventory rows.
