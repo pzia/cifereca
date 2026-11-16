@@ -83,6 +83,23 @@ def test_actual_federated_sync_and_progressive_numilog_c_notice(
         assert doc.identity_id is None and persisted is not None
         assert persisted.attribute.candidates[0].url == a.thumbnail_url
         assert persisted.epoch == 1
+        # An actually parsed supplier, not a synthetic SearchResult, must
+        # feed the canonical C index under its exact source edition.
+        from cifereca.core.notice_c_cover_index import (
+            canonical_cover_document_ref, read_consolidated_notice_cover,
+        )
+        from cifereca.core.notice_c_public_search import search_public_notice_c
+        from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
+        exact_edition = persisted.observation.key.edition_id
+        canonical = canonical_cover_document_ref(exact_edition)
+        assert a._core_notice_canonical_cover_document_ref == canonical
+        admitted = read_consolidated_notice_cover(service.storage, canonical)
+        assert admitted is not None and len(admitted.sources) == 1
+        assert [x.url for x in admitted.candidates] == [a.thumbnail_url]
+        n2 = cached_notice_cover_snapshot(NS(storage=service.storage), canonical)
+        assert n2.scope == canonical and n2.revision == admitted.epoch
+        known_page = search_public_notice_c(service.storage, "loup")
+        assert any(hit.document == canonical for hit in known_page.hits)
 
         service.select_identity("bob")
         assert service.current_identity.identity_id == "bob"
