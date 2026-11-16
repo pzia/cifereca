@@ -49,11 +49,19 @@ def test_public_c_source_binds_same_document_to_list_and_detail_without_actions(
         assert len(rows) == 1
         item = rows[0]
         ui = _host()
+        # MainWindow supplies these existing four Core/UI epochs. The
+        # headless generic Search fixture predates the C-first N3 guard.
+        ui._identity_context_generation = 2
+        ui._search_generation = 3
+        ui.service._account_context_epoch = 5
+        ui.service._source_context_epoch = 7
         ui._populate_local_search(rows)
         list_rows = ui.search_page.show_rows.call_args.args[0]
         assert len(list_rows) == 1
         list_row = list_rows[0]
         assert list_row._cover_document_ref == hit.document
+        assert list_row._cover_known_public_c_source is item
+        assert list_row._cover_known_public_c_receipt is not None
         assert list_row.options == {}
         assert list_row.meta.startswith("Notice C publique")
         assert list_row._public_row_content[-2] == hit.document
@@ -68,15 +76,19 @@ def test_public_c_source_binds_same_document_to_list_and_detail_without_actions(
             _cancel_cached_book_details=Mock(),
             _search_local_objects={item["key"]: item},
             _selected_search_id=None,
-            service=NS(current_identity=NS(identity_id="alice")),
-            search_page=NS(detail=panel),
+            service=ui.service,
+            _search_mode="local",
+            _identity_context_generation=2, _search_generation=3,
+            search_page=NS(detail=panel, selection=NS(
+                get_selected_item=lambda: list_row,
+            )),
             _book_description=no_actions, _known_search_result=no_actions,
             _add_local_book_actions=no_actions,
             _add_plugin_book_actions=no_actions,
             _request_cached_book_details=no_actions,
             run_search=no_actions,
         )
-        _detail_selected()(detail, NS(key=item["key"]))
+        _detail_selected()(detail, list_row)
         panel.empty.assert_not_called()
         presentation = panel.show_presentation.call_args.args[0]
         assert presentation.cover_document_ref == list_row._cover_document_ref
@@ -90,7 +102,7 @@ def test_public_c_source_binds_same_document_to_list_and_detail_without_actions(
         # neither the previous C ref nor a private action may be invoked.
         detail.service.current_identity.identity_id = "bob"
         panel.show_presentation.reset_mock()
-        _detail_selected()(detail, NS(key=item["key"]))
+        _detail_selected()(detail, list_row)
         panel.show_presentation.assert_not_called()
         panel.empty.assert_called_once()
     finally:
