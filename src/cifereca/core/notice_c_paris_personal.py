@@ -20,7 +20,7 @@ from typing import Any
 from ..models import Account, HistoryItem, Loan
 from .book_cover_projection import CoverDocumentScope
 from .notice_c_cover_index import is_canonical_cover_document
-from .notice_c_exact_source_lookup import exact_public_source_c
+from .notice_c_exact_source_lookup import exact_public_source_c_batch
 
 _CORE_PARIS_PERSONAL_C_WITNESS = object()
 _LINK_FIELD = "_core_notice_c_paris_public_link"
@@ -74,8 +74,7 @@ def attach_paris_personal_public_c(
         account.credential_id, account.unique_id,
     )
     from .notice_c_cover_index import _IDENTIFIER
-    matched: dict[str, object] = {}
-    missed: set[str] = set()
+    observed: list[Loan | HistoryItem] = []
     for item in items:
         if (type(item) not in (Loan, HistoryItem)
                 or item.provider != "DILICOM"
@@ -88,27 +87,29 @@ def attach_paris_personal_public_c(
                 or _IDENTIFIER.fullmatch(item.record_id) is None
                 or "://" in item.record_id or ".." in item.record_id):
             continue
-        record = item.record_id
-        if record not in matched and record not in missed:
-            # Paris's public Search projection intentionally emits revision
-            # None. Never attach to a different revised record by title.
-            result = exact_public_source_c(
-                storage, provider_id="paris", record_id=record,
-                docbase="DILICOM", medium="digital",
-                source_revision=None,
-            )
-            if result is None or not result.candidates:
-                missed.add(record)
-                continue
-            matched[record] = result
-        canonical = matched.get(record)
-        if canonical is None:
+        observed.append(item)
+    if not observed:
+        return
+
+    coordinates = tuple(sorted({
+        ("paris", item.record_id, "DILICOM", "digital", None)
+        for item in observed
+    }))
+    # One bounded decoded public-C cursor for this whole account batch;
+    # unknown/revised/ambiguous coordinates remain absent without HTTP.
+    matched = exact_public_source_c_batch(storage, coordinates)
+    for item in observed:
+        canonical = matched.get((
+            "paris", item.record_id, "DILICOM", "digital", None,
+        ))
+        if canonical is None or not canonical.candidates:
             continue
         item.__dict__[_LINK_FIELD] = VerifiedParisPersonalPublicC(
             original=item, document=canonical.document,
             canonical_epoch=canonical.epoch, scope=scope,
             account_epoch=account_epoch, source_epoch=source_epoch,
-            record_id=record, witness=_CORE_PARIS_PERSONAL_C_WITNESS,
+            record_id=item.record_id,
+            witness=_CORE_PARIS_PERSONAL_C_WITNESS,
         )
 
 
