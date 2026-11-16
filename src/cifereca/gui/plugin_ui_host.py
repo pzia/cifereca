@@ -132,6 +132,32 @@ class _UiHost:
         return self.window.search_books(
             query, field=field, online=online, identity_id=identity_id,
         )
+    def public_notice_cover_ref(
+        self, item: object, *, identity_id: str,
+    ) -> object | None:
+        """Public, read-only Core admission of an exact Search C document.
+
+        A recommendations plugin may share the already published public C
+        miniature but must never import Core internals or mint a reference
+        from ISBN, title, URL, affinity or provider metadata. The active
+        identity and live host are verified before any proof is consulted.
+        The Core validator itself is pure: no GTK SQLite/HTTP/image IO.
+        """
+        if (not self._window_alive()
+                or type(identity_id) is not str or not identity_id):
+            return None
+        service = getattr(self.window, "service", None)
+        current = getattr(getattr(service, "current_identity", None),
+                          "identity_id", None)
+        if type(current) is not str or current != identity_id:
+            return None
+        from ..core.notice_c_known_projection import (
+            matching_live_public_canonical_ref,
+        )
+        return matching_live_public_canonical_ref(
+            item, identity_id=identity_id,
+        )
+
     def can_open_loaded_search_notice(
         self, *, provider: str, credential: str, record_id: str,
         docbase: str, source_collection: str, identity_id: str,
