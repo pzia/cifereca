@@ -125,7 +125,7 @@ def test_numilog_epoch_and_bnf_mode_cannot_leak_across_types(policy):
         assert bridge.toggle_state(conn, loan) == "off"  # no loan epoch
     db.metadata_set("sync.source.bnf_auto." + bnf_id + ".revision", "b" * 32)
     with db._lock, db._connect() as conn:
-        assert bridge.toggle_state(conn, loan) == "on"
+        assert bridge.toggle_state(conn, loan) == "off"
         assert bridge.toggle_state(conn, purchase) == "on"
 
 
@@ -235,7 +235,7 @@ def test_optional_right_state_does_not_veto_canonical_download(
 
 
 
-def test_legacy_bnf_source_opt_in_is_scope_and_revision_pinned(policy):
+def test_legacy_bnf_source_on_is_inert_even_with_valid_revision(policy):
     """Only the existing SOURCE consent transfers to canonical execution."""
     service, db, _ = policy
     loan = replace(
