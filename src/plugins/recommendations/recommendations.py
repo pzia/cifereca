@@ -3301,11 +3301,13 @@ class UxRecommendationsView:
                 subtitle=author,
                 thumbnail_url=thumbnail,
                 cover_document_ref=(
+                    row.cover_document_ref
+                    if row.cover_document_ref is not None
+                    and row.cover_document_ref ==
                     _attested_recommendation_c_cover(
                         ranked, identity_id=exact_identity,
                         catalogue_sources=catalogue_sources,
                     )
-                    if row.cover_document_ref is not None
                     else None
                 ),
                 badges=tuple(badges),
