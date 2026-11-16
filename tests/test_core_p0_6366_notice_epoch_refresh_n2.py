@@ -149,6 +149,16 @@ def test_overlap_of_two_core_epochs_never_loses_latest_revision(
     monkeypatch.setattr(search_orchestration.time, "time", lambda: clock[0])
     db = Storage(tmp_path / "notices.sqlite")
     loader = CoverLoader(max_workers=2)
+    # The asynchronous test is about N2, not the external image transport.
+    # Never issue a real HTTP GET from its worker callback.
+    monkeypatch.setattr(
+        loader, "load",
+        lambda url, callback, **kw: NS(cancel=lambda: None),
+    )
+    monkeypatch.setattr(
+        loader, "load_preview",
+        lambda url, callback, **kw: NS(cancel=lambda: None),
+    )
     entered, release, v3_painted = Event(), Event(), Event()
     reads = []
 
