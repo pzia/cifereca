@@ -2393,6 +2393,7 @@ def _mirror_remote_results(
                     field_path=("search_result", "thumbnail_url"),
                     cover_inventory_complete=True,
                 )
+                eligible_c_routes = []
                 for row, persisted in zip(producing_rows, persisted_batch):
                     if persisted is None:
                         logging.getLogger("cifereca").warning(
@@ -2425,31 +2426,35 @@ def _mirror_remote_results(
                             row._core_notice_canonical_cover_document_epoch = (
                                 canonical.epoch
                             )
-                            # A live Search hit can now reuse the same
-                            # independently attested multi-provider C already
-                            # shown by the durable C-first Search index.
-                            # Resolve on this Core worker, never in GTK.
-                            # The immutable packet refuses old epochs and
-                            # source/edition mismatches at paint time.
-                            if len(producing_rows) <= 32:
-                                from .notice_c_exact_source_lookup import (
-                                    exact_public_source_c,
-                                )
-                                from .notice_c_live_multisource_binding import (
-                                    stamp_live_multisource_c,
-                                )
-                                multi = exact_public_source_c(
-                                    self.storage,
-                                    provider_id=row.source_provider,
-                                    record_id=row.record_id,
-                                    docbase=row.docbase,
-                                    medium=row.medium,
-                                    source_revision=row.revision_id,
-                                )
-                                if multi is not None:
-                                    stamp_live_multisource_c(
-                                        row, persisted, multi,
-                                    )
+                            eligible_c_routes.append((row, persisted))
+                # Multi-source C may be admitted after the initial per-source
+                # C. Resolve this ready batch only AFTER all writes, with one
+                # bounded Core scan, not one SQLite scan per Search/GTK row.
+                # Larger batches retain safe individual C refs and can be
+                # completed by the durable known-C read instead.
+                if eligible_c_routes and len(eligible_c_routes) <= 32:
+                    from .notice_c_exact_source_lookup import (
+                        exact_public_sources_c,
+                    )
+                    from .notice_c_live_multisource_binding import (
+                        stamp_live_multisource_c,
+                    )
+                    source_coords = tuple(
+                        (row.source_provider, row.record_id, row.docbase,
+                         row.medium, row.revision_id)
+                        for row, _persisted in eligible_c_routes
+                    )
+                    routed = exact_public_sources_c(
+                        self.storage, source_coords,
+                    )
+                    for (row, persisted), coords in zip(
+                        eligible_c_routes, source_coords,
+                    ):
+                        multi = routed.get(coords)
+                        if multi is not None:
+                            stamp_live_multisource_c(
+                                row, persisted, multi,
+                            )
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # Catalogue mirror remains independent. A broken source
                 # index cannot invent a cover or leak provider bytes/paths.
