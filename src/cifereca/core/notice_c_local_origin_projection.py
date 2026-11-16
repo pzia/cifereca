@@ -1,8 +1,9 @@
 """#6366: Core-attested public C cover from a local completed OriginLink.
 
 Library and Recent are *owner-scoped local* views. Their catalogue fallback
-may reuse a canonical PUBLIC Notice C only when a real completed provider
-OriginLink relates that same Artifact/Placement to the exact supplier record
+may reuse a canonical PUBLIC Notice C for completed purchases **or loans**
+only when a real completed provider OriginLink relates the Artifact/Placement
+to the exact supplier record
 retained inside the C. No catalogue match by title, ISBN, URL, SHA alone or
 foreign profile. This runs on Library/Recent's existing worker, never GTK.
 No right is acquired, inferred, or copied from C. EPUB N1 always wins.
@@ -93,7 +94,10 @@ def project_local_origin_public_c(
     by_artifact: dict[str, set[tuple[str, str]]] = {}
     origin_memberships: dict[tuple[str, str], set[str]] = {}
     for artifact, owner, provider, _credential, _account, edition, kind in verified:
-        if owner != identity_id or kind != "purchase":
+        # A completed *loan* acquisition also proves the source-to-Artifact
+        # relationship. C remains descriptive, never a borrowing entitlement;
+        # an unmaterialized/remote loan still has no Placement and cannot join.
+        if owner != identity_id or kind not in ("purchase", "loan"):
             continue
         coord = (provider, edition)
         by_artifact.setdefault(artifact, set()).add(coord)
