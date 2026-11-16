@@ -863,10 +863,11 @@ class DetailPanel(Gtk.Box):
         from cifereca.gui.offer_actions import (
             requires_selected_offer_check, download_action_label,
             private_notice_download_hint_allowed,
+            public_catalogue_download_hint_allowed,
         )
-        # Supplier-neutral private provenance guard; a public catalogue's
-        # existing independent delivery policy is intentionally unchanged.
-        if item.source_provider == "numilog-catalog":
+        # Descriptive public catalogue rows have no implicit download offer.
+        # This guard is independent of supplier identity and does no I/O.
+        if not public_catalogue_download_hint_allowed(item):
             return
         if not private_notice_download_hint_allowed(
             item,
