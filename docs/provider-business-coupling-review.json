@@ -1669,9 +1669,9 @@
       "original_site_id": "site-ec3bd8bf2ee3527ef2c55dd0",
       "original": "core.diagnostic_journal._make_event promoted historical Core ACQUISITION/loan sync provider provenance only when the native provider literal was Paris or BnF, hiding the same exact diagnostic shape from Numilog and future providers",
       "original_classification": "legitimate_readonly_compat",
-      "replacement": "One bounded, lower-case native provider-id pattern with the existing exact Core logger/category/operation/severity/status/code/loan_id envelope; all provider names handled identically. No new log writer, provider request, or permission.",
+      "replacement": "Shared Core provider_identifier.valid_provider_identifier ABI, exact installed-grammar identifier (including multi-segment source IDs) within the unchanged Core logger/category/operation/severity/status/code/loan_id envelope; reserved/invalid source IDs rejected. No new log writer, provider request or permission.",
       "classification": "replaced_historical_supplier_allowlist_with_source_neutral_readonly_projection",
-      "evidence": "A real Core diagnostic with the historical loan-sync shape and a future synthetic or Numilog provider is filterable without declaring supplier names in Core; malformed provider IDs, plugin logger impostors, wrong category/operation/status/severity and malformed issue envelope stay untrusted and cannot establish an event provider_id. Legacy Paris/BnF events retain byte-for-byte payload and provider filtering.",
+      "evidence": "A real Core historical loan-sync diagnostic from Numilog, a future synthetic provider, or a dot-separated installed source such as biblioaccess.la-rochelle is filterable without declaring names in Core. Malformed/reserved provider IDs, plugin logger impostors, wrong category/operation/status/severity and malformed issue envelope stay untrusted; compatibility never implies an entitlement, runtime credential or GET. Paris/BnF historical events retain payload and provider filtering.",
       "tests": [
         "tests/test_diagnostics_p0_2888_legacy_loan_provider.py",
         "tests/test_diagnostics_acquisition_fidelity.py",
