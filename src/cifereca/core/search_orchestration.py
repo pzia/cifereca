@@ -2128,7 +2128,9 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
     if isinstance(self.storage, Storage):
         import sqlite3
         from .notice_search_cover_producer import admit_public_search_cover
-        from .notice_cover_repository import persist_notice_cover
+        from .notice_cover_repository import persist_notice_cover_many
+        producing_rows = []
+        observations = []
         for _key, row, _state, _qualified in keyed:
             public_url = _shared_catalogue_cover_url(row.thumbnail_url)
             if public_url is None:
@@ -2138,23 +2140,35 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
                     row, identity_id=identity_id, observed_at=now,
                     public_cover_url=public_url,
                 )
-                if observed is None:
-                    continue
-                persisted = persist_notice_cover(
-                    self.storage, observed,
+            except (ValueError, TypeError, UnicodeError):
+                observed = None
+            if observed is None:
+                continue
+            producing_rows.append(row)
+            observations.append(observed)
+
+        if observations:
+            try:
+                persisted_batch = persist_notice_cover_many(
+                    self.storage, observations,
                     field_path=("search_result", "thumbnail_url"),
                     cover_inventory_complete=True,
                 )
-                # Only Core's accepted SQLite observation can supply this
-                # ephemeral DocumentRef; it is not serialized into the
-                # provider cache or inferred by GTK from the image URL.
-                row._core_notice_cover_document_ref = persisted.document
-                row._core_notice_cover_document_epoch = persisted.epoch
+                for row, persisted in zip(producing_rows, persisted_batch):
+                    if persisted is None:
+                        logging.getLogger("cifereca").warning(
+                            "TRACE notice c public search code=source_persist_failed"
+                        )
+                        continue
+                    # Core stamps only a successfully accepted source and
+                    # its durable epoch. A GTK widget never writes a second
+                    # N2 source or infers an association from an N3 HIT.
+                    row._core_notice_cover_document_ref = persisted.document
+                    row._core_notice_cover_document_epoch = persisted.epoch
             except (ValueError, TypeError, OSError, sqlite3.Error):
-                # The historical catalogue mirror is still independently
-                # useful; one malformed provider notice must not abort other
-                # rows. No source strings, URL, path or secrets in the log.
+                # Catalogue mirror remains independent. A broken source
+                # index cannot invent a cover or leak provider bytes/paths.
                 logging.getLogger("cifereca").warning(
-                    "TRACE notice c public search code=source_persist_failed"
+                    "TRACE notice c public search code=source_batch_failed"
                 )
     return len(upserts)
