@@ -187,10 +187,17 @@ def exact_public_source_c_batch(
 
     resolved = {}
     for coords, options in matches.items():
-        strength = max(len(x.sources) for x in options)
-        candidates = [x for x in options if len(x.sources) == strength]
-        if len(candidates) == 1:
-            resolved[coords] = candidates[0]
+        # The batch must obey the same fail-closed canonical relation rule as
+        # exact_public_source_c: two distinct multisource claims conflict,
+        # even when one has three sources and the other only two. Counting
+        # providers never grants canonical authority to either claim.
+        relations = {x.document: x for x in options if len(x.sources) > 1}
+        if len(relations) > 1:
+            continue
+        if relations:
+            resolved[coords] = next(iter(relations.values()))
+        elif len(options) == 1:
+            resolved[coords] = options[0]
     return resolved
 
 
