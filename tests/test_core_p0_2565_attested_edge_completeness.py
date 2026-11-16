@@ -35,14 +35,17 @@ def _duplicate_rights():
     return inventory, tables
 
 
-def test_unique_full_source_produces_exactly_one_attested_right_edge():
+def test_unique_historical_receipt_is_not_an_attested_purchase_origin():
     inventory, tables = _fixture(1)
     result = _reconcile(inventory, tables)
-    assert result.files[0] == {"confirmed_link"}
-    assert len(_attested(result)) == 1
-    assert _attested(result)[0].row_index == 0
-    assert result.unverified_rights == []
-    assert result.redacted()["edge_counts"]["explicit_right_ledger_placement_sha_size"] == 1
+    assert result.files[0] == {
+        "present_unlinked", "local_file_without_attested_right",
+    }
+    assert _attested(result) == []
+    assert result.unverified_rights == [0]
+    assert result.redacted()["edge_counts"]["explicit_placement_sha_size"] == 1
+    assert ("explicit_right_ledger_placement_sha_size"
+            not in result.redacted()["edge_counts"])
 
 
 def test_two_attested_looking_rights_are_ambiguous_not_two_attestations():
@@ -83,10 +86,31 @@ def test_incomplete_snapshot_never_publishes_attested_edge():
     assert result.unverified_rights == [0]
 
 
-def test_deadline_expiring_inside_single_file_cannot_attest(monkeypatch):
+def test_deadline_expiring_before_canonical_promotion_cannot_attest(monkeypatch):
+    from cifereca.core.canonical_publication import _stable
     inventory, tables = _fixture(1)
-    # Start, file entry, placement, right are inside the window. The
-    # final proof-promotion check happens exactly on the deadline.
+    origin = {
+        "identity_id": "alice", "provider_id": "numilog",
+        "credential_id": "credential", "account_id": "account",
+        "branch_id": "personal_library", "edition_id": "edition-0000",
+        "right_id": "right-0000", "reference_kind": "purchase",
+        "state": "active", "evidence_kind": "provider_response",
+        "evidence_ref": "observed-via-provider", "receipt_ref": "completed",
+        "observed_at": "2026-11-16T09:00:00Z",
+        "artifact_id": tables["artifacts"][0]["artifact_id"],
+    }
+    keys = (
+        "identity_id", "provider_id", "credential_id", "account_id",
+        "branch_id", "edition_id", "right_id", "reference_kind",
+    )
+    origin["source_reference_id"] = _stable("source", *(origin[k] for k in keys))
+    origin["origin_link_id"] = _stable(
+        "origin", "provider", origin["identity_id"], origin["artifact_id"],
+        origin["source_reference_id"], origin["receipt_ref"],
+    )
+    tables["provider_origins"] = [origin]
+    # Start, file entry, placement and artifact compare fit. The final
+    # canonical-positive checkpoint (not a retired legacy right) expires.
     clock = iter((0.0, 0.0, 0.0, 0.0, 10.0))
     monkeypatch.setattr(engine.time, "monotonic", lambda: next(clock, 10.0))
     result = _reconcile(inventory, tables, seconds=10)
@@ -96,12 +120,10 @@ def test_deadline_expiring_inside_single_file_cannot_attest(monkeypatch):
     assert "confirmed_link" not in result.files[0]
 
 
-def test_deadline_inside_one_file_before_right_verification_never_attests(monkeypatch):
+def test_deadline_inside_file_before_byte_verification_never_attests(monkeypatch):
     inventory, tables = _fixture(1)
-    # The source-agnostic account-ambiguity gate now rejects *both* Kobo
-    # and Numilog editions with multiple accounts before inner comparison.
-    # Keep this independent deadline test on an otherwise unique right.
-    # Start, file entry and placement fit; right verification expires.
+    # Start, file and placement fit; artifact-byte verification is cut off
+    # before any source or ownership evidence could be promoted.
     ticks = iter((0, 0, 0, 10))
     monkeypatch.setattr(engine.time, "monotonic", lambda: next(ticks, 10))
     result = _reconcile(inventory, tables, seconds=10)
@@ -117,10 +139,12 @@ def test_cancellation_inside_selected_file_revokes_tentative_link():
 
     def cancelled():
         calls.append(True)
-        return len(calls) >= 4
+        # File entry, placement and artifact are still three independent
+        # cancellation points; the retired legacy-right loop no longer runs.
+        return len(calls) >= 3
 
     result = _reconcile(inventory, tables, cancelled=cancelled)
-    assert len(calls) >= 4
+    assert len(calls) >= 3
     assert result.reasons == {"cancelled"}
     assert "confirmed_link" not in result.files[0]
     assert _attested(result) == []
@@ -149,7 +173,7 @@ def test_unknown_provider_competing_borrowers_are_ambiguous_without_any_grant():
     assert "competing-right" not in json.dumps(report.redacted())
 
 
-def test_cross_identity_and_different_edition_do_not_create_false_ambiguity():
+def test_unrelated_legacy_scopes_keep_byte_evidence_without_false_ambiguity():
     inventory, tables = _fixture(1)
     observed = tables["entitlements"][0]
     different_identity = dict(observed, entitlement_id="foreign-right",
@@ -159,8 +183,11 @@ def test_cross_identity_and_different_edition_do_not_create_false_ambiguity():
     tables["entitlements"].extend((different_identity, different_edition))
     report = _reconcile(inventory, tables)
     assert "ambiguous" not in report.files[0]
-    assert report.files[0] == {"confirmed_link"}
-    assert len(_attested(report)) == 1
+    assert report.files[0] == {
+        "present_unlinked", "local_file_without_attested_right",
+    }
+    assert _attested(report) == []
+    assert report.unverified_rights == [0, 1, 2]
 
 
 def test_same_provider_edition_with_inactive_other_account_still_blocks():

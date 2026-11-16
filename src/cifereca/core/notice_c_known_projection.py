@@ -66,16 +66,33 @@ def merge_public_notice_c_known_rows(
 
     rows: list[dict[str, Any]] = []
     admitted: list[PublicNoticeCHit] = []
-    seen: set[str] = set()
+    by_document: dict[str, dict[str, Any]] = {}
     for hit in page.hits:
         if (type(hit) is not PublicNoticeCHit
                 or hit.document.kind != "public_catalogue"
                 or hit.document.identity_id is not None
-                or not is_notice_cover_document(hit.document)
-                or hit.document.source_key in seen):
+                or not is_notice_cover_document(hit.document)):
             continue
-        seen.add(hit.document.source_key)
         admitted.append(hit)
+        prior = by_document.get(hit.document.source_key)
+        if prior is not None:
+            # Distinct providers can contribute different public text to ONE
+            # canonical cover document. Keep their independently attested
+            # descriptions as alternatives; never silently treat the first
+            # source's words as a reconciled canonical bibliography.
+            alternatives = prior["metadata"].setdefault(
+                "notice_c_source_alternatives", [],
+            )
+            alternatives.append({
+                "provider_id": hit.provider_id,
+                "record_id": hit.record_id,
+                "source_revision": hit.source_revision,
+                "title": hit.title,
+                "author": hit.author,
+                "publisher": hit.publisher,
+                "description": hit.description,
+            })
+            continue
         rows.append({
             "key": "c-public:" + hit.document.source_key,
             "source": "notice_c_public",
@@ -101,6 +118,7 @@ def merge_public_notice_c_known_rows(
             },
             "_cover_document_ref": hit.document,
         })
+        by_document[hit.document.source_key] = rows[-1]
     for row in known:
         # Do not replace local placements, verified rights, private sources,
         # different revisions or medium with public descriptive metadata.
@@ -111,7 +129,7 @@ def merge_public_notice_c_known_rows(
 
 
 def matching_live_public_canonical_ref(row: object, *, identity_id: str):
-    """Match one same-call live result to ITS OWN canonical public C ref.
+    """Match one same-call live result to its Core-attested canonical C ref.
 
     A mutable provider-facing SearchResult may carry arbitrary attributes.
     Re-derive both source and edition coordinates under the private Core
@@ -140,11 +158,30 @@ def matching_live_public_canonical_ref(row: object, *, identity_id: str):
             public_cover_url=row.thumbnail_url,
         )
         if (admitted is not None
-                and notice_cover_document_ref(admitted.key) == source
-                and canonical_cover_document_ref(
-                    admitted.key.edition_id
-                ) == canonical):
-            return canonical
+                and notice_cover_document_ref(admitted.key) == source):
+            if canonical_cover_document_ref(
+                admitted.key.edition_id,
+            ) == canonical:
+                return canonical
+            # A true cross-provider target is never derivable from Search
+            # title/ISBN/thumbnail/provider fields. Only the Core worker
+            # can stamp this private token AFTER verifying two completed,
+            # same-owner provider OriginLinks and persisting both sources.
+            # No SQL or entitlement lookup is performed on GTK here.
+            from .notice_c_origin_link_producer import (
+                _CORE_ORIGIN_LINK_C_WITNESS,
+            )
+            proof = getattr(row, "_core_notice_cross_provider_proof", None)
+            epoch = getattr(
+                row, "_core_notice_canonical_cover_document_epoch", None,
+            )
+            if (type(proof) is tuple and len(proof) == 4
+                    and proof[0] is _CORE_ORIGIN_LINK_C_WITNESS
+                    and proof[1] == source.source_key
+                    and proof[2] == canonical.source_key
+                    and type(epoch) is int and epoch > 0
+                    and proof[3] == epoch):
+                return canonical
     except (TypeError, ValueError, UnicodeError):
         pass
     return None

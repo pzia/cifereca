@@ -11,9 +11,11 @@ from cifereca.plugin_api.loan_inventory import (
 )
 
 
-def attest_paris_dilicom_complete(session, *, credential_id: str) -> None:
-    """Simulate a branch-scoped end of pagination; no real provider I/O."""
-    session.provider_id = "paris"
+def attest_source_branch_complete(
+    session, *, credential_id: str, branch: str, provider: str = "paris",
+) -> None:
+    """Simulate exact typed branch coverage; no real provider I/O."""
+    session.provider_id = provider
     session.credential_id = credential_id
     session.capabilities = SimpleNamespace(loans=True)
 
@@ -23,9 +25,16 @@ def attest_paris_dilicom_complete(session, *, credential_id: str) -> None:
             scope=LoanInventoryScope.for_account(account),
             loans=tuple(rows), status="success",
             branches=(LoanBranchCoverage(
-                upstream="dilicom", medium="digital", completeness="complete",
-                pagination_complete=True,
+                upstream=branch.casefold(), medium="digital",
+                completeness="complete", pagination_complete=True,
             ),),
         )
 
     session.loan_inventory_snapshot = loan_inventory_snapshot
+
+
+def attest_paris_dilicom_complete(session, *, credential_id: str) -> None:
+    """Historical Paris DILICOM helper; retain its literal coverage."""
+    attest_source_branch_complete(
+        session, credential_id=credential_id, branch="dilicom",
+    )

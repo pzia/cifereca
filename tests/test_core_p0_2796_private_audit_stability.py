@@ -37,10 +37,59 @@ def _pair(first, second):
                                   second, lambda: True)
 
 
+def _canonicalize(tables):
+    """Attest only these synthetic baseline files via canonical purchase origins.
+
+    The stability tests must measure loss of a *real canonical proof*, not
+    a deprecated Numilog entitlement/ledger shortcut.
+    """
+    from cifereca.core.canonical_publication import _stable
+
+    by_edition = {
+        (row["identity_id"], row["provider_id"], row["item_id"]): row
+        for row in tables["entitlements"]
+    }
+    origins = []
+    for placement in tables["placements"]:
+        right = by_edition[(
+            placement["identity_id"], placement["provider_id"],
+            placement["source_item_id"],
+        )]
+        row = {
+            "identity_id": right["identity_id"],
+            "provider_id": right["provider_id"],
+            "credential_id": right["credential_id"],
+            "account_id": right["account_id"],
+            "branch_id": "personal_library",
+            "edition_id": right["item_id"],
+            "right_id": right["entitlement_id"],
+            "reference_kind": "purchase", "state": "active",
+            "evidence_kind": "provider_response",
+            "evidence_ref": "verified-" + right["entitlement_id"],
+            "receipt_ref": "completed-" + right["entitlement_id"],
+            "observed_at": "2026-11-16T09:00:00Z",
+            "artifact_id": placement["artifact_id"],
+        }
+        keys = (
+            "identity_id", "provider_id", "credential_id", "account_id",
+            "branch_id", "edition_id", "right_id", "reference_kind",
+        )
+        row["source_reference_id"] = _stable(
+            "source", *(row[key] for key in keys),
+        )
+        row["origin_link_id"] = _stable(
+            "origin", "provider", row["identity_id"], row["artifact_id"],
+            row["source_reference_id"], row["receipt_ref"],
+        )
+        origins.append(row)
+    tables["provider_origins"] = origins
+    return tables
+
+
 def _base(count=600):
     inventory, tables = _fixture(count)
     tables['backup_items'] = []
-    return inventory, tables
+    return inventory, _canonicalize(tables)
 
 
 def test_equal_six_hundred_observations_and_sqlite_proofs_are_stable():

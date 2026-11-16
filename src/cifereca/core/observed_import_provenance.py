@@ -48,3 +48,65 @@ def provider_scoped_observed_links(provider_id: str, links: object) -> dict:
         and all(type(value) is str and bool(value) for value in scope)
         and type(local_key) is str and bool(local_key)
     }
+
+
+
+def observed_loan_provenance_field(provider_id: object) -> str | None:
+    """The frozen legacy manual-import *field grammar*, not provider authority.
+
+    Every installed or future source matching the original writer grammar
+    uses the prefix before its first hyphen. Dots/foreign objects are not
+    silently normalized into a historical key.
+    """
+    from re import fullmatch
+    from .provider_identifier import valid_provider_identifier
+
+    if (not valid_provider_identifier(provider_id)
+            or fullmatch(r"[a-z][a-z0-9-]{0,63}", provider_id) is None):
+        return None
+    return provider_id.split("-", 1)[0] + "_observed_loan"
+
+
+def observed_import_links_for_sources(
+    storage, placements, local_keys, *, providers,
+) -> dict:
+    """Read passive loan display links for exact stored entitlement providers.
+
+    Provider name is merely a coordinate of the same local manual-import
+    grammar used by the writer. A hint still requires a completed manual
+    acquisition, unambiguous placement, exact provider, artifact and borrower.
+    No entitlement, possession, file or runtime callback is created.
+    """
+    try:
+        unique = set()
+        for index, provider in enumerate(providers):
+            if index >= 100_000:
+                return {}
+            if observed_loan_provenance_field(provider) is not None:
+                unique.add(provider)
+                if len(unique) > 64:
+                    # A corrupt unbounded provider inventory must not
+                    # cause an unbounded series of SQLite joins.
+                    return {}
+    except Exception:
+        # Provider inventory may be malformed or lazy; do not publish
+        # partially joined private display metadata from a failed iterator.
+        return {}
+
+    result = {}
+    for provider in sorted(unique):
+        field = observed_loan_provenance_field(provider)
+        scoped = provider_scoped_observed_links(
+            provider, observed_import_links(
+                storage, placements, local_keys,
+                provider_id=provider, provenance_field=field,
+            ),
+        )
+        # The identity/provider/credential/borrower/loan/edition composite
+        # is disjoint across providers. Never select a first ambiguous alias.
+        for key, value in scoped.items():
+            if key in result and result[key] != value:
+                result.pop(key, None)
+            else:
+                result[key] = value
+    return result

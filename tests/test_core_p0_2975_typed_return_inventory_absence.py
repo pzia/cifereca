@@ -19,7 +19,7 @@ from tests.test_core_0982_loan_return_reconciliation import Session, _library, _
 from tests.test_core_0984_adept_first_paris_reconcile import setup as adept_setup
 
 
-def _enable_typed(session, *, status="success", loans=(), coverage="unknown"):
+def _enable_typed(session, *, status="success", loans=(), coverage="unknown", branch="dilicom"):
     session.provider_id = "paris"
     session.credential_id = "paris-a"
     session.capabilities = SimpleNamespace(loans=True)
@@ -28,7 +28,7 @@ def _enable_typed(session, *, status="success", loans=(), coverage="unknown"):
         calls.append(account.unique_id)
         branches = (
             LoanBranchCoverage(
-                "dilicom", "digital", coverage,
+                branch.casefold(), "digital", coverage,
                 pagination_complete=True if coverage == "complete" else None,
             ),
             LoanBranchCoverage("syracuse", "physical", "unknown"),
@@ -169,12 +169,30 @@ def test_inflight_typed_return_rejects_changed_context_before_confirming_absence
 ])
 def test_adept_first_uses_same_typed_absence_gate(tmp_path, coverage, expected):
     service, loan, paris = adept_setup(tmp_path)
-    calls = _enable_typed(paris, coverage=coverage)
+    # ADEPT-first fixture uses PNB as its exact documentary branch. A
+    # DILICOM-only snapshot cannot prove absence of this PNB transaction.
+    calls = _enable_typed(paris, coverage=coverage, branch=loan.provider)
     # This synthetic source uses a different stored credential than _library.
     paris.credential_id = loan.source_credential
     try:
         result = service.verify_paris_return_inventory(loan)
         assert result["status"] == expected
+        assert calls == [loan.source_account_id]
+        assert paris.posts == 0
+    finally:
+        service.close()
+
+
+def test_adept_first_never_confirms_absence_from_complete_sibling_branch(tmp_path):
+    service, loan, paris = adept_setup(tmp_path)
+    assert loan.provider.casefold() != "dilicom"
+    calls = _enable_typed(paris, coverage="complete", branch="dilicom")
+    paris.credential_id = loan.source_credential
+    try:
+        assert service.verify_paris_return_inventory(loan) == {
+            "status": "verification_unavailable",
+            "verification": "unavailable",
+        }
         assert calls == [loan.source_account_id]
         assert paris.posts == 0
     finally:

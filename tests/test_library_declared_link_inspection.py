@@ -353,3 +353,39 @@ def test_declared_local_presence_downgrades_when_account_is_switched(selected):
     assert outcome['revoke_available'] is True
     assert records(service) == before
     assert rows(service, 'placements') == []
+
+
+@pytest.mark.parametrize('rig', ['bnf-pret'], indirect=True)
+def test_bnf_user_declaration_is_lower_trust_not_a_provider_ownership_grant(
+    selected,
+):
+    """Formerly provider-blocked BnF rows now use the same explicit UI path.
+
+    Recording a statement may change the declaration journal only, never a
+    supplier right, placement, origin link, acquisition or private EPUB.
+    """
+    session, right, file, service, fixture = selected
+    assert session.declaration_context(right, file)['provider'] == 'bnf-pret'
+    unchanged = {
+        table: rows(service, table) for table in (
+            'entitlements', 'acquisition_ledger', 'artifacts', 'placements',
+            'source_references', 'origin_links',
+        )
+    }
+    original_bytes = fixture[1].read_bytes()
+    assert session.preview_declared_link(right, file)['status'] == 'preview'
+    result = session.confirm_declared_link(
+        right, file, user_confirmed=True,
+    )
+    assert result['status'] == 'declared'
+    assert result['trust'] == 'user_declaration'
+    assert result['rights_mutations'] == 0
+    assert result['placement_mutations'] == 0
+    assert {
+        table: rows(service, table) for table in unchanged
+    } == unchanged
+    assert fixture[1].read_bytes() == original_bytes
+    observed = session.preview_declared_link(right, file)
+    assert observed['status'] == 'already_declared'
+    assert observed['trust'] == 'user_declaration'
+    assert observed['read_only'] is True

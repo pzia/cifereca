@@ -1,0 +1,240 @@
+"""#6366: live image-less public Search uses the SAME C/N2 as C-first Search.
+
+No image is not a missing-cover attestation. A canonical source is usable for
+list/detail only after the exact same-call Core producer persisted it.
+"""
+from __future__ import annotations
+
+from dataclasses import replace
+from threading import Event
+from types import SimpleNamespace as NS
+
+from cifereca.core.notice_cover_repository import is_notice_cover_document
+from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
+from cifereca.gui.cover_loader import CoverLoader
+from cifereca.gui.document_cover_service import DocumentCoverService
+from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
+from cifereca.gui.search_document_cover_bridge import (
+    exact_remote_search_document, register_exact_search_document,
+)
+from cifereca.storage import Storage
+from tests.test_core_p0_6366_same_call_public_cover_writer import (
+    witnessed, mirror,
+)
+from tests.test_core_p0_6366_real_search_notice_c_ingestion import public_row
+from tests.test_core_p1_6168_search_remote_document_gateway import host
+
+
+def test_coverless_live_search_list_and_detail_share_pending_c_without_n3(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    db = Storage(tmp_path / "coverless-live.sqlite")
+    loader = CoverLoader(max_workers=2)
+    downloads, reads, placeholders = [], [], []
+    monkeypatch.setattr(
+        loader, "load",
+        lambda url, callback, **kwargs: downloads.append(url),
+    )
+    monkeypatch.setattr(
+        loader, "load_preview",
+        lambda url, callback, **kwargs: downloads.append(url),
+    )
+
+    def read(document):
+        reads.append(document)
+        return cached_notice_cover_snapshot(NS(storage=db), document)
+
+    service = DocumentCoverService(
+        loader, cached_source_reader=read,
+        cached_source_scope=is_notice_cover_document,
+    )
+    try:
+        live = witnessed(public_row(record_id="no-cover", thumbnail_url=None))
+        window, _, key = host(live)
+        assert mirror(db, [live]) == 1
+        canonical = live._core_notice_canonical_cover_document_ref
+        evidence = exact_remote_search_document(window, live, key)
+        assert evidence is not None
+        assert evidence.document == canonical and evidence.candidates == ()
+        assert register_exact_search_document(
+            window, live, service, evidence, canonical,
+        )
+
+        ready = Event()
+        cold = service.get_cover(
+            canonical, "list", placeholders.append,
+            on_source_changed=ready.set,
+        )
+        assert ready.wait(10)
+        assert not cold.still_current
+        listed = service.get_cover(canonical, "list", placeholders.append)
+        detailed = service.get_cover(canonical, "detail", placeholders.append)
+        assert listed.source_uri is None and detailed.source_uri is None
+        assert listed.still_current and detailed.still_current
+        assert reads == [canonical] and downloads == []
+        assert placeholders == [None, None, None]
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        service.close()
+        loader.close()
+        db.close()
+
+
+def test_coverless_search_ref_refuses_unattested_cloned_and_cross_edition(
+    tmp_path,
+):
+    db = Storage(tmp_path / "coverless-forgery.sqlite")
+    try:
+        raw = public_row(thumbnail_url=None)
+        window, _, key = host(raw)
+        assert exact_remote_search_document(window, raw, key) is None
+
+        live = witnessed(raw)
+        window.search_objects[key] = live
+        assert exact_remote_search_document(window, live, key) is None
+        assert mirror(db, [live]) == 1
+        canonical = live._core_notice_canonical_cover_document_ref
+        assert exact_remote_search_document(window, live, key).document == canonical
+
+        clone = replace(live)
+        window.search_objects[key] = clone
+        assert exact_remote_search_document(window, clone, key) is None
+        window.search_objects[key] = live
+        live._core_notice_canonical_cover_document_ref = (
+            canonical_cover_document_ref("edition:someone-else")
+        )
+        assert exact_remote_search_document(window, live, key) is None
+        live._core_notice_canonical_cover_document_ref = canonical
+        window._search_generation += 1
+        assert exact_remote_search_document(window, live, key) is None
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def test_coverless_c_first_and_live_search_keep_one_exact_row(tmp_path):
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from cifereca.core.notice_c_known_projection import (
+        merge_public_notice_c_known_rows,
+    )
+    from tests.test_search_results_view import _host
+
+    db = Storage(tmp_path / "coverless-dedupe.sqlite")
+    try:
+        live = witnessed(public_row(
+            record_id="no-image-dedupe", thumbnail_url=None,
+        ))
+        assert mirror(db, [live]) == 1
+        page = search_public_notice_c(db, "Même titre")
+        known = merge_public_notice_c_known_rows([], page, identity_id="alice")
+        assert len(known) == 1
+        assert known[0]["_cover_document_ref"] == (
+            live._core_notice_canonical_cover_document_ref
+        )
+        view = _host()
+        view._search_local_objects = {known[0]["key"]: known[0]}
+        view._remote_search_results = [live]
+        view._populate_search([live], announce=False)
+        shown = view.search_page.show_rows.call_args.args[0]
+        assert len(shown) == 1
+        assert shown[0].key.startswith("bnf:")
+
+        # Changing the exact edition (even with same title and absent
+        # image) must not suppress the unrelated C-first result.
+        live._core_notice_canonical_cover_document_ref = (
+            canonical_cover_document_ref("edition:unrelated")
+        )
+        view._populate_search([live], announce=False)
+        assert len(view.search_page.show_rows.call_args.args[0]) == 2
+    finally:
+        db.close()
+
+
+def test_same_c_n2_upgrades_from_unknown_placeholder_to_attested_image(
+    tmp_path, monkeypatch,
+):
+    from cifereca.core import search_orchestration
+    from tests.test_core_p0_6366_real_search_notice_c_ingestion import URL
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    clock = [200]
+    monkeypatch.setattr(search_orchestration.time, "time", lambda: clock[0])
+    db = Storage(tmp_path / "upgrade-view.sqlite")
+    loader = CoverLoader(max_workers=2)
+    downloads, reads = [], []
+    monkeypatch.setattr(
+        loader, "load",
+        lambda url, callback, **kw: (
+            downloads.append(url) or NS(cancel=lambda: None)
+        ),
+    )
+    monkeypatch.setattr(
+        loader, "load_preview",
+        lambda url, callback, **kw: (
+            downloads.append(url) or NS(cancel=lambda: None)
+        ),
+    )
+
+    def reader(document):
+        reads.append(document)
+        return cached_notice_cover_snapshot(NS(storage=db), document)
+
+    covers = DocumentCoverService(
+        loader, cached_source_reader=reader,
+        cached_source_scope=is_notice_cover_document,
+    )
+    try:
+        initial = witnessed(public_row(
+            record_id="image-arrives-later", thumbnail_url=None,
+        ))
+        window, _, key = host(initial)
+        assert mirror(db, [initial]) == 1
+        canonical = initial._core_notice_canonical_cover_document_ref
+        before = exact_remote_search_document(window, initial, key)
+        assert before is not None and before.candidates == ()
+        assert register_exact_search_document(
+            window, initial, covers, before, canonical,
+        )
+        initial_ready = Event()
+        covers.get_cover(
+            canonical, "list", lambda path: None,
+            on_source_changed=initial_ready.set,
+        )
+        assert initial_ready.wait(10)
+        assert covers.get_cover(
+            canonical, "detail", lambda path: None,
+        ).source_uri is None
+        assert downloads == []
+
+        # The same exact public supplier edition obtains its first image.
+        # Refresh only the attested canonical N2 epoch, never N3/GTK SQL.
+        clock[0] = 201
+        later = witnessed(public_row(
+            record_id="image-arrives-later", thumbnail_url=URL,
+        ))
+        assert mirror(db, [later]) == 1
+        assert later._core_notice_canonical_cover_document_ref == canonical
+        assert later._core_notice_canonical_cover_document_epoch == 2
+        window.search_objects[key] = later
+        updated = exact_remote_search_document(window, later, key)
+        assert updated is not None and updated.document == canonical
+        assert [c.url for c in updated.candidates] == [URL]
+        refreshed = Event()
+        covers.get_cover(
+            canonical, "list", lambda path: None,
+            on_source_changed=refreshed.set,
+        )
+        assert register_exact_search_document(
+            window, later, covers, updated, canonical,
+        )
+        assert refreshed.wait(10)
+        after = covers.get_cover(canonical, "detail", lambda path: None)
+        assert after.source_uri == URL
+        assert reads == [canonical, canonical]
+        assert downloads == [URL]
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        covers.close()
+        loader.close()
+        db.close()
