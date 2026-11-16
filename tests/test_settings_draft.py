@@ -1791,3 +1791,67 @@ def test_untyped_persisted_primary_id_never_becomes_a_plausible_saved_binding(ed
 def test_empty_primary_remains_optional_for_single_connection_legacy(editor):
     draft = validate(editor)
     assert "primary_paris_connection_id" not in draft.data["identities"][0]
+
+
+def test_adept_source_pair_is_saved_exact_without_provider_guess_or_legacy_writer(editor):
+    config, values = editor
+    before = deepcopy(config.data)
+    values["identities"][0].update(
+        adept_source_provider_id="future-library",
+        adept_source_connection_id="alice-reader",
+    )
+    draft = validate(editor)
+    saved = draft.data["identities"][0]
+    assert saved["adept_source_provider_id"] == "future-library"
+    assert saved["adept_source_connection_id"] == "alice-reader"
+    assert "primary_paris_connection_id" not in saved
+    assert config.data == before
+    # Headless callers missing the new widgets retain the exact persisted pair.
+    config.set("identities", [
+        dict(id="alice", directory_name="alice",
+             adept_source_provider_id="future-library",
+             adept_source_connection_id="alice-reader"),
+    ])
+    values["identities"][0].pop("adept_source_provider_id")
+    values["identities"][0].pop("adept_source_connection_id")
+    retained = validate(editor).data["identities"][0]
+    assert retained["adept_source_provider_id"] == "future-library"
+    assert retained["adept_source_connection_id"] == "alice-reader"
+
+
+@pytest.mark.parametrize(("provider", "connection"), [
+    ("future-library", ""),
+    ("", "alice-reader"),
+    ("Future-Library", "alice-reader"),
+    ("future-library", " reader "),
+    ("future-library", "reader\\nother"),
+    (True, "alice-reader"),
+    ("future-library", 123),
+    ("future-library", "x" * 257),
+])
+def test_adept_source_pair_invalid_draft_cannot_be_committed(
+    editor, provider, connection,
+):
+    config, values = editor
+    before = deepcopy(config.data)
+    values["identities"][0].update(
+        adept_source_provider_id=provider,
+        adept_source_connection_id=connection,
+    )
+    with pytest.raises(SettingsValidationError, match="Source ADEPT"):
+        validate(editor)
+    assert config.data == before
+
+
+def test_corrupt_saved_adept_source_pair_refuses_unrelated_settings_save(editor):
+    config, values = editor
+    config.set("identities", [
+        dict(id="alice", directory_name="alice",
+             adept_source_provider_id={"provider": "PRIVATE"},
+             adept_source_connection_id="old-reader"),
+    ])
+    before = deepcopy(config.data)
+    values["identities"][0]["label"] = "Unrelated"
+    with pytest.raises(SettingsValidationError, match="Source ADEPT historique"):
+        validate(editor)
+    assert config.data == before
