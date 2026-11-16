@@ -90,3 +90,42 @@ Après preuves de couverture et rollback : retirer `_POLICIES`, `_consent_genera
 - Tests ciblés : `tests/test_core_p0_3171_source_auto_consent_bridge.py`, `tests/test_core_p0_3171_kobo_consent_aba.py`, `tests/test_core_p0_3719_legacy_source_toggle_aba.py`, `tests/test_core_p0_3719_primary_legacy_consent_collision.py`, `tests/test_core_p0_5077_generic_legacy_epoch.py`, `tests/test_core_p0_5077_transactional_cas_refusal.py`.
 - Exécution réelle des tests, CI Core, installation/rollback au **HEAD exact** de chaque PR de code. `pytest --collect-only` ne vaut pas exécution.
 - Afficher les fonctions/consommateurs supprimés et les chemins de compatibilité résiduels ; ne pas déclarer le ticket clos sur un compteur lexical ou un relevé AST.
+
+## Cutover exécuté — décisions de consentement legacy **prêt** (16/11/2026)
+
+Référence : P0 #5975 / P-1 #5077. Le chemin actif
+`sync_coordination._run_observed_canonical_convergence` n'admet plus le
+`legacy_source_auto_policy(..., "loan")` comme consentement, même en présence
+d'un ON historique et de sa révision valide. Il ne construit plus de liste de
+droits admissibles depuis cet ancien interrupteur, et ne conserve aucun
+appel de revalidation `legacy_source_auto_current/in_transaction` pour le prêt.
+
+La frontière transactionnelle `source_auto_consent_bridge.toggle_state`
+interprète désormais un interrupteur historique de prêt **présent** comme
+`off` en l'absence de politique CAS explicite, y compris si l'ancienne
+valeur était ON et que son epoch est bien formé. Les anciens helpers
+`legacy_source_auto_current` et `legacy_source_auto_in_transaction`
+refusent également tout `SourceKey(kind="loan")`. Ils restent disponibles
+uniquement pour les anciens achats, sous leur compatibilité préexistante.
+
+Un consentement d'acquisition source CAS `cifereca.source-sync-consent/1`
+saisi explicitement par l'utilisateur autorise de nouveau le parcours,
+sous réserve des preuves de source, d'offre, de compte, du claim one-shot
+et du contrôle `BEGIN IMMEDIATE`. La révision CAS est épinglée avant
+GET ; une séquence OFF→ON invalide les tentatives précédentes. L'ancien
+ON ne crée jamais le nouveau CAS. Les grants exacts préexistants sont
+conservés, mais une ancienne politique de prêt explicite les bloque
+jusqu'à ce nouvel opt-in pour éviter l'ambiguïté entre autorisations.
+
+**Compatibilité maintenue** : les clés SQLite historiques, les migrations,
+les lecteurs de diagnostic et le retrait atomique ON→OFF restent conservés.
+Leurs lignes ne sont pas effacées et ne deviennent pas un nouveau droit.
+Le pont legacy **achats** Numilog/Kobo et les rotations d'epoch legacy
+d'inventaire demeurent des tranches #5077 distinctes : cette PR ne
+revendique ni extinction de ce second parcours ni réduction AST non mesurée.
+
+**Recette ciblée** : refus du prêt BnF avec ON historique versionné, succès
+après opt-in CAS exact, refus au changement de CAS OFF / OFF→ON pendant la
+livraison, absence de nouvelle publication ou double requête, CAS corrompu
+et prêts à provenance inconnue. CI Core/provider/AST + installation/rollback
+au HEAD exact requis avant intégration.

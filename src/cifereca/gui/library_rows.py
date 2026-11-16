@@ -5,6 +5,7 @@ the library snapshot. Rendering must never rescan or fetch a provider.
 """
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -94,9 +95,27 @@ def project_library_rows(
     field: str = "all",
 ) -> tuple[list[Any], dict[str, dict[str, Any]]]:
     """Project the already-filtered snapshot, preserving keys and display order."""
+    # Keys are also the lookup identifiers for the detail/action model.
+    # Two different Library items with the same GTK key must not borrow
+    # one another's documentary cover or select an arbitrary last-writer.
+    # Preserve the old library:N fallback based on unique mapped keys.
+    source_items = list(filtered_entries)
+    display_keys: list[str] = []
+    seen_keys: set[str] = set()
+    for item in source_items:
+        ui_key = item.get("_library_ui_key")
+        key = (
+            ui_key if type(ui_key) is str and 0 < len(ui_key) <= 1300
+            else str(item.get("key") or f"library:{len(seen_keys)}")
+        )
+        display_keys.append(key)
+        seen_keys.add(key)
+    ambiguous_keys = {
+        key for key, count in Counter(display_keys).items() if count > 1
+    }
     rows: list[Any] = []
     objects: dict[str, dict[str, Any]] = {}
-    for item in filtered_entries:
+    for item, key in zip(source_items, display_keys):
         provider = str(item.get("provider_id") or "local")
         providers = list(item.get("providers") or [provider])
         provider_label = (
@@ -107,12 +126,6 @@ def project_library_rows(
         # The global read view can show the same canonical book key under
         # separate profile owners. Keep Core's book key unchanged for actions;
         # only the GTK list/mapping key is namespaced by the read adapter.
-        display_key = item.get("_library_ui_key")
-        key = (
-            display_key if type(display_key) is str
-            and 0 < len(display_key) <= 1300
-            else str(item.get("key") or f"library:{len(objects)}")
-        )
         objects[key] = item
         meta_parts = [state] if state else []
         owner = item.get("_library_view_owner")
@@ -165,7 +178,8 @@ def project_library_rows(
         # that compatibility path; an attested row is N2-first.
         link = item.get("_public_canonical_cover_link")
         safe_link = (
-            item.get("_exact_local_cover_evidence") is None
+            key not in ambiguous_keys
+            and item.get("_exact_local_cover_evidence") is None
             and valid_local_public_c_link(
                 link, identity_id=item.get("identity_id"),
                 artifact_id=item.get("artifact_id"),
@@ -177,7 +191,8 @@ def project_library_rows(
         )
         cover_url = (
             item.get("thumbnail_url")
-            if item.get("_exact_local_cover_evidence") is None
+            if key not in ambiguous_keys
+            and item.get("_exact_local_cover_evidence") is None
             and link is None else None
         )
         row = row_factory(key, title, author, meta, provider_label, cover_url)
@@ -188,16 +203,23 @@ def project_library_rows(
         # Keep the GTK-free projector compatible with tuple factories used by
         # legacy headless adapters and tests.
         if hasattr(row, "__dict__"):
+            if key in ambiguous_keys:
+                row._library_ambiguous_key = True
             row._public_row_content = (
                 "library", key, title, author, meta, provider_label, cover_url,
                 item.get("identity_id"), item.get("_library_view_owner"),
                 item.get("provider_id"), item.get("item_id"),
             )
+            if key in ambiguous_keys:
+                # Force a GTK rebind even when the visible fields are equal
+                # to an earlier, once-unique selected row.
+                row._public_row_content += ("ambiguous-library-key",)
             # Attach ONLY the private, owner-scoped Core proof created after
             # local_book_path() validated the exact Artifact+Placement. Never
             # infer a document association from image URL/title/ISBN/SHA.
             facts = item.get("_exact_local_cover_evidence")
-            if (type(facts) is VerifiedLocalCoverEvidence
+            if (key not in ambiguous_keys
+                    and type(facts) is VerifiedLocalCoverEvidence
                     and facts.scope.identity_id == item.get("identity_id")
                     and facts.scope.artifact_id == item.get("artifact_id")
                     and facts.scope.placement_id == item.get("placement_id")

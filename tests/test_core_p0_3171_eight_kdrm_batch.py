@@ -21,6 +21,10 @@ from tests.test_core_p0_3719_source_sync_consent import source, change
 
 def test_eight_kdrm_runtime_candidates_retry_one_failed_and_then_zero_get(source):
     service, storage, root, calls, _broker = source
+    service.runtime_acquisition_binding = (
+        lambda provider: "runtime.synthetic"
+        if provider == service.account.provider_id else None
+    )
     assert change(source, True)["enabled"] is True
 
     baseline = service.resource_snapshot
@@ -67,7 +71,7 @@ def test_eight_kdrm_runtime_candidates_retry_one_failed_and_then_zero_get(source
         service.execute_acquisition_request = fake_runtime
         execute_runtime({
             "schema_version": 2,
-            "source": {"type": "kobo", "provider": "synthetic-runtime"},
+            "source": {"type": service.account.provider_id, "provider": "synthetic-runtime"},
             "destination": str(destination), "format": "pdf",
         })
         return DeliveryCandidate(row.source, selected_offer_id, destination)

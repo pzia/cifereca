@@ -36,6 +36,44 @@ from .source_convergence import SourceKey
 logger = logging.getLogger(__name__)
 
 
+def _selected_runtime_recipe_source_admitted(
+    service: object, recipe_source: object, expected_provider_id: str,
+) -> bool:
+    """Only the exact installed provider/runtime pair may execute its recipe.
+
+    An ACSM is a technical DRM transport understood by Core; all other
+    source types identify the *current* lending/purchasing provider, never an
+    arbitrary second provider or a caller-named runtime. This is a negative
+    gate, not permission to acquire: consent, target, runtime and bytes are
+    checked separately at the execution boundary.
+    """
+    from .provider_identifier import valid_provider_identifier
+
+    if type(recipe_source) is not dict:
+        return False
+    source_type = recipe_source.get("type")
+    if type(source_type) is not str:
+        return False
+    if source_type == "acsm":
+        return True
+    if (source_type == "http"
+            or not valid_provider_identifier(expected_provider_id)
+            or source_type != expected_provider_id):
+        return False
+    # Static method lookup avoids invoking plugin properties. The Core's
+    # reciprocal binding reader checks both installed manifests and their
+    # current enabled/ready state; the executor repeats that check before
+    # and after the runtime call. A malformed or missing proof is a veto.
+    binding_reader = getattr_static(service, "runtime_acquisition_binding", None)
+    if not callable(binding_reader):
+        return False
+    try:
+        runtime_id = service.runtime_acquisition_binding(source_type)
+        return type(runtime_id) is str and bool(runtime_id)
+    except Exception:
+        return False
+
+
 def complete_selected_delivery(
     service, account: Account, session, source: SourceKey,
     offer: ProviderRightObservation, *,
@@ -226,8 +264,9 @@ def complete_selected_delivery(
         if runtime_used[0] or not admission_current():
             raise ValueError("canonical_delivery_runtime_admission_changed")
         if (type(request) is not dict or request.get("schema_version") != 2
-                or type(request.get("source")) is not dict
-                or request["source"].get("type") not in ("kobo", "acsm")
+                or not _selected_runtime_recipe_source_admitted(
+                    service, request.get("source"), scope.provider_id,
+                )
                 or type(request.get("destination")) is not str):
             raise ValueError("canonical_delivery_runtime_recipe_invalid")
         destination = Path(request["destination"])
