@@ -244,6 +244,7 @@ class DocumentCoverService:
             "n2_hit": 0, "n2_miss": 0, "n2_source_unknown": 0,
             "n2_resolution_miss": 0, "n2_register_new": 0,
             "n2_register_changed": 0, "n2_register_reused": 0,
+            "n2_source_refresh_scheduled": 0,
         }        # N2 documentary source events for currently bound GTK consumers.
         # A newly admitted Notice C value can update an already visible
         # placeholder without a new Search selection or provider request.
@@ -264,6 +265,11 @@ class DocumentCoverService:
             if cached_source_reader is not None else None
         )
         self._read_active: set[CoverDocumentScope] = set()
+        # A newer, producer-attested Notice C epoch may supersede an N2 HIT.
+        # This is a targeted, bounded background re-read, not a per-rebind
+        # source poll or a second documentary authority in GTK.
+        self._refresh_active: set[CoverDocumentScope] = set()
+        self._refresh_targets: dict[CoverDocumentScope, int] = {}
         self._read_waiters: dict[
             CoverDocumentScope, list[tuple[CoverReadRequest, Callable[[], None]]]
         ] = {}
@@ -630,6 +636,31 @@ class DocumentCoverService:
                         self._read_cooldown.popitem(last=False)
                 else:
                     self._read_cooldown.pop(document, None)
+                # A later Core producer may have persisted a newer epoch
+                # while this first MISS worker was reading an old snapshot.
+                # Defer the *targeted* re-read until after its flight clears.
+                target = self._refresh_targets.get(document, 0)
+                current_snapshot = self._snapshots.get(document)
+                retry_newer = bool(
+                    target and current_snapshot is not None
+                    and current_snapshot.revision < target
+                )
+                retry_missing = bool(
+                    target and current_snapshot is None and handle.active
+                )
+                if target and not retry_newer:
+                    self._refresh_targets.pop(document, None)
+                if retry_missing:
+                    # The old MISS may have returned unknown just before C
+                    # was written. A positive producer epoch allows ONE
+                    # immediate retry, not a permanent negative cache.
+                    self._read_cooldown.pop(document, None)
+            if retry_newer:
+                self.refresh_cached_source_if_newer(document, target)
+            elif retry_missing:
+                self._read_source_on_n2_miss(
+                    document, handle, source_changed,
+                )
             if live:
                 for waiting_handle, callback in waiters:
                     if (not waiting_handle.active
@@ -648,6 +679,101 @@ class DocumentCoverService:
             with self._lock:
                 self._read_active.discard(document)
                 self._read_waiters.pop(document, None)
+
+    def refresh_cached_source_if_newer(
+        self, document: CoverDocumentScope, minimum_revision: int,
+    ) -> bool:
+        """Refresh a known N2 source only after a *new Core-persisted* epoch.
+
+        The GUI may forward an ephemeral Core producer stamp, but cannot
+        author the source value: the bounded worker reads Notice C again.
+        A normal N2 HIT/recycled row never triggers SQLite I/O; a changed
+        epoch invalidates only this exact DocumentRef, not shared N3 bytes.
+        Concurrent revisions coalesce into one worker with a bounded retry.
+        """
+        if (type(document) is not CoverDocumentScope
+                or type(minimum_revision) is not int
+                or not 1 <= minimum_revision < 2**63):
+            return False
+        reader, pool = self._cached_source_reader, self._read_pool
+        if reader is None or pool is None:
+            return False
+        if self._cached_source_scope is not None:
+            try:
+                if self._cached_source_scope(document) is not True:
+                    return False
+            except Exception:
+                return False
+        with self._lock:
+            if self._closed:
+                return False
+            current = self._snapshots.get(document)
+            if current is None:
+                # A first N2 MISS may already be reading epoch v1 while the
+                # Core writes v2. Preserve that newer producer hint until the
+                # in-flight worker completes; do not enqueue a second read.
+                if document in self._read_active:
+                    self._refresh_targets[document] = max(
+                        self._refresh_targets.get(document, 0), minimum_revision,
+                    )
+                return False
+            if current.revision >= minimum_revision:
+                return False  # Routine hot bind: no SQLite I/O.
+            self._refresh_targets[document] = max(
+                self._refresh_targets.get(document, 0), minimum_revision,
+            )
+            if document in self._refresh_active:
+                return False
+            if len(self._refresh_active) >= 16:
+                self._refresh_targets.pop(document, None)
+                return False
+            self._refresh_active.add(document)
+            self._stats["n2_source_refresh_scheduled"] += 1
+
+        def work() -> None:
+            try:
+                for _attempt in range(3):
+                    with self._lock:
+                        if self._closed:
+                            return
+                        target = self._refresh_targets.get(document, 0)
+                    try:
+                        latest = reader(document)
+                    except Exception:
+                        # Unknown is not a negative Notice C observation.
+                        latest = None
+                    if type(latest) is CoverSourceSnapshot and latest.scope == document:
+                        try:
+                            self._register_snapshot(
+                                latest, only_if_absent=False,
+                            )
+                        except (ValueError, TypeError, RuntimeError):
+                            # A newer concurrent snapshot can win; never
+                            # roll back to a stale SQLite/source response.
+                            pass
+                    with self._lock:
+                        current = self._snapshots.get(document)
+                        requested = self._refresh_targets.get(document, 0)
+                        if (self._closed or requested <= target
+                                or current is not None
+                                and current.revision >= requested):
+                            return
+                    # A newer Core epoch arrived while the worker was
+                    # reading the older snapshot. Retry only that exact
+                    # source; never fetch a supplier or scan other books.
+            finally:
+                with self._lock:
+                    self._refresh_active.discard(document)
+                    self._refresh_targets.pop(document, None)
+
+        try:
+            pool.submit(work)
+        except RuntimeError:
+            with self._lock:
+                self._refresh_active.discard(document)
+                self._refresh_targets.pop(document, None)
+            return False
+        return True
 
     def get_cover(
         self,
@@ -876,6 +1002,8 @@ class DocumentCoverService:
             self._trace_subscriptions.clear()
             self._resolving.clear()
             self._read_active.clear()
+            self._refresh_active.clear()
+            self._refresh_targets.clear()
             self._read_waiters.clear()
             self._read_cooldown.clear()
             self._qualified_fallback.clear()
