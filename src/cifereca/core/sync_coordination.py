@@ -242,40 +242,15 @@ def _run_observed_canonical_convergence(
     # fallback or implied consent for older sessions.
     delivery = getattr(self, "_canonical_right_delivery", None)
     consent_reader = getattr(self, "_canonical_persisted_consent", None)
-    # Canonical source-level ON does not depend on the retired per-right
-    # consent reader. Keep that reader only for legacy/unset sources.
+    # Only the explicit source CAS ON admits a source-wide automatic loan.
+    # Legacy loan ON/revision metadata remains readable, never authoritative;
+    # historical switches still veto earlier exact-right grants.
     from .source_sync_consent import read_policy
-    from .source_auto_consent_bridge import (
-        legacy_source_auto_policy, legacy_source_auto_current,
-        legacy_source_auto_in_transaction,
-    )
     observed = admitted_snapshots[0]
-    # One authoritative policy snapshot decides both the canonical branch
-    # and whether the historical source-wide loan switch may be consulted.
-    # A later grant/revocation is still fenced by revision checks before GET
-    # and inside the final SQLite publication transaction.
     source_policy = read_policy(self.storage, observed.scope)
     canonical_on = source_policy.mode == "on"
-    legacy_revision = None
-    legacy_keys = frozenset()
-    if not source_policy.configured:
-        from .source_convergence import SourceKey
-        keys = frozenset(
-            SourceKey(observed.scope, row.edition_id, row.right_id,
-                      row.kind, observed.branch)
-            for row in observed.rights
-            if row.provider_attested is True and row.kind == "loan"
-        )
-        if keys:
-            mode, revision = legacy_source_auto_policy(
-                self.storage, observed.scope, "loan",
-            )
-            if mode == "on" and type(revision) is str:
-                legacy_revision = revision
-                legacy_keys = keys
-    legacy_on = legacy_revision is not None
     if (delivery is None
-            and (canonical_on or legacy_on or callable(consent_reader))):
+            and (canonical_on or callable(consent_reader))):
         from inspect import getattr_static
         try:
             candidate_session = self._session_for_account(account)
@@ -298,15 +273,13 @@ def _run_observed_canonical_convergence(
                 consent_still_current=lambda: current_consent(key),
             )
     if (callable(delivery)
-            and (canonical_on or legacy_on or callable(consent_reader))):
+            and (canonical_on or callable(consent_reader))):
         from .convergence_execution import execute_admitted_convergence
         from .source_convergence import SourceKey
         from .source_auto_consent_bridge import (
             consent_generation, consent_generation_in_transaction,
         )
-        # Freeze an exact source/type epoch BEFORE the first grant read.
-        # The legacy unversioned Kobo switch remains admissible; any later
-        # ON→OFF→ON advances its revision and invalidates this older attempt.
+        # Keep a source epoch for revocation and ABA, never an old ON grant.
         frozen_epoch = consent_generation(self.storage, admitted_snapshots[0].scope)
         # An explicitly configured source-wide policy adds a second,
         # independently revocable generation fence. Legacy unset sources
@@ -325,8 +298,7 @@ def _run_observed_canonical_convergence(
         )
 
         try:
-            consent = (legacy_keys if legacy_on else
-                       consent_reader(account)
+            consent = (consent_reader(account)
                        if callable(consent_reader) and not canonical_on
                        else frozenset())
         except Exception:
@@ -363,15 +335,6 @@ def _run_observed_canonical_convergence(
                 # The source-wide ON grant is not an authorization per right.
                 # The offer/snapshot still independently gates availability.
                 return key.scope == admitted_snapshots[0].scope
-            if legacy_on:
-                return (
-                    key in legacy_keys
-                    and key.scope == admitted_snapshots[0].scope
-                    and not read_policy(self.storage, key.scope).configured
-                    and legacy_source_auto_current(
-                        self.storage, key, legacy_revision,
-                    )
-                )
             latest = consent_reader(account)
             return (type(latest) is frozenset
                     and key in latest
@@ -396,10 +359,6 @@ def _run_observed_canonical_convergence(
                 if (current_policy.mode != "on"
                         or current_policy.revision != admitted_source_revision):
                     return False
-            if legacy_on and not legacy_source_auto_in_transaction(
-                db, key, legacy_revision,
-            ):
-                return False
             return (existing_publication_guard(db, key)
                     if callable(existing_publication_guard) else True)
 

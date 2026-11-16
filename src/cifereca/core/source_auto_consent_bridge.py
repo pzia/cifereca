@@ -26,9 +26,12 @@ from .legacy_source_consent_metadata import (
 def toggle_state(db, source: SourceKey):
     """Read the current committed mode INSIDE the caller's SQLite snapshot.
 
-    'on' grants only eligible exact references via the canonical admission;
-    'off' explicitly revokes them; None means no compatible opt-in was set.
-    A malformed value grants nothing. This method never writes metadata.
+    Only the explicit source CAS 'on' grants a whole-source policy.
+    Historical purchase switches remain under their bounded compatibility
+    fence; a historical loan switch is now *negative evidence only*: both
+    its old ON and OFF require a fresh explicit CAS consent to resume.
+    None means there was no switch to veto an earlier exact-right grant.
+    This method never writes metadata.
     """
     if type(source) is not SourceKey:
         return "off"
@@ -83,9 +86,15 @@ def toggle_state(db, source: SourceKey):
         "SELECT value FROM metadata WHERE key=?", (prefix + sid,),
     ).fetchone()
     if row is None:
-        # An installation without this optional source-wide switch keeps
-        # its legacy explicit per-right grants, not an implicit opt-out.
+        # No historical source-wide switch: retain independent exact-right
+        # opt-ins (still bound to their live source and provider offer).
         return None
+    if source.kind == "loan":
+        # A legacy loan ON (+ epoch) used to become an automatic ACSM GET.
+        # Historical values cannot be reinterpreted as a fresh CAS grant,
+        # including on older databases and after an ON→OFF→ON cycle.
+        # Keep the row as a negative fence until deliberate re-consent.
+        return "off"
     if row[0] != active:
         return "off"
     # Loan delivery is non-repeatable and cannot inherit the permissive
@@ -197,9 +206,13 @@ def legacy_source_auto_policy(storage, scope, kind: str) -> tuple[str, str | Non
 
 
 def legacy_source_auto_current(storage, source: SourceKey, revision: str) -> bool:
-    """Revalidate source-level ON and the EXACT old generation before GET."""
-    if (type(source) is not SourceKey or type(revision) is not str
-            or _HEX.fullmatch(revision) is None):
+    """Historical purchase-only compatibility, never a loan GET grant.
+
+    The versioned source CAS is required for all automatic loan acquisition.
+    Do not re-admit a prior BnF ON merely because its old epoch still matches.
+    """
+    if (type(source) is not SourceKey or source.kind == "loan"
+            or type(revision) is not str or _HEX.fullmatch(revision) is None):
         return False
     try:
         # A newly configured CAS source policy supersedes the old toggle,
@@ -215,9 +228,9 @@ def legacy_source_auto_current(storage, source: SourceKey, revision: str) -> boo
 
 
 def legacy_source_auto_in_transaction(db, source: SourceKey, revision: str) -> bool:
-    """Final SQLite-transaction fence; protects against consent ABA."""
-    if (type(source) is not SourceKey or type(revision) is not str
-            or _HEX.fullmatch(revision) is None):
+    """Historical purchase-only final fence, not a loan authorization."""
+    if (type(source) is not SourceKey or source.kind == "loan"
+            or type(revision) is not str or _HEX.fullmatch(revision) is None):
         return False
     try:
         # An exact generic CAS source policy takes precedence, irrespective
