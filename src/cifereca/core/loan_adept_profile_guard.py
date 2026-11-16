@@ -23,43 +23,64 @@ def check(
     # Check the exact source-scoped borrower grant again immediately before
     # ADEPT for EVERY ACSM provider: staging can take time and grants can
     # change. Direct EPUB/PDF acquisitions do not enter this helper.
-    adept_borrower_identity_id = identity.identity_id
+    try:
+        adept_borrower_identity_id = identity.identity_id
+    except Exception:
+        # A malformed identity cannot authorize ADEPT and must still reach
+        # the durable attention receipt for the staged ACSM.
+        adept_borrower_identity_id = None
     borrower_code = None
-    # The loan may have crossed an external staging boundary since source
-    # admission. Do not coerce plugin-owned coordinates, and never interpret
-    # malformed provenance as an exemption from the grant guard.
+    # Staging and profile/borrower callbacks can expose hostile Loan getters.
+    # Read each coordinate as a native value within the veto boundary; no
+    # exception or custom equality is permitted to skip the refusal receipt.
     def source_intact() -> bool:
-        # Read live coordinates on each call; a borrower resolver is another
-        # external hook capable of mutating the staged Loan.
-        exact_source = (
-            type(expected_loan_id) is str and bool(expected_loan_id)
-            and type(expected_record_id) in (str, type(None))
-            and type(loan.id) is str and loan.id == expected_loan_id
-            and type(loan.record_id) in (str, type(None))
-            and loan.record_id == expected_record_id
-            and type(loan.source_provider) is str and bool(loan.source_provider)
-            and type(loan.source_credential) is str and bool(loan.source_credential)
-            and type(loan.source_account_id) in (str, type(None))
-            and loan.source_provider == ledger_base.get("provider_id")
-            and loan.source_credential == ledger_base.get("credential_id")
-            and loan.source_account_id == ledger_base.get("account_id")
-            and type(identity.identity_id) is str
-            and bool(identity.identity_id)
-            and identity.identity_id == ledger_base.get("identity_id")
-        )
-        if not exact_source:
+        if (type(expected_loan_id) is not str or not expected_loan_id
+                or type(expected_record_id) not in (str, type(None))
+                or type(ledger_base) is not dict):
             return False
-        # Provider staging, borrower grants, ADEPT profile discovery and
-        # readiness callbacks may run after the source was first admitted.
-        # An unchanged Loan object is not proof that its SQLite connection
-        # still exists, is enabled or belongs to the pinned identity.
-        # Re-read its exact native owner after EACH callback, including the
-        # last check just before ADEPT fulfillment; never fall back to GTK.
         try:
-            return self.storage.provider_connection_owner_current(
-                loan.source_provider, loan.source_credential,
-                identity.identity_id,
-            ) is True
+            expected_provider = ledger_base.get("provider_id")
+            expected_credential = ledger_base.get("credential_id")
+            expected_account = ledger_base.get("account_id")
+            expected_identity = ledger_base.get("identity_id")
+            if (type(expected_provider) is not str or not expected_provider
+                    or type(expected_credential) is not str
+                    or not expected_credential
+                    or type(expected_account) not in (str, type(None))
+                    or type(expected_identity) is not str
+                    or not expected_identity):
+                return False
+            expected = (
+                expected_loan_id, expected_record_id, expected_provider,
+                expected_credential, expected_account, expected_identity,
+            )
+
+            def snapshot():
+                coordinates = (
+                    loan.id, loan.record_id, loan.source_provider,
+                    loan.source_credential, loan.source_account_id,
+                    identity.identity_id,
+                )
+                if (type(coordinates[0]) is not str or not coordinates[0]
+                        or type(coordinates[1]) not in (str, type(None))
+                        or type(coordinates[2]) is not str or not coordinates[2]
+                        or type(coordinates[3]) is not str or not coordinates[3]
+                        or type(coordinates[4]) not in (str, type(None))
+                        or type(coordinates[5]) is not str or not coordinates[5]):
+                    return None
+                return coordinates
+
+            before = snapshot()
+            if before is None or before != expected:
+                return False
+            # Enabled owner remains a necessary veto, not a borrower grant.
+            if self.storage.provider_connection_owner_current(
+                before[2], before[3], before[5],
+            ) is not True:
+                return False
+            # A storage adapter can also mutate the loan as a side-effect:
+            # never approve a different scope using the pre-read owner.
+            return snapshot() == before
         except Exception:
             return False
 
