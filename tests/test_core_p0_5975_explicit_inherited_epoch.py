@@ -11,7 +11,10 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.core.loan_source_epoch import SourceEpochLease
+from cifereca.core.loan_source_epoch import (
+    SourceEpochLease, inherited_explicit_source_epoch,
+    pin_explicit_source_epoch,
+)
 from tests.test_core_p0_5975_explicit_reacquire_native_scope import (
     _loan as paris_loan, _setup, _no_staging,
 )
@@ -147,8 +150,9 @@ def test_explicit_reacquire_refuses_revalidated_owner_after_hidden_aba(
             )
             def nested(*_args, **kwargs):
                 assert kwargs["force_refresh"] is True
-                assert type(kwargs["source_lease"]) is SourceEpochLease
-                assert kwargs["source_lease"].current(service.storage, loan)
+                lease = inherited_explicit_source_epoch()
+                assert type(lease) is SourceEpochLease
+                assert lease.current(service.storage, loan)
                 rotate()
                 return {"status": "complete"}
             monkeypatch.setattr(
@@ -187,7 +191,7 @@ def test_stable_reacquisition_passes_original_epoch_to_nested_auto(
             )
         seen = []
         def nested(*_args, **kwargs):
-            lease = kwargs["source_lease"]
+            lease = inherited_explicit_source_epoch()
             assert type(lease) is SourceEpochLease
             assert kwargs["force_refresh"] is True
             assert lease.current(service.storage, loan)
@@ -208,6 +212,7 @@ def test_stable_reacquisition_passes_original_epoch_to_nested_auto(
             "status": "complete",
         }
         assert len(seen) == 1
+        assert inherited_explicit_source_epoch() is None
     finally:
         service.close()
 
@@ -232,10 +237,12 @@ def test_nested_auto_loan_lock_cannot_refresh_explicit_source_lease(
             service, "_acquire_active_loan_automatically_guarded",
             lambda *_a, **_kw: pytest.fail("stale lease entered provider path"),
         )
-        result = service._acquire_active_loan_automatically(
-            loan, force_refresh=True, source_lease=lease,
-        )
+        with pin_explicit_source_epoch(lease):
+            result = service._acquire_active_loan_automatically(
+                loan, force_refresh=True,
+            )
         assert result == _refusal()
+        assert inherited_explicit_source_epoch() is None
     finally:
         service.close()
 
@@ -265,9 +272,11 @@ def test_nested_guarded_auto_rejects_old_epoch_even_if_new_admission_passes(
             service.storage, "acquisition_put",
             lambda *_a, **_kw: pytest.fail("stale epoch reached ledger write"),
         )
-        assert service._acquire_active_loan_automatically_guarded(
-            loan, source_lease=lease, force_refresh=True,
-        ) == _refusal()
+        with pin_explicit_source_epoch(lease):
+            assert service._acquire_active_loan_automatically_guarded(
+                loan, force_refresh=True,
+            ) == _refusal()
+        assert inherited_explicit_source_epoch() is None
     finally:
         service.close()
 
@@ -294,18 +303,64 @@ def test_legacy_borrower_refusal_remains_authoritative_under_stable_epoch(
 @pytest.mark.parametrize("untrusted", [
     False, 0, 1, "1", [], NS(epoch=1),
 ])
-def test_invalid_inherited_lease_rejected_without_auto_grant(
-    tmp_path, monkeypatch, untrusted,
-):
+def test_invalid_inherited_lease_cannot_enter_transaction_context(untrusted):
+    with pytest.raises(ValueError, match="invalid_explicit_source_epoch"):
+        with pin_explicit_source_epoch(untrusted):
+            pytest.fail("untrusted lease entered nested automatic admission")
+    assert inherited_explicit_source_epoch() is None
+
+
+def test_recovery_context_is_always_restored_after_error(tmp_path, monkeypatch):
     service = _setup(tmp_path, monkeypatch)
     loan = paris_loan()
     try:
-        monkeypatch.setattr(
-            service, "_acquire_active_loan_automatically_guarded",
-            lambda *_a, **_kw: pytest.fail("untrusted lease entered core"),
-        )
-        assert service._acquire_active_loan_automatically(
-            loan, source_lease=untrusted,
-        ) == _refusal()
+        lease = SourceEpochLease.capture(service.storage, loan, "default")
+        assert type(lease) is SourceEpochLease
+        with pytest.raises(RuntimeError, match="synthetic exception"):
+            with pin_explicit_source_epoch(lease):
+                assert inherited_explicit_source_epoch() is lease
+                raise RuntimeError("synthetic exception")
+        assert inherited_explicit_source_epoch() is None
+    finally:
+        service.close()
+
+
+def test_conflicting_nested_transaction_cannot_replace_epoch(tmp_path, monkeypatch):
+    service = _setup(tmp_path, monkeypatch)
+    loan = paris_loan()
+    try:
+        lease = SourceEpochLease.capture(service.storage, loan, "default")
+        assert type(lease) is SourceEpochLease
+        other = replace(lease, epoch=lease.epoch + 1)
+        with pin_explicit_source_epoch(lease):
+            assert inherited_explicit_source_epoch() is lease
+            with pytest.raises(ValueError, match="explicit_source_epoch_conflict"):
+                with pin_explicit_source_epoch(other):
+                    pytest.fail("another loan replaced the original epoch")
+            assert inherited_explicit_source_epoch() is lease
+        assert inherited_explicit_source_epoch() is None
+    finally:
+        service.close()
+
+
+def test_forged_native_lease_epoch_is_rejected_before_comparison(
+    tmp_path, monkeypatch,
+):
+    class Hostile:
+        def __eq__(self, _other):
+            pytest.fail("hostile grant epoch was compared")
+        def __str__(self):
+            pytest.fail("hostile epoch was formatted")
+    service = _setup(tmp_path, monkeypatch)
+    loan = paris_loan()
+    try:
+        lease = SourceEpochLease.capture(service.storage, loan, "default")
+        assert type(lease) is SourceEpochLease
+        forged = replace(lease, epoch=Hostile())
+        with pin_explicit_source_epoch(forged):
+            assert service._acquire_active_loan_automatically(
+                loan, force_refresh=True,
+            ) == _refusal()
+        assert inherited_explicit_source_epoch() is None
     finally:
         service.close()
