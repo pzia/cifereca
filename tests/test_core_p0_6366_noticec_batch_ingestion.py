@@ -120,7 +120,7 @@ def test_corrupt_source_rollback_is_local_and_does_not_tombstone_other_cover(
             conn.execute(
                 "UPDATE metadata SET value=? WHERE key=?",
                 ('{"schema":1,"schema":1}',
-                 "notice.c.observation.v1:" + public.key.edition_id[:0] + good[1].document.source_key.split(":")[-1]),
+                 "notice.c.observation.v1:" + good[1].document.source_key.rsplit(":", 1)[-1]),
             )
         result = batch(db, [
             notice(OTHER, observed_at=200),
