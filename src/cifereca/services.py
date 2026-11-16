@@ -1975,6 +1975,24 @@ class LibraryService:
             self, query, scope, field=field, identity_id=admitted, logger=_TRACE_LOG,
         )
 
+    def search_public_notice_c(
+        self, query: str, *, field: str = "all", scope: str = "all",
+        provider_ids: tuple[str, ...] = (), page: int = 0,
+        page_size: int = 50, max_scan: int = 10000,
+    ):
+        """Read public descriptive Notice C from SQLite without provider I/O.
+
+        Use from a Core search worker, not synchronously on GTK. This initial
+        bounded source cursor never asserts complete query coverage or
+        supplies the live account/holdings capabilities of search().
+        """
+        from .core.notice_c_public_search import search_public_notice_c
+        return search_public_notice_c(
+            self.storage, query, field=field, scope=scope,
+            provider_ids=provider_ids, page=page, page_size=page_size,
+            max_scan=max_scan,
+        )
+
     def search_known_catalog(
         self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
         provider_ids: list[str] | tuple[str, ...] | None = None,
