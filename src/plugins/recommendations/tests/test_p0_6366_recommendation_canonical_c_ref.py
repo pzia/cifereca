@@ -149,3 +149,56 @@ def test_ambiguous_aggregates_cache_replays_and_wrong_scope_never_borrow_c(
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+def test_raw_gtk_list_item_reuses_only_revalidated_c_cover(tmp_path):
+    """E2E exact_setup passes BookListItem, not the public UiBookListEntry.
+
+    Its N2 field is _cover_document_ref: absence of the public field must
+    not crash the detail or authorize a stale/multi-edition cover.
+    """
+    db = Storage(tmp_path / "gtk-shape.sqlite")
+    try:
+        live = _verified(db)
+        ranked = _ranked(live)
+        view, _, _, _, _ = _view(ranked.notices)
+        view._ranked = [ranked]
+        view.host.public_notice_cover_ref = _host().public_notice_cover_ref
+        view._matches = lambda candidate: candidate is ranked
+        view._candidate_key = lambda _: "canonical:one"
+        rows, details = [], []
+        view._master.show_rows = lambda items, **kw: rows.append(tuple(items))
+        view._master.show_detail = details.append
+        view._render(preserve_summary=True)
+
+        original_row = rows[-1][0]
+        canonical = live._core_notice_canonical_cover_document_ref
+        assert original_row.cover_document_ref == canonical
+        # Mirrors BookListItem's public fields and *private* validated scope;
+        # deliberately has no cover_document_ref public property.
+        gtk_row = NS(
+            key=original_row.key, title=original_row.title,
+            subtitle=original_row.subtitle,
+            thumbnail_url=original_row.thumbnail_url,
+            _cover_document_ref=canonical,
+        )
+        assert not hasattr(gtk_row, "cover_document_ref")
+        view._selected_row(gtk_row)
+        assert details[-1].cover_document_ref == canonical
+        assert view._exact_notice_state["row_presentation"][-1] == canonical
+
+        gtk_row._cover_document_ref = object()
+        view._selected_row(gtk_row)
+        assert details[-1].cover_document_ref is None
+
+        # Same GTK row, but the recommendation now aggregates two source
+        # variants. The old documentary ref cannot survive revalidation.
+        gtk_row._cover_document_ref = canonical
+        view._ranked_by_key[gtk_row.key] = _ranked(
+            live, variants=ranked.notices * 2,
+        )
+        view._selected_row(gtk_row)
+        assert details[-1].cover_document_ref is None
+        assert db.entitlements() == []
+    finally:
+        db.close()
