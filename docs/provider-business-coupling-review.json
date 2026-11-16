@@ -384,60 +384,6 @@
       "reachability": "unproven"
     },
     {
-      "id": "site-a99f3f4da32247a6a6efec04",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Saved Paris primary connection / ADEPT identity readiness and explicit runtime check",
-      "productive_caller": "LibraryService.normal_paris_adept_status -> check_normal_paris_adept_runtime; Settings reads normal status and user-triggered runtime probe rechecks binding before/after",
-      "effect": "Checks active configured primary Paris source, saved identity and binding freshness. An explicit ADEPT runtime probe cannot use a stale or foreign profile; status is read-only.",
-      "authority": "Persisted source identity/credential and exact ADEPT profile binding; runtime successful probe is not a grant.",
-      "replacement_contract": "Typed source-neutral primary DRM binding status and revocable explicit diagnostic lease, preserving refusal after ABA changes.",
-      "tests": [
-        "tests/test_core_1063_normal_paris_adept_status.py",
-        "tests/test_core_p1_1063_adept_runtime_check.py",
-        "tests/test_core_p0_5048_adept_source_binding_status.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Three anchors form one readiness/freshness context at read and diagnostic boundaries, not three independent acquisition decisions.",
-      "decision_group_id": "adept.normal-paris-primary-binding-readiness",
-      "reachability": "productive"
-    },
-    {
-      "id": "site-ad1126c55bb2a396a4efeaf8",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Saved Paris primary connection / ADEPT identity readiness and explicit runtime check",
-      "productive_caller": "LibraryService.normal_paris_adept_status -> check_normal_paris_adept_runtime; Settings reads normal status and user-triggered runtime probe rechecks binding before/after",
-      "effect": "Checks active configured primary Paris source, saved identity and binding freshness. An explicit ADEPT runtime probe cannot use a stale or foreign profile; status is read-only.",
-      "authority": "Persisted source identity/credential and exact ADEPT profile binding; runtime successful probe is not a grant.",
-      "replacement_contract": "Typed source-neutral primary DRM binding status and revocable explicit diagnostic lease, preserving refusal after ABA changes.",
-      "tests": [
-        "tests/test_core_1063_normal_paris_adept_status.py",
-        "tests/test_core_p1_1063_adept_runtime_check.py",
-        "tests/test_core_p0_5048_adept_source_binding_status.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Three anchors form one readiness/freshness context at read and diagnostic boundaries, not three independent acquisition decisions.",
-      "decision_group_id": "adept.normal-paris-primary-binding-readiness",
-      "reachability": "productive"
-    },
-    {
-      "id": "site-27ca4e2cb71815ea92df3fd2",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Saved Paris primary connection / ADEPT identity readiness and explicit runtime check",
-      "productive_caller": "LibraryService.normal_paris_adept_status -> check_normal_paris_adept_runtime; Settings reads normal status and user-triggered runtime probe rechecks binding before/after",
-      "effect": "Checks active configured primary Paris source, saved identity and binding freshness. An explicit ADEPT runtime probe cannot use a stale or foreign profile; status is read-only.",
-      "authority": "Persisted source identity/credential and exact ADEPT profile binding; runtime successful probe is not a grant.",
-      "replacement_contract": "Typed source-neutral primary DRM binding status and revocable explicit diagnostic lease, preserving refusal after ABA changes.",
-      "tests": [
-        "tests/test_core_1063_normal_paris_adept_status.py",
-        "tests/test_core_p1_1063_adept_runtime_check.py",
-        "tests/test_core_p0_5048_adept_source_binding_status.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Three anchors form one readiness/freshness context at read and diagnostic boundaries, not three independent acquisition decisions.",
-      "decision_group_id": "adept.normal-paris-primary-binding-readiness",
-      "reachability": "productive"
-    },
-    {
       "id": "site-ad2f06a6ca9b22ee1e32194b",
       "classification": "legitimate_readonly_compat",
       "journey": "Read historical voluntary return receipts with obsolete Paris-specific format",
@@ -1701,6 +1647,54 @@
       "pr": "#6449",
       "in_ast_metric": true,
       "original_site_id": "site-60a9d11031d9610ffda9a089"
+    },
+    {
+      "id": "struct-p0-5975-source-adept-readiness-1",
+      "original": "src/cifereca/services.py::normal_paris_adept_status (branded primary source binding site 1)",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "LibraryService.normal_source_adept_status and check_source_adept_runtime, with historical Paris facade forwarding an exact saved primary connection and retaining readiness/probe fencing",
+      "classification": "neutral_core_source_binding_cutover",
+      "evidence": "Provider selection and configured-login validation moved to source_provider_id argument; all suppliers use the same read-only readiness and one-user-invoked ADEPT runtime check, while Paris facade remains a compatibility adapter. AST inventory must confirm changed/retired original anchors before merging.",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_adept_readiness.py",
+        "tests/test_core_1063_normal_paris_adept_status.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py"
+      ],
+      "pr": "pending",
+      "in_ast_metric": true,
+      "original_site_id": "site-a99f3f4da32247a6a6efec04"
+    },
+    {
+      "id": "struct-p0-5975-source-adept-readiness-2",
+      "original": "src/cifereca/services.py::normal_paris_adept_status (branded primary source binding site 2)",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "LibraryService.normal_source_adept_status and check_source_adept_runtime, with historical Paris facade forwarding an exact saved primary connection and retaining readiness/probe fencing",
+      "classification": "neutral_core_source_binding_cutover",
+      "evidence": "Provider selection and configured-login validation moved to source_provider_id argument; all suppliers use the same read-only readiness and one-user-invoked ADEPT runtime check, while Paris facade remains a compatibility adapter. AST inventory must confirm changed/retired original anchors before merging.",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_adept_readiness.py",
+        "tests/test_core_1063_normal_paris_adept_status.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py"
+      ],
+      "pr": "pending",
+      "in_ast_metric": true,
+      "original_site_id": "site-ad1126c55bb2a396a4efeaf8"
+    },
+    {
+      "id": "struct-p0-5975-source-adept-readiness-3",
+      "original": "src/cifereca/services.py::normal_paris_adept_status (branded primary source binding site 3)",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "LibraryService.normal_source_adept_status and check_source_adept_runtime, with historical Paris facade forwarding an exact saved primary connection and retaining readiness/probe fencing",
+      "classification": "neutral_core_source_binding_cutover",
+      "evidence": "Provider selection and configured-login validation moved to source_provider_id argument; all suppliers use the same read-only readiness and one-user-invoked ADEPT runtime check, while Paris facade remains a compatibility adapter. AST inventory must confirm changed/retired original anchors before merging.",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_adept_readiness.py",
+        "tests/test_core_1063_normal_paris_adept_status.py",
+        "tests/test_core_p1_1063_adept_runtime_check.py"
+      ],
+      "pr": "pending",
+      "in_ast_metric": true,
+      "original_site_id": "site-27ca4e2cb71815ea92df3fd2"
     }
   ],
   "guard_installations": [
