@@ -249,12 +249,38 @@ def _render_search_results(self) -> int:
             # public results retain their legacy URL presentation.
             if item.get("_exact_local_cover_evidence") is not None:
                 cover_url = None
+            is_c = item.get("source") == "notice_c_public"
+            if is_c:
+                # The C row already carries a persisted exact, public N2
+                # DocumentRef. The URI remains ABSENT: never turn a hot N3
+                # image into the documentary proof for this list cell.
+                cover_url = None
+                status = (
+                    "Notice C publique · à actualiser"
+                    if (item.get("metadata") or {}).get("notice_c_stale")
+                    else "Notice C publique · index partiel"
+                )
+                summary = status
+            else:
+                summary = " · ".join(x for x in [
+                    self._library_state_label(item),
+                    local_match_explanation(item, state.text, field=state.field),
+                ] if x)
             view_row = BookListItem(
                 key, str(item.get("title") or "Sans titre"), str(item.get("author") or ""),
-                " · ".join(x for x in [self._library_state_label(item), local_match_explanation(item, state.text, field=state.field)] if x),
+                summary,
                 self.service.provider_display_name(provider) if provider != "local" else "Local",
                 cover_url,
             )
+            if is_c:
+                from cifereca.core.book_cover_projection import CoverDocumentScope
+                from cifereca.core.notice_cover_repository import is_notice_cover_document
+                ref = item.get("_cover_document_ref")
+                if (type(ref) is CoverDocumentScope
+                        and ref.kind == "public_catalogue"
+                        and ref.identity_id is None
+                        and is_notice_cover_document(ref)):
+                    view_row._cover_document_ref = ref
             # Search-local only reuses an explicit Core owner+Artifact+
             # Placement cover packet. An identical URL/title/ISBN/SHA does
             # not let a catalogue notice or another identity borrow N2.
@@ -286,12 +312,15 @@ def _render_search_results(self) -> int:
                 getattr(row, "thumbnail_url", None),
             )
             proof = getattr(row, "_cover_local_evidence", None)
-            if proof is not None:
-                # The URI remains LAST for BookListItem.set_thumbnail_url's
-                # in-place presentation update, even when source changes.
+            document_ref = getattr(row, "_cover_document_ref", None)
+            if proof is not None or document_ref is not None:
+                # The URI remains LAST; rebinding a different exact N2 ref
+                # must invalidate a recycled GTK cell even if title/URL match.
                 signature = row._public_row_content
                 row._public_row_content = (
-                    *signature[:-1], proof, signature[-1],
+                    *signature[:-1],
+                    proof if proof is not None else document_ref,
+                    signature[-1],
                 )
         self.search_page.show_rows(local_rows)
         self._search_local_snapshot_dirty = False
@@ -333,8 +362,48 @@ def _render_search_results(self) -> int:
         linked[key]["placement_id"] for key in remote_keys
         if key in linked and key not in ambiguous
     }
+    # Online extension keeps already-loaded public C cards until their
+    # EXACT live source is available; a provider URL/title/ISBN/record alone
+    # is not evidence that an old C row can be replaced. No GTK source read.
+    from cifereca.core.book_cover_projection import CoverDocumentScope
+    from cifereca.core.notice_cover_repository import is_notice_cover_document
+    remote_c_refs = {
+        ref for item in self._remote_search_results
+        if (item.source_credential == "__public__"
+            and item.source_collection == "public_catalog"
+            and item.source_account_id is None
+            and item.owned is False and item.downloadable is False
+            and item.download_url is None)
+        if (type(ref := getattr(item, "_core_notice_cover_document_ref", None))
+            is CoverDocumentScope
+            and ref.kind == "public_catalogue"
+            and ref.identity_id is None
+            and is_notice_cover_document(ref))
+    }
     ui_rows: list[BookListItem] = []
     for known in state.filter(self._search_local_objects.values()):
+        if known.get("source") == "notice_c_public":
+            document = known.get("_cover_document_ref")
+            if (type(document) is CoverDocumentScope
+                    and document.kind == "public_catalogue"
+                    and document.identity_id is None
+                    and is_notice_cover_document(document)):
+                if document in remote_c_refs:
+                    continue
+                view = BookListItem(
+                    str(known["key"]), str(known.get("title") or "Sans titre"),
+                    str(known.get("author") or ""),
+                    "Notice C publique · "
+                    + ("à actualiser" if (known.get("metadata") or {}).get(
+                        "notice_c_stale") else "index partiel"),
+                    self.service.provider_display_name(str(known.get(
+                        "provider_id") or "local")), None,
+                )
+                view._cover_document_ref = document
+                ui_rows.append(view)
+            # An invalid C ref never falls back to a direct image URL or
+            # opens a private provider action during online extension.
+            continue
         if known.get("placement_id") in linked_placements:
             continue
         # Suppress only the exact same v2 account + docbase + collection row.
@@ -486,7 +555,8 @@ def _render_search_results(self) -> int:
             getattr(row, "badge", ""), getattr(row, "action_label", ""),
             getattr(row, "action_icon_name", ""),
             bool(getattr(row, "action_callback", None)),
-            proof.row_signature if proof is not None else None,
+            (proof.row_signature if proof is not None else
+             getattr(row, "_cover_document_ref", None)),
             getattr(row, "thumbnail_url", None),
         )
     self.search_page.show_rows(ui_rows)
