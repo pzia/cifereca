@@ -2673,7 +2673,7 @@ class UxRecommendationsView:
             except (AttributeError, TypeError):
                 identity_for_cover = None
             cover_ref = _attested_recommendation_c_cover(
-                ranked, host=self.host,
+                ranked, host=getattr(self, "host", None),
                 identity_id=identity_for_cover,
                 catalogue_sources=catalogue_sources,
             )
@@ -3314,7 +3314,7 @@ class UxRecommendationsView:
                     if row.cover_document_ref is not None
                     and row.cover_document_ref ==
                     _attested_recommendation_c_cover(
-                        ranked, host=self.host,
+                        ranked, host=getattr(self, "host", None),
                         identity_id=exact_identity,
                         catalogue_sources=catalogue_sources,
                     )
