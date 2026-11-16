@@ -22,7 +22,7 @@ from .notice_c_cover_index import persist_consolidated_cover_source
 from .notice_cover_repository import (
     PersistedNoticeCover, _PREFIX as _SOURCE_PREFIX, read_notice_cover,
 )
-from .notice_c_public_search import _public_observation
+from .notice_c_public_search import _public_observation, _fold
 
 _MAX_PUBLIC_SOURCES = 4096
 _MAX_ORIGINS = 100000
@@ -167,6 +167,17 @@ def reconcile_origin_linked_public_batch(
         pair = tuple(sorted(coords))
         first, second = (public[coord] for coord in pair)
         if first.document == second.document:
+            continue
+        a = first.observation.fields_copy()["search_result"]["public_bibliography"]
+        b = second.observation.fields_copy()["search_result"]["public_bibliography"]
+        # A generic PDF/DRM placeholder can be delivered under two different
+        # rights. Shared physical bytes and two receipts are not carte
+        # blanche to merge bibliographically contradictory works. Matching
+        # titles are only a NEGATIVE veto, never a positive edition join.
+        # Different catalogue titles/identified authors remain separate C.
+        if (_fold(a["title"]) != _fold(b["title"])
+                or (a.get("author") and b.get("author")
+                    and _fold(a["author"]) != _fold(b["author"]))):
             continue
 
         # The stable target is derived from TWO public source edition refs,
