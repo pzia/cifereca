@@ -1956,6 +1956,19 @@
         "tests/test_core_p1_1063_adept_runtime_check.py"
       ],
       "pr": "#6364"
+    },
+    {
+      "id": "guard-adept-borrower-native-source-account-snapshot",
+      "journey": "ADEPT borrower negative source ownership admission before source-scoped v16/v15 grant checks",
+      "classification": "native_source_owner_refusal",
+      "effect": "Replace stringification, truth-testing and potentially dynamic account equality with static native account coordinates for provider/credential/borrower/identity/primary. Reject malformed matching-provider rows, conflicting identities, duplicate primary accounts and failed inventories.",
+      "remaining_debt": "This is a guard replacement, not a grant or a claim that the legacy historical Paris borrower facade has been removed. Keep exact v16 grant and source-epoch protections.",
+      "tests": [
+        "tests/test_core_p0_5975_native_borrower_conflict.py",
+        "tests/test_adept_borrower_identity_guard.py",
+        "tests/test_core_p0_1120_paris_borrower_typed_input.py"
+      ],
+      "pr": "pending"
     }
   ],
   "retained_legacy_migrations": [
