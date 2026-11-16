@@ -341,11 +341,18 @@ def _render_search_results(self) -> int:
             account_context_epoch=getattr(self.service, "_account_context_epoch", None),
             source_context_epoch=getattr(self.service, "_source_context_epoch", None),
         )
-    # Remote/source placement reconciliation is irrelevant before the first
-    # online supplier result. Keep a C-first preview free of this SQL read.
+    # Only an already-present public C preview avoids the historical GTK
+    # placement read; other (including empty/error) Search paths keep ABI.
+    # This prevents redundant synchronous SQL while showing C before HTTP.
+    known_preview = getattr(self, "_search_local_objects", None)
+    has_c_preview = (
+        type(known_preview) is dict
+        and any(type(v) is dict and v.get("source") == "notice_c_public"
+                for v in known_preview.values())
+    )
     linked = (
         self.service.local_placements_for_sources(identity.identity_id)
-        if identity and self._remote_search_results else {}
+        if identity and (self._remote_search_results or not has_c_preview) else {}
     )
     remote_keys = {
         (item.source_provider, item.source_credential, item.record_id)
