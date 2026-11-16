@@ -1671,12 +1671,12 @@
       "in_ast_metric": true
     },
     {
-      "id": "struct-historical-adept-return-paris-only-cutover",
-      "original": "src/cifereca/services.py::adept_return_status_for_loan is_paris branch at borrower resolution and profile mismatch",
+      "id": "struct-historical-adept-return-paris-borrower-cutover",
+      "original": "src/cifereca/services.py::adept_return_status_for_loan if is_paris before borrower resolution",
       "original_classification": "safety_guard_pending_contract",
       "replacement": "Source-scoped v16 ADEPT borrower-grant resolver and historical profile-conflict veto for any provider; inventory-attested origin remains independent",
       "classification": "removed_from_executable_core_provider_dispatch",
-      "evidence": "Removed both Paris-specific gates. Return status is read-only and never offers a return action; all sources resolve native borrower scope before inventories and apply profile mismatch only for non-inventory-attested ADEPT origins. Exact source and cross-identity/duplicate vetoes remain.",
+      "evidence": "Historical ADEPT return status no longer skips source-scoped v16 borrower provenance outside Paris. The source-neutral resolver runs for any exact source before historical ledger reads.",
       "tests": [
         "tests/test_core_p0_5975_adept_return_source_neutral.py",
         "tests/test_core_p0_5975_generic_reacquire_identity_veto.py",
@@ -1688,7 +1688,29 @@
       "original_site_ids": [
         "site-e25ad2cf6472e075797d889f",
         "site-9db736c5a6459afb19e60a9a"
-      ]
+      ],
+      "original_site_id": "site-e25ad2cf6472e075797d889f"
+    },
+    {
+      "id": "struct-historical-adept-return-paris-profile-cutover",
+      "original": "src/cifereca/services.py::adept_return_status_for_loan if is_paris before profile mismatch",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Source-scoped v16 ADEPT borrower-grant resolver and historical profile-conflict veto for any provider; inventory-attested origin remains independent",
+      "classification": "removed_from_executable_core_provider_dispatch",
+      "evidence": "Profile-origin mismatch is checked for every non-inventory-attested historical ADEPT fulfillment, rather than only Paris; no voluntary return is exposed.",
+      "tests": [
+        "tests/test_core_p0_5975_adept_return_source_neutral.py",
+        "tests/test_core_p0_5975_generic_reacquire_identity_veto.py",
+        "tests/test_core_p0_5975_adept_return_exact_source_scope.py",
+        "tests/test_core_0984_adept_return_status_provenance.py"
+      ],
+      "pr": "#6450",
+      "in_ast_metric": true,
+      "original_site_ids": [
+        "site-e25ad2cf6472e075797d889f",
+        "site-9db736c5a6459afb19e60a9a"
+      ],
+      "original_site_id": "site-9db736c5a6459afb19e60a9a"
     }
   ],
   "guard_installations": [
