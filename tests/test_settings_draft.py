@@ -1877,7 +1877,10 @@ def test_clearing_saved_explicit_adept_source_never_resurrects_legacy_paris(edit
         adept_source_provider_id="",
         adept_source_connection_id="",
     )
-    draft = validate(editor)
+    values["accounts"] = [account("paris", account_id="paris-legacy")]
+    draft = validate(editor, descriptors={
+        "paris": source_selection_descriptor("paris"),
+    })
     saved = draft.data["identities"][0]
     assert saved["primary_paris_connection_id"] == "paris-legacy"
     # Both blank fields are retained: explicit-source absence is NOT the
@@ -1912,7 +1915,10 @@ def test_untouched_legacy_paris_identity_remains_readable_without_new_pair(edito
         adept_source_provider_id="",
         adept_source_connection_id="",
     )
-    saved = validate(editor).data["identities"][0]
+    values["accounts"] = [account("paris", account_id="paris-legacy")]
+    saved = validate(editor, descriptors={
+        "paris": source_selection_descriptor("paris"),
+    }).data["identities"][0]
     assert saved["primary_paris_connection_id"] == "paris-legacy"
     assert "adept_source_provider_id" not in saved
     assert "adept_source_connection_id" not in saved
@@ -1930,7 +1936,10 @@ def test_preexisting_half_empty_adept_source_marker_stays_fail_closed_on_save(ed
              primary_paris_connection_id="paris-legacy",
              adept_source_provider_id=""),
     ])
-    saved = validate(editor).data["identities"][0]
+    values["accounts"] = [account("paris", account_id="paris-legacy")]
+    saved = validate(editor, descriptors={
+        "paris": source_selection_descriptor("paris"),
+    }).data["identities"][0]
     assert saved["adept_source_provider_id"] == ""
     assert saved["adept_source_connection_id"] == ""
     assert _selected_adept_source(saved) == (True, None, None)
