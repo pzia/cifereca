@@ -28,7 +28,13 @@ def _setup(tmp_path, monkeypatch, *, provider="synthetic-library"):
         source_provider=provider, source_credential="card-1",
         source_account_id="primary", identity_id="default",
     )
-    # Test the inter-identity ledger veto with a genuinely admitted exact\n    # primary borrower; an unproven linked borrower must fail earlier.\n    service.accounts = [Account(\n        provider_id=provider, credential_id="card-1",\n        unique_id="", is_primary=True, identity_id="default",\n    )]\n    monkeypatch.setattr(services_module, "InterProcessLock",
+    # This suite tests inter-identity ledger ownership with an exact
+    # admitted synthetic primary, not an unproven secondary borrower.
+    service.accounts = [Account(
+        provider_id=provider, credential_id="card-1",
+        unique_id="", is_primary=True, identity_id="default",
+    )]
+    monkeypatch.setattr(services_module, "InterProcessLock",
                         lambda *_a: nullcontext())
     monkeypatch.setattr(services_module, "acquisition_lock_file",
                         lambda: tmp_path / "reacquire.lock")
