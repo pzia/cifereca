@@ -13,6 +13,7 @@ import pytest
 from cifereca.models import Account, Loan
 from cifereca.core.loan_return_verification import (
     _paris_inventory_exact_borrower, _read_paris_return_presence,
+    verify_loan_return_inventory, verify_paris_return_inventory,
 )
 from cifereca.plugin_api.loan_inventory import (
     LoanInventoryScope, LoanBranchCoverage, LoanInventorySnapshot,
@@ -143,3 +144,8 @@ def test_generic_exact_reader_rejects_reserved_and_malformed_source_ids():
             [replace(loan, source_provider=invalid)],
             replace(account, provider_id=invalid),
         )
+
+
+def test_historical_module_return_verifier_is_only_an_alias_of_neutral_reader():
+    # No provider-name based runtime delegation and no public ABI removal.
+    assert verify_paris_return_inventory is verify_loan_return_inventory
