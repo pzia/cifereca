@@ -1338,6 +1338,18 @@ class MainWindow(Adw.ApplicationWindow):
             # cached_history_cover() is NOT an authoritative book link.
             row._cover_document_ref = history_evidence.document
             row._cover_history_evidence = history_evidence
+        else:
+            # Only a real Paris DILICOM RecordId and a separately
+            # attested public Search C may replace a missing/private
+            # history fallback. Never trust title, history ID or N3 URL.
+            from .notice_c_paris_personal_bridge import (
+                current_paris_personal_public_c,
+            )
+            public_c = current_paris_personal_public_c(self, x)
+            if public_c is not None:
+                row._cover_document_ref = public_c.document
+                row._cover_paris_public_c = public_c
+                row.thumbnail_url = None
         self._attach_row_facets([row],{x.id:{'author':x.author,'source_provider':x.source_provider}},self.search_controls)
         # The history refresh may replace the cover or its fallback while
         # keeping the same upstream row ID. MasterDetailPage's append-fast
@@ -1356,6 +1368,12 @@ class MainWindow(Adw.ApplicationWindow):
             # A->B->A and history revision changes must force cell rebind
             # even when the same public image URL remains on disk in N3.
             row._public_row_content += (history_evidence,)
+        elif getattr(row, "_cover_paris_public_c", None) is not None:
+            link = row._cover_paris_public_c
+            row._public_row_content += (
+                link.document, link.canonical_epoch,
+                link.account_epoch, link.source_epoch,
+            )
         return row
 
     def _rerender_history(self) -> None:
@@ -1396,7 +1414,18 @@ class MainWindow(Adw.ApplicationWindow):
                 if proof is not None and callable(renderer):
                     renderer(presented, cover_evidence=proof)
                 else:
-                    self.history_page.detail.show_history(presented)
+                    from .notice_c_paris_personal_bridge import (
+                        current_paris_personal_public_c,
+                    )
+                    public_c = current_paris_personal_public_c(self, item)
+                    public_renderer = getattr(
+                        self.history_page.detail,
+                        "show_history_public_c", None,
+                    )
+                    if public_c is not None and callable(public_renderer):
+                        public_renderer(presented, public_link=public_c)
+                    else:
+                        self.history_page.detail.show_history(presented)
                 self._add_facets(self.history_page.detail, asdict(item), self.search_controls)
                 self._add_local_book_actions(self.history_page.detail, asdict(item))
 
