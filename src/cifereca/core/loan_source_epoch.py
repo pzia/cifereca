@@ -32,11 +32,11 @@ class SourceEpochLease:
         if type(identity_id) is not str or not identity_id:
             return None
         try:
-            provider = loan.source_provider
-            credential = loan.source_credential
-            account = loan.source_account_id
-            loan_id = loan.id
-            record = loan.record_id
+            provider = getattr(loan, "source_provider", None)
+            credential = getattr(loan, "source_credential", None)
+            account = getattr(loan, "source_account_id", None)
+            loan_id = getattr(loan, "id", None)
+            record = getattr(loan, "record_id", None)
         except Exception:
             return None
         if (type(provider) is not str or not provider
@@ -53,15 +53,19 @@ class SourceEpochLease:
                 return None
             # Never rebind the lease to post-callback coordinates. Even a
             # mutation to a foreign source with the SAME epoch fails closed.
-            if (type(loan.source_provider) is not str
-                    or loan.source_provider != provider
-                    or type(loan.source_credential) is not str
-                    or loan.source_credential != credential
-                    or type(loan.source_account_id) not in (str, type(None))
-                    or loan.source_account_id != account
-                    or type(loan.id) is not str or loan.id != loan_id
-                    or type(loan.record_id) not in (str, type(None))
-                    or loan.record_id != record):
+            post_provider = getattr(loan, "source_provider", None)
+            post_credential = getattr(loan, "source_credential", None)
+            post_account = getattr(loan, "source_account_id", None)
+            post_loan_id = getattr(loan, "id", None)
+            post_record = getattr(loan, "record_id", None)
+            if (type(post_provider) is not str or post_provider != provider
+                    or type(post_credential) is not str
+                    or post_credential != credential
+                    or type(post_account) not in (str, type(None))
+                    or post_account != account
+                    or type(post_loan_id) is not str or post_loan_id != loan_id
+                    or type(post_record) not in (str, type(None))
+                    or post_record != record):
                 return None
         except Exception:
             return None
@@ -93,11 +97,11 @@ class SourceEpochLease:
                 or type(self.epoch) is not int or self.epoch < 1):
             return False
         try:
-            provider = loan.source_provider
-            credential = loan.source_credential
-            account = loan.source_account_id
-            loan_id = loan.id
-            record = loan.record_id
+            provider = getattr(loan, "source_provider", None)
+            credential = getattr(loan, "source_credential", None)
+            account = getattr(loan, "source_account_id", None)
+            loan_id = getattr(loan, "id", None)
+            record = getattr(loan, "record_id", None)
             if (type(provider) is not str or provider != self.provider_id
                     or type(credential) is not str
                     or credential != self.credential_id
@@ -114,15 +118,19 @@ class SourceEpochLease:
                 self.epoch,
             ) is not True:
                 return False
-            return (type(loan.source_provider) is str
-                    and loan.source_provider == provider
-                    and type(loan.source_credential) is str
-                    and loan.source_credential == credential
-                    and type(loan.source_account_id) in (str, type(None))
-                    and loan.source_account_id == account
-                    and type(loan.id) is str and loan.id == loan_id
-                    and type(loan.record_id) in (str, type(None))
-                    and loan.record_id == record)
+            post_provider = getattr(loan, "source_provider", None)
+            post_credential = getattr(loan, "source_credential", None)
+            post_account = getattr(loan, "source_account_id", None)
+            post_loan_id = getattr(loan, "id", None)
+            post_record = getattr(loan, "record_id", None)
+            return (type(post_provider) is str and post_provider == provider
+                    and type(post_credential) is str
+                    and post_credential == credential
+                    and type(post_account) in (str, type(None))
+                    and post_account == account
+                    and type(post_loan_id) is str and post_loan_id == loan_id
+                    and type(post_record) in (str, type(None))
+                    and post_record == record)
         except Exception:
             return False
 
