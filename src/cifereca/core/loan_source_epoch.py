@@ -23,28 +23,35 @@ class SourceEpochLease:
     @classmethod
     def capture(cls, storage: Any, loan: Any, identity_id: str) -> SourceEpochLease | None:
         """Pin the connection epoch before calling any identity/borrower hook."""
+        # Legacy public reacquisition accepts loan-like sources that omit
+        # optional account/edition. Read each plugin-owned field once and
+        # never coerce a foreign object to str or reuse an unstable getter.
+        try:
+            provider = getattr(loan, "source_provider", None)
+            credential = getattr(loan, "source_credential", None)
+            account = getattr(loan, "source_account_id", None)
+            loan_id = getattr(loan, "id", None)
+            record = getattr(loan, "record_id", None)
+        except Exception:
+            return None
         if (type(identity_id) is not str or not identity_id
-                or type(loan.source_provider) is not str or not loan.source_provider
-                or type(loan.source_credential) is not str or not loan.source_credential
-                or type(loan.source_account_id) not in (str, type(None))
-                or type(loan.id) is not str or not loan.id
-                or type(loan.record_id) not in (str, type(None))):
+                or type(provider) is not str or not provider
+                or type(credential) is not str or not credential
+                or type(account) not in (str, type(None))
+                or type(loan_id) is not str or not loan_id
+                or type(record) not in (str, type(None))):
             return None
         try:
             epoch = storage.provider_connection_epoch(
-                loan.source_provider, loan.source_credential, identity_id,
+                provider, credential, identity_id,
             )
         except Exception:
             return None
         if type(epoch) is not int or epoch < 1:
             return None
         return cls(
-            provider_id=loan.source_provider,
-            credential_id=loan.source_credential,
-            account_id=loan.source_account_id,
-            loan_id=loan.id,
-            record_id=loan.record_id,
-            identity_id=identity_id,
+            provider_id=provider, credential_id=credential, account_id=account,
+            loan_id=loan_id, record_id=record, identity_id=identity_id,
             epoch=epoch,
         )
 
@@ -54,6 +61,14 @@ class SourceEpochLease:
         No borrower grant or provider callback runs. Native type checks are
         performed before any equality comparison, hash or SQLite access.
         """
+        try:
+            provider = getattr(loan, "source_provider", None)
+            credential = getattr(loan, "source_credential", None)
+            account = getattr(loan, "source_account_id", None)
+            loan_id = getattr(loan, "id", None)
+            record = getattr(loan, "record_id", None)
+        except Exception:
+            return False
         if (type(self) is not SourceEpochLease
                 or type(self.provider_id) is not str or not self.provider_id
                 or type(self.credential_id) is not str or not self.credential_id
@@ -62,17 +77,17 @@ class SourceEpochLease:
                 or type(self.record_id) not in (str, type(None))
                 or type(self.identity_id) is not str or not self.identity_id
                 or type(self.epoch) is not int or self.epoch < 1
-                or type(loan.source_provider) is not str
-                or type(loan.source_credential) is not str
-                or type(loan.source_account_id) not in (str, type(None))
-                or type(loan.id) is not str
-                or type(loan.record_id) not in (str, type(None))):
+                or type(provider) is not str
+                or type(credential) is not str
+                or type(account) not in (str, type(None))
+                or type(loan_id) is not str
+                or type(record) not in (str, type(None))):
             return False
-        if (loan.source_provider != self.provider_id
-                or loan.source_credential != self.credential_id
-                or loan.source_account_id != self.account_id
-                or loan.id != self.loan_id
-                or loan.record_id != self.record_id):
+        if (provider != self.provider_id
+                or credential != self.credential_id
+                or account != self.account_id
+                or loan_id != self.loan_id
+                or record != self.record_id):
             return False
         try:
             return storage.provider_connection_epoch_current(
