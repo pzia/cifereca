@@ -375,6 +375,33 @@ def persist_consolidated_cover_source(
             "urls": urls,
             "visibility": visibility,
         }
+        # Copy the already validated public bibliographic *source fact*
+        # alongside its canonical cover record, in the same SQLite commit.
+        # The short-lived provider row may later be purged independently.
+        # Private records and generic cover-only observations never enter
+        # this durable descriptive snapshot.
+        if (visibility == "public"
+                and source.observation.parser_id == "core.search.public-cover"
+                and source.observation.parser_version == "2"):
+            from .notice_c_public_search import _public_observation
+            hit = _public_observation(
+                original[0], key_string=source_key,
+                now=source.observation.observed_at,
+            )
+            if hit is not None and hit.document == source_document:
+                incoming["public_bibliography"] = {
+                    "edition_id": hit.edition_id,
+                    "record_id": hit.record_id,
+                    "docbase": hit.docbase,
+                    "medium": hit.medium,
+                    "source_revision": hit.source_revision,
+                    "title": hit.title,
+                    "author": hit.author,
+                    "publisher": hit.publisher,
+                    "media_format": hit.media_format,
+                    "description": hit.description,
+                    "last_seen_at": hit.last_seen_at,
+                }
         if rows.get(source_ref) == incoming:
             return _decode(old[0], document)
         if len(rows) >= _MAX_SOURCES and source_ref not in rows:
