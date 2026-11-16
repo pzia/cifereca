@@ -28,9 +28,10 @@ def exact_public_source_c(
 ) -> ConsolidatedNoticeCover | None:
     """Find a C only for a fully observed, unambiguous public source edition.
 
-    The source's own C and a stronger, explicitly persisted multi-source C
-    may coexist. Prefer the unique C with the most independently admitted
-    public sources; ties across distinct canonical C refs are ambiguous.
+    The source's independent C may coexist with an explicitly persisted
+    multi-source C. Exactly ONE foreign multi-source relation may supersede
+    the self edition; conflicting foreign claims fall back to the self C or
+    fail closed. Never settle contradictory canonical identities by size.
     Fail closed on unbounded indices and corrupt matching canonical records.
     """
     from .notice_c_cover_index import _IDENTIFIER
@@ -90,9 +91,24 @@ def exact_public_source_c(
                     return None
         if not matches:
             return None
-        strength = max(len(x.sources) for x in matches)
-        winners = [x for x in matches if len(x.sources) == strength]
-        return winners[0] if len(winners) == 1 else None
+        # A single public-source C can be superseded only by ONE independently
+        # attested multi-source relation. Choosing the numerically strongest
+        # of two *contradictory* foreign groups manufactures an edition link:
+        # a third provider in one group does not disprove the other group.
+        # Match the conservative route used by the C-first Search reader.
+        independent = canonical_cover_document_ref(edition_id)
+        own = [c for c in matches if c.document == independent]
+        foreign = [
+            c for c in matches
+            if c.document != independent and len(c.sources) >= 2
+        ]
+        if len(foreign) == 1:
+            return foreign[0]
+        if len(own) == 1:
+            return own[0]
+        # Contradictory foreign groups without a verified self edition, or
+        # foreign single-source 'relations', cannot bind a canonical cover.
+        return None
     except (sqlite3.Error, AttributeError, TypeError, ValueError):
         return None
 
