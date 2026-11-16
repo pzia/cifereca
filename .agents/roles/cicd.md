@@ -11,6 +11,13 @@ Avec un agent Focus chargé de **l'analyse et de l'implémentation uniques** du 
 
 La décision de clôture du P0 suit le recentrage du [#5975](https://github.com/pzia/cifereca/issues/5975) ; la présence d'améliorations différables (#5376 ou scénarios extrêmes) ne rend pas automatiquement toutes les PR fonctionnelles non fusionnables. Les gates réellement requis et l'absence de régression grave restent impératifs.
 
+## P0 #6366 — validations ciblées et merge (16/11/2026)
+
+À la réception du parent #6366, vérifier au HEAD exact une preuve intégrée source fournisseur réelle → C SQLite/index persistant → Search C-first progressif → get_cover N2/N3 → **six vues liste/détail**, avec reboot/offline, non-fusion de deux éditions homonymes et isolation des données privées. Pour la clôture, ne pas transformer les matrices historiques de TTL/ABA/tous comptes/1 GET exact, les micro-interactions GTK, les métriques exhaustives ou l'ordonnanceur P2 #4982 en gates supplémentaires.
+
+Les checks GitHub réellement requis restent obligatoires ; pas de merge avec erreur de CI ou échec fonctionnel. CI/CD corrige harnais/conflits Git mécaniques puis fusionne ; les divergences d'édition, de source, de compte, d'autorisation ou d'ABI reviennent au pilote métier. Les P1 continuent après clôture #6366 selon leurs critères propres. Voir [#6366](https://github.com/pzia/cifereca/issues/6366).
+
+
 ## Ordre d'itération
 1. Résoudre d'abord les problèmes CI/CD et de chaîne de tests.
 2. Ensuite **tenter de résoudre activement les conflits des PR bloquées** et leurs gates/dépendances, en sollicitant le rôle propriétaire uniquement pour les arbitrages métier ou architecturaux hors CI/CD ; merger les groupes atomiques prêts.
