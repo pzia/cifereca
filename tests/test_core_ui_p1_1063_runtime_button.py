@@ -184,3 +184,31 @@ def test_queued_adept_probe_keeps_method_bound_at_click(monkeypatch):
     args[2]({"status": "observed", "reason": "adept_acsm_capability_reported",
              "acsm_ready": True})
     assert "Autorisation Adobe" in editor["normal_adept_status"].subtitle
+
+
+def test_late_adept_result_rejected_when_saved_primary_changes_without_ui_epoch(monkeypatch):
+    host, editor, button, submits, reads, _ = _harness(monkeypatch)
+    button.emit("clicked")
+    args, _ = submits[-1]
+    result = args[1]()
+    # External config mutation: neither the rendered form nor UI generations
+    # change, and the legacy descriptive local status still says "ready".
+    host.config.identity = lambda _id: {
+        "id": "alice", "primary_paris_connection_id": "paris-b",
+    }
+    args[2](result)
+    assert reads == ["alice"]
+    assert not hasattr(editor["normal_adept_status"], "subtitle")
+
+
+def test_late_adept_result_rejected_when_saved_profile_changes_without_ui_epoch(monkeypatch):
+    host, editor, button, submits, reads, _ = _harness(monkeypatch)
+    button.emit("clicked")
+    args, _ = submits[-1]
+    result = args[1]()
+    # A new SQLite ADEPT binding cannot inherit a positive result observed
+    # for the previous profile, even when a read-only status is unchanged.
+    host.service.storage.adept_profile_binding_get = lambda *_: "adept-b"
+    args[2](result)
+    assert reads == ["alice"]
+    assert not hasattr(editor["normal_adept_status"], "subtitle")
