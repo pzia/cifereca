@@ -12,6 +12,7 @@ from ..models import Loan
 from ..identities.models import Identity
 from .loan_safe_trace import loan_trace_ref
 from .adept_borrower import public_borrower_refusal_code
+from .loan_source_epoch import SourceEpochLease
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -19,6 +20,7 @@ class AutomaticLoanAdmission:
     identity: Any = None
     entitlement_id: str | None = None
     refusal: dict[str, Any] | None = None
+    source_lease: SourceEpochLease | None = None
 
 
 def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
@@ -87,6 +89,17 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
 
     if not source_intact():
         return source_changed()
+    # Capture the atomic enabled-owner + durable epoch *before* calling the
+    # identity lookup or borrower resolver. A->B->A cannot revive this proof.
+    # Keep the historical unbound-connection refusal if no native owner was
+    # returned, rather than trying to obtain an epoch for an unknown owner.
+    source_lease = (
+        SourceEpochLease.capture(self.storage, loan, bound_identity_id)
+        if type(bound_identity_id) is str and bool(bound_identity_id)
+        else None
+    )
+    if type(bound_identity_id) is str and bound_identity_id and source_lease is None:
+        return source_changed()
     # A storage owner is an exact native key, not a UI hint or a coercible
     # plugin value. Never let a swapped/malformed lookup choose another user.
     identity = (
@@ -117,7 +130,9 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     def admission_intact() -> bool:
         return (source_intact() and type(identity) is Identity
                 and type(identity.identity_id) is str
-                and identity.identity_id == bound_identity_id)
+                and identity.identity_id == bound_identity_id
+                and type(source_lease) is SourceEpochLease
+                and source_lease.current(self.storage, loan))
 
     trace_ref = loan_trace_ref(loan, bound_identity_id)
     _TRACE_LOG.info("TRACE download identity resolved request_ref=%s loan_ref=%s", request_ref, trace_ref)
@@ -214,4 +229,7 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
         and bool(entitlement_rows[0]["entitlement_id"])
         else None
     )
-    return AutomaticLoanAdmission(identity=identity, entitlement_id=entitlement_id)
+    return AutomaticLoanAdmission(
+        identity=identity, entitlement_id=entitlement_id,
+        source_lease=source_lease,
+    )
