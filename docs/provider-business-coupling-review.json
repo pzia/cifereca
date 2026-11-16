@@ -1660,7 +1660,7 @@
         "tests/test_core_1063_normal_paris_adept_status.py",
         "tests/test_core_p1_1063_adept_runtime_check.py"
       ],
-      "pr": "pending",
+      "pr": "#6456",
       "in_ast_metric": true,
       "original_site_id": "site-a99f3f4da32247a6a6efec04"
     },
@@ -1676,7 +1676,7 @@
         "tests/test_core_1063_normal_paris_adept_status.py",
         "tests/test_core_p1_1063_adept_runtime_check.py"
       ],
-      "pr": "pending",
+      "pr": "#6456",
       "in_ast_metric": true,
       "original_site_id": "site-ad1126c55bb2a396a4efeaf8"
     },
@@ -1692,7 +1692,7 @@
         "tests/test_core_1063_normal_paris_adept_status.py",
         "tests/test_core_p1_1063_adept_runtime_check.py"
       ],
-      "pr": "pending",
+      "pr": "#6456",
       "in_ast_metric": true,
       "original_site_id": "site-27ca4e2cb71815ea92df3fd2"
     }
