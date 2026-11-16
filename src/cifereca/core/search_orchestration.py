@@ -416,6 +416,15 @@ def _public_rows_from_response(
             or len({id(row) for row in response.results}) != len(response.results)):
         # Repeated object identity is not an independently attested notice.
         return []
+    from collections import Counter
+    from ..plugin_api import PublicSearchNotice
+    # Build identity counts once; a 10,000-row catalogue must not add another
+    # O(rows * notices) pass to the existing public projection.
+    exact_public_rows = Counter(
+        id(claim.result)
+        for claim in response.public_notices
+        if type(claim) is PublicSearchNotice
+    )
     admitted: list[SearchResult] = []
     for row in response.results:
         if type(row) is not SearchResult:
@@ -437,7 +446,6 @@ def _public_rows_from_response(
             # image, but only when its exact same-call public notice points
             # to THIS source object, with no credential/account/rights.
             # A signed/private image still fails the Core catalogue guard.
-            from ..plugin_api import PublicSearchNotice
             anonymous = (
                 getattr(session, "credential_id", None) == "__public__"
                 and type(getattr(session, "credentials", None)) is dict
@@ -449,11 +457,7 @@ def _public_rows_from_response(
                 and row.source_account_id is None
                 and row.owned is False and row.downloadable is False
                 and row.download_url is None
-                and sum(
-                    type(claim) is PublicSearchNotice
-                    and claim.result is row
-                    for claim in response.public_notices
-                ) == 1
+                and exact_public_rows.get(id(row), 0) == 1
             )
             if anonymous:
                 image = _shared_catalogue_cover_url(row.thumbnail_url)
