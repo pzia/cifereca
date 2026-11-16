@@ -237,11 +237,22 @@ def _initial_digest(path: Path, directory: Path, now: float) -> str | None:
 
 
 def _initial_scope(loan, identity_id: str, account_id: str) -> dict | None:
-    """Only an exact, active Paris DILICOM borrowing scope is receivable."""
-    if (type(identity_id) is not str or not identity_id
+    """Exact borrower/edition/branch scope independent of supplier names.
+
+    A receipt identifies a claimed one-shot token, not a borrow grant,
+    content GET authorization or proof of ADEPT fulfillment.
+    """
+    from .models import Loan
+    from .core.provider_identifier import valid_provider_identifier
+
+    if (type(loan) is not Loan
+            or type(identity_id) is not str or not identity_id
             or type(account_id) is not str or not account_id
-            or loan.source_provider != 'paris'
-            or loan.provider != 'DILICOM' or loan.medium != 'digital'
+            or not valid_provider_identifier(loan.source_provider)
+            or type(loan.provider) is not str
+            or not 0 < len(loan.provider) <= 128
+            or not loan.provider.isprintable()
+            or loan.medium != 'digital'
             or type(loan.source_credential) is not str
             or not loan.source_credential
             or type(loan.identity_id) is not str
@@ -251,10 +262,10 @@ def _initial_scope(loan, identity_id: str, account_id: str) -> dict | None:
             or type(loan.id) is not str or not loan.id
             or type(loan.record_id) is not str or not loan.record_id):
         return None
-    return dict(identity=identity_id, provider='paris',
+    return dict(identity=identity_id, provider=loan.source_provider,
                 credential=loan.source_credential, borrower=account_id,
-                loan=loan.id, item=loan.record_id, due=loan.due_at)
-
+                loan=loan.id, item=loan.record_id, due=loan.due_at,
+                branch=loan.provider)
 
 def remember_initial(path: Path, directory: Path, loan, identity_id: str,
                      account_id: str, *, now=None, borrow_claim=None,
