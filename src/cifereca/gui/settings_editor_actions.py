@@ -8,6 +8,51 @@ from .settings_identity_editor import build_identity_settings_editor
 from .settings_account_editor import build_provider_account_editor
 
 
+def _selected_adept_source(saved: dict[str, Any]) -> tuple[bool, str | None, str | None]:
+    """Explicit source pair or an unambiguous marker for historical Settings.
+
+    Never repair a malformed new pair by silently selecting legacy Paris.
+    """
+    from ..core.provider_identifier import valid_provider_identifier
+
+    explicit = ("adept_source_provider_id" in saved
+                or "adept_source_connection_id" in saved)
+    if not explicit:
+        # Read-only legacy Config bridge. "primary_paris_connection_id"
+        # explicitly designates the historical Paris source; never infer it
+        # from an ADEPT profile or from the user's current GTK selection.
+        legacy = saved.get("primary_paris_connection_id")
+        if legacy is None:
+            return False, "paris", None
+        if (type(legacy) is not str or len(legacy) > 256
+                or (legacy and (
+                    legacy != legacy.strip() or not legacy.isprintable()))):
+            return False, None, None
+        return False, "paris", legacy or None
+    provider = saved.get("adept_source_provider_id")
+    connection = saved.get("adept_source_connection_id")
+    if (not valid_provider_identifier(provider)
+            or type(connection) is not str or not connection
+            or len(connection) > 256 or connection != connection.strip()
+            or not connection.isprintable()):
+        return True, None, None
+    return True, provider, connection
+
+
+def _saved_adept_status(core, identity_id: str, saved: dict[str, Any]) -> dict[str, Any]:
+    """Read saved source only; never infer provider from an ADEPT profile."""
+    explicit, provider, credential = _selected_adept_source(saved)
+    if provider is None:
+        return {
+            "identity_id": identity_id, "status": "to_configure",
+            "reason": "invalid_source_descriptor", "adept_profile_id": None,
+        }
+    return core.normal_source_adept_status(
+        identity_id, source_provider_id=provider, source_label=provider,
+        primary_connection_id=credential,
+    )
+
+
 def _local_adept_binding_caption(state: dict[str, Any]) -> str:
     """Non-authorizing local settings status, never a provider permission."""
     if state.get("status") == "ready":
@@ -164,7 +209,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
         )
         normal_subtitle = (
             _local_adept_binding_caption(
-                self.service.normal_paris_adept_status(identity_id)
+                _saved_adept_status(self.service, identity_id, data)
             )
             if data.get("id")
             else "À configurer · enregistrez l’identité pour vérifier ses liaisons."
@@ -206,20 +251,39 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 "identity", saved_id,
             ) or ""
             stored_primary = saved.get("primary_paris_connection_id") or ""
+            # A changed/half-filled source pair remains an unsaved draft,
+            # even when its ADEPT profile is unchanged.
+            provider = saved.get("adept_source_provider_id", "")
+            connection = saved.get("adept_source_connection_id", "")
+            provider_row = e.get("adept_source_provider_id")
+            connection_row = e.get("adept_source_connection_id")
             if (e["adept_profile"].get_text() != stored_profile
                     or e["primary_paris_connection_id"].get_text()
-                       != stored_primary):
+                       != stored_primary
+                    or (provider_row is not None
+                        and provider_row.get_text() != provider)
+                    or (connection_row is not None
+                        and connection_row.get_text() != connection)):
                 e["normal_adept_status"].set_subtitle(
                     "À vérifier · enregistrez les modifications avant le contrôle ADEPT."
                 )
                 return
-            start_status = admitted_core.normal_paris_adept_status(saved_id)
+            selected_source = _selected_adept_source(saved)
+            start_status = _saved_adept_status(admitted_core, saved_id, saved)
             if start_status.get("status") != "ready":
                 e["normal_adept_status"].set_subtitle(
                     _local_adept_binding_caption(start_status)
                 )
                 return
-            runtime_probe = admitted_core.check_normal_paris_adept_runtime
+            # No more active Paris-specific Core facade in Settings: both the
+            # legacy saved-primary source and new explicit provider pair use
+            # the same source-scoped admission and runtime observation.
+            runtime_method = admitted_core.check_source_adept_runtime
+            runtime_probe = lambda identity: runtime_method(
+                identity, source_provider_id=selected_source[1],
+                source_label=selected_source[1],
+                primary_connection_id=selected_source[2],
+            )
             generations = (
                 getattr(self, "_identity_context_generation", None),
                 getattr(self, "_account_context_generation", None),
@@ -229,22 +293,34 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             button.set_sensitive(False)
 
             def saved_binding_current():
-                # A failed persisted read is not evidence that the old
-                # source/profile still owns this runtime observation.
+                # A local SQLite/Config change may leave both the GTK
+                # generations and the descriptive readiness status unchanged.
+                # Compare *raw saved coordinates* and the persisted ADEPT
+                # identity profile before publishing any asynchronous result.
+                # Unlike the historical Paris-only guard, this also fences
+                # the new explicit provider + connection pair.
                 try:
-                    identity = self.config.identity(saved_id)
-                    if type(identity) is not dict:
+                    persisted = self.config.identity(saved_id)
+                    if type(persisted) is not dict:
                         return False
                     return (
-                        identity.get("primary_paris_connection_id", "")
+                        persisted.get("primary_paris_connection_id", "")
                             == stored_primary
+                        and persisted.get("adept_source_provider_id", "")
+                            == provider
+                        and persisted.get("adept_source_connection_id", "")
+                            == connection
                         and admitted_core.storage.adept_profile_binding_get(
                             "identity", saved_id,
                         ) == stored_profile
-                        and admitted_core.normal_paris_adept_status(saved_id)
-                            == start_status
+                        and _selected_adept_source(persisted) == selected_source
+                        and _saved_adept_status(
+                            admitted_core, saved_id, persisted,
+                        ) == start_status
                     )
                 except Exception:
+                    # An unreadable source/profile binding is never evidence
+                    # that an old ADEPT runtime result may still be rendered.
                     return False
 
             def current():
@@ -260,9 +336,10 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     and e["adept_profile"].get_text() == stored_profile
                     and e["primary_paris_connection_id"].get_text()
                         == stored_primary
-                    # External config/SQLite changes may leave UI generations
-                    # and descriptive status unchanged; recheck exact saved
-                    # bindings, fail-closed on any read error.
+                    and (provider_row is None
+                         or provider_row.get_text() == provider)
+                    and (connection_row is None
+                         or connection_row.get_text() == connection)
                     and saved_binding_current()
                 )
 

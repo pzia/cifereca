@@ -112,7 +112,7 @@ def test_editor_loading_keeps_bound_ids_and_choosers_read_current_directory(monk
     rows = [{'id': 'paris-default', 'provider': 'paris'}, {'id': 'unavailable', 'provider': 'offline'}]
     host = NS(config=NS(identities=lambda: configured, provider_accounts=lambda: rows),
               service=NS(storage=NS(adept_profile_binding_get=Mock(return_value='bound')),
-                         normal_paris_adept_status=Mock(return_value={})),
+                         normal_source_adept_status=Mock(return_value={})),
               _choose_identity_directory=Mock(), _choose_adept_profile=Mock(), navigate=Mock())
     identity_controls, account_controls = [], []
     def identity_builder(**kwargs):
