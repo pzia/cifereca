@@ -23,27 +23,52 @@ class SourceEpochLease:
     @classmethod
     def capture(cls, storage: Any, loan: Any, identity_id: str) -> SourceEpochLease | None:
         """Pin the connection epoch before calling any identity/borrower hook."""
-        if (type(identity_id) is not str or not identity_id
-                or type(loan.source_provider) is not str or not loan.source_provider
-                or type(loan.source_credential) is not str or not loan.source_credential
-                or type(loan.source_account_id) not in (str, type(None))
-                or type(loan.id) is not str or not loan.id
-                or type(loan.record_id) not in (str, type(None))):
+        # Snapshot every native transaction coordinate BEFORE the storage
+        # callback: it can be a plugin shim and may mutate the caller's Loan.
+        # Never combine epoch(A) with source(B), even if both happen to have
+        # the same numeric SQLite epoch and identity owner.
+        if type(identity_id) is not str or not identity_id:
+            return None
+        try:
+            provider = loan.source_provider
+            credential = loan.source_credential
+            account = loan.source_account_id
+            loan_id = loan.id
+            record = loan.record_id
+        except Exception:
+            return None
+        if (type(provider) is not str or not provider
+                or type(credential) is not str or not credential
+                or type(account) not in (str, type(None))
+                or type(loan_id) is not str or not loan_id
+                or type(record) not in (str, type(None))):
             return None
         try:
             epoch = storage.provider_connection_epoch(
-                loan.source_provider, loan.source_credential, identity_id,
+                provider, credential, identity_id,
             )
+            if type(epoch) is not int or epoch < 1:
+                return None
+            # Never rebind the lease to post-callback coordinates. Even a
+            # mutation to a foreign source with the SAME epoch fails closed.
+            if (type(loan.source_provider) is not str
+                    or loan.source_provider != provider
+                    or type(loan.source_credential) is not str
+                    or loan.source_credential != credential
+                    or type(loan.source_account_id) not in (str, type(None))
+                    or loan.source_account_id != account
+                    or type(loan.id) is not str or loan.id != loan_id
+                    or type(loan.record_id) not in (str, type(None))
+                    or loan.record_id != record):
+                return None
         except Exception:
             return None
-        if type(epoch) is not int or epoch < 1:
-            return None
         return cls(
-            provider_id=loan.source_provider,
-            credential_id=loan.source_credential,
-            account_id=loan.source_account_id,
-            loan_id=loan.id,
-            record_id=loan.record_id,
+            provider_id=provider,
+            credential_id=credential,
+            account_id=account,
+            loan_id=loan_id,
+            record_id=record,
             identity_id=identity_id,
             epoch=epoch,
         )
