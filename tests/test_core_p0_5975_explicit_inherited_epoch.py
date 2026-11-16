@@ -106,7 +106,9 @@ def test_explicit_reacquire_refuses_revalidated_owner_after_hidden_aba(
                 service, "_paris_adept_identity_for_loan",
                 wrap(lambda *_a, **_kw: ("default", None)),
             )
-        elif provider == "paris":
+        else:
+            # All sources now require a positive v16 borrower identity;
+            # isolate the source-epoch transition rather than its grant gate.
             monkeypatch.setattr(
                 service, "_paris_adept_identity_for_loan",
                 lambda *_a, **_kw: ("default", None),
@@ -184,11 +186,12 @@ def test_stable_reacquisition_passes_original_epoch_to_nested_auto(
         monkeypatch.setattr(service, "can_download_loan", lambda _: True)
         monkeypatch.setattr(service, "_persist_active_loans",
                             lambda *_a, **_kw: None)
-        if provider == "paris":
-            monkeypatch.setattr(
-                service, "_paris_adept_identity_for_loan",
-                lambda *_a, **_kw: ("default", None),
-            )
+        # A valid borrower is a separate positive prerequisite for each
+        # provider, including the synthetic library in this epoch-only test.
+        monkeypatch.setattr(
+            service, "_paris_adept_identity_for_loan",
+            lambda *_a, **_kw: ("default", None),
+        )
         seen = []
         def nested(*_args, **kwargs):
             lease = inherited_explicit_source_epoch()
@@ -258,6 +261,12 @@ def test_nested_guarded_auto_rejects_old_epoch_even_if_new_admission_passes(
             "provider_id": "synthetic-pnb", "credential_id": "credential-a",
             "identity_id": "default", "enabled": True,
         })
+        # Exercise the stale *inherited* lease after positive borrower
+        # admission; an absent borrower is already rejected independently.
+        monkeypatch.setattr(
+            service, "_paris_adept_identity_for_loan",
+            lambda *_a, **_kw: ("default", None),
+        )
         lease = SourceEpochLease.capture(service.storage, loan, "default")
         assert type(lease) is SourceEpochLease
         _rotate(service, "synthetic-pnb", mode)
