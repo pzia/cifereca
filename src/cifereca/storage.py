@@ -1794,6 +1794,95 @@ class Storage:
             db.execute("RELEASE SAVEPOINT provider_source_epoch_v17")
             raise
 
+        # v17-compatible durable grant generation. Physical deletion does
+        # not delete the witness: DELETE -> INSERT, UPSERT reconfirmation and
+        # raw SQLite writers all retire the prior grant. Never infer authority
+        # from confirmed_at (second-resolution) or the connection epoch alone.
+        db.execute("SAVEPOINT adept_grant_epoch_v17")
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS adept_borrower_grant_epochs (
+                    provider_id TEXT NOT NULL,
+                    credential_id TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    epoch INTEGER NOT NULL
+                        CHECK (typeof(epoch)='integer' AND epoch > 0
+                               AND epoch < 9223372036854775807),
+                    PRIMARY KEY(provider_id, credential_id, account_id)
+                )
+            """)
+            db.execute("""
+                INSERT OR IGNORE INTO adept_borrower_grant_epochs
+                    (provider_id, credential_id, account_id, epoch)
+                SELECT provider_id, credential_id, account_id, 1
+                FROM adept_borrower_grants
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_epoch_no_delete
+                BEFORE DELETE ON adept_borrower_grant_epochs
+                BEGIN
+                    SELECT RAISE(ABORT, 'adept_grant_epoch_retirement_forbidden');
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_epoch_no_rewind
+                BEFORE UPDATE ON adept_borrower_grant_epochs
+                WHEN NEW.provider_id != OLD.provider_id
+                     OR NEW.credential_id != OLD.credential_id
+                     OR NEW.account_id != OLD.account_id
+                     OR typeof(NEW.epoch) != 'integer'
+                     OR NEW.epoch <= OLD.epoch
+                BEGIN
+                    SELECT RAISE(ABORT, 'adept_grant_epoch_rewind_forbidden');
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_epoch_insert
+                AFTER INSERT ON adept_borrower_grants
+                BEGIN
+                    INSERT INTO adept_borrower_grant_epochs
+                        (provider_id, credential_id, account_id, epoch)
+                    VALUES (NEW.provider_id, NEW.credential_id, NEW.account_id, 1)
+                    ON CONFLICT(provider_id, credential_id, account_id)
+                    DO UPDATE SET epoch=epoch+1;
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_epoch_update
+                AFTER UPDATE ON adept_borrower_grants
+                BEGIN
+                    INSERT INTO adept_borrower_grant_epochs
+                        (provider_id, credential_id, account_id, epoch)
+                    VALUES (OLD.provider_id, OLD.credential_id, OLD.account_id, 1)
+                    ON CONFLICT(provider_id, credential_id, account_id)
+                    DO UPDATE SET epoch=epoch+1;
+                    INSERT INTO adept_borrower_grant_epochs
+                        (provider_id, credential_id, account_id, epoch)
+                    SELECT NEW.provider_id, NEW.credential_id, NEW.account_id, 1
+                    WHERE NEW.provider_id != OLD.provider_id
+                       OR NEW.credential_id != OLD.credential_id
+                       OR NEW.account_id != OLD.account_id
+                    ON CONFLICT(provider_id, credential_id, account_id)
+                    DO UPDATE SET epoch=epoch+1;
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_epoch_delete
+                AFTER DELETE ON adept_borrower_grants
+                BEGIN
+                    INSERT INTO adept_borrower_grant_epochs
+                        (provider_id, credential_id, account_id, epoch)
+                    VALUES (OLD.provider_id, OLD.credential_id, OLD.account_id, 1)
+                    ON CONFLICT(provider_id, credential_id, account_id)
+                    DO UPDATE SET epoch=epoch+1;
+                END
+            """)
+            db.execute("RELEASE SAVEPOINT adept_grant_epoch_v17")
+        except Exception:
+            db.execute("ROLLBACK TO SAVEPOINT adept_grant_epoch_v17")
+            db.execute("RELEASE SAVEPOINT adept_grant_epoch_v17")
+            raise
+
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
         raw = "\x1f".join(str(part or "") for part in parts).encode("utf-8", "surrogatepass")
@@ -3353,6 +3442,61 @@ class Storage:
             ("connection_identity_id", "borrower_identity_id", "profile_id",
              "confirmed_by", "confirmed_at", "updated_at"), row,
         )) if row is not None else None)
+
+    def adept_borrower_grant_epoch(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+    ) -> int | None:
+        """Capture the positive v16 grant's durable generation, never a grant.
+
+        The generation is returned only while the complete, currently
+        attested v16 grant exists. A tombstone alone never grants access.
+        """
+        scope = self._adept_grant_scope(
+            provider_id=provider_id, credential_id=credential_id,
+            account_id=account_id,
+        )
+        with self._lock, self._connect() as db:
+            row = db.execute(
+                "SELECT e.epoch FROM adept_borrower_grant_epochs AS e "
+                "JOIN adept_borrower_grants AS g "
+                "ON g.provider_id=e.provider_id "
+                "AND g.credential_id=e.credential_id "
+                "AND g.account_id=e.account_id "
+                "JOIN provider_connections AS c "
+                "ON c.provider_id=g.provider_id "
+                "AND c.credential_id=g.credential_id "
+                "AND c.identity_id=g.connection_identity_id AND c.enabled=1 "
+                "JOIN provider_accounts AS a "
+                "ON a.provider_id=g.provider_id "
+                "AND a.credential_id=g.credential_id "
+                "AND a.account_id=g.account_id "
+                "AND a.connection_id=c.connection_id "
+                "AND a.identity_id=g.connection_identity_id "
+                "JOIN identities AS i ON i.identity_id=g.borrower_identity_id "
+                "JOIN adept_profile_bindings AS p "
+                "ON p.scope_type='identity' "
+                "AND p.scope_id=g.borrower_identity_id "
+                "AND p.profile_id=g.profile_id "
+                "WHERE g.provider_id=? AND g.credential_id=? "
+                "AND g.account_id=? AND g.confirmed_by='explicit'",
+                scope,
+            ).fetchone()
+        return row[0] if row is not None and type(row[0]) is int and row[0] > 0 else None
+
+    def adept_borrower_grant_epoch_current(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        epoch: int,
+    ) -> bool:
+        """A revoked/reconfirmed grant never revives a captured generation."""
+        if type(epoch) is not int or epoch < 1:
+            return False
+        try:
+            return self.adept_borrower_grant_epoch(
+                provider_id=provider_id, credential_id=credential_id,
+                account_id=account_id,
+            ) == epoch
+        except (ValueError, TypeError):
+            return False
 
     def adept_borrower_grant_delete(
         self, *, provider_id: str, credential_id: str, account_id: str,
