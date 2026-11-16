@@ -11,12 +11,37 @@ from typing import Any
 
 from .adept_borrower import public_borrower_refusal_code
 from .loan_adept_profile_receipt import attention_receipt
+from .loan_source_epoch import SourceEpochLease
+
+
+def refuse_staged_source(
+    self: Any, *, ledger_base: dict[str, Any], previous_meta: dict[str, Any],
+    retained_acsm: Any, trace_ref: str, expected_loan_id: str,
+    raw_code: Any, _TRACE_LOG: Any,
+) -> dict[str, Any]:
+    """Retain staged ACSM with the exact loan receipt, never a new grant."""
+    code = public_borrower_refusal_code(raw_code)
+    self.storage.acquisition_put(
+        attention_receipt(
+            ledger_base=ledger_base, previous_meta=previous_meta,
+            loan_id=expected_loan_id, retained_acsm=retained_acsm, code=code,
+        )
+    )
+    _TRACE_LOG.warning(
+        "TRACE download loan_auto blocked reason=ambiguous_borrower_account loan_ref=%s",
+        trace_ref,
+    )
+    return {
+        "status": "attention_required", "loan_id": expected_loan_id,
+        "code": code, "retry": "explicit_only",
+    }
 
 
 def check(
     self: Any, loan: Any, *, identity: Any, ledger_base: dict[str, Any],
     previous_meta: dict[str, Any], retained_acsm: Any, trace_ref: str,
     expected_loan_id: str, expected_record_id: str | None,
+    source_lease: SourceEpochLease | None,
     AdeptProfileResolutionError: type, adept_acsm_plan: Any, _TRACE_LOG: Any,
 ) -> tuple[str, str] | dict[str, Any]:
     """Exact pre-ADEPT grant/profile sequence; dict is the existing refusal."""
@@ -43,6 +68,9 @@ def check(
             and loan.source_credential == ledger_base.get("credential_id")
             and loan.source_account_id == ledger_base.get("account_id")
             and identity.identity_id == ledger_base.get("identity_id")
+            and type(source_lease) is SourceEpochLease
+            and source_lease.identity_id == identity.identity_id
+            and source_lease.current(self.storage, loan)
         )
 
     if not source_intact():
@@ -60,21 +88,12 @@ def check(
     # Profile resolution and inventory are external callbacks too: they must
     # not return a profile for a different staged loan after the first grant.
     def borrower_refusal(raw_code: Any) -> dict[str, Any]:
-        code = public_borrower_refusal_code(raw_code)
-        self.storage.acquisition_put(
-            attention_receipt(
-                ledger_base=ledger_base, previous_meta=previous_meta,
-                loan_id=expected_loan_id, retained_acsm=retained_acsm, code=code,
-            )
+        return refuse_staged_source(
+            self, ledger_base=ledger_base, previous_meta=previous_meta,
+            retained_acsm=retained_acsm, trace_ref=trace_ref,
+            expected_loan_id=expected_loan_id, raw_code=raw_code,
+            _TRACE_LOG=_TRACE_LOG,
         )
-        _TRACE_LOG.warning(
-            "TRACE download loan_auto blocked reason=ambiguous_borrower_account loan_ref=%s",
-            trace_ref,
-        )
-        return {
-            "status": "attention_required", "loan_id": expected_loan_id,
-            "code": code, "retry": "explicit_only",
-        }
 
     # Only literal None means approved. A profile resolver must never receive
     # an absent/foreign borrower identity even when the guard code was None.
