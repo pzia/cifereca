@@ -46,6 +46,66 @@ def _history_cache_key(account: Account) -> str:
     return f"history-v4:{digest}"
 
 
+
+def _pinned_history_c_rows(rows: object, account: Account) -> list[HistoryItem]:
+    """Qualify borrowed history DTOs only from an exact, leased Core read.
+
+    The Paris normalizer (and other legacy adapters) can omit owner fields.
+    A completed history(account) with a CURRENT native source lease is the
+    positive borrower proof; C's independent public source still decides
+    the document. Do not overwrite a contradictory source/owner, guess an
+    edition, or copy any authorization into the canonical catalogue.
+    The caller must check the lease BEFORE invoking this function.
+    """
+    if (type(account) is not Account or type(rows) is not list
+            or type(account.identity_id) is not str or not account.identity_id
+            or type(account.provider_id) is not str or not account.provider_id
+            or type(account.credential_id) is not str
+            or not account.credential_id
+            or type(account.unique_id) is not str):
+        return []
+    qualified: list[HistoryItem] = []
+    for item in rows:
+        if (type(item) is not HistoryItem
+                or type(item.source_provider) is not str
+                or item.source_provider != account.provider_id
+                or type(item.source_credential) is not str
+                or item.source_credential != account.credential_id
+                or type(item.identity_id) not in (str, type(None))
+                or item.identity_id not in (None, account.identity_id)
+                or type(item.source_account_id) not in (str, type(None))
+                or item.source_account_id not in (None, account.unique_id)):
+            continue
+        # Normalize only missing *account* coordinates after a verified
+        # provider read; a supplier-supplied different owner always vetoes.
+        if item.identity_id is None:
+            item.identity_id = account.identity_id
+        if item.source_account_id is None:
+            item.source_account_id = account.unique_id
+        qualified.append(item)
+    return qualified
+
+
+def _leased_cached_history_c_rows(
+    self, rows: list[HistoryItem], *, account: Account,
+    scope: tuple[str, str, str, str], source_epoch: int,
+) -> list[HistoryItem]:
+    """Cached history stays readable offline, but no C link without lease.
+
+    Cache key is borrower-scoped, not provider authority. Validate the exact
+    still-registered provider source before stamping a public C fallback.
+    """
+    try:
+        session = self._session_for_account(account)
+        if not self._history_source_lease_current(
+            account, session, scope=scope, epoch=source_epoch,
+        ):
+            return []
+    except (ProviderConfigurationError, AttributeError, TypeError, ValueError):
+        return []
+    return _pinned_history_c_rows(rows, account)
+
+
 def refresh_history(
     self, force: bool = False, *, account: Account,
     expected_source_epoch: int | None = None,
@@ -75,13 +135,19 @@ def refresh_history(
         cached = self.storage.cache_get("account", key)
         if isinstance(cached, list):
             rows = [HistoryItem(**x) for x in cached]
-            # C is public and independently indexed. Enrich the exact
-            # borrower DTOs on the existing Core worker, never at GTK bind.
+            # A cache key is not a current borrower lease. Revalidate the
+            # exact source before filling missing owner coordinates for C.
+            # All enrichment remains on this existing Core worker.
             from .notice_c_borrower_public_projection import attach_borrower_public_c
-            attach_borrower_public_c(
-                self.storage, rows, identity_id=account.identity_id,
-                account_epoch=epoch, source_epoch=source_epoch,
+            qualified = _leased_cached_history_c_rows(
+                self, rows, account=account, scope=source_scope,
+                source_epoch=source_epoch,
             )
+            if qualified:
+                attach_borrower_public_c(
+                    self.storage, qualified, identity_id=account.identity_id,
+                    account_epoch=epoch, source_epoch=source_epoch,
+                )
             if self._account_context_epoch == epoch and self.current_account is account:
                 self.last_history = rows
             self.diagnostics.add("CACHE", "history", detail={"hit": True, "count": len(rows)})
@@ -130,13 +196,19 @@ def refresh_history(
     ):
         raise ProviderConfigurationError("history_source_binding_changed")
     self.storage.cache_put("account", key, [asdict(x) for x in rows], ttl)
-    # Keep the immutable source's public-C receipt out of private cache
-    # serialization; associate it only with the current returned objects.
+    # Only a still-valid source lease may fill the missing owner fields
+    # of legacy provider HistoryItem DTOs. Do this AFTER cache serialization:
+    # no private C witness or synthesized owner enters persisted data.
     from .notice_c_borrower_public_projection import attach_borrower_public_c
-    attach_borrower_public_c(
-        self.storage, rows, identity_id=account.identity_id,
-        account_epoch=epoch, source_epoch=source_epoch,
-    )
+    if self._history_source_lease_current(
+        account, session, scope=source_scope, epoch=source_epoch,
+    ):
+        qualified = _pinned_history_c_rows(rows, account)
+        if qualified:
+            attach_borrower_public_c(
+                self.storage, qualified, identity_id=account.identity_id,
+                account_epoch=epoch, source_epoch=source_epoch,
+            )
     if self._account_context_epoch == epoch and self.current_account is account:
         self.last_history = rows
     return rows
