@@ -35,14 +35,17 @@ def _duplicate_rights():
     return inventory, tables
 
 
-def test_unique_full_source_produces_exactly_one_attested_right_edge():
+def test_unique_historical_receipt_is_not_an_attested_purchase_origin():
     inventory, tables = _fixture(1)
     result = _reconcile(inventory, tables)
-    assert result.files[0] == {"confirmed_link"}
-    assert len(_attested(result)) == 1
-    assert _attested(result)[0].row_index == 0
-    assert result.unverified_rights == []
-    assert result.redacted()["edge_counts"]["explicit_right_ledger_placement_sha_size"] == 1
+    assert result.files[0] == {
+        "present_unlinked", "local_file_without_attested_right",
+    }
+    assert _attested(result) == []
+    assert result.unverified_rights == [0]
+    assert result.redacted()["edge_counts"]["explicit_placement_sha_size"] == 1
+    assert ("explicit_right_ledger_placement_sha_size"
+            not in result.redacted()["edge_counts"])
 
 
 def test_two_attested_looking_rights_are_ambiguous_not_two_attestations():
@@ -149,7 +152,7 @@ def test_unknown_provider_competing_borrowers_are_ambiguous_without_any_grant():
     assert "competing-right" not in json.dumps(report.redacted())
 
 
-def test_cross_identity_and_different_edition_do_not_create_false_ambiguity():
+def test_unrelated_legacy_scopes_keep_byte_evidence_without_false_ambiguity():
     inventory, tables = _fixture(1)
     observed = tables["entitlements"][0]
     different_identity = dict(observed, entitlement_id="foreign-right",
@@ -159,8 +162,11 @@ def test_cross_identity_and_different_edition_do_not_create_false_ambiguity():
     tables["entitlements"].extend((different_identity, different_edition))
     report = _reconcile(inventory, tables)
     assert "ambiguous" not in report.files[0]
-    assert report.files[0] == {"confirmed_link"}
-    assert len(_attested(report)) == 1
+    assert report.files[0] == {
+        "present_unlinked", "local_file_without_attested_right",
+    }
+    assert _attested(report) == []
+    assert report.unverified_rights == [0, 1, 2]
 
 
 def test_same_provider_edition_with_inactive_other_account_still_blocks():
