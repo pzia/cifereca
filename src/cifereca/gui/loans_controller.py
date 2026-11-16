@@ -367,6 +367,15 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
         rows = service.refresh_identity_loans(
             force=force, identity_id=identity_id,
         )
+        # A separate, source-exact, PUBLIC catalogue C may supply the
+        # thumbnail of an image-less loan, but never the loan right.
+        # This is the existing bounded background worker, not GTK.
+        from cifereca.core.notice_c_borrower_public_projection import (
+            attach_borrower_public_c,
+        )
+        attach_borrower_public_c(
+            service.storage, rows, identity_id=identity_id,
+        )
         # Resolve a missing loan cover only on this existing background
         # worker, once per refresh. Core's library_entries(scan=False) reads
         # local placements/entitlements; it never contacts a catalogue,
