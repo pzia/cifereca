@@ -1218,8 +1218,10 @@ class DetailPanel(Gtk.Box):
         # A direct-download action must be visible immediately.  Do not wait for
         # the asynchronous holdings request: Gallica has no meaningful holding
         # list and a failed availability lookup must never hide the download.
-        if item.source_provider != "numilog-catalog":
-            self._direct_download_action(item)
+        # Let the shared source-neutral offer guard and Core broker decide.
+        # A catalogue-only row is rejected by _direct_download_action before
+        # any Core eligibility call, regardless of the supplier name.
+        self._direct_download_action(item)
         availability = Adw.PreferencesGroup()
         availability.set_title("Disponibilités")
         row = Adw.ActionRow()
@@ -1360,7 +1362,10 @@ class DetailPanel(Gtk.Box):
             metadata=item.metadata,
             cover_document_ref=document,
         ), description=getattr(detail, "description", None) or item.description)
-        from cifereca.gui.offer_actions import private_notice_download_hint_allowed
+        from cifereca.gui.offer_actions import (
+            private_notice_download_hint_allowed,
+            public_catalogue_download_hint_allowed,
+        )
         private_hint_ok = private_notice_download_hint_allowed(
             item,
             purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
@@ -1371,7 +1376,7 @@ class DetailPanel(Gtk.Box):
         )
         direct_download = (
             self.window.service.can_direct_download(item)
-            if private_hint_ok and item.source_provider != "numilog-catalog"
+            if private_hint_ok and public_catalogue_download_hint_allowed(item)
             else False
         )
         # A spent, uncertain loan may no longer be advertised as
