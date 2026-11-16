@@ -76,8 +76,10 @@ class SourceEpochLease:
     def current(self, storage: Any, loan: Any) -> bool:
         """Reject source drift and every A->B->A/disable/recreate since capture.
 
-        No borrower grant or provider callback runs. Native type checks are
-        performed before any equality comparison, hash or SQLite access.
+        A Loan may be a plugin-supplied object with getters that mutate or
+        raise. Read each native coordinate exactly once, then validate the
+        pinned tuple before consulting SQLite. A failing getter is a veto.
+        No borrower grant or provider callback runs here.
         """
         if (type(self) is not SourceEpochLease
                 or type(self.provider_id) is not str or not self.provider_id
@@ -86,23 +88,38 @@ class SourceEpochLease:
                 or type(self.loan_id) is not str or not self.loan_id
                 or type(self.record_id) not in (str, type(None))
                 or type(self.identity_id) is not str or not self.identity_id
-                or type(self.epoch) is not int or self.epoch < 1
-                or type(loan.source_provider) is not str
-                or type(loan.source_credential) is not str
-                or type(loan.source_account_id) not in (str, type(None))
-                or type(loan.id) is not str
-                or type(loan.record_id) not in (str, type(None))):
-            return False
-        if (loan.source_provider != self.provider_id
-                or loan.source_credential != self.credential_id
-                or loan.source_account_id != self.account_id
-                or loan.id != self.loan_id
-                or loan.record_id != self.record_id):
+                or type(self.epoch) is not int or self.epoch < 1):
             return False
         try:
-            return storage.provider_connection_epoch_current(
+            provider = loan.source_provider
+            credential = loan.source_credential
+            account = loan.source_account_id
+            loan_id = loan.id
+            record = loan.record_id
+            if (type(provider) is not str or provider != self.provider_id
+                    or type(credential) is not str
+                    or credential != self.credential_id
+                    or type(account) not in (str, type(None))
+                    or account != self.account_id
+                    or type(loan_id) is not str or loan_id != self.loan_id
+                    or type(record) not in (str, type(None))
+                    or record != self.record_id):
+                return False
+            # Recheck the loan after the SQLite callback: an adapter may
+            # mutate the source while returning an otherwise valid epoch.
+            if storage.provider_connection_epoch_current(
                 self.provider_id, self.credential_id, self.identity_id,
                 self.epoch,
-            ) is True
+            ) is not True:
+                return False
+            return (type(loan.source_provider) is str
+                    and loan.source_provider == provider
+                    and type(loan.source_credential) is str
+                    and loan.source_credential == credential
+                    and type(loan.source_account_id) in (str, type(None))
+                    and loan.source_account_id == account
+                    and type(loan.id) is str and loan.id == loan_id
+                    and type(loan.record_id) in (str, type(None))
+                    and loan.record_id == record)
         except Exception:
             return False
