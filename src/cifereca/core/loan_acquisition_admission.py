@@ -136,14 +136,16 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
                 or identity.identity_id != bound_identity_id):
             return False
         try:
-            return (
-                self.storage.provider_connection_owner_current(
-                    pinned_provider, pinned_credential, bound_identity_id,
-                ) is True
-                and self.storage.source_connection_epoch_get(
-                    pinned_provider, pinned_credential, bound_identity_id,
-                ) == source_epoch
+            owner_current = self.storage.provider_connection_owner_current(
+                pinned_provider, pinned_credential, bound_identity_id,
             )
+            epoch_current = self.storage.source_connection_epoch_get(
+                pinned_provider, pinned_credential, bound_identity_id,
+            )
+            return (owner_current is True and type(epoch_current) is int
+                    and epoch_current == source_epoch and source_intact()
+                    and type(identity.identity_id) is str
+                    and identity.identity_id == bound_identity_id)
         except Exception:
             return False
 
