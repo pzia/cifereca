@@ -3,21 +3,6 @@
   "purpose": "Reviewed execution/authority evidence only; absent reviews remain unclassified. No automatic reachability claims.",
   "reviews": [
     {
-      "id": "site-7baf3b4f552b2c895f2c79ae",
-      "classification": "safety_guard_pending_contract",
-      "journey": "canonical selected-delivery DRM runtime callback",
-      "productive_caller": "complete_selected_delivery.execute_selected_runtime -> LibraryService.execute_acquisition_request behind live SourceKey and consent lease",
-      "effect": "Reject arbitrary/unrecognized DRM recipe source types before the only one-use runtime call and Core-owned destination validation",
-      "authority": "Canonical source admission, live epoch/consent and schema-v2 runtime recipe; a plugin cannot grant by choosing arbitrary executor type",
-      "replacement_contract": "Declared versioned DRM recipe capabilities from a verified runtime plugin, with a Core allowlist derived from installed attestations rather than branded type literals",
-      "tests": [
-        "tests/test_core_p0_4858_d3_exact_kobo_selected.py",
-        "tests/test_core_p0_3121_canonical_first_acsm.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "The Kobo/acsm allowlist is a presently necessary fail-closed restriction, but is still an active Core source-brand policy; it is not a justified permanent endpoint"
-    },
-    {
       "id": "site-68325c336f6dcadf637017cb",
       "classification": "safety_guard_pending_contract",
       "journey": "all-provider automatic digital-loan borrower admission",
@@ -318,38 +303,6 @@
       "rationale": "Comparison and resolver invocation are one active safety decision. #6183 closed the falsey-code bypass, not the need for this provider-specific veto. Revue réancrée après la garde native de réacquisition explicite #6245 : exigence d'admission Paris conservée, aucun retrait AST ni permission nouvelle.",
       "decision_group_id": "loan.explicit-reacquire-adept-borrower",
       "reachability": "productive"
-    },
-    {
-      "id": "site-e25ad2cf6472e075797d889f",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Read-only ADEPT return availability status from exact Paris loan provenance",
-      "productive_caller": "LibraryService.adept_return_status_for_loan -> _paris_adept_identity_for_loan before historical acquisitions/rights status projection",
-      "effect": "Inspects exact borrower profile and cross-identity conflicts before deriving historical return-origin status; a malformed/foreign provenance cannot imply action availability.",
-      "authority": "Source credential, stored borrower grant, identity and original acquisition binding; no selected GTK profile.",
-      "replacement_contract": "Versioned generic historical DRM-origin status projection with source exactness and recorded fulfillment provenance; voluntary return remains removed.",
-      "tests": [
-        "tests/test_core_0984_adept_return_status_provenance.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Provider check and borrower callback belong to one source-specific status fence. Direct productive reachability is not established from an exported facade alone. Site reviewed again after typed native-scope guard extraction in #6206; this is a retained read-only safety fence, not an AST retirement.",
-      "decision_group_id": "adept.return-source-provenance-status",
-      "reachability": "unproven"
-    },
-    {
-      "id": "site-9db736c5a6459afb19e60a9a",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Read-only ADEPT return availability status from exact Paris loan provenance",
-      "productive_caller": "LibraryService.adept_return_status_for_loan -> _paris_adept_identity_for_loan before historical acquisitions/rights status projection",
-      "effect": "Inspects exact borrower profile and cross-identity conflicts before deriving historical return-origin status; a malformed/foreign provenance cannot imply action availability.",
-      "authority": "Source credential, stored borrower grant, identity and original acquisition binding; no selected GTK profile.",
-      "replacement_contract": "Versioned generic historical DRM-origin status projection with source exactness and recorded fulfillment provenance; voluntary return remains removed.",
-      "tests": [
-        "tests/test_core_0984_adept_return_status_provenance.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Provider check and borrower callback belong to one source-specific status fence. Direct productive reachability is not established from an exported facade alone. Site reviewed again after typed native-scope guard extraction in #6206; this is a retained read-only safety fence, not an AST retirement.",
-      "decision_group_id": "adept.return-source-provenance-status",
-      "reachability": "unproven"
     },
     {
       "id": "site-ad2f06a6ca9b22ee1e32194b",
@@ -1678,6 +1631,64 @@
       ],
       "pr": "#6459",
       "in_ast_metric": true
+    },
+    {
+      "id": "struct-canonical-selected-runtime-provider-allowlist-cutover-6447",
+      "original": "src/cifereca/core/canonical_selected_delivery.py::complete_selected_delivery.execute_selected_runtime (source type in kobo/acsm)",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "_selected_runtime_recipe_source_admitted with exact scope.provider_id plus reciprocal installed runtime acquisition binding; ACSM stays protocol",
+      "classification": "removed_from_executable_core_provider_dispatch",
+      "evidence": "Removed the hardcoded Kobo DRM recipe whitelist. Canonical selected-delivery now accepts the technical acsm source or the exact source provider with a live reciprocal installed provider/runtime manifest binding; arbitrary foreign or disabled types are refused before any runtime call. Consent lease, one-use runtime, destination, SHA, inode and publisher checks are unchanged.",
+      "tests": [
+        "tests/test_core_p0_3171_selected_runtime_delivery.py",
+        "tests/test_core_p0_3171_eight_kdrm_batch.py",
+        "tests/test_core_p0_3252_drm_unresolved_terminal_reason.py"
+      ],
+      "pr": "#6447",
+      "in_ast_metric": true,
+      "original_site_id": "site-7baf3b4f552b2c895f2c79ae"
+    },
+    {
+      "id": "struct-historical-adept-return-paris-borrower-cutover",
+      "original": "src/cifereca/services.py::adept_return_status_for_loan if is_paris before borrower resolution",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Source-scoped v16 ADEPT borrower-grant resolver and historical profile-conflict veto for any provider; inventory-attested origin remains independent",
+      "classification": "removed_from_executable_core_provider_dispatch",
+      "evidence": "Historical ADEPT return status no longer skips source-scoped v16 borrower provenance outside Paris. The source-neutral resolver runs for any exact source before historical ledger reads.",
+      "tests": [
+        "tests/test_core_p0_5975_adept_return_source_neutral.py",
+        "tests/test_core_p0_5975_generic_reacquire_identity_veto.py",
+        "tests/test_core_p0_5975_adept_return_exact_source_scope.py",
+        "tests/test_core_0984_adept_return_status_provenance.py"
+      ],
+      "pr": "#6450",
+      "in_ast_metric": true,
+      "original_site_ids": [
+        "site-e25ad2cf6472e075797d889f",
+        "site-9db736c5a6459afb19e60a9a"
+      ],
+      "original_site_id": "site-e25ad2cf6472e075797d889f"
+    },
+    {
+      "id": "struct-historical-adept-return-paris-profile-cutover",
+      "original": "src/cifereca/services.py::adept_return_status_for_loan if is_paris before profile mismatch",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Source-scoped v16 ADEPT borrower-grant resolver and historical profile-conflict veto for any provider; inventory-attested origin remains independent",
+      "classification": "removed_from_executable_core_provider_dispatch",
+      "evidence": "Profile-origin mismatch is checked for every non-inventory-attested historical ADEPT fulfillment, rather than only Paris; no voluntary return is exposed.",
+      "tests": [
+        "tests/test_core_p0_5975_adept_return_source_neutral.py",
+        "tests/test_core_p0_5975_generic_reacquire_identity_veto.py",
+        "tests/test_core_p0_5975_adept_return_exact_source_scope.py",
+        "tests/test_core_0984_adept_return_status_provenance.py"
+      ],
+      "pr": "#6450",
+      "in_ast_metric": true,
+      "original_site_ids": [
+        "site-e25ad2cf6472e075797d889f",
+        "site-9db736c5a6459afb19e60a9a"
+      ],
+      "original_site_id": "site-9db736c5a6459afb19e60a9a"
     },
     {
       "id": "struct-auto-borrower-paris-only-gate-cutover-6445",
