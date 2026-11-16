@@ -165,6 +165,15 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
         # never inferred from the current GTK identity, Paris or a single
         # matching account. Invalid persisted values block an unrelated Save
         # instead of being silently rewritten as blank.
+        # Once an identity has an explicit source namespace, clearing both
+        # fields must revoke that selection, never silently re-enable its
+        # historical Paris primary on Save. Retain the *empty* explicit pair
+        # as a fail-closed tombstone. An identity that has NEVER had these
+        # fields stays on the untouched legacy read-only adapter.
+        previous_explicit = (
+            'adept_source_provider_id' in prior_identity
+            or 'adept_source_connection_id' in prior_identity
+        )
         previous_provider = prior_identity.get('adept_source_provider_id', '')
         previous_connection = prior_identity.get('adept_source_connection_id', '')
         if type(previous_provider) is not str or type(previous_connection) is not str:
@@ -192,7 +201,7 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
             **({
                 'adept_source_provider_id': adept_provider,
                 'adept_source_connection_id': adept_connection,
-            } if adept_provider else {}),
+            } if adept_provider or previous_explicit else {}),
             'id': identity_id,
             'label': editor['label'].strip() or identity_id,
             'directory_name': directory_name,
