@@ -183,3 +183,91 @@ def test_sqlite_owner_unchanged_preserves_nonparis_profile_readiness(tmp_path):
     borrower.assert_not_called()
     resolver.assert_called_once_with("identity-1")
     store.assert_not_called()
+
+
+
+@pytest.mark.parametrize("provider", ["synthetic-pnb", "another-library"])
+@pytest.mark.parametrize("stage", ["initial_disabled", "identity_rebind", "rights_disable", "acquisitions_rebind"])
+def test_automatic_admission_fences_live_owner_before_provider_or_ledger_write(
+    tmp_path, monkeypatch, provider, stage,
+):
+    from cifereca.core.loan_acquisition_admission import resolve
+    from cifereca.models import Loan
+    from tests.test_automatic_loan_admission import LOGGER, _forbid_work
+    from tests.test_sync_state_contract import _service
+
+    service = _service(tmp_path)
+    try:
+        service.storage.provider_connection_put({
+            "provider_id": provider, "credential_id": "reader",
+            "identity_id": "default", "enabled": stage != "initial_disabled",
+        })
+        loan = Loan(
+            id="loan-1", record_id="edition-1", provider="PNB",
+            medium="digital", title="Automatic owner fence",
+            source_provider=provider, source_credential="reader",
+            source_account_id="primary", identity_id="default",
+        )
+        if stage == "identity_rebind":
+            original = service.identity_by_id
+            def rebind_on_identity(owner):
+                result = original(owner)
+                service.storage.provider_connection_put({
+                    "provider_id": provider, "credential_id": "reader",
+                    "identity_id": "alex", "enabled": True,
+                })
+                return result
+            monkeypatch.setattr(service, "identity_by_id", rebind_on_identity)
+        elif stage in ("rights_disable", "acquisitions_rebind"):
+            hook = "entitlements" if stage == "rights_disable" else "acquisitions"
+            previous = getattr(service.storage, hook)
+            def revoke_after_inventory(*args, **kwargs):
+                inventory = previous(*args, **kwargs)
+                service.storage.provider_connection_put({
+                    "provider_id": provider, "credential_id": "reader",
+                    "identity_id": ("alex" if stage == "acquisitions_rebind"
+                                    else "default"),
+                    "enabled": stage != "rights_disable",
+                })
+                return inventory
+            monkeypatch.setattr(service.storage, hook, revoke_after_inventory)
+        _forbid_work(service, monkeypatch)
+        result = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert result.identity is None
+        assert result.entitlement_id is None
+        assert result.refusal == {
+            "status": "attention_required", "loan_id": "loan-1",
+            "code": "adept_identity_unproven",
+            "reason": "source_scope_changed", "retry": "explicit_only",
+        }
+    finally:
+        service.close()
+
+
+def test_live_sqlite_source_owner_does_not_prevent_normal_automatic_admission(
+    tmp_path, monkeypatch,
+):
+    from cifereca.core.loan_acquisition_admission import resolve
+    from cifereca.models import Loan
+    from tests.test_automatic_loan_admission import LOGGER, _forbid_work
+    from tests.test_sync_state_contract import _service
+
+    service = _service(tmp_path)
+    try:
+        service.storage.provider_connection_put({
+            "provider_id": "synthetic-pnb", "credential_id": "reader",
+            "identity_id": "default", "enabled": True,
+        })
+        loan = Loan(
+            id="loan-1", record_id="edition-1", provider="PNB",
+            medium="digital", title="Automatic owner fence",
+            source_provider="synthetic-pnb", source_credential="reader",
+            source_account_id="primary", identity_id="default",
+        )
+        _forbid_work(service, monkeypatch)
+        result = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert result.refusal is None
+        assert result.identity.identity_id == "default"
+        assert result.entitlement_id is None
+    finally:
+        service.close()
