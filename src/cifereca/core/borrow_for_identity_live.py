@@ -255,12 +255,13 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
             policy.observed_loan_account_alias,
         )
         if source_key is not None:
-            if (fullmatch(r"[a-z][a-z0-9_]{0,63}", source_key) is None
-                    or not configured_primary_source_current(
-                        service, item, evidence.identity_id,
-                        provider_id=evidence.provider_id,
-                        selection_key=source_key,
-                    )):
+            if fullmatch(r"[a-z][a-z0-9_]{0,63}", source_key) is None:
+                return "capability_unverified"
+            if not configured_primary_source_current(
+                service, item, evidence.identity_id,
+                provider_id=evidence.provider_id,
+                selection_key=source_key,
+            ):
                 return "lender_unavailable"
         capability = assess_lending_operation(
             "loan.borrow",
