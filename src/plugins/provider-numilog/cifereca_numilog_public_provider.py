@@ -203,6 +203,30 @@ class NumilogPublicSession(ProviderSession):
         self._assert_public_generation(epoch)
         return rows
 
+    def search_with_response_facets(
+        self, query, scope="all", *, field="all", content_types=(),
+    ):
+        """Supply one SAME-CALL anonymous public envelope to federated Core.
+
+        Core requires ProviderSearchResponse.public_notices for a session
+        whose credential has no private SQL owner. The ordinary anonymous
+        search already parsed these exact rows; do not add another HTTP GET,
+        copy a previous response, or re-label a private purchase/inventory.
+        Facets remain unverified for this generic Search API.
+        """
+        from cifereca.plugin_api import (
+            ProviderSearchResponse, PublicSearchNotice,
+        )
+        # Federated Core requests a foreign/ownerless session with the
+        # conservative "catalog" scope. This session has NO private content:
+        # its only supported upstream operation is an anonymous catalogue.
+        normalized_scope = "all" if scope == "catalog" else scope
+        rows = self.search(query, normalized_scope, field=field)
+        return ProviderSearchResponse(
+            results=list(rows),
+            public_notices=tuple(PublicSearchNotice(result=row) for row in rows),
+        )
+
     def _assert_public_generation(self, expected):
         with self._navigation_lock:
             if not self.connected or self._navigation_epoch != expected:
