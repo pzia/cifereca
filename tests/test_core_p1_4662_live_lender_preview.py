@@ -246,6 +246,26 @@ def test_lender_preview_uses_non_paris_installed_primary_source_contract(harness
     assert session.calls == 0
 
 
+def test_descriptor_rebind_during_lender_validation_revokes_preview(
+    harness, monkeypatch,
+):
+    from cifereca.core import borrow_for_identity_live as live
+    service, account, session = harness
+    observed = _candidate()
+    original = live.assess_lending_operation
+
+    def rebind(*args, **kwargs):
+        result = original(*args, **kwargs)
+        session.descriptor = replace(session.descriptor)
+        return result
+
+    monkeypatch.setattr(live, "assess_lending_operation", rebind)
+    preview = _preview(service, observed)
+    assert preview.options == ()
+    assert preview.rejection_reasons == ("context_changed",)
+    assert session.calls == 0
+
+
 def test_missing_supplier_evidence_is_never_a_borrowable_offer(harness):
     service, account, session = harness
     candidate = _candidate()
