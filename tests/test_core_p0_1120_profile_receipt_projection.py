@@ -57,15 +57,39 @@ def test_profile_refusals_keep_single_persistence_in_each_existing_branch():
     tree = ast.parse(path.read_text(encoding="utf-8"))
     check = next(n for n in tree.body
                  if isinstance(n, ast.FunctionDef) and n.name == "check")
-    writes = [
+    # The borrower refusal writer is shared with the final pre-ADEPT
+    # source-epoch veto. Keep three effective refusal branches, but require
+    # one physical writer for the two callers of that shared helper rather
+    # than inventing a fourth/duplicated persistence side effect.
+    shared = next(n for n in tree.body
+                  if isinstance(n, ast.FunctionDef)
+                  and n.name == "refuse_staged_source")
+    direct_writes = [
         node for node in ast.walk(check) if isinstance(node, ast.Call)
         and ast.unparse(node.func) == "self.storage.acquisition_put"
     ]
-    assert len(writes) == 3
-    for write in writes:
+    shared_writes = [
+        node for node in ast.walk(shared) if isinstance(node, ast.Call)
+        and ast.unparse(node.func) == "self.storage.acquisition_put"
+    ]
+    assert len(direct_writes) == 2 and len(shared_writes) == 1
+    for write in [*direct_writes, *shared_writes]:
         assert len(write.args) == 1
         assert isinstance(write.args[0], ast.Call)
         assert ast.unparse(write.args[0].func) == "attention_receipt"
+    borrower_refusal = next(n for n in ast.walk(check)
+                           if isinstance(n, ast.FunctionDef)
+                           and n.name == "borrower_refusal")
+    shared_calls = [
+        n for n in ast.walk(borrower_refusal) if isinstance(n, ast.Call)
+        and ast.unparse(n.func) == "refuse_staged_source"
+    ]
+    assert len(shared_calls) == 1
+    assert not any(
+        isinstance(n, ast.Call)
+        and ast.unparse(n.func) == "self.storage.acquisition_put"
+        for n in ast.walk(borrower_refusal)
+    )
     source = path.read_text(encoding="utf-8")
     assert source.index("borrower_code is not None") < source.index(
         "resolve_adept_profile_for_identity")
