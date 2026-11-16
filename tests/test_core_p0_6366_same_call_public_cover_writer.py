@@ -55,13 +55,7 @@ def test_legacy_provider_public_shaped_row_cannot_write_core_notice_c(tmp_path):
         assert mirror(db, [safe]) == 1
         doc = safe._core_notice_cover_document_ref
         assert doc.identity_id is None
-        canonical = read_consolidated_notice_cover(db, doc)
-        assert canonical is not None and len(canonical.sources) == 1
-        source_doc = replace(
-            doc, source_key=canonical.sources[0].source_ref,
-            provider_id=safe.source_provider,
-        )
-        persisted = read_notice_cover(db, source_doc)
+        persisted = read_notice_cover(db, doc)
         assert persisted.attribute.candidates[0].url == URL
         # The existing v2 bibliographic witness must survive this cover gate.
         bibliography = persisted.observation.fields_copy()["search_result"]["public_bibliography"]
@@ -98,14 +92,14 @@ def test_witness_is_bound_to_exact_row_edition_url_not_equal_looking_copy(
 
         assert mirror(db, [accepted]) == 1
         original = accepted._core_notice_cover_document_ref
-        assert read_consolidated_notice_cover(db, original).epoch == 1
+        assert read_notice_cover(db, original).epoch == 1
         # Mutate the already-witnessed live object between parse and write.
         # A stale epoch/source/image cannot reuse its former same-call proof.
         accepted.thumbnail_url = OTHER_URL
         assert mirror(db, [accepted]) == 1
         assert source_count(db) == 1
         assert read_notice_cover(db, original).epoch == 1
-        assert read_consolidated_notice_cover(db, original).candidates[0].url == URL
+        assert read_notice_cover(db, original).attribute.candidates[0].url == URL
     finally:
         db.close()
 
@@ -196,7 +190,8 @@ def test_same_call_live_writer_publishes_canonical_cover_for_shared_n2(tmp_path)
     try:
         safe = witnessed(public_row())
         assert mirror(db, [safe]) == 1
-        doc = safe._core_notice_cover_document_ref
+        doc = safe._core_notice_c_canonical_document_ref
+        assert safe._core_notice_cover_document_ref != doc
         assert is_canonical_cover_document(doc)
         c = read_consolidated_notice_cover(db, doc)
         assert c is not None and c.epoch == 1
@@ -223,8 +218,8 @@ def test_distinct_exact_editions_never_share_canonical_cover(tmp_path):
         second = witnessed(public_row(revision_id="edition-v2"))
         assert mirror(db, [first]) == 1
         assert mirror(db, [second]) == 1
-        a = first._core_notice_cover_document_ref
-        b = second._core_notice_cover_document_ref
+        a = first._core_notice_c_canonical_document_ref
+        b = second._core_notice_c_canonical_document_ref
         assert a != b
         assert len(read_consolidated_notice_cover(db, a).sources) == 1
         assert len(read_consolidated_notice_cover(db, b).sources) == 1
