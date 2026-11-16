@@ -46,6 +46,14 @@ def admit_public_search_cover(
     if type(row) is not SearchResult:
         return None
     if public_cover_url is None:
+        # Without an image there is no legacy cover-only evidence. Require
+        # BOTH Core-owned same-call witnesses before persisting a public
+        # partial source: a provider-shaped row or cache replay is not proof.
+        from .search_orchestration import _verified_public_cover_witness
+        if (getattr(row, "_core_notice_c_public_bibliography", None)
+                is not _CORE_PUBLIC_C_WITNESS
+                or not _verified_public_cover_witness(row)):
+            return None
         # A provider-declared PUBLIC bibliographic notice may legitimately
         # have no image. It is a C with an UNKNOWN cover inventory, not an
         # invented 'missing' negative and never an N3 image candidate.
