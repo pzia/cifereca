@@ -2037,15 +2037,9 @@ class LibraryService:
         from .core.attested_age_filter import filter_attested_age
         return list(filter_attested_age(rows, age, age_kind=age_kind))
 
-    def _mirror_remote_results(
-        self, rows: list[SearchResult], *, identity_id: str | None = None,
-        require_public_cover_witness: bool = False,
-    ) -> int:
-        """Persist the mirror; enforce same-call evidence for live public C."""
-        return search_orchestration._mirror_remote_results(
-            self, rows, identity_id=identity_id,
-            require_public_cover_witness=require_public_cover_witness,
-        )
+    def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None = None) -> int:
+        """Persist progressively discovered remote catalog metadata (0.8.3)."""
+        return search_orchestration._mirror_remote_results(self, rows, identity_id=identity_id)
 
     def mirror_personal_libraries(self) -> dict[str, int]:
         """Refresh private metadata with the same pinned binding as source Sync.
