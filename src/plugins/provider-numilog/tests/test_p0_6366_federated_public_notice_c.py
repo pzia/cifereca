@@ -505,3 +505,73 @@ def test_observed_source_cache_and_search_ttl_expire_but_notice_c_remains(
         assert supplier_gets == [1, 1]
     finally:
         restarted.close()
+
+
+def test_real_numilog_search_writes_public_bibliography_inside_same_notice_c(
+    tmp_path, monkeypatch,
+):
+    """SQLite Notice C, not the per-profile mirror, serves a second viewer."""
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
+
+    service, session, supplier_gets = build(tmp_path, monkeypatch)
+    storage_path = tmp_path / "notices.sqlite"
+    try:
+        rows = service.search(
+            "loup", provider_id=session.provider_id, force=True,
+        )
+        assert rows and supplier_gets == [1]
+        original = rows[0]
+        document = original._core_notice_cover_document_ref
+        persisted = read_notice_cover(service.storage, document)
+        assert persisted is not None
+        assert persisted.observation.parser_version == "2"
+        facts = persisted.observation.fields_copy()["search_result"]
+        assert facts["public_bibliography"]["title"] == original.title
+        assert facts["public_bibliography"]["record_id"] == original.record_id
+        assert facts["thumbnail_url"] == original.thumbnail_url
+
+        page = service.search_public_notice_c(
+            "loup", provider_ids=(session.provider_id,),
+        )
+        assert page.status == "partial"  # No false complete-query claim.
+        assert len(page.hits) == 1
+        first = page.hits[0]
+        assert first.document == document
+        assert first.title == original.title
+        assert first.record_id == original.record_id
+        assert first.cover_state == "available"
+        assert first.epoch == persisted.epoch == 1
+        assert first.stale is False
+        assert cached_notice_cover_snapshot(
+            NS(storage=service.storage), first.document,
+        ).candidates[0].url == original.thumbnail_url
+
+        service.storage.cache_delete_namespace("search")
+        session._public_cache.clear()
+        service.select_identity("bob")
+        second = service.search_public_notice_c("loup")
+        assert second.hits == page.hits
+        assert supplier_gets == [1]
+        # Availability, ownership, account and provider action remain absent.
+        assert not hasattr(first, "download_url")
+        assert not hasattr(first, "owned")
+        assert service.storage.entitlements() == []
+        assert service.storage.acquisitions() == []
+    finally:
+        service.close()
+        session.close()
+    db = Storage(storage_path)
+    try:
+        page = search_public_notice_c(db, "loup")
+        assert len(page.hits) == 1 and page.hits[0].document == document
+        assert page.hits[0].title == original.title
+        # +25h does not DELETE C; it marks its observed facts stale.
+        stale = search_public_notice_c(
+            db, "loup", now=persisted.observation.observed_at + 25 * 3600,
+        )
+        assert stale.hits and stale.hits[0].stale is True
+        assert stale.hits[0].document == document
+        assert supplier_gets == [1]
+    finally:
+        db.close()
