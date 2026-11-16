@@ -3884,7 +3884,7 @@ class LibraryService:
             if (row.get("status") != "complete"
                     or row.get("executor") != "kobo-adept"
                     # #989: a manual/imported ADEPT artifact is not proof of
-                    # this automatic Paris loan's fulfillment transaction.
+                    # this exact source loan's fulfillment transaction.
                     or row.get("strategy") != "loan_auto"
                     or not scope.matches_acquisition(
                         row, identity_id=bound_identity_id,
@@ -3937,8 +3937,8 @@ class LibraryService:
             }
         # Grants/current identity profile govern NEW fulfillment. Historical
         # inventory attestation preserves a completed license's own origin.
-        # Exact Paris provenance and cross-identity/duplicate guards above stay.
-        if is_paris and not origin_attested and binding.get("adept_profile_id") and (
+        # Exact provider provenance and cross-identity/duplicate vetoes stay.
+        if not origin_attested and binding.get("adept_profile_id") and (
             self.storage.adept_profile_binding_get(
                 "identity", borrower_identity_id
             ) != binding["adept_profile_id"]
