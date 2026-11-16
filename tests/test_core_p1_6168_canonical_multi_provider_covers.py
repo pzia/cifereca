@@ -1,7 +1,6 @@
 """#6168/#2385: persistent canonical Notice C cover candidates by provider."""
 from __future__ import annotations
 
-from dataclasses import replace
 from threading import Event
 from types import SimpleNamespace as NS
 
@@ -204,11 +203,13 @@ def test_canonical_cover_through_shared_n2_worker_without_provider_requests(
             urls.append(uri) or NS(cancel=lambda: None)
         ),
     )
+    reads = []
+    def source_reader(doc):
+        reads.append(doc)
+        return cached_notice_cover_snapshot(NS(storage=db), doc)
+
     service = DocumentCoverService(
-        loader,
-        cached_source_reader=lambda doc: cached_notice_cover_snapshot(
-            NS(storage=db), doc,
-        ),
+        loader, cached_source_reader=source_reader,
         cached_source_scope=is_notice_cover_document,
     )
     ready = Event()
@@ -226,10 +227,11 @@ def test_canonical_cover_through_shared_n2_worker_without_provider_requests(
         }
         assert len(urls) == 1
         assert service._snapshots[aggregate.document].revision == aggregate.epoch
-        # N2 HIT with the same canonical ref does not revisit source SQLite.
-        before = list(urls)
+        # A list/detail N2 hit must not initiate another documentary read;
+        # N3 may legitimately request a separate preview size.
+        assert reads == [aggregate.document]
         service.get_cover(aggregate.document, "detail", lambda _: None)
-        assert urls == before
+        assert reads == [aggregate.document]
     finally:
         service.close()
         loader.close()
