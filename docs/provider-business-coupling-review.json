@@ -1676,7 +1676,7 @@
         "tests/test_core_p0_3121_canonical_first_acsm.py",
         "tests/test_core_p0_3121_canonical_first_acsm_flow.py"
       ],
-      "pr": "#6420",
+      "pr": "#6422",
       "in_ast_metric": true
     }
   ],
