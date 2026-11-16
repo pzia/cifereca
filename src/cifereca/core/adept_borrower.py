@@ -28,7 +28,7 @@ def public_borrower_refusal_code(value: Any) -> str:
 def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: str) -> tuple[str | None, str | None]:
     """Resolve the Adobe borrower for one exact provider connection.
 
-    v16 source grants work for any installed library; v15 is Paris-only.\n    The primary account normally uses its proven connection identity.
+    v16 source grants work for any installed library; v15 has fixed,\n    historical source provenance. The primary account uses its proven\n    connection identity unless an explicit exceptional grant overrides it.
     An explicit exceptional grant takes precedence without changing that
     identity's normal profile. Linked accounts always require a grant.
     """
@@ -77,16 +77,24 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
 
     if not matches[0].is_primary and (not borrower or borrower == "primary"):
         return None, "adept_borrower_ambiguous"
-    # v15 is an unscoped, historical PARIS-only table. Another provider
-    # may legitimately reuse the same credential/account strings: reading
-    # that old record for them would import a foreign Adobe identity or veto
-    # their own independent v16 grant. Only the *old reader* is brand-bound;
-    # current authorization is source-scoped v16 for every provider.
-    binding = (
-        self.storage.paris_borrower_adept_binding_get(
+    # The v15 SQLite table lacks a provider column, and credentials/account
+    # IDs can legitimately collide between libraries. Storage projects its
+    # historical, immutable source provenance; only an exact matching source
+    # may consult that legacy row as a NEGATIVE consistency check. All live
+    # positive borrower authority remains source-scoped v16. This comparison
+    # is data against data, never a Core branch on a supplier name.
+    try:
+        binding = self.storage.paris_borrower_adept_binding_get(
             credential_id=credential, account_id=borrower,
-        ) if source_provider == "paris" else None
-    )
+        )
+    except Exception:
+        return None, "adept_borrower_ambiguous"
+    if binding is not None:
+        if (type(binding) is not dict
+                or type(binding.get("source_provider")) is not str):
+            return None, "adept_borrower_profile_changed"
+        if binding["source_provider"] != source_provider:
+            binding = None
     # v16 revocation and explicit reconfirmation leave the historical row
     # available for provenance, but its old owner must no longer authorize
     # an ADEPT operation (even after revoke/restore or A→B→A).
