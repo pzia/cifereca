@@ -92,7 +92,7 @@ def test_only_current_original_local_public_c_is_admitted(view):
     name = "_library_objects" if view == "library" else "_recent_objects"
     mapped = getattr(host, name)
     mapped[row.key] = dict(original)
-    assert not current() is False  # Snapshot identity alone is not required.
+    assert current()  # Mapping may be copied; the Core proof itself must match.
     replay = replace(proof)
     mapped[row.key]["_public_canonical_cover_link"] = replay
     assert not current()
@@ -185,7 +185,7 @@ def test_real_cell_passes_local_public_c_time_guard_into_n3(view):
     assert not check()
     cell._thumbnail_item = row
     assert check()
-    host._recent_objects.pop(row.key, None) if view == "recent" else host._library_objects.pop(row.key, None)
+    (host._recent_objects if view == "recent" else host._library_objects).pop(row.key, None)
     assert not check()
 
 
