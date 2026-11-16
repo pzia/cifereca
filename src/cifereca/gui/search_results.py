@@ -287,6 +287,15 @@ def _render_search_results(self) -> int:
                     epoch = (item.get("metadata") or {}).get("notice_c_epoch")
                     if type(epoch) is int and epoch > 0:
                         view_row._cover_public_c_epoch = epoch
+                    # This is the *actual* C-first Core row, not a
+                    # documentary association guessed from its title or URL.
+                    from cifereca.gui.search_known_public_c_guard import (
+                        pin_known_public_c,
+                    )
+                    view_row._cover_known_public_c_source = item
+                    pinned = pin_known_public_c(self, view_row, item)
+                    if pinned is not None:
+                        view_row._cover_known_public_c_receipt = pinned
             # Search-local only reuses an explicit Core owner+Artifact+
             # Placement cover packet. An identical URL/title/ISBN/SHA does
             # not let a catalogue notice or another identity borrow N2.
@@ -315,6 +324,10 @@ def _render_search_results(self) -> int:
                 getattr(row, "badge", ""), getattr(row, "action_label", ""),
                 getattr(row, "action_icon_name", ""),
                 bool(getattr(row, "action_callback", None)),
+                getattr(
+                    getattr(row, "_cover_known_public_c_receipt", None),
+                    "context", None,
+                ),
                 getattr(row, "_cover_public_c_epoch", None),
                 getattr(row, "thumbnail_url", None),
             )
@@ -439,6 +452,13 @@ def _render_search_results(self) -> int:
                 epoch = (known.get("metadata") or {}).get("notice_c_epoch")
                 if type(epoch) is int and epoch > 0:
                     view._cover_public_c_epoch = epoch
+                from cifereca.gui.search_known_public_c_guard import (
+                    pin_known_public_c,
+                )
+                view._cover_known_public_c_source = known
+                pinned = pin_known_public_c(self, view, known)
+                if pinned is not None:
+                    view._cover_known_public_c_receipt = pinned
                 ui_rows.append(view)
             # An invalid C ref never falls back to a direct image URL or
             # opens a private provider action during online extension.
@@ -599,6 +619,10 @@ def _render_search_results(self) -> int:
             bool(getattr(row, "action_callback", None)),
             (proof.row_signature if proof is not None else
              getattr(row, "_cover_document_ref", None)),
+            getattr(
+                getattr(row, "_cover_known_public_c_receipt", None),
+                "context", None,
+            ),
             getattr(row, "_cover_public_c_epoch", None),
             getattr(row, "thumbnail_url", None),
         )
