@@ -16,10 +16,10 @@ SAVED_STATUS = {
 }
 
 
-def _harness(monkeypatch, *, source=None):
+def _harness(monkeypatch, *, source=None, primary="paris-a"):
     import copy
     saved = {
-        "id": "alice", "label": "Alice", "primary_paris_connection_id": "paris-a",
+        "id": "alice", "label": "Alice", "primary_paris_connection_id": primary,
         "adept_profile": "adept-a",
     }
     if source is not None:
@@ -461,3 +461,27 @@ def test_late_adept_result_rejected_when_persisted_binding_read_fails(monkeypatc
     assert reads == ["alice"]
     assert button.sensitive is True
     assert not hasattr(editor["normal_adept_status"], "subtitle")
+
+
+def test_falsey_persisted_primary_mutation_cannot_be_coerced_into_stale_success(
+    monkeypatch,
+):
+    """An exact Config/SQLite fence cannot treat 0/False/None like empty ID."""
+    for mutation in (None, False, 0):
+        host, editor, button, submits, reads, _ = _harness(
+            monkeypatch, source=("future-library", "reader-b"), primary="",
+        )
+        button.emit("clicked")
+        assert len(submits) == 1
+        args, _ = submits[0]
+        result = args[1]()
+        assert reads == ["alice"]
+        original = host.config.identity
+        host.config.identity = lambda _id, value=mutation: dict(
+            original(_id), primary_paris_connection_id=value,
+        )
+        # Both the generic ADEPT readiness status and the visible source
+        # fields stay unchanged; only the exact saved legacy coordinate has
+        # become malformed, without a GTK generation increment.
+        args[2](result)
+        assert not hasattr(editor["normal_adept_status"], "subtitle")
