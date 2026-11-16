@@ -204,12 +204,14 @@ class PublicBookMasterDetailView:
         from .recommendation_exact_cover import loaded_recommendation_cover
         proof = loaded_recommendation_cover(self._window, item, detail)
         if proof is None:
-            # The known-v2 route has no live SearchResult N2 packet. Its
-            # exact anonymous public C ref was resolved on the holdings
-            # worker, not inferred from the recommendation image/title.
-            panel.show_item_detail(
-                item, detail, public_c_document=public_c_document,
-            )
+            # Preserve the legacy renderer ABI for all non-C paths.
+            # Only the attested known-v2 worker passes an exact C ref.
+            if public_c_document is None:
+                panel.show_item_detail(item, detail)
+            else:
+                panel.show_item_detail(
+                    item, detail, public_c_document=public_c_document,
+                )
         else:
             panel.show_search_document(item, detail=detail, cover_evidence=proof)
         # Search appends these same Core local/open/send/owned actions after
@@ -239,9 +241,12 @@ class PublicBookMasterDetailView:
         from .recommendation_exact_cover import loaded_recommendation_cover
         proof = loaded_recommendation_cover(self._window, item)
         if proof is None:
-            panel.show_search(
-                item, loading=False, public_c_document=public_c_document,
-            )
+            if public_c_document is None:
+                panel.show_search(item, loading=False)
+            else:
+                panel.show_search(
+                    item, loading=False, public_c_document=public_c_document,
+                )
         else:
             panel.show_search_document(item, cover_evidence=proof)
         from .query_model import result_row
