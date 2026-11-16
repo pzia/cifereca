@@ -108,7 +108,17 @@ def test_multisource_public_c_keeps_separate_source_text_and_one_n2_ref(
         known = merge_public_notice_c_known_rows(
             [], offline, identity_id="alice",
         )
-        assert {row["_cover_document_ref"] for row in known} == {canonical}
+        assert len(known) == 1  # One C, not two competing cover cards.
+        assert known[0]["_cover_document_ref"] == canonical
+        assert known[0]["metadata"]["notice_c_source_alternatives"] == [{
+            "provider_id": "numilog-catalog",
+            "record_id": "numilog-source-9",
+            "source_revision": None,
+            "title": "Deux sources: Numilog",
+            "author": "Une autrice",
+            "publisher": None,
+            "description": "Description spécifique Numilog",
+        }]
         assert all(not row.get("download_url") for row in known)
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
