@@ -111,7 +111,7 @@ def merge_public_notice_c_known_rows(
 
 
 def matching_live_public_canonical_ref(row: object, *, identity_id: str):
-    """Match one same-call live result to ITS OWN canonical public C ref.
+    """Match one same-call live result to its Core-attested canonical C ref.
 
     A mutable provider-facing SearchResult may carry arbitrary attributes.
     Re-derive both source and edition coordinates under the private Core
@@ -140,11 +140,30 @@ def matching_live_public_canonical_ref(row: object, *, identity_id: str):
             public_cover_url=row.thumbnail_url,
         )
         if (admitted is not None
-                and notice_cover_document_ref(admitted.key) == source
-                and canonical_cover_document_ref(
-                    admitted.key.edition_id
-                ) == canonical):
-            return canonical
+                and notice_cover_document_ref(admitted.key) == source):
+            if canonical_cover_document_ref(
+                admitted.key.edition_id,
+            ) == canonical:
+                return canonical
+            # A true cross-provider target is never derivable from Search
+            # title/ISBN/thumbnail/provider fields. Only the Core worker
+            # can stamp this private token AFTER verifying two completed,
+            # same-owner provider OriginLinks and persisting both sources.
+            # No SQL or entitlement lookup is performed on GTK here.
+            from .notice_c_origin_link_producer import (
+                _CORE_ORIGIN_LINK_C_WITNESS,
+            )
+            proof = getattr(row, "_core_notice_cross_provider_proof", None)
+            epoch = getattr(
+                row, "_core_notice_canonical_cover_document_epoch", None,
+            )
+            if (type(proof) is tuple and len(proof) == 4
+                    and proof[0] is _CORE_ORIGIN_LINK_C_WITNESS
+                    and proof[1] == source.source_key
+                    and proof[2] == canonical.source_key
+                    and type(epoch) is int and epoch > 0
+                    and proof[3] == epoch):
+                return canonical
     except (TypeError, ValueError, UnicodeError):
         pass
     return None
