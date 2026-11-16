@@ -61,21 +61,32 @@ def test_declaration_matching_never_copies_an_account_or_revision_to_foreign_vie
         mixed, b, provider_id="bnf", credential_id="__public__",
     ) is None
 
-    claimed = replace(a, source_account_id="private-account-A")
-    mismatch = ProviderSearchResponse(
+    claimed = replace(
+        a, source_account_id="private-account-A",
+        owned=True, downloadable=True,
+        download_url="https://delivery.example.org/private",
+    )
+    foreign = ProviderSearchResponse(
         results=[claimed],
         public_notices=(PublicSearchNotice(a),),
     )
-    assert project_public_search_results(mismatch) == {}
+    # A private SOURCE may contribute a separately declared, read-only
+    # PUBLIC bibliography. Its account/rights/URL MUST NOT be carried over.
+    projected = project_public_search_results(foreign)
+    assert projected is not None and len(projected) == 1
+    public = projected[id(claimed)]
+    assert public.source_account_id is None
+    assert public.owned is False and public.downloadable is False
+    assert public.download_url is None and public.revision_id is None
     assert project_public_search_result(
-        mismatch, claimed, provider_id="bnf", credential_id="__public__",
-    ) is None
+        foreign, claimed, provider_id="bnf", credential_id="__public__",
+    ) == public
 
     same_private = ProviderSearchResponse(
         results=[claimed],
         public_notices=(PublicSearchNotice(claimed),),
     )
-    # Even matching a private-looking row does not create public metadata.
+    # A private *claim* is not a sanitized public declaration.
     assert project_public_search_results(same_private) == {}
 
 
