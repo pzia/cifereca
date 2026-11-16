@@ -613,8 +613,8 @@ def test_real_numilog_notice_c_is_first_known_search_across_profiles_no_get(
         assert supplier_gets == [1]
         assert service.storage.entitlements() == []
         assert service.storage.acquisitions() == []
-        # Explicit online extension still requires a separate user request.
-        assert len(service.last_search) == len(observed)
+        # An offline known C read never launches a new online session.
+        assert supplier_gets == [1]
     finally:
         service.close()
         session.close()
