@@ -304,7 +304,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     if type(persisted) is not dict:
                         return False
                     return (
-                        (persisted.get("primary_paris_connection_id") or "")
+                        persisted.get("primary_paris_connection_id", "")
                             == stored_primary
                         and persisted.get("adept_source_provider_id", "")
                             == provider
