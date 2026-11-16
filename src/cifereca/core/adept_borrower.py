@@ -89,6 +89,9 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     )
     if legacy_retired:
         binding = None
+    # A v15 record is retained only as a negative consistency check. Only a
+    # separately confirmed v16 grant can positively attest an ADEPT borrower.
+    confirmed_v16_owner: str | None = None
     if binding is not None:
         # During the explicit reconfirmation transition, a concurrent or
         # historically reintroduced legacy row must not silently override a
@@ -121,6 +124,7 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
                     or type(binding.get("profile_id")) is not str
                     or binding["profile_id"] != v16.get("profile_id")):
                 return None, "adept_borrower_profile_changed"
+            confirmed_v16_owner = v16_owner
     if binding is None:
         # The v16 register is independent of the historical Paris grant.
         # This path is positive-only: a linked borrower may be resolved from
@@ -164,7 +168,12 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     if (type(current) is not str or current != pinned
             or type(confirmed_by) is not str or confirmed_by != "explicit"):
         return None, "adept_borrower_profile_changed"
-    return owner, None
+    # A validated historical row is still descriptive, not a live grant.
+    # Keeping it readable must never silently authorize acquisition, return
+    # or post-staging ADEPT execution without explicit source-scoped v16 proof.
+    if confirmed_v16_owner is None:
+        return None, "adept_borrower_binding_required"
+    return confirmed_v16_owner, None
 
 
 def _cross_identity_loan_conflict(

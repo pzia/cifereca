@@ -15,7 +15,7 @@ def _sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-@pytest.mark.parametrize("placement", [None, "bnf-pret"])
+@pytest.mark.parametrize("placement", [None, "bnf-pret", "synthetic-lender", "future-books"])
 @pytest.mark.parametrize("damage", [
     "none", "changed", "invalid", "symlink", "dangling_symlink", "missing", "directory",
 ])
@@ -80,3 +80,149 @@ def test_completed_acsm_reuse_requires_exact_artifact_for_every_provider(
     else:
         with pytest.raises(ProviderConfigurationError, match="réconciliation nécessaire"):
             import_acsm(service, source, **kwargs)
+
+
+@pytest.mark.parametrize("placement", [
+    "future-books", "synthetic-lender", "library.v2",
+])
+def test_generic_observed_loan_placement_is_allowed_only_on_manual_ledger(
+    tmp_path, placement,
+):
+    # A caller cannot change the account or rights source by smuggling an
+    # alternate provider_id through the manual ACSM fulfillment.
+    source = tmp_path / "token.acsm"
+    source.write_bytes(b"synthetic")
+    calls = []
+    class Storage:
+        def acquisition_get(self, acquisition_id):
+            calls.append(acquisition_id)
+            return {
+                "status": "complete", "artifact_id": "sha256:" + "d" * 64,
+                "metadata": {"path": str(tmp_path / "cached.epub")},
+            }
+    output = tmp_path / "cached.epub"
+    output.write_bytes(b"cached artifact")
+    service = NS(
+        identity_by_id=lambda identity_id: NS(identity_id=identity_id),
+        storage=Storage(),
+    )
+    kwargs = dict(
+        identity_id="alice", provider_id="manual",
+        placement_provider_id=placement,
+        Path=Path, ProviderConfigurationError=ProviderConfigurationError,
+        sha256_file=lambda _: "d" * 64, hashlib=hashlib,
+        data_dir=None, shutil=None, detect_acsm_format=None,
+        AdeptProfileResolutionError=Exception,
+        inspect_artifact=lambda _: NS(valid=True), os=os,
+    )
+    # A valid staged placement reuses an already completed manual receipt.
+    assert import_acsm(service, source, **kwargs)["status"] == "unchanged"
+    assert len(calls) == 1
+    # No arbitrary provider gets to author an acquisition/rights ledger.
+    calls.clear()
+    with pytest.raises(ProviderConfigurationError, match="Source de placement"):
+        import_acsm(service, source, **(kwargs | {"provider_id": placement}))
+    assert calls == []
+
+
+@pytest.mark.parametrize("placement", [
+    "", "other", "all", "not valid", "evil/route", "OtherBooks",
+    "-bad", "future-books." , 42, False, ["synthetic-lender"],
+])
+def test_malformed_placement_source_rejected_before_receipt_or_staging(
+    tmp_path, placement,
+):
+    source = tmp_path / "token.acsm"
+    source.write_bytes(b"synthetic")
+    class Storage:
+        def acquisition_get(self, *_args):
+            pytest.fail("malformed placement must not access acquisition ledger")
+    service = NS(
+        identity_by_id=lambda _: NS(identity_id="alice"),
+        storage=Storage(),
+    )
+    with pytest.raises(ProviderConfigurationError, match="Source de placement"):
+        import_acsm(
+            service, source, identity_id="alice",
+            provider_id="manual", placement_provider_id=placement,
+            Path=Path, ProviderConfigurationError=ProviderConfigurationError,
+            sha256_file=lambda *_: pytest.fail("no file hash on bad source"),
+            hashlib=hashlib, data_dir=None, shutil=None,
+            detect_acsm_format=None, AdeptProfileResolutionError=Exception,
+            inspect_artifact=None, os=os,
+        )
+    assert source.read_bytes() == b"synthetic"
+
+
+@pytest.mark.parametrize("placement", ["bnf-pret", "synthetic-lender", "future-books"])
+def test_new_manual_acsm_import_indexes_synthetic_loan_provider_without_right(
+    tmp_path, placement,
+):
+    # This exercises the *new* fulfillment/index path, not only completed
+    # receipt reuse. A provider label is descriptive and cannot mint a loan.
+    source = tmp_path / "token.acsm"
+    source.write_bytes(b"synthetic user-selected ACSM")
+    events = []
+    sha = _sha(source)
+
+    class Storage:
+        def acquisition_get(self, _acquisition_id):
+            return None
+
+        def acquisition_put(self, receipt):
+            events.append(("receipt", receipt))
+
+        def acquisition_update_state(self, acquisition_id, state, **kwargs):
+            events.append(("state", state, kwargs))
+
+        def entitlement_put(self, *_args, **_kwargs):
+            pytest.fail("manual import cannot create an entitlement")
+
+    def fulfill(request):
+        events.append(("fulfill", request))
+        path = Path(request["destination"])
+        path.write_bytes(b"valid synthetic EPUB payload")
+        return {"ok": True, "artifact": {"path": str(path)}}
+
+    def indexed(path, **kwargs):
+        events.append(("index", str(path), kwargs))
+        return {"status": "indexed", "artifact_id": "sha256:" + _sha(path)}
+
+    service = NS(
+        identity_by_id=lambda identity_id: NS(identity_id=identity_id),
+        storage=Storage(),
+        library_identity_provider_dir=lambda identity, provider: (
+            tmp_path / "library" / identity / provider
+        ),
+        _loan_destination_name=lambda _title, suffix: "book" + suffix,
+        resolve_adept_profile_for_identity=lambda _identity: ("profile", "installed"),
+        _originating_adept_profile_id=lambda *_args: None,
+        execute_acquisition_request=fulfill,
+        catalog_index_path=indexed,
+    )
+    result = import_acsm(
+        service, source, identity_id="alice",
+        provider_id="manual", placement_provider_id=placement,
+        Path=Path, ProviderConfigurationError=ProviderConfigurationError,
+        sha256_file=_sha, hashlib=hashlib,
+        data_dir=lambda: tmp_path / "private",
+        shutil=shutil, detect_acsm_format=lambda _path: "epub",
+        AdeptProfileResolutionError=Exception,
+        inspect_artifact=lambda _: NS(valid=True, media_format="epub"),
+        os=os,
+    )
+    assert result["status"] == "complete"
+    assert source.read_bytes() == b"synthetic user-selected ACSM"
+    assert Path(result["path"]).is_file()
+    assert f"/alice/{placement}/acsm-{sha}/" in result["path"]
+    receipt = next(row for kind, row in events if kind == "receipt")
+    assert receipt["provider_id"] == "manual"
+    assert receipt["strategy"] == "manual_acsm"
+    assert receipt["identity_id"] == "alice"
+    assert not receipt.get("entitlement_id")
+    sent = next(row for kind, row in events if kind == "fulfill")
+    assert sent["source"]["provider"] == "manual"
+    indexed_args = next(row[2] for row in events if row[0] == "index")
+    assert indexed_args["provider_id"] == placement
+    assert indexed_args["identity_id"] == "alice"
+    assert any(row[0] == "state" and row[1] == "complete" for row in events)

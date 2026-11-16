@@ -596,16 +596,36 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
                 and candidates[0]['media_format'] in {'epub', 'kepub'}
                 and candidates[0]['artifact_id'] == 'sha256:' + observation.sha256
             )
-            if placement['provider_id'] is None and placement['source_item_id'] is None:
-                origin_key = (observation.identity_id, placement['artifact_id'])
-                provider_origins = origins.get(origin_key, [])
-                if len(provider_origins) > 1 or (
-                        provider_origins and present_placements[origin_key] != 1):
+            # Modern canonical provider origins are authoritative for *any*
+            # installed provider. A historical placement may also carry an
+            # exact provider/edition annotation; verify that annotation against
+            # the canonical SourceReference rather than consulting a vendor
+            # whitelist or inferring ownership from legacy metadata.
+            origin_key = (observation.identity_id, placement['artifact_id'])
+            provider_origins = origins.get(origin_key, [])
+            if provider_origins:
+                if (len(provider_origins) != 1
+                        or present_placements[origin_key] != 1):
                     categories.add('ambiguous')
-                elif verified_bytes and provider_origins:
-                    oi, origin = provider_origins[0]
-                    if _attested_purchase_origin(origin):
-                        canonical = oi
+                    continue
+                oi, origin = provider_origins[0]
+                bare_placement = (placement['provider_id'] is None
+                                  and placement['source_item_id'] is None)
+                annotated_placement = (
+                    type(placement['provider_id']) is str
+                    and type(placement['source_item_id']) is str
+                    and placement['provider_id'] == origin['provider_id']
+                    and placement['source_item_id'] == origin['edition_id']
+                )
+                if (verified_bytes and _attested_purchase_origin(origin)
+                        and (bare_placement or annotated_placement)):
+                    canonical = oi
+                else:
+                    # A contradictory or malformed canonical origin must not
+                    # be bypassed by a weaker legacy entitlement/ledger.
+                    categories.add('ambiguous')
+                continue
+            if placement['provider_id'] is None and placement['source_item_id'] is None:
                 continue
             edition_rights = rights_by_placement.get((
                 observation.identity_id, placement['provider_id'],

@@ -67,9 +67,17 @@ def choose_adept_profile(window, entry, control, *, Adw) -> None:
     if getattr(window, "_closed", False):
         return
     context = _context(window)
+    # A queued chooser is owned by the Core admitted at the click. Replacing
+    # the MainWindow service must not project that Core's private ADE list.
+    admitted_core = window.service
+    admitted_choices = admitted_core.adept_profile_choices
 
     def current():
-        return not getattr(window, "_closed", False) and _context(window) == context
+        return (
+            not getattr(window, "_closed", False)
+            and window.service is admitted_core
+            and _context(window) == context
+        )
 
     def done(choices):
         if not current():
@@ -114,7 +122,7 @@ def choose_adept_profile(window, entry, control, *, Adw) -> None:
 
     window.runner.submit(
         "Profils ADE…",
-        window.service.adept_profile_choices,
+        admitted_choices,
         done,
         error,
         control=control,

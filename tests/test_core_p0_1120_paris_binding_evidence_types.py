@@ -107,7 +107,7 @@ def test_untrusted_current_profile_binding_invalidates_grant(tmp_path, monkeypat
         service.close()
 
 
-def test_valid_explicit_grant_and_unbound_primary_keep_existing_semantics(tmp_path):
+def test_historical_grant_is_readable_but_not_live_borrower_authority(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
         assert service._paris_adept_identity_for_loan(
@@ -119,6 +119,6 @@ def test_valid_explicit_grant_and_unbound_primary_keep_existing_semantics(tmp_pa
         )
         assert service._paris_adept_identity_for_loan(
             loan, connection_identity_id="alice",
-        ) == ("bob", None)
+        ) == (None, "adept_borrower_binding_required")
     finally:
         service.close()
