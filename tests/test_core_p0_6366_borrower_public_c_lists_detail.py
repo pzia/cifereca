@@ -242,6 +242,48 @@ def test_no_source_match_or_direct_source_cannot_borrow_public_c(
         db.close()
 
 
+
+def test_unequal_conflicting_multisource_groups_never_choose_borrower_cover(tmp_path):
+    """A 3-source C does not defeat a contradictory 2-source edition claim."""
+    db = Storage(tmp_path / "borrower-conflicting-editions.sqlite")
+    try:
+        a, own = bibliography(db)
+        b, _ = bibliography(
+            db, provider="numilog", record="source-b", thumbnail=URL_B,
+        )
+        c, _ = bibliography(
+            db, provider="paris", record="source-c", thumbnail=URL_B,
+        )
+        d, _ = bibliography(
+            db, provider="other-provider", record="source-d", thumbnail=URL_B,
+        )
+        large = None
+        for source in (a, b, c):
+            large = persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:conflict-three",
+                source=source, relation_proof_id="strong:fixture:large",
+            )
+        small = None
+        for source in (a, d):
+            small = persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:conflict-two",
+                source=source, relation_proof_id="strong:fixture:small",
+            )
+        assert len(large.sources) == 3
+        assert len(small.sources) == 2
+        assert len({own.document, large.document, small.document}) == 3
+        original_loan, original_history = loan(), history()
+        assert admit(db, [original_loan, original_history]) == 0
+        for original in (original_loan, original_history):
+            assert borrower_public_c_receipt(
+                original, identity_id="alice",
+            ) is None
+        # A later refresh must also revoke an old, formerly valid packet:
+        # no stale thumbnail or borrowed right may survive re-projection.
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
 def test_record_reused_for_two_docbases_never_associates_without_docbase(tmp_path):
     db = Storage(tmp_path / "docbases.sqlite")
     try:
