@@ -121,3 +121,40 @@ def test_missing_key_preserves_original_unique_index_fallback():
     c = library(key="")
     rows, _ = project(a, b, c)
     assert [row.key for row in rows] == ["known", "known", "library:1"]
+
+
+def test_stale_once_unique_gtk_row_cannot_open_new_duplicate_mapping():
+    old = library(title="Previously unique")
+    stale_row, _ = project(old)
+    assert not getattr(stale_row[0], "_library_ambiguous_key", False)
+    current = library(title="Different book", placement="placement:other")
+    events = []
+    host = NS(
+        _closed=False, _cancel_cached_book_details=lambda: None,
+        _library_objects={old["key"]: current},
+        _library_ambiguous_keys=frozenset((old["key"],)),
+        library_page=NS(detail=NS(empty=lambda *args: events.append(args))),
+    )
+    library_selected(
+        host, stale_row[0], Gtk=None, unique_library_loan=None,
+        book_detail_presentation=None, detail_language=None,
+        document_links=None,
+    )
+    assert events and events[0][0] == "Référence ambiguë"
+
+
+def test_render_controller_publishes_ambiguity_set_before_gtk_model_update():
+    from pathlib import Path
+    import ast
+    path = Path(__file__).resolve().parents[1] / (
+        "src/cifereca/gui/library_render_controller.py"
+    )
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    method = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "render_library"
+    )
+    code = ast.unparse(method)
+    assert code.index("window._library_ambiguous_keys") < code.index(
+        "window.library_page.show_rows("
+    )
