@@ -145,6 +145,7 @@ def test_automatic_acquisition_lock_uses_same_path_for_shared_loan(monkeypatch):
         lambda self, loan, **kwargs: {"status": "unchanged"},
     )
     service = object.__new__(LibraryService)
+    service._sessions = {}  # offline fixture: no registered supplier can issue I/O
     for identity in ("alice", "bob"):
         loan = SimpleNamespace(id="shared-123", source_provider="paris", source_credential="paris-a", identity_id=identity)
         service._acquire_active_loan_automatically(loan)
@@ -239,6 +240,7 @@ def test_auto_acquisition_lock_busy_never_enters_fulfillment(monkeypatch):
 
     monkeypatch.setattr(LibraryService, "_acquire_active_loan_automatically_guarded", forbidden)
     service = object.__new__(LibraryService)
+    service._sessions = {}  # exercise the scoped-lock path without a live provider
     result = service._acquire_active_loan_automatically(
         SimpleNamespace(id="loan-1", source_provider="paris", source_credential="paris-a")
     )
