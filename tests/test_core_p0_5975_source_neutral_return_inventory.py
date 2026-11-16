@@ -28,6 +28,7 @@ def _rig(*, provider="future-lender", docbase="PBNB",
     )
     target = Loan(
         id="loan-A", provider=docbase, medium="digital",
+        title="Synthetic loan",
         source_provider=provider, source_credential="credential-A",
         source_account_id="reader-1", identity_id="identity-A",
         record_id="edition-A",
