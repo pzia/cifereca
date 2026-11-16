@@ -51,6 +51,21 @@ def toggle_state(db, source: SourceKey):
     spec = _POLICIES.get((source.scope.provider_id, source.kind))
     if spec is None:
         return None
+    # Historical loan-wide ON is now inert: it cannot grant automatic GET,
+    # even with a valid epoch. An existing legacy toggle (ON or OFF) keeps
+    # exact-right consent blocked until the user explicitly writes the CAS
+    # source policy; an absent toggle allows independent exact-right grants.
+    # Keep the old key grammar and rows for diagnostic/explicit OFF migration.
+    if source.kind == "loan":
+        try:
+            prefix, _old_on, _old_epoch = spec
+            sid = _source_id(source.scope)
+            old_row = db.execute(
+                "SELECT value FROM metadata WHERE key=?", (prefix + sid,),
+            ).fetchone()
+            return "off" if old_row is not None else None
+        except Exception:
+            return "off"
     # No alternative historical per-right grant can bypass an explicitly
     # disabled loan source. This runs inside the same SQLite transaction as
     # the final local publication guard.
@@ -199,7 +214,10 @@ def legacy_source_auto_policy(storage, scope, kind: str) -> tuple[str, str | Non
 def legacy_source_auto_current(storage, source: SourceKey, revision: str) -> bool:
     """Revalidate source-level ON and the EXACT old generation before GET."""
     if (type(source) is not SourceKey or type(revision) is not str
-            or _HEX.fullmatch(revision) is None):
+            or _HEX.fullmatch(revision) is None
+            or source.kind == "loan"):
+        # Retained compatibility API is read-only and cannot reopen a
+        # retired historical loan-wide ON as live acquisition admission.
         return False
     try:
         # A newly configured CAS source policy supersedes the old toggle,
@@ -217,7 +235,10 @@ def legacy_source_auto_current(storage, source: SourceKey, revision: str) -> boo
 def legacy_source_auto_in_transaction(db, source: SourceKey, revision: str) -> bool:
     """Final SQLite-transaction fence; protects against consent ABA."""
     if (type(source) is not SourceKey or type(revision) is not str
-            or _HEX.fullmatch(revision) is None):
+            or _HEX.fullmatch(revision) is None
+            or source.kind == "loan"):
+        # Retained compatibility API is read-only and cannot reopen a
+        # retired historical loan-wide ON as live acquisition admission.
         return False
     try:
         # An exact generic CAS source policy takes precedence, irrespective
