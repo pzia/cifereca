@@ -2514,9 +2514,10 @@ class LibraryService:
         )
 
     def verify_loan_return(self, loan: Loan) -> dict[str, Any]:
-        """Project one historical ADEPT return receipt; never retry or return.
+        """Read exact source-scoped historical ADEPT receipts for any provider.
 
-        An old checkpoint cannot be selected through inferred borrower
+        This retained response uses the original adobe_first_paris namespace
+        for ABI compatibility, not as a supplier-specific permission. An old checkpoint cannot be selected through inferred borrower
         coordinates, coercible plugin objects or a source changed by a
         preflight/storage callback. This is a read-only compatibility path.
         """
@@ -2531,7 +2532,11 @@ class LibraryService:
         if scope is None or type(loan.medium) is not str:
             return refused
         medium = loan.medium
-        if scope.provider_id.casefold() != "paris" or medium != "digital":
+        # The checkpoint key already includes provider, credential, exact
+        # borrower and loan ID. Voluntary return has been removed for EVERY
+        # provider; this read-only legacy receipt lookup cannot enable it.
+        # Do not restrict a historical ADEPT diagnostic by a supplier name.
+        if medium != "digital":
             return {"status": "not_requested", "scope": "adobe_first_paris"}
         if not scope.borrower_proven:
             return refused
