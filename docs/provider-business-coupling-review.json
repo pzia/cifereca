@@ -48,20 +48,6 @@
       "rationale": "A productive, necessary ADEPT identity recheck now protecting EVERY provider ACSM; not a provider-only dispatch. Count the retained call signal honestly until its facade is migrated."
     },
     {
-      "id": "site-fa4141b996ceab0e1bd6be32",
-      "classification": "safety_guard_pending_contract",
-      "journey": "BnF web loan automatic-acquisition denial",
-      "productive_caller": "LibraryService._acquire_active_loan_automatically, directly callable outside opening_sync",
-      "effect": "Rejects Web-observed BnF loan with explicit-only retry before lock, network, provider request or ACSM fulfillment",
-      "authority": "Exact native Loan.source_provider, but Web inventory alone never proves an explicit user act or acquisition approval",
-      "replacement_contract": "Typed lending admission policy from provider declaring explicit_user_action required and Core-enforced default-deny for unverified source",
-      "tests": [
-        "tests/test_core_p0_2055_bnf_opening_guard.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "An active mandatory safety veto; removing provider comparison now would permit a destructive implicit GET and cannot be credited as decoupling"
-    },
-    {
       "id": "site-48985b6dd27a2ea911e7026d",
       "classification": "presentation_only",
       "journey": "Settings ADEPT profile binding status subtitle",
@@ -1701,6 +1687,21 @@
       "pr": "#6458",
       "in_ast_metric": true,
       "original_site_id": "site-ad2f06a6ca9b22ee1e32194b"
+    },
+    {
+      "id": "struct-auto-loan-provider-capability-cutover-6444",
+      "original": "src/cifereca/services.py::LibraryService._acquire_active_loan_automatically (BnF source-name gate)",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "core.automatic_loan_source_policy.auto_loan_refusal (installed ProviderDescriptor opt-in)",
+      "classification": "removed_from_executable_core_provider_dispatch",
+      "evidence": "The sole source_provider == 'bnf-pret' early automatic-acquisition branch is physically deleted. Exact registered provider descriptor capabilities drive a pre-lock default deny of undeclared, wrong-scope and disconnected sessions; the BnF plugin continues to refuse implicit token GET. No DRM grant or right is inferred.",
+      "tests": [
+        "tests/test_core_p0_2055_bnf_opening_guard.py",
+        "tests/test_automatic_loan_admission.py"
+      ],
+      "pr": "#6444",
+      "in_ast_metric": true,
+      "original_site_id": "site-fa4141b996ceab0e1bd6be32"
     }
   ],
   "guard_installations": [
