@@ -3845,22 +3845,18 @@ class LibraryService:
             return denied
         borrower_code = None
         is_paris = scope.provider_id.casefold() == "paris"
-        if is_paris:
-            connection_identity_id = self.storage.identity_for_connection(
-                scope.provider_id, scope.credential_id,
-            )
-            if type(connection_identity_id) is not str or not connection_identity_id:
-                return denied
-            identity = self.identity_by_id(connection_identity_id)
-            if identity is None:
-                return denied
-        else:
-            try:
-                identity = self.identity_for_connection(
-                    scope.provider_id, scope.credential_id,
-                )
-            except ProviderConfigurationError:
-                return denied
+        # Source ownership is exact SQLite provenance for every supplier.
+        # The facade or selected GTK identity is not an alternate owner,
+        # even if a legacy identity_for_connection override returns one.
+        connection_identity_id = self.storage.identity_for_connection(
+            scope.provider_id, scope.credential_id,
+        )
+        if type(connection_identity_id) is not str or not connection_identity_id:
+            return denied
+        identity = self.identity_by_id(connection_identity_id)
+        if (identity is None or type(getattr(identity, "identity_id", None)) is not str
+                or identity.identity_id != connection_identity_id):
+            return denied
         # Source lookup may call a plugin or storage shim. Do not let it
         # retarget the loan, and never read ledger rows with unknown borrower.
         if (not scope.current(loan) or not scope.borrower_proven
@@ -3882,7 +3878,11 @@ class LibraryService:
         all_acquisitions = self.storage.acquisitions(provider_id=scope.provider_id)
         if not scope.current(loan):
             return denied
-        if is_paris and self._cross_identity_loan_conflict(
+        # Historical ADEPT origin is descriptive, but a foreign owner of
+        # the same provider loan remains a veto for *every* source. Neither
+        # an inventory receipt nor a previously indexed file authorizes an
+        # ADEPT operation; no return mutation is offered by this status.
+        if self._cross_identity_loan_conflict(
             all_acquisitions, provider_loan_id=scope.loan_id,
             identity_id=bound_identity_id,
             entitlements=[
@@ -4213,28 +4213,35 @@ class LibraryService:
                                 borrower_code,
                             ), "retry": "explicit_only",
                         }
-                    conflict_rows = self.storage.acquisitions(
-                        provider_id=source.provider_id,
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    active_rights = self.storage.entitlements(
-                        provider_id=source.provider_id, state="active",
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    conflict = self._cross_identity_loan_conflict(
-                        conflict_rows, provider_loan_id=source.loan_id,
-                        identity_id=bound_identity_id, entitlements=active_rights,
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    if conflict:
-                        return {
-                            "status": "attention_required", "loan_id": source.loan_id,
-                            "code": "adept_loan_identity_conflict",
-                            "retry": "explicit_only",
-                        }
+                # A persisted acquisition or active entitlement for this
+                # upstream loan can veto a different identity for *any*
+                # source. This is not positive permission to GET or fulfill
+                # ADEPT; the guarded auto-acquisition independently checks
+                # the exact borrower/grant, even after provider staging.
+                # Keep the Paris borrower refusal ahead of this inventory to
+                # preserve its existing public/attention precedence.
+                conflict_rows = self.storage.acquisitions(
+                    provider_id=source.provider_id,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                active_rights = self.storage.entitlements(
+                    provider_id=source.provider_id, state="active",
+                )
+                if not admission_intact():
+                    return source_refusal()
+                conflict = self._cross_identity_loan_conflict(
+                    conflict_rows, provider_loan_id=source.loan_id,
+                    identity_id=bound_identity_id, entitlements=active_rights,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                if conflict:
+                    return {
+                        "status": "attention_required", "loan_id": source.loan_id,
+                        "code": "adept_loan_identity_conflict",
+                        "retry": "explicit_only",
+                    }
 
                 previous_rows = self.storage.acquisitions(
                     provider_id=source.provider_id,
