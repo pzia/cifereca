@@ -6,6 +6,7 @@ no title/ISBN/image equality is used to infer that edition relation.
 from __future__ import annotations
 
 from dataclasses import replace
+from threading import Event
 from types import SimpleNamespace as NS
 
 from cifereca.core import search_orchestration
@@ -20,7 +21,12 @@ from cifereca.core.notice_c_known_projection import (
 from cifereca.core.notice_c_public_search import search_public_notice_c
 from cifereca.core.notice_cover_repository import read_notice_cover
 from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
-from cifereca.gui.search_document_cover_bridge import exact_remote_search_document
+from cifereca.gui.cover_loader import CoverLoader
+from cifereca.gui.document_cover_service import DocumentCoverService
+from cifereca.core.notice_cover_repository import is_notice_cover_document
+from cifereca.gui.search_document_cover_bridge import (
+    exact_remote_search_document, register_exact_search_document,
+)
 from cifereca.storage import Storage
 
 from tests.test_core_p0_6366_same_call_public_cover_writer import (
@@ -96,6 +102,51 @@ def test_producer_live_both_suppliers_and_c_first_share_one_n2_ref(
         assert {x.url for x in snapshot.candidates} == {
             a.thumbnail_url, b.thumbnail_url,
         }
+        # The common N2/N3 read-through is identical for the live list and
+        # detail. No second source-specific Search cover is registered.
+        loader = CoverLoader(max_workers=2)
+        calls, reads = [], []
+        monkeypatch.setattr(
+            loader, "load",
+            lambda url, callback, **kw: (
+                calls.append(url) or NS(cancel=lambda: None)
+            ),
+        )
+        monkeypatch.setattr(
+            loader, "load_preview",
+            lambda url, callback, **kw: (
+                calls.append(url) or NS(cancel=lambda: None)
+            ),
+        )
+        def reader(document):
+            reads.append(document)
+            return cached_notice_cover_snapshot(NS(storage=db), document)
+        covers = DocumentCoverService(
+            loader, cached_source_reader=reader,
+            cached_source_scope=is_notice_cover_document,
+        )
+        try:
+            assert register_exact_search_document(
+                window, b, covers, live_n2, shared.document,
+            )
+            ready = Event()
+            initial = covers.get_cover(
+                shared.document, "list", lambda _: None,
+                on_source_changed=ready.set,
+            )
+            assert ready.wait(10) and not initial.still_current
+            listed = covers.get_cover(
+                shared.document, "list", lambda _: None,
+            )
+            detailed = covers.get_cover(
+                shared.document, "detail", lambda _: None,
+            )
+            assert listed.source_uri == detailed.source_uri == b.thumbnail_url
+            assert reads == [shared.document]
+            assert calls and set(calls) == {b.thumbnail_url}
+        finally:
+            covers.close()
+            loader.close()
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
