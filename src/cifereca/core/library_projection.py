@@ -127,6 +127,19 @@ def refresh_history(
         account, session, scope=source_scope, epoch=source_epoch,
     ):
         raise ProviderConfigurationError("history_source_binding_changed")
+    # The Paris plugin's historical HistoryItem format does not itself
+    # include the borrower. Stamp the exact owner ONLY after the provider
+    # worker's live Account+session+source-epoch lease was revalidated.
+    # A conflicting source owner is never overwritten or given a C link.
+    if account.provider_id == "paris":
+        for item in rows:
+            if (item.provider == "DILICOM"
+                    and item.source_provider == account.provider_id
+                    and item.source_credential == account.credential_id
+                    and item.identity_id in (None, account.identity_id)
+                    and item.source_account_id in (None, account.unique_id)):
+                item.identity_id = account.identity_id
+                item.source_account_id = account.unique_id
     self.storage.cache_put("account", key, [asdict(x) for x in rows], ttl)
     # A verified Paris DILICOM catalogue coordinate is documentary only.
     # Stamped after cache serialization so no private scope token persists.
