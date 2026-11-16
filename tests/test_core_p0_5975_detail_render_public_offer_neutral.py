@@ -112,8 +112,13 @@ def test_both_real_detail_render_paths_admit_only_the_exact_neutral_offer(
     else:
         _show_search()(panel, item)
 
-    # The supplier never blocks entry into the shared decision.
-    panel._direct_download_action.assert_called_once_with(item)
+    # The supplier is never a gate. The loaded-detail path already applies
+    # the source-neutral public offer guard *before* invoking the action,
+    # while the initial result delegates that early guard to the action.
+    if complete_detail and not exact:
+        panel._direct_download_action.assert_not_called()
+    else:
+        panel._direct_download_action.assert_called_once_with(item)
     if exact:
         expected = 2 if complete_detail else 1
         assert panel.window.service.can_direct_download.call_args_list == (
