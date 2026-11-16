@@ -2175,6 +2175,8 @@ def _mirror_remote_results(
         if type(row) is SearchResult:
             row.__dict__.pop("_core_notice_cover_document_ref", None)
             row.__dict__.pop("_core_notice_cover_document_epoch", None)
+            row.__dict__.pop("_core_notice_c_canonical_document_ref", None)
+            row.__dict__.pop("_core_notice_c_canonical_document_epoch", None)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
     # The stronger #5073 UI/action proof remains authoritative for actions.
@@ -2370,8 +2372,14 @@ def _mirror_remote_results(
                         row._core_notice_cover_document_ref = persisted.document
                         row._core_notice_cover_document_epoch = persisted.epoch
                     else:
-                        row._core_notice_cover_document_ref = canonical.document
-                        row._core_notice_cover_document_epoch = canonical.epoch
+                        # Preserve the exact-source stamp consumed by
+                        # existing Search cache, N2 epoch and six-view bridge.
+                        # Canonical C is separately available to Core for a
+                        # future proven cross-source relation / UI migration.
+                        row._core_notice_cover_document_ref = persisted.document
+                        row._core_notice_cover_document_epoch = persisted.epoch
+                        row._core_notice_c_canonical_document_ref = canonical.document
+                        row._core_notice_c_canonical_document_epoch = canonical.epoch
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # Catalogue mirror remains independent. A broken source
                 # index cannot invent a cover or leak provider bytes/paths.
