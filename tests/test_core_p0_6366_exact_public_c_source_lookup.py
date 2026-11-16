@@ -124,3 +124,49 @@ def test_two_conflicting_equal_strength_groups_fail_closed(tmp_path):
         assert find(db, c) is not None
     finally:
         db.close()
+
+
+def test_unequal_multisource_relations_are_still_ambiguous(tmp_path):
+    """More sources are not proof that a conflicting canonical claim is false."""
+    db = Storage(tmp_path / "unequal-conflicts.sqlite")
+    try:
+        a = make(db, "bnf", "edition-a")
+        b = make(db, "numilog-catalog", "edition-b")
+        c = make(db, "paris", "edition-c")
+        d = make(db, "another-provider", "edition-d")
+        for source in (a, b, c):
+            persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:larger-group",
+                source=source, relation_proof_id="strong:fixture:larger",
+            )
+        for source in (a, d):
+            persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:smaller-group",
+                source=source, relation_proof_id="strong:fixture:smaller",
+            )
+        assert find(db, a) is None
+        assert find(db, b).document == find(db, c).document
+        assert find(db, d) is not None
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def test_single_source_c_does_not_override_unique_multisource_relation(tmp_path):
+    db = Storage(tmp_path / "one-relation.sqlite")
+    try:
+        a = make(db, "bnf", "edition-a")
+        b = make(db, "numilog-catalog", "edition-b")
+        persist_exact_public_search_cover(db, a)
+        persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:attested-group",
+            source=a, relation_proof_id="strong:fixture:a",
+        )
+        group = persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:attested-group",
+            source=b, relation_proof_id="strong:fixture:b",
+        )
+        assert find(db, a).document == group.document
+        assert find(db, b).document == group.document
+    finally:
+        db.close()
