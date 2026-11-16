@@ -50,7 +50,7 @@ def _same_book_row_presentation(old: BookListItem, new: BookListItem) -> bool:
     # Placement or selected offer. The old GTK cell must be rebound instead
     # of retaining a previously captured action. Identity, not __eq__, is
     # the appropriate test for an executable callback.
-    if old.action_callback is not new.action_callback:
+    if getattr(old, "action_callback", None) is not getattr(new, "action_callback", None):
         return False
     # Exact Core evidence, not just its displayed source URL, determines
     # the N2 cache token. A progressive batch with the same key/title/URL
