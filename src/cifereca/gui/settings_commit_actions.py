@@ -67,6 +67,12 @@ def bind_settings_commit(self, *, page_lifetime, settings_state,
             primary = editor.get("primary_paris_connection_id")
             if primary is not None:
                 row["primary_paris_connection_id"] = primary.get_text()
+            for source_key in (
+                "adept_source_provider_id", "adept_source_connection_id",
+            ):
+                field = editor.get(source_key)
+                if field is not None:
+                    row[source_key] = field.get_text()
             row["prefer_vo"] = editor["prefer_vo"].get_active()
             identities.append(row)
         accounts = []
