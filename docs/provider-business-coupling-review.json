@@ -96,19 +96,19 @@
       "reachability": "productive"
     },
     {
-      "id": "site-1e0a66caf63d7b19feef68dd",
+      "id": "site-07ee90e681f2ff0bf5ace55f",
       "classification": "safety_guard_pending_contract",
       "journey": "Settings ADEPT runtime inspection stale result publication fencing",
-      "productive_caller": "GUI Settings check_adept.current closure re-reads normal_paris_adept_status before rendering result from asynchronous TaskRunner",
-      "effect": "Suppresses positive/status subtitle if page generation, saved profile, primary Paris connection or local binding has changed after click (including A→B→A) Core identity is also compared by instance and stale GTK callbacks never publish a foreign Core's result.",
-      "authority": "Local saved identity and generation lease; a previous runtime status is not authority over the newly displayed identity",
+      "productive_caller": "GUI Settings check_adept.saved_binding_current checks persisted identity primary Paris connection, exact SQLite ADEPT profile binding and Core's local readiness status before a queued runtime result can publish",
+      "effect": "Refuses stale runtime publication when the saved connection, persisted ADEPT profile, displayed binding, local status, Core instance or page generation differs; errors while reading saved bindings fail closed. This is not an anti-ABA version lease.",
+      "authority": "Exact saved identity and persisted connection/profile binding observed at publication time, checked against the click snapshot; no provider entitlement is inferred",
       "replacement_contract": "Generic typed current-context callback with exact saved binding identity and epochs for every asynchronous runtime result, independent of GTK navigation",
       "tests": [
         "tests/test_core_ui_p1_1063_runtime_button.py",
         "tests/test_core_p1_1063_adept_runtime_check.py"
       ],
       "retirement_pr": "",
-      "rationale": "A stale-publication veto on a live Settings runtime check; removing it without a revocable replacement could mislabel a different profile.",
+      "rationale": "Relocated live Settings runtime stale-result gate from check_adept.current to saved_binding_current; AST source witness and fail-closed tests retained; site ID refreshed from current CI inventory.",
       "decision_group_id": "adept.settings-explicit-runtime-check",
       "reachability": "productive"
     },
