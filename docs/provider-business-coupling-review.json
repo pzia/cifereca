@@ -1700,7 +1700,7 @@
         "tests/test_library_declared_link_inspection.py",
         "tests/test_library_declared_links.py"
       ],
-      "pr": "#pending",
+      "pr": "#6432",
       "in_ast_metric": true
     }
   ],
