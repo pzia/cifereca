@@ -115,9 +115,20 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     # after each callback. A frozen native Identity is expected; a mutated
     # object or a foreign replacement must fail closed, not retarget a right.
     def admission_intact() -> bool:
-        return (source_intact() and type(identity) is Identity
-                and type(identity.identity_id) is str
-                and identity.identity_id == bound_identity_id)
+        # A retained connection owner ID is insufficient once another
+        # callback has disabled, deleted or rebound that SQLite connection.
+        # One read snapshot checks the enabled owner without assuming rights,
+        # a UI-selected identity, or any provider-specific account policy.
+        if (not source_intact() or type(identity) is not Identity
+                or type(identity.identity_id) is not str
+                or identity.identity_id != bound_identity_id):
+            return False
+        try:
+            return self.storage.provider_connection_owner_current(
+                pinned_provider, pinned_credential, bound_identity_id,
+            ) is True
+        except Exception:
+            return False
 
     trace_ref = loan_trace_ref(loan, bound_identity_id)
     _TRACE_LOG.info("TRACE download identity resolved request_ref=%s loan_ref=%s", request_ref, trace_ref)
