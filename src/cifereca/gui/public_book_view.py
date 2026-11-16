@@ -124,11 +124,19 @@ class PublicBookMasterDetailView:
                     continue
                 button = Gtk.LinkButton(uri=uri, label=str(action.title))
                 button.set_tooltip_text(str(action.title))
+                button.connect(
+                    "activate-link",
+                    lambda clicked: getattr(
+                        clicked, "_cifereca_action_context_revoked", False,
+                    ) is True,
+                )
             else:
                 button = action_button(str(action.title), str(action.icon_name or "view-more-symbolic"))
                 callback = getattr(action, "callback", None)
                 if callable(callback):
                     def activate(clicked, cb=callback, action_id=str(action.id)):
+                        if getattr(clicked, "_cifereca_action_context_revoked", False):
+                            return
                         # Capture the real clicked action before its callback
                         # switches routes: mouse clicks need not give GTK focus.
                         window = self._window
