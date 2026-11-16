@@ -1111,7 +1111,13 @@ class DetailPanel(Gtk.Box):
         finally:
             self._next_cover_evidence = None
 
-    def show_search(self, item: SearchResult, loading: bool = False) -> None:
+    def show_search(
+        self, item: SearchResult, loading: bool = False, *,
+        public_c_document=None,
+    ) -> None:
+        from ..core.notice_c_cover_index import is_canonical_cover_document
+        document = (public_c_document
+                    if is_canonical_cover_document(public_c_document) else None)
         medium = search_detail_support_label(item)
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
@@ -1147,6 +1153,7 @@ class DetailPanel(Gtk.Box):
                 ]),
             ],
             metadata=item.metadata,
+            cover_document_ref=document,
         ), description=item.description)
         if stale_known:
             # A public cache row is neither a current download offer nor a
@@ -1254,7 +1261,13 @@ class DetailPanel(Gtk.Box):
         group.add(box)
         self._append_content(group)
 
-    def show_item_detail(self, item: SearchResult, detail: ItemDetail) -> None:
+    def show_item_detail(
+        self, item: SearchResult, detail: ItemDetail, *,
+        public_c_document=None,
+    ) -> None:
+        from ..core.notice_c_cover_index import is_canonical_cover_document
+        document = (public_c_document
+                    if is_canonical_cover_document(public_c_document) else None)
         medium = search_detail_support_label(item)
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
@@ -1292,6 +1305,7 @@ class DetailPanel(Gtk.Box):
                    account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
                    source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))),
             metadata=item.metadata,
+            cover_document_ref=document,
         ), description=getattr(detail, "description", None) or item.description)
         from cifereca.gui.offer_actions import private_notice_download_hint_allowed
         private_hint_ok = private_notice_download_hint_allowed(
