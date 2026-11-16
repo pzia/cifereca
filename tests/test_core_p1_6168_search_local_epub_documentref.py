@@ -76,7 +76,11 @@ def test_search_local_refuses_cross_scope_or_untrusted_packets(search_book, muta
     result = render(mutated)
     assert not hasattr(result, "_cover_document_ref")
     assert not hasattr(result, "_cover_local_evidence")
-    assert len(result._public_row_content) == 10  # legacy signature stable
+    # Public Search-C epoch/query context are now part of the base signature.
+    # An unqualified local packet cannot populate these slots or append N2.
+    assert len(result._public_row_content) == 12
+    assert result._public_row_content[-3:-1] == (None, None)
+    assert result._public_row_content[-2:] == (None, None)
 
 
 def test_active_profile_bob_never_adopts_alice_packet(search_book):
