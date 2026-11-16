@@ -60,6 +60,9 @@ def _same_book_row_presentation(old: BookListItem, new: BookListItem) -> bool:
     # equal-valued receipt needs a rebind to invalidate already-painted N4.
     for field in (
         "_cover_public_c_link", "_cover_borrower_public_c_receipt",
+        # Core's Search C-first row is a mutable mapping. Equal content
+        # from a new projection cannot inherit the old cell's live witness.
+        "_cover_known_public_c_source",
     ):
         if getattr(old, field, None) is not getattr(new, field, None):
             return False
