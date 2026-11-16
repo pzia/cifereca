@@ -80,6 +80,14 @@ def history(**changed):
     return item
 
 
+def admit(db, rows, *, identity_id="alice"):
+    # All mock borrower reads were admitted at these exact Core generations.
+    return attach_borrower_public_c(
+        db, rows, identity_id=identity_id,
+        account_epoch=7, source_epoch=9,
+    )
+
+
 def host_for(book, *, identity="alice"):
     service = NS(
         current_identity=NS(identity_id=identity),
@@ -112,7 +120,7 @@ def test_loan_history_two_distinct_occurrences_share_exact_public_c_n2(tmp_path)
     try:
         observed, c = bibliography(db)
         borrowed, returned = loan(), history()
-        assert attach_borrower_public_c(
+        assert admit(
             db, [borrowed, returned], identity_id="alice",
         ) == 2
         a = borrower_public_c_receipt(borrowed, identity_id="alice")
@@ -162,7 +170,7 @@ def test_loan_history_two_distinct_occurrences_share_exact_public_c_n2(tmp_path)
         db.close()
     restarted = Storage(filename)
     try:
-        assert attach_borrower_public_c(
+        assert admit(
             restarted, [loan(), history()], identity_id="alice",
         ) == 2
         assert [x.url for x in
@@ -191,7 +199,7 @@ def test_verified_two_provider_c_selected_over_own_source_without_cross_join(tmp
         )
         assert consolidated.document != own.document
         l, h = loan(), history()
-        assert attach_borrower_public_c(db, [l, h], identity_id="alice") == 2
+        assert admit(db, [l, h], identity_id="alice") == 2
         assert borrower_public_c_receipt(
             l, identity_id="alice",
         ).document == consolidated.document
@@ -223,7 +231,7 @@ def test_no_source_match_or_direct_source_cannot_borrow_public_c(
         bibliography(db)
         for factory in (loan, history):
             item = factory(**change)
-            assert attach_borrower_public_c(
+            assert admit(
                 db, [item], identity_id="alice",
             ) == 0
             assert borrower_public_c_receipt(
@@ -241,7 +249,7 @@ def test_record_reused_for_two_docbases_never_associates_without_docbase(tmp_pat
         bibliography(
             db, docbase="other-catalogue", thumbnail=URL_B,
         )
-        assert attach_borrower_public_c(
+        assert admit(
             db, [loan(), history()], identity_id="alice",
         ) == 0
     finally:
@@ -254,7 +262,7 @@ def test_stale_borrower_receipt_rejected_for_account_epoch_and_rebound(tmp_path)
         bibliography(db)
         for maker in (loan, history):
             original = maker()
-            assert attach_borrower_public_c(
+            assert admit(
                 db, [original], identity_id="alice",
             ) == 1
             packet = borrower_public_c_receipt(original, identity_id="alice")
@@ -291,10 +299,10 @@ def test_same_public_cover_is_not_right_and_stale_receipt_is_revoked(tmp_path):
     try:
         bibliography(db)
         x = loan()
-        assert attach_borrower_public_c(db, [x], identity_id="alice") == 1
+        assert admit(db, [x], identity_id="alice") == 1
         assert borrower_public_c_receipt(x, identity_id="alice") is not None
         x.thumbnail_url = URL_A  # provider now supplies its own direct cover
-        assert attach_borrower_public_c(db, [x], identity_id="alice") == 0
+        assert admit(db, [x], identity_id="alice") == 0
         assert borrower_public_c_receipt(x, identity_id="alice") is None
         assert not x.__dict__.get("_core_public_c_cover_receipt")
         assert db.entitlements() == [] and db.acquisitions() == []
@@ -310,8 +318,8 @@ def test_gtk_wiring_stays_worker_only_and_keeps_actions(tmp_path):
     history_code = (root / "gui/main_window.py").read_text()
     panel = (root / "gui/detail_panel.py").read_text()
     source = (root / "core/library_projection.py").read_text()
-    assert "attach_borrower_public_c(" in loan_code.split("def work():", 1)[1]
-    assert "attach_borrower_public_c(" in source.split("def refresh_history(", 1)[1]
+    assert "admit(" in loan_code.split("def work():", 1)[1]
+    assert "admit(" in source.split("def refresh_history(", 1)[1]
     assert "exact_loan_public_c(self, loan)" in loan_code
     assert "show_public_loan_c(" in loan_code
     assert "exact_history_public_c(self, x)" in history_code
