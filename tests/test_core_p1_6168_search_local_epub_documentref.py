@@ -76,7 +76,12 @@ def test_search_local_refuses_cross_scope_or_untrusted_packets(search_book, muta
     result = render(mutated)
     assert not hasattr(result, "_cover_document_ref")
     assert not hasattr(result, "_cover_local_evidence")
-    assert len(result._public_row_content) == 10  # legacy signature stable
+    # The public Search-C epoch and query-context slots were added by P0
+    # #6472/#6473; they remain empty on an unqualified local EPUB packet.
+    # The documentary source is still at [-2], URL at [-1].
+    assert len(result._public_row_content) == 12
+    assert result._public_row_content[-4:-2] == (None, None)
+    assert result._public_row_content[-2:] == (None, None)
 
 
 def test_active_profile_bob_never_adopts_alice_packet(search_book):
