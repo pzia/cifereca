@@ -183,6 +183,6 @@ def test_entitlement_text_is_not_a_verified_link_even_if_it_matches_a_local_epub
     assert "Titre caché 5" in _right(session).label
     assert session.candidate_files(_right(session).key) == ()
     assert session.overview()["confirmed_files"] == 0
-    assert session.overview()["unverified_rights"] == 3
+    # All six legacy Numilog entitlements remain visible but unverified:\n    # a historical acquisition ledger alone no longer attests an EPUB link.\n    assert session.overview()["unverified_rights"] == 6
     assert audit.redacted()["repair_authorized"] is False
     assert audit.redacted()["acquisition_authorized"] is False
