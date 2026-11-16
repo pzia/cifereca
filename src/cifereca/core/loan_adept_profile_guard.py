@@ -20,13 +20,14 @@ def check(
     AdeptProfileResolutionError: type, adept_acsm_plan: Any, _TRACE_LOG: Any,
 ) -> tuple[str, str] | dict[str, Any]:
     """Exact pre-ADEPT grant/profile sequence; dict is the existing refusal."""
-    # Check the pinned borrower grant again immediately before ADEPT:
-    # provider staging can take time, and a grant may be revoked.
+    # Check the exact source-scoped borrower grant again immediately before
+    # ADEPT for EVERY ACSM provider: staging can take time and grants can
+    # change. Direct EPUB/PDF acquisitions do not enter this helper.
     adept_borrower_identity_id = identity.identity_id
     borrower_code = None
     # The loan may have crossed an external staging boundary since source
     # admission. Do not coerce plugin-owned coordinates, and never interpret
-    # malformed provenance as a non-Paris source exempt from the grant guard.
+    # malformed provenance as an exemption from the grant guard.
     def source_intact() -> bool:
         # Read live coordinates on each call; a borrower resolver is another
         # external hook capable of mutating the staged Loan.
@@ -65,10 +66,19 @@ def check(
     if not source_intact():
         # The durable acquiring receipt is the pinned transaction scope.
         borrower_code = "adept_borrower_ambiguous"
-    elif loan.source_provider.casefold() == "paris":
-        adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
-            loan, connection_identity_id=identity.identity_id,
-        )
+    else:
+        # This helper is invoked ONLY for an already staged ACSM, regardless
+        # of its issuing library. ADEPT needs the exact borrowing identity
+        # for every source: a non-Paris linked reader must not inherit the
+        # connection owner's Adobe profile without a v16 source-scoped grant.
+        # The historical facade name is retained for compatibility; the
+        # resolver uses v16 grants for all sources and reads v15 only for Paris.
+        try:
+            adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+                loan, connection_identity_id=identity.identity_id,
+            )
+        except Exception:
+            borrower_code = "adept_borrower_ambiguous"
     # The borrower/grant callback may mutate the staged loan after initial
     # validation. Check the original transaction again before profile lookup.
     if borrower_code is None and not source_intact():
