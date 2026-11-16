@@ -9,6 +9,7 @@ import shlex
 from typing import Any
 
 from ..identities.directory_selection import directory_choice
+from ..core.provider_identifier import valid_provider_identifier
 from ..providers.base import (
     validated_account_option_choices, valid_account_option_url,
     valid_account_option_boolean,
@@ -160,11 +161,38 @@ def build_settings_draft(config, values, *, descriptors, public_ids,
                 'Identifiant de connexion Paris principale invalide : recharger les paramètres.'
             )
         selected = selected.strip()
+        # New-source ADEPT inspection is configured by an exact saved pair,
+        # never inferred from the current GTK identity, Paris or a single
+        # matching account. Invalid persisted values block an unrelated Save
+        # instead of being silently rewritten as blank.
+        previous_provider = prior_identity.get('adept_source_provider_id', '')
+        previous_connection = prior_identity.get('adept_source_connection_id', '')
+        if type(previous_provider) is not str or type(previous_connection) is not str:
+            raise SettingsValidationError(
+                'Source ADEPT historique invalide : recharger les paramètres.'
+            )
+        adept_provider = editor.get('adept_source_provider_id', previous_provider)
+        adept_connection = editor.get('adept_source_connection_id', previous_connection)
+        if (type(adept_provider) is not str
+                or type(adept_connection) is not str
+                or bool(adept_provider) != bool(adept_connection)
+                or (adept_provider and not valid_provider_identifier(adept_provider))
+                or len(adept_connection) > 256
+                or (adept_connection and (
+                    adept_connection != adept_connection.strip()
+                    or not adept_connection.isprintable()))):
+            raise SettingsValidationError(
+                'Source ADEPT : fournisseur et connexion explicites valides requis ensemble.'
+            )
         languages = [part.strip().lower() for part in editor['languages'].split(',') if part.strip()]
         if not languages:
             languages = ['fr']
         saved_identities.append({
             **({'primary_paris_connection_id': selected} if selected else {}),
+            **({
+                'adept_source_provider_id': adept_provider,
+                'adept_source_connection_id': adept_connection,
+            } if adept_provider else {}),
             'id': identity_id,
             'label': editor['label'].strip() or identity_id,
             'directory_name': directory_name,
