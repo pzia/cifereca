@@ -16,6 +16,11 @@ from .notice_source_observation import (
 from .search_cover_provenance import project_exact_search_catalogue_cover
 
 
+# Private Core-only object identity. An arbitrary supplier-provided attribute
+# value (including True) can never admit public bibliographic disclosure.
+_CORE_PUBLIC_C_WITNESS = object()
+
+
 def _coordinate_digest(*parts: object) -> str:
     """Opaque, stable coordinates; never a title/ISBN/content deduplication."""
     raw = json.dumps(parts, ensure_ascii=True, separators=(",", ":"))
@@ -93,7 +98,8 @@ def admit_public_search_catalogue(
         public_cover_url=public_cover_url,
     )
     if (initial is None
-            or getattr(row, "_core_notice_c_public_bibliography", False) is not True):
+            or getattr(row, "_core_notice_c_public_bibliography", None)
+            is not _CORE_PUBLIC_C_WITNESS):
         return initial
 
     from .public_search_projection import _public_bibliographic_text
