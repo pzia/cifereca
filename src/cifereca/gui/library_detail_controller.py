@@ -24,6 +24,15 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
             "Sélectionnez un livre dans la liste pour afficher ses détails.",
         )
         return
+    if getattr(row, "_library_ambiguous_key", False) is True:
+        # The display key is also the dictionary key for action/detail
+        # lookup. Never let a duplicate row open the last writer's book,
+        # private Placement or even a canonical public C cover.
+        window.library_page.detail.empty(
+            "Référence ambiguë",
+            "Actualisez la bibliothèque avant d'ouvrir ce détail.",
+        )
+        return
     item = window._library_objects.get(row.key)
     if not item:
         return
