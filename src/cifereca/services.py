@@ -3864,7 +3864,11 @@ class LibraryService:
         all_acquisitions = self.storage.acquisitions(provider_id=scope.provider_id)
         if not scope.current(loan):
             return denied
-        if is_paris and self._cross_identity_loan_conflict(
+        # Historical ADEPT origin is descriptive, but a foreign owner of
+        # the same provider loan remains a veto for *every* source. Neither
+        # an inventory receipt nor a previously indexed file authorizes an
+        # ADEPT operation; no return mutation is offered by this status.
+        if self._cross_identity_loan_conflict(
             all_acquisitions, provider_loan_id=scope.loan_id,
             identity_id=bound_identity_id,
             entitlements=[
