@@ -149,3 +149,92 @@ def test_coverless_c_first_and_live_search_keep_one_exact_row(tmp_path):
         assert len(view.search_page.show_rows.call_args.args[0]) == 2
     finally:
         db.close()
+
+
+def test_same_c_n2_upgrades_from_unknown_placeholder_to_attested_image(
+    tmp_path, monkeypatch,
+):
+    from cifereca.core import search_orchestration
+    from tests.test_core_p0_6366_real_search_notice_c_ingestion import URL
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    clock = [200]
+    monkeypatch.setattr(search_orchestration.time, "time", lambda: clock[0])
+    db = Storage(tmp_path / "upgrade-view.sqlite")
+    loader = CoverLoader(max_workers=2)
+    downloads, reads = [], []
+    monkeypatch.setattr(
+        loader, "load",
+        lambda url, callback, **kw: (
+            downloads.append(url) or NS(cancel=lambda: None)
+        ),
+    )
+    monkeypatch.setattr(
+        loader, "load_preview",
+        lambda url, callback, **kw: (
+            downloads.append(url) or NS(cancel=lambda: None)
+        ),
+    )
+
+    def reader(document):
+        reads.append(document)
+        return cached_notice_cover_snapshot(NS(storage=db), document)
+
+    covers = DocumentCoverService(
+        loader, cached_source_reader=reader,
+        cached_source_scope=is_notice_cover_document,
+    )
+    try:
+        initial = witnessed(public_row(
+            record_id="image-arrives-later", thumbnail_url=None,
+        ))
+        window, _, key = host(initial)
+        assert mirror(db, [initial]) == 1
+        canonical = initial._core_notice_canonical_cover_document_ref
+        before = exact_remote_search_document(window, initial, key)
+        assert before is not None and before.candidates == ()
+        assert register_exact_search_document(
+            window, initial, covers, before, canonical,
+        )
+        initial_ready = Event()
+        covers.get_cover(
+            canonical, "list", lambda path: None,
+            on_source_changed=initial_ready.set,
+        )
+        assert initial_ready.wait(10)
+        assert covers.get_cover(
+            canonical, "detail", lambda path: None,
+        ).source_uri is None
+        assert downloads == []
+
+        # The same exact public supplier edition obtains its first image.
+        # Refresh only the attested canonical N2 epoch, never N3/GTK SQL.
+        clock[0] = 201
+        later = witnessed(public_row(
+            record_id="image-arrives-later", thumbnail_url=URL,
+        ))
+        assert mirror(db, [later]) == 1
+        assert later._core_notice_canonical_cover_document_ref == canonical
+        assert later._core_notice_canonical_cover_document_epoch == 2
+        window.search_objects[key] = later
+        updated = exact_remote_search_document(window, later, key)
+        assert updated is not None and updated.document == canonical
+        assert [c.url for c in updated.candidates] == [URL]
+        refreshed = Event()
+        covers.get_cover(
+            canonical, "list", lambda path: None,
+            on_source_changed=refreshed.set,
+        )
+        assert register_exact_search_document(
+            window, later, covers, updated, canonical,
+        )
+        assert refreshed.wait(10)
+        after = covers.get_cover(canonical, "detail", lambda path: None)
+        assert after.source_uri == URL
+        assert reads == [canonical, canonical]
+        assert downloads == [URL]
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        covers.close()
+        loader.close()
+        db.close()
