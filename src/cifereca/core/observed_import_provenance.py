@@ -59,8 +59,9 @@ def observed_loan_provenance_field(provider_id: object) -> str | None:
     silently normalized into a historical key.
     """
     from re import fullmatch
+    from .provider_identifier import valid_provider_identifier
 
-    if (type(provider_id) is not str
+    if (not valid_provider_identifier(provider_id)
             or fullmatch(r"[a-z][a-z0-9-]{0,63}", provider_id) is None):
         return None
     return provider_id.split("-", 1)[0] + "_observed_loan"
@@ -87,7 +88,9 @@ def observed_import_links_for_sources(
                     # A corrupt unbounded provider inventory must not
                     # cause an unbounded series of SQLite joins.
                     return {}
-    except (TypeError, ValueError, RuntimeError):
+    except Exception:
+        # Provider inventory may be malformed or lazy; do not publish
+        # partially joined private display metadata from a failed iterator.
         return {}
 
     result = {}
