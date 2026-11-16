@@ -331,3 +331,67 @@ def test_poststage_borrower_resolver_exception_is_closed_refusal(provider):
     inventory.assert_not_called()
     store.assert_called_once()
     assert store.call_args.args[0]["attention_code"] == "adept_borrower_ambiguous"
+
+
+@pytest.mark.parametrize(("field", "replacement"), [
+    ("source_provider", "synthetic-other"),
+    ("source_credential", "other-credential"),
+    ("source_account_id", "other-borrower"),
+    ("id", "other-loan"),
+    ("record_id", "other-edition"),
+])
+def test_epoch_capture_refuses_source_mutation_inside_storage_reader(
+    tmp_path, monkeypatch, field, replacement,
+):
+    """The lease cannot combine epoch(A) with callback-mutated coordinates(B)."""
+    service, loan = _setup(tmp_path)
+    try:
+        # Deliberately assign the SAME epoch and owner to the foreign source:
+        # a captured epoch alone cannot distinguish the old and new scope.
+        service.storage.provider_connection_put({
+            "provider_id": "synthetic-other", "credential_id": "source-a",
+            "identity_id": "default", "enabled": True,
+        })
+        original = service.storage.provider_connection_epoch
+        epoch_a = original("synthetic-pnb", "source-a", "default")
+        assert epoch_a == original("synthetic-other", "source-a", "default")
+
+        def stale_reader(provider, credential, identity):
+            assert (provider, credential, identity) == (
+                "synthetic-pnb", "source-a", "default",
+            )
+            epoch = original(provider, credential, identity)
+            setattr(loan, field, replacement)
+            return epoch
+
+        monkeypatch.setattr(service.storage, "provider_connection_epoch", stale_reader)
+        lease = SourceEpochLease.capture(service.storage, loan, "default")
+        assert lease is None
+        assert service.storage.acquisitions(provider_id="synthetic-pnb") == []
+        assert service.storage.acquisitions(provider_id="synthetic-other") == []
+    finally:
+        service.close()
+
+
+def test_epoch_capture_rejects_hostile_postread_coordinate_before_constructing_lease(
+    tmp_path, monkeypatch,
+):
+    class Hostile:
+        def __eq__(self, _other):
+            raise AssertionError("foreign equality must not run")
+        def __str__(self):
+            raise AssertionError("foreign coercion must not run")
+
+    service, loan = _setup(tmp_path)
+    try:
+        original = service.storage.provider_connection_epoch
+        def contaminate(provider, credential, identity):
+            result = original(provider, credential, identity)
+            loan.source_provider = Hostile()
+            return result
+        monkeypatch.setattr(
+            service.storage, "provider_connection_epoch", contaminate,
+        )
+        assert SourceEpochLease.capture(service.storage, loan, "default") is None
+    finally:
+        service.close()
