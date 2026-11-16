@@ -75,10 +75,31 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                 )),),
                 metadata=None,
             )
-            panel.show_presentation(
-                replace(presentation, cover_document_ref=document),
-                description=metadata.get("description"),
+            from cifereca.gui.search_known_public_c_guard import (
+                pin_known_public_c, known_public_c_cell_current,
             )
+            from cifereca.gui.local_public_c_detail_guard import (
+                staged_local_public_c_detail,
+            )
+            binding = pin_known_public_c(self, row, item)
+
+            def current_c_detail() -> bool:
+                if not known_public_c_cell_current(self, row, binding):
+                    return False
+                # Selection can change while N3 is materialising. A shared
+                # catalogue ref never transfers the old detail selection.
+                selection = getattr(self.search_page, "selection", None)
+                get_selected = getattr(selection, "get_selected_item", None)
+                return not callable(get_selected) or get_selected() is row
+
+            if binding is None or not current_c_detail():
+                panel.empty("Notice indisponible", "Source documentaire périmée.")
+                return
+            with staged_local_public_c_detail(panel, current_c_detail):
+                panel.show_presentation(
+                    replace(presentation, cover_document_ref=document),
+                    description=metadata.get("description"),
+                )
             return
         description = self._book_description(item)
         # The same *known v2 exact notice* may already have a validated
