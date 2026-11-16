@@ -15,6 +15,7 @@ from cifereca.core.notice_cover_repository import (
 )
 from cifereca.core.notice_search_cover_producer import (
     admit_public_search_cover, admit_public_search_catalogue,
+    _CORE_PUBLIC_C_WITNESS,
 )
 from cifereca.storage import Storage
 from tests.test_core_p0_6366_real_search_notice_c_ingestion import (
@@ -29,7 +30,7 @@ def verified_public(**kwargs):
     row = public_row(**kwargs)
     # This flag is assigned by the Core same-call anonymous projector; only
     # test fixtures attach it directly to model a previously verified result.
-    row._core_notice_c_public_bibliography = True
+    row._core_notice_c_public_bibliography = _CORE_PUBLIC_C_WITNESS
     return row
 
 
