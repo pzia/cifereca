@@ -182,17 +182,28 @@ def exact_remote_search_document(
         )
         if (expected is not None
                 and notice_cover_document_ref(expected.key) == admitted):
-            # The Core Search worker may now bind two provider observations
-            # to a single C after verifying completed same-owner OriginLinks.
-            # Only its private same-call+relation proof is admissible here:
-            # a forged canonical ref, identical ISBN, URL or title is not.
+            # Preserve the prior exact own-source C on validated cache
+            # replay after restart / source TTL expiry. Cross-provider C
+            # still requires the stronger same-call Core OriginLink proof.
+            from ..core.notice_c_cover_index import (
+                canonical_cover_document_ref, is_canonical_cover_document,
+            )
             from ..core.notice_c_known_projection import (
                 matching_live_public_canonical_ref,
             )
-            canonical = matching_live_public_canonical_ref(
-                item, identity_id=viewer_id,
+            cached_c = getattr(
+                item, "_core_notice_canonical_cover_document_ref", None,
             )
-            scope = canonical if canonical is not None else admitted
+            own_c = canonical_cover_document_ref(expected.key.edition_id)
+            if (type(cached_c) is CoverDocumentScope
+                    and is_canonical_cover_document(cached_c)
+                    and cached_c == own_c):
+                scope = cached_c
+            else:
+                canonical = matching_live_public_canonical_ref(
+                    item, identity_id=viewer_id,
+                )
+                scope = canonical if canonical is not None else admitted
     return VerifiedSearchDocumentCover(
         source_item=item, row_key=row_key,
         document=scope, context=context,
