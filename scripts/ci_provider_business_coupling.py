@@ -516,6 +516,10 @@ def main(argv: list[str] | None = None) -> int:
     # semantic site must still name its offending IDs on the failure console.
     if result["stale_reviews"]:
         print("Stale business-review IDs:", result["stale_reviews"], file=sys.stderr)
+        # P0_RELOCATION_DIAGNOSTIC: temporary site inventory for review migration.
+        for site in result["sites"]:
+            if site["path"] == "src/cifereca/gui/settings_editor_actions.py":
+                print("REVIEW_RELOCATION_CANDIDATE", site["id"], site["function"], site["fingerprint"], site["signal_lines"], file=sys.stderr)
     return int(bool(result["stale_reviews"]))
 
 
