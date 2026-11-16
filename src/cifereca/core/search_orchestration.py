@@ -1896,6 +1896,7 @@ def _stamp_cached_public_notice_refs(
         if type(row) is not SearchResult:
             continue
         row.__dict__.pop("_core_notice_cover_document_ref", None)
+        row.__dict__.pop("_core_notice_cover_document_epoch", None)
         safe_url = _shared_catalogue_cover_url(row.thumbnail_url)
         if safe_url is None:
             continue
@@ -1934,6 +1935,7 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
     for row in rows:
         if type(row) is SearchResult:
             row.__dict__.pop("_core_notice_cover_document_ref", None)
+            row.__dict__.pop("_core_notice_cover_document_epoch", None)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
     # The stronger #5073 UI/action proof remains authoritative for actions.
@@ -2067,6 +2069,7 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
                 # ephemeral DocumentRef; it is not serialized into the
                 # provider cache or inferred by GTK from the image URL.
                 row._core_notice_cover_document_ref = persisted.document
+                row._core_notice_cover_document_epoch = persisted.epoch
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # The historical catalogue mirror is still independently
                 # useful; one malformed provider notice must not abort other
