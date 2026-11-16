@@ -19,7 +19,7 @@ from cifereca.identities import AdeptProfileResolutionError
 
 
 def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
-             profiles=None):
+             profiles=None, owner_current=None):
     loan = NS(source_provider=provider, source_credential="reader", source_account_id="primary", id="loan-1", record_id="edition-1")
     borrower = Mock(return_value=("identity-1", borrower_code))
     resolver = Mock(return_value=("reader-a", "explicit_binding"))
@@ -30,7 +30,13 @@ def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
     ])
     store = Mock()
     owner = NS(
-        storage=NS(acquisition_put=store),
+        storage=NS(
+            acquisition_put=store,
+            provider_connection_owner_current=(
+                owner_current if owner_current is not None
+                else Mock(return_value=True)
+            ),
+        ),
         _paris_adept_identity_for_loan=borrower,
         resolve_adept_profile_for_identity=resolver,
         kobo_profiles=provider_profiles,
