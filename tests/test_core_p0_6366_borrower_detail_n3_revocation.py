@@ -229,3 +229,66 @@ def test_detail_header_routes_staged_borrower_proof_through_n3_guard():
     assert out.index("bind_borrower_public_c_detail") < out.index(
         "bind_declared_document_cover"
     )
+
+
+@pytest.mark.parametrize("phase", ["before_decode", "during_decode"])
+def test_shared_coverview_never_retains_revoked_n3_texture(
+    phase,
+):
+    # Execute the actual CoverView._apply_result body without a GTK runtime.
+    # A proof may be revoked before the callback OR between GDK decode and
+    # the final N0 paint notification. Both must end at the placeholder.
+    import time
+
+    tree = ast.parse((ROOT / "book_widgets.py").read_text(encoding="utf-8"))
+    cls = next(x for x in tree.body
+               if isinstance(x, ast.ClassDef) and x.name == "CoverView")
+    fn = next(x for x in cls.body
+              if isinstance(x, ast.FunctionDef) and x.name == "_apply_result")
+    module = ast.fix_missing_locations(
+        ast.Module(body=[fn], type_ignores=[]),
+    )
+    texture = object()
+    pixels = []
+    def new_texture(_file):
+        pixels.append("decode")
+        return texture
+    ns = {
+        "CoverLoader": CoverLoader, "Path": Path, "time": time,
+        "Gio": NS(File=NS(new_for_path=lambda path: path)),
+        "Gdk": NS(Texture=NS(new_from_file=new_texture)),
+    }
+    exec(compile(module, str(ROOT / "book_widgets.py"), "exec"), ns)
+
+    checks = []
+    def current():
+        checks.append("check")
+        return phase == "during_decode" and len(checks) == 1
+
+    class Picture:
+        paintable = None
+        def set_paintable(self, value):
+            self.paintable = value
+
+    picture = Picture()
+    spinner = NS(stop=lambda: None, set_visible=lambda _: None)
+    placeholder = NS(set_visible=lambda *_a: None)
+    result = []
+    loader = NS(
+        note_ui_stale=lambda: result.append("stale"),
+        note_ui_decode=lambda _elapsed: result.append("decode-time"),
+        note_ui_applied=lambda: result.append("applied"),
+    )
+    cover = NS(
+        _generation=7, _document_check=current,
+        _width=100, _height=150, _missing_width=40, _missing_height=60,
+        spinner=spinner, picture=picture, placeholder=placeholder,
+        _set_logical_size=lambda *_a: None,
+        _show_missing=lambda: picture.set_paintable(None),
+    )
+    assert ns["_apply_result"](cover, 7, loader, Path("/no/actual/file")) is False
+    assert picture.paintable is None
+    assert "applied" not in result
+    assert "stale" in result
+    assert ("decode" in pixels) is (phase == "during_decode")
+    assert len(checks) == (1 if phase == "before_decode" else 2)
