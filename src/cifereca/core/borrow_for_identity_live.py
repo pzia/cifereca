@@ -8,6 +8,7 @@ options are non-executable; a later explicit action must revalidate everything.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from re import fullmatch
 from time import time
 
 from ..models import Account, SearchResult
@@ -19,7 +20,7 @@ from ..plugin_api.lending_borrower_eligibility import (
     BorrowerOperationEvidence as ExactEditionBorrowerEvidence,
     assess_borrower_eligibility,
 )
-from ..providers.base import ProviderDescriptor
+from ..providers.base import ManualBorrowPolicy, ProviderDescriptor
 from .borrow_action_scope import borrow_claim_key
 from .borrow_for_identity_preview import (
     BorrowForIdentityPreview, BorrowForIdentityWitness, BorrowOfferRejection,
@@ -210,16 +211,6 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                 or sum(other is account for other in rows) != 1):
             return "lender_unavailable"
 
-        # Paris's normal borrow contract supports exactly the selected
-        # primary. Other profiles are NEVER activated to inspect this fact.
-        if (evidence.provider_id == "paris"
-                and not configured_primary_source_current(
-                    service, item, evidence.identity_id,
-                    provider_id="paris",
-                    selection_key="primary_paris_connection_id",
-                )):
-            return "lender_unavailable"
-
         plugin_id = service._provider_plugin_ids.get(evidence.provider_id)
         manager = service._plugin_manager
         if type(plugin_id) is not str or not plugin_id or manager is None:
@@ -239,6 +230,27 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         if (type(descriptor) is not ProviderDescriptor
                 or descriptor.id != evidence.provider_id):
             return "capability_unverified"
+        # The installed provider owns its primary-source rule. Never turn an
+        # absent/hostile manual-borrow policy into a fallback on the selected
+        # GTK account or hardcode a supplier's configuration key in Core.
+        policy = descriptor.manual_borrow_policy
+        if (type(policy) is not ManualBorrowPolicy
+                or type(policy.schema) is not str
+                or policy.schema != "cifereca.manual-borrow/1"
+                or type(policy.docbase) is not str
+                or type(item.docbase) is not str
+                or policy.docbase != item.docbase
+                or type(policy.source_selection_key) not in (str, type(None))):
+            return "capability_unverified"
+        source_key = policy.source_selection_key
+        if source_key is not None:
+            if (fullmatch(r"[a-z][a-z0-9_]{0,63}", source_key) is None
+                    or not configured_primary_source_current(
+                        service, item, evidence.identity_id,
+                        provider_id=evidence.provider_id,
+                        selection_key=source_key,
+                    )):
+                return "lender_unavailable"
         capability = assess_lending_operation(
             "loan.borrow",
             manifest_capabilities=declaration.capabilities,
@@ -296,6 +308,8 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         )
         if (service._sessions.get(session_key) is not session
                 or _inert_session_state(session) is not state
+                or state.get("descriptor") is not descriptor
+                or descriptor.manual_borrow_policy is not policy
                 or state.get("connected") is not True
                 or state.get("_epoch", source_epoch) != session_epoch
                 or service.storage.identity_for_connection(
