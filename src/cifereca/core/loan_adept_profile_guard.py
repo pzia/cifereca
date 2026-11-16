@@ -57,16 +57,27 @@ def check(
         # Re-read its exact native owner after EACH callback, including the
         # last check just before ADEPT fulfillment; never fall back to GTK.
         try:
-            return (
-                self.storage.provider_connection_owner_current(
-                    loan.source_provider, loan.source_credential,
-                    identity.identity_id,
-                ) is True
-                and self.storage.source_connection_epoch_get(
-                    loan.source_provider, loan.source_credential,
-                    identity.identity_id,
-                ) == expected_source_epoch
+            owner_current = self.storage.provider_connection_owner_current(
+                loan.source_provider, loan.source_credential,
+                identity.identity_id,
             )
+            epoch_current = self.storage.source_connection_epoch_get(
+                loan.source_provider, loan.source_credential,
+                identity.identity_id,
+            )
+            return (owner_current is True and type(epoch_current) is int
+                    and epoch_current == expected_source_epoch
+                    and type(identity.identity_id) is str
+                    and identity.identity_id == ledger_base.get("identity_id")
+                    and type(loan.source_provider) is str
+                    and loan.source_provider == ledger_base.get("provider_id")
+                    and type(loan.source_credential) is str
+                    and loan.source_credential == ledger_base.get("credential_id")
+                    and type(loan.source_account_id) in (str, type(None))
+                    and loan.source_account_id == ledger_base.get("account_id")
+                    and type(loan.id) is str and loan.id == expected_loan_id
+                    and type(loan.record_id) in (str, type(None))
+                    and loan.record_id == expected_record_id)
         except Exception:
             return False
 
