@@ -267,7 +267,7 @@ def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
 
 
 
-def verify_paris_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE_LOG) -> dict[str, str]:
+def verify_loan_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE_LOG) -> dict[str, str]:
     """Fresh exact-account read after ADEPT; never send ReturnDigitalLoan."""
     from .loan_return_guard import return_ref
     try:
@@ -291,3 +291,8 @@ def verify_paris_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE
             "unavailable": "verification_unavailable",
         }[verification],
     }
+
+
+# Historical public module-level ABI: no provider-specific routing or mutation.
+# New Core call sites use the source-neutral implementation above.
+verify_paris_return_inventory = verify_loan_return_inventory
