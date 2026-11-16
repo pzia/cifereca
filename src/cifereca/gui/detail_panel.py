@@ -72,6 +72,7 @@ class DetailPanel(Gtk.Box):
         # profile-wide association or secondary documentary cache.
         self._next_cover_evidence = None
         self._next_cover_document_ref = None
+        self._next_paris_public_c_link = None
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_vexpand(True)
         self.action_scroll = AdaptiveActionBar(
@@ -230,12 +231,31 @@ class DetailPanel(Gtk.Box):
             # An independently attested local/search N1 source takes priority.
             self._bind_cover(cover, thumbnail, cover_evidence=evidence)
         elif document is not None:
-            from .declared_document_cover import bind_declared_document_cover
-            bind_declared_document_cover(
-                cover, self.window.covers,
-                getattr(self.window, "document_covers", None), document,
-                variant="detail", priority=0,
-            )
+            public_link = getattr(self, "_next_paris_public_c_link", None)
+            if public_link is not None:
+                # An account-bound personal cover must not outlive its
+                # original Loan/History occurrence or a source A->B->A.
+                from .notice_c_paris_personal_bridge import public_c_is_current
+                from .document_cover_service import DocumentCoverService
+                service = getattr(self.window, "document_covers", None)
+                if (public_link.document == document
+                        and type(service) is DocumentCoverService
+                        and public_c_is_current(self.window, public_link)):
+                    cover.bind_document(
+                        service, document, variant="detail", priority=0,
+                        is_current=lambda: public_c_is_current(
+                            self.window, public_link,
+                        ),
+                    )
+                else:
+                    cover.bind_url(self.window.covers, None, priority=0)
+            else:
+                from .declared_document_cover import bind_declared_document_cover
+                bind_declared_document_cover(
+                    cover, self.window.covers,
+                    getattr(self.window, "document_covers", None), document,
+                    variant="detail", priority=0,
+                )
         else:
             cover.bind_url(self.window.covers, thumbnail, priority=0)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -716,7 +736,13 @@ class DetailPanel(Gtk.Box):
         # The list and detail get the same opaque Core document. Scope lives
         # only for this synchronous rendering, never as a second cache.
         previous_ref = getattr(self, "_next_cover_document_ref", None)
-        self._next_cover_document_ref = getattr(presentation, "cover_document_ref", None)
+        declared = getattr(presentation, "cover_document_ref", None)
+        personal = getattr(self, "_next_paris_public_c_link", None)
+        if personal is not None and declared is None:
+            # The synchronous Loan display keeps its original actions and
+            # never changes the source DTO to carry a catalogue entitlement.
+            declared = personal.document
+        self._next_cover_document_ref = declared
         try:
             self._cover_and_title(
                 presentation.title,
@@ -904,6 +930,21 @@ class DetailPanel(Gtk.Box):
         finally:
             self._next_cover_evidence = None
 
+    def show_loan_public_c(self, loan: Loan, *, public_link) -> None:
+        """Normal Loan detail/actions with a separately verified public C N2.
+
+        The Core public C can only draw an image; it cannot create/revoke
+        loans, offers, account scope, downloads or any ADEPT action.
+        """
+        if (self._next_paris_public_c_link is not None
+                or self._next_cover_evidence is not None):
+            raise RuntimeError("nested exact Paris public C render")
+        self._next_paris_public_c_link = public_link
+        try:
+            self.show_loan(loan)
+        finally:
+            self._next_paris_public_c_link = None
+
     def show_loan(self, loan: Loan, include_pnb_action: bool = True) -> None:
         self._cancel_meta_request()
         source = self.window.service.provider_display_name(str(loan.source_provider or loan.provider))
@@ -1036,6 +1077,20 @@ class DetailPanel(Gtk.Box):
         finally:
             self._next_cover_evidence = None
 
+    def show_history_public_c(self, item: HistoryItem, *, public_link) -> None:
+        """Staged exact historical source C; restore after this render."""
+        if (self._next_paris_public_c_link is not None
+                or self._next_cover_document_ref is not None
+                or self._next_cover_evidence is not None):
+            raise RuntimeError("nested exact Paris history C render")
+        self._next_paris_public_c_link = public_link
+        self._next_cover_document_ref = public_link.document
+        try:
+            self.show_history(item)
+        finally:
+            self._next_paris_public_c_link = None
+            self._next_cover_document_ref = None
+
     def show_history(self, item: HistoryItem) -> None:
         self._cancel_meta_request()
         clear_box(self.content)
@@ -1052,6 +1107,7 @@ class DetailPanel(Gtk.Box):
             [medium, item.year or ""],
         )
         if (not item.thumbnail_url and not present_cover
+                and self._next_paris_public_c_link is None
                 and self.window.service.current_account.is_primary):
             context = history_cover_context(self.window)
             cover.show_loading()
@@ -1084,7 +1140,8 @@ class DetailPanel(Gtk.Box):
                 item.default_thumbnail_url, resolved,
                 scope=history_cover_request_scope(context),
             )
-        elif not item.thumbnail_url and not present_cover:
+        elif (not item.thumbnail_url and not present_cover
+              and self._next_paris_public_c_link is None):
             # Compte lié : pas de requêtes de reconstruction automatiques.
             cover.reset()
         self._group("Historique", [
