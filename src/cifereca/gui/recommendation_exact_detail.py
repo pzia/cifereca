@@ -180,7 +180,12 @@ def present_loaded_search_detail_in_place(
         except Exception:
             return False
 
+    # Source-C lookup and holdings run on the SAME existing Core worker.
+    # A plugin recommendation cannot contribute documentary evidence here.
+    public_c_document = None
+
     def work() -> ItemDetail:
+        nonlocal public_c_document
         if not source_current() or not loaded_facts_current():
             from ..plugin_api import Cancelled
             raise Cancelled("Source de consultation périmée.")
@@ -189,6 +194,12 @@ def present_loaded_search_detail_in_place(
             if current is None or current[1] != known_snapshot:
                 from ..plugin_api import Cancelled
                 raise Cancelled("Notice catalogue modifiée.")
+            from ..core.notice_c_recommendation_projection import (
+                known_recommendation_public_c_document,
+            )
+            public_c_document = known_recommendation_public_c_document(
+                service.storage, known_snapshot, **coords,
+            )
         return service.holdings(item, query, force=False)
 
     def deliver(detail: object) -> None:
@@ -211,9 +222,10 @@ def present_loaded_search_detail_in_place(
                 return
         elif _loaded_item(window, coords) is not item:
             return
-        view.show_existing_search_detail(
-            item, detail, context_sections=context_sections,
-        )
+        presentation_kwargs = {"context_sections": context_sections}
+        if known_source and public_c_document is not None:
+            presentation_kwargs["public_c_document"] = public_c_document
+        view.show_existing_search_detail(item, detail, **presentation_kwargs)
 
     def failed(_error: BaseException) -> None:
         # A canceled/obsolete lookup is not an availability failure; never
@@ -235,7 +247,10 @@ def present_loaded_search_detail_in_place(
         # Do not project a fake ItemDetail or expose raw provider errors.
         fallback = getattr(view, "show_existing_search_unavailable", None)
         if callable(fallback):
-            fallback(item, context_sections=context_sections)
+            presentation_kwargs = {"context_sections": context_sections}
+            if known_source and public_c_document is not None:
+                presentation_kwargs["public_c_document"] = public_c_document
+            fallback(item, **presentation_kwargs)
         window.toast("Disponibilités indisponibles pour cette notice.", 5)
 
     try:

@@ -2229,6 +2229,7 @@ def _mirror_remote_results(
             row.__dict__.pop("_core_notice_cover_document_epoch", None)
             row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
             row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
+            row.__dict__.pop("_core_notice_cross_provider_proof", None)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
     # The stronger #5073 UI/action proof remains authoritative for actions.
@@ -2423,6 +2424,39 @@ def _mirror_remote_results(
                             row._core_notice_canonical_cover_document_epoch = (
                                 canonical.epoch
                             )
+                # Reconcile only when TWO separately persisted public source
+                # observations have a real common v14 completed OriginLink.
+                # This is a single worker-only scan per Search batch; no
+                # supplier dispatch, GTK SQLite read or title/ISBN join.
+                from .notice_c_origin_link_producer import (
+                    reconcile_origin_linked_public_batch,
+                    _CORE_ORIGIN_LINK_C_WITNESS,
+                )
+                verified_sources = [
+                    persisted for row, persisted in zip(
+                        producing_rows, persisted_batch,
+                    )
+                    if (persisted is not None
+                        and persisted.observation.parser_version == "2"
+                        and _verified_public_cover_witness(row))
+                ]
+                linked = reconcile_origin_linked_public_batch(
+                    self.storage, verified_sources,
+                ) if verified_sources else {}
+                for row, persisted in zip(producing_rows, persisted_batch):
+                    if persisted is None or not _verified_public_cover_witness(row):
+                        continue
+                    shared = linked.get(persisted.document.source_key)
+                    if shared is None:
+                        continue
+                    row._core_notice_canonical_cover_document_ref = shared.document
+                    row._core_notice_canonical_cover_document_epoch = shared.epoch
+                    row._core_notice_cross_provider_proof = (
+                        _CORE_ORIGIN_LINK_C_WITNESS,
+                        persisted.document.source_key,
+                        shared.document.source_key,
+                        shared.epoch,
+                    )
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # Catalogue mirror remains independent. A broken source
                 # index cannot invent a cover or leak provider bytes/paths.
