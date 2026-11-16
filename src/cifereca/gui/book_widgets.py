@@ -751,6 +751,11 @@ class BookListCell(Gtk.Box):
                        is not None) else {}),
             )
             return
+        if getattr(item, "_cover_plugin_c_source", None) is not None:
+            # Missing N2 service or revoked document is NOT permission
+            # to load the old plugin thumbnail through the raw URL path.
+            self.cover.bind_url(self.cover_loader, None, priority=10)
+            return
         self.cover.bind_url(
             self.cover_loader, item.thumbnail_url or item.default_thumbnail_url,
             priority=10,
@@ -849,6 +854,10 @@ class BookListCell(Gtk.Box):
                        or getattr(item, "_cover_plugin_c_source", None)
                        is not None) else {}),
                 )
+        elif getattr(item, "_cover_plugin_c_source", None) is not None:
+            # A C-specific widget cannot fall back to an unqualified URI
+            # just because its exact N2 service became unavailable.
+            self.cover.bind_url(self.cover_loader, None, priority=10)
         elif item.thumbnail_url:
             self.cover.bind_url(
                 self.cover_loader, item.thumbnail_url, priority=10,
