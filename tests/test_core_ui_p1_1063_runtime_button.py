@@ -212,3 +212,19 @@ def test_late_adept_result_rejected_when_saved_profile_changes_without_ui_epoch(
     args[2](result)
     assert reads == ["alice"]
     assert not hasattr(editor["normal_adept_status"], "subtitle")
+
+
+def test_late_adept_result_rejected_when_persisted_binding_read_fails(monkeypatch):
+    host, editor, button, submits, reads, _ = _harness(monkeypatch)
+    button.emit("clicked")
+    args, _ = submits[-1]
+    result = args[1]()
+
+    def unavailable(*_args):
+        raise RuntimeError("synthetic private SQLite failure")
+
+    host.service.storage.adept_profile_binding_get = unavailable
+    args[2](result)
+    assert reads == ["alice"]
+    assert button.sensitive is True
+    assert not hasattr(editor["normal_adept_status"], "subtitle")
