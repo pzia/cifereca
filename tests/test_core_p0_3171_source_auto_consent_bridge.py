@@ -178,6 +178,7 @@ def test_unknown_right_with_authenticated_downloadable_file_publishes_without_en
         db, library_root=tmp_path / "EBooks", path=book,
         source=service.source, snapshot=snapshot, final_sha256=SHA,
         delivery_receipt_ref="authenticated-delivery-receipt",
+        expected_source_policy_revision="a" * 32,
     )
     assert result.artifact_id == "sha256:" + SHA
     assert len(db.placements()) == 1
