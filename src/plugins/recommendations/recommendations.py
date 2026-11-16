@@ -2664,8 +2664,14 @@ class UxRecommendationsView:
             if reasons:
                 meta_parts.append("Pourquoi : " + reasons)
 
+            # Headless legacy render hosts may omit the identity widget.
+            # They cannot attest a Core public SearchResult, so no C ref.
+            try:
+                identity_for_cover = self.selected_identity_id()
+            except (AttributeError, TypeError):
+                identity_for_cover = None
             cover_ref = _attested_recommendation_c_cover(
-                ranked, identity_id=self.selected_identity_id(),
+                ranked, identity_id=identity_for_cover,
                 catalogue_sources=catalogue_sources,
             )
             rows.append(
