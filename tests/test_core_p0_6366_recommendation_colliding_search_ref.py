@@ -8,12 +8,37 @@ base or another edition's thumbnail/capabilities.
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace as NS
+import ast
 import sys
 
 from cifereca.gui.recommendation_exact_cover import loaded_recommendation_cover
-from cifereca.gui.search_results import _remote_result_row_keys
 from tests.test_core_p1_6168_search_remote_document_gateway import host, CATALOG
+
+
+def _remote_result_row_keys(rows):
+    # Exercise the actual GTK-free function without importing Gtk widgets in
+    # the Core-only pytest job; repository headless tests use this contract.
+    source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/search_results.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    names = {
+        "_catalogue_edition_scope", "_exact_remote_catalogue_scope",
+        "_remote_result_row_keys",
+    }
+    functions = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in names
+    ]
+    assert len(functions) == 3
+    code = ast.fix_missing_locations(ast.Module(body=[
+        ast.ImportFrom(module="__future__",
+                       names=[ast.alias(name="annotations")], level=0),
+        *functions,
+    ], type_ignores=[]))
+    namespace = {}
+    exec(compile(code, str(source), "exec"), namespace)
+    return namespace["_remote_result_row_keys"](rows)
 
 
 def setup_two_versions():
