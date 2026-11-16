@@ -18,7 +18,17 @@ def _selected_adept_source(saved: dict[str, Any]) -> tuple[bool, str | None, str
     explicit = ("adept_source_provider_id" in saved
                 or "adept_source_connection_id" in saved)
     if not explicit:
-        return False, None, None
+        # Read-only legacy Config bridge. "primary_paris_connection_id"
+        # explicitly designates the historical Paris source; never infer it
+        # from an ADEPT profile or from the user's current GTK selection.
+        legacy = saved.get("primary_paris_connection_id")
+        if legacy is None:
+            return False, "paris", None
+        if (type(legacy) is not str or len(legacy) > 256
+                or (legacy and (
+                    legacy != legacy.strip() or not legacy.isprintable()))):
+            return False, None, None
+        return False, "paris", legacy or None
     provider = saved.get("adept_source_provider_id")
     connection = saved.get("adept_source_connection_id")
     if (not valid_provider_identifier(provider)
@@ -32,8 +42,6 @@ def _selected_adept_source(saved: dict[str, Any]) -> tuple[bool, str | None, str
 def _saved_adept_status(core, identity_id: str, saved: dict[str, Any]) -> dict[str, Any]:
     """Read saved source only; never infer provider from an ADEPT profile."""
     explicit, provider, credential = _selected_adept_source(saved)
-    if not explicit:
-        return core.normal_paris_adept_status(identity_id)
     if provider is None:
         return {
             "identity_id": identity_id, "status": "to_configure",
@@ -267,16 +275,15 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     _local_adept_binding_caption(start_status)
                 )
                 return
-            if selected_source[0]:
-                # Only this exact saved provider/connection is inspected.
-                runtime_method = admitted_core.check_source_adept_runtime
-                runtime_probe = lambda identity: runtime_method(
-                    identity, source_provider_id=selected_source[1],
-                    source_label=selected_source[1],
-                    primary_connection_id=selected_source[2],
-                )
-            else:
-                runtime_probe = admitted_core.check_normal_paris_adept_runtime
+            # No more active Paris-specific Core facade in Settings: both the
+            # legacy saved-primary source and new explicit provider pair use
+            # the same source-scoped admission and runtime observation.
+            runtime_method = admitted_core.check_source_adept_runtime
+            runtime_probe = lambda identity: runtime_method(
+                identity, source_provider_id=selected_source[1],
+                source_label=selected_source[1],
+                primary_connection_id=selected_source[2],
+            )
             generations = (
                 getattr(self, "_identity_context_generation", None),
                 getattr(self, "_account_context_generation", None),
