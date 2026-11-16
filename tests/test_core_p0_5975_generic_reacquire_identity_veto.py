@@ -12,7 +12,7 @@ from contextlib import nullcontext
 import pytest
 
 import cifereca.services as services_module
-from cifereca.models import Loan
+from cifereca.models import Account, Loan
 from tests.test_sync_state_contract import _service
 
 
@@ -26,9 +26,9 @@ def _setup(tmp_path, monkeypatch, *, provider="synthetic-library"):
         id="loan-shared", record_id="edition-1", provider="PNB",
         medium="digital", title="Synthetic loan",
         source_provider=provider, source_credential="card-1",
-        source_account_id="reader-1", identity_id="default",
+        source_account_id="primary", identity_id="default",
     )
-    monkeypatch.setattr(services_module, "InterProcessLock",
+    # Test the inter-identity ledger veto with a genuinely admitted exact\n    # primary borrower; an unproven linked borrower must fail earlier.\n    service.accounts = [Account(\n        provider_id=provider, credential_id="card-1",\n        unique_id="", is_primary=True, identity_id="default",\n    )]\n    monkeypatch.setattr(services_module, "InterProcessLock",
                         lambda *_a: nullcontext())
     monkeypatch.setattr(services_module, "acquisition_lock_file",
                         lambda: tmp_path / "reacquire.lock")
