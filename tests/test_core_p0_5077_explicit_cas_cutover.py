@@ -26,8 +26,9 @@ def test_explicit_cas_off_revokes_legacy_on_without_deleting_legacy_row(
     db.metadata_set(prefix + suffix, "legacy-on")
     db.metadata_set(revision_prefix + suffix, "a" * 32)
     with db._lock, db._connect() as conn:
-        assert bridge.toggle_state(conn, key) == "on"
-        assert consent_current_in_transaction(conn, key)
+        # Legacy ON is now a veto, not a source-wide grant.
+        assert bridge.toggle_state(conn, key) == "off"
+        assert not consent_current_in_transaction(conn, key)
 
     # The existing, explicitly invoked CAS writer is the only cutover path.
     # This negative choice never inherits ON from the historical metadata.

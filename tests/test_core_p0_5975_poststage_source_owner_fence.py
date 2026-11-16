@@ -121,12 +121,9 @@ def test_revoked_source_during_poststage_callbacks_never_reaches_adept(
         state["current"] = False
 
     if stage == "borrower":
-        if provider == "paris":
-            borrower.side_effect = lambda *_a, **_kw: (revoke() or ("identity-1", None))
-        else:
-            # Non-Paris never invokes the Paris resolver; revoke after a
-            # successful preflight via the profile callback instead.
-            resolver.side_effect = lambda *_a: (revoke() or ("reader-a", "binding"))
+        # All staged ACSM sources now pass the same borrower callback.
+        # Revocation during that callback must veto even its positive owner.
+        borrower.side_effect = lambda *_a, **_kw: (revoke() or ("identity-1", None))
     elif stage == "profile":
         resolver.side_effect = lambda *_a: (revoke() or ("reader-a", "binding"))
     else:
@@ -164,7 +161,7 @@ def test_sqlite_rebind_after_staging_revokes_existing_profile_proof(tmp_path):
         "status": "attention_required", "loan_id": loan.id,
         "code": "adept_borrower_ambiguous", "retry": "explicit_only",
     }
-    borrower.assert_not_called()
+    borrower.assert_called_once_with(loan, connection_identity_id="identity-1")
     profiles.assert_not_called()
     store.assert_called_once()
 
@@ -180,7 +177,7 @@ def test_sqlite_owner_unchanged_preserves_nonparis_profile_readiness(tmp_path):
         owner_current=storage.provider_connection_owner_current,
     )
     assert invoke() == ("identity-1", "reader-a")
-    borrower.assert_not_called()
+    borrower.assert_called_once_with(loan, connection_identity_id="identity-1")
     resolver.assert_called_once_with("identity-1")
     store.assert_not_called()
 
@@ -192,11 +189,15 @@ def test_automatic_admission_fences_live_owner_before_provider_or_ledger_write(
     tmp_path, monkeypatch, provider, stage,
 ):
     from cifereca.core.loan_acquisition_admission import resolve
-    from cifereca.models import Loan
+    from cifereca.models import Account, Loan
     from tests.test_automatic_loan_admission import LOGGER, _forbid_work
     from tests.test_sync_state_contract import _service
 
     service = _service(tmp_path)
+    service.accounts = [Account(
+        provider_id=provider, credential_id="reader", unique_id="",
+        identity_id="default", is_primary=True,
+    )]
     try:
         service.storage.provider_connection_put({
             "provider_id": provider, "credential_id": "reader",
@@ -248,11 +249,15 @@ def test_live_sqlite_source_owner_does_not_prevent_normal_automatic_admission(
     tmp_path, monkeypatch,
 ):
     from cifereca.core.loan_acquisition_admission import resolve
-    from cifereca.models import Loan
+    from cifereca.models import Account, Loan
     from tests.test_automatic_loan_admission import LOGGER, _forbid_work
     from tests.test_sync_state_contract import _service
 
     service = _service(tmp_path)
+    service.accounts = [Account(
+        provider_id="synthetic-pnb", credential_id="reader", unique_id="",
+        identity_id="default", is_primary=True,
+    )]
     try:
         service.storage.provider_connection_put({
             "provider_id": "synthetic-pnb", "credential_id": "reader",

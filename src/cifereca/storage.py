@@ -3603,6 +3603,12 @@ class Storage:
                  "confirmed_by", "confirmed_at", "updated_at"), row[:6],
             )),
             "retired_for_authority": bool(row[6]),
+            # Historical table has no provider column: its schema was
+            # exclusively Paris. Expose immutable origin evidence so a
+            # source-neutral Core reader can compare native coordinates
+            # without inventing a provider-specific decision or replaying
+            # an unscoped v15 grant for another library.
+            "source_provider": "paris",
         }
 
     def paris_borrower_adept_bindings(

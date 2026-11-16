@@ -38,24 +38,24 @@ def test_manual_side_by_side_remains_possible_without_exact_isbn(
     session = LocalInspection(audit, lambda: True, 'alice')
 
     rights = session.page(provider='numilog', state='rights_without_verified_file')
-    assert rights.total == 3
+    assert rights.total == 6
     assert all(session.candidate_files(case.key) == () for case in rights.cases)
 
     # Manual exploration includes both unlinked and unhashed file states;
     # neither pairing nor provider ownership is introduced for Numilog.
-    assert session.page(state='local_file_without_attested_right').total == 2
+    assert session.page(state='local_file_without_attested_right').total == 5
     first = session.unconfirmed_files(limit=1)
-    assert first.total == 3 and len(first.cases) == 1
+    assert first.total == 6 and len(first.cases) == 1
     assert first.cases[0].provider == 'unattributed'
-    for offset in range(3):
+    for offset in range(6):
         item = session.unconfirmed_files(offset=offset, limit=1)
-        assert item.total == 3 and len(item.cases) == 1
+        assert item.total == 6 and len(item.cases) == 1
         assert 'code-' in item.cases[0].label
         assert 'confirmed_link' not in item.cases[0].states
 
     unverified = session.unconfirmed_files(query='code-5', limit=1)
     assert unverified.total == 1 and 'unverified_file' in unverified.cases[0].states
-    assert session.unconfirmed_files(query='code-0', limit=1).total == 0
+    assert session.unconfirmed_files(query='code-0', limit=1).total == 1
     assert session.unconfirmed_files(query='FOREIGN_SECRET').total == 0
     assert all('PRIVATE_OTHER_IDENTITY' not in case.details
                for case in session.page().cases)

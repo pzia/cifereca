@@ -131,11 +131,69 @@ def test_missing_or_positive_readiness_keeps_old_compatibility(profile_row):
     store.assert_not_called()
 
 
-def test_nonparis_profile_resolution_does_not_change_borrower_account():
-    invoke, store, borrower, resolver, profiles, *_ = _fixture(provider="kobo")
+@pytest.mark.parametrize("provider", [
+    "kobo", "biblioaccess.la-rochelle", "future-lender",
+])
+def test_any_acsm_source_revalidates_exact_borrower_before_profile(provider):
+    invoke, store, borrower, resolver, profiles, loan, _opts = _fixture(
+        provider=provider,
+    )
     assert invoke() == ("identity-1", "reader-a")
-    borrower.assert_not_called()
+    borrower.assert_called_once_with(loan, connection_identity_id="identity-1")
+    resolver.assert_called_once_with("identity-1")
     store.assert_not_called()
+
+
+@pytest.mark.parametrize("provider", [
+    "kobo", "biblioaccess.la-rochelle", "future-lender",
+])
+@pytest.mark.parametrize("borrower_code,expected", [
+    ("adept_borrower_binding_required", "adept_borrower_binding_required"),
+    (False, "adept_borrower_ambiguous"),
+])
+def test_other_sources_missing_borrower_grant_keep_staged_acsm_without_adept(
+    provider, borrower_code, expected,
+):
+    invoke, store, borrower, resolver, profiles, loan, opts = _fixture(
+        provider=provider, borrower_code=borrower_code,
+    )
+    assert invoke() == {
+        "status": "attention_required", "loan_id": loan.id,
+        "code": expected, "retry": "explicit_only",
+    }
+    borrower.assert_called_once_with(loan, connection_identity_id="identity-1")
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    receipt = store.call_args.args[0]
+    assert receipt["attention_code"] == expected
+    assert receipt["provider_id"] == provider
+    assert receipt["metadata"]["acsm_staging_path"] == str(opts["retained_acsm"])
+
+
+def test_other_source_borrower_callback_cannot_retarget_poststaging_acsm():
+    invoke, store, borrower, resolver, profiles, loan, _opts = _fixture(
+        provider="future-lender",
+    )
+    def mutate(*_args, **_kwargs):
+        loan.source_account_id = "another-reader"
+        return "identity-1", None
+    borrower.side_effect = mutate
+    assert invoke()["code"] == "adept_borrower_ambiguous"
+    borrower.assert_called_once()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    assert store.call_args.args[0]["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
+
+
+def test_other_source_resolver_exception_fails_closed_and_keeps_acsm():
+    invoke, store, borrower, resolver, profiles, *_ = _fixture(
+        provider="biblioaccess.la-rochelle",
+    )
+    borrower.side_effect = RuntimeError("PRIVATE_PROVIDER_SECRET")
+    assert invoke()["code"] == "adept_borrower_ambiguous"
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    assert store.call_args.args[0]["attention_code"] == "adept_borrower_ambiguous"
 
 
 def test_profile_inventory_failure_is_nonblocking_as_before():

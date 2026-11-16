@@ -1310,7 +1310,14 @@ class MainWindow(Adw.ApplicationWindow):
         # Only the exact Core source cover may enter N1. The separately
         # retained History visual fallback is bound to this SAME DTO and is
         # never promoted to documentary evidence or a Loan entitlement.
-        visual_cover = presented.thumbnail_url or cached_history_cover(self, x)
+        from .borrower_public_c_bridge import exact_history_public_c
+        public_c = exact_history_public_c(self, x)
+        # If the exact source has no direct image, choose a real retained
+        # public N2 C over a title-search visual-only History fallback.
+        visual_cover = (
+            None if public_c is not None
+            else presented.thumbnail_url or cached_history_cover(self, x)
+        )
         row = BookListItem(
             x.id, x.title, x.author or "",
             f"Emprunté le {fr_date(x.borrowed_at)} · {x.year or x.document_type or ''}",
@@ -1338,6 +1345,19 @@ class MainWindow(Adw.ApplicationWindow):
             # cached_history_cover() is NOT an authoritative book link.
             row._cover_document_ref = history_evidence.document
             row._cover_history_evidence = history_evidence
+        elif public_c is not None:
+            service = self.service
+            row._cover_document_ref = public_c.document
+            row._cover_borrower_public_c_receipt = public_c
+            row._borrower_public_c_source = x
+            row._borrower_public_c_context = (
+                x.identity_id, service._account_context_epoch,
+                service._source_context_epoch,
+            )
+            row._history_cover_revision = self._history_cover_revision
+            # No legacy HistoryCoverResolver may infer a second cover by title.
+            row.cover_provider = None
+            row.cover_record_id = None
         self._attach_row_facets([row],{x.id:{'author':x.author,'source_provider':x.source_provider}},self.search_controls)
         # The history refresh may replace the cover or its fallback while
         # keeping the same upstream row ID. MasterDetailPage's append-fast
@@ -1356,6 +1376,11 @@ class MainWindow(Adw.ApplicationWindow):
             # A->B->A and history revision changes must force cell rebind
             # even when the same public image URL remains on disk in N3.
             row._public_row_content += (history_evidence,)
+        elif public_c is not None:
+            row._public_row_content += (
+                public_c.document, public_c.epoch,
+                self._history_cover_revision,
+            )
         return row
 
     def _rerender_history(self) -> None:
@@ -1396,7 +1421,9 @@ class MainWindow(Adw.ApplicationWindow):
                 if proof is not None and callable(renderer):
                     renderer(presented, cover_evidence=proof)
                 else:
-                    self.history_page.detail.show_history(presented)
+                    from .borrower_public_c_bridge import show_public_history_c
+                    if not show_public_history_c(self, item, presented):
+                        self.history_page.detail.show_history(presented)
                 self._add_facets(self.history_page.detail, asdict(item), self.search_controls)
                 self._add_local_book_actions(self.history_page.detail, asdict(item))
 

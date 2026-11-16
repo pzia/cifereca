@@ -54,6 +54,9 @@ def test_untrusted_grant_fields_never_attest_borrower(
     service, loan = service_with_linked_borrower(tmp_path)
     try:
         grant = {
+            # The historical reader tags its fixed source at the SQLite
+            # boundary. A mock legacy row must include that provenance.
+            "source_provider": "paris",
             "connection_identity_id": "alice",
             "borrower_identity_id": "bob",
             "profile_id": "bob-profile",
@@ -107,7 +110,7 @@ def test_untrusted_current_profile_binding_invalidates_grant(tmp_path, monkeypat
         service.close()
 
 
-def test_valid_explicit_grant_and_unbound_primary_keep_existing_semantics(tmp_path):
+def test_historical_grant_is_readable_but_not_live_borrower_authority(tmp_path):
     service, loan = service_with_linked_borrower(tmp_path)
     try:
         assert service._paris_adept_identity_for_loan(
@@ -119,6 +122,35 @@ def test_valid_explicit_grant_and_unbound_primary_keep_existing_semantics(tmp_pa
         )
         assert service._paris_adept_identity_for_loan(
             loan, connection_identity_id="alice",
-        ) == ("bob", None)
+        ) == (None, "adept_borrower_binding_required")
+    finally:
+        service.close()
+
+
+def test_unscoped_or_malformed_legacy_source_never_attests_adept_borrower(
+    tmp_path, monkeypatch,
+):
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        grant = {
+            "connection_identity_id": "alice",
+            "borrower_identity_id": "bob",
+            "profile_id": "bob-profile",
+            "confirmed_by": "explicit",
+        }
+        for invalid in (None, "", "another-lender", Hostile(),
+                        HostileString("paris")):
+            raw = {**grant, "source_provider": invalid}
+            monkeypatch.setattr(
+                service.storage, "paris_borrower_adept_binding_get",
+                lambda **_kw: raw,
+            )
+            owner, reason = service._paris_adept_identity_for_loan(
+                loan, connection_identity_id="alice",
+            )
+            assert owner is None
+            assert reason in ("adept_borrower_profile_changed",
+                              "adept_borrower_binding_required")
+        assert service.storage.acquisitions(provider_id="paris") == []
     finally:
         service.close()

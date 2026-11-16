@@ -49,13 +49,27 @@ def _kobo(rig):
     return service, db, root, policy
 
 
-def test_kobo_legacy_on_without_epoch_still_grants_but_reopt_changes_generation(rig):
+
+def _explicit_cas(storage, source, *, revision: str, enabled: bool = True):
+    import json
+    from cifereca.core.source_sync_consent import (
+        policy_key, source_enablement_key,
+    )
+    scope = source.scope
+    storage.metadata_set(source_enablement_key(scope), "1")
+    storage.metadata_set(policy_key(scope), json.dumps({
+        "schema": "cifereca.source-sync-consent/1",
+        "scope": [scope.identity_id, scope.provider_id,
+                  scope.credential_id, scope.account_id],
+        "enabled": enabled, "revision": revision,
+    }))
+
+
+def test_kobo_legacy_on_without_epoch_is_inert_even_after_reopt(rig):
     service, db, root, policy = _kobo(rig)
     db.metadata_set(policy, "1")
     assert bridge.consent_generation(db, service.source.scope) is None
-    assert read_source_acquisition_consent(service, service.account) == frozenset({
-        service.source,
-    })
+    assert read_source_acquisition_consent(service, service.account) == frozenset()
     db.metadata_set_with_revision(policy, "0", policy + ".revision")
     off = bridge.consent_generation(db, service.source.scope)
     assert len(off) == 32
@@ -63,17 +77,22 @@ def test_kobo_legacy_on_without_epoch_still_grants_but_reopt_changes_generation(
     db.metadata_set_with_revision(policy, "1", policy + ".revision")
     on = bridge.consent_generation(db, service.source.scope)
     assert on != off and len(on) == 32
+    assert read_source_acquisition_consent(service, service.account) == frozenset()
+    with db._lock, db._connect() as conn:
+        assert bridge.consent_generation_in_transaction(conn, service.source) == on
+    # A new positive CAS, not the historical revision, is now required.
+    _explicit_cas(db, service.source, revision="b" * 32)
     assert read_source_acquisition_consent(service, service.account) == frozenset({
         service.source,
     })
-    with db._lock, db._connect() as conn:
-        assert bridge.consent_generation_in_transaction(conn, service.source) == on
 
 
 def test_kobo_off_on_while_delivery_in_flight_never_publishes_old_get(rig):
     service, db, root, policy = _kobo(rig)
-    # Simulate a pre-upgrade persisted ON without a revision.
+    # A pre-upgrade ON is retained only as compatibility data; a new
+    # explicit CAS can permit a first delivery, pinned to its own revision.
     db.metadata_set(policy, "1")
+    _explicit_cas(db, service.source, revision="a" * 32)
     calls = []
 
     def delivered(key, offer):
@@ -83,6 +102,13 @@ def test_kobo_off_on_while_delivery_in_flight_never_publishes_old_get(rig):
         path.write_bytes(BYTES)
         db.metadata_set_with_revision(policy, "0", policy + ".revision")
         db.metadata_set_with_revision(policy, "1", policy + ".revision")
+        # The old key has no authority against the explicitly consented CAS.
+        assert read_source_acquisition_consent(service, service.account) == frozenset({
+            service.source,
+        })
+        _explicit_cas(db, service.source, revision="b" * 32, enabled=False)
+        _explicit_cas(db, service.source, revision="c" * 32)
+        # ON→OFF→ON in the CAS still invalidates the in-flight source lease.
         assert read_source_acquisition_consent(service, service.account) == frozenset({
             service.source,
         })
@@ -114,9 +140,8 @@ def test_policy_and_generation_commit_or_rollback_as_one_sqlite_unit(rig):
         with pytest.raises(sqlite3.IntegrityError, match="synthetic_toggle_failure"):
             db.metadata_set_with_revision(policy, "0", revision)
         assert (db.metadata_get(policy), db.metadata_get(revision)) == before
-        assert read_source_acquisition_consent(service, service.account) == frozenset({
-            service.source,
-        })
+        # Rollback preserved the old key but never created new consent.
+        assert read_source_acquisition_consent(service, service.account) == frozenset()
     finally:
         with db._lock, db._connect() as conn:
             conn.execute("DROP TRIGGER refuse_toggle")

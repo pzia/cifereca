@@ -1,8 +1,8 @@
 """#6366: cache HIT after restart must still resolve the same persisted Notice C.
 
 The search-result cache stores no per-viewer image association or writer
-stamp. Replaying it produces an opaque source coordinate only: the N2 worker
-still requires a durable, exact source observation for the image.
+stamp. On replay Core verifies the existing canonical C and its exact public
+bibliographic source, even after the shorter-lived provider source is purged.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from dataclasses import replace
 from types import SimpleNamespace as NS
 
 from cifereca.core import search_orchestration
+from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 from cifereca.core.notice_cover_repository import read_notice_cover
 from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
 from cifereca.models import SearchResult
@@ -23,11 +24,13 @@ class _Public(_FakeSession):
     def __init__(self):
         super().__init__("public-catalogue")
         self.credential_id = "__public__"
+        self.credentials = {}
+        self._accounts = []
         self.calls = 0
 
     def search(self, query, scope, *, field="all", content_types=()):
         self.calls += 1
-        return [SearchResult(
+        source = SearchResult(
             id="public:book:1", record_id="public:book:1",
             docbase="PUBLIC", medium="digital", title="Progressive Book",
             author="A", type="ebook", format="EPUB",
@@ -36,7 +39,14 @@ class _Public(_FakeSession):
             scenario="PUBLIC", source_provider=self.provider_id,
             source_credential="__public__", source_collection="public_catalog",
             owned=False, downloadable=False, download_url=None,
-        )]
+        )
+        # Produce a real same-call public catalogue projection in Core,
+        # never publish a legacy list-only row by its public-looking fields.
+        return search_orchestration._public_rows_from_response(
+            ProviderSearchResponse(
+                results=[source], public_notices=(PublicSearchNotice(source),),
+            ), self,
+        )
 
 
 def test_search_cache_sync_and_progressive_replay_after_process_restart(tmp_path):
@@ -48,6 +58,8 @@ def test_search_cache_sync_and_progressive_replay_after_process_restart(tmp_path
                               force=True)
         assert len(live) == 1 and original.calls == 1
         ref = live[0]._core_notice_cover_document_ref
+        canonical = live[0]._core_notice_canonical_cover_document_ref
+        assert canonical is not None and canonical != ref
         assert ref.identity_id is None and ref.kind == "public_catalogue"
         persisted = read_notice_cover(service.storage, ref)
         assert persisted is not None and persisted.epoch == 1
@@ -56,6 +68,7 @@ def test_search_cache_sync_and_progressive_replay_after_process_restart(tmp_path
                                 force=False)
         assert len(cached) == 1 and cached[0] is not live[0]
         assert cached[0]._core_notice_cover_document_ref == ref
+        assert cached[0]._core_notice_canonical_cover_document_ref == canonical
         assert original.calls == 1
         assert read_notice_cover(service.storage, ref).epoch == 1
         # Sync and progressive cache keys are distinct today. Warm the
@@ -82,13 +95,14 @@ def test_search_cache_sync_and_progressive_replay_after_process_restart(tmp_path
         assert len(rows) == 1
         assert new_session.calls == 0  # No supplier fetch or reparsing.
         assert rows[0]._core_notice_cover_document_ref == ref
+        assert rows[0]._core_notice_canonical_cover_document_ref == canonical
         from cifereca.gui.search_document_cover_bridge import exact_remote_search_document
         from tests.test_core_p1_6168_search_remote_document_gateway import host
         # The actual Search list/detail bridge must consume this cached Core
         # stamp, not create another search-exact N2 source after restart.
         window, _, row_key = host(rows[0])
         packet = exact_remote_search_document(window, rows[0], row_key)
-        assert packet is not None and packet.document == ref
+        assert packet is not None and packet.document == canonical
         batches = []
         result = reopened.search_progressive(
             "Progressive Book", provider_id=new_session.provider_id,
@@ -97,10 +111,14 @@ def test_search_cache_sync_and_progressive_replay_after_process_restart(tmp_path
         assert not result.cancelled and len(batches) == 1
         assert batches[0].cached is True
         assert batches[0].results[0]._core_notice_cover_document_ref == ref
+        assert batches[0].results[0]._core_notice_canonical_cover_document_ref == canonical
         assert new_session.calls == 0
         assert read_notice_cover(reopened.storage, ref).epoch == 1
         assert cached_notice_cover_snapshot(
             NS(storage=reopened.storage), ref,
+        ).candidates[0].url == URL
+        assert cached_notice_cover_snapshot(
+            NS(storage=reopened.storage), canonical,
         ).candidates[0].url == URL
 
         # A→B→A reuses the source coordinate and physical image cache; no
@@ -114,7 +132,7 @@ def test_search_cache_sync_and_progressive_replay_after_process_restart(tmp_path
         reopened.close()
 
 
-def test_cache_row_does_not_invent_persisted_cover_if_notice_source_missing(
+def test_cache_replay_uses_c_after_source_ttl_but_rejects_missing_c(
     tmp_path,
 ):
     service = _service(tmp_path)
@@ -124,15 +142,42 @@ def test_cache_row_does_not_invent_persisted_cover_if_notice_source_missing(
         live = service.search("Progressive Book", provider_id=session.provider_id,
                               force=True)
         ref = live[0]._core_notice_cover_document_ref
+        canonical = live[0]._core_notice_canonical_cover_document_ref
         with service.storage._lock, service.storage._connect() as db:
             db.execute("DELETE FROM metadata WHERE key LIKE 'notice.c.observation.v1:%'")
         cached = service.search("Progressive Book", provider_id=session.provider_id,
                                 force=False)
         assert cached[0]._core_notice_cover_document_ref == ref
-        # A coordinate is NOT a proof. N2 can only select from an actually
-        # persisted source; a warm N3 image cannot authorize it.
+        assert cached[0]._core_notice_canonical_cover_document_ref == canonical
         assert read_notice_cover(service.storage, ref) is None
         assert cached_notice_cover_snapshot(NS(storage=service.storage), ref) is None
+        assert cached_notice_cover_snapshot(
+            NS(storage=service.storage), canonical,
+        ).candidates[0].url == URL
+        from cifereca.gui.search_document_cover_bridge import exact_remote_search_document
+        from tests.test_core_p1_6168_search_remote_document_gateway import host
+        window, _, key = host(cached[0])
+        assert exact_remote_search_document(window, cached[0], key).document == canonical
+
+        # Exact same source ID with forged cached title is not its edition.
+        altered = replace(cached[0], title="Different edition")
+        search_orchestration._stamp_cached_public_notice_refs(
+            [altered], identity_id="alice", storage=service.storage,
+        )
+        assert altered._core_notice_cover_document_ref == ref
+        assert not hasattr(altered, "_core_notice_canonical_cover_document_ref")
+
+        # No C + no source cannot confer an image from the physical N3 cache.
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute("DELETE FROM metadata WHERE key LIKE 'notice.c.cover.canonical.v1:%'")
+        without_c = service.search(
+            "Progressive Book", provider_id=session.provider_id, force=False,
+        )
+        assert without_c[0]._core_notice_cover_document_ref == ref
+        assert not hasattr(without_c[0], "_core_notice_canonical_cover_document_ref")
+        assert cached_notice_cover_snapshot(
+            NS(storage=service.storage), canonical,
+        ) is None
         assert session.calls == 1
     finally:
         service.close()

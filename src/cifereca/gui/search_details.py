@@ -37,6 +37,49 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         if not item:
             return
         self._selected_search_id = row.key
+        if item.get("source") == "notice_c_public":
+            # Search C is a descriptive, potentially stale source observation.
+            # It is NEVER an entitlement, a v2 known-available action or a
+            # session/offer. The detail receives the same exact document as
+            # the standard list, without a new provider request or an
+            # arbitrary image URL fallback. No plugin/cached actions.
+            from dataclasses import replace
+            from cifereca.core.book_cover_projection import CoverDocumentScope
+            from cifereca.core.notice_cover_repository import is_notice_cover_document
+            document = item.get("_cover_document_ref")
+            active = getattr(
+                getattr(self.service, "current_identity", None),
+                "identity_id", None,
+            )
+            panel = self.search_page.detail
+            if (type(document) is not CoverDocumentScope
+                    or document.kind != "public_catalogue"
+                    or document.identity_id is not None
+                    or not is_notice_cover_document(document)
+                    or item.get("identity_id") != active):
+                panel.empty("Notice indisponible", "Source documentaire périmée.")
+                return
+            metadata = item.get("metadata")
+            metadata = metadata if type(metadata) is dict else {}
+            stale = metadata.get("notice_c_stale") is True
+            presentation = book_detail_presentation(
+                title=str(item.get("title") or "Sans titre"),
+                subtitle=str(item.get("author") or ""),
+                thumbnail=None,
+                badges=("Notice connue · à actualiser" if stale
+                        else "Notice publique connue",),
+                section_rows=(("Catalogue", (
+                    ("Fournisseur", item.get("provider_id") or "—"),
+                    ("Disponibilité", "Non vérifiée"),
+                    ("Couverture de recherche", "Partielle"),
+                )),),
+                metadata=None,
+            )
+            panel.show_presentation(
+                replace(presentation, cover_document_ref=document),
+                description=metadata.get("description"),
+            )
+            return
         description = self._book_description(item)
         # The same *known v2 exact notice* may already have a validated
         # holdings image in the shared N2 decision. Only presentation uses

@@ -1,4 +1,4 @@
-"""P0 #2657: six Numilog EPUBs, three attested chains, three unlinked cases.
+"""P0 #2657: six Numilog EPUBs, three legacy chains, six unlinked cases.
 
 Private fixtures only: no provider inference, acquisition, mutation or leaks.
 """
@@ -71,7 +71,7 @@ def six_numilog(tmp_path):
     return root, database
 
 
-def test_six_files_three_confirmed_and_three_rights_unverified_not_a_bijection(
+def test_six_files_all_legacy_rights_unverified_and_three_byte_placements(
     six_numilog, tmp_path,
 ):
     root, database = six_numilog
@@ -80,10 +80,10 @@ def test_six_files_three_confirmed_and_three_rights_unverified_not_a_bijection(
     session = LocalInspection(audit, lambda: True, 'alice', roots=(root,))
     counts = session.overview()
     assert counts['files'] == 6
-    assert counts['confirmed_files'] == 3
-    assert counts['local_without_right'] == 3
-    assert counts['unattributed_files'] == 3
-    assert counts['unverified_rights'] == 3
+    assert counts['confirmed_files'] == 0
+    assert counts['local_without_right'] == 6
+    assert counts['unattributed_files'] == 6
+    assert counts['unverified_rights'] == 6
     # These are three distinct evidence populations, not a 1:1 join.
     assert counts['files'] == (
         counts['files_attested']
@@ -91,25 +91,28 @@ def test_six_files_three_confirmed_and_three_rights_unverified_not_a_bijection(
         + counts['files_individually_unverified']
     )
     assert (counts['files_attested'], counts['files_without_attested_link'],
-            counts['files_individually_unverified']) == (3, 3, 0)
+            counts['files_individually_unverified']) == (0, 6, 0)
     assert counts['rights_active'] == 6
-    assert counts['rights_attested'] == 3
-    assert counts['rights_unverified_total'] == 3
+    assert counts['rights_attested'] == 0
+    assert counts['rights_unverified_total'] == 6
     assert counts['placements_registered'] == 3
     assert counts['roots'] == (str(root),)
-    assert session.page(state='confirmed_link').total == 3
-    assert session.page(provider='numilog', state='confirmed_link').total == 3
+    assert session.page(state='confirmed_link').total == 0
+    assert session.page(provider='numilog', state='confirmed_link').total == 0
     assert session.page(provider='unattributed',
-                        state='local_file_without_attested_right').total == 3
+                        state='local_file_without_attested_right').total == 6
     assert session.page(provider='local').total == 0
     rights = session.page(provider='numilog', state='rights_without_verified_file')
-    assert rights.total == 3
+    assert rights.total == 6
     for case in rights.cases:
         assert 'Titre notice' in case.label
         assert 'Autrice Exemple' in case.label
-        assert 'Aucune acquisition liée' in case.details
-        assert 'Aucun placement explicite' in case.details
         assert 'ne prouvent ni l’absence physique' in case.details
+        # Only the last three editions have no historical receipt/placement;
+        # the first three remain visible but have no canonical OriginLink.
+        if any(f'item-{i}' in case.details for i in range(3, 6)):
+            assert 'Aucune acquisition liée' in case.details
+            assert 'Aucun placement explicite' in case.details
     files = session.page(provider='unattributed')
     assert all('Titre caché' in case.label for case in files.cases)
     assert all('code-' in case.label for case in files.cases)
@@ -129,6 +132,68 @@ def test_six_files_three_confirmed_and_three_rights_unverified_not_a_bijection(
     assert session.overview() == {}
 
 
+def test_three_canonical_purchase_origins_confirm_same_epubs_without_legacy_whitelist(
+    six_numilog,
+):
+    """Only the canonical proof may restore the three historically linked books."""
+    from cifereca.core.canonical_publication import _stable
+    from cifereca.core.library_reconciliation import reconcile
+    from cifereca.core.library_evidence_scope import group_evidence
+
+    root, database = six_numilog
+    audit = audit_library(database, {'alice': (root,)})
+    assert audit.reconciliation.redacted()['counts'].get('confirmed_link', 0) == 0
+    before = filesystem(root.parent)
+    rights = {
+        row['item_id']: row
+        for row in audit.snapshot.tables['entitlements']
+    }
+    canonical = []
+    for placement in audit.snapshot.tables['placements']:
+        right = rights[placement['source_item_id']]
+        origin = {
+            'identity_id': 'alice', 'provider_id': 'numilog',
+            'credential_id': right['credential_id'],
+            'account_id': right['account_id'],
+            'branch_id': 'personal_library',
+            'edition_id': right['item_id'],
+            'right_id': right['entitlement_id'],
+            'reference_kind': 'purchase', 'state': 'active',
+            'evidence_kind': 'provider_response',
+            'evidence_ref': 'source-verified-' + right['entitlement_id'],
+            'receipt_ref': 'completed-' + right['entitlement_id'],
+            'observed_at': '2026-11-16T09:00:00Z',
+            'artifact_id': placement['artifact_id'],
+        }
+        coordinates = (
+            'identity_id', 'provider_id', 'credential_id', 'account_id',
+            'branch_id', 'edition_id', 'right_id', 'reference_kind',
+        )
+        origin['source_reference_id'] = _stable(
+            'source', *(origin[key] for key in coordinates),
+        )
+        origin['origin_link_id'] = _stable(
+            'origin', 'provider', origin['identity_id'],
+            origin['artifact_id'], origin['source_reference_id'],
+            origin['receipt_ref'],
+        )
+        canonical.append(origin)
+    audit.snapshot.tables['provider_origins'] = canonical
+    audit.reconciliation = reconcile(audit.inventory, audit.snapshot)
+    audit.groups = group_evidence(
+        audit.inventory, audit.snapshot, audit.reconciliation, ('alice',),
+    )
+    session = LocalInspection(audit, lambda: True, 'alice', roots=(root,))
+    assert session.overview()['confirmed_files'] == 3
+    assert session.page(state='confirmed_link').total == 3
+    assert session.unconfirmed_files().total == 3
+    assert all(edge.table == 'provider_origins' for edge in
+               audit.reconciliation.edges if edge.certainty == 'attested')
+    assert filesystem(root.parent) == before
+    assert audit.redacted()['repair_authorized'] is False
+    session.close()
+
+
 def test_search_and_nonnumeric_queries_cannot_leak_or_crash(six_numilog):
     root, database = six_numilog
     session = LocalInspection(audit_library(database, {'alice': (root,)}),
@@ -139,7 +204,7 @@ def test_search_and_nonnumeric_queries_cannot_leak_or_crash(six_numilog):
     assert session.page(query='pas-de-livre').total == 0
     assert session.page(query='TITRE  CAChE').total == 6
     assert session.page(query='edition-absente').total == 0
-    assert session.page(offset=50).total == 9
+    assert session.page(offset=50).total == 12
     assert 'PRIVATE' not in repr(session) + repr(session.page())
 
 

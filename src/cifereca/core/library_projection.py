@@ -75,6 +75,13 @@ def refresh_history(
         cached = self.storage.cache_get("account", key)
         if isinstance(cached, list):
             rows = [HistoryItem(**x) for x in cached]
+            # C is public and independently indexed. Enrich the exact
+            # borrower DTOs on the existing Core worker, never at GTK bind.
+            from .notice_c_borrower_public_projection import attach_borrower_public_c
+            attach_borrower_public_c(
+                self.storage, rows, identity_id=account.identity_id,
+                account_epoch=epoch, source_epoch=source_epoch,
+            )
             if self._account_context_epoch == epoch and self.current_account is account:
                 self.last_history = rows
             self.diagnostics.add("CACHE", "history", detail={"hit": True, "count": len(rows)})
@@ -123,6 +130,13 @@ def refresh_history(
     ):
         raise ProviderConfigurationError("history_source_binding_changed")
     self.storage.cache_put("account", key, [asdict(x) for x in rows], ttl)
+    # Keep the immutable source's public-C receipt out of private cache
+    # serialization; associate it only with the current returned objects.
+    from .notice_c_borrower_public_projection import attach_borrower_public_c
+    attach_borrower_public_c(
+        self.storage, rows, identity_id=account.identity_id,
+        account_epoch=epoch, source_epoch=source_epoch,
+    )
     if self._account_context_epoch == epoch and self.current_account is account:
         self.last_history = rows
     return rows
@@ -660,6 +674,13 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         rows.append(entry_view)
         if len(rows) >= max(1, limit):
             break
+    # Existing worker-only Core read; attach exact PUBLIC C fallback only
+    # when a completed provider OriginLink proves this owner/Artifact/
+    # Placement association. Never substitute it for an extracted EPUB.
+    from .notice_c_local_origin_projection import project_local_origin_public_c
+    project_local_origin_public_c(
+        self.storage, rows, identity_id=identity_id,
+    )
     return rows
 
 
@@ -1357,24 +1378,26 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
     # A v0.7 backup projection is not scoped by identity/borrower: even a
     # descriptive title/cover can leak a former owner's private metadata.
     # Present only catalogue, canonical entitlement and scoped loan facts.
-    from .observed_import_provenance import (
-        observed_import_links, provider_scoped_observed_links,
-    )
-    # Retain historical display hints only under their exact source provider.
-    observed_loan_display_aliases = provider_scoped_observed_links(
-        'bnf-pret',
-        observed_import_links(
-            self.storage,
-            [p for rows in placements_by_artifact.values() for p in rows],
-            local_keys, provider_id='bnf-pret',
-            provenance_field='bnf_observed_loan',
+    from .observed_import_provenance import observed_import_links_for_sources
+    # The source of a manual-import display hint is the entitlement's exact
+    # stored provider, never a branded Core selector. The reader accepts
+    # only legacy fields that the generic manual-import writer can produce.
+    # These hints remain display-only; an OriginLink always takes priority.
+    loan_entitlements = self.storage.entitlements()
+    observed_loan_display_aliases = observed_import_links_for_sources(
+        self.storage,
+        [p for rows in placements_by_artifact.values() for p in rows],
+        local_keys,
+        providers=(
+            row.get("provider_id") for row in loan_entitlements
+            if type(row) is dict and row.get("entitlement_type") == "loan"
         ),
     )
     loans_by_key: dict[tuple[str, str, str | None, str], Loan] = {}
     for loan in self.last_loans:
         loans_by_key[(loan.source_provider, loan.source_credential, loan.source_account_id, str(loan.record_id or loan.id))] = loan
 
-    for entitlement in self.storage.entitlements():
+    for entitlement in loan_entitlements:
         if not _entitlement_visible_in_library(entitlement):
             continue
         status = str(entitlement.get("state") or "")
@@ -1628,5 +1651,9 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
         row["source_count"] = len(row.get("source_refs") or [])
         result.append(row)
     result.sort(key=lambda row: (str(row.get("title") or "").casefold(), str(row.get("provider_id") or "")))
+    from .notice_c_local_origin_projection import project_local_origin_public_c
+    project_local_origin_public_c(
+        self.storage, result, identity_id=identity_id,
+    )
     logger.info("TRACE library-entries end identity=%s count=%s dt=%.3fs", identity_id, len(result), time.monotonic()-_lib_started)
     return result

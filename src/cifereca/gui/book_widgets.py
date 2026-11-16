@@ -571,6 +571,20 @@ class BookListCell(Gtk.Box):
         decision from cached N3 media. A rejected packet never falls back
         silently to a lower-priority supplier URL.
         """
+        borrower_public = getattr(item, "_cover_borrower_public_c_receipt", None)
+        if borrower_public is not None:
+            # N2 loads only the public canonical C on its own worker.
+            # Recycled GTK cells may neither borrow another identity's
+            # occurrence nor reuse a stale account/source generation.
+            if any(getattr(item, name, None) is not None for name in (
+                "_cover_local_evidence", "_cover_history_evidence",
+                "_cover_loan_supplier_evidence", "_cover_search_evidence",
+            )):
+                return False
+            from .borrower_public_c_bridge import admit_borrower_public_c_cell
+            return admit_borrower_public_c_cell(
+                self.window, item, document,
+            )
         search = getattr(item, "_cover_search_evidence", None)
         if search is not None:
             from .search_document_cover_bridge import register_exact_search_document
@@ -588,6 +602,29 @@ class BookListCell(Gtk.Box):
             return register_exact_loan_supplier(
                 self.window, getattr(item, "_loan_source_item", None),
                 service, supplier, document,
+            )
+        public_link = getattr(item, "_cover_public_c_link", None)
+        if public_link is not None:
+            from ..core.notice_c_local_origin_projection import (
+                valid_local_public_c_link,
+            )
+            # Core created this packet on the owner-pinned Library/Recent
+            # worker. Recheck the selected identity on each recycled cell.
+            active = getattr(
+                getattr(
+                    getattr(self.window, "service", None),
+                    "current_identity", None,
+                ), "identity_id", None,
+            )
+            return (
+                getattr(item, "_cover_local_evidence", None) is None
+                and getattr(item, "_cover_history_evidence", None) is None
+                and document == public_link.document
+                and valid_local_public_c_link(
+                    public_link, identity_id=active,
+                    artifact_id=public_link.artifact_id,
+                    placement_id=public_link.placement_id,
+                )
             )
         facts = getattr(item, "_cover_local_evidence", None)
         history = getattr(item, "_cover_history_evidence", None)
@@ -614,6 +651,14 @@ class BookListCell(Gtk.Box):
             return False
 
     def _search_cover_guard(self, item: BookListItem) -> dict:
+        borrower = getattr(item, "_cover_borrower_public_c_receipt", None)
+        if borrower is not None:
+            # Also recheck after a delayed N3 callback. A recycled cell or
+            # A->B->A account/source transition is not a current occurrence.
+            from .borrower_public_c_bridge import admit_borrower_public_c_cell
+            return {"is_current": lambda: admit_borrower_public_c_cell(
+                self.window, item, getattr(item, "_cover_document_ref", None),
+            )}
         proof = getattr(item, "_cover_search_evidence", None)
         from .search_document_cover_bridge import search_document_is_current
         return {"is_current": lambda: search_document_is_current(self.window, proof)}
@@ -631,7 +676,9 @@ class BookListCell(Gtk.Box):
                 service, document, variant="list", priority=10,
                 on_texture_applied=getattr(item, "_cover_paint_observer", None),
                 **(self._search_cover_guard(item)
-                   if getattr(item, "_cover_search_evidence", None) is not None else {}),
+                   if (getattr(item, "_cover_search_evidence", None) is not None
+                       or getattr(item, "_cover_borrower_public_c_receipt", None)
+                       is not None) else {}),
             )
             return
         self.cover.bind_url(
@@ -722,7 +769,9 @@ class BookListCell(Gtk.Box):
                     service, document, variant="list", priority=10,
                     on_texture_applied=getattr(item, "_cover_paint_observer", None),
                     **(self._search_cover_guard(item)
-                       if getattr(item, "_cover_search_evidence", None) is not None else {}),
+                       if (getattr(item, "_cover_search_evidence", None) is not None
+                       or getattr(item, "_cover_borrower_public_c_receipt", None)
+                       is not None) else {}),
                 )
         elif item.thumbnail_url:
             self.cover.bind_url(

@@ -92,6 +92,34 @@ class PublicBookMasterDetailView:
                 item.thumbnail_url = None
             item._public_row_content = presentation
             ui_rows.append(item)
+        # Duplicate public plugin keys are occurrence-local, not document
+        # identities. On a reordered/replaced snapshot, MasterDetailPage
+        # would normally restore the same display key, silently selecting
+        # another source and exposing its detail/actions. Preserve selection
+        # only while the exact original source object remains under that key.
+        from collections import Counter
+        collisions = {
+            key for key, count in Counter(original_keys).items() if count > 1
+        }
+        previous_collisions = getattr(self, "_duplicate_source_keys", set())
+        previous = getattr(self, "_rows", {})
+        selection = getattr(self._page, "selection", None)
+        selected = getattr(selection, "get_selected_item", None)
+        if callable(selected) and type(previous) is dict:
+            active = selected()
+            active_key = getattr(active, "key", None)
+            former = previous.get(active_key)
+            incoming = mapped.get(active_key)
+            if (former is not None and incoming is not None
+                    and former is not incoming
+                    and (str(getattr(former, "key", "")) in
+                         (collisions | previous_collisions)
+                         or str(getattr(incoming, "key", "")) in
+                         (collisions | previous_collisions))):
+                # Clear before replacing the mapping so even synchronous
+                # GTK selection callbacks cannot dispatch a foreign row.
+                selection.set_selected(0xFFFFFFFF)
+        self._duplicate_source_keys = collisions
         # Publish mapping before GTK selection notifications during show_rows.
         self._rows = mapped
         self._page.show_rows(ui_rows, total_count=total_count)
@@ -164,7 +192,7 @@ class PublicBookMasterDetailView:
         panel.add_actions(buttons)
 
     def show_existing_search_detail(
-        self, item, detail, *, context_sections=(),
+        self, item, detail, *, context_sections=(), public_c_document=None,
     ) -> None:
         """Render Core's actual Search detail/actions in this plugin panel.
 
@@ -176,7 +204,14 @@ class PublicBookMasterDetailView:
         from .recommendation_exact_cover import loaded_recommendation_cover
         proof = loaded_recommendation_cover(self._window, item, detail)
         if proof is None:
-            panel.show_item_detail(item, detail)
+            # Preserve the legacy renderer ABI for all non-C paths.
+            # Only the attested known-v2 worker passes an exact C ref.
+            if public_c_document is None:
+                panel.show_item_detail(item, detail)
+            else:
+                panel.show_public_c_search_document(
+                    item, detail=detail, public_c_document=public_c_document,
+                )
         else:
             panel.show_search_document(item, detail=detail, cover_evidence=proof)
         # Search appends these same Core local/open/send/owned actions after
@@ -194,7 +229,7 @@ class PublicBookMasterDetailView:
         self._append_recommendation_context(panel, context_sections)
 
     def show_existing_search_unavailable(
-        self, item, *, context_sections=(),
+        self, item, *, context_sections=(), public_c_document=None,
     ) -> None:
         """Match Search's non-mutating detail fallback after holdings failure.
 
@@ -206,7 +241,12 @@ class PublicBookMasterDetailView:
         from .recommendation_exact_cover import loaded_recommendation_cover
         proof = loaded_recommendation_cover(self._window, item)
         if proof is None:
-            panel.show_search(item, loading=False)
+            if public_c_document is None:
+                panel.show_search(item, loading=False)
+            else:
+                panel.show_public_c_search_document(
+                    item, loading=False, public_c_document=public_c_document,
+                )
         else:
             panel.show_search_document(item, cover_evidence=proof)
         from .query_model import result_row

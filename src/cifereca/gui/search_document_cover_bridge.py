@@ -129,6 +129,28 @@ def exact_remote_search_document(
             candidates.clear()
         candidates.append(catalogue)
     if not candidates:
+        # An attested image-less public catalogue source still owns a
+        # searchable canonical C. Route list/detail to its N2 UNKNOWN
+        # placeholder, rather than dropping the document for lack of N3.
+        # This is deliberately stricter than the legacy image-bearing path:
+        # only the same-call Core witness and BOTH exact persisted source
+        # references may authorize an empty-candidate C bind.
+        if item.thumbnail_url is None:
+            from ..core.notice_c_known_projection import (
+                matching_live_public_canonical_ref,
+            )
+            viewer_id = getattr(
+                getattr(getattr(window, "service", None), "current_identity", None),
+                "identity_id", None,
+            )
+            canonical = matching_live_public_canonical_ref(
+                item, identity_id=viewer_id,
+            )
+            if canonical is not None:
+                return VerifiedSearchDocumentCover(
+                    source_item=item, row_key=row_key,
+                    document=canonical, context=context, candidates=(),
+                )
         return None
     # Only a real Core producer may attach an already-persisted Notice C
     # reference to its very SearchResult object. Prefer the canonical source
@@ -160,7 +182,28 @@ def exact_remote_search_document(
         )
         if (expected is not None
                 and notice_cover_document_ref(expected.key) == admitted):
-            scope = admitted
+            # Preserve the prior exact own-source C on validated cache
+            # replay after restart / source TTL expiry. Cross-provider C
+            # still requires the stronger same-call Core OriginLink proof.
+            from ..core.notice_c_cover_index import (
+                canonical_cover_document_ref, is_canonical_cover_document,
+            )
+            from ..core.notice_c_known_projection import (
+                matching_live_public_canonical_ref,
+            )
+            cached_c = getattr(
+                item, "_core_notice_canonical_cover_document_ref", None,
+            )
+            own_c = canonical_cover_document_ref(expected.key.edition_id)
+            if (type(cached_c) is CoverDocumentScope
+                    and is_canonical_cover_document(cached_c)
+                    and cached_c == own_c):
+                scope = cached_c
+            else:
+                canonical = matching_live_public_canonical_ref(
+                    item, identity_id=viewer_id,
+                )
+                scope = canonical if canonical is not None else admitted
     return VerifiedSearchDocumentCover(
         source_item=item, row_key=row_key,
         document=scope, context=context,
@@ -289,13 +332,24 @@ def register_exact_search_document(
         # A producer-stamped exact source belongs to persisted Notice C.
         # Do not also publish a competing N2 source: the widget calls the
         # common cache, whose bounded worker reads the source/epoch from C.
-        if (getattr(item, "_core_notice_cover_document_ref", None) != document
+        canonical = getattr(
+            item, "_core_notice_canonical_cover_document_ref", None,
+        )
+        if (document not in (
+                    getattr(item, "_core_notice_cover_document_ref", None),
+                    canonical,
+                )
                 or not callable(getattr(service, "_cached_source_reader", None))):
             return False
         # Only the *live Core producer* has a persisted C epoch. A cached
         # SearchResult replays its exact ref without inventing an epoch;
         # a routine GTK rebind on an unchanged source causes no SQLite I/O.
-        epoch = getattr(item, "_core_notice_cover_document_epoch", None)
+        epoch = getattr(
+            item,
+            ("_core_notice_canonical_cover_document_epoch"
+             if document == canonical else "_core_notice_cover_document_epoch"),
+            None,
+        )
         if type(epoch) is int and epoch > 0:
             service.refresh_cached_source_if_newer(document, epoch)
         return True

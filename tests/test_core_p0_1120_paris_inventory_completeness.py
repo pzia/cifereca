@@ -5,7 +5,9 @@ ReturnDigitalLoan, ADEPT mutation, GET, or file deletion is performed.
 """
 from __future__ import annotations
 
-from tests.loan_return_inventory_fixtures import attest_paris_dilicom_complete
+from tests.loan_return_inventory_fixtures import (
+    attest_paris_dilicom_complete, attest_source_branch_complete,
+)
 
 import json
 
@@ -100,7 +102,11 @@ def test_typed_dilicom_inventory_stays_readable_but_no_pnb_mutation(tmp_path):
     second_root.mkdir()
     service2, loan2, paris2 = adept_setup(second_root)
     paris2.last_loan_errors = [{"upstream": "SYRACUSE", "error": PRIVATE}]
-    attest_paris_dilicom_complete(paris2, credential_id="alice-paris")
+    # The target ADEPT fixture records the documentary branch as PNB, not
+    # DILICOM. An unrelated complete DILICOM page cannot prove PNB absent.
+    attest_source_branch_complete(
+        paris2, credential_id="alice-paris", branch=loan2.provider,
+    )
     try:
         assert service2.verify_paris_return_inventory(loan2) == {
             "status": "provider_return_confirmed",

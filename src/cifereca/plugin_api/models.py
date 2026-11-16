@@ -1077,6 +1077,21 @@ class UiSearchNavigationHost(UiPageHost, Protocol):
 
 
 @runtime_checkable
+class UiPublicNoticeCoverHost(UiPageHost, Protocol):
+    """Optional CoreUI attestation bridge for a public canonical Notice C.
+
+    Plugins provide an already loaded original SearchResult and the explicit
+    active viewer; they cannot infer, create or persist a DocumentRef. The
+    host returns the opaque exact C reference or None, never an entitlement
+    or a URL. No provider GET, thumbnail I/O, SQLite or GTK blocking.
+    """
+
+    def public_notice_cover_ref(
+        self, item: object, *, identity_id: str,
+    ) -> object | None: ...
+
+
+@runtime_checkable
 class UiLoadedSearchNoticeHost(UiPageHost, Protocol):
     """Optional exact-match navigation to a notice ALREADY loaded by Search.
 

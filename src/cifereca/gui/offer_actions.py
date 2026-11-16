@@ -83,3 +83,26 @@ def private_notice_download_hint_allowed(
         account_context_epoch=account_context_epoch,
         source_context_epoch=source_context_epoch,
     )["state"] == "remote_owned"
+
+
+def public_catalogue_download_hint_allowed(item: Any) -> bool:
+    """Require a real public delivery offer, not just a catalogue listing.
+
+    The `public_catalog` namespace is descriptive (not a purchase, a
+    download grant or a source-specific allowlist). A selected public offer
+    has to carry an exact URL and a positive downloadable signal before
+    GTK may even consult the Core broker. Other public collections retain
+    their existing independently qualified direct-download contracts.
+    The Core still owns the final visibility and execution-time admission.
+    """
+    if getattr(item, "source_collection", None) != "public_catalog":
+        return True
+    link = getattr(item, "download_url", None)
+    return (
+        getattr(item, "source_credential", None) == "__public__"
+        and getattr(item, "source_account_id", None) is None
+        and getattr(item, "owned", None) is False
+        and getattr(item, "downloadable", None) is True
+        and type(link) is str and bool(link)
+        and link == link.strip()
+    )
