@@ -213,6 +213,9 @@ def search_public_notice_c(
     wanted = set(provider_ids)
     matches: list[PublicNoticeCHit] = []
     seen_source_refs: set[str] = set()
+    # Exact source ref -> unique admitted canonical index relation. This is
+    # read-only, identity-scoped by the source itself, never viewer/profile.
+    canonical_routes: dict[str, tuple[object, int, object, str]] = {}
     scanned = unindexed = 0
     exceeded = False
     # SQLite's metadata PK is indexed; exact-prefix range is a deterministic
@@ -243,11 +246,10 @@ def search_public_notice_c(
             ):
                 matches.append(record)
 
-        # Canonical C owns its public descriptive facts after source eviction.
-        # Inspect only remaining bounded rows; never scan the per-profile
-        # catalogue, perform a supplier GET or manufacture a negative result.
-        # Existing source facts win when present; fallback is ONLY for absent
-        # source observations, not a second live result copy.
+        # A canonical C may contain several independently attested public
+        # source bibliographies. The C is the cover identity, not a licence
+        # to choose one provider's descriptive text as authoritative.
+        # Enumerate bounded canonical rows ONCE; retain exact source facts.
         if scanned < max_scan:
             from .notice_c_cover_index import (
                 _PREFIX as _CANON_PREFIX, _json as _canon_json,
@@ -259,6 +261,11 @@ def search_public_notice_c(
                 (_CANON_PREFIX, _CANON_PREFIX + "\uffff", max_scan - scanned + 1),
             )
             canonical_scanned = 0
+            # An explicit verified relation may move a source from its
+            # self-identity C to a stronger multi-provider C. Prefer the
+            # unique group with the MOST public source proofs; conflicting
+            # equal-strength groups remain ambiguous and fail closed.
+            staged = {}
             for key_string, raw in cursor:
                 if canonical_scanned >= max_scan - scanned:
                     exceeded = True
@@ -270,20 +277,49 @@ def search_public_notice_c(
                     if key_string != _CANON_PREFIX + ref.source_key.split(":")[-1]:
                         continue
                     consolidated = _decode_canonical(raw, ref)
-                    public_sources = [
+                    public_sources = tuple(
                         src for src in consolidated.sources
                         if src.public_bibliography is not None
+                    )
+                    for source in public_sources:
+                        staged.setdefault(source.source_ref, []).append((
+                            ref, consolidated, source, len(public_sources),
+                        ))
+                except (TypeError, ValueError, KeyError, AttributeError):
+                    # A corrupt canonical index never supplies an identity
+                    # or a public descriptive source.
+                    unindexed += 1
+                    continue
+
+            if not exceeded:
+                for source_ref, candidates in staged.items():
+                    strongest = max(item[3] for item in candidates)
+                    best = [
+                        item for item in candidates if item[3] == strongest
                     ]
-                    # A source-specific bibliography cannot silently decide
-                    # the canonical text when two providers disagree.
-                    if len(public_sources) != 1:
+                    if len(best) != 1:
+                        # Two contradictory canonical links are not resolved
+                        # by title, ISBN, URL, insertion order or hash order.
                         continue
-                    src = public_sources[0]
-                    if src.source_ref in seen_source_refs:
+                    ref, consolidated, source, _strength = best[0]
+                    bib = source.public_bibliography
+                    # The index decoder rederives the exact source ref and
+                    # edition from the original provider coordinates.
+                    aggregate_cover = (
+                        "available" if consolidated.candidates
+                        else "missing" if consolidated.snapshot_complete
+                        else "pending"
+                    )
+                    canonical_routes[source_ref] = (
+                        ref, consolidated.epoch, source, aggregate_cover,
+                    )
+                    if source_ref in seen_source_refs:
+                        # A live source observation is more current than the
+                        # retained canonical bibliography. Rebind its N2
+                        # only if its exact epoch and facts still match.
                         continue
-                    bib = src.public_bibliography
                     hit = PublicNoticeCHit(
-                        document=ref, provider_id=src.provider_id,
+                        document=ref, provider_id=source.provider_id,
                         record_id=bib.record_id, docbase=bib.docbase,
                         medium=bib.medium,
                         source_revision=bib.source_revision,
@@ -291,23 +327,18 @@ def search_public_notice_c(
                         publisher=bib.publisher,
                         media_format=bib.media_format,
                         description=bib.description,
-                        observed_at=src.observed_at,
+                        observed_at=source.observed_at,
                         last_seen_at=bib.last_seen_at,
                         epoch=consolidated.epoch,
-                        cover_state=src.state,
+                        cover_state=aggregate_cover,
                         stale=now - bib.last_seen_at > _STALE_AFTER,
                         edition_id=bib.edition_id,
                     )
-                except (TypeError, ValueError, KeyError, AttributeError):
-                    # Malformed canonical metadata can never widen public
-                    # visibility or turn a missing cover into a rights grant.
-                    unindexed += 1
-                    continue
-                if _matches_public_c(
-                    hit, wanted=wanted, scope=scope,
-                    field=field, needle=needle,
-                ):
-                    matches.append(hit)
+                    if _matches_public_c(
+                        hit, wanted=wanted, scope=scope,
+                        field=field, needle=needle,
+                    ):
+                        matches.append(hit)
 
     # Pagination is over *known* source facts, not a confirmed total.
     matches.sort(key=lambda item: (
@@ -315,40 +346,31 @@ def search_public_notice_c(
     ))
     offset = page * page_size
     selected = matches[offset:offset + page_size]
-    if selected:
-        from .notice_c_cover_index import (
-            canonical_cover_document_ref, read_consolidated_notice_cover,
-        )
+    if selected and canonical_routes:
+        # Live source hits keep their own text and current source revision.
+        # A canonical index may change only the N2 ref after verifying the
+        # precise retained provider/edition/source epoch and public fields.
         canonical_hits = []
         for hit in selected:
-            # Keep each bibliographic C source distinct. In the absence of
-            # an installed, vetted type-specific text consolidator, a
-            # multi-provider cover relation must NOT silently deduplicate
-            # differently authored descriptive records. Upgrade N2 only
-            # when the canonical index contains exactly THIS source.
-            try:
-                canonical_ref = canonical_cover_document_ref(hit.edition_id)
-                stored = read_consolidated_notice_cover(
-                    storage, canonical_ref,
-                )
-                if (stored is not None and len(stored.sources) == 1
-                        and stored.sources[0].source_ref == hit.document.source_key
-                        and stored.sources[0].source_epoch == hit.epoch
-                        and stored.sources[0].visibility == "public"
-                        and (
-                            (stored.sources[0].state == "available"
-                             and bool(stored.candidates))
-                            or (stored.sources[0].state == "pending"
-                                and hit.cover_state == "pending"
-                                and not stored.candidates)
-                        )):
+            route = canonical_routes.get(hit.document.source_key)
+            if route is not None:
+                ref, epoch, src, cover_state = route
+                bib = src.public_bibliography
+                if (src.source_epoch == hit.epoch
+                        and src.provider_id == hit.provider_id
+                        and src.visibility == "public"
+                        and bib is not None
+                        and bib.edition_id == hit.edition_id
+                        and bib.record_id == hit.record_id
+                        and bib.docbase == hit.docbase
+                        and bib.medium == hit.medium
+                        and bib.source_revision == hit.source_revision
+                        and bib.title == hit.title
+                        and bib.author == hit.author):
                     hit = replace(
-                        hit, document=canonical_ref, epoch=stored.epoch,
+                        hit, document=ref, epoch=epoch,
+                        cover_state=cover_state,
                     )
-            except (ValueError, TypeError, AttributeError):
-                # A corrupt/unrelated canonical index cannot remove a valid
-                # exact-source C hit or reassign its bibliography.
-                pass
             canonical_hits.append(hit)
         selected = canonical_hits
     return PublicNoticeCPage(
