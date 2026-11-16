@@ -228,6 +228,25 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             button = e["normal_adept_check"]
             button.set_sensitive(False)
 
+            def saved_binding_current():
+                # A failed persisted read is not evidence that the old
+                # source/profile still owns this runtime observation.
+                try:
+                    identity = self.config.identity(saved_id)
+                    if type(identity) is not dict:
+                        return False
+                    return (
+                        identity.get("primary_paris_connection_id", "")
+                            == stored_primary
+                        and admitted_core.storage.adept_profile_binding_get(
+                            "identity", saved_id,
+                        ) == stored_profile
+                        and admitted_core.normal_paris_adept_status(saved_id)
+                            == start_status
+                    )
+                except Exception:
+                    return False
+
             def current():
                 return (
                     not getattr(self, "_closed", False)
@@ -241,18 +260,10 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     and e["adept_profile"].get_text() == stored_profile
                     and e["primary_paris_connection_id"].get_text()
                         == stored_primary
-                    # The saved binding can change without an in-memory UI
-                    # generation bump (external config/SQLite mutation).
-                    # A descriptive status can remain equal across owners;
-                    # it cannot attest the original probe's exact source.
-                    and (self.config.identity(saved_id) or {}).get(
-                        "primary_paris_connection_id", ""
-                    ) == stored_primary
-                    and admitted_core.storage.adept_profile_binding_get(
-                        "identity", saved_id,
-                    ) == stored_profile
-                    and admitted_core.normal_paris_adept_status(saved_id)
-                        == start_status
+                    # External config/SQLite changes may leave UI generations
+                    # and descriptive status unchanged; recheck exact saved
+                    # bindings, fail-closed on any read error.
+                    and saved_binding_current()
                 )
 
             def release():
