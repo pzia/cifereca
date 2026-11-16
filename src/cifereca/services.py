@@ -4159,11 +4159,21 @@ class LibraryService:
                     }
 
                 def admission_intact() -> bool:
-                    return (
-                        source_intact()
-                        and type(getattr(identity, "identity_id", None)) is str
-                        and identity.identity_id == bound_identity_id
-                    )
+                    # A pinned Loan and the owner found at entry are not
+                    # evidence that the SQLite connection remains enabled
+                    # and attached to the same identity after callbacks.
+                    # This is a source-neutral veto, not an ADEPT grant.
+                    if (not source_intact()
+                            or type(getattr(identity, "identity_id", None)) is not str
+                            or identity.identity_id != bound_identity_id):
+                        return False
+                    try:
+                        return self.storage.provider_connection_owner_current(
+                            source.provider_id, source.credential_id,
+                            bound_identity_id,
+                        ) is True
+                    except Exception:
+                        return False
 
                 if source.provider_id.casefold() == "paris":
                     _, borrower_code = self._paris_adept_identity_for_loan(
