@@ -422,22 +422,6 @@
       "reachability": "productive"
     },
     {
-      "id": "site-af9a4882484f55e85f232552",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Exact primary Paris lender preflight for cross-identity manual borrow",
-      "productive_caller": "core.borrow_for_identity_live._witness -> configured_primary_source_current in admitted lender choice calculation",
-      "effect": "Rejects a lender whose saved primary Paris connection no longer matches the observed exact account; does not itself authorize borrowing.",
-      "authority": "Installed explicit lender identity, source/credential/account coordinates and saved primary connection option.",
-      "replacement_contract": "Typed versioned primary-source lender witness from the installed provider, rechecked with Core owner/session lease before action.",
-      "tests": [
-        "tests/test_core_p0_5975_headless_lender_admission.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "The Paris predicate guards a live source selection; eliminating it without a neutral witness would admit a stale or foreign lender.",
-      "decision_group_id": "lending.borrower-paris-primary-witness",
-      "reachability": "productive"
-    },
-    {
       "id": "site-60a9d11031d9610ffda9a089",
       "classification": "safety_guard_pending_contract",
       "journey": "Explicit reacquisition of a protected Paris digital loan",
@@ -1677,6 +1661,24 @@
       "pr": "#6170",
       "in_ast_metric": false,
       "retired_at_sha": "31724a9ed64ff2ee8999fddce5e5ed5598cda5e2"
+    },
+    {
+      "id": "struct-lender-primary-source-abi-cutover",
+      "original": "core.borrow_for_identity_live._witness: provider_id == 'paris' and hardcoded primary_paris_connection_id (AST site-af9a4882484f55e85f232552)",
+      "original_classification": "safety_guard_pending_contract",
+      "journey": "Exact primary Paris lender preflight for cross-identity manual borrow",
+      "replacement": "Installed, exact ProviderDescriptor.manual_borrow_policy (cifereca.manual-borrow/1) publishes source_selection_key; generic configured_primary_source_current validates the source and borrower; a missing/malformed policy yields no lender witness",
+      "classification": "retired_supplier_specific_primary_lender_selection",
+      "evidence": "The productive Paris comparison was physically removed; the same saved primary connection veto is applied from the typed installed plugin policy with exact provider/credential/identity/account scope. A different synthetic source declaring its own key is accepted, while wrong selection, wrong branch, absent/mutated contract, disabled provider, account rebind and descriptor replacement block the preview. No provider HTTP, consent, borrow, acquisition, rights or CAS introduced; the executable borrower action retains its independent guards.",
+      "tests": [
+        "tests/test_core_p1_4662_live_lender_preview.py::test_alex_exact_observation_is_visible_under_default_but_not_executable",
+        "tests/test_core_p1_4662_live_lender_preview.py::test_broken_lender_scope_rejects_without_fallback",
+        "tests/test_core_p1_4662_live_lender_preview.py::test_lender_preview_does_not_fallback_when_declared_policy_changes",
+        "tests/test_core_p1_4662_live_lender_preview.py::test_lender_preview_uses_non_paris_installed_primary_source_contract",
+        "tests/test_core_p1_4662_live_lender_preview.py::test_descriptor_rebind_during_lender_validation_revokes_preview"
+      ],
+      "pr": "#6382",
+      "in_ast_metric": true
     }
   ],
   "guard_installations": [
