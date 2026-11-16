@@ -571,6 +571,20 @@ class BookListCell(Gtk.Box):
         decision from cached N3 media. A rejected packet never falls back
         silently to a lower-priority supplier URL.
         """
+        borrower_public = getattr(item, "_cover_borrower_public_c_receipt", None)
+        if borrower_public is not None:
+            # N2 loads only the public canonical C on its own worker.
+            # Recycled GTK cells may neither borrow another identity's
+            # occurrence nor reuse a stale account/source generation.
+            if any(getattr(item, name, None) is not None for name in (
+                "_cover_local_evidence", "_cover_history_evidence",
+                "_cover_loan_supplier_evidence", "_cover_search_evidence",
+            )):
+                return False
+            from .borrower_public_c_bridge import admit_borrower_public_c_cell
+            return admit_borrower_public_c_cell(
+                self.window, item, document,
+            )
         search = getattr(item, "_cover_search_evidence", None)
         if search is not None:
             from .search_document_cover_bridge import register_exact_search_document
