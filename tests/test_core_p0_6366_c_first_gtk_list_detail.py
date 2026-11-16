@@ -129,8 +129,8 @@ def test_online_extension_preserves_same_c_cover_until_exact_live_source(tmp_pat
         retained = ui.search_page.show_rows.call_args.args[0]
         assert len(retained) == 1
         assert retained[0]._cover_document_ref == persisted.document
-        assert retained[0]._public_row_content[-4] == persisted.document
-        assert retained[0]._public_row_content[-2] == known[0]["metadata"]["notice_c_epoch"]
+        assert retained[0]._public_row_content[-2] == persisted.document
+        assert retained[0]._public_row_content[-3] == known[0]["metadata"]["notice_c_epoch"]
         assert retained[0]._public_row_content[-1] is None
         assert retained[0].options == {}
 
