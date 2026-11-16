@@ -454,8 +454,12 @@ Le fournisseur expose uniquement pour intégration future son adaptateur
 `digital_download` ou `acquisition.download` dans ses capacités publiques.
 La synchronisation ne l'appelle jamais : seul le parcours CoreUI initié par
 l'utilisateur invoque l'adaptateur avec `explicit_user_action=True`. Toute
-invocation générique est refusée avant une requête Web. Le garde Core
-`bnf_web_explicit_only` reste actif : aucun ACSM n'est obtenu à l'ouverture.
+invocation générique est refusée avant une requête Web. Le garde Core source-neutre `loan_auto_explicit_only` vérifie
+les capacités de la session installée (`opening_loan_auto_acquisition`,
+`digital_download`, `loans`) avant tout verrou ou GET : BnF ne déclare
+pas l'acquisition implicite et reste refusée. Le provider conserve séparément
+son refus `bnf_web_explicit_only` si un appel `download_digital` survient
+sans `explicit_user_action=True`. Aucun ACSM n'est obtenu à l'ouverture.
 
 Ce chemin exige une connexion active, l'objet de compte **exact** et un prêt
 numérique avec la même identité / connexion / ressource que la dernière page
