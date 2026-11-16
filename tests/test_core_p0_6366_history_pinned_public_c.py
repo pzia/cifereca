@@ -210,3 +210,32 @@ def test_history_cache_row_pinned_to_wrong_account_never_borrows_c(tmp_path):
         assert db.entitlements() == []
     finally:
         db.close()
+
+
+def test_supplier_branch_change_revokes_previously_admitted_history_c(tmp_path):
+    db = Storage(tmp_path / "branch-changed.sqlite")
+    try:
+        bibliography(
+            db, provider="paris", record="edition-paris", docbase="DILICOM",
+        )
+        account = _account()
+        source = _provider_history()
+        service, _state = _service(db, account, source)
+        original = refresh_history(service, force=True, account=account)[0]
+        accepted = borrower_public_c_receipt(
+            original, identity_id="alice", account_epoch=7, source_epoch=9,
+        )
+        assert accepted is not None
+        # An occurrence can retain provider+record+medium while its upstream
+        # branch is changed by a later refresh or a faulty plugin.
+        original.provider = "SYRACUSE"
+        assert borrower_public_c_receipt(
+            original, identity_id="alice",
+        ) is None
+        original.provider = "DILICOM"
+        # Return to the original scalar fields is not independently a new
+        # Core lease; a newly admitted worker batch reconstructs a receipt.
+        refresh_history(service, force=True, account=account)
+        assert db.entitlements() == []
+    finally:
+        db.close()
