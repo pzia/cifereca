@@ -87,6 +87,7 @@ def test_automatic_acquisitions_are_serialized_in_process(monkeypatch):
     from time import sleep
 
     service = object.__new__(LibraryService)
+    service._sessions = {}  # offline serialization fixture; no supplier I/O
     counters = {"active": 0, "peak": 0}
     monitor = Lock()
 
