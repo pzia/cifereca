@@ -20,8 +20,11 @@ from cifereca.identities import AdeptProfileResolutionError
 
 
 def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
-             profiles=None, source_epoch_current=None):
-    loan = NS(source_provider=provider, source_credential="reader", source_account_id="primary", id="loan-1", record_id="edition-1")
+             profiles=None, source_epoch_current=None, loan_override=None):
+    loan = (loan_override if loan_override is not None else NS(
+        source_provider=provider, source_credential="reader",
+        source_account_id="primary", id="loan-1", record_id="edition-1",
+    ))
     borrower = Mock(return_value=("identity-1", borrower_code))
     resolver = Mock(return_value=("reader-a", "explicit_binding"))
     if profile_error is not None:
@@ -445,3 +448,104 @@ def test_poststaging_borrower_callback_cannot_change_source_or_edition(
     assert receipt["attention_code"] == "adept_borrower_ambiguous"
     assert receipt["metadata"]["provider_loan_id"] == "loan-1"
     assert receipt["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
+
+
+@pytest.mark.parametrize("provider", ["paris", "synthetic-library"])
+@pytest.mark.parametrize("field", [
+    "id", "record_id", "source_provider", "source_credential",
+    "source_account_id",
+])
+def test_poststaging_throwing_loan_getter_preserves_acsm_without_borrower(
+    provider, field,
+):
+    """A plugin getter failure must return a durable scoped refusal, not raise."""
+    base = NS(
+        source_provider=provider, source_credential="reader",
+        source_account_id="primary", id="loan-1", record_id="edition-1",
+    )
+
+    class StagedLoan:
+        def __getattr__(self, name):
+            if name == field:
+                raise RuntimeError("private hostile getter")
+            return getattr(base, name)
+
+    invoke, store, borrower, resolver, profiles, _loan, _opts = _fixture(
+        provider=provider, loan_override=StagedLoan(),
+    )
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    receipt = store.call_args.args[0]
+    assert receipt["provider_id"] == provider
+    assert receipt["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
+    assert "private hostile" not in repr(receipt)
+
+
+@pytest.mark.parametrize("field", [
+    "id", "record_id", "source_provider", "source_credential",
+    "source_account_id",
+])
+def test_poststaging_getter_becomes_hostile_inside_borrower_callback(field):
+    """Grant resolver return cannot conceal a newly unreadable staged loan."""
+    base = NS(
+        source_provider="synthetic-library", source_credential="reader",
+        source_account_id="primary", id="loan-1", record_id="edition-1",
+    )
+
+    class ChangingLoan:
+        blocked = False
+
+        def __getattr__(self, name):
+            if self.blocked and name == field:
+                raise RuntimeError("private callback corruption")
+            return getattr(base, name)
+
+    staged = ChangingLoan()
+    invoke, store, borrower, resolver, profiles, _loan, _opts = _fixture(
+        provider="synthetic-library", loan_override=staged,
+    )
+
+    def revoke(*_args, **_kwargs):
+        staged.blocked = True
+        return "identity-1", None
+
+    borrower.side_effect = revoke
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_called_once()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    assert store.call_args.args[0]["metadata"]["acsm_staging_path"] == (
+        "/synthetic/staged.acsm"
+    )
+
+
+def test_poststaging_throwing_identity_getter_retains_original_receipt():
+    """An unreadable owner is no ADEPT grant, even before the first check."""
+    invoke, store, borrower, resolver, profiles, loan, opts = _fixture(
+        provider="synthetic-library",
+    )
+
+    class HostileIdentity:
+        @property
+        def identity_id(self):
+            raise RuntimeError("private bad identity")
+
+    opts["identity"] = HostileIdentity()
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
