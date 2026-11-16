@@ -554,7 +554,10 @@ def test_real_numilog_search_writes_public_bibliography_inside_same_notice_c(
         assert page.status == "partial"  # No false complete-query claim.
         assert len(page.hits) == 1
         first = page.hits[0]
-        assert first.document == document
+        from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
+        canonical = canonical_cover_document_ref(persisted.observation.key.edition_id)
+        assert original._core_notice_canonical_cover_document_ref == canonical
+        assert first.document == canonical
         assert first.title == original.title
         assert first.record_id == original.record_id
         assert first.cover_state == "available"
@@ -581,14 +584,14 @@ def test_real_numilog_search_writes_public_bibliography_inside_same_notice_c(
     db = Storage(storage_path)
     try:
         page = search_public_notice_c(db, "loup")
-        assert len(page.hits) == 1 and page.hits[0].document == document
+        assert len(page.hits) == 1 and page.hits[0].document == canonical
         assert page.hits[0].title == original.title
         # +25h does not DELETE C; it marks its observed facts stale.
         stale = search_public_notice_c(
             db, "loup", now=persisted.observation.observed_at + 25 * 3600,
         )
         assert stale.hits and stale.hits[0].stale is True
-        assert stale.hits[0].document == document
+        assert stale.hits[0].document == canonical
         assert supplier_gets == [1]
     finally:
         db.close()
@@ -611,6 +614,8 @@ def test_real_numilog_notice_c_is_first_known_search_across_profiles_no_get(
         assert observed and supplier_gets == [1]
         c_ref = observed[0]._core_notice_cover_document_ref
         assert read_notice_cover(service.storage, c_ref) is not None
+        canonical = observed[0]._core_notice_canonical_cover_document_ref
+        assert canonical != c_ref
 
         # A public-only source is shared across readers but never shares
         # rights. Bob has no per-profile historical mirror of Alice's row.
@@ -620,7 +625,7 @@ def test_real_numilog_notice_c_is_first_known_search_across_profiles_no_get(
         known = service.search_known_catalog("loup", identity_id="bob")
         public = [r for r in known if r.get("source") == "notice_c_public"]
         assert len(public) == 1
-        assert public[0]["_cover_document_ref"] == c_ref
+        assert public[0]["_cover_document_ref"] == canonical
         assert public[0]["thumbnail_url"] is None
         assert public[0]["metadata"]["notice_c_query_status"] == "partial"
         assert public[0]["identity_id"] == "bob"
