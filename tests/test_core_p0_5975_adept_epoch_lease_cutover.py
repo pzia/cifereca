@@ -15,7 +15,7 @@ from cifereca.core.loan_acquisition_admission import resolve
 from cifereca.core.loan_source_epoch import SourceEpochLease
 from cifereca.core.loan_adept_fulfillment import SourceEpochRevoked, fulfill
 from cifereca.core.loan_safe_trace import trace_integer
-from cifereca.models import Loan
+from cifereca.models import Account, Loan
 from tests.test_automatic_loan_admission import LOGGER, _forbid_work
 from tests.test_core_p0_1120_adept_profile_guard_extraction import _fixture
 from tests.test_sync_state_contract import _service
@@ -27,6 +27,12 @@ def _setup(tmp_path):
         "provider_id": "synthetic-pnb", "credential_id": "source-a",
         "identity_id": "default", "enabled": True,
     })
+    service.accounts = [
+        Account(
+            provider_id="synthetic-pnb", credential_id="source-a",
+            identity_id="default", unique_id="", is_primary=True,
+        ),
+    ]
     loan = Loan(
         id="loan-1", record_id="edition-1", provider="PNB",
         medium="digital", title="Synthetic",
@@ -122,8 +128,6 @@ def test_automatic_admission_rejects_aba_after_first_epoch_capture(
 def test_poststage_epoch_revocation_before_adept_produces_exact_attention_receipt(
     provider, hook,
 ):
-    if hook == "borrower" and provider != "paris":
-        pytest.skip("non-Paris does not consult the Paris borrower resolver")
     live = {"valid": True}
     witness = Mock(side_effect=lambda *_args: live["valid"])
     invoke, store, borrower, resolver, inventory, loan, options = _fixture(
@@ -257,3 +261,73 @@ def test_drift_from_loan_to_hostile_source_never_reaches_sqlite(tmp_path, monkey
         assert lease.current(service.storage, loan) is False
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("provider", ["paris", "synthetic-pnb"])
+def test_poststage_epoch_valid_but_borrower_refused_cannot_reach_profile_or_adept(
+    provider,
+):
+    """A valid source epoch is never an ADEPT borrower authorization."""
+    invoke, store, borrower, resolver, inventory, loan, options = _fixture(
+        provider=provider, borrower_code="adept_borrower_binding_required",
+    )
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_binding_required", "retry": "explicit_only",
+    }
+    borrower.assert_called_once_with(loan, connection_identity_id="identity-1")
+    resolver.assert_not_called()
+    inventory.assert_not_called()
+    store.assert_called_once()
+    receipt = store.call_args.args[0]
+    assert receipt["attention_code"] == "adept_borrower_binding_required"
+    assert receipt["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
+    assert receipt["provider_id"] == provider
+
+
+def test_synthetic_provider_automatic_admission_checks_borrower_before_rights(
+    tmp_path, monkeypatch,
+):
+    service, loan = _setup(tmp_path)
+    try:
+        _forbid_work(service, monkeypatch)
+        from unittest.mock import Mock
+        borrower = Mock(return_value=(
+            None, "adept_borrower_binding_required",
+        ))
+        monkeypatch.setattr(service, "_paris_adept_identity_for_loan", borrower)
+        entitlement_lookup = Mock(side_effect=AssertionError(
+            "borrower refusal must precede entitlement reads"
+        ))
+        monkeypatch.setattr(service.storage, "entitlements", entitlement_lookup)
+        refused = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert refused.identity is None
+        assert refused.source_lease is None
+        assert refused.refusal == {
+            "status": "attention_required", "loan_id": "loan-1",
+            "code": "adept_borrower_binding_required", "retry": "explicit_only",
+        }
+        borrower.assert_called_once_with(
+            loan, connection_identity_id="default",
+        )
+        entitlement_lookup.assert_not_called()
+        assert service.storage.acquisitions(provider_id="synthetic-pnb") == []
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("provider", ["paris", "synthetic-pnb"])
+def test_poststage_borrower_resolver_exception_is_closed_refusal(provider):
+    invoke, store, borrower, resolver, inventory, loan, opts = _fixture(
+        provider=provider,
+    )
+    borrower.side_effect = RuntimeError("private untrusted lender payload")
+    result = invoke()
+    assert result == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    resolver.assert_not_called()
+    inventory.assert_not_called()
+    store.assert_called_once()
+    assert store.call_args.args[0]["attention_code"] == "adept_borrower_ambiguous"
