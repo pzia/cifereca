@@ -495,20 +495,23 @@ def _render_search_results(self) -> int:
         placement = None if (stale_known or placement_key in ambiguous) else linked.get(
             placement_key
         )
-        # Public Numilog has neither an authenticated download entitlement
-        # nor an acquisition action. Never consult the direct-download broker
-        # for this source, including malformed remote flags.
-        from cifereca.gui.offer_actions import private_notice_download_hint_allowed
-        private_hint_ok = private_notice_download_hint_allowed(
+        # Catalogue-only notices are not download offers, regardless of the
+        # supplier name or malformed owned/downloadable flags. A real public
+        # offer must be explicit before consulting Core's read-only broker.
+        from cifereca.gui.offer_actions import (
+            private_notice_download_hint_allowed,
+            public_catalogue_download_hint_allowed,
+        )
+        private_hint_ok = (public_catalogue_download_hint_allowed(item)
+                           and private_notice_download_hint_allowed(
             item,
             purchase_evidence=getattr(self, "_search_purchase_evidence", None),
             identity_id=identity_id,
             account_context_epoch=getattr(self.service, "_account_context_epoch", None),
             source_context_epoch=getattr(self.service, "_source_context_epoch", None),
-        )
+        ))
         direct = (
-            False if (stale_known or item.source_provider == "numilog-catalog"
-                      or not private_hint_ok)
+            False if (stale_known or not private_hint_ok)
             else self.service.can_direct_download(item)
         )
         # An installed v2 interface is a preflight hint, not an attested offer.
