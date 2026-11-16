@@ -66,7 +66,7 @@ class PublicNoticeCPage:
     hits: tuple[PublicNoticeCHit, ...]
     known_matches: int
     scanned_sources: int
-    corrupt_sources: int
+    unindexed_sources: int
     status: str  # "partial" | "budget_exceeded"
     has_more: bool
 
@@ -130,16 +130,18 @@ def _public_observation(
                     bio["docbase"], bio["medium"], bio["revision_id"],
                 )):
             return None
-        if not _public_bibliographic_text(
-            bio["title"], required=True, limit=512,
-        ):
+        if (not _public_bibliographic_text(
+                    bio["title"], required=True, limit=512,
+            ) or bio["title"].lstrip().casefold().startswith(
+                ("/", "\\", "~/", "file:")
+            )):
             return None
         for name in ("author", "format", "publisher", "published_at", "description"):
             value = bio[name]
             if (value is not None
                     and (not _public_bibliographic_text(
                         value, limit=4000 if name == "description" else 512,
-                    ) or value.lstrip().startswith(("/", "\\", "~/", "file:")))):
+                    ) or value.lstrip().casefold().startswith(("/", "\\", "~/", "file:")))):
                 return None
         last_seen = payload.get("last_seen_at", persisted.observation.observed_at)
         if (type(last_seen) is not int
@@ -190,14 +192,17 @@ def search_public_notice_c(
     needle = _fold(query.strip())
     wanted = set(provider_ids)
     matches: list[PublicNoticeCHit] = []
-    scanned = corrupt = 0
+    scanned = unindexed = 0
     exceeded = False
     # SQLite's metadata PK is indexed; exact-prefix range is a deterministic
     # bounded cursor and must not enumerate the legacy per-profile mirror.
     with storage._lock, storage._connect() as db:
         cursor = db.execute(
             "SELECT key,value FROM metadata "
-            "WHERE key>=? AND key<? ORDER BY key LIMIT ?",
+            "WHERE key>=? AND key<? "
+            "AND CASE WHEN json_valid(value) THEN "
+            "json_extract(value, '$.key.visibility') ELSE NULL END='public' "
+            "ORDER BY key LIMIT ?",
             (_PREFIX, _PREFIX + "\uffff", max_scan + 1),
         )
         for key_string, raw in cursor:
@@ -208,6 +213,7 @@ def search_public_notice_c(
             record = _public_observation(raw, key_string=key_string, now=now)
             if record is None:
                 # Older cover-only sources are expected; no false 'missing'.
+                unindexed += 1
                 continue
             if wanted and record.provider_id not in wanted:
                 continue
@@ -231,7 +237,7 @@ def search_public_notice_c(
     return PublicNoticeCPage(
         hits=tuple(matches[offset:offset + page_size]),
         known_matches=len(matches), scanned_sources=scanned,
-        corrupt_sources=corrupt,
+        unindexed_sources=unindexed,
         status="budget_exceeded" if exceeded else "partial",
         has_more=exceeded or offset + page_size < len(matches),
     )
