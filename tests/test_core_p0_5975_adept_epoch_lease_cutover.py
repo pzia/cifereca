@@ -395,3 +395,71 @@ def test_epoch_capture_rejects_hostile_postread_coordinate_before_constructing_l
         assert SourceEpochLease.capture(service.storage, loan, "default") is None
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("getter", [
+    "source_provider", "source_credential", "source_account_id",
+    "id", "record_id",
+])
+def test_epoch_current_fails_closed_on_throwing_loan_getter(
+    tmp_path, monkeypatch, getter,
+):
+    service, loan = _setup(tmp_path)
+    try:
+        lease = SourceEpochLease.capture(service.storage, loan, "default")
+        assert type(lease) is SourceEpochLease
+
+        class ThrowingLoan:
+            def __getattr__(self, name):
+                if name == getter:
+                    raise RuntimeError("untrusted loan getter")
+                return getattr(loan, name)
+
+        epoch_read = Mock(side_effect=AssertionError(
+            "hostile getter must never reach SQLite"
+        ))
+        monkeypatch.setattr(
+            service.storage, "provider_connection_epoch_current", epoch_read,
+        )
+        assert lease.current(service.storage, ThrowingLoan()) is False
+        epoch_read.assert_not_called()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(("field", "replacement"), [
+    ("source_provider", "synthetic-other"),
+    ("source_credential", "other-credential"),
+    ("source_account_id", "other-account"),
+    ("id", "other-loan"),
+    ("record_id", "other-edition"),
+])
+def test_epoch_current_rejects_loan_drift_during_sqlite_validation(
+    tmp_path, monkeypatch, field, replacement,
+):
+    """An epoch lookup must not certify coordinates changed inside its hook."""
+    service, loan = _setup(tmp_path)
+    try:
+        lease = SourceEpochLease.capture(service.storage, loan, "default")
+        assert type(lease) is SourceEpochLease
+        original = service.storage.provider_connection_epoch_current
+        calls = []
+
+        def mutating_reader(provider, credential, identity, epoch):
+            calls.append((provider, credential, identity, epoch))
+            assert original(provider, credential, identity, epoch) is True
+            setattr(loan, field, replacement)
+            return True
+
+        monkeypatch.setattr(
+            service.storage, "provider_connection_epoch_current",
+            mutating_reader,
+        )
+        assert lease.current(service.storage, loan) is False
+        assert calls == [
+            (lease.provider_id, lease.credential_id,
+             lease.identity_id, lease.epoch),
+        ]
+        assert service.storage.acquisitions(provider_id="synthetic-pnb") == []
+    finally:
+        service.close()
