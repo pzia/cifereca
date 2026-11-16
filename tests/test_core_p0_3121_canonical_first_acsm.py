@@ -149,7 +149,7 @@ def test_canonical_first_acsm_stages_any_exact_claimed_source_without_new_get(
     # borrow_claim_key, never reuse the fixture's Paris claim as evidence
     # of a different lender's accepted borrow.
     key = "loan.borrow.v1:" + sha256(provider.encode("utf-8")).hexdigest()
-    operation = "synthetic-confirmed-" + provider
+    operation = "confirmed-" + sha256(provider.encode("utf-8")).hexdigest()[:20]
     claim.clear()
     claim[key] = {
         "schema": 1, "operation": "loan.borrow", "status": "confirmed",
