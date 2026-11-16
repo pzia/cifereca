@@ -101,8 +101,12 @@ def _leased_cached_history_c_rows(
     still-registered provider source before stamping a public C fallback.
     """
     try:
-        session = self._session_for_account(account)
-        if not self._history_source_lease_current(
+        # Reuse only the already-registered session. A cache hit must not
+        # resolve/reconnect a provider merely to decorate private history.
+        session = self._sessions.get(
+            self._session_key(account.provider_id, account.credential_id),
+        )
+        if session is None or not self._history_source_lease_current(
             account, session, scope=scope, epoch=source_epoch,
         ):
             return []
