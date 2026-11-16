@@ -18,7 +18,7 @@ _TRACE_LOG = logging.getLogger("cifereca")
 # Schema history is deliberately explicit from 0.7.10 onward.  Databases created
 # before that release had no schema_version metadata; they are treated as v0 and
 # migrated forward transactionally.
-CURRENT_SCHEMA_VERSION = 17
+CURRENT_SCHEMA_VERSION = 18
 
 # Frozen 0.8.1 migration cohort, NEVER live provider business policy.
 # v15's persistent generic cardinality table governs modern connections.
@@ -1681,6 +1681,110 @@ class Storage:
                 raise
             version = 17
 
+        if version < 18:
+            db.execute("SAVEPOINT migration_v18")
+            try:
+                # Persistent, source-neutral ABA witness. A row survives
+                # provider connection deletion; recreating the same key may
+                # never reuse an earlier epoch, even through direct SQLite.
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS provider_connection_epochs (
+                        provider_id TEXT NOT NULL,
+                        credential_id TEXT NOT NULL,
+                        epoch INTEGER NOT NULL
+                            CHECK(epoch BETWEEN 1 AND 9223372036854775806),
+                        PRIMARY KEY(provider_id, credential_id)
+                    )
+                """)
+                # Historic v17 connections have no recoverable earlier epoch:
+                # grant 1 only to their CURRENT exact key at upgrade time.
+                # No old receipt or ADEPT grant is promoted to authority.
+                db.execute("""
+                    INSERT OR IGNORE INTO provider_connection_epochs
+                        (provider_id,credential_id,epoch)
+                    SELECT provider_id,credential_id,1
+                    FROM provider_connections
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_source_epoch_insert
+                    AFTER INSERT ON provider_connections
+                    BEGIN
+                        INSERT INTO provider_connection_epochs
+                            (provider_id,credential_id,epoch)
+                        VALUES (NEW.provider_id,NEW.credential_id,1)
+                        ON CONFLICT(provider_id,credential_id)
+                        DO UPDATE SET epoch=epoch+1;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_source_epoch_update_new
+                    AFTER UPDATE OF connection_id,identity_id,provider_id,
+                                    credential_id,enabled ON provider_connections
+                    WHEN OLD.connection_id IS NOT NEW.connection_id
+                       OR OLD.identity_id IS NOT NEW.identity_id
+                       OR OLD.provider_id IS NOT NEW.provider_id
+                       OR OLD.credential_id IS NOT NEW.credential_id
+                       OR OLD.enabled IS NOT NEW.enabled
+                    BEGIN
+                        INSERT INTO provider_connection_epochs
+                            (provider_id,credential_id,epoch)
+                        VALUES (NEW.provider_id,NEW.credential_id,1)
+                        ON CONFLICT(provider_id,credential_id)
+                        DO UPDATE SET epoch=epoch+1;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_source_epoch_update_old
+                    AFTER UPDATE OF provider_id,credential_id
+                    ON provider_connections
+                    WHEN OLD.provider_id IS NOT NEW.provider_id
+                       OR OLD.credential_id IS NOT NEW.credential_id
+                    BEGIN
+                        INSERT INTO provider_connection_epochs
+                            (provider_id,credential_id,epoch)
+                        VALUES (OLD.provider_id,OLD.credential_id,1)
+                        ON CONFLICT(provider_id,credential_id)
+                        DO UPDATE SET epoch=epoch+1;
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_source_epoch_delete
+                    AFTER DELETE ON provider_connections
+                    BEGIN
+                        INSERT INTO provider_connection_epochs
+                            (provider_id,credential_id,epoch)
+                        VALUES (OLD.provider_id,OLD.credential_id,1)
+                        ON CONFLICT(provider_id,credential_id)
+                        DO UPDATE SET epoch=epoch+1;
+                    END
+                """)
+                # Epochs are tombstones, never a disposable cache. Even raw
+                # maintenance SQL must not reset or transfer their scope.
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_source_epoch_no_delete
+                    BEFORE DELETE ON provider_connection_epochs
+                    BEGIN
+                        SELECT RAISE(ABORT,'source_epoch_tombstone_immutable');
+                    END
+                """)
+                db.execute("""
+                    CREATE TRIGGER IF NOT EXISTS trg_source_epoch_monotone
+                    BEFORE UPDATE ON provider_connection_epochs
+                    WHEN NEW.provider_id IS NOT OLD.provider_id
+                      OR NEW.credential_id IS NOT OLD.credential_id
+                      OR NEW.epoch <= OLD.epoch
+                    BEGIN
+                        SELECT RAISE(ABORT,'source_epoch_not_monotone');
+                    END
+                """)
+                cls._write_schema_version(db, 18)
+                db.execute("RELEASE SAVEPOINT migration_v18")
+            except Exception:
+                db.execute("ROLLBACK TO SAVEPOINT migration_v18")
+                db.execute("RELEASE SAVEPOINT migration_v18")
+                raise
+            version = 18
+
         # Forward-compatible strengthening of v17: add this idempotent
         # trigger even to already upgraded databases. The tombstone is an
         # invariant of the v16 grant row's physical deletion, not a policy
@@ -2958,6 +3062,38 @@ class Storage:
                 (provider_id.casefold(), credential_id),
             ).fetchall()
         return len(rows) == 1 and rows[0] == (identity_id, 1)
+
+    def source_connection_epoch_get(
+        self, provider_id: str, credential_id: str, identity_id: str,
+    ) -> int | None:
+        """Current enabled owner's monotone source epoch, or no authority.
+
+        The owner, enabled switch and revision are read atomically from one
+        SQLite snapshot. An A→B→A or OFF→ON cycle changes the revision even
+        when the final owner matches. Absent/tombstoned keys are never grants.
+        """
+        values = (provider_id, credential_id, identity_id)
+        if any(
+            type(value) is not str or not value or len(value) > 1024
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+            for value in values
+        ):
+            return None
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT epoch.epoch FROM provider_connections AS c "
+                "JOIN provider_connection_epochs AS epoch "
+                "ON epoch.provider_id=c.provider_id "
+                "AND epoch.credential_id=c.credential_id "
+                "WHERE c.provider_id=? AND c.credential_id=? "
+                "AND c.identity_id=? AND c.enabled=1 LIMIT 2",
+                (provider_id.casefold(), credential_id, identity_id),
+            ).fetchall()
+        return (
+            rows[0][0] if len(rows) == 1
+            and type(rows[0][0]) is int and rows[0][0] > 0
+            else None
+        )
 
     def identity_for_connection(self, provider_id: str, credential_id: str) -> str | None:
         with self._lock, self._connect() as db:
