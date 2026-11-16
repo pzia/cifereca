@@ -86,10 +86,31 @@ def test_incomplete_snapshot_never_publishes_attested_edge():
     assert result.unverified_rights == [0]
 
 
-def test_deadline_expiring_inside_single_file_cannot_attest(monkeypatch):
+def test_deadline_expiring_before_canonical_promotion_cannot_attest(monkeypatch):
+    from cifereca.core.canonical_publication import _stable
     inventory, tables = _fixture(1)
-    # Start, file entry, placement, right are inside the window. The
-    # final proof-promotion check happens exactly on the deadline.
+    origin = {
+        "identity_id": "alice", "provider_id": "numilog",
+        "credential_id": "credential", "account_id": "account",
+        "branch_id": "personal_library", "edition_id": "edition-0000",
+        "right_id": "right-0000", "reference_kind": "purchase",
+        "state": "active", "evidence_kind": "provider_response",
+        "evidence_ref": "observed-via-provider", "receipt_ref": "completed",
+        "observed_at": "2026-11-16T09:00:00Z",
+        "artifact_id": tables["artifacts"][0]["artifact_id"],
+    }
+    keys = (
+        "identity_id", "provider_id", "credential_id", "account_id",
+        "branch_id", "edition_id", "right_id", "reference_kind",
+    )
+    origin["source_reference_id"] = _stable("source", *(origin[k] for k in keys))
+    origin["origin_link_id"] = _stable(
+        "origin", "provider", origin["identity_id"], origin["artifact_id"],
+        origin["source_reference_id"], origin["receipt_ref"],
+    )
+    tables["provider_origins"] = [origin]
+    # Start, file entry, placement and artifact compare fit. The final
+    # canonical-positive checkpoint (not a retired legacy right) expires.
     clock = iter((0.0, 0.0, 0.0, 0.0, 10.0))
     monkeypatch.setattr(engine.time, "monotonic", lambda: next(clock, 10.0))
     result = _reconcile(inventory, tables, seconds=10)
@@ -99,12 +120,10 @@ def test_deadline_expiring_inside_single_file_cannot_attest(monkeypatch):
     assert "confirmed_link" not in result.files[0]
 
 
-def test_deadline_inside_one_file_before_right_verification_never_attests(monkeypatch):
+def test_deadline_inside_file_before_byte_verification_never_attests(monkeypatch):
     inventory, tables = _fixture(1)
-    # The source-agnostic account-ambiguity gate now rejects *both* Kobo
-    # and Numilog editions with multiple accounts before inner comparison.
-    # Keep this independent deadline test on an otherwise unique right.
-    # Start, file entry and placement fit; right verification expires.
+    # Start, file and placement fit; artifact-byte verification is cut off
+    # before any source or ownership evidence could be promoted.
     ticks = iter((0, 0, 0, 10))
     monkeypatch.setattr(engine.time, "monotonic", lambda: next(ticks, 10))
     result = _reconcile(inventory, tables, seconds=10)
