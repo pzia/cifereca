@@ -399,6 +399,82 @@ class GraphTests(unittest.TestCase):
         self.assertNotIn('PRIVATE', json.dumps(report.redacted()))
         self.assertNotIn(self.inventory.files[0].sha256, json.dumps(report.redacted()))
 
+    def _canonical_future_purchase_origin(self):
+        from cifereca.core.canonical_publication import _stable
+
+        origin = {
+            'identity_id': 'alice', 'provider_id': 'synthetic-books',
+            'credential_id': 'c', 'account_id': 'account',
+            'branch_id': 'personal_library', 'edition_id': 'item',
+            'right_id': 'right-item', 'reference_kind': 'purchase',
+            'state': 'active', 'evidence_kind': 'provider_response',
+            'evidence_ref': 'private-source-proof',
+            'observed_at': '2026-11-16T07:00:00Z',
+            'receipt_ref': 'completed-delivery',
+            'artifact_id': self.artifact,
+        }
+        keys = ('identity_id', 'provider_id', 'credential_id',
+                'account_id', 'branch_id', 'edition_id', 'right_id',
+                'reference_kind')
+        source_id = _stable('source', *(origin[k] for k in keys))
+        origin['source_reference_id'] = source_id
+        origin['origin_link_id'] = _stable(
+            'origin', 'provider', origin['identity_id'],
+            origin['artifact_id'], source_id, origin['receipt_ref'],
+        )
+        return origin
+
+    def test_canonical_provider_origin_confirms_annotated_legacy_placement_without_brand(self):
+        # A new provider can have an old-style provider+edition placement,
+        # but the right's self-declared source is NOT sufficient authority.
+        for table in ('entitlements', 'acquisition_ledger', 'placements'):
+            self.snapshot.tables[table][0]['provider_id'] = 'synthetic-books'
+        self.right['attested_source'] = 'synthetic-books.personal_manifest'
+        without = reconcile(self.inventory, self.snapshot)
+        self.assertNotIn('confirmed_link', without.files[0])
+        self.assertFalse([e for e in without.edges if e.certainty == 'attested'])
+
+        self.snapshot.tables['provider_origins'] = [
+            self._canonical_future_purchase_origin()
+        ]
+        report = reconcile(self.inventory, self.snapshot)
+        self.assertEqual(report.files[0], {'confirmed_link'})
+        self.assertEqual(
+            [e.table for e in report.edges if e.certainty == 'attested'],
+            ['provider_origins'],
+        )
+        self.assertFalse(report.redacted()['acquisition_authorized'])
+
+    def test_mismatched_canonical_origin_blocks_weaker_legacy_fallback(self):
+        # A valid legacy Numilog chain cannot override a contradictory
+        # canonical provider origin, even though its own bytes still match.
+        original = self._canonical_future_purchase_origin()
+        for change in ('foreign_provider', 'foreign_edition',
+                       'foreign_account', 'unverified', 'duplicate'):
+            with self.subTest(change=change):
+                origin = dict(original)
+                if change == 'foreign_provider':
+                    origin['provider_id'] = 'another-provider'
+                elif change == 'foreign_edition':
+                    origin['edition_id'] = 'another-edition'
+                elif change == 'foreign_account':
+                    origin['account_id'] = 'another-account'
+                elif change == 'unverified':
+                    origin['evidence_kind'] = 'legacy_unverified'
+                self.snapshot.tables['provider_origins'] = (
+                    [origin, dict(origin)] if change == 'duplicate'
+                    else [origin]
+                )
+                report = reconcile(self.inventory, self.snapshot)
+                self.assertNotIn('confirmed_link', report.files[0])
+                self.assertIn('ambiguous', report.files[0])
+                self.assertFalse(
+                    [e for e in report.edges if e.certainty == 'attested']
+                )
+        self.snapshot.tables.pop('provider_origins')
+        self.assertEqual(reconcile(self.inventory, self.snapshot).files[0],
+                         {'confirmed_link'})
+
     def test_artifact_fanout_cancellation_never_confirms_partial_chain(self):
         # A legacy/corrupt snapshot may contain many artifacts under one ID.
         # Cancellation in the middle of one placement must revoke its proof.
