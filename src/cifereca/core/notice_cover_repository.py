@@ -65,8 +65,13 @@ def _opaque_key(document: CoverDocumentScope) -> str | None:
 
 
 def is_notice_cover_document(document: CoverDocumentScope) -> bool:
-    """Pure source-index scope eligibility, without SQLite or profile I/O."""
-    return _opaque_key(document) is not None
+    """Pure eligibility for exact-source or explicit canonical C read-through."""
+    if _opaque_key(document) is not None:
+        return True
+    # The canonical index depends on this repository for source revalidation.
+    # Delay the import to avoid a module cycle; the predicate does no I/O.
+    from .notice_c_cover_index import is_canonical_cover_document
+    return is_canonical_cover_document(document)
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
