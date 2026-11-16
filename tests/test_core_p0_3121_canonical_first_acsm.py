@@ -144,7 +144,19 @@ def test_canonical_first_acsm_stages_any_exact_claimed_source_without_new_get(
     setup, provider,
 ):
     service, session, account, _old_source, attempt, path, claim, loan = setup
-    key, operation = next(iter(claim.items()))[0], claim[next(iter(claim))]["operation_id"]
+    from hashlib import sha256
+    # Synthetic stand-in for the real provider/account/edition-scoped
+    # borrow_claim_key, never reuse the fixture's Paris claim as evidence
+    # of a different lender's accepted borrow.
+    key = "loan.borrow.v1:" + sha256(provider.encode("utf-8")).hexdigest()
+    operation = "synthetic-confirmed-" + provider
+    claim.clear()
+    claim[key] = {
+        "schema": 1, "operation": "loan.borrow", "status": "confirmed",
+        "operation_id": operation, "request_accepted": True,
+        "verification": "positive_active_loan",
+        "verified_loan_id": loan.id,
+    }
     docbase = "FUTURE_LIBRARY" if provider != "paris" else "DILICOM"
     account = replace(account, provider_id=provider)
     loan = replace(
