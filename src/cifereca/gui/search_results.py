@@ -287,15 +287,12 @@ def _render_search_results(self) -> int:
                     epoch = (item.get("metadata") or {}).get("notice_c_epoch")
                     if type(epoch) is int and epoch > 0:
                         view_row._cover_public_c_epoch = epoch
-                    # This is the *actual* C-first Core row, not a
-                    # documentary association guessed from its title or URL.
+                    # Filtering may copy each dict. Only the original
+                    # _search_local_objects row is Core's source witness.
                     from cifereca.gui.search_known_public_c_guard import (
-                        pin_known_public_c,
+                        attach_filtered_known_public_c,
                     )
-                    view_row._cover_known_public_c_source = item
-                    pinned = pin_known_public_c(self, view_row, item)
-                    if pinned is not None:
-                        view_row._cover_known_public_c_receipt = pinned
+                    attach_filtered_known_public_c(self, view_row, item)
             # Search-local only reuses an explicit Core owner+Artifact+
             # Placement cover packet. An identical URL/title/ISBN/SHA does
             # not let a catalogue notice or another identity borrow N2.
@@ -453,12 +450,9 @@ def _render_search_results(self) -> int:
                 if type(epoch) is int and epoch > 0:
                     view._cover_public_c_epoch = epoch
                 from cifereca.gui.search_known_public_c_guard import (
-                    pin_known_public_c,
+                    attach_filtered_known_public_c,
                 )
-                view._cover_known_public_c_source = known
-                pinned = pin_known_public_c(self, view, known)
-                if pinned is not None:
-                    view._cover_known_public_c_receipt = pinned
+                attach_filtered_known_public_c(self, view, known)
                 ui_rows.append(view)
             # An invalid C ref never falls back to a direct image URL or
             # opens a private provider action during online extension.
