@@ -87,6 +87,46 @@ def pin_known_public_c(
     )
 
 
+def attach_filtered_known_public_c(
+    window: Any, row: Any, projected: object,
+) -> None:
+    """Restore the original C source after QueryState.filter copies rows.
+
+    QueryState.filter is a presentation projection and may allocate a new
+    dict. Equality of those copies is NOT a Core C witness. Require exact
+    key, DocumentRef, owner and persisted C epoch to agree with the actual
+    _search_local_objects entry before pinning its original object.
+    """
+    if type(projected) is not dict:
+        return
+    key = projected.get("key")
+    current = getattr(window, "_search_local_objects", None)
+    source = current.get(key) if type(current) is dict else None
+    source_meta = source.get("metadata") if type(source) is dict else None
+    projected_meta = projected.get("metadata")
+    matching = (
+        type(source) is dict
+        and source.get("source") == "notice_c_public"
+        and source.get("key") == key
+        and source.get("identity_id") == projected.get("identity_id")
+        and source.get("_cover_document_ref")
+            == projected.get("_cover_document_ref")
+        and type(source_meta) is dict
+        and type(projected_meta) is dict
+        and type(source_meta.get("notice_c_epoch")) is int
+        and source_meta["notice_c_epoch"] == projected_meta.get(
+            "notice_c_epoch",
+        )
+    )
+    original = source if matching else projected
+    # Retain a veto marker even on rejected projections. No generic
+    # DocumentRef branch may render an unpinned C-first source by accident.
+    row._cover_known_public_c_source = original
+    packet = pin_known_public_c(window, row, original) if matching else None
+    if packet is not None:
+        row._cover_known_public_c_receipt = packet
+
+
 def known_public_c_current(window: Any, binding: object) -> bool:
     """N3 and post-GDK N4 check: refuse ABA, same-key and C epoch replacement."""
     if type(binding) is not PinnedKnownPublicC:
@@ -128,6 +168,6 @@ def known_public_c_cell_current(window: Any, row: Any, binding: object) -> bool:
 
 
 __all__ = [
-    "PinnedKnownPublicC", "pin_known_public_c",
+    "PinnedKnownPublicC", "pin_known_public_c", "attach_filtered_known_public_c",
     "known_public_c_current", "known_public_c_cell_current",
 ]
