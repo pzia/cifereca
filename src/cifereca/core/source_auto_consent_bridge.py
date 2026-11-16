@@ -206,9 +206,13 @@ def legacy_source_auto_policy(storage, scope, kind: str) -> tuple[str, str | Non
 
 
 def legacy_source_auto_current(storage, source: SourceKey, revision: str) -> bool:
-    """Revalidate source-level ON and the EXACT old generation before GET."""
-    if (type(source) is not SourceKey or type(revision) is not str
-            or _HEX.fullmatch(revision) is None):
+    """Historical purchase-only compatibility, never a loan GET grant.
+
+    The versioned source CAS is required for all automatic loan acquisition.
+    Do not re-admit a prior BnF ON merely because its old epoch still matches.
+    """
+    if (type(source) is not SourceKey or source.kind == "loan"
+            or type(revision) is not str or _HEX.fullmatch(revision) is None):
         return False
     try:
         # A newly configured CAS source policy supersedes the old toggle,
@@ -224,9 +228,9 @@ def legacy_source_auto_current(storage, source: SourceKey, revision: str) -> boo
 
 
 def legacy_source_auto_in_transaction(db, source: SourceKey, revision: str) -> bool:
-    """Final SQLite-transaction fence; protects against consent ABA."""
-    if (type(source) is not SourceKey or type(revision) is not str
-            or _HEX.fullmatch(revision) is None):
+    """Historical purchase-only final fence, not a loan authorization."""
+    if (type(source) is not SourceKey or source.kind == "loan"
+            or type(revision) is not str or _HEX.fullmatch(revision) is None):
         return False
     try:
         # An exact generic CAS source policy takes precedence, irrespective
