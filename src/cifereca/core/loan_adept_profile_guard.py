@@ -30,7 +30,7 @@ def check(
     def source_intact() -> bool:
         # Read live coordinates on each call; a borrower resolver is another
         # external hook capable of mutating the staged Loan.
-        return (
+        exact_source = (
             type(expected_loan_id) is str and bool(expected_loan_id)
             and type(expected_record_id) in (str, type(None))
             and type(loan.id) is str and loan.id == expected_loan_id
@@ -42,8 +42,25 @@ def check(
             and loan.source_provider == ledger_base.get("provider_id")
             and loan.source_credential == ledger_base.get("credential_id")
             and loan.source_account_id == ledger_base.get("account_id")
+            and type(identity.identity_id) is str
+            and bool(identity.identity_id)
             and identity.identity_id == ledger_base.get("identity_id")
         )
+        if not exact_source:
+            return False
+        # Provider staging, borrower grants, ADEPT profile discovery and
+        # readiness callbacks may run after the source was first admitted.
+        # An unchanged Loan object is not proof that its SQLite connection
+        # still exists, is enabled or belongs to the pinned identity.
+        # Re-read its exact native owner after EACH callback, including the
+        # last check just before ADEPT fulfillment; never fall back to GTK.
+        try:
+            return self.storage.provider_connection_owner_current(
+                loan.source_provider, loan.source_credential,
+                identity.identity_id,
+            ) is True
+        except Exception:
+            return False
 
     if not source_intact():
         # The durable acquiring receipt is the pinned transaction scope.
