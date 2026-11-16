@@ -7,6 +7,7 @@ presentation and row factories are injected through the existing facades.
 from __future__ import annotations
 
 from . import history_language_projection
+from .history_occurrence_guard import unambiguous_history_occurrences
 
 
 def populate_history(window, rows, preserve_all: bool = False) -> None:
@@ -29,6 +30,15 @@ def populate_history(window, rows, preserve_all: bool = False) -> None:
         rows = history_language_projection.history_rows_with_languages(
             rows, wanted_languages, catalog_rows,
         )
+    # The downstream list/detail/cover bridge keys by bare upstream History ID.
+    # Reject collisions across credentials/accounts rather than last-write-wins.
+    identity = getattr(
+        getattr(getattr(window, "service", None), "current_identity", None),
+        "identity_id", None,
+    )
+    rows = unambiguous_history_occurrences(
+        rows, identity_id=identity if type(identity) is str else None,
+    )
     window.history_objects = {item.id: item for item in rows}
     window._history_rows = list(rows)
     window._history_loaded_count = 0
