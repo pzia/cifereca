@@ -50,6 +50,9 @@ class CoverSourceSnapshot:
     embedded: AttestedEmbeddedCover | None = None
     verified_epub_path: Path | None = None
     snapshot_complete: bool = True
+    # Only the durable canonical-C cover index can attest a multi-source
+    # same-edition relation for deterministic catalogue tie-breaking.
+    attested_book_identity: str = ""
 
     def __post_init__(self) -> None:
         if type(self.scope) is not CoverDocumentScope:
@@ -58,6 +61,14 @@ class CoverSourceSnapshot:
             raise ValueError("invalid source revision")
         if type(self.snapshot_complete) is not bool:
             raise TypeError("source completeness must be explicit")
+        if (type(self.attested_book_identity) is not str
+                or (self.attested_book_identity and (
+                    not self.scope.source_key.startswith(
+                        "notice-c:canonical-cover:v1:"
+                    )
+                    or self.attested_book_identity != self.scope.source_key
+                ))):
+            raise ValueError("invalid canonical cover relation")
         if (type(self.candidates) is not tuple
                 or len(self.candidates) > _MAX_EVIDENCE):
             raise ValueError("invalid cover source inventory")
@@ -445,6 +456,7 @@ class DocumentCoverService:
             fallback = resolve_book_cover(
                 document, snapshot.candidates,
                 revision=snapshot.revision, snapshot_complete=True,
+                attested_book_identity=snapshot.attested_book_identity,
             )
             if (fallback.status != "selected"
                     or fallback.tier not in ("origin", "catalog")):
@@ -857,6 +869,7 @@ class DocumentCoverService:
                         self.decisions.resolve_and_publish(
                             token, proofs,
                             snapshot_complete=snapshot.snapshot_complete,
+                            attested_book_identity=snapshot.attested_book_identity,
                         )
                         decision = self.decisions.peek(
                             document, revision=snapshot.revision,
