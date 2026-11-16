@@ -1,7 +1,9 @@
 """#6366: exact public-source C lookup, no cross-provider title/ISBN join."""
 from __future__ import annotations
 
-from cifereca.core.notice_c_exact_source_lookup import exact_public_source_c
+from cifereca.core.notice_c_exact_source_lookup import (
+    exact_public_source_c, exact_public_source_c_batch,
+)
 from cifereca.core.notice_c_cover_index import (
     persist_consolidated_cover_source, persist_exact_public_search_cover,
 )
@@ -122,5 +124,36 @@ def test_two_conflicting_equal_strength_groups_fail_closed(tmp_path):
         assert find(db, a) is None
         assert find(db, b) is not None
         assert find(db, c) is not None
+    finally:
+        db.close()
+
+def test_direct_and_batch_reject_conflicting_three_vs_two_source_c(tmp_path):
+    """A 3-source relation never outvotes a contradictory 2-source C."""
+    db = Storage(tmp_path / "conflicting-c.sqlite")
+    try:
+        a = make(db, "bnf", "edition-a")
+        b = make(db, "numilog-catalog", "edition-b")
+        c = make(db, "paris", "edition-c")
+        d = make(db, "openlibrary", "edition-d")
+        persist_exact_public_search_cover(db, a)
+        for source, proof in ((a, "a"), (b, "b"), (c, "c")):
+            persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:three-sources",
+                source=source, relation_proof_id="strong:fixture:" + proof,
+            )
+        for source, proof in ((a, "a"), (d, "d")):
+            persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:two-sources",
+                source=source, relation_proof_id="strong:fixture:" + proof,
+            )
+        a_coord = ("bnf", "edition-a", "digital-books", "digital", None)
+        b_coord = ("numilog-catalog", "edition-b", "digital-books", "digital", None)
+        d_coord = ("openlibrary", "edition-d", "digital-books", "digital", None)
+        assert find(db, a) is None
+        assert a_coord not in exact_public_source_c_batch(db, (a_coord,))
+        unambiguous = exact_public_source_c_batch(db, (b_coord, d_coord))
+        assert unambiguous[b_coord].document == find(db, b).document
+        assert unambiguous[d_coord].document == find(db, d).document
+        assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
