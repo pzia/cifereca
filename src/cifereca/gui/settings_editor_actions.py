@@ -292,6 +292,37 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             button = e["normal_adept_check"]
             button.set_sensitive(False)
 
+            def saved_binding_current():
+                # A local SQLite/Config change may leave both the GTK
+                # generations and the descriptive readiness status unchanged.
+                # Compare *raw saved coordinates* and the persisted ADEPT
+                # identity profile before publishing any asynchronous result.
+                # Unlike the historical Paris-only guard, this also fences
+                # the new explicit provider + connection pair.
+                try:
+                    persisted = self.config.identity(saved_id)
+                    if type(persisted) is not dict:
+                        return False
+                    return (
+                        (persisted.get("primary_paris_connection_id") or "")
+                            == stored_primary
+                        and persisted.get("adept_source_provider_id", "")
+                            == provider
+                        and persisted.get("adept_source_connection_id", "")
+                            == connection
+                        and admitted_core.storage.adept_profile_binding_get(
+                            "identity", saved_id,
+                        ) == stored_profile
+                        and _selected_adept_source(persisted) == selected_source
+                        and _saved_adept_status(
+                            admitted_core, saved_id, persisted,
+                        ) == start_status
+                    )
+                except Exception:
+                    # An unreadable source/profile binding is never evidence
+                    # that an old ADEPT runtime result may still be rendered.
+                    return False
+
             def current():
                 return (
                     not getattr(self, "_closed", False)
@@ -309,13 +340,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                          or provider_row.get_text() == provider)
                     and (connection_row is None
                          or connection_row.get_text() == connection)
-                    and _selected_adept_source(
-                        self.config.identity(saved_id) or {}
-                    ) == selected_source
-                    and _saved_adept_status(
-                        admitted_core, saved_id,
-                        self.config.identity(saved_id) or {},
-                    ) == start_status
+                    and saved_binding_current()
                 )
 
             def release():
