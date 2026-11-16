@@ -628,6 +628,14 @@ class BookListCell(Gtk.Box):
             return False
 
     def _search_cover_guard(self, item: BookListItem) -> dict:
+        borrower = getattr(item, "_cover_borrower_public_c_receipt", None)
+        if borrower is not None:
+            # Also recheck after a delayed N3 callback. A recycled cell or
+            # A->B->A account/source transition is not a current occurrence.
+            from .borrower_public_c_bridge import admit_borrower_public_c_cell
+            return {"is_current": lambda: admit_borrower_public_c_cell(
+                self.window, item, getattr(item, "_cover_document_ref", None),
+            )}
         proof = getattr(item, "_cover_search_evidence", None)
         from .search_document_cover_bridge import search_document_is_current
         return {"is_current": lambda: search_document_is_current(self.window, proof)}
@@ -645,7 +653,9 @@ class BookListCell(Gtk.Box):
                 service, document, variant="list", priority=10,
                 on_texture_applied=getattr(item, "_cover_paint_observer", None),
                 **(self._search_cover_guard(item)
-                   if getattr(item, "_cover_search_evidence", None) is not None else {}),
+                   if (getattr(item, "_cover_search_evidence", None) is not None
+                       or getattr(item, "_cover_borrower_public_c_receipt", None)
+                       is not None) else {}),
             )
             return
         self.cover.bind_url(
@@ -736,7 +746,9 @@ class BookListCell(Gtk.Box):
                     service, document, variant="list", priority=10,
                     on_texture_applied=getattr(item, "_cover_paint_observer", None),
                     **(self._search_cover_guard(item)
-                       if getattr(item, "_cover_search_evidence", None) is not None else {}),
+                       if (getattr(item, "_cover_search_evidence", None) is not None
+                       or getattr(item, "_cover_borrower_public_c_receipt", None)
+                       is not None) else {}),
                 )
         elif item.thumbnail_url:
             self.cover.bind_url(
