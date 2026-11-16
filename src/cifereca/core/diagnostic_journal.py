@@ -17,6 +17,7 @@ import unicodedata
 from typing import Any
 
 from .diagnostic_log_line import _LOG_LINE
+from .provider_identifier import valid_provider_identifier
 
 _MAX_FILE_BYTES = 2_000_000
 _MAX_EVENT_BYTES = 256_000
@@ -200,8 +201,7 @@ def _make_event(match, identity, offset):
         expected_outcome = (
             "attention_required" if status == "warning" else "retryable_error"
         )
-        if (type(legacy_provider) is str
-                and re.fullmatch(r"[a-z][a-z0-9-]{0,63}", legacy_provider) is not None
+        if (valid_provider_identifier(legacy_provider)
                 and detail.get("status") == expected_outcome
                 and type(detail.get("code")) is str
                 and 0 < len(detail["code"]) <= 90
