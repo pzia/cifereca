@@ -65,9 +65,10 @@ def _harness(monkeypatch, *, source=None):
     identities = [saved]
     profile_reads = []
     source_reads = []
+    expected_source = source if source is not None else ("paris", "paris-a")
     def source_status(identity, *, source_provider_id, primary_connection_id, source_label=None):
         source_reads.append(("status", source_provider_id, primary_connection_id))
-        if source != (source_provider_id, primary_connection_id):
+        if expected_source != (source_provider_id, primary_connection_id):
             return {"identity_id": identity, "status": "to_configure",
                     "reason": "invalid_source_descriptor"}
         return copy.deepcopy(SAVED_STATUS)
@@ -75,7 +76,7 @@ def _harness(monkeypatch, *, source=None):
     def source_runtime(identity, *, source_provider_id, primary_connection_id,
                        source_label=None):
         source_reads.append(("runtime", source_provider_id, primary_connection_id))
-        if source != (source_provider_id, primary_connection_id):
+        if expected_source != (source_provider_id, primary_connection_id):
             raise AssertionError("ADEPT probe retargeted to a different source")
         return runtime(identity)
 
@@ -200,8 +201,8 @@ def test_queued_adept_probe_keeps_method_bound_at_click(monkeypatch):
     host, editor, button, submits, reads, _ = _harness(monkeypatch)
     button.emit("clicked")
     args, _ = submits[-1]
-    host.service.check_normal_paris_adept_runtime = (
-        lambda _identity_id: (_ for _ in ()).throw(
+    host.service.check_source_adept_runtime = (
+        lambda _identity_id, **_kwargs: (_ for _ in ()).throw(
             AssertionError("live method was rebound after admission")
         )
     )
@@ -285,3 +286,38 @@ def test_generic_source_queued_result_is_discarded_if_saved_scope_changes(monkey
     args[2](result)
     assert reads == ["alice"]
     assert not hasattr(editor["normal_adept_status"], "subtitle")
+
+
+def test_historical_paris_uses_generic_source_core_facade(monkeypatch):
+    host, editor, button, submits, reads, _ = _harness(monkeypatch)
+    assert host._adept_source_reads == [("status", "paris", "paris-a")]
+    # A runtime operation is always bound to the saved Paris connection,
+    # even though the old Core method remains available to other callers.
+    host.service.normal_paris_adept_status = lambda _id: (
+        _ for _ in ()
+    ).throw(AssertionError("retired Paris Settings status facade"))
+    host.service.check_normal_paris_adept_runtime = lambda _id: (
+        _ for _ in ()
+    ).throw(AssertionError("retired Paris Settings inspection facade"))
+    button.emit("clicked")
+    assert len(submits) == 1
+    result = submits[0][0][1]()
+    assert result["status"] == "observed"
+    submits[0][0][2](result)
+    assert host._adept_source_reads[-1] == ("status", "paris", "paris-a")
+    assert any(row == ("runtime", "paris", "paris-a")
+               for row in host._adept_source_reads)
+    assert reads == ["alice"]
+
+
+def test_invalid_historical_primary_stays_non_authorizing(monkeypatch):
+    from cifereca.gui.settings_editor_actions import (
+        _saved_adept_status, _selected_adept_source,
+    )
+    class Core:
+        def normal_source_adept_status(self, *_args, **_kwargs):
+            raise AssertionError("malformed legacy primary cannot select a source")
+
+    invalid = {"primary_paris_connection_id": True}
+    assert _selected_adept_source(invalid) == (False, None, None)
+    assert _saved_adept_status(Core(), "alice", invalid)["status"] == "to_configure"
