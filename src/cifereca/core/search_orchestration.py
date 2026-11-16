@@ -463,7 +463,7 @@ def _public_rows_from_response(
                 image = _shared_catalogue_cover_url(row.thumbnail_url)
                 revision = (
                     row.revision_id
-                    if type(row.revision_id) is str
+                    if image is not None and type(row.revision_id) is str
                     and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", row.revision_id)
                     else None
                 )
