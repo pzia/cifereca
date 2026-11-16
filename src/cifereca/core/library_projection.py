@@ -64,9 +64,14 @@ def _pinned_history_c_rows(rows: object, account: Account) -> list[HistoryItem]:
             or not account.credential_id
             or type(account.unique_id) is not str):
         return []
+    # An account-scoped history read is not, by itself, a proof that the
+    # source's book RecordId identifies a public catalogue edition.
+    from .notice_c_borrower_public_projection import _attested_public_edition
     qualified: list[HistoryItem] = []
     for item in rows:
         if (type(item) is not HistoryItem
+                or _attested_public_edition(item) is None
+                or item.thumbnail_url is not None
                 or type(item.source_provider) is not str
                 or item.source_provider != account.provider_id
                 or type(item.source_credential) is not str
