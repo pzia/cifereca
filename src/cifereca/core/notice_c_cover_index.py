@@ -451,8 +451,11 @@ def persist_exact_public_search_cover(
             or source.observation.parser_id != "core.search.public-cover"
             or source.observation.parser_version != "2"
             or source.document.kind != "public_catalogue"
-            or source.attribute.state != "available"
-            or not source.attribute.candidates):
+            or source.attribute.state not in ("available", "pending")
+            or (source.attribute.state == "available"
+                and not source.attribute.candidates)
+            or (source.attribute.state == "pending"
+                and source.attribute.candidates)):
         raise ValueError("unattested_exact_public_c_source")
 
     fields = source.observation.fields_copy().get("search_result")
