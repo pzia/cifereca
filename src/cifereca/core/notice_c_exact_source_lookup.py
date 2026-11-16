@@ -97,4 +97,102 @@ def exact_public_source_c(
         return None
 
 
-__all__ = ["exact_public_source_c"]
+
+
+def exact_public_source_c_batch(
+    storage: Any, coordinates: tuple[tuple[str, str, str, str, str | None], ...],
+) -> dict[tuple[str, str, str, str, str | None], ConsolidatedNoticeCover]:
+    """One bounded SQLite scan for a batch of fully attested public sources.
+
+    Personal Loan/History inventories may contain many distinct RecordIds.
+    Re-scanning up to 4096 canonical rows PER item would starve their Core
+    worker even though GTK remains free. Decode the public C cursor once,
+    then map only exact source-edition coordinates to a unique strongest C.
+    Any ambiguous coordinate is absent, never returned with a first match.
+    """
+    from .notice_c_cover_index import _IDENTIFIER
+
+    if (type(coordinates) is not tuple
+            or not 1 <= len(coordinates) <= 256):
+        return {}
+    wanted = set()
+    for coord in coordinates:
+        if (type(coord) is not tuple or len(coord) != 5):
+            return {}
+        provider, record, docbase, medium, revision = coord
+        if (any(type(value) is not str
+                or _IDENTIFIER.fullmatch(value) is None
+                or "://" in value or ".." in value
+                for value in (provider, record, docbase))
+                or medium not in ("digital", "physical", "unknown")
+                or (revision is not None
+                    and (type(revision) is not str
+                         or _IDENTIFIER.fullmatch(revision) is None))):
+            return {}
+        wanted.add(coord)
+    if len(wanted) > 256:
+        return {}
+
+    try:
+        with storage._lock, storage._connect() as db:
+            indexed = db.execute(
+                "SELECT key,value FROM metadata WHERE key>=? AND key<? "
+                "ORDER BY key LIMIT ?",
+                (_PREFIX, _PREFIX + "\uffff", _MAX_INDEXED_C + 1),
+            ).fetchall()
+    except (sqlite3.Error, AttributeError, TypeError, ValueError):
+        return {}
+    if len(indexed) > _MAX_INDEXED_C:
+        return {}
+
+    matches: dict[
+        tuple[str, str, str, str, str | None],
+        list[ConsolidatedNoticeCover],
+    ] = {}
+    overflow: set[tuple[str, str, str, str, str | None]] = set()
+    for key, raw in indexed:
+        try:
+            parsed = _json(raw)
+            document = canonical_cover_document_ref(parsed["edition_id"])
+            if _db_key(document) != key:
+                continue
+            canonical = _decode(raw, document)
+            if not canonical.sources or any(
+                s.visibility != "public"
+                or s.public_bibliography is None
+                for s in canonical.sources
+            ):
+                continue
+            for source in canonical.sources:
+                biblio = source.public_bibliography
+                coords = (
+                    source.provider_id, biblio.record_id, biblio.docbase,
+                    biblio.medium, biblio.source_revision,
+                )
+                if (coords not in wanted or coords in overflow
+                        or biblio.edition_id != "edition:" + _coordinate_digest(
+                            source.provider_id, "public_catalog",
+                            biblio.record_id, biblio.docbase,
+                            biblio.medium, biblio.source_revision,
+                        )):
+                    continue
+                found = matches.setdefault(coords, [])
+                if len(found) >= _MAX_RESULTS:
+                    overflow.add(coords)
+                    matches.pop(coords, None)
+                else:
+                    found.append(canonical)
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+
+    resolved = {}
+    for coords, options in matches.items():
+        strength = max(len(x.sources) for x in options)
+        candidates = [x for x in options if len(x.sources) == strength]
+        if len(candidates) == 1:
+            resolved[coords] = candidates[0]
+    return resolved
+
+
+__all__ = ["exact_public_source_c", "exact_public_source_c_batch"]
+
