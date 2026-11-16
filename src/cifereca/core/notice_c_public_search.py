@@ -261,10 +261,11 @@ def search_public_notice_c(
                 (_CANON_PREFIX, _CANON_PREFIX + "\uffff", max_scan - scanned + 1),
             )
             canonical_scanned = 0
-            # An explicit verified relation may move a source from its
-            # self-identity C to a stronger multi-provider C. Prefer the
-            # unique group with the MOST public source proofs; conflicting
-            # equal-strength groups remain ambiguous and fail closed.
+            # A source may retain its own self-identity C while also being
+            # admitted into ONE cross-provider C. A sole non-self group with
+            # at least two public observations can supersede that self C.
+            # Contradictory cross-group claims retain the safe self-identity
+            # rather than selecting by group size, text, URL or row order.
             staged = {}
             for key_string, raw in cursor:
                 if canonical_scanned >= max_scan - scanned:
@@ -293,15 +294,35 @@ def search_public_notice_c(
 
             if not exceeded:
                 for source_ref, candidates in staged.items():
-                    strongest = max(item[3] for item in candidates)
-                    best = [
-                        item for item in candidates if item[3] == strongest
+                    own = [
+                        item for item in candidates
+                        if item[0] == canonical_cover_document_ref(
+                            item[2].public_bibliography.edition_id
+                        )
                     ]
-                    if len(best) != 1:
-                        # Two contradictory canonical links are not resolved
-                        # by title, ISBN, URL, insertion order or hash order.
+                    foreign = [
+                        item for item in candidates
+                        if item[0] != canonical_cover_document_ref(
+                            item[2].public_bibliography.edition_id
+                        )
+                    ]
+                    if len(foreign) == 1 and foreign[0][3] >= 2:
+                        selected_route = foreign[0]
+                    elif len(own) == 1:
+                        # No foreign relation, or contradictory claims: the
+                        # source's exact independent canonical ref wins.
+                        selected_route = own[0]
+                    elif len(foreign) == 1 and not own:
+                        # Only an explicit multi-public source group may
+                        # rebind an unrelated provider's edition.
+                        selected_route = (
+                            foreign[0] if foreign[0][3] >= 2 else None
+                        )
+                    else:
+                        selected_route = None
+                    if selected_route is None:
                         continue
-                    ref, consolidated, source, _strength = best[0]
+                    ref, consolidated, source, _strength = selected_route
                     bib = source.public_bibliography
                     # The index decoder rederives the exact source ref and
                     # edition from the original provider coordinates.
