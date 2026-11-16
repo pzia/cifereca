@@ -111,3 +111,41 @@ def test_coverless_search_ref_refuses_unattested_cloned_and_cross_edition(
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+def test_coverless_c_first_and_live_search_keep_one_exact_row(tmp_path):
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from cifereca.core.notice_c_known_projection import (
+        merge_public_notice_c_known_rows,
+    )
+    from tests.test_search_results_view import _host
+
+    db = Storage(tmp_path / "coverless-dedupe.sqlite")
+    try:
+        live = witnessed(public_row(
+            record_id="no-image-dedupe", thumbnail_url=None,
+        ))
+        assert mirror(db, [live]) == 1
+        page = search_public_notice_c(db, "Même titre")
+        known = merge_public_notice_c_known_rows([], page, identity_id="alice")
+        assert len(known) == 1
+        assert known[0]["_cover_document_ref"] == (
+            live._core_notice_canonical_cover_document_ref
+        )
+        view = _host()
+        view._search_local_objects = {known[0]["key"]: known[0]}
+        view._remote_search_results = [live]
+        view._populate_search([live], announce=False)
+        shown = view.search_page.show_rows.call_args.args[0]
+        assert len(shown) == 1
+        assert shown[0].key.startswith("bnf:")
+
+        # Changing the exact edition (even with same title and absent
+        # image) must not suppress the unrelated C-first result.
+        live._core_notice_canonical_cover_document_ref = (
+            canonical_cover_document_ref("edition:unrelated")
+        )
+        view._populate_search([live], announce=False)
+        assert len(view.search_page.show_rows.call_args.args[0]) == 2
+    finally:
+        db.close()
