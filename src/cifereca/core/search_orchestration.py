@@ -1947,8 +1947,59 @@ def mirrored_catalogue_scoped_id(
     return hashlib.sha256(("mirror-v2\0" + scope).encode()).hexdigest()
 
 
+def mirrored_catalogue_revisioned_id(
+    identity_id: str, row: SearchResult,
+) -> str | None:
+    """Read-only mirror-v3 locator for one unambiguously versioned edition.
+
+    This is a legacy *presentation* cache, not the authority for Notice C or
+    holdings. The source account participates in the opaque hash, not a
+    person's display/profile ID. A malformed revision must not overwrite
+    a valid mirror-v2 row or acquire a v3 source certification.
+    """
+    if (type(row) is not SearchResult
+            or type(row.revision_id) is not str
+            or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", row.revision_id,
+            ) is None
+            or row.medium not in ("digital", "physical", "unknown")
+            or (row.source_account_id is not None
+                and (type(row.source_account_id) is not str
+                     or not row.source_account_id
+                     or len(row.source_account_id) > 512
+                     or "\0" in row.source_account_id))):
+        return None
+    if mirrored_catalogue_scoped_id(
+        identity_id, row.source_provider, row.record_id,
+        row.source_credential, row.docbase, row.source_collection,
+    ) is None:
+        return None
+    coordinates = (
+        identity_id, row.source_provider, row.record_id,
+        row.source_credential, row.docbase, row.source_collection or "",
+        row.source_account_id or "", row.medium, row.revision_id,
+    )
+    raw = json.dumps(coordinates, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(("mirror-v3\0" + raw).encode()).hexdigest()
+
+
 def _mirrored_catalogue_key(identity_id: str, row: SearchResult) -> tuple[str, bool]:
     """Keep historical incomplete scopes read-only; never infer a source."""
+    if row.revision_id not in (None, ""):
+        revised = mirrored_catalogue_revisioned_id(identity_id, row)
+        if revised is not None:
+            return revised, True
+        # An invalid revision must not overwrite a former valid v2 entry.
+        # Keep its exact bad source isolated but NEVER mark it qualified.
+        opaque = (
+            identity_id, row.source_provider, row.record_id,
+            row.source_credential, row.docbase, row.source_collection,
+            row.source_account_id, row.medium, row.revision_id,
+        )
+        raw = json.dumps(opaque, ensure_ascii=True, default=str)
+        return hashlib.sha256(
+            ("mirror-unqualified-revision\0" + raw).encode(),
+        ).hexdigest(), False
     scoped = mirrored_catalogue_scoped_id(
         identity_id, row.source_provider, row.record_id,
         row.source_credential, row.docbase, row.source_collection,
@@ -2118,7 +2169,23 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
                     _safe_public_search_text("description", row.description)
                     if type(row.description) is str else None
                 ),
-                "catalogue_scope_version": 2 if qualified else None,
+                # v3 is a read-only edition-sensitive mirror. Only the
+                # actual Notice C index confers a durable document source;
+                # neither revision nor mirrored availability grants rights.
+                "catalogue_scope_version": (
+                    3 if qualified and row.revision_id not in (None, "")
+                    else 2 if qualified else None
+                ),
+                "source_revision": (
+                    row.revision_id
+                    if qualified and row.revision_id not in (None, "")
+                    else None
+                ),
+                "source_account_id": (
+                    row.source_account_id
+                    if qualified and row.revision_id not in (None, "")
+                    else None
+                ),
             },
         })
     self.storage.catalog_entries_upsert_many(upserts)
