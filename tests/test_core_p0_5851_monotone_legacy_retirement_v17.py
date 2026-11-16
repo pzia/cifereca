@@ -39,7 +39,7 @@ def test_v17_reconfirmation_is_monotone_across_revoke_and_reopen(tmp_path):
     service, loan = setup_legacy(tmp_path)
     db_path = service.storage.path
     try:
-        assert service.storage.schema_version() == CURRENT_SCHEMA_VERSION == 17
+        assert service.storage.schema_version() == CURRENT_SCHEMA_VERSION == 18
         assert _retired(service.storage) is None
         service.reconfirm_legacy_adept_borrower_grant(
             **scope(), borrower_identity_id="bob", confirmed=True,
@@ -57,7 +57,7 @@ def test_v17_reconfirmation_is_monotone_across_revoke_and_reopen(tmp_path):
 
     reopened = Storage(db_path)
     try:
-        assert reopened.schema_version() == 17
+        assert reopened.schema_version() == 18
         assert _retired(reopened) is not None
         with pytest.raises(sqlite3.IntegrityError, match="adept_legacy_grant_retired"):
             _write_legacy(reopened)
