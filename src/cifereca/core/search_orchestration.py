@@ -830,6 +830,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
             rows = [_provider_search_row(SearchResult(**x)) for x in cached]
             _stamp_cached_public_notice_refs(
                 rows, identity_id=identity.identity_id if identity else None,
+                storage=self.storage,
             )
             with self._search_generation_lock:
                 if (self._search_generation != search_generation
@@ -1509,6 +1510,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 # persisted Notice C source before selecting any image.
                 _stamp_cached_public_notice_refs(
                     rows, identity_id=identity.identity_id if identity else None,
+                storage=self.storage,
                 )
                 # An empty 200 also earns a cached verdict; session ownership
                 # remains observable for the same selected provider set.
@@ -2113,45 +2115,88 @@ def _mirrored_catalogue_key(identity_id: str, row: SearchResult) -> tuple[str, b
 
 def _stamp_cached_public_notice_refs(
     rows: list[SearchResult], *, identity_id: str | None,
+    storage: object | None = None,
 ) -> None:
-    """Route Core search-cache replay to an *already persisted* Notice C.
+    """Replay cached public Search coordinates from the durable C source.
 
-    The cache contains source-coordinate metadata only; it never serializes
-    the nonpersistent producer stamp. Re-derive that same opaque public key
-    without mutating SQLite or making a supplier/image GET. A ref here is
-    NOT proof that a cover exists: N2's bounded worker must replay and verify
-    the exact Notice C source before returning an image. Private/stale/source-
-    ambiguous cached rows never gain a public reference.
+    A cache HIT does NOT recreate the nonserializable Core live-producer
+    witness and is never documentary evidence by itself. For bounded Core
+    workers with storage, upgrade only after reading an already persisted
+    canonical C contribution which exactly matches the public bibliographic
+    source. That index survives the shorter provider-source TTL.
+
+    Source-coordinate-only fallback preserves the old read-through contract;
+    N2 must still independently verify source bytes before showing a cover.
+    No HTTP, source writes, private data, GTK DB access or rights.
     """
     if type(identity_id) is not str or not identity_id:
         return
     from .notice_search_cover_producer import admit_public_search_cover
     from .notice_cover_projection import notice_cover_document_ref
+    from .notice_c_cover_index import (
+        canonical_cover_document_ref, read_consolidated_notice_cover,
+    )
 
-    for row in rows:
+    for index, row in enumerate(rows):
         if type(row) is not SearchResult:
             continue
-        row.__dict__.pop("_core_notice_cover_document_ref", None)
-        row.__dict__.pop("_core_notice_cover_document_epoch", None)
+        for key in (
+            "_core_notice_cover_document_ref",
+            "_core_notice_cover_document_epoch",
+            "_core_notice_canonical_cover_document_ref",
+            "_core_notice_canonical_cover_document_epoch",
+        ):
+            row.__dict__.pop(key, None)
         safe_url = _shared_catalogue_cover_url(row.thumbnail_url)
         if safe_url is None:
             continue
-        # Only a *candidate* coordinate is constructed here (observed_at=1
-        # is intentionally not an upstream freshness timestamp). No
-        # observation is stored; read_notice_cover remains the only authority.
+        # A candidate coordinate is not an upstream freshness timestamp.
         try:
             snapshot = admit_public_search_cover(
                 row, identity_id=identity_id, observed_at=1,
                 public_cover_url=safe_url,
             )
-            if snapshot is not None:
-                row._core_notice_cover_document_ref = notice_cover_document_ref(
-                    snapshot.key,
-                )
-        except (ValueError, TypeError, UnicodeError):
-            # A malformed cached supplier coordinate must not abort search
-            # or be interpreted as an absent/negative source in Notice C.
-            # Do not log untrusted source strings or sensitive image URLs.
+            if snapshot is None:
+                continue
+            exact = notice_cover_document_ref(snapshot.key)
+            row._core_notice_cover_document_ref = exact
+            # Bounded indexed Core read, never a scan of supplier/HTTP cache.
+            # The UI's GTK bind may only consume the resulting exact ref.
+            if storage is None or index >= 256:
+                continue
+            canonical_ref = canonical_cover_document_ref(
+                snapshot.key.edition_id,
+            )
+            persisted = read_consolidated_notice_cover(
+                storage, canonical_ref,
+            )
+            if persisted is None or not persisted.candidates:
+                continue
+            for source in persisted.sources:
+                facts = source.public_bibliography
+                if (source.source_ref == exact.source_key
+                        and source.provider_id == snapshot.key.provider_id
+                        and source.visibility == "public"
+                        and source.state == "available"
+                        and facts is not None
+                        and facts.edition_id == snapshot.key.edition_id
+                        and facts.record_id == row.record_id
+                        and facts.docbase == row.docbase
+                        and facts.medium == row.medium
+                        and facts.source_revision == row.revision_id
+                        and facts.title == row.title
+                        and facts.author == row.author):
+                    row._core_notice_canonical_cover_document_ref = (
+                        persisted.document
+                    )
+                    row._core_notice_canonical_cover_document_epoch = (
+                        persisted.epoch
+                    )
+                    break
+        except (ValueError, TypeError, UnicodeError, AttributeError):
+            # Corrupt/stale canonical metadata is not an absent source or a
+            # permission; keep the legacy exact-coordinate read-through.
+            # Never log raw source strings, credentials or signed cover URLs.
             continue
 
 
@@ -2175,6 +2220,8 @@ def _mirror_remote_results(
         if type(row) is SearchResult:
             row.__dict__.pop("_core_notice_cover_document_ref", None)
             row.__dict__.pop("_core_notice_cover_document_epoch", None)
+            row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
+            row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
     # The stronger #5073 UI/action proof remains authoritative for actions.
@@ -2304,6 +2351,7 @@ def _mirror_remote_results(
         import sqlite3
         from .notice_search_cover_producer import admit_public_search_catalogue
         from .notice_cover_repository import persist_notice_cover_many
+        from .notice_c_cover_index import persist_exact_public_search_cover
         producing_rows = []
         observations = []
         for _key, row, _state, _qualified in keyed:
@@ -2344,6 +2392,27 @@ def _mirror_remote_results(
                     # N2 source or infers an association from an N3 HIT.
                     row._core_notice_cover_document_ref = persisted.document
                     row._core_notice_cover_document_epoch = persisted.epoch
+                    # A public C source is exactly related to ITS OWN
+                    # producer-attested edition. No title/ISBN/URL or cross-
+                    # provider identity is inferred here. The canonical
+                    # index retains its own N2 revision and source proofs.
+                    if (persisted.observation.parser_version == "2"
+                            and _verified_public_cover_witness(row)):
+                        try:
+                            canonical = persist_exact_public_search_cover(
+                                self.storage, persisted,
+                            )
+                        except (ValueError, TypeError, OSError, sqlite3.Error):
+                            logging.getLogger("cifereca").warning(
+                                "TRACE notice c public search code=canonical_source_failed"
+                            )
+                        else:
+                            row._core_notice_canonical_cover_document_ref = (
+                                canonical.document
+                            )
+                            row._core_notice_canonical_cover_document_epoch = (
+                                canonical.epoch
+                            )
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # Catalogue mirror remains independent. A broken source
                 # index cannot invent a cover or leak provider bytes/paths.

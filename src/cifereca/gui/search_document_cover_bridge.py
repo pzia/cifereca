@@ -160,7 +160,23 @@ def exact_remote_search_document(
         )
         if (expected is not None
                 and notice_cover_document_ref(expected.key) == admitted):
-            scope = admitted
+            # Only a Core-persisted same-source/edition C can upgrade this
+            # public-only N2 scope to the canonical edition. Recompute the
+            # expected key; a provider-supplied arbitrary ref is insufficient.
+            from ..core.notice_c_cover_index import (
+                canonical_cover_document_ref, is_canonical_cover_document,
+            )
+            canonical = getattr(
+                item, "_core_notice_canonical_cover_document_ref", None,
+            )
+            if (type(canonical) is CoverDocumentScope
+                    and is_canonical_cover_document(canonical)
+                    and canonical == canonical_cover_document_ref(
+                        expected.key.edition_id
+                    )):
+                scope = canonical
+            else:
+                scope = admitted
     return VerifiedSearchDocumentCover(
         source_item=item, row_key=row_key,
         document=scope, context=context,
@@ -289,13 +305,24 @@ def register_exact_search_document(
         # A producer-stamped exact source belongs to persisted Notice C.
         # Do not also publish a competing N2 source: the widget calls the
         # common cache, whose bounded worker reads the source/epoch from C.
-        if (getattr(item, "_core_notice_cover_document_ref", None) != document
+        canonical = getattr(
+            item, "_core_notice_canonical_cover_document_ref", None,
+        )
+        if (document not in (
+                    getattr(item, "_core_notice_cover_document_ref", None),
+                    canonical,
+                )
                 or not callable(getattr(service, "_cached_source_reader", None))):
             return False
         # Only the *live Core producer* has a persisted C epoch. A cached
         # SearchResult replays its exact ref without inventing an epoch;
         # a routine GTK rebind on an unchanged source causes no SQLite I/O.
-        epoch = getattr(item, "_core_notice_cover_document_epoch", None)
+        epoch = getattr(
+            item,
+            ("_core_notice_canonical_cover_document_epoch"
+             if document == canonical else "_core_notice_cover_document_epoch"),
+            None,
+        )
         if type(epoch) is int and epoch > 0:
             service.refresh_cached_source_if_newer(document, epoch)
         return True

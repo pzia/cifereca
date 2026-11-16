@@ -11,7 +11,7 @@ this bounded read away from the GTK main thread.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import re
 import time
@@ -57,6 +57,7 @@ class PublicNoticeCHit:
     epoch: int
     cover_state: str
     stale: bool
+    edition_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,10 +160,29 @@ def _public_observation(
             last_seen_at=last_seen, epoch=persisted.epoch,
             cover_state=persisted.attribute.state,
             stale=now - last_seen > _STALE_AFTER,
+            edition_id=key.edition_id,
         )
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError,
             UnicodeError, RecursionError):
         return None
+
+
+def _matches_public_c(
+    record: PublicNoticeCHit, *, wanted: set[str],
+    scope: str, field: str, needle: str,
+) -> bool:
+    if wanted and record.provider_id not in wanted:
+        return False
+    if scope != "all" and record.medium != scope:
+        return False
+    texts = (
+        (record.title,) if field == "title" else
+        (record.author or "",) if field == "author" else
+        (record.publisher or "",) if field == "publisher" else
+        (record.title, record.author or "", record.publisher or "",
+         record.description or "")
+    )
+    return any(needle in _fold(text) for text in texts)
 
 
 def search_public_notice_c(
@@ -192,6 +212,7 @@ def search_public_notice_c(
     needle = _fold(query.strip())
     wanted = set(provider_ids)
     matches: list[PublicNoticeCHit] = []
+    seen_source_refs: set[str] = set()
     scanned = unindexed = 0
     exceeded = False
     # SQLite's metadata PK is indexed; exact-prefix range is a deterministic
@@ -215,27 +236,118 @@ def search_public_notice_c(
                 # Older cover-only sources are expected; no false 'missing'.
                 unindexed += 1
                 continue
-            if wanted and record.provider_id not in wanted:
-                continue
-            if scope != "all" and record.medium != scope:
-                continue
-            texts = (
-                (record.title,) if field == "title" else
-                (record.author or "",) if field == "author" else
-                (record.publisher or "",) if field == "publisher" else
-                (record.title, record.author or "", record.publisher or "",
-                 record.description or "")
-            )
-            if any(needle in _fold(text) for text in texts):
+            seen_source_refs.add(record.document.source_key)
+            if _matches_public_c(
+                record, wanted=wanted, scope=scope,
+                field=field, needle=needle,
+            ):
                 matches.append(record)
+
+        # Canonical C owns its public descriptive facts after source eviction.
+        # Inspect only remaining bounded rows; never scan the per-profile
+        # catalogue, perform a supplier GET or manufacture a negative result.
+        # Existing source facts win when present; fallback is ONLY for absent
+        # source observations, not a second live result copy.
+        if scanned < max_scan:
+            from .notice_c_cover_index import (
+                _PREFIX as _CANON_PREFIX, _json as _canon_json,
+                _decode as _decode_canonical, canonical_cover_document_ref,
+            )
+            cursor = db.execute(
+                "SELECT key,value FROM metadata "
+                "WHERE key>=? AND key<? ORDER BY key LIMIT ?",
+                (_CANON_PREFIX, _CANON_PREFIX + "\uffff", max_scan - scanned + 1),
+            )
+            canonical_scanned = 0
+            for key_string, raw in cursor:
+                if canonical_scanned >= max_scan - scanned:
+                    exceeded = True
+                    break
+                canonical_scanned += 1
+                try:
+                    row = _canon_json(raw)
+                    ref = canonical_cover_document_ref(row["edition_id"])
+                    if key_string != _CANON_PREFIX + ref.source_key.split(":")[-1]:
+                        continue
+                    consolidated = _decode_canonical(raw, ref)
+                    public_sources = [
+                        src for src in consolidated.sources
+                        if src.public_bibliography is not None
+                    ]
+                    # A source-specific bibliography cannot silently decide
+                    # the canonical text when two providers disagree.
+                    if len(public_sources) != 1:
+                        continue
+                    src = public_sources[0]
+                    if src.source_ref in seen_source_refs:
+                        continue
+                    bib = src.public_bibliography
+                    hit = PublicNoticeCHit(
+                        document=ref, provider_id=src.provider_id,
+                        record_id=bib.record_id, docbase=bib.docbase,
+                        medium=bib.medium,
+                        source_revision=bib.source_revision,
+                        title=bib.title, author=bib.author,
+                        publisher=bib.publisher,
+                        media_format=bib.media_format,
+                        description=bib.description,
+                        observed_at=src.observed_at,
+                        last_seen_at=bib.last_seen_at,
+                        epoch=consolidated.epoch,
+                        cover_state=src.state,
+                        stale=now - bib.last_seen_at > _STALE_AFTER,
+                        edition_id=bib.edition_id,
+                    )
+                except (TypeError, ValueError, KeyError, AttributeError):
+                    # Malformed canonical metadata can never widen public
+                    # visibility or turn a missing cover into a rights grant.
+                    unindexed += 1
+                    continue
+                if _matches_public_c(
+                    hit, wanted=wanted, scope=scope,
+                    field=field, needle=needle,
+                ):
+                    matches.append(hit)
 
     # Pagination is over *known* source facts, not a confirmed total.
     matches.sort(key=lambda item: (
         _fold(item.title), item.provider_id, item.document.source_key,
     ))
     offset = page * page_size
+    selected = matches[offset:offset + page_size]
+    if selected:
+        from .notice_c_cover_index import (
+            canonical_cover_document_ref, read_consolidated_notice_cover,
+        )
+        canonical_hits = []
+        for hit in selected:
+            # Keep each bibliographic C source distinct. In the absence of
+            # an installed, vetted type-specific text consolidator, a
+            # multi-provider cover relation must NOT silently deduplicate
+            # differently authored descriptive records. Upgrade N2 only
+            # when the canonical index contains exactly THIS source.
+            try:
+                canonical_ref = canonical_cover_document_ref(hit.edition_id)
+                stored = read_consolidated_notice_cover(
+                    storage, canonical_ref,
+                )
+                if (stored is not None and len(stored.sources) == 1
+                        and stored.sources[0].source_ref == hit.document.source_key
+                        and stored.sources[0].source_epoch == hit.epoch
+                        and stored.sources[0].visibility == "public"
+                        and stored.sources[0].state == "available"
+                        and stored.candidates):
+                    hit = replace(
+                        hit, document=canonical_ref, epoch=stored.epoch,
+                    )
+            except (ValueError, TypeError, AttributeError):
+                # A corrupt/unrelated canonical index cannot remove a valid
+                # exact-source C hit or reassign its bibliography.
+                pass
+            canonical_hits.append(hit)
+        selected = canonical_hits
     return PublicNoticeCPage(
-        hits=tuple(matches[offset:offset + page_size]),
+        hits=tuple(selected),
         known_matches=len(matches), scanned_sources=scanned,
         unindexed_sources=unindexed,
         status="budget_exceeded" if exceeded else "partial",

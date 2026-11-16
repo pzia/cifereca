@@ -3,21 +3,6 @@
   "purpose": "Reviewed execution/authority evidence only; absent reviews remain unclassified. No automatic reachability claims.",
   "reviews": [
     {
-      "id": "site-9b7a3e896db6ff1e346f2365",
-      "classification": "safety_guard_pending_contract",
-      "journey": "confirmed Paris DILICOM first-offer ACSM staging",
-      "productive_caller": "acsm_cache.remember_initial -> _initial_scope -> stage_claimed_initial_acsm during selected canonical delivery",
-      "effect": "Reject a loan or borrower whose exact Paris DILICOM identity/credential/source coordinates differ before recording a one-shot ACSM claim; no grant inferred",
-      "authority": "Native Loan fields plus explicit identity_id and source_account_id, not title, URL or current GTK selection",
-      "replacement_contract": "Versioned provider-neutral first-offer ACSM attestation with exact borrower and PNB branch; retain Paris-specific fail-closed check until the replacement is installed",
-      "tests": [
-        "tests/test_core_p0_3121_canonical_first_acsm.py",
-        "tests/test_core_p0_2975_paris_primary_alias_provenance.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "This is a live provider-aware veto of replay/cross-borrower staging, not a removable detection heuristic; explicitly blocks zero-brand-decision closure until typed contract migration"
-    },
-    {
       "id": "site-7baf3b4f552b2c895f2c79ae",
       "classification": "safety_guard_pending_contract",
       "journey": "canonical selected-delivery DRM runtime callback",
@@ -378,22 +363,6 @@
       "reachability": "productive"
     },
     {
-      "id": "site-af9a4882484f55e85f232552",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Exact primary Paris lender preflight for cross-identity manual borrow",
-      "productive_caller": "core.borrow_for_identity_live._witness -> configured_primary_source_current in admitted lender choice calculation",
-      "effect": "Rejects a lender whose saved primary Paris connection no longer matches the observed exact account; does not itself authorize borrowing.",
-      "authority": "Installed explicit lender identity, source/credential/account coordinates and saved primary connection option.",
-      "replacement_contract": "Typed versioned primary-source lender witness from the installed provider, rechecked with Core owner/session lease before action.",
-      "tests": [
-        "tests/test_core_p0_5975_headless_lender_admission.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "The Paris predicate guards a live source selection; eliminating it without a neutral witness would admit a stale or foreign lender.",
-      "decision_group_id": "lending.borrower-paris-primary-witness",
-      "reachability": "productive"
-    },
-    {
       "id": "site-60a9d11031d9610ffda9a089",
       "classification": "safety_guard_pending_contract",
       "journey": "Explicit reacquisition of a protected Paris digital loan",
@@ -566,6 +535,22 @@
       "rationale": "Compatibility reader is not an active user-return permission or a new migration writer; the Paris filter remains a real read-only technical dependency. Following #6219, the scanned AST anchor moved from an unvalidated str() loan predicate to the native scoped medium gate; the same historical read-only obligation remains, without retirement credit.",
       "decision_group_id": "loan.historical-return-receipt",
       "reachability": "legacy_only"
+    },
+    {
+      "id": "site-cab20e1d25971659268c3e22",
+      "classification": "legitimate_readonly_compat",
+      "journey": "24-hour transitional read of historical first-borrow ACSM v1 receipts",
+      "productive_caller": "acsm_cache.reuse_initial -> stage_claimed_initial_acsm (read-only v1 scope fallback after a previously confirmed one-shot loan.borrow claim)",
+      "effect": "Accepts the only Paris/DILICOM branch that historically wrote v1 receipts without a branch field; rejects any other documentary branch reusing the same loan ID, edition and borrower. No new provider GET, loan POST, entitlement, ADEPT grant or rights publication.",
+      "authority": "Historical schema=1 provenance and exact native owner/provider/credential/account/loan/edition scope, bounded 24h TTL, XML/SHA validation and confirmed durable loan.borrow operation; the canonical reader additionally requires exactly one live matching branch/borrower loan.",
+      "replacement_contract": "Expire all historical v1 claim-bound receipts through a deployed 24h+ rollout window, then remove schema 1 consumption and this supplier literal. Only schema 2, containing immutable documentary branch provenance, remains supported. Any removal before expiry must explicitly account for one-shot ACSM tokens that cannot be re-downloaded.",
+      "tests": [
+        "tests/test_core_p0_3121_initial_acsm_receipt.py",
+        "tests/test_core_p0_3121_canonical_first_acsm.py",
+        "tests/test_core_p0_3121_canonical_first_acsm_flow.py"
+      ],
+      "retirement_pr": "",
+      "rationale": "This is a read-only, bounded compatibility veto, not active Core policy for new providers. Removing it without removing v1 reading would permit cross-branch token replay. The scanner reports 1 retained historical signal, so #6422 is AST delta 0 despite retiring the active Paris/DILICOM v2 writer predicate."
     }
   ],
   "retirements": [
@@ -1664,6 +1649,37 @@
         "tests/test_core_p0_5975_business_coupling_ledger.py"
       ],
       "pr": "#6414",
+      "in_ast_metric": true
+    },
+    {
+      "id": "struct-headless-lender-paris-witness-neutral-manual-policy",
+      "original_site_id": "site-af9a4882484f55e85f232552",
+      "original": "core.borrow_for_identity_live._witness checked provider_id == 'paris' and hardcoded 'primary_paris_connection_id' before exposing a cross-profile lender choice, regardless of the already installed typed ManualBorrowPolicy.",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Read-only exact ManualBorrowPolicy from the active ProviderSession's ProviderDescriptor, schema cifereca.manual-borrow/1. Require documentary branch and optional primary borrower ID equality, and use its optional source_selection_key with configured_primary_source_current under the same exact observed provider identity.",
+      "classification": "replaced_active_supplier_witness_by_installed_provider_declared_primary_selection",
+      "evidence": "No literal Paris branch or saved primary_paris_connection_id key remains in the live Core witness. The existing Paris installed descriptor supplies that key; a synthetic future lender supplies an independent key and receives the same strict refusal after an account selection change. Rebind/saved-source checks, installed manifest capability, borrower+edition evidence and claim-state are unchanged. The outcome remains read-only and non-executable.",
+      "tests": [
+        "tests/test_core_p1_4662_live_lender_preview.py",
+        "tests/test_core_p0_5975_headless_lender_admission.py"
+      ],
+      "pr": "#6425",
+      "in_ast_metric": true
+    },
+    {
+      "id": "struct-first-offer-acsm-paris-dilicom-scope-neutralized",
+      "original_site_id": "site-9b7a3e896db6ff1e346f2365",
+      "original": "acsm_cache._initial_scope previously admitted only a literal Paris+DILICOM first-offer ACSM receipt, even though generic manual_borrow already enforces exact connected provider, borrower and one-shot confirmed claim.",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Native Loan identity/provider/credential/account/loan/edition + typed documentary branch; shared valid_provider_identifier. New claim-bound initial receipts use schema 2 with branch attached to immutable private sidecar. Canonical first-offer staging rechecks the live exact upstream branch, verified loan, operation claim and bytes before any artifact is published.",
+      "classification": "replaced_active_supplier_first_offer_decision_by_generic_claimed_token_scope",
+      "evidence": "The active new-receipt writer is source-neutral (valid_provider_identifier + exact borrower/edition/branch); version-2 receipts use an immutable branch field and retain all SHA/XML/one-shot claim checks, including selected canonical staging. An intentionally bounded historical v1 reader keeps the ORIGINAL Paris+DILICOM branch rule only while old claim-bound sidecars may exist (24h TTL), to prevent an old missing-branch receipt being reused for another documentary branch. This is read-only historical compatibility, not current supplier routing, token GET permission, ADEPT authority, or entitlement proof. Tests cover dotted/synthetic providers, old v1 exact reuse, and v1 cross-branch replay refusal. The AST scanner counts the bounded v1 historical predicate, so this change reports NO net AST reduction against main after #6414.",
+      "tests": [
+        "tests/test_core_p0_3121_initial_acsm_receipt.py",
+        "tests/test_core_p0_3121_canonical_first_acsm.py",
+        "tests/test_core_p0_3121_canonical_first_acsm_flow.py"
+      ],
+      "pr": "#6422",
       "in_ast_metric": true
     },
     {
