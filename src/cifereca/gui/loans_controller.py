@@ -206,6 +206,9 @@ def _render_loans(self) -> None:
     # The service cache is independently mutable; only the active GTK
     # action map can authorize a loan row and its documentary N2 evidence.
     # In particular, reject a replayed/equal DTO that is not the same object.
+    # Keep the dependency local: headless controller contract harnesses
+    # execute this method independently of module-level imports.
+    from cifereca.core.loan_live_projection import current_actionable_loan_rows
     all_loans = current_actionable_loan_rows(
         self.service.last_loans, getattr(self, "loan_objects", {}),
         identity_id=identity_id,
