@@ -47,31 +47,48 @@ def check(
     """Exact pre-ADEPT grant/profile sequence; dict is the existing refusal."""
     # Check the pinned borrower grant again immediately before ADEPT:
     # provider staging can take time, and a grant may be revoked.
-    adept_borrower_identity_id = identity.identity_id
+    try:
+        adept_borrower_identity_id = identity.identity_id
+    except Exception:
+        # A malformed callback-owned identity must never bypass the staged
+        # ACSM refusal/receipt path.
+        adept_borrower_identity_id = None
     borrower_code = None
     # The loan may have crossed an external staging boundary since source
-    # admission. Do not coerce plugin-owned coordinates, and never interpret
-    # malformed provenance as a non-Paris source exempt from the grant guard.
+    # admission. Snapshot native coordinates, without coercing plugin values.
+    # Any throwing getter is a negative proof: retain the staged ACSM.
     def source_intact() -> bool:
-        # Read live coordinates on each call; a borrower resolver is another
-        # external hook capable of mutating the staged Loan.
-        return (
-            type(expected_loan_id) is str and bool(expected_loan_id)
-            and type(expected_record_id) in (str, type(None))
-            and type(loan.id) is str and loan.id == expected_loan_id
-            and type(loan.record_id) in (str, type(None))
-            and loan.record_id == expected_record_id
-            and type(loan.source_provider) is str and bool(loan.source_provider)
-            and type(loan.source_credential) is str and bool(loan.source_credential)
-            and type(loan.source_account_id) in (str, type(None))
-            and loan.source_provider == ledger_base.get("provider_id")
-            and loan.source_credential == ledger_base.get("credential_id")
-            and loan.source_account_id == ledger_base.get("account_id")
-            and identity.identity_id == ledger_base.get("identity_id")
-            and type(source_lease) is SourceEpochLease
-            and source_lease.identity_id == identity.identity_id
-            and source_lease.current(self.storage, loan)
-        )
+        if (type(expected_loan_id) is not str or not expected_loan_id
+                or type(expected_record_id) not in (str, type(None))
+                or type(source_lease) is not SourceEpochLease
+                or type(ledger_base) is not dict):
+            return False
+        try:
+            live_loan_id = loan.id
+            live_record_id = loan.record_id
+            live_provider = loan.source_provider
+            live_credential = loan.source_credential
+            live_account = loan.source_account_id
+            live_identity_id = identity.identity_id
+            if (type(live_loan_id) is not str
+                    or live_loan_id != expected_loan_id
+                    or type(live_record_id) not in (str, type(None))
+                    or live_record_id != expected_record_id
+                    or type(live_provider) is not str or not live_provider
+                    or live_provider != ledger_base.get("provider_id")
+                    or type(live_credential) is not str or not live_credential
+                    or live_credential != ledger_base.get("credential_id")
+                    or type(live_account) not in (str, type(None))
+                    or live_account != ledger_base.get("account_id")
+                    or type(live_identity_id) is not str
+                    or live_identity_id != ledger_base.get("identity_id")
+                    or source_lease.identity_id != live_identity_id):
+                return False
+            # The lease independently rechecks the original coordinates and
+            # durable SQLite epoch; it can never be a positive ADEPT grant.
+            return source_lease.current(self.storage, loan)
+        except Exception:
+            return False
 
     if not source_intact():
         # The durable acquiring receipt is the pinned transaction scope.
