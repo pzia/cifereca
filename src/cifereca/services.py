@@ -4201,27 +4201,30 @@ class LibraryService:
                 if not admission_intact():
                     return source_refusal()
 
-                if source.provider_id.casefold() == "paris":
-                    _, borrower_code = self._paris_adept_identity_for_loan(
-                        loan, connection_identity_id=bound_identity_id,
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    # Literal None is the only approved borrower grant.
-                    if borrower_code is not None:
-                        return {
-                            "status": "attention_required", "loan_id": source.loan_id,
-                            "code": adept_borrower.public_borrower_refusal_code(
-                                borrower_code,
-                            ), "retry": "explicit_only",
-                        }
+                # The legacy facade name is ABI compatibility only: its
+                # v16 borrower-grant resolver is scoped to *any* lender.
+                # A linked borrower cannot bypass the pre-staging veto merely
+                # because the source is not Paris. No extra GET/POST occurs.
+                _, borrower_code = self._paris_adept_identity_for_loan(
+                    loan, connection_identity_id=bound_identity_id,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                # Literal None is the only approved borrower grant.
+                if borrower_code is not None:
+                    return {
+                        "status": "attention_required", "loan_id": source.loan_id,
+                        "code": adept_borrower.public_borrower_refusal_code(
+                            borrower_code,
+                        ), "retry": "explicit_only",
+                    }
                 # A persisted acquisition or active entitlement for this
                 # upstream loan can veto a different identity for *any*
                 # source. This is not positive permission to GET or fulfill
                 # ADEPT; the guarded auto-acquisition independently checks
                 # the exact borrower/grant, even after provider staging.
-                # Keep the Paris borrower refusal ahead of this inventory to
-                # preserve its existing public/attention precedence.
+                # Keep the source-neutral borrower refusal ahead of this
+                # inventory to preserve public/attention precedence.
                 conflict_rows = self.storage.acquisitions(
                     provider_id=source.provider_id,
                 )
