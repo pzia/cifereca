@@ -139,10 +139,12 @@ def test_cancellation_inside_selected_file_revokes_tentative_link():
 
     def cancelled():
         calls.append(True)
-        return len(calls) >= 4
+        # File entry, placement and artifact are still three independent
+        # cancellation points; the retired legacy-right loop no longer runs.
+        return len(calls) >= 3
 
     result = _reconcile(inventory, tables, cancelled=cancelled)
-    assert len(calls) >= 4
+    assert len(calls) >= 3
     assert result.reasons == {"cancelled"}
     assert "confirmed_link" not in result.files[0]
     assert _attested(result) == []
