@@ -127,6 +127,13 @@ def project_local_origin_public_c(
     # must be independently proven to belong to this Artifact. Otherwise
     # no single local file may borrow another edition's public thumbnail.
     candidates: dict[str, list[tuple[object, int]]] = {}
+    # Completed OriginLinks attest a provider record, but do NOT retain the
+    # public Search docbase/medium/revision. If two source editions reuse that
+    # provider+record coordinate, the local Artifact cannot tell which one
+    # was delivered. First gather ALL retained public C editions, then refuse
+    # that coordinate in every candidate; iteration order cannot decide it.
+    source_editions: dict[tuple[str, str], set[str]] = {}
+    decoded: list[tuple[object, tuple[tuple[str, str], ...]]] = []
     for key, raw in indexed:
         try:
             value = _json(raw)
@@ -147,16 +154,29 @@ def project_local_origin_public_c(
             )
             if len(set(coords)) != len(coords):
                 continue
-            for artifact in eligible_artifacts:
-                trusted = by_artifact.get(artifact, set())
-                if all(coord in trusted
-                       and origin_memberships.get(coord) == {artifact}
-                       for coord in coords):
-                    candidates.setdefault(artifact, []).append(
-                        (c, len(coords)),
-                    )
+            decoded.append((c, coords))
+            for source, coord in zip(sources, coords):
+                source_editions.setdefault(coord, set()).add(
+                    source.public_bibliography.edition_id
+                )
         except (ValueError, KeyError, TypeError, AttributeError):
             continue
+
+    for c, coords in decoded:
+        # A single provider record may be advertised with two different
+        # docbases, media, or supplier revisions. A bare OriginLink record ID
+        # then proves NEITHER exact public edition, even when only one C has
+        # a larger multi-source group or a more attractive image.
+        if any(len(source_editions[coord]) != 1 for coord in coords):
+            continue
+        for artifact in eligible_artifacts:
+            trusted = by_artifact.get(artifact, set())
+            if all(coord in trusted
+                   and origin_memberships.get(coord) == {artifact}
+                   for coord in coords):
+                candidates.setdefault(artifact, []).append(
+                    (c, len(coords)),
+                )
 
     selected: dict[str, object] = {}
     for artifact, options in candidates.items():
