@@ -218,6 +218,29 @@ def test_absent_or_untrusted_origin_refuses_cross_provider_merge(
         db.close()
 
 
+def test_two_confirmed_receipts_for_same_generic_bytes_cannot_merge_two_works(
+    tmp_path,
+):
+    db = Storage(tmp_path / "different-works.sqlite")
+    try:
+        _origins(db, tmp_path)
+        a, _ = _source_rows()
+        unrelated = witnessed(public_row(
+            source_provider="seller-b", record_id="edition-b",
+            thumbnail_url=B_URL, title="Autre ouvrage",
+            author="Une autre autrice",
+        ))
+        assert _mirror(db, a) == 1
+        assert _mirror(db, unrelated) == 1
+        assert unrelated._core_notice_canonical_cover_document_ref != (
+            a._core_notice_canonical_cover_document_ref
+        )
+        assert not hasattr(unrelated, "_core_notice_cross_provider_proof")
+        assert db.entitlements() == []
+    finally:
+        db.close()
+
+
 def test_laundered_cross_ref_and_stale_original_never_bind_live_ui(tmp_path):
     db = Storage(tmp_path / "forged.sqlite")
     try:
