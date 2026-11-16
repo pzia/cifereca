@@ -28,9 +28,9 @@ def exact_public_source_c(
 ) -> ConsolidatedNoticeCover | None:
     """Find a C only for a fully observed, unambiguous public source edition.
 
-    The source's own C and a stronger, explicitly persisted multi-source C
-    may coexist. Prefer the unique C with the most independently admitted
-    public sources; ties across distinct canonical C refs are ambiguous.
+    The source's own C and one independently attested multi-source C may
+    coexist. Two competing multi-source canonical claims remain ambiguous
+    regardless of the number of providers attesting each relationship.
     Fail closed on unbounded indices and corrupt matching canonical records.
     """
     from .notice_c_cover_index import _IDENTIFIER
@@ -90,9 +90,14 @@ def exact_public_source_c(
                     return None
         if not matches:
             return None
-        strength = max(len(x.sources) for x in matches)
-        winners = [x for x in matches if len(x.sources) == strength]
-        return winners[0] if len(winners) == 1 else None
+        # Independently attested relations outrank the automatic per-source
+        # C, but conflicting relations are never settled by vote count.
+        relations = {x.document: x for x in matches if len(x.sources) > 1}
+        if len(relations) > 1:
+            return None
+        if relations:
+            return next(iter(relations.values()))
+        return matches[0] if len(matches) == 1 else None
     except (sqlite3.Error, AttributeError, TypeError, ValueError):
         return None
 
