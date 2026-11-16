@@ -91,9 +91,9 @@ def test_revision_and_manifestation_and_account_are_not_dedup_aliases():
     assert _search_result_scope_key(a) != _search_result_scope_key(
         replace(a, medium="physical")
     )
-    assert _search_result_scope_key(a) == _search_result_scope_key(
+    assert _search_result_scope_key(a) != _search_result_scope_key(
         replace(a, revision_id=None)
-    ) if a.revision_id is None else True
+    )
 
 
 def test_invalid_version_marker_does_not_become_shared_public_provenance():
