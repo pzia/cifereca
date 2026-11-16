@@ -1855,3 +1855,82 @@ def test_corrupt_saved_adept_source_pair_refuses_unrelated_settings_save(editor)
     with pytest.raises(SettingsValidationError, match="Source ADEPT historique"):
         validate(editor)
     assert config.data == before
+
+
+def test_clearing_saved_explicit_adept_source_never_resurrects_legacy_paris(editor):
+    """Clearing a chosen future source is a revocation, not fallback to Paris."""
+    from cifereca.gui.settings_editor_actions import (
+        _saved_adept_status, _selected_adept_source,
+    )
+    config, values = editor
+    config.set("identities", [
+        dict(
+            id="alice", directory_name="alice",
+            primary_paris_connection_id="paris-legacy",
+            adept_source_provider_id="future-library",
+            adept_source_connection_id="future-reader",
+        ),
+    ])
+    before = deepcopy(config.data)
+    values["identities"][0].update(
+        primary_paris_connection_id="paris-legacy",
+        adept_source_provider_id="",
+        adept_source_connection_id="",
+    )
+    draft = validate(editor)
+    saved = draft.data["identities"][0]
+    assert saved["primary_paris_connection_id"] == "paris-legacy"
+    # Both blank fields are retained: explicit-source absence is NOT the
+    # same as revocation of an already configured explicit source.
+    assert "adept_source_provider_id" in saved
+    assert "adept_source_connection_id" in saved
+    assert saved["adept_source_provider_id"] == ""
+    assert saved["adept_source_connection_id"] == ""
+    assert _selected_adept_source(saved) == (True, None, None)
+
+    class Core:
+        def normal_source_adept_status(self, *_args, **_kwargs):
+            raise AssertionError("cleared source reactivated historical Paris")
+
+    status = _saved_adept_status(Core(), "alice", saved)
+    assert status["status"] == "to_configure"
+    assert status["reason"] == "invalid_source_descriptor"
+    assert config.data == before
+
+
+def test_untouched_legacy_paris_identity_remains_readable_without_new_pair(editor):
+    from cifereca.gui.settings_editor_actions import _selected_adept_source
+
+    config, values = editor
+    config.set("identities", [
+        dict(id="alice", directory_name="alice",
+             primary_paris_connection_id="paris-legacy"),
+    ])
+    values["identities"][0].update(
+        primary_paris_connection_id="paris-legacy",
+        # The live widgets are empty for never-upgraded identities.
+        adept_source_provider_id="",
+        adept_source_connection_id="",
+    )
+    saved = validate(editor).data["identities"][0]
+    assert saved["primary_paris_connection_id"] == "paris-legacy"
+    assert "adept_source_provider_id" not in saved
+    assert "adept_source_connection_id" not in saved
+    assert _selected_adept_source(saved) == (False, "paris", "paris-legacy")
+
+
+def test_preexisting_half_empty_adept_source_marker_stays_fail_closed_on_save(editor):
+    from cifereca.gui.settings_editor_actions import _selected_adept_source
+
+    config, values = editor
+    # A prior version can have one empty marker. An unrelated Settings save
+    # must not erase it and thereby turn on a legacy Paris selection.
+    config.set("identities", [
+        dict(id="alice", directory_name="alice",
+             primary_paris_connection_id="paris-legacy",
+             adept_source_provider_id=""),
+    ])
+    saved = validate(editor).data["identities"][0]
+    assert saved["adept_source_provider_id"] == ""
+    assert saved["adept_source_connection_id"] == ""
+    assert _selected_adept_source(saved) == (True, None, None)
