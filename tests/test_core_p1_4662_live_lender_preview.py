@@ -246,8 +246,9 @@ def test_lender_preview_uses_non_paris_installed_primary_source_contract(harness
     assert session.calls == 0
 
 
+@pytest.mark.parametrize("change", ["descriptor_replaced", "policy_mutated"])
 def test_descriptor_rebind_during_lender_validation_revokes_preview(
-    harness, monkeypatch,
+    harness, monkeypatch, change,
 ):
     from cifereca.core import borrow_for_identity_live as live
     service, account, session = harness
@@ -256,7 +257,13 @@ def test_descriptor_rebind_during_lender_validation_revokes_preview(
 
     def rebind(*args, **kwargs):
         result = original(*args, **kwargs)
-        session.descriptor = replace(session.descriptor)
+        if change == "descriptor_replaced":
+            session.descriptor = replace(session.descriptor)
+        else:
+            object.__setattr__(
+                session.descriptor.manual_borrow_policy,
+                "source_selection_key", None,
+            )
         return result
 
     monkeypatch.setattr(live, "assess_lending_operation", rebind)
