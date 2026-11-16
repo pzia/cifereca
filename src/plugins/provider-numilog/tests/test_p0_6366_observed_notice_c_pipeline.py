@@ -325,3 +325,105 @@ def test_observed_supplier_c_to_real_n2_n3_metrics_and_single_image_get(
         loader.close()
         db.close()
         session.close()
+
+
+def test_two_distinct_notice_editions_share_n3_bytes_not_n2_ownership(
+    tmp_path, monkeypatch,
+):
+    """Exact C document identities remain separate even with the same PNG."""
+    from io import BytesIO
+    import httpx
+    from PIL import Image
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "covers"))
+    monkeypatch.setattr(search_orchestration.time, "time", lambda: 200)
+    session, observed, supplier_gets = real_search(monkeypatch)
+    db = Storage(tmp_path / "notices.sqlite")
+    loader = CoverLoader(max_workers=2)
+    image_gets = []
+    payload = BytesIO()
+    Image.new("RGB", (20, 28), (200, 50, 110)).save(payload, "PNG")
+
+    def image_response(request):
+        assert request.method == "GET"
+        assert str(request.url) == observed[0].thumbnail_url
+        image_gets.append(1)
+        return httpx.Response(
+            200, headers={"content-type": "image/png"},
+            content=payload.getvalue(), request=request,
+        )
+
+    loader.client.close()
+    loader.client = httpx.Client(
+        transport=httpx.MockTransport(image_response), trust_env=False,
+    )
+    reads = []
+    covers = DocumentCoverService(
+        loader, cached_source_reader=lambda ref: (
+            reads.append(ref)
+            or cached_notice_cover_snapshot(NS(storage=db), ref)
+        ),
+        cached_source_scope=is_notice_cover_document,
+    )
+    try:
+        first = observed[0]
+        second = replace(
+            first, record_id=first.record_id + ":independent-edition",
+            id=first.id + ":independent-edition",
+        )
+        assert first.thumbnail_url == second.thumbnail_url
+        assert search_orchestration._mirror_remote_results(
+            NS(storage=db), [first, second], identity_id="alice",
+        ) == 2
+        ref_a = first._core_notice_cover_document_ref
+        ref_b = second._core_notice_cover_document_ref
+        assert ref_a != ref_b
+        assert ref_a.identity_id is ref_b.identity_id is None
+        assert read_notice_cover(db, ref_a).epoch == 1
+        assert read_notice_cover(db, ref_b).epoch == 1
+
+        def warm(ref):
+            ready = Event()
+            covers.get_cover(
+                ref, "detail", lambda _: None,
+                on_source_changed=ready.set,
+            )
+            assert ready.wait(10)
+            done = Event()
+            accepted = []
+            chosen = covers.get_cover(
+                ref, "detail",
+                lambda file: (accepted.append(file), done.set()),
+            )
+            assert chosen.source_uri == first.thumbnail_url
+            assert done.wait(10)
+            assert accepted[0] is not None and accepted[0].is_file()
+            return chosen
+
+        warm(ref_a)  # N2/C source a, N3 physical MISS.
+        assert image_gets == [1]
+        warm(ref_b)  # N2/C source b, N3 physical HIT.
+        assert image_gets == [1] and reads == [ref_a, ref_b]
+        assert covers.stats()["n2_registered_documents"] == 2
+        assert loader.stats()["download_ok"] == 1
+        assert loader.stats()["cache_hit_valid"] >= 1
+        assert len(supplier_gets) == 1
+
+        # Evict only the physical image: both independent documentary N2
+        # associations remain valid and one new N3 GET is allowed on demand.
+        physical = loader._path(first.thumbnail_url)
+        assert physical.is_file()
+        physical.unlink()
+        reloaded = Event()
+        again = covers.get_cover(ref_b, "detail", lambda _: reloaded.set())
+        assert again.source_uri == first.thumbnail_url
+        assert reloaded.wait(10)
+        assert image_gets == [1, 1]
+        assert reads == [ref_a, ref_b]  # Never requalify Notice C on N3 MISS.
+        assert covers.stats()["n2_registered_documents"] == 2
+        assert len(supplier_gets) == 1
+    finally:
+        covers.close()
+        loader.close()
+        db.close()
+        session.close()
