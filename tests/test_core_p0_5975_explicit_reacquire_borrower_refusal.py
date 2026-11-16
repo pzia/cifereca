@@ -23,6 +23,7 @@ class _HostileRefusal:
         raise AssertionError("private refusal must not be formatted")
 
 
+@pytest.mark.parametrize("provider", ["paris", "biblioaccess.la-rochelle"])
 @pytest.mark.parametrize(("refusal", "public_code"), [
     ("", "adept_borrower_ambiguous"),
     (False, "adept_borrower_ambiguous"),
@@ -33,18 +34,18 @@ class _HostileRefusal:
     ("adept_borrower_binding_required", "adept_borrower_binding_required"),
 ])
 def test_explicit_reacquisition_refuses_malformed_or_falsey_borrower_grant(
-    tmp_path, monkeypatch, refusal, public_code,
+    tmp_path, monkeypatch, refusal, public_code, provider,
 ):
     service = _service(tmp_path)
     try:
         service.storage.provider_connection_put({
-            "provider_id": "paris", "credential_id": "credential-a",
+            "provider_id": provider, "credential_id": "credential-a",
             "identity_id": "default",
         })
         loan = Loan(
             id="loan-1", record_id="edition-1", provider="PNB",
             medium="digital", title="Test admission",
-            source_provider="paris", source_credential="credential-a",
+            source_provider=provider, source_credential="credential-a",
             source_account_id="primary", identity_id="default",
         )
 
@@ -76,7 +77,7 @@ def test_explicit_reacquisition_refuses_malformed_or_falsey_borrower_grant(
             "code": public_code,
             "retry": "explicit_only",
         }
-        assert service.storage.acquisitions(provider_id="paris") == []
-        assert service.storage.entitlements(provider_id="paris") == []
+        assert service.storage.acquisitions(provider_id=provider) == []
+        assert service.storage.entitlements(provider_id=provider) == []
     finally:
         service.close()

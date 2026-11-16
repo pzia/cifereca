@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from cifereca.models import Loan
+from cifereca.models import Account, Loan
 from tests.test_core_p0_5975_explicit_reacquire_native_scope import (
     _setup, _no_staging,
 )
@@ -119,10 +119,9 @@ def test_explicit_recovery_rechecks_owner_after_callback_revocation(
             def inventory(*a, **kw):
                 calls["n"] += 1
                 result = old(*a, **kw)
-                # Paris reads one extra conflict inventory.
+                # Every provider traverses borrower preflight and the same
+                # conflict + previous acquisition inventories.
                 target = (1 if callback == "conflict_inventory" else 2)
-                if provider != "paris":
-                    target = 1
                 if calls["n"] == target:
                     revoke()
                 return result
@@ -139,12 +138,6 @@ def test_explicit_recovery_rechecks_owner_after_callback_revocation(
                 service, "_cross_identity_loan_conflict",
                 lambda *_a, **_kw: (revoke() or False),
             )
-        if provider != "paris" and callback in (
-            "borrower", "active_rights", "cross_identity",
-        ):
-            # These Paris-only callbacks cannot execute for an unknown
-            # provider; only test the generic prior inventory in that case.
-            return
         assert service._reacquire_digital_loan_impl(loan) == _expected()
     finally:
         service.close()
@@ -167,6 +160,12 @@ def test_explicit_recovery_with_stable_owner_preserves_borrower_admission(
                 lambda *_a, **_kw: ("default", "adept_borrower_binding_required"),
             )
         else:
+            # The real neutral borrower resolver requires the exact active
+            # account and never inherits a UI-selected borrower.
+            service.accounts = [Account(
+                provider_id=provider, credential_id="credential-a",
+                identity_id="default", unique_id="", is_primary=True,
+            )]
             monkeypatch.setattr(
                 service, "_persist_active_loans",
                 lambda *_a, **_kw: None,

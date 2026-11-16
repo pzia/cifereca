@@ -181,6 +181,7 @@ def book_detail_presentation(
     section_rows: Iterable[tuple[str, Iterable[tuple[str, object]]]] = (),
     links: Iterable[DocumentLink] = (),
     metadata: object = None,
+    cover_document_ref: object | None = None,
 ) -> UiBookDetailPresentation:
     """Build the neutral book-detail projection used by Core and plugin views."""
     details = list(detail_metadata_items(metadata))
@@ -242,4 +243,5 @@ def book_detail_presentation(
         badges=tuple(dict.fromkeys(str(value) for value in badges if value)),
         sections=tuple(sections_list),
         links=tuple(links),
+        cover_document_ref=cover_document_ref,
     )
