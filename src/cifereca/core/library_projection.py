@@ -1364,24 +1364,26 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
     # A v0.7 backup projection is not scoped by identity/borrower: even a
     # descriptive title/cover can leak a former owner's private metadata.
     # Present only catalogue, canonical entitlement and scoped loan facts.
-    from .observed_import_provenance import (
-        observed_import_links, provider_scoped_observed_links,
-    )
-    # Retain historical display hints only under their exact source provider.
-    observed_loan_display_aliases = provider_scoped_observed_links(
-        'bnf-pret',
-        observed_import_links(
-            self.storage,
-            [p for rows in placements_by_artifact.values() for p in rows],
-            local_keys, provider_id='bnf-pret',
-            provenance_field='bnf_observed_loan',
+    from .observed_import_provenance import observed_import_links_for_sources
+    # The source of a manual-import display hint is the entitlement's exact
+    # stored provider, never a branded Core selector. The reader accepts
+    # only legacy fields that the generic manual-import writer can produce.
+    # These hints remain display-only; an OriginLink always takes priority.
+    loan_entitlements = self.storage.entitlements()
+    observed_loan_display_aliases = observed_import_links_for_sources(
+        self.storage,
+        [p for rows in placements_by_artifact.values() for p in rows],
+        local_keys,
+        providers=(
+            row.get("provider_id") for row in loan_entitlements
+            if type(row) is dict and row.get("entitlement_type") == "loan"
         ),
     )
     loans_by_key: dict[tuple[str, str, str | None, str], Loan] = {}
     for loan in self.last_loans:
         loans_by_key[(loan.source_provider, loan.source_credential, loan.source_account_id, str(loan.record_id or loan.id))] = loan
 
-    for entitlement in self.storage.entitlements():
+    for entitlement in loan_entitlements:
         if not _entitlement_visible_in_library(entitlement):
             continue
         status = str(entitlement.get("state") or "")
