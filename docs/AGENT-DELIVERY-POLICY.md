@@ -11,6 +11,13 @@ Le contrat de sortie [#5975](https://github.com/pzia/cifereca/issues/5975) privi
 
 Une association EPUB manquante peut être présentée « à récupérer » **uniquement si un retéléchargement autorisé est encore possible** ; cela ne permet pas de supprimer un fichier local unique, d'inventer un prêt ou de masquer une corruption. Les scénarios extrêmes sans effet d'intégrité/autorisation actuel démontré peuvent être explicitement différés. **#5376 reste un audit qualité ultérieur non bloquant pour la clôture du parent**, même si son ticket reste ouvert. La CI requise sur le HEAD exact et les preuves de sécurité directement pertinentes ne sont jamais dispensées. Le binôme Focus implémenteur unique / CI-CD intégrateur respecte les rôles existants.
 
+## Application particulière : P0 Notices C / miniatures #6366 (16/11/2026)
+
+La livraison [#6366](https://github.com/pzia/cifereca/issues/6366) consiste en **un parcours réel** fournisseur → Notice C canonique persistante/indexée → Search C-first progressive sans blocage GTK → façade partagée N1/N2/N3 → six vues liste/détail. Preuves proportionnées : producteur réellement parsé, deux sources même édition prouvée et non-fusion homonyme, reboot/offline, recherche rapide/lente, miniatures et actions des six vues. Une couverture non qualifiable peut rester placeholder et un lien EPUB retéléchargeable pourra être reconstruit sans perdre la copie locale unique.
+
+Ne sont pas préalables à la clôture : toutes les combinaisons de comptes/profils, ABA/TTL, CAS/invalidation fine de chaque niveau, strict single-flight 1 GET dans chaque ordonnancement, métriques HIT/MISS exhaustives, E2E de chaque micro-état UX, intégration de tous les fournisseurs ou scheduler P2 #4982. **Non reportables** : mauvaise association édition/image, fuite de données privées/credentials, faux droits, mutation sous mauvais compte, corruption SQLite, perte d'EPUB unique ou gel GTK manifeste ; les tests/gates réellement requis restent obligatoires sur le HEAD exact. Les P1 propriétaires demeurent indépendants après clôture du P0.
+
+
 ## Objectif
 
 Plusieurs fils ChatGPT travaillent **asynchroniquement**. Le dépôt GitHub est
