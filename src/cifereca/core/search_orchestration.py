@@ -1739,16 +1739,13 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
     from ..core.search import KnownCatalogSearch
 
     resolved_identity = identity_id
-    rows = KnownCatalogSearch(self.catalog_entries, self.library_entries).search(
-        query, identity_id=resolved_identity, scope=scope, field=field,
-        providers=provider_ids, content_types=content_types,
-        age=age, age_kind=age_kind,
-    )
-    # A known Search is already executed off the GTK thread by its existing
-    # TaskRunner. Read the durable public C index HERE, before any explicit
-    # online extension, instead of doing SQLite work in a row/widget binder.
-    # This source-only cursor is bounded/partial and cannot grant a right.
-    # Preserve the legacy path for fake backends and unsupported fields.
+    # The known Search task is ALREADY queued off the GTK main thread.
+    # Read the durable public C cursor FIRST, before consulting per-profile
+    # legacy mirrors/possessions, and before any separate online extension.
+    # The current synchronous known-task callback still returns a combined
+    # snapshot; progressive public C UI batches remain a subsequent gate.
+    c_page = None
+    c_rows = []
     if (type(query) is str and 2 <= len(query.strip()) <= 160
             and field in ("all", "title", "author", "publisher")
             and scope in ("all", "digital", "physical", "unknown")
@@ -1771,27 +1768,26 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
                     c_rows = filter_loaded_results(
                         c_rows, "", content_types=content_types,
                     )
-                # Suppress an existing mirror only for a C hit ACTUALLY
-                # admitted into the result after format filtering.
-                if len(c_rows) == len(c_page.hits):
-                    rows = merge_public_notice_c_known_rows(
-                        rows, c_page, identity_id=resolved_identity,
-                    )
-                    if content_types:
-                        selected = {row["key"] for row in c_rows}
-                        rows = [
-                            row for row in rows
-                            if row.get("source") != "notice_c_public"
-                            or row.get("key") in selected
-                        ]
-                else:
-                    # No lossy dedup: a format-hidden C hit must not suppress
-                    # its otherwise visible legacy/local result.
-                    rows = c_rows + rows
             except (SQLiteError, ValueError, TypeError, AttributeError):
-                # Unknown/broken public C does not erase the independently
-                # scoped local library, rights or historical Search results.
-                pass
+                # Failed public metadata must never erase private possessions
+                # or turn an unproven empty C page into a search-zero verdict.
+                c_page = None
+                c_rows = []
+    rows = KnownCatalogSearch(self.catalog_entries, self.library_entries).search(
+        query, identity_id=resolved_identity, scope=scope, field=field,
+        providers=provider_ids, content_types=content_types,
+        age=age, age_kind=age_kind,
+    )
+    if c_page is not None:
+        # Deduplicate a mirror ONLY if its exact, rights-free C source is
+        # itself visible under the requested format filter. A hidden C hit
+        # cannot delete a visible local/mirrored entry.
+        if len(c_rows) == len(c_page.hits):
+            rows = merge_public_notice_c_known_rows(
+                rows, c_page, identity_id=resolved_identity,
+            )
+        else:
+            rows = c_rows + rows
     logger.info(
         "TRACE search known identity=%s query_len=%s scope=%s field=%s results=%s",
         resolved_identity, len(str(query or "")), scope, field, len(rows),
