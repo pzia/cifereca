@@ -42,7 +42,7 @@ def _foreign_loan(service, loan, *, ledger, provider=None, owner="alex",
     upstream = loan_id or loan.id
     if ledger == "acquisition":
         service.storage.acquisition_put({
-            "acquisition_id": "foreign-1",
+            "acquisition_id": f"foreign-{source}-{upstream}",
             "provider_id": source, "credential_id": "card-foreign",
             "account_id": "reader-foreign", "identity_id": owner,
             "item_id": loan.record_id, "status": "complete",
@@ -51,7 +51,7 @@ def _foreign_loan(service, loan, *, ledger, provider=None, owner="alex",
         })
     else:
         service.storage.entitlement_put({
-            "entitlement_id": "right-foreign-1",
+            "entitlement_id": f"right-{source}-{upstream}",
             "identity_id": owner, "provider_id": source,
             "credential_id": "card-foreign", "account_id": "reader-foreign",
             "item_id": loan.record_id, "entitlement_type": "loan",
