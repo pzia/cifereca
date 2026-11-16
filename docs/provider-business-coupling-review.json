@@ -1699,7 +1699,7 @@
         "tests/test_core_p0_5851_v16_adept_borrower_adoption.py",
         "tests/test_automatic_loan_admission.py"
       ],
-      "pr": "#TBD",
+      "pr": "#6439",
       "in_ast_metric": true
     }
   ],
