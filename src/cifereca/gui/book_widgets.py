@@ -651,6 +651,28 @@ class BookListCell(Gtk.Box):
             return False
 
     def _search_cover_guard(self, item: BookListItem) -> dict:
+        public_link = getattr(item, "_cover_public_c_link", None)
+        if public_link is not None:
+            # Bind-time owner and two Core epochs, never a mutable current
+            # account lookup at N3 callback time. An A→B→A epoch cannot
+            # revive an old cell, even if its opaque C URL is still cached.
+            from .local_public_c_cell_guard import local_public_c_cell_current
+            owner = getattr(self.window, "service", None)
+            context = (
+                getattr(getattr(owner, "current_identity", None),
+                        "identity_id", None),
+                getattr(owner, "_account_context_epoch", None),
+                getattr(owner, "_source_context_epoch", None),
+            )
+            bind_epoch = self._bind_epoch
+            return {"is_current": lambda: (
+                self._bind_epoch == bind_epoch
+                and self._bound_key == item.key
+                and self._thumbnail_item is item
+                and local_public_c_cell_current(
+                    self.window, item, service=owner, context=context,
+                )
+            )}
         borrower = getattr(item, "_cover_borrower_public_c_receipt", None)
         if borrower is not None:
             # Also recheck after a delayed N3 callback. A recycled cell or
@@ -678,6 +700,8 @@ class BookListCell(Gtk.Box):
                 **(self._search_cover_guard(item)
                    if (getattr(item, "_cover_search_evidence", None) is not None
                        or getattr(item, "_cover_borrower_public_c_receipt", None)
+                       is not None
+                       or getattr(item, "_cover_public_c_link", None)
                        is not None) else {}),
             )
             return
@@ -771,6 +795,8 @@ class BookListCell(Gtk.Box):
                     **(self._search_cover_guard(item)
                        if (getattr(item, "_cover_search_evidence", None) is not None
                        or getattr(item, "_cover_borrower_public_c_receipt", None)
+                       is not None
+                       or getattr(item, "_cover_public_c_link", None)
                        is not None) else {}),
                 )
         elif item.thumbnail_url:
