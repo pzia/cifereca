@@ -261,6 +261,19 @@ def _render_loans(self) -> None:
                 item._cover_document_ref = supplier.document
                 item._cover_loan_supplier_evidence = supplier
                 item._loan_source_item = loan
+            elif display.thumbnail_url is None:
+                # Canonical C never creates a loan/borrower entitlement.
+                # Exact provider-issued book record match was admitted on
+                # the already completed refresh worker.
+                from cifereca.gui.borrower_public_c_bridge import (
+                    exact_loan_public_c,
+                )
+                receipt = exact_loan_public_c(self, loan)
+                if receipt is not None:
+                    item._cover_document_ref = receipt.document
+                    item._cover_borrower_public_c_receipt = receipt
+                    item._borrower_public_c_source = loan
+                    item._borrower_public_c_context = scope_context
         # MasterDetailPage.show_rows has an append-only fast path when keys
         # stay identical. A new exact local cover for the same loan must
         # invalidate that presentation (and repaint the mapped Gtk.ListView),
@@ -276,6 +289,12 @@ def _render_loans(self) -> None:
             item._public_row_content += (evidence,)
         elif getattr(item, "_cover_loan_supplier_evidence", None) is not None:
             item._public_row_content += (item._cover_loan_supplier_evidence,)
+        elif getattr(item, "_cover_borrower_public_c_receipt", None) is not None:
+            # A stable loan key does not imply a stable public C epoch.
+            item._public_row_content += (
+                item._cover_borrower_public_c_receipt.document,
+                item._cover_borrower_public_c_receipt.epoch,
+            )
         ranked_rows.append((due.sort_key, item))
     ranked_rows.sort(key=lambda item: item[0])
     rows = [row for _rank, row in ranked_rows]
@@ -330,7 +349,11 @@ def _render_loans(self) -> None:
                 if not show_supplier_loan_cover(
                     self, fresh, lambda: _loan_display_cover(self, fresh),
                 ):
-                    self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
+                    from cifereca.gui.borrower_public_c_bridge import show_public_loan_c
+                    if not show_public_loan_c(
+                        self, fresh, lambda: _loan_display_cover(self, fresh),
+                    ):
+                        self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
 
 
 def _loan_selected(self, row: BookListItem | None) -> None:
@@ -346,7 +369,11 @@ def _loan_selected(self, row: BookListItem | None) -> None:
             if not show_supplier_loan_cover(
                 self, loan, lambda: _loan_display_cover(self, loan),
             ):
-                self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
+                from cifereca.gui.borrower_public_c_bridge import show_public_loan_c
+                if not show_public_loan_c(
+                    self, loan, lambda: _loan_display_cover(self, loan),
+                ):
+                    self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
         self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
             'source_credential':loan.source_credential,'record_id':loan.record_id})
         self._add_facets(self.loan_page.detail, {'source_provider':loan.source_provider,
