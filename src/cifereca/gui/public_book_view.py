@@ -209,8 +209,8 @@ class PublicBookMasterDetailView:
             if public_c_document is None:
                 panel.show_item_detail(item, detail)
             else:
-                panel.show_item_detail(
-                    item, detail, public_c_document=public_c_document,
+                panel.show_public_c_search_document(
+                    item, detail=detail, public_c_document=public_c_document,
                 )
         else:
             panel.show_search_document(item, detail=detail, cover_evidence=proof)
@@ -244,7 +244,7 @@ class PublicBookMasterDetailView:
             if public_c_document is None:
                 panel.show_search(item, loading=False)
             else:
-                panel.show_search(
+                panel.show_public_c_search_document(
                     item, loading=False, public_c_document=public_c_document,
                 )
         else:
