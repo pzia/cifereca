@@ -289,10 +289,16 @@ def register_exact_search_document(
         # A producer-stamped exact source belongs to persisted Notice C.
         # Do not also publish a competing N2 source: the widget calls the
         # common cache, whose bounded worker reads the source/epoch from C.
-        return (
-            getattr(item, "_core_notice_cover_document_ref", None) == document
-            and callable(getattr(service, "_cached_source_reader", None))
-        )
+        if (getattr(item, "_core_notice_cover_document_ref", None) != document
+                or not callable(getattr(service, "_cached_source_reader", None))):
+            return False
+        # Only the *live Core producer* has a persisted C epoch. A cached
+        # SearchResult replays its exact ref without inventing an epoch;
+        # a routine GTK rebind on an unchanged source causes no SQLite I/O.
+        epoch = getattr(item, "_core_notice_cover_document_epoch", None)
+        if type(epoch) is int and epoch > 0:
+            service.refresh_cached_source_if_newer(document, epoch)
+        return True
     adapter = getattr(window, "search_document_cover_registry", None)
     if type(adapter) is not SearchDocumentCoverRegistry:
         return False
