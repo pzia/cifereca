@@ -193,3 +193,135 @@ def test_observed_source_edition_changes_not_joined_by_image_and_no_rights(
     finally:
         db.close()
         session.close()
+
+
+def test_observed_supplier_c_to_real_n2_n3_metrics_and_single_image_get(
+    tmp_path, monkeypatch,
+):
+    """A real parsed book uses one physical N3 cache across list/detail/A/B.
+
+    MockTransport replaces ONLY the image server; N2 and N3 are production
+    implementations, not mocked loaders. Store safe counters rather than
+    profile names, supplier HTTP bodies or filesystem paths in diagnostics.
+    """
+    from io import BytesIO
+
+    import httpx
+    from PIL import Image
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "covers"))
+    monkeypatch.setattr(search_orchestration.time, "time", lambda: 200)
+    session, rows, search_fetches = real_search(monkeypatch)
+    db = Storage(tmp_path / "notices.sqlite")
+    loader = CoverLoader(max_workers=2)
+    reads = []
+    image_gets = []
+    response = BytesIO()
+    Image.new("RGB", (18, 24), (20, 90, 180)).save(response, format="PNG")
+    picture = response.getvalue()
+
+    def serve(request):
+        assert request.method == "GET"
+        assert str(request.url) == rows[0].thumbnail_url
+        image_gets.append("GET")
+        return httpx.Response(
+            200, headers={"content-type": "image/png"},
+            content=picture, request=request,
+        )
+
+    loader.client.close()
+    loader.client = httpx.Client(
+        transport=httpx.MockTransport(serve), trust_env=False,
+    )
+    covers = DocumentCoverService(
+        loader,
+        cached_source_reader=lambda ref: (
+            reads.append(ref)
+            or cached_notice_cover_snapshot(NS(storage=db), ref)
+        ),
+        cached_source_scope=is_notice_cover_document,
+    )
+    try:
+        row = rows[0]
+        assert search_orchestration._mirror_remote_results(
+            NS(storage=db), [row], identity_id="alice",
+        ) == 1
+        doc = row._core_notice_cover_document_ref
+        source_ready = Event()
+        first = covers.get_cover(
+            doc, "detail", lambda _: None,
+            on_source_changed=source_ready.set,
+        )
+        assert first.source_uri is None
+        assert source_ready.wait(10)
+        assert reads == [doc]
+
+        done_detail = Event()
+        rendered_detail = []
+        detail = covers.get_cover(
+            doc, "detail",
+            lambda file: (rendered_detail.append(file), done_detail.set()),
+        )
+        assert detail.source_uri == row.thumbnail_url
+        assert done_detail.wait(10)
+        assert rendered_detail[0] is not None and rendered_detail[0].is_file()
+        assert image_gets == ["GET"]
+        assert loader.stats()["download_ok"] == 1
+
+        done_list = Event()
+        rendered_list = []
+        listing = covers.get_cover(
+            doc, "list",
+            lambda file: (rendered_list.append(file), done_list.set()),
+        )
+        assert listing.source_uri == detail.source_uri
+        assert done_list.wait(10)
+        assert rendered_list[0] is not None and rendered_list[0].is_file()
+        assert image_gets == ["GET"]  # warm image, no GET on list
+        n3_before = loader.stats()
+        assert n3_before["cache_hit_valid"] >= 1
+        # Plugin-only CI may lack GdkPixbuf, which is required to create a
+        # preview. The real CoverLoader must then return the validated source
+        # image rather than attempt a second supplier GET. On GTK hosts with
+        # the decoder, the generated preview is reused on the next list bind.
+        created = n3_before["preview_created"]
+        fallback = n3_before["preview_fallback"]
+        assert created + fallback >= 1
+        if created:
+            assert rendered_list[0].parent == loader.preview_root
+        else:
+            assert rendered_list[0] == rendered_detail[0]
+
+        again = Event()
+        cached = covers.get_cover(doc, "list", lambda _: again.set())
+        assert cached.source_uri == row.thumbnail_url and again.wait(10)
+        assert image_gets == ["GET"]
+        if created:
+            assert loader.stats()["preview_hit"] >= 1
+        else:
+            assert loader.stats()["preview_fallback"] >= fallback
+
+        # Bob views the same anonymous source on the same desktop. Neither
+        # GET nor N2 admission needs repeating; source/edition stays stable.
+        assert search_orchestration._mirror_remote_results(
+            NS(storage=db), [row], identity_id="bob",
+        ) == 1
+        assert row._core_notice_cover_document_ref == doc
+        from_b = Event()
+        covers.get_cover(doc, "detail", lambda _: from_b.set())
+        assert from_b.wait(10)
+        assert image_gets == ["GET"] and len(search_fetches) == 1
+        assert reads == [doc]
+        n2 = covers.stats()
+        n3 = loader.stats()
+        assert n2["n2_miss"] >= 1
+        assert n2["n2_hit"] >= 3
+        assert n2["n2_registered_documents"] == 1
+        assert n3["download_ok"] == 1
+        assert n3["cache_hit_valid"] >= 2
+        assert read_notice_cover(db, doc).epoch == 1
+    finally:
+        covers.close()
+        loader.close()
+        db.close()
+        session.close()
