@@ -1690,7 +1690,7 @@
         "tests/test_core_p0_5055_generic_import_display_links.py",
         "tests/test_bnf_import_library_link.py"
       ],
-      "pr": "pending",
+      "pr": "#6459",
       "in_ast_metric": true
     }
   ],
