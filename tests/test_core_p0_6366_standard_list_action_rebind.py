@@ -21,12 +21,22 @@ def same_row():
         if isinstance(stmt, ast.FunctionDef)
         and stmt.name == "_same_book_row_presentation"
     )
+    visible_fields = next(
+        stmt for stmt in tree.body
+        if isinstance(stmt, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "_BOOK_ROW_VISIBLE_FIELDS"
+            for target in stmt.targets
+        )
+    )
     module = ast.fix_missing_locations(ast.Module(
         body=[
             ast.ImportFrom(
                 module="__future__", names=[ast.alias(name="annotations")],
                 level=0,
             ),
+            visible_fields,
             function,
         ],
         type_ignores=[],
