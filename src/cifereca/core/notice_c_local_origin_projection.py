@@ -65,8 +65,16 @@ def project_local_origin_public_c(
     additional bounded read neither looks up files nor consults a supplier.
     Invalid/ambiguous provenance simply leaves the existing cover path.
     """
-    if (type(identity_id) is not str or not identity_id
-            or type(rows) is not list or not rows or len(rows) > _MAX_ROWS):
+    if type(rows) is not list or len(rows) > _MAX_ROWS:
+        return
+    # A repeated worker projection may receive previously annotated rows.
+    # A proof from an earlier origin/C inventory cannot survive failed or
+    # conflicting fresh evidence, a profile switch, or a removed Placement.
+    # Always revoke the old binding before attempting the new admission.
+    for row in rows:
+        if type(row) is dict:
+            row.pop("_public_canonical_cover_link", None)
+    if type(identity_id) is not str or not identity_id or not rows:
         return
     wanted = {
         (row.get("artifact_id"), row.get("placement_id"))
@@ -160,12 +168,15 @@ def project_local_origin_public_c(
 
     selected: dict[str, object] = {}
     for artifact, options in candidates.items():
-        # A shared C with two exact sources supersedes each self-edition C.
-        # Equal-strength contradictory canonical links remain ambiguous.
-        strongest = max(score for _c, score in options)
-        best = [c for c, score in options if score == strongest]
-        if len(best) == 1:
-            selected[artifact] = best[0]
+        # Source-count is not evidence that one *contradictory* canonical C
+        # is truer than another. One multi-source relation supersedes the
+        # automatic self-C rows; any two multi-source relations for this
+        # Artifact are ambiguous, even when their sizes differ (3 vs 2).
+        relations = [c for c, count in options if count > 1]
+        if len(relations) == 1:
+            selected[artifact] = relations[0]
+        elif not relations and len(options) == 1:
+            selected[artifact] = options[0][0]
 
     for row in rows:
         if (type(row) is not dict
