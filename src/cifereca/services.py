@@ -4179,28 +4179,35 @@ class LibraryService:
                                 borrower_code,
                             ), "retry": "explicit_only",
                         }
-                    conflict_rows = self.storage.acquisitions(
-                        provider_id=source.provider_id,
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    active_rights = self.storage.entitlements(
-                        provider_id=source.provider_id, state="active",
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    conflict = self._cross_identity_loan_conflict(
-                        conflict_rows, provider_loan_id=source.loan_id,
-                        identity_id=bound_identity_id, entitlements=active_rights,
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    if conflict:
-                        return {
-                            "status": "attention_required", "loan_id": source.loan_id,
-                            "code": "adept_loan_identity_conflict",
-                            "retry": "explicit_only",
-                        }
+                # A persisted acquisition or active entitlement for this
+                # upstream loan can veto a different identity for *any*
+                # source. This is not positive permission to GET or fulfill
+                # ADEPT; the guarded auto-acquisition independently checks
+                # the exact borrower/grant, even after provider staging.
+                # Keep the Paris borrower refusal ahead of this inventory to
+                # preserve its existing public/attention precedence.
+                conflict_rows = self.storage.acquisitions(
+                    provider_id=source.provider_id,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                active_rights = self.storage.entitlements(
+                    provider_id=source.provider_id, state="active",
+                )
+                if not admission_intact():
+                    return source_refusal()
+                conflict = self._cross_identity_loan_conflict(
+                    conflict_rows, provider_loan_id=source.loan_id,
+                    identity_id=bound_identity_id, entitlements=active_rights,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                if conflict:
+                    return {
+                        "status": "attention_required", "loan_id": source.loan_id,
+                        "code": "adept_loan_identity_conflict",
+                        "retry": "explicit_only",
+                    }
 
                 previous_rows = self.storage.acquisitions(
                     provider_id=source.provider_id,
