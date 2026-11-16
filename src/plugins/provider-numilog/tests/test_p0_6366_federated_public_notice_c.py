@@ -427,3 +427,81 @@ def test_observed_numilog_federated_two_source_revisions_survive_search_and_c(
     finally:
         service.close()
         session.close()
+
+
+def test_observed_source_cache_and_search_ttl_expire_but_notice_c_remains(
+    tmp_path, monkeypatch,
+):
+    """P0: the short-lived source/HTTP/search caches are NOT a Notice C TTL.
+
+    This exercises a real parsed Numilog HTML response and a live Core
+    federated producer, then purges both the provider's source page cache and
+    the SQLite search-cache namespace. C remains in the SAME SQLite store,
+    including after a >24h clock advance and full process-style restart.
+    Neither cache invalidation creates a right or performs an image GET.
+    """
+    import cifereca.core.search_orchestration as orchestration
+    from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
+
+    clock = [1_800_000_000]
+    monkeypatch.setattr(orchestration.time, "time", lambda: clock[0])
+    service, session, supplier_gets = build(tmp_path, monkeypatch)
+    path = tmp_path / "notices.sqlite"
+    try:
+        rows = service.search(
+            "loup", provider_id=session.provider_id, force=True,
+        )
+        assert rows and supplier_gets == [1]
+        first = rows[0]
+        document = first._core_notice_cover_document_ref
+        initial = read_notice_cover(service.storage, document)
+        assert initial is not None and initial.epoch == 1
+        assert initial.attribute.candidates[0].url == first.thumbnail_url
+        assert any(
+            namespace["namespace"] == "search" and namespace["entries"] > 0
+            for namespace in service.storage.cache_namespace_stats()
+        )
+
+        # Real provider's ephemeral parsed-page cache (the HTTP response is
+        # already consumed); clearing it cannot delete metadata-owned C.
+        session._public_cache.clear()
+        clock[0] += 25 * 3600
+        assert service.storage.purge_expired() >= 1
+        assert not any(
+            namespace["namespace"] == "search" and namespace["entries"] > 0
+            for namespace in service.storage.cache_namespace_stats()
+        )
+        surviving = read_notice_cover(service.storage, document)
+        assert surviving == initial
+        assert cached_notice_cover_snapshot(
+            NS(storage=service.storage), document,
+        ).candidates[0].url == first.thumbnail_url
+        assert supplier_gets == [1]  # A local C read needs no provider GET.
+        assert service.storage.entitlements() == []
+        assert service.storage.acquisitions() == []
+
+        # Explicit refresh may now reobserve the same actual source. This
+        # advances its last-seen watermark, not the N2 epoch for identical C.
+        refreshed = service.search(
+            "loup", provider_id=session.provider_id, force=True,
+        )
+        assert refreshed and supplier_gets == [1, 1]
+        assert refreshed[0]._core_notice_cover_document_ref == document
+        assert read_notice_cover(service.storage, document).epoch == 1
+    finally:
+        service.close()
+        session.close()
+
+    restarted = Storage(path)
+    try:
+        persisted = read_notice_cover(restarted, document)
+        assert persisted is not None and persisted.epoch == 1
+        assert persisted.attribute.candidates[0].url == first.thumbnail_url
+        assert cached_notice_cover_snapshot(
+            NS(storage=restarted), document,
+        ).revision == 1
+        assert restarted.entitlements() == []
+        assert restarted.acquisitions() == []
+        assert supplier_gets == [1, 1]
+    finally:
+        restarted.close()
