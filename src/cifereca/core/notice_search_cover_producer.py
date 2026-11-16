@@ -116,6 +116,8 @@ def admit_public_search_catalogue(
             or not coordinate(row.revision_id, optional=True)
             or not _public_bibliographic_text(
                 row.title, required=True, limit=512,
+            ) or row.title.lstrip().casefold().startswith(
+                ("/", "\\", "~/", "file:")
             )):
         return initial
     fields = {
@@ -131,7 +133,9 @@ def admit_public_search_catalogue(
             fields[name] = None
         elif (not _public_bibliographic_text(
                     value, limit=4000 if name == "description" else 512,
-              ) or value.lstrip().startswith(("/", "\\", "~/", "file:"))):
+              ) or value.lstrip().casefold().startswith(
+                  ("/", "\\", "~/", "file:")
+              )):
             # The independently attested COVER is still useful, but reject
             # this untrusted descriptive value rather than leak it globally.
             return initial
