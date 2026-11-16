@@ -646,3 +646,8 @@ la comparaison des seules observations positives va jusqu'au bout.
 L'annulation, le changement de compte/identité/racines et les erreurs
 de lecture restent des causes explicites de refus ; aucun téléchargement
 ni réparation n'est effectué.
+
+
+### Recette de compatibilité du panneau Numilog après extinction de l'attestation legacy (#5975)
+
+Dans le jeu de six droits historiques Numilog, les six lignes restent visibles comme droits enregistrés mais **non vérifiés**, y compris si le titre du droit correspond à un EPUB local. L'ancien compteur de trois liens présumés attestés n'est plus applicable : `unverified_rights == 6` et `confirmed_files == 0` sans OriginLink canonique. La navigation et les métadonnées descriptives demeurent accessibles ; aucun droit, placement ou octet EPUB n'est effacé. Seule une provenance canonique exacte, et non le texte du droit ou un ledger `complete`, peut rétablir le lien confirmé. Test : `test_core_p0_2714_numilog_right_metadata_panel.py::test_entitlement_text_is_not_a_verified_link_even_if_it_matches_a_local_epub`.
