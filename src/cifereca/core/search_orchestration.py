@@ -506,6 +506,45 @@ def _search_owner_cache_scope(
     ))
 
 
+def _search_presentation_cache_scope(
+    identity: object,
+    searchable: list[ProviderSession],
+    owner_leases: tuple[tuple[ProviderSession, str | None], ...],
+) -> str:
+    """Cache by source, not by *viewer*, only for a truly anonymous producer.
+
+    Never generalize this to private, ownerless-but-unknown or mixed sources:
+    their response may reflect a different account. Search projections are
+    already ranked using the selected reader's language preferences, so
+    those preferences remain part of the key until raw source responses and
+    reader ranking are separated. An anonymous source must still return a
+    same-call PublicSearchNotice, independently enforced by the producer
+    response gate; this cache key cannot confer public provenance.
+    """
+    if identity is None:
+        return ""
+    preferences = getattr(identity, "preferences", None)
+    ranking = (
+        f"{','.join(preferences.reading_languages)}:"
+        f"{int(preferences.prefer_original_language)}"
+    )
+    if (len(searchable) == 1 and len(owner_leases) == 1
+            and owner_leases[0][0] is searchable[0]
+            and owner_leases[0][1] is None):
+        session = searchable[0]
+        if (getattr(session, "credential_id", None) == "__public__"
+                and type(getattr(session, "credentials", None)) is dict
+                and not session.credentials
+                and type(getattr(session, "_accounts", None)) is list
+                and not session._accounts
+                and isinstance(session, ProviderSearchWithFacets)):
+            # Source and owner scopes are independently in the cache key.
+            # Deliberate distinct domain from an identity literally named
+            # "anonymous-v1", so no cross-scope key collision is possible.
+            return "source-anonymous-public-v1:" + ranking
+    return f"{identity.identity_id}:" + ranking
+
+
 def _search_cooldown_clock() -> float:
     return time.monotonic()
 
@@ -719,9 +758,9 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         for session in searchable
     )
     provider_key = ",".join(sorted(x.provider_id for x in searchable)) or requested_provider
-    pref_key = ""
-    if identity is not None:
-        pref_key = f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
+    pref_key = _search_presentation_cache_scope(
+        identity, searchable, owner_leases,
+    )
     virtual_versions = ",".join(
         f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
         for session in searchable
@@ -1329,7 +1368,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         for session in searchable
     )
     provider_key = ",".join(sorted(x.provider_id for x in searchable)) or (",".join(sorted(requested)) or single)
-    pref_key = "" if identity is None else f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
+    pref_key = _search_presentation_cache_scope(
+        identity, searchable, owner_leases,
+    )
     types = tuple(sorted(content_types or ()))
     virtual_versions = ",".join(
         f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
