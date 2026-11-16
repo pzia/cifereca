@@ -18,6 +18,7 @@ from cifereca.core.notice_c_known_projection import merge_public_notice_c_known_
 from cifereca.gui.detail_model import book_detail_presentation
 from cifereca.gui.search_known_public_c_guard import (
     PinnedKnownPublicC, pin_known_public_c,
+    attach_filtered_known_public_c,
     known_public_c_current, known_public_c_cell_current,
 )
 from cifereca.storage import Storage
@@ -299,3 +300,45 @@ def test_real_widget_source_routes_known_c_to_guard_at_bind_and_signal():
     detail_source = (ROOT / "detail_panel.py").read_text()
     assert "is_current=getattr(" in detail_source
     assert '"_next_local_public_c_check", None' in detail_source
+
+
+@pytest.mark.parametrize("alter", [
+    "epoch", "document", "owner", "source",
+])
+def test_filtered_c_copy_cannot_mint_new_core_witness_from_equal_title(
+    tmp_path, alter,
+):
+    db, host, row, original = _seed(tmp_path)
+    try:
+        projected = {
+            **original, "metadata": dict(original["metadata"]),
+        }
+        if alter == "epoch":
+            projected["metadata"]["notice_c_epoch"] += 1
+        elif alter == "document":
+            from cifereca.core.notice_c_cover_index import (
+                canonical_cover_document_ref,
+            )
+            projected["_cover_document_ref"] = canonical_cover_document_ref(
+                "edition:wrong-book",
+            )
+        elif alter == "owner":
+            projected["identity_id"] = "another-profile"
+        else:
+            projected["source"] = "another-source"
+        # A filtered copy may contain the same headline and a nominal
+        # DocumentRef; only the ORIGINAL Core dictionary is a witness.
+        visible = NS(
+            key=row.key,
+            _cover_document_ref=projected["_cover_document_ref"],
+            _cover_public_c_epoch=projected["metadata"]["notice_c_epoch"],
+        )
+        attach_filtered_known_public_c(host, visible, projected)
+        assert not hasattr(visible, "_cover_known_public_c_receipt")
+        assert not known_public_c_cell_current(
+            host, visible,
+            getattr(visible, "_cover_known_public_c_receipt", None),
+        )
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
