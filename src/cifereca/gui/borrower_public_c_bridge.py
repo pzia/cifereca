@@ -122,8 +122,61 @@ def show_public_history_c(host: Any, source: HistoryItem, presentation: HistoryI
     return True
 
 
+def bind_borrower_public_c_detail(
+    host: Any, cover: Any, document: object,
+    receipt: object,
+) -> bool:
+    """Keep a detail N3 response bound to its exact borrower occurrence.
+
+    The Core worker already attached the only permitted public N2 reference.
+    Here the GTK cell consumes it, but must recheck the same original receipt
+    after the asynchronous N3 request, including A→B→A account/source and
+    an intervening refresh of the same row ID. No supplier GET/SQLite/rights.
+    """
+    from .document_cover_service import DocumentCoverService
+
+    service_owner = getattr(host, "service", None)
+    source = getattr(receipt, "source_item", None)
+    is_loan = type(source) is Loan
+    is_history = type(source) is HistoryItem
+    revision_name = (
+        "_loan_cover_decision_revision" if is_loan
+        else "_history_cover_revision"
+    )
+    revision = getattr(host, revision_name, None)
+    document_service = getattr(host, "document_covers", None)
+
+    def is_current() -> bool:
+        if (getattr(host, "service", None) is not service_owner
+                or getattr(host, revision_name, None) != revision
+                or type(receipt) is not VerifiedBorrowerPublicC
+                or receipt.document != document):
+            return False
+        if is_loan:
+            return exact_loan_public_c(host, source) is receipt
+        if is_history:
+            return exact_history_public_c(host, source) is receipt
+        return False
+
+    def missing() -> bool:
+        cover.bind_url(getattr(host, "covers", None), None, priority=0)
+        return False
+
+    if (type(document_service) is not DocumentCoverService
+            or not is_current()):
+        return missing()
+    try:
+        cover.bind_document(
+            document_service, document, variant="detail", priority=0,
+            is_current=is_current,
+        )
+    except (TypeError, ValueError, RuntimeError):
+        return missing()
+    return True
+
+
 __all__ = [
     "exact_loan_public_c", "exact_history_public_c",
-    "admit_borrower_public_c_cell",
+    "admit_borrower_public_c_cell", "bind_borrower_public_c_detail",
     "show_public_loan_c", "show_public_history_c",
 ]

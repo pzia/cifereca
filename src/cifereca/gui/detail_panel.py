@@ -72,6 +72,9 @@ class DetailPanel(Gtk.Box):
         # profile-wide association or secondary documentary cache.
         self._next_cover_evidence = None
         self._next_cover_document_ref = None
+        # Single-render borrowed-public C guard, never a retained GTK proof.
+        self._next_borrower_public_c_receipt = None
+        self._next_local_public_c_check = None
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_vexpand(True)
         self.action_scroll = AdaptiveActionBar(
@@ -230,12 +233,29 @@ class DetailPanel(Gtk.Box):
             # An independently attested local/search N1 source takes priority.
             self._bind_cover(cover, thumbnail, cover_evidence=evidence)
         elif document is not None:
-            from .declared_document_cover import bind_declared_document_cover
-            bind_declared_document_cover(
-                cover, self.window.covers,
-                getattr(self.window, "document_covers", None), document,
-                variant="detail", priority=0,
+            # Borrower C is public but its association with a Loan/History
+            # item is private and time-scoped. Unlike a generic public Search
+            # ref, a delayed N3 return MUST recheck that exact occurrence.
+            borrower = getattr(
+                self, "_next_borrower_public_c_receipt", None,
             )
+            if borrower is not None:
+                from .borrower_public_c_bridge import (
+                    bind_borrower_public_c_detail,
+                )
+                bind_borrower_public_c_detail(
+                    self.window, cover, document, borrower,
+                )
+            else:
+                from .declared_document_cover import bind_declared_document_cover
+                bind_declared_document_cover(
+                    cover, self.window.covers,
+                    getattr(self.window, "document_covers", None), document,
+                    variant="detail", priority=0,
+                    is_current=getattr(
+                        self, "_next_local_public_c_check", None,
+                    ),
+                )
         else:
             cover.bind_url(self.window.covers, thumbnail, priority=0)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -900,17 +920,23 @@ class DetailPanel(Gtk.Box):
         PUBLIC C cover. This does not alter loan actions or permissions.
         """
         from ..core.notice_c_cover_index import is_canonical_cover_document
+        from .borrower_public_c_bridge import exact_loan_public_c
+        receipt = exact_loan_public_c(self.window, loan)
         if (type(loan) is not Loan
                 or loan.thumbnail_url is not None
                 or not is_canonical_cover_document(document)
+                or receipt is None or receipt.document != document
                 or self._next_cover_document_ref is not None
-                or self._next_cover_evidence is not None):
+                or self._next_cover_evidence is not None
+                or self._next_borrower_public_c_receipt is not None):
             raise ValueError("invalid_loan_public_c_detail")
         self._next_cover_document_ref = document
+        self._next_borrower_public_c_receipt = receipt
         try:
             self.show_loan(loan)
         finally:
             self._next_cover_document_ref = None
+            self._next_borrower_public_c_receipt = None
 
     def show_loan_local(self, loan: Loan, *, cover_evidence) -> None:
         """Loan view with an owner/entitlement-attested EPUB DocumentRef.
@@ -1045,17 +1071,23 @@ class DetailPanel(Gtk.Box):
     def show_history_public_c(self, item: HistoryItem, *, document) -> None:
         """History lists/details share a Core-public N2 C; no title search."""
         from ..core.notice_c_cover_index import is_canonical_cover_document
+        from .borrower_public_c_bridge import exact_history_public_c
+        receipt = exact_history_public_c(self.window, item)
         if (type(item) is not HistoryItem
                 or item.thumbnail_url is not None
                 or not is_canonical_cover_document(document)
+                or receipt is None or receipt.document != document
                 or self._next_cover_document_ref is not None
-                or self._next_cover_evidence is not None):
+                or self._next_cover_evidence is not None
+                or self._next_borrower_public_c_receipt is not None):
             raise ValueError("invalid_history_public_c_detail")
         self._next_cover_document_ref = document
+        self._next_borrower_public_c_receipt = receipt
         try:
             self.show_history(item)
         finally:
             self._next_cover_document_ref = None
+            self._next_borrower_public_c_receipt = None
 
     def show_history_document(
         self, item: HistoryItem, *, cover_evidence,

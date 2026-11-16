@@ -105,18 +105,44 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
     )
     if cover_evidence is None:
         link = item.get("_public_canonical_cover_link")
-        if (not foreign
-                and item.get("_exact_local_cover_evidence") is None
-                and valid_local_public_c_link(
-                    link, identity_id=active,
-                    artifact_id=item.get("artifact_id"),
-                    placement_id=item.get("placement_id"),
-                )):
+        pinned_c = (
+            not foreign
+            and item.get("_exact_local_cover_evidence") is None
+            and valid_local_public_c_link(
+                link, identity_id=active,
+                artifact_id=item.get("artifact_id"),
+                placement_id=item.get("placement_id"),
+            )
+        )
+        if pinned_c:
+            # Only the actual current GTK list selection may use this
+            # Artifact/Placement C after an N3 read. A stale once-unique
+            # key cannot open the newer mapped book or paint its cover.
+            from .local_public_c_detail_guard import (
+                local_public_c_detail_check, staged_local_public_c_detail,
+            )
+            check = local_public_c_detail_check(
+                window, row, item, link, view="library",
+            )
+            if (getattr(row, "_cover_public_c_link", None) is not None
+                    and not check()):
+                detail.empty(
+                    "Référence périmée",
+                    "Actualisez la bibliothèque avant d'ouvrir ce détail.",
+                )
+                return
             presentation = replace(
                 presentation, cover_document_ref=link.document,
                 thumbnail_url=None,
             )
-        detail.show_presentation(presentation, description=description)
+            with staged_local_public_c_detail(detail, check):
+                detail.show_presentation(
+                    presentation, description=description,
+                )
+        else:
+            detail.show_presentation(
+                presentation, description=description,
+            )
     else:
         detail.show_local_presentation(
             presentation, description=description, cover_evidence=cover_evidence,
