@@ -124,6 +124,14 @@ class PublicBookMasterDetailView:
                     continue
                 button = Gtk.LinkButton(uri=uri, label=str(action.title))
                 button.set_tooltip_text(str(action.title))
+                # GTK4's activate-link expects True to suppress the default
+                # URI opener. A discarded detail must not launch an old link.
+                button.connect(
+                    "activate-link",
+                    lambda clicked: getattr(
+                        clicked, "_cifereca_action_context_revoked", False,
+                    ) is True,
+                )
             else:
                 button = action_button(str(action.title), str(action.icon_name or "view-more-symbolic"))
                 callback = getattr(action, "callback", None)
