@@ -1677,6 +1677,21 @@
       "pr": "#6456",
       "in_ast_metric": true,
       "original_site_id": "site-27ca4e2cb71815ea92df3fd2"
+    },
+    {
+      "id": "struct-observed-loan-display-bnf-provider-selector-cutover",
+      "original": "src/cifereca/core/library_projection.py::library_entries hardcoded 'bnf-pret' and 'bnf_observed_loan' to associate manual-import display hints",
+      "original_classification": "presentation_only",
+      "replacement": "observed_import_links_for_sources over exact stored loan-entitlement provider coordinates and shared writer metadata-field grammar, still requiring exact local Placement/artifact/borrower and manual import receipt",
+      "classification": "neutral_display_projection_cutover",
+      "evidence": "Core no longer chooses BnF by supplier name; it reads the same already-written provider-scoped metadata grammar for all eligible observed providers, bounded to 64 providers with no new entitlement or GET. Existing BnF historical rows and URI scopes remain byte-for-byte compatible.",
+      "tests": [
+        "tests/test_core_p0_5975_source_neutral_observed_import_display.py",
+        "tests/test_core_p0_5055_generic_import_display_links.py",
+        "tests/test_bnf_import_library_link.py"
+      ],
+      "pr": "pending",
+      "in_ast_metric": true
     }
   ],
   "guard_installations": [
