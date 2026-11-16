@@ -50,15 +50,14 @@ def test_invalid_exact_cas_vetoes_old_on_before_get_and_at_commit(
         assert bridge.legacy_source_auto_policy(storage, scope, kind) == (
             "on", "a" * 32,
         )
-        old_purchase_authorized = kind == "purchase"
-        assert bridge.legacy_source_auto_current(storage, source, "a" * 32) is old_purchase_authorized
+        # Even a fully versioned historical purchase switch is no longer
+        # an executable source-wide grant (same rule as retired loan ON).
+        assert not bridge.legacy_source_auto_current(storage, source, "a" * 32)
         with storage._lock, storage._connect() as db:
-            assert bridge.toggle_state(db, source) == (
-                "on" if old_purchase_authorized else "off"
-            )
-            assert bridge.legacy_source_auto_in_transaction(
+            assert bridge.toggle_state(db, source) == "off"
+            assert not bridge.legacy_source_auto_in_transaction(
                 db, source, "a" * 32,
-            ) is old_purchase_authorized
+            )
 
         payload = {
             "schema": "cifereca.source-sync-consent/1",

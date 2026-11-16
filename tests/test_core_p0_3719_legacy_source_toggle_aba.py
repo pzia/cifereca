@@ -95,31 +95,22 @@ def test_failed_legacy_source_switch_rolls_back_epoch_and_boolean(
         storage.close()
 
 
-def test_kobo_legacy_on_off_on_mid_get_cannot_revive_previous_consent(rig):
+def test_kobo_legacy_on_cannot_start_get_or_publish_without_cas(rig):
     service, storage, root, materialization_policy = _kobo(rig)
     storage.metadata_set(materialization_policy, "1")
     assert consent_generation(storage, service.source.scope) is None
-    broker = SynchronizationBrokerImpl(service)
-    sid = broker._source_id(service.account)
     calls = []
 
-    def delivery(key, offer):
-        calls.append(offer.delivery_offer_id)
-        path = root / "A" / "stale-legacy-attempt.pdf"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(BYTES)
-        broker.set_enabled(sid, False)
-        broker.set_enabled(sid, True)
-        # The materialization opt-in remains ON; only the independent source
-        # switch was cycled. The original GET must not inherit the new epoch.
-        assert storage.metadata_get(materialization_policy) == "1"
-        assert consent_generation(storage, service.source.scope) is not None
-        return CompletedDelivery(
-            key, offer.delivery_offer_id, path, SHA, "stale-legacy-receipt",
-        )
+    def forbidden_delivery(*_args):
+        calls.append("unexpected")
+        raise AssertionError("historical Kobo ON cannot admit a new GET")
 
-    service._canonical_right_delivery = delivery
+    service._canonical_right_delivery = forbidden_delivery
     result = synchronize_account_source(service, service.account)
-    assert calls == ["kobo-verified-private-offer"]
+    assert calls == []
     assert result["canonical_execution"]["downloaded"] == 0
     assert storage.placements() == [] and refs(storage)[1] == 0
+    # The old key was neither deleted nor silently converted to CAS ON.
+    assert storage.metadata_get(materialization_policy) == "1"
+    from cifereca.core.source_sync_consent import read_policy
+    assert read_policy(storage, service.source.scope).mode == "unset"
