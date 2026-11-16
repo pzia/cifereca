@@ -66,6 +66,30 @@ def _key(row: object) -> tuple | None:
     return values
 
 
+def _declaration_key(row: object) -> tuple | None:
+    """Bind a public declaration to its *exact* same-call source/edition.
+
+    The public DTO deliberately discards supplier revision and account
+    attributes outside the genuinely anonymous session exception. They
+    remain necessary as LOCAL matching coordinates: two distinct supplier
+    revisions must not make each other's declarations ambiguous, nor allow
+    a same-record notice from a different private account to be projected.
+    None of these auxiliary values are copied to the shared public DTO.
+    """
+    key = _key(row)
+    if key is None:
+        return None
+    account = row.source_account_id
+    revision = row.revision_id
+    if ((account is not None and not _text(account, required=True, limit=512))
+            or (revision is not None and (
+                type(revision) is not str
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", revision) is None
+            ))):
+        return None
+    return (*key, account or "", revision or "")
+
+
 def project_public_search_result(
     response: ProviderSearchResponse, row: SearchResult, *,
     provider_id: str, credential_id: str,
@@ -90,7 +114,7 @@ def project_public_search_result(
             or not _text(provider_id, required=True, limit=512)
             or not _text(credential_id, required=True, limit=512)):
         return None
-    key = _key(row)
+    key = _declaration_key(row)
     if (key is None or row.source_provider != provider_id
             or row.source_credential != credential_id):
         return None
@@ -100,14 +124,14 @@ def project_public_search_result(
                 or type(notice.schema_version) is not int
                 or notice.schema_version != 1):
             return None
-        candidate_key = _key(notice.result)
+        candidate_key = _declaration_key(notice.result)
         if candidate_key is None:
             return None
         if candidate_key == key:
             matches.append(notice.result)
     if len(matches) != 1:
         return None
-    return _project_public_notice(key, matches[0])
+    return _project_public_notice(key[:-2], matches[0])
 
 
 def _project_public_notice(
@@ -175,7 +199,7 @@ def project_public_search_results(
                 or type(declaration.schema_version) is not int
                 or declaration.schema_version != 1):
             return None
-        key = _key(declaration.result)
+        key = _declaration_key(declaration.result)
         if key is None:
             return None
         declarations.setdefault(key, []).append(declaration.result)
@@ -183,13 +207,13 @@ def project_public_search_results(
     for row in response.results:
         if type(row) is not SearchResult:
             return None
-        key = _key(row)
+        key = _declaration_key(row)
         if key is None:
             continue
         candidates = declarations.get(key, ())
         if len(candidates) != 1:
             continue
-        projected = _project_public_notice(key, candidates[0])
+        projected = _project_public_notice(key[:-2], candidates[0])
         if projected is not None:
             results[id(row)] = projected
     return results
