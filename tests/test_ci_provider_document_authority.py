@@ -46,7 +46,7 @@ def test_gate_fails_on_missing_normative_reference(authority_tree):
     content = index.read_text(encoding="utf-8")
     assert "](ARCHITECTURE.md)" in content
     index.write_text(
-        content.replace("](ARCHITECTURE.md)", "](old-architecture.md)", 1),
+        content.replace("](ARCHITECTURE.md)", "](old-architecture.md)"),
         encoding="utf-8",
     )
     assert any("Missing normative index link: ARCHITECTURE.md" in error
