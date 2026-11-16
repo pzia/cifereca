@@ -76,10 +76,16 @@ def check(
     if not source_intact():
         # The durable acquiring receipt is the pinned transaction scope.
         borrower_code = "adept_borrower_ambiguous"
-    elif loan.source_provider.casefold() == "paris":
-        adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
-            loan, connection_identity_id=identity.identity_id,
-        )
+    else:
+        # A pinned SQLite epoch is only a source-continuity veto; ADEPT
+        # borrower authorization remains source-scoped v16 for all lenders.
+        # The legacy "paris" resolver name is not a supplier dispatch.
+        try:
+            adept_borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+                loan, connection_identity_id=identity.identity_id,
+            )
+        except Exception:
+            borrower_code = "adept_borrower_ambiguous"
     # The borrower/grant callback may mutate the staged loan after initial
     # validation. Check the original transaction again before profile lookup.
     if borrower_code is None and not source_intact():
