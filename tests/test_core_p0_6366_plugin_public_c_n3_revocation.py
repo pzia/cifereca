@@ -335,3 +335,38 @@ def test_noncanonical_plugin_cover_preserves_existing_neutral_abi():
     rendered, current_check = view._page.detail.renders[-1]
     assert rendered.cover_document_ref == legacy
     assert current_check is None
+
+
+def test_plugin_c_missing_n2_service_never_falls_back_to_raw_url():
+    view, window, service, source, visible = _selected()
+    calls = []
+    loader = object()
+    window.document_covers = None
+    cell = NS(
+        window=window,
+        _thumbnail_item=visible, _bound_key=visible.key,
+        cover_loader=loader,
+        cover=NS(
+            bind_url=lambda *args, **kwargs: calls.append(
+                (args, kwargs),
+            ),
+        ),
+    )
+    _method("_thumbnail_changed")(cell, visible)
+    assert calls == [
+        ((loader, None), {"priority": 10}),
+    ]
+    # Bind and thumbnail-changed must both refuse the same legacy URL
+    # downgrade when a canonical C packet's N2 gateway is absent.
+    tree = ast.parse((ROOT / "book_widgets.py").read_text(encoding="utf-8"))
+    klass = next(x for x in tree.body if (
+        isinstance(x, ast.ClassDef) and x.name == "BookListCell"
+    ))
+    bind = next(x for x in klass.body if (
+        isinstance(x, ast.FunctionDef) and x.name == "bind"
+    ))
+    code = ast.unparse(bind)
+    assert "elif getattr(item, '_cover_plugin_c_source', None) is not None:" in code
+    assert code.index(
+        "elif getattr(item, '_cover_plugin_c_source', None) is not None:"
+    ) < code.index("elif item.thumbnail_url:")
