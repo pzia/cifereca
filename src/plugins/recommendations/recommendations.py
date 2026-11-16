@@ -2795,6 +2795,24 @@ class UxRecommendationsView:
         # never reopen an old page or resurrect a clickable stale action.
         exact_identity = self.selected_identity_id()
         catalogue_sources = self._selected_catalogue_sources()
+        # The normal public adapter passes UiBookListEntry, but a direct GTK
+        # selection or stale-selection probe may pass BookListItem instead.
+        # That widget stores the vetted N2 ref under _cover_document_ref.
+        # Never trust either row shape as authority: revalidate the exact
+        # original SearchResult witness against the current viewer/sources.
+        row_cover_ref = getattr(row, "cover_document_ref", None)
+        if row_cover_ref is None:
+            row_cover_ref = getattr(row, "_cover_document_ref", None)
+        if row_cover_ref is not None:
+            admitted_ref = _attested_recommendation_c_cover(
+                ranked, host=getattr(self, "host", None),
+                identity_id=exact_identity,
+                catalogue_sources=catalogue_sources,
+            )
+            if (admitted_ref is None
+                    or type(row_cover_ref) is not type(admitted_ref)
+                    or row_cover_ref != admitted_ref):
+                row_cover_ref = None
         state = getattr(self, "_exact_notice_state", None)
         if not (
             type(state) is dict
@@ -2813,7 +2831,7 @@ class UxRecommendationsView:
         state["provisional"] = self._provisional_active
         state["row_presentation"] = (
             row.title, row.subtitle, row.thumbnail_url,
-            row.cover_document_ref,
+            row_cover_ref,
         )
         self._llm_selected_row = row
         if self._llm_button is not None:
@@ -3309,17 +3327,7 @@ class UxRecommendationsView:
                 title=title,
                 subtitle=author,
                 thumbnail_url=thumbnail,
-                cover_document_ref=(
-                    row.cover_document_ref
-                    if row.cover_document_ref is not None
-                    and row.cover_document_ref ==
-                    _attested_recommendation_c_cover(
-                        ranked, host=getattr(self, "host", None),
-                        identity_id=exact_identity,
-                        catalogue_sources=catalogue_sources,
-                    )
-                    else None
-                ),
+                cover_document_ref=row_cover_ref,
                 badges=tuple(badges),
                 sections=tuple(sections),
                 actions=tuple(actions),
