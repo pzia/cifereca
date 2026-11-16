@@ -29,6 +29,26 @@ class FakeButton:
         return self._clicked(self)
 
 
+class FakeLinkButton(FakeButton):
+    def __init__(self, *, uri, label):
+        super().__init__(label)
+        self.uri = uri
+        self._activate = None
+        self.opened = []
+
+    def set_tooltip_text(self, _text):
+        pass
+
+    def connect(self, signal, callback):
+        assert signal == "activate-link"
+        self._activate = callback
+
+    def activate_link(self):
+        assert self._activate is not None
+        if not self._activate(self):
+            self.opened.append(self.uri)
+
+
 def adapter():
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     cls = next(
@@ -42,7 +62,11 @@ def adapter():
             cls,
         ], type_ignores=[],
     ))
-    namespace = {"action_button": lambda title, icon: FakeButton(title)}
+    namespace = {
+        "action_button": lambda title, icon: FakeButton(title),
+        "Gtk": NS(LinkButton=FakeLinkButton),
+        "safe_document_link_url": lambda url, **_kw: url,
+    }
     exec(compile(module, str(SOURCE), "exec"), namespace)
     view = object.__new__(namespace["PublicBookMasterDetailView"])
     buttons = []
@@ -126,7 +150,10 @@ def cached_extension():
             method,
         ], type_ignores=[],
     ))
-    namespace = {}
+    namespace = {
+        "Gtk": NS(LinkButton=FakeLinkButton),
+        "safe_document_link_url": lambda url, **_kw: url,
+    }
     exec(compile(module, str(source), "exec"), namespace)
     update = namespace["update_cached_book_details"]
     panel = NS(
@@ -200,3 +227,41 @@ def test_cached_detail_refresh_keeps_unrelated_current_base_action():
     cached.click()
     base.click()
     assert events == ["base"]
+
+
+def test_retired_plugin_detail_link_cannot_open_its_old_uri():
+    view, buttons = adapter()
+    url = "https://example.org/catalogue/old"
+    action = UiBookDetailAction(
+        id="open-link", title="Voir la notice", uri=url,
+    )
+    view.show_detail(UiBookDetailPresentation(title="Old", actions=(action,)))
+    old = buttons[0]
+    old.activate_link()
+    assert old.opened == [url]
+
+    view.show_detail(UiBookDetailPresentation(title="New", actions=(action,)))
+    assert old._cifereca_action_context_revoked
+    old.activate_link()
+    assert old.opened == [url]
+    current = buttons[0]
+    current.activate_link()
+    assert current.opened == [url]
+
+
+def test_retired_cached_detail_link_cannot_reopen_old_source():
+    update, panel = cached_extension()
+    url = "https://example.org/old-book"
+    entry = contribution(lambda: None)
+    entry.detail.actions = (NS(
+        id="catalogue", title="Open catalogue",
+        icon_name="", uri=url, callback=None,
+    ),)
+    update(panel, [entry])
+    old = panel._action_buttons[0]
+    old.activate_link()
+    assert old.opened == [url]
+    update(panel, [])
+    assert old._cifereca_action_context_revoked
+    old.activate_link()
+    assert old.opened == [url]
