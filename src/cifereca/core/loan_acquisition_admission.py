@@ -142,20 +142,34 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     # source-scoped v16 borrower authority. The historical method name is an
     # ABI facade, NOT a Paris-only exemption. An epoch lease is a veto only;
     # it never grants a borrower or an ADEPT profile.
-    _, borrower_code = self._paris_adept_identity_for_loan(
-        loan, connection_identity_id=bound_identity_id,
-    )
+    try:
+        borrower_identity, borrower_code = self._paris_adept_identity_for_loan(
+            loan, connection_identity_id=bound_identity_id,
+        )
+    except Exception:
+        # A broken grant resolver is not positive borrower authority. Keep
+        # the original refusal contract and do not read rights or stage ACSM.
+        borrower_identity, borrower_code = None, "adept_borrower_ambiguous"
     # The borrower hook may mutate the Loan or rotate the SQLite epoch.
     if not admission_intact():
         return source_changed()
-    if borrower_code is not None:
+    if (borrower_code is not None
+            or type(borrower_identity) is not str
+            or not borrower_identity):
+        # A (None, None), foreign object or empty "approved" borrower is
+        # malformed. Do not mistake a missing positive grant for success
+        # merely because the error code was omitted.
+        public_code = (
+            public_borrower_refusal_code(borrower_code)
+            if borrower_code is not None else "adept_borrower_ambiguous"
+        )
         _TRACE_LOG.warning(
             "TRACE download loan_auto blocked reason=borrower_binding_guard loan_ref=%s",
             trace_ref,
         )
         return AutomaticLoanAdmission(refusal={
             "status": "attention_required", "loan_id": pinned_loan_id,
-            "code": public_borrower_refusal_code(borrower_code),
+            "code": public_code,
             "retry": "explicit_only",
         })
     if not admission_intact():
