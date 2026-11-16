@@ -617,13 +617,17 @@ def _render_search_results(self) -> int:
             getattr(row, "badge", ""), getattr(row, "action_label", ""),
             getattr(row, "action_icon_name", ""),
             bool(getattr(row, "action_callback", None)),
-            (proof.row_signature if proof is not None else
-             getattr(row, "_cover_document_ref", None)),
+            # Keep the exact source witness at [-2]: the existing
+            # Search holdings publisher updates this slot in-place after
+            # a verified detail response (no full list rebuild). Scope
+            # generations belong BEFORE that stable slot.
             getattr(
                 getattr(row, "_cover_known_public_c_receipt", None),
                 "context", None,
             ),
             getattr(row, "_cover_public_c_epoch", None),
+            (proof.row_signature if proof is not None else
+             getattr(row, "_cover_document_ref", None)),
             getattr(row, "thumbnail_url", None),
         )
     self.search_page.show_rows(ui_rows)
