@@ -1,4 +1,4 @@
-"""Read-only Paris borrower provenance and cross-identity ledger checks.
+"""Read-only source-scoped ADEPT borrower provenance and ledger vetoes.
 
 The service facade retains profile mutation, locks and all acquisition/return
 entry points. This boundary reads existing account and binding evidence only;
@@ -26,9 +26,9 @@ def public_borrower_refusal_code(value: Any) -> str:
 
 
 def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: str) -> tuple[str | None, str | None]:
-    """Resolve the Adobe borrower separately from the Paris connection.
+    """Resolve the Adobe borrower for one exact provider connection.
 
-    The primary account normally uses its proven connection identity.
+    v16 source grants work for any installed library; v15 is Paris-only.\n    The primary account normally uses its proven connection identity.
     An explicit exceptional grant takes precedence without changing that
     identity's normal profile. Linked accounts always require a grant.
     """
@@ -77,8 +77,15 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
 
     if not matches[0].is_primary and (not borrower or borrower == "primary"):
         return None, "adept_borrower_ambiguous"
-    binding = self.storage.paris_borrower_adept_binding_get(
-        credential_id=credential, account_id=borrower,
+    # v15 is an unscoped, historical PARIS-only table. Another provider
+    # may legitimately reuse the same credential/account strings: reading
+    # that old record for them would import a foreign Adobe identity or veto
+    # their own independent v16 grant. Only the *old reader* is brand-bound;
+    # current authorization is source-scoped v16 for every provider.
+    binding = (
+        self.storage.paris_borrower_adept_binding_get(
+            credential_id=credential, account_id=borrower,
+        ) if source_provider == "paris" else None
     )
     # v16 revocation and explicit reconfirmation leave the historical row
     # available for provenance, but its old owner must no longer authorize
