@@ -2431,8 +2431,10 @@ class LibraryService:
         return loan_return_verification.verify_return_digital(self, loan, _TRACE_LOG=_TRACE_LOG)
 
     def verify_paris_return_inventory(self, loan: Loan) -> dict[str, str]:
-        """Fresh exact-account read after ADEPT; never send ReturnDigitalLoan."""
-        return loan_return_verification.verify_paris_return_inventory(self, loan, AttentionRequired=AttentionRequired, _TRACE_LOG=_TRACE_LOG)
+        """Historical ABI: source-neutral typed inventory read, never return POST."""
+        return loan_return_verification.verify_loan_return_inventory(
+            self, loan, AttentionRequired=AttentionRequired, _TRACE_LOG=_TRACE_LOG,
+        )
 
     @staticmethod
     def _return_operation_lock_file(loan: Loan) -> Path:
