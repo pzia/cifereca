@@ -2342,8 +2342,36 @@ def _mirror_remote_results(
                     # Core stamps only a successfully accepted source and
                     # its durable epoch. A GTK widget never writes a second
                     # N2 source or infers an association from an N3 HIT.
-                    row._core_notice_cover_document_ref = persisted.document
-                    row._core_notice_cover_document_epoch = persisted.epoch
+                    # Publish through the canonical-C N2 read path even
+                    # when no cross-provider edition relation is attested.
+                    # The exact-source namespace is deliberately unique:
+                    # never equate equal titles, ISBNs, or edition strings
+                    # from different suppliers without a separate Core proof.
+                    from .notice_c_cover_index import (
+                        persist_consolidated_cover_source,
+                    )
+                    try:
+                        canonical = persist_consolidated_cover_source(
+                            self.storage,
+                            canonical_edition_id=(
+                                "source:" + persisted.document.source_key[
+                                    len("notice-c:v1:"):
+                                ]
+                            ),
+                            source=persisted,
+                            relation_proof_id="core:exact-source:v1",
+                        )
+                    except (ValueError, TypeError, OSError, sqlite3.Error):
+                        logging.getLogger("cifereca").warning(
+                            "TRACE notice c public search "
+                            "code=canonical_source_persist_failed"
+                        )
+                        # The exact source remains a valid independent C.
+                        row._core_notice_cover_document_ref = persisted.document
+                        row._core_notice_cover_document_epoch = persisted.epoch
+                    else:
+                        row._core_notice_cover_document_ref = canonical.document
+                        row._core_notice_cover_document_epoch = canonical.epoch
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # Catalogue mirror remains independent. A broken source
                 # index cannot invent a cover or leak provider bytes/paths.
