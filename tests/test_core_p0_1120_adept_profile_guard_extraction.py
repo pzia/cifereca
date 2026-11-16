@@ -19,7 +19,8 @@ from cifereca.identities import AdeptProfileResolutionError
 
 
 def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
-             profiles=None, owner_current=None):
+             profiles=None, owner_current=None, source_epoch_get=None,
+             source_epoch=1):
     loan = NS(source_provider=provider, source_credential="reader", source_account_id="primary", id="loan-1", record_id="edition-1")
     borrower = Mock(return_value=("identity-1", borrower_code))
     resolver = Mock(return_value=("reader-a", "explicit_binding"))
@@ -35,6 +36,10 @@ def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
             provider_connection_owner_current=(
                 owner_current if owner_current is not None
                 else Mock(return_value=True)
+            ),
+            source_connection_epoch_get=(
+                source_epoch_get if source_epoch_get is not None
+                else Mock(return_value=source_epoch)
             ),
         ),
         _paris_adept_identity_for_loan=borrower,
@@ -54,6 +59,7 @@ def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
         retained_acsm=Path("/synthetic/staged.acsm"),
         trace_ref="0123456789abcdef0123",
         expected_loan_id="loan-1", expected_record_id="edition-1",
+        expected_source_epoch=source_epoch,
         AdeptProfileResolutionError=AdeptProfileResolutionError,
         adept_acsm_plan=adept_acsm_plan,
         _TRACE_LOG=logging.getLogger("cifereca.tests.loan-guard"),
