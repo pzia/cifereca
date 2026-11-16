@@ -75,6 +75,11 @@ def refresh_history(
         cached = self.storage.cache_get("account", key)
         if isinstance(cached, list):
             rows = [HistoryItem(**x) for x in cached]
+            from .notice_c_paris_personal import attach_paris_personal_public_c
+            attach_paris_personal_public_c(
+                self.storage, rows, account=account,
+                account_epoch=epoch, source_epoch=source_epoch,
+            )
             if self._account_context_epoch == epoch and self.current_account is account:
                 self.last_history = rows
             self.diagnostics.add("CACHE", "history", detail={"hit": True, "count": len(rows)})
@@ -123,6 +128,13 @@ def refresh_history(
     ):
         raise ProviderConfigurationError("history_source_binding_changed")
     self.storage.cache_put("account", key, [asdict(x) for x in rows], ttl)
+    # A verified Paris DILICOM catalogue coordinate is documentary only.
+    # Stamped after cache serialization so no private scope token persists.
+    from .notice_c_paris_personal import attach_paris_personal_public_c
+    attach_paris_personal_public_c(
+        self.storage, rows, account=account,
+        account_epoch=epoch, source_epoch=source_epoch,
+    )
     if self._account_context_epoch == epoch and self.current_account is account:
         self.last_history = rows
     return rows
