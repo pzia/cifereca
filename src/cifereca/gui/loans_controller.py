@@ -15,6 +15,7 @@ from gi.repository import Gtk, Adw
 
 from ..models import Loan
 from ..core.loan_source_identity import loan_source_key, unambiguous_loan_rows
+from ..core.loan_live_projection import current_actionable_loan_rows
 from ..core.covers import candidate
 from ..core.loan_cover_fallback import loan_local_cover, materialized_loan_cover_rows
 from .book_widgets import BookListItem
@@ -202,9 +203,13 @@ def _render_loans(self) -> None:
     # Service cache/async writers can be updated independently of GTK; never
     # trust a mixed-identity last_loans projection at display time.
     identity_id = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
-    all_loans = [loan for loan in self.service.last_loans
-                 if type(loan) is Loan and identity_id is not None
-                 and loan.identity_id == identity_id]
+    # The service cache is independently mutable; only the active GTK
+    # action map can authorize a loan row and its documentary N2 evidence.
+    # In particular, reject a replayed/equal DTO that is not the same object.
+    all_loans = current_actionable_loan_rows(
+        self.service.last_loans, getattr(self, "loan_objects", {}),
+        identity_id=identity_id,
+    )
     counts = loan_medium_counts(all_loans)
     if hasattr(self, "loan_filter_buttons"):
         for key, button in self.loan_filter_buttons.items():
