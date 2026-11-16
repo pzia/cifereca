@@ -80,6 +80,7 @@ def refresh_history(
             from .notice_c_borrower_public_projection import attach_borrower_public_c
             attach_borrower_public_c(
                 self.storage, rows, identity_id=account.identity_id,
+                account_epoch=epoch, source_epoch=source_epoch,
             )
             if self._account_context_epoch == epoch and self.current_account is account:
                 self.last_history = rows
@@ -134,6 +135,7 @@ def refresh_history(
     from .notice_c_borrower_public_projection import attach_borrower_public_c
     attach_borrower_public_c(
         self.storage, rows, identity_id=account.identity_id,
+        account_epoch=epoch, source_epoch=source_epoch,
     )
     if self._account_context_epoch == epoch and self.current_account is account:
         self.last_history = rows
