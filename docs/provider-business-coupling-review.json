@@ -106,21 +106,6 @@
       "rationale": "Same post-staging safety barrier as related comparison but distinct AST call; must persist until replacement attested"
     },
     {
-      "id": "site-3677c84c35a55a9626000d6e",
-      "classification": "safety_guard_pending_contract",
-      "journey": "manual ACSM import placement provenance",
-      "productive_caller": "LibraryService.import_acsm -> core.manual_acsm_import.import_acsm before SHA, staging and final catalogue index",
-      "effect": "Accepts only manual import or explicitly BnF-Prêt-labelled placement under a manual source, rejecting forged provider attribution",
-      "authority": "User-selected manual ACSM plus exact identity binding; a source folder or ACSM alone is not a BnF entitlement",
-      "replacement_contract": "Versioned provider-owned observed-import source reference verified by Core; move provider-specific placement allowlist outside generic import",
-      "tests": [
-        "tests/test_core_p0_5851_acsm_explicit_identity.py",
-        "tests/test_core_p0_5056_acsm_reuse_neutral.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Current provider-specific refusal is necessary before source provenance can be represented generically; no automatic rights or links should result"
-    },
-    {
       "id": "site-fa4141b996ceab0e1bd6be32",
       "classification": "safety_guard_pending_contract",
       "journey": "BnF web loan automatic-acquisition denial",
@@ -1662,6 +1647,22 @@
       "pr": "#6170",
       "in_ast_metric": false,
       "retired_at_sha": "31724a9ed64ff2ee8999fddce5e5ed5598cda5e2"
+    },
+    {
+      "id": "struct-manual-acsm-placement-supplier-allowlist-retired",
+      "original": "Manual ACSM Core orchestration used the literal whitelist (None, 'bnf-pret') to decide whether a provider-labelled placement was possible, even after generic staged-loan admission.",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Provider-neutral canonical identifier validation using core.provider_identifier.valid_provider_identifier, with override exclusively for a manual acquisition ledger and existing exact-owner source-staging admission from LibraryService.import_bnf_loan_acsm.",
+      "classification": "replaced_active_supplier_placement_decision_by_generic_contract",
+      "evidence": "The BnF-only placement override has been deleted from core/manual_acsm_import.py. Synthetic source IDs are accepted with the existing complete-import revalidation and staged-loan caller; invalid, reserved and hostile source keys fail before receipt lookup, hashing or staging. Source labels do not create entitlement/right or a provider acquisition. The existing exact account+loan admission, file SHA checks and manual artifact invariants remain.",
+      "tests": [
+        "tests/test_core_p0_5056_acsm_reuse_neutral.py",
+        "tests/test_core_p0_5048_b_staged_import_source_scope.py",
+        "tests/test_bnf_import_library_link.py"
+      ],
+      "pr": "#6418",
+      "in_ast_metric": true,
+      "original_site_id": "site-3677c84c35a55a9626000d6e"
     },
     {
       "id": "struct-first-offer-acsm-paris-dilicom-scope-neutralized",

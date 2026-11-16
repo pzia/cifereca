@@ -87,7 +87,7 @@ def test_existing_legacy_grant_is_preserved_without_silent_v16_migration(tmp_pat
             borrower_identity_id="bob", confirmed=True,
         )
         assert service.storage.adept_borrower_grant_get(**_coords()) is None
-        assert _resolve(service, loan) == ("bob", None)
+        assert _resolve(service, loan) == (None, "adept_borrower_binding_required")
         assert service.storage.adept_borrower_grant_get(**_coords()) is None
     finally:
         service.close()

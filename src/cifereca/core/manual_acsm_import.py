@@ -33,7 +33,16 @@ def import_acsm(
     resolved_identity_id = getattr(identity, "identity_id", None)
     if type(resolved_identity_id) is not str or resolved_identity_id != identity_id:
         raise ProviderConfigurationError("Aucune Identity active pour l'import ACSM")
-    if placement_provider_id not in (None, 'bnf-pret') or (placement_provider_id and provider_id != 'manual'):
+    # The only explicit placement override comes from an already admitted,
+    # exact staged-loan import (LibraryService.import_bnf_loan_acsm). Its
+    # provider is a routing key, not a Core-known brand or a borrowing right.
+    # A manually supplied token still cannot claim a provider acquisition:
+    # the ledger is always a manual import with no entitlement.
+    from .provider_identifier import valid_provider_identifier
+    if placement_provider_id is not None and (
+        not valid_provider_identifier(placement_provider_id)
+        or provider_id != 'manual'
+    ):
         raise ProviderConfigurationError("Source de placement ACSM invalide")
     placement_provider = placement_provider_id or provider_id
     source_sha = sha256_file(source)

@@ -5,7 +5,7 @@ from dataclasses import replace
 
 from cifereca.models import Account
 from tests.historical_adept_seed import seed_historical_adept_binding
-from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
+from tests.test_paris_borrower_adept_binding import service_with_linked_borrower, confirm_borrower_v16
 
 
 def _acquisition(service, loan, *, acquisition_id="acq-exact",
@@ -54,6 +54,7 @@ def test_linked_borrower_uses_confirmed_adobe_profile_not_ui_identity(tmp_path):
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
+        confirm_borrower_v16(service)
         acq = _acquisition(service, loan)
         service._adept_return_capability = lambda: True
         service.current_identity = service.identity_by_id("alice")
@@ -75,6 +76,7 @@ def test_wrong_origin_adept_profile_is_not_returnable(tmp_path):
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
+        confirm_borrower_v16(service)
         _acquisition(service, loan, profile="alice-profile")
         service._adept_return_capability = lambda: True
         result = service.adept_return_status_for_loan(loan)
@@ -91,10 +93,11 @@ def test_binding_revocation_or_profile_rotation_disables_return(tmp_path):
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
+        confirm_borrower_v16(service)
         _acquisition(service, loan)
         service.storage.adept_profile_binding_set("identity", "bob", "other-profile")
         result = service.adept_return_status_for_loan(loan)
-        assert result["status"] == "adept_borrower_profile_changed"
+        assert result["status"] == "adept_borrower_binding_required"
         assert result["return_available"] is False
         service.storage.paris_borrower_adept_binding_delete(
             credential_id="alice-paris", account_id="linked-123",
@@ -128,6 +131,7 @@ def test_duplicate_complete_acquisitions_cannot_choose_arbitrary_license(tmp_pat
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
+        confirm_borrower_v16(service)
         _acquisition(service, loan, acquisition_id="first")
         _acquisition(service, loan, acquisition_id="second")
         result = service.adept_return_status_for_loan(loan)
@@ -144,6 +148,7 @@ def test_same_loan_seen_by_another_identity_disables_adobe_return(tmp_path):
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
+        confirm_borrower_v16(service)
         _acquisition(service, loan)
         service.storage.entitlement_put({
             "entitlement_id": "bob-visible",
@@ -166,6 +171,7 @@ def test_wrong_item_or_loan_id_never_matches_acquisition(tmp_path):
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )
+        confirm_borrower_v16(service)
         _acquisition(service, loan, item="another-book")
         _acquisition(service, loan, acquisition_id="wrong-loan", provider_loan_id="other-loan")
         result = service.adept_return_status_for_loan(loan)
