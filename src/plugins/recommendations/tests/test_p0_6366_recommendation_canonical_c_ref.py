@@ -6,14 +6,17 @@ shared N2 ref here is the original, same-call, Core-attested public SearchResult
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace as NS
 
 from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+from cifereca.core.search_orchestration import (
+    _public_rows_from_response, _mirror_remote_results,
+)
 from cifereca.models import SearchResult
+from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 from cifereca.storage import Storage
 from recommendation_engine import CatalogNoticeVariant, RankedCandidate
 from recommendations import _attested_recommendation_c_cover
-from tests.test_core_p0_6366_same_call_public_cover_writer import witnessed, mirror
-from tests.test_core_p0_6366_real_search_notice_c_ingestion import public_row
 
 from .recommendations_catalogue_test_fixtures import _view
 
@@ -33,8 +36,32 @@ def _ranked(item, variants=None):
 
 
 def _verified(db):
-    row = witnessed(public_row())
-    assert mirror(db, [row]) == 1
+    raw = SearchResult(
+        id="public-row", record_id="source-record-1", docbase="digital-books",
+        medium="digital", title="Même titre", author="Même auteur",
+        type="book", format="EPUB", publisher=None, published_at=None,
+        description=None,
+        thumbnail_url="https://covers.example.org/exact.jpg",
+        friendly_url=None, scenario="search",
+        source_provider="bnf", source_credential="__public__",
+        source_collection="public_catalog", source_account_id=None,
+        owned=False, downloadable=False, download_url=None, metadata={},
+    )
+    session = NS(
+        provider_id="bnf", credential_id="__public__", credentials={},
+        _accounts=[],
+    )
+    rows = _public_rows_from_response(
+        ProviderSearchResponse(
+            results=[raw], public_notices=(PublicSearchNotice(raw),),
+        ), session,
+    )
+    assert len(rows) == 1 and rows[0] is not raw
+    row = rows[0]
+    assert _mirror_remote_results(
+        NS(storage=db), [row], identity_id="alice",
+        require_public_cover_witness=True,
+    ) == 1
     assert read_consolidated_notice_cover(
         db, row._core_notice_canonical_cover_document_ref,
     ) is not None
