@@ -67,6 +67,9 @@ class VerifiedBorrowerPublicC:
     document: CoverDocumentScope
     epoch: int
     source_ref: str
+    occurrence_id: str
+    source_credential: str
+    source_account_id: str | None
     provider_id: str
     record_id: str
     medium: str
@@ -85,6 +88,9 @@ class VerifiedBorrowerPublicC:
             and _coordinate(source_item, identity_id) == (
                 self.provider_id, self.record_id, self.medium,
             )
+            and source_item.id == self.occurrence_id
+            and source_item.source_credential == self.source_credential
+            and source_item.source_account_id == self.source_account_id
             and source_item.title == self.title
             and source_item.author == self.author
             and is_canonical_cover_document(self.document)
@@ -106,6 +112,11 @@ def attach_borrower_public_c(storage, rows: list, *, identity_id: str) -> int:
     if (type(rows) is not list or not 0 < len(rows) <= _MAX_ITEMS
             or type(identity_id) is not str or not identity_id):
         return 0
+    # Explicitly revoke an earlier worker receipt before re-indexing this
+    # batch. A provider can reuse a mutable DTO across a newer inventory.
+    for item in rows:
+        if type(item) in (Loan, HistoryItem):
+            item.__dict__.pop("_core_public_c_cover_receipt", None)
     wanted = {
         coord for item in rows
         if (coord := _coordinate(item, identity_id)) is not None
@@ -189,8 +200,10 @@ def attach_borrower_public_c(storage, rows: list, *, identity_id: str) -> int:
         packet = VerifiedBorrowerPublicC(
             source_item=item, identity_id=identity_id,
             document=c.document, epoch=c.epoch,
-            source_ref=source.source_ref, provider_id=coords[0],
-            record_id=coords[1], medium=coords[2],
+            source_ref=source.source_ref, occurrence_id=item.id,
+            source_credential=item.source_credential,
+            source_account_id=item.source_account_id,
+            provider_id=coords[0], record_id=coords[1], medium=coords[2],
             title=item.title, author=item.author,
             witness=_BORROWER_PUBLIC_C_TOKEN,
         )
