@@ -416,6 +416,15 @@ def _public_rows_from_response(
             or len({id(row) for row in response.results}) != len(response.results)):
         # Repeated object identity is not an independently attested notice.
         return []
+    from collections import Counter
+    from ..plugin_api import PublicSearchNotice
+    # Build identity counts once; a 10,000-row catalogue must not add another
+    # O(rows * notices) pass to the existing public projection.
+    exact_public_rows = Counter(
+        id(claim.result)
+        for claim in response.public_notices
+        if type(claim) is PublicSearchNotice
+    )
     admitted: list[SearchResult] = []
     for row in response.results:
         if type(row) is not SearchResult:
@@ -431,6 +440,36 @@ def _public_rows_from_response(
                 getattr(session, "credential_id", None), "__public__",
             )
         ):
+            # The generic foreign-profile public projection deliberately
+            # drops URLs/editions from a PRIVATE session. An actually
+            # anonymous public producer can retain its ordinary catalogue
+            # image, but only when its exact same-call public notice points
+            # to THIS source object, with no credential/account/rights.
+            # A signed/private image still fails the Core catalogue guard.
+            anonymous = (
+                getattr(session, "credential_id", None) == "__public__"
+                and type(getattr(session, "credentials", None)) is dict
+                and not session.credentials
+                and type(getattr(session, "_accounts", None)) is list
+                and not session._accounts
+                and row.source_credential == "__public__"
+                and row.source_collection == "public_catalog"
+                and row.source_account_id is None
+                and row.owned is False and row.downloadable is False
+                and row.download_url is None
+                and exact_public_rows.get(id(row), 0) == 1
+            )
+            if anonymous:
+                image = _shared_catalogue_cover_url(row.thumbnail_url)
+                revision = (
+                    row.revision_id
+                    if image is not None and type(row.revision_id) is str
+                    and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", row.revision_id)
+                    else None
+                )
+                projected = replace(
+                    projected, thumbnail_url=image, revision_id=revision,
+                )
             admitted.append(projected)
     return admitted
 
