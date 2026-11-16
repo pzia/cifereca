@@ -158,11 +158,22 @@ def matching_live_public_canonical_ref(row: object, *, identity_id: str):
             public_cover_url=row.thumbnail_url,
         )
         if (admitted is not None
-                and notice_cover_document_ref(admitted.key) == source
-                and canonical_cover_document_ref(
-                    admitted.key.edition_id
-                ) == canonical):
-            return canonical
+                and notice_cover_document_ref(admitted.key) == source):
+            if canonical_cover_document_ref(
+                admitted.key.edition_id,
+            ) == canonical:
+                return canonical
+            # A cross-provider C needs an additional exact worker-issued
+            # relation packet. A mutable provider attribute or an N3 hit is
+            # not proof that two different supplier editions are one book.
+            from .notice_c_live_multisource_binding import (
+                verified_live_multisource_c,
+            )
+            if verified_live_multisource_c(
+                row, source_document=source,
+                canonical_document=canonical,
+            ):
+                return canonical
     except (TypeError, ValueError, UnicodeError):
         pass
     return None
