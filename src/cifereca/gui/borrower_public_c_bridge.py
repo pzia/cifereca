@@ -30,7 +30,11 @@ def exact_loan_public_c(host: Any, loan: Loan):
             or type(getattr(service, "_account_context_epoch", None)) is not int
             or type(getattr(service, "_source_context_epoch", None)) is not int):
         return None
-    return borrower_public_c_receipt(loan, identity_id=identity_id)
+    return borrower_public_c_receipt(
+        loan, identity_id=identity_id,
+        account_epoch=service._account_context_epoch,
+        source_epoch=service._source_context_epoch,
+    )
 
 
 def exact_history_public_c(host: Any, item: HistoryItem):
@@ -48,7 +52,11 @@ def exact_history_public_c(host: Any, item: HistoryItem):
             or type(getattr(host, "_history_cover_revision", None)) is not int
             or host._history_cover_revision <= 0):
         return None
-    return borrower_public_c_receipt(item, identity_id=identity_id)
+    return borrower_public_c_receipt(
+        item, identity_id=identity_id,
+        account_epoch=service._account_context_epoch,
+        source_epoch=service._source_context_epoch,
+    )
 
 
 def admit_borrower_public_c_cell(host: Any, row: Any, document: object) -> bool:
