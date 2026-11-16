@@ -19,7 +19,7 @@ from ..plugin_api.lending_borrower_eligibility import (
     BorrowerOperationEvidence as ExactEditionBorrowerEvidence,
     assess_borrower_eligibility,
 )
-from ..providers.base import ProviderDescriptor
+from ..providers.base import ManualBorrowPolicy, ProviderDescriptor
 from .borrow_action_scope import borrow_claim_key
 from .borrow_for_identity_preview import (
     BorrowForIdentityPreview, BorrowForIdentityWitness, BorrowOfferRejection,
@@ -210,16 +210,6 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                 or sum(other is account for other in rows) != 1):
             return "lender_unavailable"
 
-        # Paris's normal borrow contract supports exactly the selected
-        # primary. Other profiles are NEVER activated to inspect this fact.
-        if (evidence.provider_id == "paris"
-                and not configured_primary_source_current(
-                    service, item, evidence.identity_id,
-                    provider_id="paris",
-                    selection_key="primary_paris_connection_id",
-                )):
-            return "lender_unavailable"
-
         plugin_id = service._provider_plugin_ids.get(evidence.provider_id)
         manager = service._plugin_manager
         if type(plugin_id) is not str or not plugin_id or manager is None:
@@ -239,6 +229,25 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         if (type(descriptor) is not ProviderDescriptor
                 or descriptor.id != evidence.provider_id):
             return "capability_unverified"
+        # Source selection is an installed, typed lender declaration, not a
+        # Core brand name. The same saved-primary binding protects Paris and
+        # any future provider that declares this versioned policy.
+        policy = descriptor.manual_borrow_policy
+        if policy is not None:
+            if (type(policy) is not ManualBorrowPolicy
+                    or policy.schema != "cifereca.manual-borrow/1"
+                    or policy.docbase != item.docbase):
+                return "capability_unverified"
+            if (policy.primary_borrower_id is not None
+                    and account.unique_id != policy.primary_borrower_id):
+                return "lender_unavailable"
+            if (policy.source_selection_key is not None
+                    and configured_primary_source_current(
+                        service, item, evidence.identity_id,
+                        provider_id=evidence.provider_id,
+                        selection_key=policy.source_selection_key,
+                    ) is not True):
+                return "lender_unavailable"
         capability = assess_lending_operation(
             "loan.borrow",
             manifest_capabilities=declaration.capabilities,
