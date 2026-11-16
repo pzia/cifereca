@@ -45,12 +45,16 @@ def test_gate_fails_on_missing_normative_reference(authority_tree):
     index = authority_tree / gate.INDEX.relative_to(gate.ROOT)
     content = index.read_text(encoding="utf-8")
     assert "](ARCHITECTURE.md)" in content
-    index.write_text(
-        content.replace("](ARCHITECTURE.md)", "](old-architecture.md)", 1),
-        encoding="utf-8",
-    )
+    # Remove every occurrence: an index with two independently linked
+    # authority sections must still lose its normative reference in this
+    # mutation. Replacing only the first link makes the negative gate test
+    # falsely fail when a second legitimate link remains.
+    mutated = content.replace("](ARCHITECTURE.md)", "](old-architecture.md)")
+    assert "](ARCHITECTURE.md)" not in mutated
+    index.write_text(mutated, encoding="utf-8")
+    errors = gate.check(authority_tree)
     assert any("Missing normative index link: ARCHITECTURE.md" in error
-               for error in gate.check(authority_tree))
+               for error in errors), errors
 
 
 def test_gate_fails_on_agent_role_missing_top_level_reference(authority_tree):
