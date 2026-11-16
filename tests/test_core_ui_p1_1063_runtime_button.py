@@ -403,3 +403,17 @@ def test_neutral_runtime_result_rejected_if_external_saved_provider_pair_changes
     )
     args[2](observed)
     assert not hasattr(editor["normal_adept_status"], "subtitle")
+
+
+def test_revoked_explicit_adept_source_does_not_fall_back_on_runtime_click(monkeypatch):
+    # Empty persisted keys are a deliberate negative marker after clearing a
+    # previously selected source. Even a saved Paris primary must not become
+    # the fallback runtime target.
+    host, editor, button, submits, reads, _ = _harness(
+        monkeypatch, source=("", ""),
+    )
+    assert host._adept_source_reads == []
+    assert not reads
+    button.emit("clicked")
+    assert submits == [] and reads == []
+    assert "À configurer" in editor["normal_adept_status"].subtitle
