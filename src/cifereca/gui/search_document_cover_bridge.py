@@ -182,23 +182,17 @@ def exact_remote_search_document(
         )
         if (expected is not None
                 and notice_cover_document_ref(expected.key) == admitted):
-            # Only a Core-persisted same-source/edition C can upgrade this
-            # public-only N2 scope to the canonical edition. Recompute the
-            # expected key; a provider-supplied arbitrary ref is insufficient.
-            from ..core.notice_c_cover_index import (
-                canonical_cover_document_ref, is_canonical_cover_document,
+            # The Core Search worker may now bind two provider observations
+            # to a single C after verifying completed same-owner OriginLinks.
+            # Only its private same-call+relation proof is admissible here:
+            # a forged canonical ref, identical ISBN, URL or title is not.
+            from ..core.notice_c_known_projection import (
+                matching_live_public_canonical_ref,
             )
-            canonical = getattr(
-                item, "_core_notice_canonical_cover_document_ref", None,
+            canonical = matching_live_public_canonical_ref(
+                item, identity_id=viewer_id,
             )
-            if (type(canonical) is CoverDocumentScope
-                    and is_canonical_cover_document(canonical)
-                    and canonical == canonical_cover_document_ref(
-                        expected.key.edition_id
-                    )):
-                scope = canonical
-            else:
-                scope = admitted
+            scope = canonical if canonical is not None else admitted
     return VerifiedSearchDocumentCover(
         source_item=item, row_key=row_key,
         document=scope, context=context,
