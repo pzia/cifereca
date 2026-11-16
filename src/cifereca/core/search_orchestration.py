@@ -468,6 +468,11 @@ def _public_rows_from_response(
                 projected = replace(
                     projected, thumbnail_url=image, revision_id=revision,
                 )
+                if image is not None:
+                    # Core-only same-call witness; not serialized into the
+                    # shared Search cache or assigned by provider plugins.
+                    from .notice_search_cover_producer import _CORE_PUBLIC_C_WITNESS
+                    projected._core_notice_c_public_bibliography = _CORE_PUBLIC_C_WITNESS
             admitted.append(projected)
     return admitted
 
@@ -2198,7 +2203,7 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
     from ..storage import Storage
     if isinstance(self.storage, Storage):
         import sqlite3
-        from .notice_search_cover_producer import admit_public_search_cover
+        from .notice_search_cover_producer import admit_public_search_catalogue
         from .notice_cover_repository import persist_notice_cover_many
         producing_rows = []
         observations = []
@@ -2207,7 +2212,7 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
             if public_url is None:
                 continue
             try:
-                observed = admit_public_search_cover(
+                observed = admit_public_search_catalogue(
                     row, identity_id=identity_id, observed_at=now,
                     public_cover_url=public_url,
                 )

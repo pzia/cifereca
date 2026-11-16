@@ -16,6 +16,11 @@ from .notice_source_observation import (
 from .search_cover_provenance import project_exact_search_catalogue_cover
 
 
+# Private Core-only object identity. An arbitrary supplier-provided attribute
+# value (including True) can never admit public bibliographic disclosure.
+_CORE_PUBLIC_C_WITNESS = object()
+
+
 def _coordinate_digest(*parts: object) -> str:
     """Opaque, stable coordinates; never a title/ISBN/content deduplication."""
     raw = json.dumps(parts, ensure_ascii=True, separators=(",", ":"))
@@ -75,4 +80,82 @@ def admit_public_search_cover(
     )
 
 
-__all__ = ["admit_public_search_cover"]
+def admit_public_search_catalogue(
+    row: SearchResult, *, identity_id: str, observed_at: int,
+    public_cover_url: str | None,
+) -> NoticeSourceObservation | None:
+    """Retain bounded *public bibliographic facts* inside the SAME C source.
+
+    The existing cover-only writer remains available for legacy/unqualified
+    rows. Only Core's freshly reconstructed anonymous same-call public result
+    may carry the transient admission marker, set after its provider response
+    and its public declaration were checked. A source/cache replay or a
+    private-profile row cannot promote arbitrary title/metadata to C.
+    No second catalogue record, GET, entitlement or heuristic edition join.
+    """
+    initial = admit_public_search_cover(
+        row, identity_id=identity_id, observed_at=observed_at,
+        public_cover_url=public_cover_url,
+    )
+    if (initial is None
+            or getattr(row, "_core_notice_c_public_bibliography", None)
+            is not _CORE_PUBLIC_C_WITNESS):
+        return initial
+
+    from .public_search_projection import _public_bibliographic_text
+    import re
+
+    def coordinate(value: object, *, optional: bool = False) -> bool:
+        if value is None and optional:
+            return True
+        return (
+            type(value) is str
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}", value) is not None
+            and "://" not in value and ".." not in value
+        )
+
+    if (not coordinate(row.record_id)
+            or not coordinate(row.docbase)
+            or not coordinate(row.scenario)
+            or row.medium not in ("digital", "physical", "unknown")
+            or row.source_collection != "public_catalog"
+            or not coordinate(row.revision_id, optional=True)
+            or not _public_bibliographic_text(
+                row.title, required=True, limit=512,
+            ) or row.title.lstrip().casefold().startswith(
+                ("/", "\\", "~/", "file:")
+            )):
+        return initial
+    fields = {
+        "schema": 1, "record_id": row.record_id,
+        "docbase": row.docbase, "scenario": row.scenario,
+        "source_collection": row.source_collection,
+        "medium": row.medium, "revision_id": row.revision_id,
+        "title": row.title,
+    }
+    for name in ("author", "format", "publisher", "published_at", "description"):
+        value = getattr(row, name)
+        if value is None:
+            fields[name] = None
+        elif (not _public_bibliographic_text(
+                    value, limit=4000 if name == "description" else 512,
+              ) or value.lstrip().casefold().startswith(
+                  ("/", "\\", "~/", "file:")
+              )):
+            # The independently attested COVER is still useful, but reject
+            # this untrusted descriptive value rather than leak it globally.
+            return initial
+        else:
+            fields[name] = value
+
+    return admit_source_notice(
+        key=initial.key, parser_id=initial.parser_id,
+        parser_version="2", observed_at=observed_at,
+        raw_fields={"search_result": {
+            "thumbnail_url": public_cover_url,
+            "public_bibliography": fields,
+        }},
+        status="complete",
+    )
+
+__all__ = ["admit_public_search_cover", "admit_public_search_catalogue"]

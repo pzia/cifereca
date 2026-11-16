@@ -177,6 +177,16 @@ def _persist_notice_cover_txn(
         raise ValueError("notice_c_persisted_epoch_changed")
     if previous is not None:
         old = previous.observation
+        # A cache replay or generic cover-only SearchResult is never a new
+        # PUBLIC bibliography observation. After a same-call C v2 writer has
+        # admitted its source fields, a later legacy v1 cover-only write may
+        # not erase them, even with a newer local completion timestamp.
+        # This is a monotone *Core parser evidence* rule, not a supplier
+        # preference, visibility heuristic or N3 cache decision.
+        if (old.parser_id == observation.parser_id == "core.search.public-cover"
+                and old.parser_version == "2"
+                and observation.parser_version == "1"):
+            return previous
         seen_at = json.loads(existing[0]).get(_LAST_SEEN, old.observed_at)
         # A delayed worker must not replace a newer accepted observation,
         # even if the latter was partial and kept an older valid cover.
