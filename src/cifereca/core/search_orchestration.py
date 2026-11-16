@@ -431,6 +431,41 @@ def _public_rows_from_response(
                 getattr(session, "credential_id", None), "__public__",
             )
         ):
+            # The generic foreign-profile public projection deliberately
+            # drops URLs/editions from a PRIVATE session. An actually
+            # anonymous public producer can retain its ordinary catalogue
+            # image, but only when its exact same-call public notice points
+            # to THIS source object, with no credential/account/rights.
+            # A signed/private image still fails the Core catalogue guard.
+            from ..plugin_api import PublicSearchNotice
+            anonymous = (
+                getattr(session, "credential_id", None) == "__public__"
+                and type(getattr(session, "credentials", None)) is dict
+                and not session.credentials
+                and type(getattr(session, "_accounts", None)) is list
+                and not session._accounts
+                and row.source_credential == "__public__"
+                and row.source_collection == "public_catalog"
+                and row.source_account_id is None
+                and row.owned is False and row.downloadable is False
+                and row.download_url is None
+                and sum(
+                    type(claim) is PublicSearchNotice
+                    and claim.result is row
+                    for claim in response.public_notices
+                ) == 1
+            )
+            if anonymous:
+                image = _shared_catalogue_cover_url(row.thumbnail_url)
+                revision = (
+                    row.revision_id
+                    if type(row.revision_id) is str
+                    and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", row.revision_id)
+                    else None
+                )
+                projected = replace(
+                    projected, thumbnail_url=image, revision_id=revision,
+                )
             admitted.append(projected)
     return admitted
 
