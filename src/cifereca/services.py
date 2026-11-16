@@ -1048,62 +1048,83 @@ class LibraryService:
             raise ProviderConfigurationError("provider_connection_identity_unproven")
         return identity
 
-    def normal_paris_adept_status(self, identity_id: str) -> dict[str, Any]:
-        """Read-only status of the normal Paris-primary/ADEPT configuration.
+    def normal_source_adept_status(
+        self, identity_id: str, *, source_provider_id: str,
+        source_label: str | None = None,
+        primary_connection_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Read-only local ADEPT readiness for one exact source, any provider.
 
-        This is *not* an Adobe fulfillment authorization, and it does not
-        reinterpret historical loan provenance or exceptional borrower grants.
+        The caller selects the source/primary connection explicitly; Core
+        does not infer a lender from the UI identity, a loan or Adobe state.
+        This projection never grants an ACSM operation or borrower rights.
         """
-        from .core.adept_source_binding_status import normal_source_adept_status
-
-        if self.identity_by_id(identity_id) is None:
-            return {
-                "identity_id": str(identity_id),
-                "status": "to_configure",
-                "reason": "unknown_identity",
-                "paris_label": None,
-                "adept_profile_id": None,
-            }
-        saved = self.config.identity(identity_id) or {}
-        selected = saved.get("primary_paris_connection_id")
-        connections = self.storage.provider_connections(identity_id=identity_id)
-        if selected is not None:
-            # A retired/disabled config login can still have a legacy SQLite
-            # provider_connections row. An explicit choice needs BOTH a live
-            # local configuration owner and the durable observed connection.
-            candidates = [row for row in self.config.provider_accounts()
-                          if type(row.get("id")) is str
-                          and row["id"] == selected
-                          and type(row.get("provider")) is str
-                          and row["provider"].casefold() == "paris"
-                          and row.get("identity_id") == identity_id
-                          and row.get("enabled", True) is True]
-            if len(candidates) != 1:
-                connections = []
-        status = normal_source_adept_status(
-            source_provider_id="paris", source_label="Paris",
-            identity_id=identity_id,
-            connections=connections,
-            accounts=self.accounts,
-            profile_id=self.storage.adept_profile_binding_get("identity", identity_id),
-            primary_connection_id=selected,
+        from .core.adept_source_binding_status import (
+            normal_source_adept_status as project_source_adept_status,
         )
-        # UI compatibility: only the field name is historic; the Core
-        # binding decision itself is provider-neutral and read-only.
+        from .core.provider_identifier import valid_provider_identifier
+
+        if not valid_provider_identifier(source_provider_id):
+            return {
+                "identity_id": identity_id if type(identity_id) is str else "",
+                "status": "to_configure", "reason": "invalid_source_descriptor",
+                "source_label": None, "adept_profile_id": None,
+            }
+        if type(identity_id) is not str or self.identity_by_id(identity_id) is None:
+            return {
+                "identity_id": identity_id if type(identity_id) is str else "",
+                "status": "to_configure", "reason": "unknown_identity",
+                "source_label": None, "adept_profile_id": None,
+            }
+        connections = self.storage.provider_connections(identity_id=identity_id)
+        if primary_connection_id is not None:
+            # A durable SQLite connection alone does not establish an
+            # explicitly selected login still configured and enabled for
+            # this identity and provider. Do not choose another login.
+            choices = [
+                row for row in self.config.provider_accounts()
+                if type(row.get("id")) is str
+                and row["id"] == primary_connection_id
+                and type(row.get("provider")) is str
+                and row["provider"].casefold() == source_provider_id
+                and row.get("identity_id") == identity_id
+                and row.get("enabled", True) is True
+            ]
+            if len(choices) != 1:
+                connections = []
+        return project_source_adept_status(
+            source_provider_id=source_provider_id,
+            source_label=(source_provider_id if source_label is None else source_label),
+            identity_id=identity_id, connections=connections,
+            accounts=self.accounts,
+            profile_id=self.storage.adept_profile_binding_get(
+                "identity", identity_id,
+            ),
+            primary_connection_id=primary_connection_id,
+        )
+
+    def normal_paris_adept_status(self, identity_id: str) -> dict[str, Any]:
+        """Historical Settings facade: select the saved Paris source only.
+
+        Supplier selection belongs to the legacy UI/config adapter; the
+        Core readiness decision is shared by all source providers.
+        """
+        saved = (
+            self.config.identity(identity_id) or {}
+            if type(identity_id) is str else {}
+        )
+        status = self.normal_source_adept_status(
+            identity_id, source_provider_id="paris", source_label="Paris",
+            primary_connection_id=saved.get("primary_paris_connection_id"),
+        )
         status["paris_label"] = status.pop("source_label")
         return status
 
-    def check_normal_paris_adept_runtime(self, identity_id: str) -> dict[str, object]:
-        """Explicit read-only check, NEVER called during Settings rendering.
-
-        Resolve only the persisted local binding, then enumerate Kobo-Adept
-        profiles once. Not an Adobe login, ACSM operation or borrowing right.
-        The caller must request this check; this method never changes a
-        profile binding even if an old runtime reports a different alias.
-        """
+    def _inspect_source_adept_runtime(self, identity_id: str, status_reader) -> dict[str, object]:
+        """One explicit runtime inventory, fenced by the same saved scope."""
         from .core.adept_runtime_observation import describe_adept_runtime
 
-        before = self.normal_paris_adept_status(identity_id)
+        before = status_reader()
         if before.get("status") != "ready":
             return describe_adept_runtime(before, None)
         try:
@@ -1113,18 +1134,43 @@ class LibraryService:
             selected = self._adept_profile_row(
                 before["adept_profile_id"], profiles,
             )
-            # Profile lookup uses only the pre-enumerated rows: no second
-            # runtime call, fallback to another name, or selected identity.
+            # The runtime cannot select a different profile or change local
+            # source ownership. No Adobe login or signed ACSM operation.
         except Exception:
             return describe_adept_runtime(
                 before, None, runtime_available=False,
             )
-        if self.normal_paris_adept_status(identity_id) != before:
+        if status_reader() != before:
             return {
                 "identity_id": identity_id, "status": "to_verify",
                 "reason": "local_binding_changed", "acsm_ready": None,
             }
         return describe_adept_runtime(before, selected)
+
+    def check_source_adept_runtime(
+        self, identity_id: str, *, source_provider_id: str,
+        source_label: str | None = None,
+        primary_connection_id: str | None = None,
+    ) -> dict[str, object]:
+        """User-invoked, source-neutral ADEPT profile inspection only."""
+        return self._inspect_source_adept_runtime(
+            identity_id,
+            lambda: self.normal_source_adept_status(
+                identity_id, source_provider_id=source_provider_id,
+                source_label=source_label,
+                primary_connection_id=primary_connection_id,
+            ),
+        )
+
+    def check_normal_paris_adept_runtime(self, identity_id: str) -> dict[str, object]:
+        """Historical Settings facade: preserve saved-choice revalidation.
+
+        The snapshot reader deliberately reloads the persisted Paris choice
+        before and after the explicit runtime enumeration.
+        """
+        return self._inspect_source_adept_runtime(
+            identity_id, lambda: self.normal_paris_adept_status(identity_id),
+        )
 
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:
         """Enumerate exactly one requested owner, never all accounts or GTK state.
