@@ -115,18 +115,16 @@ def test_other_public_delivery_contract_and_private_exact_purchases_remain_indep
     assert row.options["action_label"] == "Télécharger"
     host.service.can_direct_download.assert_called_once_with(ordinary_public)
 
+    from cifereca.gui.offer_actions import private_notice_download_hint_allowed
     from tests.test_core_ui_p1_1867_numilog_direct_download_scope import (
         private_purchase, _proof,
     )
     private = private_purchase()
     assert public_catalogue_download_hint_allowed(private) is True
-    host = _host()
-    host._search_purchase_evidence = _proof()
-    host._remote_search_results = [private]
-    host.service.can_direct_download = Mock(return_value=True)
-    host._populate_search([private], announce=False)
-    # The other, independent exact-private-right guard is still in force.
-    assert host.service.can_direct_download.call_count <= 1
+    assert private_notice_download_hint_allowed(private) is False
+    assert private_notice_download_hint_allowed(
+        private, purchase_evidence=_proof(), identity_id="alice",
+    ) is True
 
 
 def test_no_supplier_dispatch_in_both_active_gtk_download_decisions():
