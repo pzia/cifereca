@@ -61,6 +61,10 @@ def _service(db, account, row):
         config=NS(get=lambda _key, default: default),
         diagnostics=NS(add=lambda *_a, **_kw: None),
         last_history=[],
+        # Cached history uses the already-registered Core session without
+        # reconnecting: model the same native session registry and key here.
+        _sessions={(account.provider_id, account.credential_id): session},
+        _session_key=lambda provider, credential: (provider, credential),
         _session_for_account=lambda target: (
             session if target is account else None
         ),
