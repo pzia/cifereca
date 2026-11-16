@@ -4589,6 +4589,9 @@ class LibraryService:
         if admission.refusal is not None:
             return admission.refusal
         identity, entitlement_id = admission.identity, admission.entitlement_id
+        # The v18 SQLite epoch is captured before ANY provider staging and
+        # must survive to the final ADEPT preflight without being refreshed.
+        source_epoch = admission.source_epoch
         trace_ref = loan_trace_ref(loan, identity.identity_id)
         local = loan_local_preparation.prepare(
             self, loan, identity=identity, entitlement_id=entitlement_id,
@@ -4640,6 +4643,7 @@ class LibraryService:
                     previous_meta=previous_meta, retained_acsm=retained_acsm,
                     trace_ref=trace_ref, expected_loan_id=expected_loan_id,
                     expected_record_id=expected_record_id,
+                    expected_source_epoch=source_epoch,
                     AdeptProfileResolutionError=AdeptProfileResolutionError,
                     adept_acsm_plan=adept_acsm_plan, _TRACE_LOG=_TRACE_LOG,
                 )
