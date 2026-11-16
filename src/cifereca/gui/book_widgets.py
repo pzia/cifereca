@@ -605,25 +605,21 @@ class BookListCell(Gtk.Box):
             )
         public_link = getattr(item, "_cover_public_c_link", None)
         if public_link is not None:
-            from ..core.notice_c_local_origin_projection import (
-                valid_local_public_c_link,
+            from .local_public_c_cell_guard import local_public_c_cell_current
+            owner = getattr(self.window, "service", None)
+            context = (
+                getattr(getattr(owner, "current_identity", None),
+                        "identity_id", None),
+                getattr(owner, "_account_context_epoch", None),
+                getattr(owner, "_source_context_epoch", None),
             )
-            # Core created this packet on the owner-pinned Library/Recent
-            # worker. Recheck the selected identity on each recycled cell.
-            active = getattr(
-                getattr(
-                    getattr(self.window, "service", None),
-                    "current_identity", None,
-                ), "identity_id", None,
-            )
+            # The document association must still belong to the exact
+            # current Library/Recent mapping, not just a valid older proof
+            # on an equal-key cell. N3 repeats the SAME predicate after IO.
             return (
-                getattr(item, "_cover_local_evidence", None) is None
-                and getattr(item, "_cover_history_evidence", None) is None
-                and document == public_link.document
-                and valid_local_public_c_link(
-                    public_link, identity_id=active,
-                    artifact_id=public_link.artifact_id,
-                    placement_id=public_link.placement_id,
+                getattr(item, "_cover_document_ref", None) == document
+                and local_public_c_cell_current(
+                    self.window, item, service=owner, context=context,
                 )
             )
         facts = getattr(item, "_cover_local_evidence", None)
