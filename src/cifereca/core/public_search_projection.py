@@ -67,27 +67,24 @@ def _key(row: object) -> tuple | None:
 
 
 def _declaration_key(row: object) -> tuple | None:
-    """Bind a public declaration to its *exact* same-call source/edition.
+    """Match *edition revision* within one same-call public declaration.
 
-    The public DTO deliberately discards supplier revision and account
-    attributes outside the genuinely anonymous session exception. They
-    remain necessary as LOCAL matching coordinates: two distinct supplier
-    revisions must not make each other's declarations ambiguous, nor allow
-    a same-record notice from a different private account to be projected.
-    None of these auxiliary values are copied to the shared public DTO.
+    The public DTO does not expose a private source account or an arbitrary
+    revision marker. A private row can intentionally be paired with an
+    independently sanitized PUBLIC bibliographic declaration: matching the
+    account IDs would incorrectly reject that legitimate cross-profile
+    projection. The account is instead always removed by _project_public_notice.
+    The edition revision still disambiguates two declarations of one record.
     """
     key = _key(row)
     if key is None:
         return None
-    account = row.source_account_id
     revision = row.revision_id
-    if ((account is not None and not _text(account, required=True, limit=512))
-            or (revision is not None and (
-                type(revision) is not str
-                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", revision) is None
-            ))):
+    if (revision is not None
+            and (type(revision) is not str
+                 or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", revision) is None)):
         return None
-    return (*key, account or "", revision or "")
+    return (*key, revision or "")
 
 
 def project_public_search_result(
@@ -131,7 +128,7 @@ def project_public_search_result(
             matches.append(notice.result)
     if len(matches) != 1:
         return None
-    return _project_public_notice(key[:-2], matches[0])
+    return _project_public_notice(key[:-1], matches[0])
 
 
 def _project_public_notice(
@@ -213,7 +210,7 @@ def project_public_search_results(
         candidates = declarations.get(key, ())
         if len(candidates) != 1:
             continue
-        projected = _project_public_notice(key[:-2], candidates[0])
+        projected = _project_public_notice(key[:-1], candidates[0])
         if projected is not None:
             results[id(row)] = projected
     return results
