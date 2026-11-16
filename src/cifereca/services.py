@@ -1533,6 +1533,17 @@ class LibraryService:
                 cached, account, descriptor=descriptor,
             )
             if rows is not None:
+                # Cache replay has no durable display authority: reconstruct
+                # one ephemeral exact PUBLIC C link from the pinned borrower
+                # and Paris DILICOM upstream RecordId, on this Core worker.
+                from .core.notice_c_paris_personal import (
+                    attach_paris_personal_public_c,
+                )
+                attach_paris_personal_public_c(
+                    self.storage, rows, account=account,
+                    account_epoch=self._account_context_epoch,
+                    source_epoch=source_context_epoch(self),
+                )
                 self._record_loan_statistics(account, rows, from_cache=True)
                 return rows
         session = self._session_for_account(account)
@@ -1638,6 +1649,16 @@ class LibraryService:
             d = asdict(row); d["raw"] = {}
             serial.append(d)
         self.storage.cache_put("account", key, serial, ttl)
+        # Never serialize this owner/epoch-scoped public N2 display receipt.
+        # The provider read and mutable borrower were already fenced above.
+        from .core.notice_c_paris_personal import (
+            attach_paris_personal_public_c,
+        )
+        attach_paris_personal_public_c(
+            self.storage, rows, account=account,
+            account_epoch=self._account_context_epoch,
+            source_epoch=source_context_epoch(self),
+        )
         self._record_loan_statistics(account, rows)
         return rows
 
