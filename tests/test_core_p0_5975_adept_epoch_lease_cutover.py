@@ -463,3 +463,57 @@ def test_epoch_current_rejects_loan_drift_during_sqlite_validation(
         assert service.storage.acquisitions(provider_id="synthetic-pnb") == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("missing_owner", [None, "", False, 0, object()])
+def test_preget_requires_positive_native_borrower_even_without_refusal_code(
+    tmp_path, monkeypatch, missing_owner,
+):
+    """A missing borrower is no v16 grant merely because the code is None."""
+    service, loan = _setup(tmp_path)
+    try:
+        borrower = Mock(return_value=(missing_owner, None))
+        monkeypatch.setattr(service, "_paris_adept_identity_for_loan", borrower)
+        no_rights = Mock(side_effect=AssertionError(
+            "unproven borrower must never reach rights or staged acquisition"
+        ))
+        monkeypatch.setattr(service.storage, "entitlements", no_rights)
+        monkeypatch.setattr(service.storage, "acquisitions", no_rights)
+        outcome = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert outcome.identity is None
+        assert outcome.source_lease is None
+        assert outcome.entitlement_id is None
+        assert outcome.refusal == {
+            "status": "attention_required", "loan_id": "loan-1",
+            "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+        }
+        borrower.assert_called_once_with(
+            loan, connection_identity_id="default",
+        )
+        no_rights.assert_not_called()
+    finally:
+        service.close()
+
+
+def test_preget_borrower_grant_exception_is_closed_before_rights(
+    tmp_path, monkeypatch,
+):
+    service, loan = _setup(tmp_path)
+    try:
+        borrower = Mock(side_effect=RuntimeError("private Adobe borrower state"))
+        monkeypatch.setattr(service, "_paris_adept_identity_for_loan", borrower)
+        no_rights = Mock(side_effect=AssertionError(
+            "failed grant must not stage ACSM or consult rights"
+        ))
+        monkeypatch.setattr(service.storage, "entitlements", no_rights)
+        monkeypatch.setattr(service.storage, "acquisitions", no_rights)
+        refusal = resolve(service, loan, _TRACE_LOG=LOGGER).refusal
+        assert refusal == {
+            "status": "attention_required", "loan_id": "loan-1",
+            "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+        }
+        assert "private" not in repr(refusal)
+        borrower.assert_called_once()
+        no_rights.assert_not_called()
+    finally:
+        service.close()
