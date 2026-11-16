@@ -17,6 +17,7 @@ def check(
     self: Any, loan: Any, *, identity: Any, ledger_base: dict[str, Any],
     previous_meta: dict[str, Any], retained_acsm: Any, trace_ref: str,
     expected_loan_id: str, expected_record_id: str | None,
+    expected_source_epoch: int,
     AdeptProfileResolutionError: type, adept_acsm_plan: Any, _TRACE_LOG: Any,
 ) -> tuple[str, str] | dict[str, Any]:
     """Exact pre-ADEPT grant/profile sequence; dict is the existing refusal."""
@@ -32,6 +33,7 @@ def check(
         # external hook capable of mutating the staged Loan.
         exact_source = (
             type(expected_loan_id) is str and bool(expected_loan_id)
+            and type(expected_source_epoch) is int and expected_source_epoch >= 1
             and type(expected_record_id) in (str, type(None))
             and type(loan.id) is str and loan.id == expected_loan_id
             and type(loan.record_id) in (str, type(None))
@@ -55,10 +57,16 @@ def check(
         # Re-read its exact native owner after EACH callback, including the
         # last check just before ADEPT fulfillment; never fall back to GTK.
         try:
-            return self.storage.provider_connection_owner_current(
-                loan.source_provider, loan.source_credential,
-                identity.identity_id,
-            ) is True
+            return (
+                self.storage.provider_connection_owner_current(
+                    loan.source_provider, loan.source_credential,
+                    identity.identity_id,
+                ) is True
+                and self.storage.source_connection_epoch_get(
+                    loan.source_provider, loan.source_credential,
+                    identity.identity_id,
+                ) == expected_source_epoch
+            )
         except Exception:
             return False
 
