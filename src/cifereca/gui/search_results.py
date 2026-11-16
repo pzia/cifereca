@@ -101,14 +101,31 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
 
 
 def _exact_known_catalogue_scope(row: dict[str, Any]) -> tuple[str, ...] | None:
-    """Trust the already-scoped SQLite v2 coordinates, not title or ISBN."""
+    """Compare one known source/edition without a title/ISBN/image join."""
     meta = row.get("metadata")
-    if type(meta) is not dict or meta.get("catalogue_scope_version") != 2:
+    if type(meta) is not dict:
         return None
-    return _catalogue_edition_scope(
+    version = meta.get("catalogue_scope_version")
+    if version not in (2, 3):
+        return None
+    base = _catalogue_edition_scope(
         row.get("provider_id"), meta.get("source_credential"),
         row.get("item_id"), meta.get("docbase"), meta.get("source_collection"),
     )
+    if base is None or version == 2:
+        return base
+    revision = meta.get("source_revision")
+    account = meta.get("source_account_id")
+    medium = meta.get("medium")
+    if (type(revision) is not str
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", revision) is None
+            or medium not in ("digital", "physical", "unknown")
+            or (account is not None and (
+                type(account) is not str or not account
+                or len(account) > 512 or "\0" in account
+            ))):
+        return None
+    return (*base, account or "", medium, revision)
 
 
 def _catalogue_edition_scope(
@@ -124,10 +141,24 @@ def _catalogue_edition_scope(
 
 
 def _exact_remote_catalogue_scope(item: SearchResult) -> tuple[str, ...] | None:
-    return _catalogue_edition_scope(
+    base = _catalogue_edition_scope(
         item.source_provider, item.source_credential, item.record_id,
         item.docbase, item.source_collection,
     )
+    if base is None or item.revision_id in (None, ""):
+        return base
+    revision, account, medium = (
+        item.revision_id, item.source_account_id, item.medium,
+    )
+    if (type(revision) is not str
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", revision) is None
+            or medium not in ("digital", "physical", "unknown")
+            or (account is not None and (
+                type(account) is not str or not account
+                or len(account) > 512 or "\0" in account
+            ))):
+        return None
+    return (*base, account or "", medium, revision)
 
 
 def _remote_result_row_keys(rows: list[SearchResult]) -> list[str]:
