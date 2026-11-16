@@ -193,7 +193,20 @@ def test_manual_reacquisition_rejects_shared_borrower_before_ledger_update(monke
     monkeypatch.setattr(services, "acquisition_lock_file", lambda: Path("/tmp/acquisition.lock"))
     service = object.__new__(LibraryService)
     service.can_download_loan = lambda loan: True
-    service.storage = SimpleNamespace(identity_for_connection=lambda *args: "alice")
+    service.storage = SimpleNamespace(
+        identity_for_connection=lambda *args: "alice",
+        # A historical borrower-conflict fixture must itself demonstrate
+        # the native source-owner generation. An absent/revoked source is now
+        # rejected before the borrower conflict callback can run.
+        provider_connection_epoch=lambda provider, credential, identity: (
+            1 if (provider, credential, identity)
+            == ("paris", "paris-a", "alice") else None
+        ),
+        provider_connection_epoch_current=lambda provider, credential, identity, epoch: (
+            (provider, credential, identity, epoch)
+            == ("paris", "paris-a", "alice", 1)
+        ),
+    )
     service.identity_by_id = lambda identity_id: SimpleNamespace(identity_id=identity_id)
     service.accounts = [account("alice", "borrower-a"), account("bob", "borrower-a")]
     loan = SimpleNamespace(id="loan-1", source_provider="paris",
