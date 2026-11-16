@@ -1,0 +1,126 @@
+"""#6366: exact public-source C lookup, no cross-provider title/ISBN join."""
+from __future__ import annotations
+
+from cifereca.core.notice_c_exact_source_lookup import exact_public_source_c
+from cifereca.core.notice_c_cover_index import (
+    persist_consolidated_cover_source, persist_exact_public_search_cover,
+)
+from cifereca.core.notice_cover_repository import _opaque_key
+from cifereca.storage import Storage
+from tests.test_core_p0_6366_public_c_sqlite_source_search import (
+    persist, verified_public,
+)
+
+URL_A = "https://covers.example.org/a.jpg"
+URL_B = "https://covers.example.org/b.jpg"
+
+
+def make(db, provider, record, *, docbase="public-catalog", revision=None):
+    return persist(db, verified_public(
+        source_provider=provider, record_id=record, docbase=docbase,
+        revision_id=revision, title="Titre identique",
+        thumbnail_url=URL_A if provider == "bnf" else URL_B,
+    ))
+
+
+def find(db, source):
+    bibliography = source.observation.public_bibliography
+    return exact_public_source_c(
+        db, provider_id=source.observation.key.provider_id,
+        record_id=bibliography.record_id, docbase=bibliography.docbase,
+        medium=bibliography.medium,
+        source_revision=bibliography.source_revision,
+    )
+
+
+def test_source_lookup_prefers_one_attested_multisource_c_after_source_purge(tmp_path):
+    db = Storage(tmp_path / "source-lookup.sqlite")
+    try:
+        a = make(db, "bnf", "edition-a")
+        b = make(db, "numilog-catalog", "edition-b")
+        own_a = persist_exact_public_search_cover(db, a)
+        own_b = persist_exact_public_search_cover(db, b)
+        assert find(db, a).document == own_a.document
+        assert find(db, b).document == own_b.document
+        persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:verified-relationship",
+            source=a, relation_proof_id="strong:fixture:a",
+        )
+        shared = persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:verified-relationship",
+            source=b, relation_proof_id="strong:fixture:b",
+        )
+        assert find(db, a).document == find(db, b).document == shared.document
+        assert {cover.url for cover in find(db, a).candidates} == {URL_A, URL_B}
+        with db._lock, db._connect() as sql:
+            for source in (a, b):
+                sql.execute(
+                    "DELETE FROM metadata WHERE key=?",
+                    (_opaque_key(source.document),),
+                )
+        assert find(db, a).document == shared.document
+        assert find(db, b).document == shared.document
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def test_homonyms_and_incomplete_coordinates_never_join(tmp_path):
+    db = Storage(tmp_path / "no-inference.sqlite")
+    try:
+        a = make(db, "bnf", "same-record", docbase="books-a", revision="rev-a")
+        b = make(db, "bnf", "same-record", docbase="books-b", revision="rev-b")
+        c = make(db, "numilog-catalog", "same-record", docbase="books-a")
+        ca = persist_exact_public_search_cover(db, a)
+        cb = persist_exact_public_search_cover(db, b)
+        cc = persist_exact_public_search_cover(db, c)
+        assert len({ca.document, cb.document, cc.document}) == 3
+        assert find(db, a).document == ca.document
+        assert find(db, b).document == cb.document
+        assert find(db, c).document == cc.document
+        for args in (
+            dict(provider_id="bnf", record_id="same-record",
+                 docbase="books-a", medium="digital", source_revision=None),
+            dict(provider_id="bnf", record_id="same-record",
+                 docbase="", medium="digital", source_revision="rev-a"),
+            dict(provider_id="bnf", record_id="same-record",
+                 docbase="books-a", medium="loan", source_revision="rev-a"),
+            dict(provider_id="numilog-catalog", record_id="same-record",
+                 docbase="books-a", medium="digital", source_revision="rev-a"),
+            dict(provider_id="bnf", record_id="same-record",
+                 docbase="books-a", medium="digital",
+                 source_revision="https://signed.example/token"),
+        ):
+            assert exact_public_source_c(db, **args) is None
+        assert db.entitlements() == []
+    finally:
+        db.close()
+
+
+def test_two_conflicting_equal_strength_groups_fail_closed(tmp_path):
+    db = Storage(tmp_path / "conflict.sqlite")
+    try:
+        a = make(db, "bnf", "edition-a")
+        b = make(db, "numilog-catalog", "edition-b")
+        c = make(db, "paris", "edition-c")
+        persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:group-one",
+            source=a, relation_proof_id="strong:fixture:a",
+        )
+        persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:group-one",
+            source=b, relation_proof_id="strong:fixture:b",
+        )
+        persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:group-two",
+            source=a, relation_proof_id="strong:fixture:a",
+        )
+        persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:group-two",
+            source=c, relation_proof_id="strong:fixture:c",
+        )
+        assert find(db, a) is None
+        assert find(db, b) is not None
+        assert find(db, c) is not None
+    finally:
+        db.close()
