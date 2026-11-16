@@ -129,6 +129,12 @@ class PublicBookMasterDetailView:
                 callback = getattr(action, "callback", None)
                 if callable(callback):
                     def activate(clicked, cb=callback, action_id=str(action.id)):
+                        # The shared DetailPanel revokes buttons before
+                        # replacing an exact source/detail. A queued click on
+                        # the old widget must not execute a former plugin
+                        # capability, even if its action label stayed equal.
+                        if getattr(clicked, "_cifereca_action_context_revoked", False):
+                            return
                         # Capture the real clicked action before its callback
                         # switches routes: mouse clicks need not give GTK focus.
                         window = self._window
