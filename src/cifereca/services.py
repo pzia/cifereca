@@ -4175,6 +4175,12 @@ class LibraryService:
                     except Exception:
                         return False
 
+                # Refuse a disabled/rebound source BEFORE even asking the
+                # historical ADEPT borrower resolver for a grant. Its callback
+                # must never be used to revive a revoked connection.
+                if not admission_intact():
+                    return source_refusal()
+
                 if source.provider_id.casefold() == "paris":
                     _, borrower_code = self._paris_adept_identity_for_loan(
                         loan, connection_identity_id=bound_identity_id,
