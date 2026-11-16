@@ -194,7 +194,6 @@ def test_automatic_admission_fences_live_owner_before_provider_or_ledger_write(
     from tests.test_sync_state_contract import _service
 
     service = _service(tmp_path)
-    # Exact active primary account, required by the now universal borrower gate.
     service.accounts = [Account(
         provider_id=provider, credential_id="reader", unique_id="",
         identity_id="default", is_primary=True,
@@ -255,7 +254,6 @@ def test_live_sqlite_source_owner_does_not_prevent_normal_automatic_admission(
     from tests.test_sync_state_contract import _service
 
     service = _service(tmp_path)
-    # Exact active primary account, required by the now universal borrower gate.
     service.accounts = [Account(
         provider_id="synthetic-pnb", credential_id="reader", unique_id="",
         identity_id="default", is_primary=True,
@@ -272,13 +270,6 @@ def test_live_sqlite_source_owner_does_not_prevent_normal_automatic_admission(
             source_account_id="primary", identity_id="default",
         )
         _forbid_work(service, monkeypatch)
-        result = resolve(service, loan, _TRACE_LOG=LOGGER)
-        assert result.refusal is None
-        assert result.identity.identity_id == "default"
-        assert result.entitlement_id is None
-    finally:
-        service.close()
-nkeypatch)
         result = resolve(service, loan, _TRACE_LOG=LOGGER)
         assert result.refusal is None
         assert result.identity.identity_id == "default"
