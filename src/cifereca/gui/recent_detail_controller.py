@@ -81,12 +81,28 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
                     artifact_id=item.get("artifact_id"),
                     placement_id=item.get("placement_id"),
                 )):
+            from .local_public_c_detail_guard import (
+                local_public_c_detail_check, staged_local_public_c_detail,
+            )
+            check = local_public_c_detail_check(
+                window, row, item, link, view="recent",
+            )
+            # A stale GTK selection with the same placement ID may not
+            # open a different item's C or private local actions.
+            if (getattr(row, "_cover_public_c_link", None) is not None
+                    and not check()):
+                detail.empty(
+                    "Référence périmée",
+                    "Actualisez les livres récents avant d'ouvrir ce détail.",
+                )
+                return
             presentation = replace(
                 book_detail_presentation(**summary),
                 cover_document_ref=link.document,
                 thumbnail_url=None,
             )
-            detail.show_presentation(presentation)
+            with staged_local_public_c_detail(detail, check):
+                detail.show_presentation(presentation)
             window._add_book_notice(detail, item)
             window._add_local_book_actions(detail, item)
             window._add_facets(detail, item, window.search_controls)
