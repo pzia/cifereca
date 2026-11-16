@@ -2175,6 +2175,8 @@ def _mirror_remote_results(
         if type(row) is SearchResult:
             row.__dict__.pop("_core_notice_cover_document_ref", None)
             row.__dict__.pop("_core_notice_cover_document_epoch", None)
+            row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
+            row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
     # The stronger #5073 UI/action proof remains authoritative for actions.
@@ -2304,6 +2306,7 @@ def _mirror_remote_results(
         import sqlite3
         from .notice_search_cover_producer import admit_public_search_catalogue
         from .notice_cover_repository import persist_notice_cover_many
+        from .notice_c_cover_index import persist_exact_public_search_cover
         producing_rows = []
         observations = []
         for _key, row, _state, _qualified in keyed:
@@ -2344,6 +2347,26 @@ def _mirror_remote_results(
                     # N2 source or infers an association from an N3 HIT.
                     row._core_notice_cover_document_ref = persisted.document
                     row._core_notice_cover_document_epoch = persisted.epoch
+                    # A public C source is exactly related to ITS OWN
+                    # producer-attested edition. No title/ISBN/URL or cross-
+                    # provider identity is inferred here. The canonical
+                    # index retains its own N2 revision and source proofs.
+                    if persisted.observation.parser_version == "2":
+                        try:
+                            canonical = persist_exact_public_search_cover(
+                                self.storage, persisted,
+                            )
+                        except (ValueError, TypeError, OSError, sqlite3.Error):
+                            logging.getLogger("cifereca").warning(
+                                "TRACE notice c public search code=canonical_source_failed"
+                            )
+                        else:
+                            row._core_notice_canonical_cover_document_ref = (
+                                canonical.document
+                            )
+                            row._core_notice_canonical_cover_document_epoch = (
+                                canonical.epoch
+                            )
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # Catalogue mirror remains independent. A broken source
                 # index cannot invent a cover or leak provider bytes/paths.
