@@ -74,6 +74,7 @@ class DetailPanel(Gtk.Box):
         self._next_cover_document_ref = None
         # Single-render borrowed-public C guard, never a retained GTK proof.
         self._next_borrower_public_c_receipt = None
+        self._next_local_public_c_check = None
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_vexpand(True)
         self.action_scroll = AdaptiveActionBar(
@@ -251,6 +252,9 @@ class DetailPanel(Gtk.Box):
                     cover, self.window.covers,
                     getattr(self.window, "document_covers", None), document,
                     variant="detail", priority=0,
+                    is_current=getattr(
+                        self, "_next_local_public_c_check", None,
+                    ),
                 )
         else:
             cover.bind_url(self.window.covers, thumbnail, priority=0)
