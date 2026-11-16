@@ -33,6 +33,14 @@ Cet index est **le point d'entrée de classement**, pas une nouvelle ABI. La fro
 
 Les documents historiques ne sont **ni réécrits en masse ni supprimés** par cet index. Exemples explicitement laissés en place : `docs/KOBO-LOCAL-RECONCILIATION.md`, `docs/PLUGIN-P1-3252-RIGHTS-OBSERVATION.md`, les notes `docs/CORE-P0-3196-LEGACY-*`, les mémos `src/plugins/RIGHTS-*.md` et les fichiers racine `HANDOFF-*.md`. Les liens individuels et leurs dates servent à retrouver la preuve, **pas à prescrire le comportement**.
 
+## Critère de découplage P0 #5975 — priorité du 16/11/2026
+
+**Livrer d'abord la séparation Core/provider effective.** La sortie P0 n'exige pas zéro mention fournisseur ni zéro AST brut : elle exige **zéro branche métier décisionnelle par fournisseur dans Core/CoreUI, zéro writer legacy fournisseur encore autoritatif et des contrats Plugins/capabilities source-neutres consommés par les vrais appelants**. Mesurer les décisions métier retirées, les chemins actifs et les signaux AST distinctement ; les migrations historiques, diagnostics et gardes justifiés peuvent subsister.
+
+**Intégrité minimale :** opération qualifiée sous la vraie identité/source/credential/compte, consentement et offre actuels pour toute livraison, pas de droit inféré de C/A ou d'un `rights` legacy, pas de double mutation fournisseur, pas de corruption/effacement de copie locale unique, pas de fuite de secrets. Les races ou réconciliations historiques rares non bloquantes peuvent être documentées et différées, mais jamais une mutation possible sous le mauvais compte. Une liaison `OriginLink/Placement → EPUB` peut être récupérée plus tard si **le téléchargement actuel reste réellement admissible** ; l'absence de lien n'est pas une preuve d'absence du fichier ni de droit au re-GET.
+
+L'ABI cible [ARCHITECTURE.md](ARCHITECTURE.md) ne change pas. Le cadrage prioritaire et les exceptions de clôture sont décrits dans [#5975](https://github.com/pzia/cifereca/issues/5975), [AGENTS.md](../AGENTS.md#5975--recentrage-opposable-du-16112026--découplage-dabord) et [la politique de livraison](AGENT-DELIVERY-POLICY.md#application-particulière--p0-découplage-5975-arbitrage-du-16112026). L'audit #5376 peut rester ouvert sans bloquer la sortie du découplage.
+
 ## Mesures de découplage — ne pas confondre les catégories
 
 Le [ticket #5519](https://github.com/pzia/cifereca/issues/5519) rapporte pour le **11 novembre 2026** une photographie de **2 670 LOC spécialisées historiques** et **302 lignes génériques uniques portant un signal AST** (après reclassement). Dans les 2 670 LOC : BnF 997, Kobo 653, Numilog 531, Paris 489. L'ancien compteur lexical générique de 1 958 lignes comprend des noms dans les commentaires/chaînes : **il ne représente pas 1 958 LOC métier**. Les catégories ont des recouvrements ; ne pas additionner sans méthode.
