@@ -18,6 +18,7 @@ from cifereca.plugin_api import (
     UiBookDetailPresentation,
     UiBookListEntry,
     UiPageContribution,
+    SearchResult,
     normalize_language_tag,
 )
 from recommendation_llm import explain_reasons
@@ -653,7 +654,7 @@ def _public_cover_url(item: Any) -> str | None:
 
 
 def _attested_recommendation_c_cover(
-    ranked: Any, *, identity_id: str | None,
+    ranked: Any, *, host: Any, identity_id: str | None,
     catalogue_sources: tuple[str, ...],
 ):
     """Reuse an already published Core C, never a recommendation ISBN join.
@@ -675,7 +676,6 @@ def _attested_recommendation_c_cover(
     original = ranked.notices[0]
     if type(original) is not CatalogNoticeVariant:
         return None
-    from cifereca.models import SearchResult
     item = ranked.item
     if (type(item) is not SearchResult
             or original.item is not item
@@ -689,11 +689,13 @@ def _attested_recommendation_c_cover(
             or type(ranked.sources) is not tuple
             or set(ranked.sources) != {original.source_provider}):
         return None
-    from cifereca.core.notice_c_known_projection import (
-        matching_live_public_canonical_ref,
-    )
-    return matching_live_public_canonical_ref(
-        item, identity_id=identity_id,
+    # Plugins cannot inspect Core witnesses, reference proofs, SQLite or
+    # provider execution state. The public host gate owns this admission.
+    # A legacy/headless host without the opt-in method cannot mint C.
+    resolve = getattr(host, "public_notice_cover_ref", None)
+    return (
+        resolve(item, identity_id=identity_id)
+        if callable(resolve) else None
     )
 
 
@@ -2671,7 +2673,8 @@ class UxRecommendationsView:
             except (AttributeError, TypeError):
                 identity_for_cover = None
             cover_ref = _attested_recommendation_c_cover(
-                ranked, identity_id=identity_for_cover,
+                ranked, host=self.host,
+                identity_id=identity_for_cover,
                 catalogue_sources=catalogue_sources,
             )
             rows.append(
@@ -3311,7 +3314,8 @@ class UxRecommendationsView:
                     if row.cover_document_ref is not None
                     and row.cover_document_ref ==
                     _attested_recommendation_c_cover(
-                        ranked, identity_id=exact_identity,
+                        ranked, host=self.host,
+                        identity_id=exact_identity,
                         catalogue_sources=catalogue_sources,
                     )
                     else None
