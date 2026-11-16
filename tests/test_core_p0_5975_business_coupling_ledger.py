@@ -832,3 +832,42 @@ def test_v5_supplier_selector_neutralized_without_legacy_writer_retirement():
     assert live[0]["classification"] == "legacy_mutating_cutover"
     assert len(ledger["retained_legacy_migrations"]) == 3
     assert inventory(root)["retained_non_ast_legacy_migration_writers"] == 3
+
+
+def test_residual_adept_facade_signals_have_source_scoped_reviews():
+    """Classification is not retirement: preserve actual active refusal sites."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads(
+        (root / "docs/provider-business-coupling-review.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    reviews = {row["id"]: row for row in ledger["reviews"]}
+    expected = {
+        "site-ce18a3f96ffb1a6a1ca88708": (
+            "false_positive", "check_source_adept_runtime",
+        ),
+        "site-9db736c5a6459afb19e60a9a": (
+            "safety_guard_pending_contract", "adept_return_status_for_loan",
+        ),
+        "site-a99f3f4da32247a6a6efec04": (
+            "safety_guard_pending_contract", "check_normal_paris_adept_runtime",
+        ),
+    }
+    for site_id, (classification, caller) in expected.items():
+        row = reviews[site_id]
+        assert row["classification"] == classification
+        assert caller in row["productive_caller"]
+        assert row["retirement_pr"] == ""
+        assert row["tests"]
+        assert all((root / path).is_file() for path in row["tests"])
+        assert row["authority"] and row["replacement_contract"]
+    # No new provider permission is earned by reviewing old names.
+    assert not any(
+        row["id"] in expected
+        for row in ledger["retirements"]
+    )
+    source = (root / "src/cifereca/services.py").read_text(encoding="utf-8")
+    for _classification, method in expected.values():
+        assert f"def {method}(" in source
