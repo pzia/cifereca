@@ -1688,7 +1688,7 @@
       "in_ast_metric": true
     },
     {
-      "id": "struct-canonical-selected-runtime-provider-allowlist-cutover-6446",
+      "id": "struct-canonical-selected-runtime-provider-allowlist-cutover-6447",
       "original": "src/cifereca/core/canonical_selected_delivery.py::complete_selected_delivery.execute_selected_runtime (source type in kobo/acsm)",
       "original_classification": "safety_guard_pending_contract",
       "replacement": "_selected_runtime_recipe_source_admitted with exact scope.provider_id plus reciprocal installed runtime acquisition binding; ACSM stays protocol",
@@ -1699,7 +1699,7 @@
         "tests/test_core_p0_3171_eight_kdrm_batch.py",
         "tests/test_core_p0_3252_drm_unresolved_terminal_reason.py"
       ],
-      "pr": "#6446",
+      "pr": "#6447",
       "in_ast_metric": true,
       "original_site_id": "site-7baf3b4f552b2c895f2c79ae"
     }
