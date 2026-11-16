@@ -15,8 +15,21 @@ def loaded_recommendation_cover(
     """The exact detail port supplies a live Core row, never a plugin image."""
     if type(item) is not SearchResult:
         return None
-    key = f"{item.source_provider}:{item.id}"
-    if _current(window, item, key) is None:
+    # Search's visible keys can include an exact source/credential/edition
+    # suffix when two supplier rows reuse the same legacy display ID. Locate
+    # the ONE actual live SearchResult object, never join an edition by its
+    # title, URL, ISBN, display ID, or even identical source coordinates.
+    objects = getattr(window, "search_objects", None)
+    if type(objects) is not dict:
+        return None
+    key = None
+    for candidate_key, row in objects.items():
+        if row is not item:
+            continue
+        if key is not None or type(candidate_key) is not str or not candidate_key:
+            return None  # Ambiguous same object mapped under two list keys.
+        key = candidate_key
+    if key is None or _current(window, item, key) is None:
         return None
     if detail is not None:
         store = window.search_page.store
