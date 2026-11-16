@@ -1900,6 +1900,15 @@ def test_clearing_saved_explicit_adept_source_never_resurrects_legacy_paris(edit
     assert status["reason"] == "invalid_source_descriptor"
     assert config.data == before
 
+    # The tombstone is not merely a transient draft flag: a real Save +
+    # Config reload must not erase it and resurrect the old Paris source.
+    draft.save()
+    reopened = Config(draft.path)
+    restored = reopened.identity("alice")
+    assert restored["adept_source_provider_id"] == ""
+    assert restored["adept_source_connection_id"] == ""
+    assert _selected_adept_source(restored) == (True, None, None)
+
 
 def test_untouched_legacy_paris_identity_remains_readable_without_new_pair(editor):
     from cifereca.gui.settings_editor_actions import _selected_adept_source
