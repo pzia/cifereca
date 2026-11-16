@@ -171,10 +171,9 @@ def forget(path: Path) -> None:
         pass
 
 
-# #3121: a first-borrow Paris ACSM may be issued under a one-shot signed
-# redirect URL that is absent from a later ListLoans response. The URL itself
-# must never become a persisted receipt, and the normal URL-keyed cache above
-# must remain unchanged for all existing provider paths.
+# #3121: a claimed first-borrow ACSM may use a one-shot signed URL that
+# disappears from a later loan inventory. Never persist that URL. The ordinary
+# URL-keyed cache remains unchanged for every provider.
 INITIAL_MANIFEST = '.initial-acsm-receipt.json'
 
 
@@ -285,8 +284,10 @@ def remember_initial(path: Path, directory: Path, loan, identity_id: str,
                 or admission_current() is not True):
             return False
         owner = _initial_scope(loan, identity_id, account_id)
+        if owner is None:
+            return False
         digest = _initial_digest(path, directory, now)
-        if (owner is None or digest is None or not _active(loan, now)
+        if (digest is None or not _active(loan, now)
                 or directory.is_symlink() or path.parent != directory
                 or (admission_current is not None
                     and admission_current() is not True)):
@@ -306,7 +307,8 @@ def remember_initial(path: Path, directory: Path, loan, identity_id: str,
                     or not all(ch.isascii() and (ch.isalnum() or ch in "_-")
                                for ch in borrow_claim[1])):
                 return False
-        row = dict(schema=1, scope=owner, file=path.name, sha256=digest,
+        # v2 binds the documentary branch as well as the exact borrower.
+        row = dict(schema=2, scope=owner, file=path.name, sha256=digest,
                    created_at=now)
         if borrow_claim is not None:
             row["borrow_claim"] = list(borrow_claim)
@@ -387,8 +389,18 @@ def reuse_initial(directory: Path, loan, identity_id: str, account_id: str,
         row = _read_initial_manifest(directory)
         if row is None:
             return None
-        if (type(row) is not dict or row.get('schema') != 1
-                or row.get('scope') != owner):
+        # v1 receipts predate the branch field. Keep their 24-hour
+        # exact-source/bytes/claim reader while the canonical consumer
+        # independently checks its current documentary branch. New v2
+        # receipts bind the branch in the sidecar itself.
+        schema = row.get('schema')
+        if type(schema) is not int or schema not in (1, 2):
+            return None
+        expected_scope = (owner if schema == 2 else {
+            field: value for field, value in owner.items()
+            if field != 'branch'
+        })
+        if row.get('scope') != expected_scope:
             return None
         # Callers with a live Core storage broker MUST present a confirmed
         # claim for the very operation that created the one-shot token.
