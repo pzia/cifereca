@@ -178,8 +178,11 @@ def test_two_completed_real_provider_origins_publish_shared_c_on_live_search(
 
 
 def test_origin_linked_c_keeps_pending_public_source_and_upgrades_same_ref(
-    tmp_path,
+    tmp_path, monkeypatch,
 ):
+    from cifereca.core import search_orchestration
+    clock = [200]
+    monkeypatch.setattr(search_orchestration.time, "time", lambda: clock[0])
     db = Storage(tmp_path / "pending-upgrade.sqlite")
     try:
         _origins(db, tmp_path)
@@ -200,6 +203,7 @@ def test_origin_linked_c_keeps_pending_public_source_and_upgrades_same_ref(
 
         # Actual newly attested Search observation: one provider now has
         # its own cover. The second provider's C association survives.
+        clock[0] = 201
         present, _ = _source_rows()
         assert _mirror(db, present) == 1
         assert present._core_notice_canonical_cover_document_ref == ref
