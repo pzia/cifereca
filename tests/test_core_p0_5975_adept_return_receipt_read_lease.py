@@ -214,7 +214,7 @@ def test_foreign_provider_without_its_exact_borrower_cannot_select_receipt():
     service, calls = _reader(loan, _account())
     assert service.verify_loan_return(loan) == {
         "status": "failed", "scope": "adobe_first_paris",
-        "code": "loan_return_borrower_unproven", "retry": "none",
+        "code": "loan_return_borrower_mismatch", "retry": "none",
     }
     # A branded shortcut must not mask the absent exact borrower evidence.
     assert calls == [("preflight", True)]
