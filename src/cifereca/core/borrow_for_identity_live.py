@@ -243,6 +243,17 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                 or type(policy.source_selection_key) not in (str, type(None))):
             return "capability_unverified"
         source_key = policy.source_selection_key
+        if (type(policy.primary_borrower_id) not in (str, type(None))
+                or type(policy.verification) is not str
+                or policy.verification not in ("active_only", "provider_observed")
+                or type(policy.observed_loan_account_alias)
+                    not in (str, type(None))):
+            return "capability_unverified"
+        pinned_policy = (
+            policy.schema, policy.docbase, source_key,
+            policy.primary_borrower_id, policy.verification,
+            policy.observed_loan_account_alias,
+        )
         if source_key is not None:
             if (fullmatch(r"[a-z][a-z0-9_]{0,63}", source_key) is None
                     or not configured_primary_source_current(
@@ -310,6 +321,20 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                 or _inert_session_state(session) is not state
                 or state.get("descriptor") is not descriptor
                 or descriptor.manual_borrow_policy is not policy
+                # Frozen dataclasses can be mutated using object.__setattr__.
+                # Revalidate native types BEFORE equality: hostile objects
+                # must not turn an in-flight source-key change into approval.
+                or type(policy.schema) is not str
+                or type(policy.docbase) is not str
+                or type(policy.source_selection_key) not in (str, type(None))
+                or type(policy.primary_borrower_id) not in (str, type(None))
+                or type(policy.verification) is not str
+                or type(policy.observed_loan_account_alias)
+                    not in (str, type(None))
+                or (policy.schema, policy.docbase,
+                    policy.source_selection_key, policy.primary_borrower_id,
+                    policy.verification, policy.observed_loan_account_alias)
+                    != pinned_policy
                 or state.get("connected") is not True
                 or state.get("_epoch", source_epoch) != session_epoch
                 or service.storage.identity_for_connection(
