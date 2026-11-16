@@ -2935,6 +2935,30 @@ class Storage:
             ).fetchall()
             return len(borrowers) == 1
 
+    def provider_connection_owner_current(
+        self, provider_id: str, credential_id: str, identity_id: str,
+    ) -> bool:
+        """Attest a live source owner in one SQLite snapshot, without provider I/O.
+
+        An identity remembered at initial loan admission cannot outlive a
+        disabled, deleted or rebound connection while an ACSM is staged.
+        This is a necessary veto, never an ADEPT profile or borrower grant.
+        """
+        values = (provider_id, credential_id, identity_id)
+        if any(
+            type(value) is not str or not value or len(value) > 1024
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+            for value in values
+        ):
+            return False
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT identity_id,enabled FROM provider_connections "
+                "WHERE provider_id=? AND credential_id=? LIMIT 2",
+                (provider_id.casefold(), credential_id),
+            ).fetchall()
+        return len(rows) == 1 and rows[0] == (identity_id, 1)
+
     def identity_for_connection(self, provider_id: str, credential_id: str) -> str | None:
         with self._lock, self._connect() as db:
             row = db.execute(
