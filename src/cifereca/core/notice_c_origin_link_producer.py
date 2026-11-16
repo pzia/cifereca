@@ -100,42 +100,54 @@ def _admitted_public_sources(storage) -> dict[tuple[str, str], PersistedNoticeCo
     return admitted
 
 
-def reconcile_origin_linked_public_c(
-    storage, current: PersistedNoticeCover,
-):
-    """Persist 2 exact-source public covers iff a shared completed origin exists.
+# A single private Core authority token, never serialized, returned or exposed
+# to a provider. Live UI can validate this after the worker has persisted
+# BOTH exact-source contributions to one cross-provider C.
+_CORE_ORIGIN_LINK_C_WITNESS = object()
 
-    Return the resulting shared canonical C only if *current* is a member.
-    None means absent, ambiguous, private, incomplete, or not yet observed.
-    Unlike a simple SHA match, both independently completed provider
-    OriginLinks, their Core response evidence and a present same-owner
-    Placement must agree. Never invent a provider-to-provider relation.
+
+def reconcile_origin_linked_public_batch(
+    storage, currents: list[PersistedNoticeCover],
+) -> dict[str, object]:
+    """Reconcile one bounded live Search batch using one OriginLink snapshot.
+
+    Return exact source DocumentRef keys -> linked canonical C, only for
+    currently admitted public v2 source observations in this batch.
     """
-    current_coords = _public_source_coordinates(current)
-    if current_coords is None:
-        return None
+    if type(currents) is not list or not 1 <= len(currents) <= 256:
+        return {}
+    current_by_coords = {}
+    for current in currents:
+        coords = _public_source_coordinates(current)
+        if coords is not None and coords not in current_by_coords:
+            current_by_coords[coords] = current
+    if not current_by_coords:
+        return {}
 
-    # Core's existing vetted OriginLink projection checks all underlying
-    # source-response evidence, receipts, present placements, artifact SHA
-    # integrity and account/identity binding. It does not infer relation
-    # from an ISBN, an image or a shared hash across profiles.
+    # Core's established read-only OriginLink projection checks complete
+    # provider-response SourceReferences, delivery receipt, positive
+    # provider provenance, present same-owner Placement and valid Artifact.
     from .library_projection import _verified_provider_origin_coordinates
     verified = _verified_provider_origin_coordinates(
         storage, identity_id=None, with_kind=True,
     )
     if not verified or len(verified) > _MAX_ORIGINS:
-        return None
+        return {}
     public = _admitted_public_sources(storage)
-    if not public or current_coords not in public:
-        return None
-    if public[current_coords] != current:
-        return None
+    if not public:
+        return {}
+    current_by_coords = {
+        coords: source for coords, source in current_by_coords.items()
+        if public.get(coords) == source
+    }
+    if not current_by_coords:
+        return {}
 
     groups: dict[tuple[str, str], set[tuple[str, str]]] = {}
     membership: dict[tuple[str, str], set[tuple[str, str]]] = {}
     for artifact, owner, provider, _credential, _account, edition, kind in verified:
-        # A realized purchase is the narrow P0 proof. A loan, archived
-        # holding, unbound account or other role cannot bootstrap this link.
+        # Keep the first P0 proof to realized purchases; loans can expire
+        # independently and cannot currently anchor a durable public join.
         if kind != "purchase":
             continue
         coords = (provider, edition)
@@ -145,52 +157,63 @@ def reconcile_origin_linked_public_c(
         groups.setdefault(group, set()).add(coords)
         membership.setdefault(coords, set()).add(group)
 
-    eligible = []
+    outcomes: dict[str, object] = {}
     for group, coords in groups.items():
-        if (current_coords not in coords or len(coords) != 2
+        if (len(coords) != 2
+                or not (coords & current_by_coords.keys())
                 or len({provider for provider, _edition in coords}) != 2
                 or any(membership.get(coord) != {group} for coord in coords)):
             continue
-        eligible.append((group, tuple(sorted(coords))))
-    if len(eligible) != 1:
+        pair = tuple(sorted(coords))
+        first, second = (public[coord] for coord in pair)
+        if first.document == second.document:
+            continue
+
+        # The stable target is derived from TWO public source edition refs,
+        # never from SHA, account, receipt, title, ISBN or thumbnail.
+        refs = tuple(sorted((
+            first.document.source_key, second.document.source_key,
+        )))
+        digest = sha256(json.dumps(
+            ["cifereca.c.origin-linked-public-edition.v1", *refs],
+            ensure_ascii=True, separators=(",", ":"),
+        ).encode("ascii")).hexdigest()
+        target = "edition:origin-linked:v1:" + digest
+        proof = "core.origin.linked.v1:" + digest
+        try:
+            persist_consolidated_cover_source(
+                storage, canonical_edition_id=target, source=first,
+                relation_proof_id=proof,
+            )
+            complete = persist_consolidated_cover_source(
+                storage, canonical_edition_id=target, source=second,
+                relation_proof_id=proof,
+            )
+            if (len(complete.sources) != 2
+                    or {src.source_ref for src in complete.sources} != set(refs)
+                    or any(src.visibility != "public" for src in complete.sources)):
+                continue
+            for coord in pair:
+                if coord in current_by_coords:
+                    source_ref = public[coord].document.source_key
+                    outcomes[source_ref] = complete
+        except (sqlite3.Error, ValueError, TypeError, OSError):
+            # A concurrently replaced source or conflicted index does not
+            # create a public relation or poison its own-source C.
+            continue
+    return outcomes
+
+
+def reconcile_origin_linked_public_c(storage, current: PersistedNoticeCover):
+    """Single-source adapter for use outside the batched Search ingestion."""
+    if _public_source_coordinates(current) is None:
         return None
-    _origin, pair = eligible[0]
-    first, second = (public[coord] for coord in pair)
-    if first.document == second.document:
-        return None
-
-    # A stable canonical edition derived from TWO *exact public source*
-    # identities; no right, Artifact hash, account ID or receipt in the
-    # public record. OriginLink evidence is required above to authorize it.
-    refs = tuple(sorted((first.document.source_key, second.document.source_key)))
-    digest = sha256(json.dumps(
-        ["cifereca.c.origin-linked-public-edition.v1", *refs],
-        ensure_ascii=True, separators=(",", ":"),
-    ).encode("ascii")).hexdigest()
-    target = "edition:origin-linked:v1:" + digest
-    proof = "core.origin.linked.v1:" + digest
-
-    # The normal writer transaction revalidates that each source is current
-    # in SQLite. A partially available group is never treated as a missing
-    # cover and no cross-provider right/entitlement is ever written.
-    try:
-        persist_consolidated_cover_source(
-            storage, canonical_edition_id=target, source=first,
-            relation_proof_id=proof,
-        )
-        complete = persist_consolidated_cover_source(
-            storage, canonical_edition_id=target, source=second,
-            relation_proof_id=proof,
-        )
-        if (len(complete.sources) != 2
-                or {src.source_ref for src in complete.sources} != set(refs)
-                or any(src.visibility != "public" for src in complete.sources)):
-            return None
-        return complete
-    except (sqlite3.Error, ValueError, TypeError, OSError):
-        # A concurrently replaced source or conflicted index is not proof.
-        # The existing self-edition C remains available.
-        return None
+    return reconcile_origin_linked_public_batch(
+        storage, [current],
+    ).get(current.document.source_key)
 
 
-__all__ = ["reconcile_origin_linked_public_c"]
+__all__ = [
+    "reconcile_origin_linked_public_batch",
+    "reconcile_origin_linked_public_c",
+]
