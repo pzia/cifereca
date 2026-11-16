@@ -5,6 +5,9 @@ links and actions remain with MainWindow and are passed via its stable facade.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+from ..core.notice_c_local_origin_projection import valid_local_public_c_link
+
 from .local_book_detail_sections import local_book_detail_sections
 from .detail_selection_perf import current_detail_trace
 from .local_detail_cover import exact_local_detail_cover
@@ -64,7 +67,9 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         # authorize painting. If rejected (owner/Artifact/Placement), do
         # NOT substitute an unqualified cached catalogue/legacy URL.
         thumbnail=(item.get("thumbnail_url")
-                   if item.get("_exact_local_cover_evidence") is None else None),
+                   if item.get("_exact_local_cover_evidence") is None
+                   and item.get("_public_canonical_cover_link") is None
+                   else None),
         badges=[],
         section_rows=local_book_detail_sections(
             item,
@@ -87,6 +92,18 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         if not foreign else None
     )
     if cover_evidence is None:
+        link = item.get("_public_canonical_cover_link")
+        if (not foreign
+                and item.get("_exact_local_cover_evidence") is None
+                and valid_local_public_c_link(
+                    link, identity_id=active,
+                    artifact_id=item.get("artifact_id"),
+                    placement_id=item.get("placement_id"),
+                )):
+            presentation = replace(
+                presentation, cover_document_ref=link.document,
+                thumbnail_url=None,
+            )
         detail.show_presentation(presentation, description=description)
     else:
         detail.show_local_presentation(
