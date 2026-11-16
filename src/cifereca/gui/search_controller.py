@@ -294,6 +294,31 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
             # results (possibly empty); do not display a stale prior query.
             self._populate_search(self._remote_search_results, announce=False)
         return False
+    def deliver_known_c(page):
+        # The SQL cursor ran on the Search worker BEFORE any supplier GET.
+        # GTK receives only already-admitted, non-actionable C descriptors.
+        # Empty/partial C is never a proof of a zero-result remote catalogue.
+        if not current():
+            return False
+        from ..core.notice_c_public_search import PublicNoticeCPage
+        if type(page) is not PublicNoticeCPage or not page.hits:
+            return False
+        from ..core.notice_c_known_projection import merge_public_notice_c_known_rows
+        rows = merge_public_notice_c_known_rows(
+            [], page, identity_id=identity_id,
+        )
+        # Keep independently attested placements/rights already in the known
+        # Search, replacing only this request's old public C preview keys.
+        known = getattr(self, "_search_local_objects", None)
+        preserved = {
+            key: row for key, row in (known or {}).items()
+            if type(row) is dict and row.get("source") != "notice_c_public"
+        } if type(known) is dict else {}
+        for row in rows:
+            preserved[row["key"]] = row
+        self._search_local_objects = preserved
+        self._populate_search(self._remote_search_results, announce=False)
+        return False
     def on_batch(batch):
         GLib.idle_add(deliver_batch, batch)
     def done(summary):
@@ -312,6 +337,37 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
         # search_progressive captures current_identity when it starts, not
         # when this GUI task is enqueued. Refuse a moved account before it can
         # issue a private GET; Core rechecks this lease before each provider.
+        if not admitted_core_current():
+            from ..plugin_api import Cancelled
+            raise Cancelled("Recherche en ligne périmée")
+        # #6366: C-first online extension without a second search engine.
+        # This function runs in TaskRunner's worker; no SQLite read, supplier
+        # HTTP, parse or consolidation is executed on the GTK thread.
+        # The on_batch ABI and existing parallel provider orchestration stay
+        # unchanged; an empty C cursor is merely partial, never a final zero.
+        selected = tuple(dict.fromkeys(
+            provider for provider in state.providers if provider != "local"
+        ))
+        c_reader = getattr(request_core, "search_public_notice_c", None)
+        if (
+            callable(c_reader)
+            and type(state.text) is str
+            and 2 <= len(state.text.strip()) <= 160
+            and state.field in ("all", "title", "author", "publisher")
+            and state.scope in ("all", "digital", "physical", "unknown")
+            and (not state.providers or selected)
+        ):
+            try:
+                page = c_reader(
+                    state.text, field=state.field, scope=state.scope,
+                    provider_ids=selected,
+                )
+            except (TypeError, ValueError, OSError):
+                # The ordinary remote extension remains available when the
+                # bounded C cursor cannot be read. Never print raw DB data.
+                page = None
+            if page is not None and admitted_core_current():
+                GLib.idle_add(deliver_known_c, page)
         if not admitted_core_current():
             from ..plugin_api import Cancelled
             raise Cancelled("Recherche en ligne périmée")
