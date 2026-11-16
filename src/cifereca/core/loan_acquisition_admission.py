@@ -12,6 +12,7 @@ from ..models import Loan
 from ..identities.models import Identity
 from .loan_safe_trace import loan_trace_ref
 from .adept_borrower import public_borrower_refusal_code
+from .loan_source_epoch import SourceEpochLease
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -19,6 +20,7 @@ class AutomaticLoanAdmission:
     identity: Any = None
     entitlement_id: str | None = None
     refusal: dict[str, Any] | None = None
+    source_lease: SourceEpochLease | None = None
 
 
 def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
@@ -87,6 +89,17 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
 
     if not source_intact():
         return source_changed()
+    # Capture the atomic enabled-owner + durable epoch *before* calling the
+    # identity lookup or borrower resolver. A->B->A cannot revive this proof.
+    # Keep the historical unbound-connection refusal if no native owner was
+    # returned, rather than trying to obtain an epoch for an unknown owner.
+    source_lease = (
+        SourceEpochLease.capture(self.storage, loan, bound_identity_id)
+        if type(bound_identity_id) is str and bool(bound_identity_id)
+        else None
+    )
+    if type(bound_identity_id) is str and bound_identity_id and source_lease is None:
+        return source_changed()
     # A storage owner is an exact native key, not a UI hint or a coercible
     # plugin value. Never let a swapped/malformed lookup choose another user.
     identity = (
@@ -115,18 +128,18 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     # after each callback. A frozen native Identity is expected; a mutated
     # object or a foreign replacement must fail closed, not retarget a right.
     def admission_intact() -> bool:
-        # A retained connection owner ID is insufficient once another
-        # callback has disabled, deleted or rebound that SQLite connection.
-        # One read snapshot checks the enabled owner without assuming rights,
-        # a UI-selected identity, or any provider-specific account policy.
+        # Both the live SQLite owner and the original monotone source epoch
+        # must remain valid across all collaborator callbacks. Neither grants
+        # ADEPT borrower rights.
         if (not source_intact() or type(identity) is not Identity
                 or type(identity.identity_id) is not str
-                or identity.identity_id != bound_identity_id):
+                or identity.identity_id != bound_identity_id
+                or type(source_lease) is not SourceEpochLease):
             return False
         try:
-            return self.storage.provider_connection_owner_current(
+            return (self.storage.provider_connection_owner_current(
                 pinned_provider, pinned_credential, bound_identity_id,
-            ) is True
+            ) is True and source_lease.current(self.storage, loan))
         except Exception:
             return False
 
@@ -138,24 +151,25 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     # The historical facade name remains for ABI compatibility, but its
     # implementation consumes source-scoped v16 grants for every provider.
     # The source's name must not decide whether a linked reader is verified.
-    _, borrower_code = self._paris_adept_identity_for_loan(
-        loan, connection_identity_id=bound_identity_id,
-    )
-    # The borrower callback is an external source of loan mutations.
-    # Even on refusal, never publish its changed/hostile loan ID or
-    # present the decision as belonging to a different loan.
+    try:
+        borrower_identity, borrower_code = self._paris_adept_identity_for_loan(
+            loan, connection_identity_id=bound_identity_id,
+        )
+    except Exception:
+        borrower_identity, borrower_code = None, "adept_borrower_ambiguous"
+    # A callback may revoke SQLite or return an empty positive borrower.
     if not admission_intact():
         return source_changed()
-    # A non-None borrower refusal is never an approval, even if its
-    # plugin-provided value is falsey or carries private text.
-    if borrower_code is not None:
+    if (borrower_code is not None or type(borrower_identity) is not str
+            or not borrower_identity):
         _TRACE_LOG.warning(
             "TRACE download loan_auto blocked reason=borrower_binding_guard loan_ref=%s",
             trace_ref,
         )
         return AutomaticLoanAdmission(refusal={
             "status": "attention_required", "loan_id": pinned_loan_id,
-            "code": public_borrower_refusal_code(borrower_code),
+            "code": (public_borrower_refusal_code(borrower_code)
+                     if borrower_code is not None else "adept_borrower_ambiguous"),
             "retry": "explicit_only",
         })
     if not admission_intact():
@@ -228,4 +242,7 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
         and bool(entitlement_rows[0]["entitlement_id"])
         else None
     )
-    return AutomaticLoanAdmission(identity=identity, entitlement_id=entitlement_id)
+    return AutomaticLoanAdmission(
+        identity=identity, entitlement_id=entitlement_id,
+        source_lease=source_lease,
+    )
