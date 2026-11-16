@@ -716,7 +716,12 @@ class DetailPanel(Gtk.Box):
         # The list and detail get the same opaque Core document. Scope lives
         # only for this synchronous rendering, never as a second cache.
         previous_ref = getattr(self, "_next_cover_document_ref", None)
-        self._next_cover_document_ref = getattr(presentation, "cover_document_ref", None)
+        # The loan-only public C fallback stages an exact Core reference
+        # synchronously. All other callers keep their regular presentation
+        # ref; a nested render never transfers the staged ref to another book.
+        self._next_cover_document_ref = (
+            getattr(presentation, "cover_document_ref", None) or previous_ref
+        )
         try:
             self._cover_and_title(
                 presentation.title,
@@ -889,6 +894,23 @@ class DetailPanel(Gtk.Box):
         direct.connect("clicked", lambda _b: self.window.download_direct_item(item, direct))
         self._actions([direct])
 
+    def show_loan_public_c(self, loan: Loan, *, document) -> None:
+        """Render an image-less private Loan with a separately attested
+        PUBLIC C cover. This does not alter loan actions or permissions.
+        """
+        from ..core.notice_c_cover_index import is_canonical_cover_document
+        if (type(loan) is not Loan
+                or loan.thumbnail_url is not None
+                or not is_canonical_cover_document(document)
+                or self._next_cover_document_ref is not None
+                or self._next_cover_evidence is not None):
+            raise ValueError("invalid_loan_public_c_detail")
+        self._next_cover_document_ref = document
+        try:
+            self.show_loan(loan)
+        finally:
+            self._next_cover_document_ref = None
+
     def show_loan_local(self, loan: Loan, *, cover_evidence) -> None:
         """Loan view with an owner/entitlement-attested EPUB DocumentRef.
 
@@ -1019,6 +1041,21 @@ class DetailPanel(Gtk.Box):
         decorate = getattr(self.window, '_decorate_book_detail', None)
         if callable(decorate): decorate(self, asdict(item))
 
+    def show_history_public_c(self, item: HistoryItem, *, document) -> None:
+        """History lists/details share a Core-public N2 C; no title search."""
+        from ..core.notice_c_cover_index import is_canonical_cover_document
+        if (type(item) is not HistoryItem
+                or item.thumbnail_url is not None
+                or not is_canonical_cover_document(document)
+                or self._next_cover_document_ref is not None
+                or self._next_cover_evidence is not None):
+            raise ValueError("invalid_history_public_c_detail")
+        self._next_cover_document_ref = document
+        try:
+            self.show_history(item)
+        finally:
+            self._next_cover_document_ref = None
+
     def show_history_document(
         self, item: HistoryItem, *, cover_evidence,
     ) -> None:
@@ -1052,6 +1089,7 @@ class DetailPanel(Gtk.Box):
             [medium, item.year or ""],
         )
         if (not item.thumbnail_url and not present_cover
+                and self._next_cover_document_ref is None
                 and self.window.service.current_account.is_primary):
             context = history_cover_context(self.window)
             cover.show_loading()
@@ -1084,7 +1122,8 @@ class DetailPanel(Gtk.Box):
                 item.default_thumbnail_url, resolved,
                 scope=history_cover_request_scope(context),
             )
-        elif not item.thumbnail_url and not present_cover:
+        elif (not item.thumbnail_url and not present_cover
+              and self._next_cover_document_ref is None):
             # Compte lié : pas de requêtes de reconstruction automatiques.
             cover.reset()
         self._group("Historique", [
