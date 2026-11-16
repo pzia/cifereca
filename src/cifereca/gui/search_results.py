@@ -395,6 +395,20 @@ def _render_search_results(self) -> int:
             and ref.identity_id is None
             and is_notice_cover_document(ref))
     }
+    # Compare only Core-attested same-call source and edition coordinates.
+    # This avoids a duplicate C-first card after its live provider returns.
+    # The projection is pure: no SQLite or HTTP on the GTK thread.
+    from cifereca.core.notice_c_known_projection import matching_live_public_canonical_ref
+    live_identity = getattr(
+        getattr(self.service, "current_identity", None), "identity_id", None,
+    )
+    if type(live_identity) is str and live_identity:
+        remote_c_refs.update(
+            canonical for item in self._remote_search_results
+            if (canonical := matching_live_public_canonical_ref(
+                item, identity_id=live_identity,
+            )) is not None
+        )
     ui_rows: list[BookListItem] = []
     for known in state.filter(self._search_local_objects.values()):
         if known.get("source") == "notice_c_public":
