@@ -62,57 +62,6 @@
       "rationale": "An active mandatory safety veto; removing provider comparison now would permit a destructive implicit GET and cannot be credited as decoupling"
     },
     {
-      "id": "site-48985b6dd27a2ea911e7026d",
-      "classification": "presentation_only",
-      "journey": "Settings ADEPT profile binding status subtitle",
-      "productive_caller": "GUI Settings build_settings_editors.add_identity_editor renders saved identity's normal_paris_adept_status using LibraryService's read-only local status",
-      "effect": "Sets a descriptive subtitle from the saved ADEPT identity/Paris connection binding; does not enumerate runtime profiles, download, write a grant or authorize Adobe",
-      "authority": "Saved local identity and normal binding status are display evidence only; no supplier entitlement, verified ADEPT licence or UI navigation-derived right",
-      "replacement_contract": "Preserve inert display status and explicit saved identity, later consume a provider-neutral versioned ADEPT binding status read model if available",
-      "tests": [
-        "tests/test_core_ui_p1_1063_runtime_button.py",
-        "tests/test_core_p1_1063_adept_runtime_check.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Presentation projection of a local read-only binding status; no supplier GET, publisher or executable permission from this branch.",
-      "decision_group_id": "adept.settings-binding-caption",
-      "reachability": "productive"
-    },
-    {
-      "id": "site-0d55ea2282fddc404d954e89",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Settings explicitly requested ADEPT runtime inspection admission",
-      "productive_caller": "GUI Settings check_adept clicked button checks saved normal_paris_adept_status before submitting TaskRunner operation",
-      "effect": "Prevents runtime probe if saved binding is unready, draft profile/primary connection differs, page is disposed, or a runtime check is already pending The status lookup is pinned to the click-admitted Core and remains a negative gate before the queued probe.",
-      "authority": "Saved identity/profile source provenance only; a positive runtime capability cannot become a new grant or Adobe authorization",
-      "replacement_contract": "Versioned generic ADEPT runtime readiness/admission DTO with explicit identity plus generation lease; retain fail-closed legacy gate until all UI/callers migrate",
-      "tests": [
-        "tests/test_core_ui_p1_1063_runtime_button.py",
-        "tests/test_core_p1_1063_adept_runtime_check.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "A productive negative guard before opt-in local runtime inspection; deleting provider-named gating would admit unbound or unsaved context.",
-      "decision_group_id": "adept.settings-explicit-runtime-check",
-      "reachability": "productive"
-    },
-    {
-      "id": "site-1e0a66caf63d7b19feef68dd",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Settings ADEPT runtime inspection stale result publication fencing",
-      "productive_caller": "GUI Settings check_adept.current closure re-reads normal_paris_adept_status before rendering result from asynchronous TaskRunner",
-      "effect": "Suppresses positive/status subtitle if page generation, saved profile, primary Paris connection or local binding has changed after click (including A→B→A) Core identity is also compared by instance and stale GTK callbacks never publish a foreign Core's result.",
-      "authority": "Local saved identity and generation lease; a previous runtime status is not authority over the newly displayed identity",
-      "replacement_contract": "Generic typed current-context callback with exact saved binding identity and epochs for every asynchronous runtime result, independent of GTK navigation",
-      "tests": [
-        "tests/test_core_ui_p1_1063_runtime_button.py",
-        "tests/test_core_p1_1063_adept_runtime_check.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "A stale-publication veto on a live Settings runtime check; removing it without a revocable replacement could mislabel a different profile.",
-      "decision_group_id": "adept.settings-explicit-runtime-check",
-      "reachability": "productive"
-    },
-    {
       "id": "site-62d608c21d04153e918b5bb3",
       "classification": "safety_guard_pending_contract",
       "journey": "Installed ADEPT diagnostic runtime producer provenance",
@@ -1703,6 +1652,51 @@
         "site-9db736c5a6459afb19e60a9a"
       ],
       "original_site_id": "site-9db736c5a6459afb19e60a9a"
+    },
+    {
+      "id": "struct-settings-adept-status-paris-facade-cutover",
+      "original": "GUI Settings build_settings_editors.add_identity_editor renders saved identity's normal_paris_adept_status using LibraryService's read-only local status",
+      "original_classification": "presentation_only",
+      "replacement": "_saved_adept_status selects an explicit source or read-only old Paris coordinate and calls LibraryService.normal_source_adept_status",
+      "classification": "neutral_source_scoped_coreui_cutover",
+      "evidence": "Source-bound status no longer calls the supplier-specific Core normal_paris_adept_status. The old key is read for existing configurations; it never selects a new provider or authorizes ADEPT.",
+      "tests": [
+        "tests/test_core_ui_p1_1063_runtime_button.py",
+        "tests/test_settings_draft.py"
+      ],
+      "pr": "#6464",
+      "in_ast_metric": true,
+      "original_site_id": "site-48985b6dd27a2ea911e7026d"
+    },
+    {
+      "id": "struct-settings-adept-click-paris-facade-cutover",
+      "original": "GUI Settings check_adept clicked button checks saved normal_paris_adept_status before submitting TaskRunner operation",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "check_source_adept_runtime with exact persisted source pair, protected by draft, live Core and page/generation checks",
+      "classification": "neutral_source_scoped_coreui_cutover",
+      "evidence": "The CoreUI clicked-button guard no longer calls normal_paris_adept_status or check_normal_paris_adept_runtime. Old Paris and new providers use identical local negative admission; no runtime inspection on render.",
+      "tests": [
+        "tests/test_core_ui_p1_1063_runtime_button.py",
+        "tests/test_settings_draft.py"
+      ],
+      "pr": "#6464",
+      "in_ast_metric": true,
+      "original_site_id": "site-0d55ea2282fddc404d954e89"
+    },
+    {
+      "id": "struct-settings-adept-result-paris-facade-cutover",
+      "original": "GUI Settings check_adept.current closure re-reads normal_paris_adept_status before rendering result from asynchronous TaskRunner",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "_selected_adept_source live saved-pair fence plus _saved_adept_status through normal_source_adept_status",
+      "classification": "neutral_source_scoped_coreui_cutover",
+      "evidence": "Stale asynchronous results are denied on changes to saved provider/credential, profile, Core identity, generations or page lifetime. No supplier-specific Core facade remains in CoreUI.",
+      "tests": [
+        "tests/test_core_ui_p1_1063_runtime_button.py",
+        "tests/test_settings_draft.py"
+      ],
+      "pr": "#6464",
+      "in_ast_metric": true,
+      "original_site_id": "site-1e0a66caf63d7b19feef68dd"
     }
   ],
   "guard_installations": [
@@ -1975,8 +1969,8 @@
       "id": "guard-settings-adept-click-bound-runtime-probe-6364",
       "journey": "Explicit Settings ADEPT runtime observation bound to a Core-owned method at click time",
       "classification": "safety_guard_pending_contract",
-      "effect": "The supplier-specific LibraryService.check_normal_paris_adept_runtime still executes after explicit saved-account preflight, through the bound method probe_method. The lexical AST call site disappeared only because the delayed worker no longer resolves self.service. The safety contract and supplier-specific implementation remain active; no ADEPT grant or authorization inferred.",
-      "remaining_debt": "Original AST site site-6df69f482e5a9d7f97c2be97 no longer appears but the exact business operation remains reachable through probe_method; do not award any retirement or reduction of provider policy. Replace by a generic versioned DRM runtime capability before cutover.",
+      "effect": "The explicit Settings runtime probe remains pinned to the admitted Core and method at click time. The original provider-specific Core facade is now retired by #6464; the bound method is check_source_adept_runtime for the exact saved provider and connection (including the read-only legacy Paris choice).",
+      "remaining_debt": "Historical AST site site-6df69f482e5a9d7f97c2be97 was a bound-method-call relocation in #6364, not independent retirement credit. #6464 migrates the actually executed operation to the source-neutral Core contract; saved source/profile authorization, page-generation and async result vetoes remain essential.",
       "tests": [
         "tests/test_core_ui_p1_1063_runtime_button.py",
         "tests/test_core_p1_1063_adept_runtime_check.py"
