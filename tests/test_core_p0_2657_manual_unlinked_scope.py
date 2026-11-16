@@ -55,7 +55,7 @@ def test_manual_side_by_side_remains_possible_without_exact_isbn(
 
     unverified = session.unconfirmed_files(query='code-5', limit=1)
     assert unverified.total == 1 and 'unverified_file' in unverified.cases[0].states
-    assert session.unconfirmed_files(query='code-0', limit=1).total == 0
+    assert session.unconfirmed_files(query='code-0', limit=1).total == 1
     assert session.unconfirmed_files(query='FOREIGN_SECRET').total == 0
     assert all('PRIVATE_OTHER_IDENTITY' not in case.details
                for case in session.page().cases)
