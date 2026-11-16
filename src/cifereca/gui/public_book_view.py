@@ -92,6 +92,34 @@ class PublicBookMasterDetailView:
                 item.thumbnail_url = None
             item._public_row_content = presentation
             ui_rows.append(item)
+        # Duplicate public plugin keys are occurrence-local, not document
+        # identities. On a reordered/replaced snapshot, MasterDetailPage
+        # would normally restore the same display key, silently selecting
+        # another source and exposing its detail/actions. Preserve selection
+        # only while the exact original source object remains under that key.
+        from collections import Counter
+        collisions = {
+            key for key, count in Counter(original_keys).items() if count > 1
+        }
+        previous_collisions = getattr(self, "_duplicate_source_keys", set())
+        previous = getattr(self, "_rows", {})
+        selection = getattr(self._page, "selection", None)
+        selected = getattr(selection, "get_selected_item", None)
+        if callable(selected) and type(previous) is dict:
+            active = selected()
+            active_key = getattr(active, "key", None)
+            former = previous.get(active_key)
+            incoming = mapped.get(active_key)
+            if (former is not None and incoming is not None
+                    and former is not incoming
+                    and (str(getattr(former, "key", "")) in
+                         (collisions | previous_collisions)
+                         or str(getattr(incoming, "key", "")) in
+                         (collisions | previous_collisions))):
+                # Clear before replacing the mapping so even synchronous
+                # GTK selection callbacks cannot dispatch a foreign row.
+                selection.set_selected(0xFFFFFFFF)
+        self._duplicate_source_keys = collisions
         # Publish mapping before GTK selection notifications during show_rows.
         self._rows = mapped
         self._page.show_rows(ui_rows, total_count=total_count)
