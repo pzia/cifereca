@@ -48,34 +48,19 @@
       "rationale": "Separate AST call anchored inside same live safety decision; do not count as another completed cutover or waive its guard"
     },
     {
-      "id": "site-bde7e6bb7d27db9b3a56d35b",
-      "classification": "safety_guard_pending_contract",
-      "journey": "ADEPT protected-loan post-staging borrower revalidation",
-      "productive_caller": "loan_adept_profile_guard.check following acquiring receipt and ACSM staging",
-      "effect": "Rechecks original Loan/source/identity against receipt and Paris borrower binding after side-effect boundaries, refusing any retarget before profile use",
-      "authority": "Frozen ledger_base plus exact account/identity and native Loan fields",
-      "replacement_contract": "Generic loan-to-DRM-profile exact owner lease and retry-safe refusal codes; preserve post-staging revalidation until migration",
-      "tests": [
-        "tests/test_automatic_loan_admission.py",
-        "tests/test_core_p0_3120_borrower_identity_ui.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Live safety check, not a decorative provider string; premature removal could cross profiles after a staged ACSM"
-    },
-    {
       "id": "site-11782bea38b359a5de6fc278",
       "classification": "safety_guard_pending_contract",
       "journey": "post-staging Paris ADEPT borrower verifier",
       "productive_caller": "loan_adept_profile_guard.check -> _paris_adept_identity_for_loan",
-      "effect": "Refuses ambiguous Paris grant before selecting an ADEPT profile and performing a one-use runtime mutation",
+      "effect": "All staged ACSM loans now require the same native identity, current exact source/connection and borrower/v16 grant check before an ADEPT profile may be selected; callback retains its historical Paris name only for facade/fixture ABI. v15 provenance is never imported across providers.",
       "authority": "Existing exact borrower binding and immutable acquiring receipt, not a library cover or title",
-      "replacement_contract": "Typed provider-neutral DRM borrowing owner proof checked again after staging",
+      "replacement_contract": "Eventually rename historical _paris_adept_identity_for_loan entrypoint to a typed neutral facade once all callers and tests migrate, while retaining the source-specific v15 reader as a bounded historical conflict check. This active call already enforces source-neutral v16 grants and must not be removed.",
       "tests": [
         "tests/test_automatic_loan_admission.py",
         "tests/test_core_p0_3120_borrower_identity_ui.py"
       ],
       "retirement_pr": "",
-      "rationale": "Same post-staging safety barrier as related comparison but distinct AST call; must persist until replacement attested"
+      "rationale": "A productive, necessary ADEPT identity recheck now protecting EVERY provider ACSM; not a provider-only dispatch. Count the retained call signal honestly until its facade is migrated."
     },
     {
       "id": "site-fa4141b996ceab0e1bd6be32",
@@ -1698,6 +1683,23 @@
         "tests/test_core_p0_2975_paris_return_branch_collision.py"
       ],
       "pr": "#6434",
+      "in_ast_metric": true
+    },
+    {
+      "id": "struct-all-source-acsm-poststaging-borrower-recheck",
+      "original_site_id": "site-bde7e6bb7d27db9b3a56d35b",
+      "original": "loan_adept_profile_guard.check ran the borrower identity / ADEPT v16 grant guard only when a staged ACSM loan's source_provider was the literal Paris. All other lenders immediately inherited the source connection's identity for ADEPT profile selection.",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "The same exact native Loan/ledger/source-connection recheck and durable attention refusal now invokes the source-scoped ADEPT borrower resolver for every already-staged ACSM loan. All linked borrowers need an explicit persisted v16 grant, regardless of library. A primary account can use the proven owner only after an exact borrower account match; a missing/malformed borrower is not a grant. The historical unscoped v15 table is projected with its fixed source provenance by the SQLite reader. The Core compares this provenance with the loan's native source coordinates and rejects cross-source adoption, even with identical credential/account text. Legacy v15 remains a negative consistency check, never positive ADEPT authority.",
+      "classification": "replaced_poststaging_supplier_exemption_by_source_scoped_adept_borrower_grant",
+      "evidence": "The Paris-only conditional has been removed from the ACTIVE ACSM post-staging gate, not renamed. Positive provider-neutral grants and negative non-Paris missing/falsey refusal, foreign scope, mutable loan callback and obsolete v15 cross-source contamination are tested. Pre-/post-staging native owner checks remain; ACSM bytes remain staged on refusal. The v15 source label is part of the historical SQLite read model, not a new Core literal comparison; its exact native source equality prevents foreign-source grant contamination. The existing legacy facade name is preserved for API compatibility.",
+      "tests": [
+        "tests/test_core_p0_1120_adept_profile_guard_extraction.py",
+        "tests/test_core_p0_5975_poststaging_adept_all_sources.py",
+        "tests/test_core_p0_5851_v16_adept_borrower_adoption.py",
+        "tests/test_automatic_loan_admission.py"
+      ],
+      "pr": "#6439",
       "in_ast_metric": true
     }
   ],
