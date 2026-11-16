@@ -95,3 +95,51 @@ def test_public_c_source_binds_same_document_to_list_and_detail_without_actions(
         panel.empty.assert_called_once()
     finally:
         db.close()
+
+
+def test_online_extension_preserves_same_c_cover_until_exact_live_source(tmp_path):
+    """Changing Search mode must not drop the C list N2 or join by URL/title."""
+    db = Storage(tmp_path / "online-view.sqlite")
+    try:
+        record = verified_public(
+            title="Un même titre", revision_id="rev-1",
+        )
+        persisted = persist(db, record)
+        page = search_public_notice_c(db, "titre")
+        known = merge_public_notice_c_known_rows(
+            [], page, identity_id="alice",
+        )
+        ui = _host()
+        ui._search_mode = "global"
+        ui._search_local_objects = {known[0]["key"]: known[0]}
+        ui._remote_search_results = []
+        ui._render_search_results()
+        retained = ui.search_page.show_rows.call_args.args[0]
+        assert len(retained) == 1
+        assert retained[0]._cover_document_ref == persisted.document
+        assert retained[0]._public_row_content[-2] == persisted.document
+        assert retained[0]._public_row_content[-1] is None
+        assert retained[0].options == {}
+
+        # Same title and same cover are insufficient to suppress this C
+        # when the provider reports another revision, even with same ID.
+        from dataclasses import replace
+        other = replace(record, revision_id="rev-2")
+        other._core_notice_cover_document_ref = None
+        ui._remote_search_results = [other]
+        ui._render_search_results()
+        expanded = ui.search_page.show_rows.call_args.args[0]
+        assert len(expanded) == 2
+        assert sum(getattr(x, "_cover_document_ref", None)
+                   == persisted.document for x in expanded) == 1
+
+        # An independently Core-stamped SAME C source may replace the known
+        # row once live results are received, not an arbitrary shared URL.
+        record._core_notice_cover_document_ref = persisted.document
+        ui._remote_search_results = [record]
+        ui._render_search_results()
+        replaced = ui.search_page.show_rows.call_args.args[0]
+        assert len(replaced) == 1
+        assert replaced[0].key == f"{record.source_provider}:{record.id}"
+    finally:
+        db.close()
