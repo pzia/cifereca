@@ -321,3 +321,111 @@ def test_actual_cached_history_worker_recreates_scope_guarded_c_offline(tmp_path
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+def _history_production_method(name, *, row_factory=None):
+    """Load ONLY the actual MainWindow presenter, no GTK display required."""
+    import ast
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    cls = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "MainWindow"
+    )
+    method = next(
+        node for node in cls.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+    ns = {
+        "__name__": "cifereca.gui.main_window",
+        "__package__": "cifereca.gui",
+        "BookListItem": row_factory,
+        "fr_date": lambda *_: "16/11/2026",
+    }
+    module = ast.Module(
+        body=[ast.ImportFrom(
+            module="__future__",
+            names=[ast.alias(name="annotations")],
+            level=0,
+        ), method],
+        type_ignores=[],
+    )
+    exec(compile(ast.fix_missing_locations(module), str(path), "exec"), ns)
+    return ns[name]
+
+
+def test_history_actual_list_and_selection_use_one_exact_c_without_get(
+    tmp_path, monkeypatch,
+):
+    """The REAL MainWindow methods bind C in list and selected detail."""
+    from cifereca.gui import history_cover_presentation
+    from cifereca.gui import history_cover_decision_bridge
+    from cifereca.gui import history_document_cover_bridge
+
+    monkeypatch.setattr(
+        history_cover_decision_bridge,
+        "history_cover_presentation", lambda _host, item: item,
+    )
+    monkeypatch.setattr(
+        history_cover_presentation,
+        "cached_history_cover", lambda _host, _item: None,
+    )
+    monkeypatch.setattr(
+        history_document_cover_bridge,
+        "exact_history_document_evidence", lambda _host, _item: None,
+    )
+
+    class Row:
+        def __init__(self, key, title, subtitle, meta, badge, thumbnail, **kw):
+            self.key, self.title = key, title
+            self.subtitle, self.meta, self.badge = subtitle, meta, badge
+            self.thumbnail_url = thumbnail
+            for k, v in kw.items():
+                setattr(self, k, v)
+
+    db = Storage(tmp_path / "real-history-ui.sqlite")
+    try:
+        c, _ = public(db)
+        _loan, history = personal_items()
+        account = paris_account()
+        stamp(db, [history], account)
+        events = []
+        detail = NS(
+            show_history_public_c=lambda presented, *, public_link: events.append(
+                (presented, public_link),
+            ),
+            show_history=lambda *_: events.append(("legacy",)),
+            show_history_document=None,
+            empty=lambda *_: events.append(("empty",)),
+        )
+        host = current_host(account, _loan, history)
+        host.history_page = NS(detail=detail)
+        host.search_controls = object()
+        host._attach_row_facets = lambda *_: None
+        host._add_facets = lambda *_: None
+        host._add_local_book_actions = lambda *_: None
+
+        build = _history_production_method(
+            "_history_book_row", row_factory=Row,
+        )
+        select = _history_production_method("_history_selected")
+        row = build(host, history)
+        assert row._cover_document_ref == c.document
+        assert row._cover_paris_public_c.document == c.document
+        assert row.thumbnail_url is None
+        select(host, row)
+        assert len(events) == 1
+        assert events[0] == (
+            history, history._core_notice_c_paris_public_link,
+        )
+        assert db.entitlements() == []
+
+        host.service._source_context_epoch += 1
+        stale = build(host, history)
+        assert not hasattr(stale, "_cover_paris_public_c")
+        select(host, stale)
+        assert events[-1] == ("legacy",)
+    finally:
+        db.close()
