@@ -249,12 +249,38 @@ def _render_search_results(self) -> int:
             # public results retain their legacy URL presentation.
             if item.get("_exact_local_cover_evidence") is not None:
                 cover_url = None
+            is_c = item.get("source") == "notice_c_public"
+            if is_c:
+                # The C row already carries a persisted exact, public N2
+                # DocumentRef. The URI remains ABSENT: never turn a hot N3
+                # image into the documentary proof for this list cell.
+                cover_url = None
+                status = (
+                    "Notice C publique · à actualiser"
+                    if (item.get("metadata") or {}).get("notice_c_stale")
+                    else "Notice C publique · index partiel"
+                )
+                summary = status
+            else:
+                summary = " · ".join(x for x in [
+                    self._library_state_label(item),
+                    local_match_explanation(item, state.text, field=state.field),
+                ] if x)
             view_row = BookListItem(
                 key, str(item.get("title") or "Sans titre"), str(item.get("author") or ""),
-                " · ".join(x for x in [self._library_state_label(item), local_match_explanation(item, state.text, field=state.field)] if x),
+                summary,
                 self.service.provider_display_name(provider) if provider != "local" else "Local",
                 cover_url,
             )
+            if is_c:
+                from cifereca.core.book_cover_projection import CoverDocumentScope
+                from cifereca.core.notice_cover_repository import is_notice_cover_document
+                ref = item.get("_cover_document_ref")
+                if (type(ref) is CoverDocumentScope
+                        and ref.kind == "public_catalogue"
+                        and ref.identity_id is None
+                        and is_notice_cover_document(ref)):
+                    view_row._cover_document_ref = ref
             # Search-local only reuses an explicit Core owner+Artifact+
             # Placement cover packet. An identical URL/title/ISBN/SHA does
             # not let a catalogue notice or another identity borrow N2.
@@ -286,12 +312,15 @@ def _render_search_results(self) -> int:
                 getattr(row, "thumbnail_url", None),
             )
             proof = getattr(row, "_cover_local_evidence", None)
-            if proof is not None:
-                # The URI remains LAST for BookListItem.set_thumbnail_url's
-                # in-place presentation update, even when source changes.
+            document_ref = getattr(row, "_cover_document_ref", None)
+            if proof is not None or document_ref is not None:
+                # The URI remains LAST; rebinding a different exact N2 ref
+                # must invalidate a recycled GTK cell even if title/URL match.
                 signature = row._public_row_content
                 row._public_row_content = (
-                    *signature[:-1], proof, signature[-1],
+                    *signature[:-1],
+                    proof if proof is not None else document_ref,
+                    signature[-1],
                 )
         self.search_page.show_rows(local_rows)
         self._search_local_snapshot_dirty = False
