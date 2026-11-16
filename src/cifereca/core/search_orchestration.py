@@ -2152,6 +2152,7 @@ def _stamp_cached_public_notice_refs(
             "_core_notice_cover_document_epoch",
             "_core_notice_canonical_cover_document_ref",
             "_core_notice_canonical_cover_document_epoch",
+            "_core_verified_live_multisource_c_route",
         ):
             row.__dict__.pop(key, None)
         safe_url = _shared_catalogue_cover_url(row.thumbnail_url)
@@ -2229,6 +2230,7 @@ def _mirror_remote_results(
             row.__dict__.pop("_core_notice_cover_document_epoch", None)
             row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
             row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
+            row.__dict__.pop("_core_verified_live_multisource_c_route", None)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
     # The stronger #5073 UI/action proof remains authoritative for actions.
@@ -2423,6 +2425,31 @@ def _mirror_remote_results(
                             row._core_notice_canonical_cover_document_epoch = (
                                 canonical.epoch
                             )
+                            # A live Search hit can now reuse the same
+                            # independently attested multi-provider C already
+                            # shown by the durable C-first Search index.
+                            # Resolve on this Core worker, never in GTK.
+                            # The immutable packet refuses old epochs and
+                            # source/edition mismatches at paint time.
+                            if len(producing_rows) <= 32:
+                                from .notice_c_exact_source_lookup import (
+                                    exact_public_source_c,
+                                )
+                                from .notice_c_live_multisource_binding import (
+                                    stamp_live_multisource_c,
+                                )
+                                multi = exact_public_source_c(
+                                    self.storage,
+                                    provider_id=row.source_provider,
+                                    record_id=row.record_id,
+                                    docbase=row.docbase,
+                                    medium=row.medium,
+                                    source_revision=row.revision_id,
+                                )
+                                if multi is not None:
+                                    stamp_live_multisource_c(
+                                        row, persisted, multi,
+                                    )
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # Catalogue mirror remains independent. A broken source
                 # index cannot invent a cover or leak provider bytes/paths.
