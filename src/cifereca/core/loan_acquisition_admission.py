@@ -138,24 +138,37 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     # The historical facade name remains for ABI compatibility, but its
     # implementation consumes source-scoped v16 grants for every provider.
     # The source's name must not decide whether a linked reader is verified.
-    _, borrower_code = self._paris_adept_identity_for_loan(
-        loan, connection_identity_id=bound_identity_id,
-    )
+    try:
+        borrower_identity, borrower_code = self._paris_adept_identity_for_loan(
+            loan, connection_identity_id=bound_identity_id,
+        )
+    except Exception:
+        # A failing source-scoped borrower resolver is not a grant; never
+        # proceed to rights inventory or ACSM staging on missing evidence.
+        borrower_identity, borrower_code = None, "adept_borrower_ambiguous"
     # The borrower callback is an external source of loan mutations.
     # Even on refusal, never publish its changed/hostile loan ID or
     # present the decision as belonging to a different loan.
     if not admission_intact():
         return source_changed()
-    # A non-None borrower refusal is never an approval, even if its
-    # plugin-provided value is falsey or carries private text.
-    if borrower_code is not None:
+    # A missing/foreign positive identity is not an ADEPT authorization
+    # merely because the resolver returned a literal None refusal code.
+    # Exceptional borrower identities are permitted when explicitly proven:
+    # do not force them to equal the connection owner.
+    if (borrower_code is not None
+            or type(borrower_identity) is not str
+            or not borrower_identity):
+        public_code = (
+            public_borrower_refusal_code(borrower_code)
+            if borrower_code is not None else "adept_borrower_ambiguous"
+        )
         _TRACE_LOG.warning(
             "TRACE download loan_auto blocked reason=borrower_binding_guard loan_ref=%s",
             trace_ref,
         )
         return AutomaticLoanAdmission(refusal={
             "status": "attention_required", "loan_id": pinned_loan_id,
-            "code": public_borrower_refusal_code(borrower_code),
+            "code": public_code,
             "retry": "explicit_only",
         })
     if not admission_intact():
