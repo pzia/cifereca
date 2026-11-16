@@ -15,6 +15,7 @@ import re
 import unicodedata
 from concurrent.futures import FIRST_COMPLETED, wait
 from dataclasses import asdict, replace
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from queue import Queue, Empty, Full
 from typing import Any, Callable
@@ -397,6 +398,25 @@ def _private_search_owner(self, session: ProviderSession) -> str | None:
     except (AttributeError, LookupError, TypeError, ValueError):
         return None
     return owner if type(owner) is str and owner else None
+
+
+# A per-search Core-only context keeps LibraryService's frozen mirror ABI.
+# ContextVar isolates overlapping threads and callback-initiated nested searches;
+# no plugin DTO or session can claim this admission scope.
+_CORE_LIVE_PUBLIC_C_WRITER: ContextVar[bool] = ContextVar(
+    "cifereca_core_live_public_c_writer", default=False,
+)
+
+
+def _mirror_live_search_results(
+    service, rows: list[SearchResult], *, identity_id: str,
+) -> int:
+    """Invoke the legacy mirror ABI while requiring a same-call C witness."""
+    token = _CORE_LIVE_PUBLIC_C_WRITER.set(True)
+    try:
+        return service._mirror_remote_results(rows, identity_id=identity_id)
+    finally:
+        _CORE_LIVE_PUBLIC_C_WRITER.reset(token)
 
 
 # In-process, nonserializable Core admission witness. Do not use a provider
@@ -992,12 +1012,11 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         return []
     if identity is not None:
         try:
-            self._mirror_remote_results([
+            _mirror_live_search_results(self, [
                 row for row in rows
                 if not isinstance(row.metadata, dict)
                 or row.metadata.get("search_provenance") != "known_catalog_stale"
-            ], identity_id=identity.identity_id,
-            require_public_cover_witness=True)
+            ], identity_id=identity.identity_id)
         except Exception:
             # Mirror exceptions may be dynamically named by untrusted plugins.
             logger.warning("TRACE catalog mirror search code=mirror_failed")
@@ -1723,9 +1742,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             row for row in rows
             if row.metadata.get("search_provenance") != "known_catalog_stale"
         ]
-        try: self._mirror_remote_results(
-            live_results, identity_id=identity.identity_id,
-            require_public_cover_witness=True,
+        try: _mirror_live_search_results(
+            self, live_results, identity_id=identity.identity_id,
         )
         except Exception: logger.warning("TRACE catalog mirror progressive search code=mirror_failed")
     cancelled = cancelled or request_cancelled()
@@ -2289,7 +2307,7 @@ def _mirror_remote_results(
         producing_rows = []
         observations = []
         for _key, row, _state, _qualified in keyed:
-            if (require_public_cover_witness
+            if ((require_public_cover_witness or _CORE_LIVE_PUBLIC_C_WRITER.get())
                     and not _verified_public_cover_witness(row)):
                 # Do not promote an arbitrary legacy/private SearchResult to C.
                 continue
