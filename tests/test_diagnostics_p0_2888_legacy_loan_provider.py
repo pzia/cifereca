@@ -30,6 +30,8 @@ def opening_issue(provider="paris", status="attention_required", code="adept_err
     ("paris", "attention_required", "adept_loan_identity_conflict", "warning"),
     ("paris", "attention_required", "adept_error", "warning"),
     ("bnf-pret", "attention_required", "adept_error", "warning"),
+    ("numilog", "retryable_error", "provider_failure", "error"),
+    ("synthetic-pnb", "attention_required", "adept_error", "warning"),
     ("paris", "retryable_error", "provider_failure", "error"),
 ])
 def test_core_opening_loan_issue_is_filterable_by_exact_observed_provider(
@@ -47,7 +49,8 @@ def test_core_opening_loan_issue_is_filterable_by_exact_observed_provider(
     assert event["status"] == level
     assert event["module"] == "ACQUISITION"
     assert not event.get("task_ref")  # Generic opening sync is not a worker GET.
-    assert query_journal(journal.path, provider_id="numilog")["total"] == 0
+    unrelated = "paris" if provider == "numilog" else "numilog"
+    assert query_journal(journal.path, provider_id=unrelated)["total"] == 0
 
     broker = DiagnosticsBrokerImpl(NS(diagnostics=diag))
     assert broker.events(provider_id=provider)["events"] == [event]
@@ -63,10 +66,13 @@ def test_core_opening_loan_issue_is_filterable_by_exact_observed_provider(
     {"category": "PNB"},
     {"operation": "loan_auto"},
     {"status": "success"},
-    {"provider": "numilog"},
+    {"provider": ""},
     {"provider": "Paris"},
-    {"provider": "primary"},
+    {"provider": "bad.provider"},
+    {"provider": "../escape"},
     {"provider": "credential_123"},
+    {"provider": "électronique"},
+    {"provider": "very-long-provider-" + "x" * 90},
     {"provider": None},
     {"issue_status": "retryable_error"},
     {"code": ""},
