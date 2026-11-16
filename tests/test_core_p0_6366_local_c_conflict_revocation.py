@@ -17,6 +17,11 @@ def _ready(db, tmp_path):
     second = _source(db, "seller-b", "edition-b", "https://covers.example.org/b.jpg")
     persist_exact_public_search_cover(db, first)
     persist_exact_public_search_cover(db, second)
+    for source in (first, second):
+        persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:baseline-relation",
+            source=source, relation_proof_id="strong:fixture:baseline",
+        )
     return result, path, first, second
 
 
