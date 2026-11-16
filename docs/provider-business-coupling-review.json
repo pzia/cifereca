@@ -1701,6 +1701,21 @@
       "pr": "#6449",
       "in_ast_metric": true,
       "original_site_id": "site-60a9d11031d9610ffda9a089"
+    },
+    {
+      "id": "struct-p0-5975-historical-return-receipt-source-neutral",
+      "original": "src/cifereca/services.py::LibraryService.verify_loan_return branded Paris-only dispatch before exact historical receipt preflight",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "source-neutral digital-only historical ADEPT receipt lookup using existing typed HistoricalLoanSource, exact connected borrower preflight and source/loan/account drift fences; voluntary return remains completely removed",
+      "classification": "neutral_readonly_history_cutover",
+      "evidence": "Removed the provider_id.casefold() != 'paris' veto. The original adobe_first_paris receipt namespace and API remain byte-compatible. No new return, download, entitlement or runtime path; any provider must pass the exact current source/account preflight before a read.",
+      "tests": [
+        "tests/test_core_p0_5975_neutral_historical_adept_receipts.py",
+        "tests/test_core_p0_5975_adept_return_receipt_read_lease.py",
+        "tests/test_core_p0_1120_closure_gate.py"
+      ],
+      "pr": "pending",
+      "in_ast_metric": false
     }
   ],
   "guard_installations": [
