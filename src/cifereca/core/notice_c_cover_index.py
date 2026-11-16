@@ -298,8 +298,69 @@ def persist_consolidated_cover_source(
         return admitted
 
 
+
+def persist_exact_public_search_cover(
+    storage: Any, source: PersistedNoticeCover,
+) -> ConsolidatedNoticeCover:
+    """Publish an exactly sourced public Search C cover under its own edition.
+
+    The live Core search parser already established the anonymous same-call
+    PublicSearchNotice before persisting the exact source. Here the source's
+    *own* edition key (not its title, ISBN, URL, or another provider's key)
+    is the only allowed canonical target. Cross-source relations must be
+    admitted by a separate strong-link producer, never by this function.
+    Revalidate current SQLite evidence transactionally in the index writer.
+    """
+    if (type(source) is not PersistedNoticeCover
+            or source.observation.key.visibility != "public"
+            or source.observation.key.branch_id != "search.public.catalogue"
+            or source.observation.parser_id != "core.search.public-cover"
+            or source.observation.parser_version != "2"
+            or source.document.kind != "public_catalogue"
+            or source.attribute.state != "available"
+            or not source.attribute.candidates):
+        raise ValueError("unattested_exact_public_c_source")
+
+    fields = source.observation.fields_copy().get("search_result")
+    bibliography = (
+        fields.get("public_bibliography") if type(fields) is dict else None
+    )
+    if (type(bibliography) is not dict
+            or bibliography.get("source_collection") != "public_catalog"
+            or bibliography.get("medium") not in (
+                "digital", "physical", "unknown",
+            )):
+        raise ValueError("invalid_exact_public_c_bibliography")
+    from .notice_search_cover_producer import _coordinate_digest
+    key = source.observation.key
+    if (key.record_id != "search:" + _coordinate_digest(
+            key.provider_id, bibliography["source_collection"],
+            bibliography.get("record_id"),
+        )
+            or key.edition_id != "edition:" + _coordinate_digest(
+                key.provider_id, bibliography["source_collection"],
+                bibliography.get("record_id"),
+                bibliography.get("docbase"), bibliography["medium"],
+                bibliography.get("revision_id"),
+            )):
+        raise ValueError("invalid_exact_public_c_coordinates")
+
+    # The proof is bound to the immutable exact source and edition: this is
+    # identity (self) evidence, not a claimed relation between two providers.
+    digest = sha256(json.dumps(
+        ["cifereca.notice-c.exact-public-search-source.v1",
+         source.document.source_key, key.edition_id],
+        ensure_ascii=True, separators=(",", ":"),
+    ).encode("ascii")).hexdigest()
+    return persist_consolidated_cover_source(
+        storage, canonical_edition_id=key.edition_id, source=source,
+        relation_proof_id="core.exact.search.v1:" + digest,
+    )
+
+
 __all__ = [
     "ConsolidatedCoverSource", "ConsolidatedNoticeCover",
     "canonical_cover_document_ref", "is_canonical_cover_document",
     "read_consolidated_notice_cover", "persist_consolidated_cover_source",
+    "persist_exact_public_search_cover",
 ]
