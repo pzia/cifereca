@@ -396,6 +396,15 @@ def reuse_initial(directory: Path, loan, identity_id: str, account_id: str,
         schema = row.get('schema')
         if type(schema) is not int or schema not in (1, 2):
             return None
+        # v1 was emitted ONLY by the historical Paris/DILICOM first-borrow
+        # writer. Its payload had no branch key, so accepting the same
+        # loan/edition ID for any *other* documentary branch could replay a
+        # one-shot token across unrelated rights. This is a bounded,
+        # read-only migration predicate, NOT a provider-specific rule for v2.
+        if schema == 1 and (
+            owner['provider'] != 'paris' or owner['branch'] != 'DILICOM'
+        ):
+            return None
         expected_scope = (owner if schema == 2 else {
             field: value for field, value in owner.items()
             if field != 'branch'
