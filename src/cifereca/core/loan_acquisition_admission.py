@@ -138,27 +138,26 @@ def resolve(self, loan: Loan, *, _TRACE_LOG) -> AutomaticLoanAdmission:
     _TRACE_LOG.info("TRACE download identity resolved request_ref=%s loan_ref=%s", request_ref, trace_ref)
     if not admission_intact():
         return source_changed()
-    if pinned_provider.lower() == "paris":
-        _, borrower_code = self._paris_adept_identity_for_loan(
-            loan, connection_identity_id=bound_identity_id,
+    # Every automatic loan, whatever its source, must pass the same
+    # source-scoped v16 borrower authority. The historical method name is an
+    # ABI facade, NOT a Paris-only exemption. An epoch lease is a veto only;
+    # it never grants a borrower or an ADEPT profile.
+    _, borrower_code = self._paris_adept_identity_for_loan(
+        loan, connection_identity_id=bound_identity_id,
+    )
+    # The borrower hook may mutate the Loan or rotate the SQLite epoch.
+    if not admission_intact():
+        return source_changed()
+    if borrower_code is not None:
+        _TRACE_LOG.warning(
+            "TRACE download loan_auto blocked reason=borrower_binding_guard loan_ref=%s",
+            trace_ref,
         )
-        # The borrower callback is an external source of loan mutations.
-        # Even on refusal, never publish its changed/hostile loan ID or
-        # present the decision as belonging to a different loan.
-        if not admission_intact():
-            return source_changed()
-        # A non-None borrower refusal is never an approval, even if its
-        # plugin-provided value is falsey or carries private text.
-        if borrower_code is not None:
-            _TRACE_LOG.warning(
-                "TRACE download loan_auto blocked reason=borrower_binding_guard loan_ref=%s",
-                trace_ref,
-            )
-            return AutomaticLoanAdmission(refusal={
-                "status": "attention_required", "loan_id": pinned_loan_id,
-                "code": public_borrower_refusal_code(borrower_code),
-                "retry": "explicit_only",
-            })
+        return AutomaticLoanAdmission(refusal={
+            "status": "attention_required", "loan_id": pinned_loan_id,
+            "code": public_borrower_refusal_code(borrower_code),
+            "retry": "explicit_only",
+        })
     if not admission_intact():
         return source_changed()
     entitlement_inventory = self.storage.entitlements(
