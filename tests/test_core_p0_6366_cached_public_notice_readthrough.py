@@ -10,6 +10,7 @@ from dataclasses import replace
 from types import SimpleNamespace as NS
 
 from cifereca.core import search_orchestration
+from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 from cifereca.core.notice_cover_repository import read_notice_cover
 from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
 from cifereca.models import SearchResult
@@ -23,11 +24,13 @@ class _Public(_FakeSession):
     def __init__(self):
         super().__init__("public-catalogue")
         self.credential_id = "__public__"
+        self.credentials = {}
+        self._accounts = []
         self.calls = 0
 
     def search(self, query, scope, *, field="all", content_types=()):
         self.calls += 1
-        return [SearchResult(
+        source = SearchResult(
             id="public:book:1", record_id="public:book:1",
             docbase="PUBLIC", medium="digital", title="Progressive Book",
             author="A", type="ebook", format="EPUB",
@@ -36,7 +39,15 @@ class _Public(_FakeSession):
             scenario="PUBLIC", source_provider=self.provider_id,
             source_credential="__public__", source_collection="public_catalog",
             owned=False, downloadable=False, download_url=None,
-        )]
+        )
+        # Simulate the real public response pipeline, not a legacy list-only
+        # row with public-looking coordinates. The Core admission witness is
+        # deliberately minted from this exact same-call response.
+        return search_orchestration._public_rows_from_response(
+            ProviderSearchResponse(
+                results=[source], public_notices=(PublicSearchNotice(source),),
+            ), self,
+        )
 
 
 def test_search_cache_sync_and_progressive_replay_after_process_restart(tmp_path):
