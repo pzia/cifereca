@@ -129,3 +129,46 @@ après opt-in CAS exact, refus au changement de CAS OFF / OFF→ON pendant la
 livraison, absence de nouvelle publication ou double requête, CAS corrompu
 et prêts à provenance inconnue. CI Core/provider/AST + installation/rollback
 au HEAD exact requis avant intégration.
+
+## Cutover exécuté — extinction de l'autorité legacy **achat** (16/11/2026)
+
+**Dépendance d'intégration** : PR P0 prêt automatique #6462, puis la présente
+tranche achat. Elles partagent les frontières `source_auto_consent_bridge`
+et les tests de #3171 ; intégrer dans cet ordre ou rebaser explicitement.
+
+Le chemin actif de publication source A→B n'accepte plus `ON` depuis
+les clés `sync.source.numilog.materialization.consent.v1.*` ou
+`sync.source.materialization.on_start.*`, même lorsque l'ancienne révision
+est valide. `toggle_state` retourne `off` sur toute ancienne clé
+source-wide présente, quel que soit son état ou sa catégorie
+(`purchase`/`loan`). Le CAS source exact explicite prend priorité,
+sinon seuls les consentements individuels exacts non frappés d'un veto
+historique restent possibles.
+
+Les ABI `legacy_source_auto_current` et
+`legacy_source_auto_in_transaction`, désormais sans appelant productif,
+renvoient toujours False. `legacy_source_auto_policy` demeure un
+**lecteur descriptif** de l'ancienne valeur, non une permission. Ce retrait
+ne s'effectue pas en déplaçant simplement le dispatch vers un autre module ;
+le flux courant ne tire plus de consentement positif des anciens noms de
+fournisseurs.
+
+Une politique `cifereca.source-sync-consent/1` CAS ON, émise par le choix
+explicite de l'utilisateur pour le fournisseur/credential/compte exact,
+autorise à nouveau la convergence uniquement après preuves d'offre, de
+source, de connexion et de destination ; la révision CAS protège le GET et la
+publication atomique. OFF→ON exige une nouvelle révision et invalide les
+opérations démarrées avant la révocation.
+
+Aucune clé, ancienne révision, migration, artefact ou possession privée n'est
+effacée ; la compatibilité des toggles d'inventaire est conservée pour les
+installations anciennes et leur rollback, sans réouverture des vieux GET.
+Les helpers d'inventaire/génération `_POLICIES` et
+`_consent_generation_key` subsistent pour une coupe ultérieure du **lecteur
+historique et des écritures d'epoch**, après vérification des upgrades.
+Aucune réduction AST n'est revendiquée sans inventaire au HEAD exact.
+
+Les tests Kobo/Numilog/BnF contrôlent ON legacy conservé mais inerte,
+consentement CAS ON explicite, compte primaire vs alias littéral,
+CAS corrompu/non lisible, et ABA après callback avant publication. La suite
+CI + AST + E2E + installation/rollback demeure obligatoire avant merge.
