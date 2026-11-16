@@ -52,6 +52,17 @@ def _same_book_row_presentation(old: BookListItem, new: BookListItem) -> bool:
     # the appropriate test for an executable callback.
     if getattr(old, "action_callback", None) is not getattr(new, "action_callback", None):
         return False
+    # Public C fallback receipts remain tied to one original Core source
+    # object. Their immutable values may compare equal across a worker
+    # replay, even if the old packet has LOST its current-row authority.
+    # The cell's N3 guard (Library/Recent/Loan/History) checks this precise
+    # object identity, so append-fast must follow the same contract. A new
+    # equal-valued receipt needs a rebind to invalidate already-painted N4.
+    for field in (
+        "_cover_public_c_link", "_cover_borrower_public_c_receipt",
+    ):
+        if getattr(old, field, None) is not getattr(new, field, None):
+            return False
     # Exact Core evidence, not just its displayed source URL, determines
     # the N2 cache token. A progressive batch with the same key/title/URL
     # must not retain a cell bound to an older edition, Placement or proof.
