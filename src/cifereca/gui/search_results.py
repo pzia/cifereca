@@ -287,6 +287,12 @@ def _render_search_results(self) -> int:
                     epoch = (item.get("metadata") or {}).get("notice_c_epoch")
                     if type(epoch) is int and epoch > 0:
                         view_row._cover_public_c_epoch = epoch
+                    # Filtering may copy each dict. Only the original
+                    # _search_local_objects row is Core's source witness.
+                    from cifereca.gui.search_known_public_c_guard import (
+                        attach_filtered_known_public_c,
+                    )
+                    attach_filtered_known_public_c(self, view_row, item)
             # Search-local only reuses an explicit Core owner+Artifact+
             # Placement cover packet. An identical URL/title/ISBN/SHA does
             # not let a catalogue notice or another identity borrow N2.
@@ -315,6 +321,10 @@ def _render_search_results(self) -> int:
                 getattr(row, "badge", ""), getattr(row, "action_label", ""),
                 getattr(row, "action_icon_name", ""),
                 bool(getattr(row, "action_callback", None)),
+                getattr(
+                    getattr(row, "_cover_known_public_c_receipt", None),
+                    "context", None,
+                ),
                 getattr(row, "_cover_public_c_epoch", None),
                 getattr(row, "thumbnail_url", None),
             )
@@ -439,6 +449,10 @@ def _render_search_results(self) -> int:
                 epoch = (known.get("metadata") or {}).get("notice_c_epoch")
                 if type(epoch) is int and epoch > 0:
                     view._cover_public_c_epoch = epoch
+                from cifereca.gui.search_known_public_c_guard import (
+                    attach_filtered_known_public_c,
+                )
+                attach_filtered_known_public_c(self, view, known)
                 ui_rows.append(view)
             # An invalid C ref never falls back to a direct image URL or
             # opens a private provider action during online extension.
@@ -597,9 +611,17 @@ def _render_search_results(self) -> int:
             getattr(row, "badge", ""), getattr(row, "action_label", ""),
             getattr(row, "action_icon_name", ""),
             bool(getattr(row, "action_callback", None)),
+            # Keep the exact source witness at [-2]: the existing
+            # Search holdings publisher updates this slot in-place after
+            # a verified detail response (no full list rebuild). Scope
+            # generations belong BEFORE that stable slot.
+            getattr(
+                getattr(row, "_cover_known_public_c_receipt", None),
+                "context", None,
+            ),
+            getattr(row, "_cover_public_c_epoch", None),
             (proof.row_signature if proof is not None else
              getattr(row, "_cover_document_ref", None)),
-            getattr(row, "_cover_public_c_epoch", None),
             getattr(row, "thumbnail_url", None),
         )
     self.search_page.show_rows(ui_rows)
