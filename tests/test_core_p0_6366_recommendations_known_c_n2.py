@@ -128,7 +128,23 @@ def test_changed_provenance_never_borrows_public_c(tmp_path, field, value):
             row["metadata"][field.split(".", 1)[1]] = value
         else:
             row[field] = value
-        assert lookup(db, row) is None
+        assert lookup(
+            db, row, **({"identity_id": "alice"} if field == "identity_id" else {}),
+        ) is None
+        assert db.entitlements() == []
+    finally:
+        db.close()
+
+
+def test_same_attested_public_c_can_be_read_by_two_independent_profiles(tmp_path):
+    db = Storage(tmp_path / "public-cross-profile.sqlite")
+    try:
+        source = persist(db, verified_public(
+            source_provider="bnf", record_id="known-77",
+        ))
+        canonical = persist_exact_public_search_cover(db, source).document
+        assert lookup(db, known_row(source, identity="alice")) == canonical
+        assert lookup(db, known_row(source, identity="bob")) == canonical
         assert db.entitlements() == []
     finally:
         db.close()
