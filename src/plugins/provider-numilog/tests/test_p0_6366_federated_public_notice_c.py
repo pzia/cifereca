@@ -165,7 +165,6 @@ def test_public_same_call_envelope_does_not_launder_private_thumbnail():
         {"owned": True},
         {"downloadable": True},
         {"download_url": "https://private.invalid/file"},
-        {"metadata": {"language": ["fr"], "account": "borrower"}},
     ):
         altered = replace(raw, **mutation)
         snapshot = ProviderSearchResponse(
@@ -178,6 +177,34 @@ def test_public_same_call_envelope_does_not_launder_private_thumbnail():
             assert projected[0].revision_id is None
             assert projected[0].download_url is None
             assert projected[0].source_account_id is None
+
+
+def test_public_response_discards_unknown_private_metadata_even_if_cover_safe():
+    from cifereca.models import SearchResult
+    row = SearchResult(
+        id="public:two", record_id="two", docbase="NUMILOG",
+        medium="digital", title="A safe catalogue title", author=None,
+        type="Book", format="EPUB", publisher=None, published_at=None,
+        description=None, thumbnail_url="https://covers.example.org/catalogue.png",
+        friendly_url=None, scenario="NUMILOG_PUBLIC",
+        source_provider="numilog-catalog", source_credential="__public__",
+        source_collection="public_catalog", owned=False,
+        downloadable=False, download_url=None,
+        metadata={"language": ["fr"], "account": "private-borrower"},
+    )
+    session = NS(
+        provider_id="numilog-catalog", credential_id="__public__",
+        credentials={}, _accounts=[],
+    )
+    shared = _public_rows_from_response(
+        ProviderSearchResponse([row], public_notices=(PublicSearchNotice(row),)),
+        session,
+    )
+    assert len(shared) == 1
+    assert shared[0].thumbnail_url == row.thumbnail_url
+    assert shared[0].metadata == {
+        "catalogue_access": "shared_read_only", "language": ["fr"],
+    }
 
 
 def test_public_supplier_same_call_not_previous_page_and_no_duplicate_get(
