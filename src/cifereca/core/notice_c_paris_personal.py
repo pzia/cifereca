@@ -81,8 +81,8 @@ def attach_paris_personal_public_c(
                 or item.medium != "digital"
                 or item.source_provider != account.provider_id
                 or item.source_credential != account.credential_id
-                or item.identity_id not in (None, account.identity_id)
-                or item.source_account_id not in (None, account.unique_id)
+                or item.identity_id != account.identity_id
+                or item.source_account_id != account.unique_id
                 or type(item.record_id) is not str
                 or _IDENTIFIER.fullmatch(item.record_id) is None
                 or "://" in item.record_id or ".." in item.record_id):
@@ -138,8 +138,8 @@ def valid_paris_personal_public_c(
             and original.medium == "digital"
             and original.source_provider == "paris"
             and original.source_credential == link.scope[2]
-            and original.source_account_id in (None, link.scope[3])
-            and original.identity_id in (None, link.scope[0])
+            and original.source_account_id == link.scope[3]
+            and original.identity_id == link.scope[0]
             and original.record_id == link.record_id)
 
 
