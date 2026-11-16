@@ -114,6 +114,7 @@ def _exact_known_catalogue_scope(row: dict[str, Any]) -> tuple[str, ...] | None:
     )
     if base is None or version == 2:
         return base
+    import re
     revision = meta.get("source_revision")
     account = meta.get("source_account_id")
     medium = meta.get("medium")
@@ -147,6 +148,7 @@ def _exact_remote_catalogue_scope(item: SearchResult) -> tuple[str, ...] | None:
     )
     if base is None or item.revision_id in (None, ""):
         return base
+    import re
     revision, account, medium = (
         item.revision_id, item.source_account_id, item.medium,
     )
