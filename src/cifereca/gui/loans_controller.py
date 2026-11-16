@@ -345,9 +345,12 @@ def _render_loans(self) -> None:
                 self, fresh, lambda: _loan_display_cover(self, fresh),
             ):
                 from cifereca.gui.loan_supplier_document_cover_bridge import show_supplier_loan_cover
-                if not show_supplier_loan_cover(
-                    self, fresh, lambda: _loan_display_cover(self, fresh),
-                ):
+                from .notice_c_paris_personal_bridge import show_paris_public_loan_cover
+                if (not show_paris_public_loan_cover(
+                        self, fresh, lambda: _loan_display_cover(self, fresh),
+                    ) and not show_supplier_loan_cover(
+                        self, fresh, lambda: _loan_display_cover(self, fresh),
+                    )):
                     self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
 
 
@@ -361,9 +364,12 @@ def _loan_selected(self, row: BookListItem | None) -> None:
             self, loan, lambda: _loan_display_cover(self, loan),
         ):
             from cifereca.gui.loan_supplier_document_cover_bridge import show_supplier_loan_cover
-            if not show_supplier_loan_cover(
-                self, loan, lambda: _loan_display_cover(self, loan),
-            ):
+            from .notice_c_paris_personal_bridge import show_paris_public_loan_cover
+            if (not show_paris_public_loan_cover(
+                    self, loan, lambda: _loan_display_cover(self, loan),
+                ) and not show_supplier_loan_cover(
+                    self, loan, lambda: _loan_display_cover(self, loan),
+                )):
                 self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
         self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
             'source_credential':loan.source_credential,'record_id':loan.record_id})
@@ -447,9 +453,12 @@ def _loans_refreshed(self, rows):
                 self, fresh, lambda: _loan_display_cover(self, fresh),
             ):
                 from cifereca.gui.loan_supplier_document_cover_bridge import show_supplier_loan_cover
-                if not show_supplier_loan_cover(
-                    self, fresh, lambda: _loan_display_cover(self, fresh),
-                ):
+                from .notice_c_paris_personal_bridge import show_paris_public_loan_cover
+                if (not show_paris_public_loan_cover(
+                        self, fresh, lambda: _loan_display_cover(self, fresh),
+                    ) and not show_supplier_loan_cover(
+                        self, fresh, lambda: _loan_display_cover(self, fresh),
+                    )):
                     self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
         else:self.loan_page.detail.empty(
             "Prêt non retrouvé dans cette actualisation",
