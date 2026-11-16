@@ -3832,11 +3832,11 @@ class LibraryService:
         self.diagnostics.add("ADEPT", "loan binding", "ok" if binding_complete else "warning", detail=detail, level="normal")
 
     def adept_return_status_for_loan(self, loan: Loan) -> dict[str, Any]:
-        """Read-only ADEPT return status from the exact Paris borrower provenance.
+        """Read-only ADEPT return status from exact source borrower provenance.
 
-        Never infer the Adobe owner from the selected UI identity or the Paris
-        connection owner for a linked account. Keep return actions unavailable
-        when the source, loan transaction or origin profile is ambiguous.
+        Never infer the Adobe owner from GTK selection or a different
+        provider's connection. Return actions remain permanently unavailable
+        when the borrower, transaction or origin profile is ambiguous.
         """
         from .core.adept_return_origin import inventory_attests_return_origin
         from .core.adept_return_source_scope import HistoricalLoanSource
@@ -3845,8 +3845,6 @@ class LibraryService:
         scope = HistoricalLoanSource.capture(loan)
         if scope is None:
             return denied
-        borrower_code = None
-        is_paris = scope.provider_id.casefold() == "paris"
         # Source ownership is exact SQLite provenance for every supplier.
         # The facade or selected GTK identity is not an alternate owner,
         # even if a legacy identity_for_connection override returns one.
@@ -3866,13 +3864,14 @@ class LibraryService:
                 or not identity.identity_id):
             return denied
         bound_identity_id = identity.identity_id
-        borrower_identity_id = bound_identity_id
-        if is_paris:
-            borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
-                loan, connection_identity_id=bound_identity_id,
-            )
-            if not scope.current(loan):
-                return denied
+        # The historical facade name is retained, but the actual resolver
+        # enforces matching source-scoped v16 borrower proof for all libraries.
+        # Historical v15 Paris rows cannot authorize another provider.
+        borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+            loan, connection_identity_id=bound_identity_id,
+        )
+        if not scope.current(loan):
+            return denied
 
         all_rights = self.storage.entitlements(provider_id=scope.provider_id)
         if not scope.current(loan):
@@ -3905,7 +3904,7 @@ class LibraryService:
             if (row.get("status") != "complete"
                     or row.get("executor") != "kobo-adept"
                     # #989: a manual/imported ADEPT artifact is not proof of
-                    # this automatic Paris loan's fulfillment transaction.
+                    # this exact source loan's fulfillment transaction.
                     or row.get("strategy") != "loan_auto"
                     or not scope.matches_acquisition(
                         row, identity_id=bound_identity_id,
@@ -3958,8 +3957,8 @@ class LibraryService:
             }
         # Grants/current identity profile govern NEW fulfillment. Historical
         # inventory attestation preserves a completed license's own origin.
-        # Exact Paris provenance and cross-identity/duplicate guards above stay.
-        if is_paris and not origin_attested and binding.get("adept_profile_id") and (
+        # Exact provider provenance and cross-identity/duplicate vetoes stay.
+        if not origin_attested and binding.get("adept_profile_id") and (
             self.storage.adept_profile_binding_get(
                 "identity", borrower_identity_id
             ) != binding["adept_profile_id"]
