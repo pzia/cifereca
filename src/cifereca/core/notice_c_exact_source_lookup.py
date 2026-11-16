@@ -90,9 +90,16 @@ def exact_public_source_c(
                     return None
         if not matches:
             return None
-        strength = max(len(x.sources) for x in matches)
-        winners = [x for x in matches if len(x.sources) == strength]
-        return winners[0] if len(winners) == 1 else None
+        # Same rule as the public C-first cursor: a sole independently
+        # attested multi-public group may supersede this source's self C.
+        # Two contradictory foreign relation groups never compete by size
+        # or insertion order; retain the self C when present, else unknown.
+        own_ref = canonical_cover_document_ref(edition_id)
+        own = [x for x in matches if x.document == own_ref]
+        foreign = [x for x in matches if x.document != own_ref]
+        if len(foreign) == 1 and len(foreign[0].sources) >= 2:
+            return foreign[0]
+        return own[0] if len(own) == 1 else None
     except (sqlite3.Error, AttributeError, TypeError, ValueError):
         return None
 
