@@ -401,10 +401,15 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
         from cifereca.core.notice_c_borrower_public_projection import (
             attach_borrower_public_c,
         )
-        attach_borrower_public_c(
-            service.storage, rows, identity_id=identity_id,
-            account_epoch=account_epoch, source_epoch=source_epoch,
-        )
+        # Headless worker doubles have no storage. Public-cover enrichment
+        # is optional; a successful private loan refresh must survive it.
+        # Production services expose storage and still require exact C proof.
+        storage = getattr(service, "storage", None)
+        if storage is not None:
+            attach_borrower_public_c(
+                storage, rows, identity_id=identity_id,
+                account_epoch=account_epoch, source_epoch=source_epoch,
+            )
         # Resolve a missing loan cover only on this existing background
         # worker, once per refresh. Core's library_entries(scan=False) reads
         # local placements/entitlements; it never contacts a catalogue,

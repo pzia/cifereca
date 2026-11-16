@@ -318,7 +318,7 @@ def test_gtk_wiring_stays_worker_only_and_keeps_actions(tmp_path):
     history_code = (root / "gui/main_window.py").read_text()
     panel = (root / "gui/detail_panel.py").read_text()
     source = (root / "core/library_projection.py").read_text()
-    assert "admit(" in loan_code.split("def work():", 1)[1]
+    assert "attach_borrower_public_c(" in loan_code.split("def work():", 1)[1]
     assert "admit(" in source.split("def refresh_history(", 1)[1]
     assert "exact_loan_public_c(self, loan)" in loan_code
     assert "show_public_loan_c(" in loan_code
