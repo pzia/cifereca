@@ -560,3 +560,15 @@ def test_existing_v1_first_offer_receipt_remains_readable_until_ttl(first_offer)
         directory, loan, "identity-A", "primary", now=101,
         claim_state=lambda _: None,
     ) is None
+
+    # v1 did not bind the documentary branch. Its only historical writer
+    # was Paris/DILICOM; neither a different Paris branch with the same IDs
+    # nor a new provider may adopt those old bytes as its first token.
+    assert acsm_cache.reuse_initial(
+        directory, replace(loan, provider="SYRACUSE"),
+        "identity-A", "primary", now=101, claim_state=verify,
+    ) is None
+    assert acsm_cache.reuse_initial(
+        directory, replace(loan, source_provider="future-lender"),
+        "identity-A", "primary", now=101, claim_state=verify,
+    ) is None
