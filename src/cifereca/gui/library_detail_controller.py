@@ -24,10 +24,13 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
             "Sélectionnez un livre dans la liste pour afficher ses détails.",
         )
         return
-    if getattr(row, "_library_ambiguous_key", False) is True:
+    if (getattr(row, "_library_ambiguous_key", False) is True
+            or getattr(row, "key", None) in getattr(
+                window, "_library_ambiguous_keys", (),
+            )):
         # The display key is also the dictionary key for action/detail
-        # lookup. Never let a duplicate row open the last writer's book,
-        # private Placement or even a canonical public C cover.
+        # lookup. Reject even a stale once-unique GTK row after a new
+        # duplicate-key inventory; a cell rebind is not a permission proof.
         window.library_page.detail.empty(
             "Référence ambiguë",
             "Actualisez la bibliothèque avant d'ouvrir ce détail.",
