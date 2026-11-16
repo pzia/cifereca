@@ -20,6 +20,16 @@ from tests.test_core_p0_3719_source_sync_consent import source, change
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES
 
 
+
+@pytest.fixture(autouse=True)
+def _runtime_binding_for_offline_selected_source(source):
+    """Fake reciprocal manifest proof only in this runtime integration suite."""
+    service = source[0]
+    service.runtime_acquisition_binding = (
+        lambda provider: "runtime.synthetic"
+        if provider == service.account.provider_id else None
+    )
+
 def bridge(service, calls, *, revoke=None, foreign=False, duplicate=False):
     def guarded(account, *, admission_current, execute_runtime,
                 edition_id, resource_id, kind, branch, selected_offer_id,
@@ -33,7 +43,7 @@ def bridge(service, calls, *, revoke=None, foreign=False, duplicate=False):
         candidate = target_dir / "verified.pdf"
         request = {
             "schema_version": 2,
-            "source": {"type": "kobo", "provider": "fake", "request": {
+            "source": {"type": service.account.provider_id, "provider": "fake", "request": {
                 "url": "https://example.org/fixture"}},
             "format": "pdf", "destination": str(candidate),
         }
@@ -124,7 +134,7 @@ def test_runtime_guarded_candidate_cannot_substitute_or_skip_runtime_proof(
             service.execute_acquisition_request = fake_runtime
             request = {
                 "schema_version": 2,
-                "source": {"type": "kobo", "provider": "synthetic"},
+                "source": {"type": service.account.provider_id, "provider": "synthetic"},
                 "format": "pdf", "destination": str(runtime_path),
             }
             if route == "failed_swallowed":
@@ -170,7 +180,7 @@ def test_runtime_guarded_cannot_swap_bytes_at_witnessed_path(source, tamper):
         service.execute_acquisition_request = runtime
         execute_runtime({
             "schema_version": 2,
-            "source": {"type": "kobo", "provider": "synthetic"},
+            "source": {"type": service.account.provider_id, "provider": "synthetic"},
             "format": "pdf", "destination": str(produced),
         })
         if tamper == "replace_inode":
@@ -362,3 +372,77 @@ def test_runtime_success_with_rejected_final_bytes_reports_kdrm_verdict(
     # URLs, borrower identity or the exact temporary file path.
     assert "https://" not in detail
     assert str(root) not in detail
+
+
+@pytest.mark.parametrize(("recipe_type", "binding"), [
+    ("kobo", "runtime.synthetic"),
+    ("another-provider", "runtime.synthetic"),
+    ("seller-a", None),
+    ("http", "runtime.synthetic"),
+])
+def test_canonical_runtime_refuses_foreign_or_unbound_source_before_dispatch(
+    source, recipe_type, binding,
+):
+    """Provider-selected DRM source cannot spend a different provider's consent."""
+    service, db, root, calls, _broker = source
+    change(source, True)
+    service.runtime_acquisition_binding = (
+        lambda provider: binding if provider == "seller-a" else None
+    )
+
+    def guarded(_account, *, admission_current, execute_runtime,
+                target_dir, selected_offer_id, **_kwargs):
+        assert admission_current() is True
+        calls.append("runtime")
+        target = target_dir / "untrusted.pdf"
+        service.execute_acquisition_request = (
+            lambda _request: pytest.fail(
+                "unqualified runtime recipe must not execute supplier I/O"
+            )
+        )
+        execute_runtime({
+            "schema_version": 2,
+            "source": {"type": recipe_type, "provider": "untrusted"},
+            "format": "pdf", "destination": str(target),
+        })
+        return DeliveryCandidate(
+            service.resource_snapshot.resources[0].source,
+            selected_offer_id, target,
+        )
+
+    service.session.downloadable_selected_delivery_candidate_runtime_guarded = guarded
+    result = synchronize_account_source(service, service.account)
+    assert result["canonical_execution"]["downloaded"] == 0
+    assert result["canonical_execution"]["failed"] == 1
+    assert db.placements() == [] and db.entitlements() == []
+    assert calls == ["offer", "runtime"]
+    assert not list((root / "A" / ".canonical-delivery").glob("run-*"))
+
+
+def test_canonical_runtime_admits_exact_installed_source_and_acsm_protocol():
+    from cifereca.core.canonical_selected_delivery import (
+        _selected_runtime_recipe_source_admitted,
+    )
+    from types import SimpleNamespace as NS
+
+    queries = []
+    service = NS(runtime_acquisition_binding=lambda provider: (
+        queries.append(provider) or (
+            "runtime.synthetic" if provider == "seller-a" else None
+        )
+    ))
+    assert _selected_runtime_recipe_source_admitted(
+        service, {"type": "seller-a"}, "seller-a",
+    )
+    assert queries == ["seller-a"]
+    assert _selected_runtime_recipe_source_admitted(
+        service, {"type": "acsm"}, "seller-a",
+    )
+    assert queries == ["seller-a"]  # ACSM is technical, never a plugin dispatch.
+    assert not _selected_runtime_recipe_source_admitted(
+        service, {"type": "kobo"}, "seller-a",
+    )
+    assert queries == ["seller-a"]
+    assert not _selected_runtime_recipe_source_admitted(
+        service, {"type": True}, "seller-a",
+    )
