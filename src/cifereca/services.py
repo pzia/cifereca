@@ -1579,101 +1579,42 @@ class LibraryService:
         session = self._session_for_account(account)
         if not session.capabilities.loans:
             return []
-        # Capture immutable read coordinates before *either* provider I/O
-        # path. A mutable legacy Account must not move an observation to a
-        # different identity, borrower or cache key while loans() is running.
+        # A single typed observation boundary for every installed producer.
+        # The public ABI adapter alone can translate a legacy positive list;
+        # missing/mixed provenance never becomes a cacheable observation.
+        from .plugin_api.loan_inventory import read_loan_inventory
+        from .providers.base import ProviderDescriptor
         request_scope = (
             account.identity_id, account.provider_id,
-            account.credential_id, account.unique_id,
+            account.credential_id, account.unique_id, account.is_primary,
         )
         request_epoch = source_context_epoch(self)
-        request_session_fields = (
-            getattr(session, "provider_id", None),
-            getattr(session, "credential_id", None),
-            getattr(session, "connected", None),
-        )
-        session_key = self._session_key(
-            request_scope[1], request_scope[2],
-        )
-        registered_at_read = self._sessions.get(session_key) is session
-        # Prefer the atomic, scoped v2 observation where published. The v1
-        # list reader stays available for old installed plugin packages; it
-        # is never consulted as a second read of an opt-in snapshot.
-        # A provider can expose a property whose getter performs a remote
-        # request. Capability discovery must not execute that property or
-        # silently fall back to the v1 reader when the typed declaration is
-        # malformed; read_loan_inventory validates it without a second GET.
-        raw_reader = inspect.getattr_static(
-            session, "loan_inventory_snapshot", None,
-        )
-        if raw_reader is not None:
-            from .plugin_api.loan_inventory import read_loan_inventory
-            snapshot = read_loan_inventory(session, account, descriptor=inspect.getattr_static(session, "descriptor", None))
-            if snapshot.status in ("failed", "cancelled"):
-                raise ProviderConfigurationError("loan_inventory_read_unavailable")
-            # The reader already checks the account and mutable session
-            # fields; additionally protect against an ABA source rebind or
-            # replacement of the registered provider during the I/O.
-            if (source_context_epoch(self) != request_epoch
-                    or self._session_for_account(account) is not session):
-                raise ProviderConfigurationError("loan_inventory_scope_changed")
-            rows = list(snapshot.loans)
-        else:
-            rows = session.loans(account)
-            # Legacy v1 has no immutable envelope or post-I/O scope guard.
-            # Close that gap before any normalization or cache publication,
-            # including in-place account edits, session swaps and ABA epoch
-            # changes. Preserve non-registered legacy test/plugin shims:
-            # only assert a registry lease if it existed at admission.
-            if (
-                source_context_epoch(self) != request_epoch
-                or (
-                    account.identity_id, account.provider_id,
-                    account.credential_id, account.unique_id,
-                ) != request_scope
-                or (
-                    getattr(session, "provider_id", None),
-                    getattr(session, "credential_id", None),
-                    getattr(session, "connected", None),
-                ) != request_session_fields
-                or (registered_at_read and self._sessions.get(session_key) is not session)
-            ):
-                raise ProviderConfigurationError("loan_inventory_scope_changed")
-        # Never silently rewrite a supplier-provided different identity into
-        # the selected account. Validate the entire batch before mutation,
-        # caching or entitlement persistence; provider exceptions remain closed.
-        from .plugin_api.loan_inventory import LoanInventoryScope
-        from .providers.base import ProviderDescriptor
-        # Positive rows may use a primary alias only when the installed
-        # provider descriptor declares it for this exact empty-ID borrower.
-        # The v1 read remains supported, but may not infer Paris or any
-        # other provider's alias from a name alone.
+        session_key = self._session_key(request_scope[1], request_scope[2])
         descriptor = inspect.getattr_static(session, "descriptor", None)
         if descriptor is not None and type(descriptor) is not ProviderDescriptor:
-            descriptor = None
+            raise ProviderConfigurationError("loan_inventory_read_unavailable")
+
+        def still_bound():
+            return (
+                source_context_epoch(self) == request_epoch
+                and (account.identity_id, account.provider_id,
+                     account.credential_id, account.unique_id, account.is_primary)
+                    == request_scope
+                and self._sessions.get(session_key) is session
+                and inspect.getattr_static(session, "descriptor", None) is descriptor
+            )
+
         try:
-            scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
+            snapshot = read_loan_inventory(
+                session, account, descriptor=descriptor, scope_current=still_bound,
+            )
         except ValueError as exc:
-            raise ProviderConfigurationError(
-                "Inventaire de prêts : périmètre de compte non conforme"
-            ) from exc
-        borrowers = {account.unique_id}
-        if scope.primary_account_alias is not None:
-            borrowers.add(scope.primary_account_alias)
-        if type(rows) is not list or any(
-            type(row) is not Loan
-            or (row.identity_id is not None and row.identity_id != account.identity_id)
-            or row.source_provider != account.provider_id
-            or row.source_credential != account.credential_id
-            or (row.source_account_id is not None
-                and row.source_account_id not in borrowers)
-            for row in rows
-        ):
-            raise ProviderConfigurationError("Inventaire de prêts : périmètre de compte non conforme")
-        for row in rows:
-            row.identity_id = account.identity_id
-            if row.source_account_id is None:
-                row.source_account_id = account.unique_id
+            raise ProviderConfigurationError("loan_inventory_read_unavailable") from exc
+        if not still_bound() or snapshot.reason_code == "scope_changed":
+            raise ProviderConfigurationError("loan_inventory_scope_changed")
+        if snapshot.status in ("failed", "cancelled"):
+            raise ProviderConfigurationError("loan_inventory_read_unavailable")
+        rows = list(snapshot.loans)
         serial = []
         for row in rows:
             d = asdict(row); d["raw"] = {}
