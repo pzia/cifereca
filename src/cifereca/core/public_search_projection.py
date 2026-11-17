@@ -24,6 +24,7 @@ _BIBLIOGRAPHY = frozenset({
     "language", "languages", "original_language", "isbn", "isbns", "series",
     "collection", "publisher", "subjects", "subject", "genres", "genre",
     "authors", "contributors", "edition", "tags", "keywords", "themes",
+    "awards", "prizes", "literary_prizes",
 })
 
 
@@ -84,8 +85,10 @@ def _public_bibliographic_metadata(raw: object) -> dict | None:
             parts = value
         else:
             return None
+        # Explicit literary award labels have a tighter per-value bound.
+        limit = 240 if name in ("awards", "prizes", "literary_prizes") else 8192
         for part in parts:
-            if (type(part) is not str or not _public_bibliographic_text(part)
+            if (type(part) is not str or not _public_bibliographic_text(part, limit=limit)
                     or _PRIVATE_LOCATION.match(part.lstrip()) is not None):
                 return None
         copied = value if type(value) is str else list(parts)
