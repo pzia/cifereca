@@ -111,3 +111,26 @@ def test_unproven_search_never_requests_an_offer(monkeypatch, invalid):
                         lambda *_a, **_kw: pytest.fail("no provider request"))
     with pytest.raises(ProviderConfigurationError, match="canonical_owned"):
         search.obtain_selected_owned(NS(), replace(_item(), **invalid))
+
+
+@pytest.mark.parametrize("observed,accepted", [
+    (None, True), ("buyer", True), ("former-buyer", False),
+    ("", False), (False, False),
+])
+def test_compat_search_never_reassigns_explicit_account(monkeypatch, observed, accepted):
+    from dataclasses import replace
+    from cifereca.core import selected_source_offer
+    target = NS(account_id="buyer")
+    calls = []
+    monkeypatch.setattr(selected_source_offer, "select_source_offer_target",
+                        lambda *_a, **_kw: target)
+    monkeypatch.setattr(selected_source_offer, "obtain_source_offer",
+                        lambda _svc, chosen: calls.append(chosen) or "result")
+    item = replace(_item(), source_account_id=observed)
+    if accepted:
+        assert search.obtain_selected_owned(NS(), item, identity_id="owner") == "result"
+        assert calls == [target]
+    else:
+        with pytest.raises(ProviderConfigurationError, match="canonical_owned"):
+            search.obtain_selected_owned(NS(), item, identity_id="owner")
+        assert calls == []
