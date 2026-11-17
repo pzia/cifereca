@@ -2140,9 +2140,8 @@ def _stamp_cached_public_notice_refs(
         return
     from .notice_search_cover_producer import admit_public_search_cover
     from .notice_cover_projection import notice_cover_document_ref
-    from .notice_c_cover_index import (
-        canonical_cover_document_ref, read_consolidated_notice_cover,
-    )
+    from .notice_c_exact_source_lookup import exact_public_source_c_many
+    admitted = []
 
     for index, row in enumerate(rows):
         if type(row) is not SearchResult:
@@ -2153,6 +2152,7 @@ def _stamp_cached_public_notice_refs(
             "_core_notice_canonical_cover_document_ref",
             "_core_notice_canonical_cover_document_epoch",
             "_core_persisted_c_revision_witness",
+            "_core_cached_c_receipt",
         ):
             row.__dict__.pop(key, None)
         safe_url = _shared_catalogue_cover_url(row.thumbnail_url)
@@ -2172,12 +2172,16 @@ def _stamp_cached_public_notice_refs(
             # The UI's GTK bind may only consume the resulting exact ref.
             if storage is None or index >= 256:
                 continue
-            canonical_ref = canonical_cover_document_ref(
-                snapshot.key.edition_id,
-            )
-            persisted = read_consolidated_notice_cover(
-                storage, canonical_ref,
-            )
+            coords = (row.source_provider, row.record_id, row.docbase, row.medium, row.revision_id)
+            admitted.append((row, snapshot, exact, coords))
+        except (ValueError, TypeError, UnicodeError, AttributeError):
+            continue
+    if not admitted:
+        return
+    resolved = exact_public_source_c_many(storage, [entry[3] for entry in admitted])
+    for row, snapshot, exact, coords in admitted:
+        try:
+            persisted = resolved.get(coords)
             if persisted is None or not persisted.candidates:
                 continue
             for source in persisted.sources:
@@ -2200,6 +2204,8 @@ def _stamp_cached_public_notice_refs(
                     row._core_notice_canonical_cover_document_epoch = (
                         persisted.epoch
                     )
+                    from .notice_c_cached_revision import stamp_cached_c_revision
+                    stamp_cached_c_revision(row, persisted, identity_id=identity_id)
                     break
         except (ValueError, TypeError, UnicodeError, AttributeError):
             # Corrupt/stale canonical metadata is not an absent source or a
@@ -2231,6 +2237,7 @@ def _mirror_remote_results(
             row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
             row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
             row.__dict__.pop("_core_persisted_c_revision_witness", None)
+            row.__dict__.pop("_core_cached_c_receipt", None)
             row.__dict__.pop("_core_notice_cross_provider_proof", None)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
