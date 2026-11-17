@@ -15,6 +15,14 @@ from ..core.notice_c_known_projection import matching_live_public_canonical_ref
 from ..core.notice_c_live_revision import persisted_live_c_revision
 
 
+from ..core.notice_c_cached_revision import matching_cached_public_canonical_ref
+
+
+def _matching_ref(item, *, identity_id):
+    return (matching_live_public_canonical_ref(item, identity_id=identity_id)
+            or matching_cached_public_canonical_ref(item, identity_id=identity_id))
+
+
 _ISSUER = object()
 
 
@@ -50,7 +58,7 @@ def issue_public_c_binding(
             or type(account_epoch) is not int or account_epoch < 0
             or type(source_epoch) is not int or source_epoch < 0):
         return None
-    document = matching_live_public_canonical_ref(item, identity_id=identity_id)
+    document = _matching_ref(item, identity_id=identity_id)
     epoch = persisted_live_c_revision(item, document)
     if document is None or epoch is None:
         return None
@@ -81,7 +89,7 @@ def public_c_binding_revision(
             or getattr(service, "_account_context_epoch", None) != receipt.account_epoch
             or getattr(service, "_source_context_epoch", None) != receipt.source_epoch
             or persisted_live_c_revision(receipt.source, document) != receipt.epoch
-            or matching_live_public_canonical_ref(
+            or _matching_ref(
                 receipt.source, identity_id=receipt.identity_id,
             ) != document):
         return None
