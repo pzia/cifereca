@@ -419,3 +419,25 @@ def test_catalogue_search_exception_is_a_closed_warning(progressive):
     result = compute_recommendations(Metadata(), FailedCatalog(), "id-1", max_queries=1)
     assert result.warnings == ("catalogue_search_failed",)
     assert secret not in repr(result.warnings)
+
+
+def test_explicit_reader_catalogue_facet_is_used_instead_of_unscoped_broker():
+    class Broker:
+        def __init__(self):
+            self.identities = []
+            self.scoped = ProgressiveCatalog()
+
+        def for_identity(self, identity_id):
+            self.identities.append(identity_id)
+            return self.scoped
+
+        def searchable_providers(self):
+            pytest.fail("unscoped catalogue inventory")
+
+        def search_progressive(self, *args, **kwargs):
+            pytest.fail("unscoped catalogue search")
+
+    broker = Broker()
+    result = compute_recommendations(Metadata(), broker, "id-1", max_queries=2)
+    assert broker.identities == ["id-1"]
+    assert broker.scoped.calls and result.ranked

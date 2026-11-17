@@ -174,3 +174,26 @@ def test_reference_progressive_coverage_distinguishes_empty_and_typed_error(
     assert expected in tooltip
     assert ("1 en erreur" in status) is typed_failure
     assert "PRIVATE_TYPED_REFUSAL" not in status + tooltip
+
+
+def test_reference_search_uses_reader_not_synthetic_profile_key():
+    class Broker:
+        def __init__(self):
+            self.identities = []
+            self.scoped = Catalog()
+
+        def for_identity(self, identity_id):
+            self.identities.append(identity_id)
+            return self.scoped
+
+        def search(self, *args, **kwargs):
+            pytest.fail("unscoped catalogue search")
+
+    broker = Broker()
+    result = compute_reference_recommendations(
+        broker, reference_book(), identity_id="reader-b", max_queries=2,
+    )
+    assert broker.identities == ["reader-b"]
+    assert broker.scoped.queries and result.ranked
+    with pytest.raises(ValueError, match="search_identity_required"):
+        compute_reference_recommendations(broker, reference_book())

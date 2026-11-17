@@ -2286,6 +2286,7 @@ class UxRecommendationsView:
                 return compute_reference_recommendations(
                     catalog_broker,
                     reference,
+                    identity_id=identity_id,
                     scope=self._config_str("scope", "digital"),
                     max_queries=self._config_int("max_queries", 8),
                     per_query=self._config_int("per_query", 50),
