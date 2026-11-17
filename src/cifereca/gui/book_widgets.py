@@ -160,6 +160,7 @@ class CoverView(Gtk.Overlay):
         priority: int = 10,
         on_texture_applied: Callable[[str, Path], None] | None = None,
         is_current: Callable[[], bool] | None = None,
+        minimum_revision: int | None = None,
     ) -> None:
         """Bind N2 DocumentRef before N3; same GTK generation and decode sink.
 
@@ -230,6 +231,8 @@ class CoverView(Gtk.Overlay):
                     service, document, variant=variant, priority=priority,
                     on_texture_applied=on_texture_applied,
                     is_current=is_current,
+                    **({"minimum_revision": minimum_revision}
+                       if minimum_revision is not None else {}),
                 )
             except (RuntimeError, ValueError, TypeError):
                 self._show_missing()
@@ -248,6 +251,8 @@ class CoverView(Gtk.Overlay):
             width=self._width * scale if variant == "list" else self._width,
             height=self._height * scale if variant == "list" else self._height,
             on_source_changed=source_changed,
+            **({"minimum_revision": minimum_revision}
+               if minimum_revision is not None else {}),
         )
         self._request = request
         # The worker already checked N2, but idle dispatch can run LATER
@@ -270,6 +275,8 @@ class CoverView(Gtk.Overlay):
                 service, document, variant=variant, priority=priority,
                 on_texture_applied=on_texture_applied,
                 is_current=is_current,
+                **({"minimum_revision": minimum_revision}
+                   if minimum_revision is not None else {}),
             )
             # bind_document resets the widget. Bound the repair to one
             # attempt per binding/source notification, not an idle loop.
@@ -757,7 +764,7 @@ class BookListCell(Gtk.Box):
                 and known_public_c_cell_current(
                     self.window, item, receipt,
                 )
-            )}
+            ), "minimum_revision": receipt.epoch}
         public_link = getattr(item, "_cover_public_c_link", None)
         if public_link is not None:
             # Bind-time owner and two Core epochs, never a mutable current
@@ -779,7 +786,7 @@ class BookListCell(Gtk.Box):
                 and local_public_c_cell_current(
                     self.window, item, service=owner, context=context,
                 )
-            )}
+            ), "minimum_revision": getattr(public_link, "epoch", None)}
         borrower = getattr(item, "_cover_borrower_public_c_receipt", None)
         if borrower is not None:
             # Also recheck after a delayed N3 callback. A recycled cell or
@@ -787,7 +794,7 @@ class BookListCell(Gtk.Box):
             from .borrower_public_c_bridge import admit_borrower_public_c_cell
             return {"is_current": lambda: admit_borrower_public_c_cell(
                 self.window, item, getattr(item, "_cover_document_ref", None),
-            )}
+            ), "minimum_revision": getattr(borrower, "epoch", None)}
         proof = getattr(item, "_cover_search_evidence", None)
         from .search_document_cover_bridge import search_document_is_current
         return {"is_current": lambda: search_document_is_current(self.window, proof)}
