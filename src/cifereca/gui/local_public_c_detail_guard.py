@@ -86,17 +86,24 @@ def local_public_c_detail_check(
 
 @contextmanager
 def staged_local_public_c_detail(
-    detail: Any, is_current: Callable[[], bool],
+    detail: Any, is_current: Callable[[], bool], *,
+    minimum_revision: int | None = None,
 ) -> Iterator[None]:
     """Use one callback for the synchronous detail header, not future rows."""
     if (not callable(is_current)
             or getattr(detail, "_next_local_public_c_check", None) is not None):
         raise ValueError("invalid_local_public_c_detail_stage")
+    if minimum_revision is not None and (
+        type(minimum_revision) is not int or not 1 <= minimum_revision < 2**63
+    ):
+        raise ValueError("invalid_public_c_detail_epoch")
     detail._next_local_public_c_check = is_current
+    detail._next_public_c_minimum_revision = minimum_revision
     try:
         yield
     finally:
         detail._next_local_public_c_check = None
+        detail._next_public_c_minimum_revision = None
 
 
 __all__ = [
