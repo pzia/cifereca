@@ -330,6 +330,7 @@ def preview_live_borrow_for_current_identity(
     service, *, expected_edition_id: str,
     observations: object, now: int | None = None,
     requesting_identity_id: str | None = None, scope_current=None,
+    reader_scope=None,
 ) -> BorrowForIdentityPreview:
     """Project live Core owner/session facts without switching identities.
 
@@ -351,7 +352,17 @@ def preview_live_borrow_for_current_identity(
             or not callable(scope_current) or scope_current() is not True):
         raise ValueError("invalid_cross_profile_borrow_context")
     requesting = requesting_identity_id
-    context = getattr(service, "_account_context_epoch", None)
+    # A scoped reader uses its own source generation; the historical GTK
+    # projection keeps its navigation generation for held menus.
+    if reader_scope is not None:
+        from .search_orchestration import SearchReadScope
+        if (type(reader_scope) is not SearchReadScope
+                or reader_scope.identity_id != requesting
+                or not reader_scope.current(service)):
+            raise ValueError("invalid_cross_profile_borrow_context")
+        context = reader_scope.source_epoch
+    else:
+        context = getattr(service, "_account_context_epoch", None)
     if type(context) is not int or context < 0:
         raise ValueError("invalid_cross_profile_borrow_context")
     source = source_context_epoch(service)
@@ -377,7 +388,8 @@ def preview_live_borrow_for_current_identity(
         witnesses=witnesses, now=now, context_epoch=context,
     )
     if (scope_current() is not True
-            or getattr(service, "_account_context_epoch", None) != context
+            or (not reader_scope.current(service) if reader_scope is not None
+                else getattr(service, "_account_context_epoch", None) != context)
             or source_context_epoch(service) != source):
         empty = preview_borrow_for_identity(
             requesting_identity_id=requesting,
@@ -410,6 +422,7 @@ def revalidate_live_borrow_lender_selection(
     selected_option_id: str, expected_edition_id: str,
     observations: object, now: int | None = None,
     requesting_identity_id: str | None = None, scope_current=None,
+    reader_scope=None,
 ) -> BorrowLenderSelection:
     """Re-evaluate the *clicked* option, never pick the first eligible offer.
 
@@ -442,7 +455,7 @@ def revalidate_live_borrow_lender_selection(
             service, expected_edition_id=expected_edition_id,
             observations=observations, now=now,
             requesting_identity_id=requesting_identity_id,
-            scope_current=scope_current,
+            scope_current=scope_current, reader_scope=reader_scope,
         )
         if scope_current() is not True:
             return stale
@@ -474,8 +487,47 @@ def revalidate_live_borrow_lender_selection(
         return stale
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class ScopedBorrowPreview:
+    """In-process read-only result, pinned to the original Core and reader."""
+    reader_scope: object
+    preview: BorrowForIdentityPreview
+
+
+def preview_borrow_for_scope(service, *, reader_scope, expected_edition_id: str,
+                             observations: object, now: int | None = None):
+    from .search_orchestration import SearchReadScope
+    if type(reader_scope) is not SearchReadScope or not reader_scope.current(service):
+        raise ValueError("invalid_cross_profile_borrow_context")
+    result = preview_live_borrow_for_current_identity(
+        service, expected_edition_id=expected_edition_id, observations=observations,
+        now=now, requesting_identity_id=reader_scope.identity_id,
+        scope_current=lambda: reader_scope.current(service), reader_scope=reader_scope,
+    )
+    return ScopedBorrowPreview(reader_scope, result)
+
+
+def revalidate_borrow_for_scope(service, *, captured: ScopedBorrowPreview,
+                                selected_option_id: str, expected_edition_id: str,
+                                observations: object, now: int | None = None):
+    from .search_orchestration import SearchReadScope
+    stale = BorrowLenderSelection("revoked", "selection_stale")
+    if (type(captured) is not ScopedBorrowPreview
+            or type(captured.reader_scope) is not SearchReadScope
+            or not captured.reader_scope.current(service)):
+        return stale
+    scope = captured.reader_scope
+    return revalidate_live_borrow_lender_selection(
+        service, captured_preview=captured.preview, selected_option_id=selected_option_id,
+        expected_edition_id=expected_edition_id, observations=observations, now=now,
+        requesting_identity_id=scope.identity_id,
+        scope_current=lambda: scope.current(service), reader_scope=scope,
+    )
+
+
 __all__ = [
     "ObservedBorrowOffer", "BorrowLenderSelection",
     "preview_live_borrow_for_current_identity",
     "revalidate_live_borrow_lender_selection",
+    "ScopedBorrowPreview", "preview_borrow_for_scope", "revalidate_borrow_for_scope",
 ]
