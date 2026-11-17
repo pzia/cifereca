@@ -8,10 +8,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from inspect import getattr_static
+from threading import Lock
 
 from ..models import Account
 from .canonical_delivery_abi import has_complete_delivery_abi
 from .private_inventory_binding import exact_private_inventory_binding_valid
+
+
+class _ConfirmedOfferUse:
+    """Internal, in-process, single attempt; failure requires new confirmation."""
+
+    def __init__(self):
+        self._lock = Lock()
+        self._used = False
+
+    def claim(self):
+        with self._lock:
+            if self._used:
+                raise ValueError("selected_source_confirmation_consumed")
+            self._used = True
 
 
 @dataclass(frozen=True, repr=False)
@@ -33,6 +48,7 @@ class SourceOfferTarget:
     # Explicit headless admission additionally pins the actual registry object
     # and Core instance, not merely a reusable identity string.
     reader_scope: object | None = field(default=None, compare=False, repr=False)
+    _confirmed_use: _ConfirmedOfferUse | None = field(default=None, compare=False, repr=False)
 
 
 def _resolve(service, target: SourceOfferTarget):
@@ -44,6 +60,8 @@ def _resolve(service, target: SourceOfferTarget):
     # switch; minimal synthetic facades with no epoch still need all the
     # independent account/session/ABI binding guards below.
     if target.reader_scope is not None:
+        if type(target._confirmed_use) is not _ConfirmedOfferUse:
+            raise ValueError("selected_source_confirmation_required")
         from .search_orchestration import SearchReadScope
         scope = target.reader_scope
         if (type(scope) is not SearchReadScope
@@ -174,6 +192,13 @@ def admit_library_source_offer(
 
 def obtain_source_offer(service, target: SourceOfferTarget):
     """Core's existing global-lock, single-offer A→B path, without entitlements."""
+    if type(target) is not SourceOfferTarget:
+        raise ValueError("selected_source_target_invalid")
+    if target.reader_scope is not None:
+        if type(target._confirmed_use) is not _ConfirmedOfferUse:
+            raise ValueError("selected_source_confirmation_required")
+        target._confirmed_use.claim()
+
     def resolve(_service, entitlement_id, identity_id, item_id):
         if (entitlement_id is not None or identity_id != target.identity_id
                 or item_id != target.item_id):
