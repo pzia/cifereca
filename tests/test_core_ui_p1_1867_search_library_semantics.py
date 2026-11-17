@@ -11,7 +11,6 @@ from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
 from cifereca.gui.query_model import result_row
-from cifereca.core.search_owned_evidence import SearchOwnedEvidence
 from tests.test_search_results_view import _book, _host
 
 
@@ -27,9 +26,7 @@ def _private_numilog():
 
 
 def _proof():
-    return SearchOwnedEvidence(
-        "alice", frozenset({("numilog", "personal-credential", "account-A", "same", "")}),
-    )
+    return NS(identity_id="alice", rights=frozenset({("numilog", "personal-credential", "account-A", "same", "")}))
 
 
 def _right():
@@ -57,10 +54,10 @@ def test_remote_catalogue_cannot_be_promoted_to_owned_by_search_flags():
     assert result_row(replace(_book("paris"), owned=True))["state"] == "remote_catalog"
     assert result_row(_private_numilog())["state"] == "remote_catalog"
     assert result_row(_private_numilog(), purchase_evidence=_proof(),
-                      identity_id="alice")["state"] == "remote_owned"
+                      identity_id="alice")["state"] == "remote_catalog"
 
 
-def test_private_numilog_requires_full_scope_and_origin_before_claiming_owned():
+def test_private_numilog_remains_descriptive_even_with_historical_scope():
     private = _private_numilog()
     variants = (
         replace(private, source_collection="public_catalog"),
@@ -72,16 +69,16 @@ def test_private_numilog_requires_full_scope_and_origin_before_claiming_owned():
     for variant in variants:
         assert result_row(variant, purchase_evidence=_proof(),
                           identity_id="alice")["state"] == "remote_catalog", repr(variant)
-    # Neither supplier scenario nor collection vocabulary creates the right.
+    # Neither old proof nor supplier scenario creates the right.
     assert result_row(replace(private, scenario="NUMILOG_PUBLIC"),
-                      purchase_evidence=_proof(), identity_id="alice")["state"] == "remote_owned"
+                      purchase_evidence=_proof(), identity_id="alice")["state"] == "remote_catalog"
     for vendor_hint in (None, False, 1):
         actual = result_row(
             replace(private, owned=vendor_hint), purchase_evidence=_proof(),
             identity_id="alice",
         )
-        assert actual["state"] == "remote_owned"
-        assert actual["owned"] is True
+        assert actual["state"] == "remote_catalog"
+        assert actual["owned"] is False
 
 
 def test_anonymous_numilog_search_shows_notice_not_purchase_or_download():
@@ -103,11 +100,13 @@ def test_anonymous_numilog_search_shows_notice_not_purchase_or_download():
 def test_private_numilog_inventory_does_not_imply_local_epub():
     host = _host()
     host._remote_search_results = [_private_numilog()]
-    host.service.storage = NS(entitlements=Mock(return_value=[_right()]))
+    host.service.storage = NS(entitlements=Mock(side_effect=AssertionError("legacy ledger forbidden")))
     host.service.can_direct_download = Mock(return_value=False)
     host._populate_search(host._remote_search_results, announce=False)
     row = host.search_page.show_rows.call_args.args[0][0]
-    assert "Mes achats · fichier local non présumé" in row.meta
+    assert "Notice de bibliothèque · fichier local non présumé" in row.meta
+    assert "Mes achats" not in row.meta
+    host.service.storage.entitlements.assert_not_called()
     assert "fichier local non présumé" in row.meta
     assert "Fichier local disponible" not in row.meta
     assert row.options["action_label"] is None
@@ -137,7 +136,7 @@ def test_detail_usage_is_read_only_and_matches_search_projection():
     exec(compile(isolated, str(owner), "exec"), scope)
     usage = scope["_commercial_search_usage"]
     assert "aucun achat attesté" in usage(_public_numilog())
-    assert "Mes achats · fichier local non présumé" in usage(
+    assert "aucun droit d'achat attesté" in usage(
         _private_numilog(), NS(current_identity=NS(identity_id="alice")),
         purchase_evidence=_proof())
     assert "aucun droit d'achat attesté" in usage(
@@ -171,13 +170,11 @@ def test_detail_usage_is_read_only_and_matches_search_projection():
     assert usage(synthetic_public) == "Catalogue commercial public · aucun achat attesté"
     synthetic_private = replace(_private_numilog(), source_provider="synthetic-provider")
     assert "aucun droit d'achat attesté" in usage(synthetic_private)
-    synthetic_proof = SearchOwnedEvidence(
-        "alice", frozenset({("synthetic-provider", "personal-credential", "account-A", "same", "")}),
-    )
-    assert usage(
+    synthetic_proof = NS(identity_id="alice", rights=frozenset({("synthetic-provider", "personal-credential", "account-A", "same", "")}))
+    assert "aucun droit d'achat attesté" in usage(
         synthetic_private, NS(current_identity=NS(identity_id="alice")),
         purchase_evidence=synthetic_proof,
-    ) == "Mes achats · fichier local non présumé"
+    )
     detail_source = owner.read_text(encoding="utf-8").split("class DetailPanel", 1)[0]
     assert 'item.source_provider == "kobo"' not in detail_source
     assert 'item.source_provider == "numilog"' not in detail_source
@@ -231,4 +228,5 @@ def test_p0_5056_search_labels_do_not_dispatch_by_numilog_identity():
     assert 'if item.source_provider == "numilog-catalog":' not in source
     assert 'elif item.source_provider == "numilog"' not in source
     assert "Catalogue public · aucun achat attesté" in source
-    assert "Mes achats · fichier local non présumé" in source
+    assert "Notice de bibliothèque · fichier local non présumé" in source
+    assert "snapshot_search_owned_evidence" not in source
