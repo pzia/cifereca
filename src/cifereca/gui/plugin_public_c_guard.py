@@ -127,6 +127,7 @@ def plugin_public_c_detail_current(
 def staged_plugin_exact_public_c(
     view: Any, panel: Any, document: object, *,
     selection_is_current: Callable[[], bool] | None = None,
+    minimum_revision: int | None = None,
 ):
     """Return a render-scoped N3 check for an in-place exact Search detail.
 
@@ -162,6 +163,7 @@ def staged_plugin_exact_public_c(
     from .local_public_c_detail_guard import staged_local_public_c_detail
     return True, staged_local_public_c_detail(
         panel, same_original_recommendation,
+        minimum_revision=minimum_revision,
     )
 
 
