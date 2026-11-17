@@ -276,6 +276,8 @@ def test_real_child_is_reaped_before_transaction_restores_packages(tmp_path, mon
             on_line(line)
             if boundary == "interrupted":
                 raise KeyboardInterrupt()
+        # Only the timeout case intentionally exceeds its deadline. Give
+        # the actual child startup time under parallel CI scheduling.
         return _run(tmp_path, f'''
             import sys, time, json
             from pathlib import Path
@@ -283,9 +285,6 @@ def test_real_child_is_reaped_before_transaction_restores_packages(tmp_path, mon
             print(json.dumps({{"schema":"cifereca.update.progress/1", "stage":"plugin_install",
                 "status":"RUNNING", "plugin_index":2, "plugin_total":3}}), file=sys.stderr, flush=True)
             {terminal}
-        # Only the timeout case intentionally exceeds its deadline. Give
-        # the actual child enough startup time under parallel CI scheduling;
-        # the sleeper still stays alive for ten seconds in the timeout case.
         ''', on_line=receive, timeout=2 if boundary == "timeout" else 5,
                     **child_options)
     monkeypatch.setattr(updater, "run_plugin_child", run)
