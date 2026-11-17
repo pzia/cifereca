@@ -80,9 +80,42 @@ def _account_ref(service: Any, account: Any) -> AccountRef:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ScopedCatalogSearch:
+    """Read-only search facet bound to an explicit identity and source epoch."""
+    service: Any
+    request_scope: Any
+
+    def searchable_providers(self):
+        from .core.search_orchestration import searchable_providers
+        return searchable_providers(self.service, request_scope=self.request_scope)
+
+    def search_progressive(self, query: str, **options):
+        return self.service.search_progressive_for_scope(self.request_scope, query, **options)
+
+    def search(self, query: str, **options):
+        rows = []
+        summary = self.search_progressive(
+            query, on_batch=lambda batch: rows.extend(batch.results), **options,
+        )
+        return [] if summary.cancelled else rows
+
+    def known_public_notices(self, query: str, **options):
+        # Public C is independent of the reader but a revoked computation
+        # may not continue with new queries after its source scope is gone.
+        if not self.request_scope.current(self.service):
+            return []
+        return CatalogBrokerImpl(self.service).known_public_notices(query, **options)
+
+
 @dataclass(slots=True)
 class CatalogBrokerImpl:
     service: Any
+
+    def for_identity(self, identity_id: str) -> ScopedCatalogSearch:
+        from .core.search_orchestration import capture_search_read_scope
+        return ScopedCatalogSearch(self.service, capture_search_read_scope(self.service, identity_id))
+
     def search(self, query: str, **options: Any): return self.service.search(query, **options)
     def search_progressive(self, query: str, *, on_batch: Callable[[Any], None], control: Any = None, **options: Any):
         return self.service.search_progressive(query, on_batch=on_batch, control=control, **options)

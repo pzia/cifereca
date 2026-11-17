@@ -237,6 +237,12 @@ def compute_recommendations(
 ) -> RecommendationResult:
     total_started = time.perf_counter()
 
+    # Direct Core clients can supply the unbound public broker. The UI
+    # normally binds it already, before enqueue.
+    bind_catalog = getattr(type(catalog_broker), "for_identity", None)
+    if callable(bind_catalog):
+        catalog_broker = bind_catalog(catalog_broker, identity_id)
+
     # Persisted projection only: never trigger a filesystem scan here.
     if snapshot_cache is None:
         snapshot_started = time.perf_counter()
