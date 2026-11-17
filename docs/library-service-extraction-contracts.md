@@ -1,5 +1,33 @@
 # Contrats de LibraryService avant extraction — lot 0 (#1116)
 
+## Retrait ciblé #3199 (Core 0.9.44+dev.13, lot de développement)
+
+Inventaire candidat sur main 184373f4, revérifié avant édition : les cinq wrappers
+de l'issue n'ont pas de consommateur de production identifié par recherche de
+symboles dans le dépôt. Cela ne constitue pas un inventaire des extensions
+externes non disponibles. Trois sont déjà retirés : `_acquire_personal_library_item`,
+`_execute_kobo_acquisition`, `sync_kobo_backup` ; les références historiques et
+tests de non-réactivation restent utiles.
+
+Les deux derniers sont des wrappers de façade interne (pas d'ABI Plugin API
+versionnée ni de commande CLI dédiée identifiée), non des opérations métier :
+
+| Ancienne signature | Remplacement explicite |
+|---|---|
+| `prepare_direct_download(item) -> (Path, str)` | `acquire_direct_item(item) -> Acquisition` ; consulter `path`, `target_dir`, `url` |
+| `prepare_digital_download(loan, force_refresh=False) -> (Path, str)` | `acquire_digital_loan(loan, force_refresh=...)` ; refuser un résultat sans fichier avant usage |
+
+La suppression est intentionnelle dans le présent lot, avec mise à jour des
+deux entrées du fixture gelé. Le seul test appelant le second wrapper
+(`test_core_0913.py`) vérifie désormais directement le parcours canonique, y
+compris force_refresh, cache/hook et présence du chemin ; les autres tests de
+DRM et d'acquisition sont conservés. Toute extension externe qui importait
+ces méthodes internes doit migrer avant d'utiliser cette version. Aucun
+changement de version majeure de Plugin API ni de comportement des commandes
+ou brokers supportés n'est induit. La matrice historique ci-dessous est
+conservée comme baseline, non inventaire des méthodes actuelles.
+
+
 > **Retrait fonctionnel #4147 (02/11/2026) :** `Booking`, `ProviderCapabilities.bookings` et `LibraryService.refresh_bookings` ne représentent plus une capacité produit. Ils restent strictement **inertes en ABI v1** pour décoder/effacer sans risque d'anciennes données et tolérer les plugins déjà installés : `refresh_bookings` vide son snapshot et retourne `[]` sans stockage, session ni réseau. Aucun `ListBookings`/`CancelBookings`, vue, action ou badge ne doit être réactivé. Les méthodes et callsites de `library-service-inventory.json` sont une **baseline historique** ; leur présence dans ce document n'autorise pas leur réintroduction. Les prêts, l'historique, les profils ADEPT et les renouvellements Paris physiques restent indépendants.
 
 La façade `from cifereca.services import LibraryService` reste le point d'entrée.
