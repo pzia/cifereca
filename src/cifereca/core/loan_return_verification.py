@@ -32,7 +32,8 @@ def _paris_inventory_rows_well_formed(rows: Any) -> bool:
     )
 
 
-def _paris_inventory_exact_borrower(rows: Any, account: Any) -> bool:
+def _paris_inventory_exact_borrower(rows: Any, account: Any, *,
+                                     primary_alias: str | None = "primary") -> bool:
     """A complete source can prove absence ONLY for its intended borrower.
 
     An installed adapter stamps every row with exact source and borrower
@@ -55,17 +56,20 @@ def _paris_inventory_exact_borrower(rows: Any, account: Any) -> bool:
     # because its returned loan list happens to be empty. In particular,
     # [] + a complete DILICOM status is NOT absence proof for the principal
     # account unless the selected Account really is_primary.
-    if (account.is_primary is not True
-            and account.unique_id in ('', 'primary')):
+    if (type(account.is_primary) is not bool
+            or (account.is_primary is not True
+                and (account.unique_id == "" or account.unique_id == primary_alias))):
         return False
-    borrower = account.unique_id or 'primary'
+    borrowers = {account.unique_id}
+    if account.is_primary and account.unique_id == "" and primary_alias is not None:
+        borrowers.add(primary_alias)
     return all(
         type(row.source_provider) is str
         and row.source_provider == account.provider_id
         and type(row.source_credential) is str
         and row.source_credential == account.credential_id
         and type(row.source_account_id) is str
-        and row.source_account_id == borrower
+        and row.source_account_id in borrowers
         and (row.identity_id is None
              or (type(row.identity_id) is str
                  and row.identity_id == account.identity_id))
@@ -182,14 +186,26 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
     typed = raw_reader is not None
     if typed:
         from ..plugin_api.loan_inventory import read_loan_inventory
-        snapshot = read_loan_inventory(session, account, descriptor=getattr_static(session, "descriptor", None))
+        descriptor = getattr_static(session, "descriptor", None)
+        snapshot = read_loan_inventory(session, account, descriptor=descriptor)
         if snapshot.status not in {"success", "partial"}:
             raise ValueError("return_inventory_unavailable")
         rows = list(snapshot.loans)
+        # The typed reader validated this exact descriptor against the
+        # account. Do not substitute the historical literal "primary" for
+        # a native empty borrower or a different declared alias.
+        primary_alias = (descriptor.existing_primary_loan_account_alias
+                         if descriptor is not None else None)
+        if getattr_static(session, "descriptor", None) is not descriptor:
+            raise ValueError("return_inventory_source_changed")
     else:
         # A legacy v1 result is read once for positive observations only.
+        # Its frozen alias convention cannot authorize absence.
         rows = session.loans(account)
-    if not still_bound() or not _paris_inventory_exact_borrower(rows, account):
+        primary_alias = "primary"
+    if not still_bound() or not _paris_inventory_exact_borrower(
+        rows, account, primary_alias=primary_alias,
+    ):
         raise ValueError("return_inventory_scope_changed")
     presence = _paris_loan_presence(rows, loan)
     if presence is None:
