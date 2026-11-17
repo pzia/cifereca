@@ -167,3 +167,28 @@ def test_direct_typed_reader_property_is_not_evaluated_or_retried(tmp_path):
         assert service.storage.acquisitions() == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("field", ["identity_id", "source_account_id"])
+def test_legacy_positive_without_provenance_is_not_normalized_into_cache(tmp_path, field):
+    service = _service(tmp_path)
+    try:
+        a = account(borrower="exact")
+        service.accounts = [a]
+        row = loan(a)
+        setattr(row, field, None)
+        calls = []
+        session = NS(
+            provider_id=a.provider_id, credential_id=a.credential_id,
+            connected=True, capabilities=NS(loans=True),
+            loans=lambda selected: calls.append(selected) or [row],
+        )
+        service._sessions[service._session_key(a.provider_id, a.credential_id)] = session
+        with pytest.raises(ProviderConfigurationError, match="loan_inventory_read_unavailable"):
+            service._loans_for_account(a, force=True)
+        assert calls == [a]
+        assert getattr(row, field) is None
+        assert service.storage.cache_get("account", _loan_cache_key(a)) is None
+        assert not service.storage.entitlements()
+    finally:
+        service.close()
