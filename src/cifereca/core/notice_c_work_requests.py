@@ -19,7 +19,10 @@ from .notice_c_cover_index import (
 from .notice_c_origin_link_producer import reattest_exact_origin_group_txn
 from .notice_cover_repository import (
     PersistedNoticeCover, _checked_source_state, _opaque_key,
+    _persist_notice_cover_txn, _MAX_EPOCH,
 )
+
+from .notice_cover_projection import project_notice_cover_attribute
 
 _MAX_MATCHES = 32
 
@@ -73,6 +76,7 @@ def request_affected_public_recompute_txn(db, source, *, now):
     candidates = []
     refused = 0
     multi = 0
+    uncertain = False
     for row_key, raw in rows:
         try:
             document = canonical_cover_document_ref(_json(raw)["edition_id"])
@@ -98,10 +102,11 @@ def request_affected_public_recompute_txn(db, source, *, now):
             candidates.append((document, is_multi))
         except (ValueError, TypeError, KeyError, UnicodeError, RecursionError):
             refused += 1
+            uncertain = True
 
     refs = []
     for document, is_multi in candidates:
-        if is_multi and multi != 1:
+        if is_multi and (multi != 1 or uncertain):
             refused += 1
             continue
         try:
@@ -134,3 +139,43 @@ def request_affected_public_recompute(storage, source, *, now):
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         return request_affected_public_recompute_txn(db, source, now=now)
+
+
+def persist_public_source_and_request(
+    storage, observation, *, field_path, cover_inventory_complete,
+    now, expected_epoch=None,
+):
+    """Opt-in producer port: source publication + dirty requests, atomic.
+
+    Reuse the canonical source writer. No existing producer is switched
+    automatically; the coordinator must explicitly call this off GTK.
+    If a partial write is declined by the source writer, no request follows.
+    """
+    if (observation.key.visibility != "public"
+            or observation.parser_id != "core.search.public-cover"
+            or observation.parser_version != "2"):
+        raise ValueError("notice_work_public_source_required")
+    if (expected_epoch is not None
+            and (type(expected_epoch) is not int
+                 or not 0 <= expected_epoch < _MAX_EPOCH)):
+        raise ValueError("notice_c_persisted_epoch_invalid")
+    if not journal._integer(now):
+        raise ValueError("notice_work_invalid_clock")
+    attribute = project_notice_cover_attribute(
+        observation, field_path=field_path,
+        cover_inventory_complete=cover_inventory_complete,
+    )
+    key = _opaque_key(attribute.document)
+    if key is None:
+        raise ValueError("notice_c_persisted_scope_invalid")
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        published = _persist_notice_cover_txn(
+            db, observation, attribute, key, field_path,
+            cover_inventory_complete, expected_epoch,
+        )
+        if published is None:
+            return published, SourceChangeRequests((), 0, 0)
+        return published, request_affected_public_recompute_txn(
+            db, published, now=now,
+        )
