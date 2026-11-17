@@ -60,7 +60,7 @@ def test_source_epoch_changed_during_holdings_cannot_publish_actions(
         f.service._source_context_epoch = 11
         return f.detail
 
-    f.service.holdings = reconnect_during_read
+    f.service.holdings_for_scope = reconnect_during_read
     success(work())
     assert len(f.calls) == 1
     assert f.outputs == []
