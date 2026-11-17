@@ -153,8 +153,6 @@ def test_corrupt_switch_stays_off_through_opening_but_another_source_updates(
         assert service.sync_source_enabled(allowed)
         # Ignore unrelated loan and ADEPT work. Those paths are orthogonal to
         # this source switch, and must not be used as permission to download.
-        monkeypatch.setattr(service, "_kobo_adapter",
-                            lambda: NS(available=lambda: False))
         monkeypatch.setattr(service, "_loans_for_account",
                             lambda *_args, **_kw: [])
         monkeypatch.setattr(service, "_reconcile_identity_adept_inventory",

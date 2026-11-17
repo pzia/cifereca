@@ -379,10 +379,6 @@
     "kind": "method",
     "signature": "(self) -> 'Path'"
   },
-  "_kobo_adapter": {
-    "kind": "method",
-    "signature": "(self)"
-  },
   "_required_plugin_service": {
     "kind": "method",
     "signature": "(self, plugin_id: 'str') -> 'Any'"

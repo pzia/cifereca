@@ -58,7 +58,6 @@ def test_opening_partial_continues_other_loans_and_recovers_without_ui_identity_
                          ebook_url='https://example.invalid/second.acsm', due_at='2099-01-01')]
         service.current_identity = service.identity_by_id('bob')
         monkeypatch.setattr(service, '_loans_for_account', lambda _a, force=False: loans)
-        monkeypatch.setattr(service, '_kobo_adapter', lambda: SimpleNamespace(available=lambda: False))
         service.config.set("kobo_backup.enabled", False)
         monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
         monkeypatch.setattr(service, '_reconcile_identity_adept_inventory', lambda _i: {})
@@ -92,7 +91,7 @@ def test_opening_partial_continues_other_loans_and_recovers_without_ui_identity_
 
 @pytest.mark.parametrize("name", [
     "_acquire_personal_library_item", "_execute_kobo_acquisition", "sync_kobo_backup",
-    "prepare_direct_download", "prepare_digital_download",
+    "prepare_direct_download", "prepare_digital_download", "_kobo_adapter",
 ])
 def test_retired_internal_acquisition_wrappers_do_not_reappear(name):
     assert not hasattr(LibraryService, name)

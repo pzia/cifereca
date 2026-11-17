@@ -54,7 +54,6 @@ def _service(tmp_path: Path) -> LibraryService:
 
 
 def _neutralize_unrelated_sync_work(service: LibraryService, monkeypatch) -> None:
-    monkeypatch.setattr(service, "_kobo_adapter", lambda: SimpleNamespace(available=lambda: False))
     monkeypatch.setattr(service, "_loans_for_account", lambda account, force=False: [])
     monkeypatch.setattr(service, "sync_source_enabled", lambda account: True)
     monkeypatch.setattr(service, "mirror_personal_libraries", lambda: {"mirrored": 0})

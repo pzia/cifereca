@@ -35,6 +35,7 @@ def test_corrupt_binding_fields_block_return_without_reading_provider(
         monkeypatch.setattr(
             service, "_kobo_adapter",
             lambda: pytest.fail("Return status must not fetch Adobe inventory"),
+            raising=False,  # poison a retired attribute; no runtime shim
         )
         monkeypatch.setattr(
             service, "execute_drm_mutation",
