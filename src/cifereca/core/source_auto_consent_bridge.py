@@ -21,7 +21,7 @@ from .source_sync_consent import (
 # lookup carries no consent decision, provider GET or acquisition permission.
 from .legacy_source_consent_metadata import (
     _POLICIES, _HEX, _source_id, _consent_generation_key,
-    legacy_source_consent_switch_present,
+    legacy_source_consent_switch_present, historical_switch_in_transaction,
 )
 
 
@@ -53,47 +53,31 @@ def toggle_state(db, source: SourceKey):
         # policy. Falling back to an older ON after an unreadable CAS row
         # would resurrect a revoked or unverified automatic acquisition.
         return "off"
-    spec = _POLICIES.get((source.scope.provider_id, source.kind))
-    if spec is None:
-        return None
-    # No alternative historical per-right grant can bypass an explicitly
-    # disabled loan source. This runs inside the same SQLite transaction as
-    # the final local publication guard.
+    # A historical toggle is solely a veto. Its namespace is not a provider
+    # capability; the source digest already includes the provider coordinate.
+    try:
+        if historical_switch_in_transaction(db, source.scope, source.kind):
+            return "off"
+    except Exception:
+        return "off"
+    # Disabled sources and ambiguous old primary aliases must never admit
+    # exact-right work merely because no historical toggle exists.
     if source.kind == "loan":
         try:
             from .source_sync_consent import source_enablement_key
             from .source_enablement import source_enabled
-            enabled_row = db.execute(
-                "SELECT value FROM metadata WHERE key=?",
-                (source_enablement_key(source.scope),),
-            ).fetchone()
-            if not source_enabled(enabled_row[0] if enabled_row else None):
+            row = db.execute("SELECT value FROM metadata WHERE key=?",
+                             (source_enablement_key(source.scope),)).fetchone()
+            if not source_enabled(row[0] if row else None):
                 return "off"
         except Exception:
             return "off"
-    # The old Sync source-id encoding maps an empty primary borrower to the
-    # literal text "provider:credential:primary". A real upstream borrower
-    # can have exactly that ID. A legacy source-wide ON row cannot identify
-    # which of those TWO accounts opted in, even when only one remains in the
-    # current account list. Deny the ambiguous *literal* borrower until it
-    # receives the new exact-scope, CAS-versioned source policy above.
     scope = source.scope
     if ambiguous_legacy_source_account_id(
         scope.provider_id, scope.credential_id, scope.account_id
     ):
         return "off"
-    prefix, _active, _epoch_prefix = spec
-    sid = _source_id(source.scope)
-    row = db.execute(
-        "SELECT 1 FROM metadata WHERE key=?", (prefix + sid,),
-    ).fetchone()
-    # Do not delete old metadata: rollback and migration readers retain it.
-    # Its mere existence must not override exact-right revocations or grant
-    # a source-wide purchase/loan acquisition. CAS ON takes precedence above.
-    return "off" if row is not None else None
-
-
-
+    return None
 
 
 def consent_generation(storage, scope):
