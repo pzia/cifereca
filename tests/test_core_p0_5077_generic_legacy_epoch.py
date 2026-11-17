@@ -1,54 +1,45 @@
-"""P0 #5077: one legacy consent policy defines toggle and ABA epoch keys.
-
-This adapter does not grant any new acquisition consent.
-"""
-from types import SimpleNamespace as NS
-
+"""#5077: frozen data formats, no provider-specific authorization dispatch."""
 import pytest
 
 from cifereca.core import source_auto_consent_bridge as bridge
 from cifereca.core import legacy_source_consent_metadata as metadata
+from cifereca.core.source_convergence import SourceKey
+from cifereca.core.source_sync_consent import read_policy
+from cifereca.plugin_api.provider_rights_observation import ProviderRightsScope
+from cifereca.storage import Storage
 
 
-def scope(provider):
-    return NS(identity_id="alice", provider_id=provider,
-              credential_id="credential", account_id="account")
+@pytest.mark.parametrize("provider", ["numilog", "kobo", "bnf-pret", "fictional"])
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_same_historical_formats_for_every_exact_provider_scope(tmp_path, provider, index):
+    scope = ProviderRightsScope("alice", provider, "credential", "account")
+    other = ProviderRightsScope("alice", provider, "other", "account")
+    key, old_on, revision = metadata.historical_consent_keys(scope)[index]
+    kind = "loan" if index == 1 else "purchase"
+    source = SourceKey(scope, "edition", "right", kind, "branch")
+    foreign = SourceKey(other, "edition", "right", kind, "branch")
+    db = Storage(tmp_path / "historical.sqlite")
+    try:
+        db.metadata_set(key, old_on)
+        db.metadata_set(revision, "a" * 32)
+        assert read_policy(db, scope).mode == "unset"
+        assert bridge.consent_generation(db, scope) == "a" * 32
+        assert bridge.consent_generation(db, other) is None
+        with db._lock, db._connect() as connection:
+            assert bridge.toggle_state(connection, source) == "off"
+            assert bridge.toggle_state(connection, foreign) is None
+            assert bridge.consent_generation_in_transaction(connection, source) == "a" * 32
+        remainders = [epoch for _key, _on, epoch in metadata.historical_consent_keys(scope)
+                      if epoch != revision]
+        db.metadata_set(remainders[0], "b" * 32)
+        assert bridge.consent_generation(db, scope) == "invalid"
+        with db._lock, db._connect() as connection:
+            assert bridge.consent_generation_in_transaction(connection, source) == "invalid"
+    finally:
+        db.close()
 
 
-@pytest.mark.parametrize(("provider", "expected"), [
-    ("numilog", "sync.source.numilog.materialization.epoch.v1."),
-    ("kobo", "sync.source.materialization.on_start."),
-    ("bnf-pret", "sync.source.bnf_auto."),
-])
-def test_legacy_epoch_uses_same_provider_mapping_as_toggle(provider, expected):
-    source = scope(provider)
-    sid = bridge._source_id(source)
-    key = bridge._consent_generation_key(source)
-    suffix = "" if provider == "numilog" else ".revision"
-    assert key == expected + sid + suffix
-
-
-def test_future_provider_policy_is_generic_but_unknown_and_ambiguous_fail_closed(monkeypatch):
-    source = scope("fixture-provider")
-    assert bridge._consent_generation_key(source) is None
-    policies = dict(metadata._POLICIES)
-    policies[("fixture-provider", "purchase")] = (
-        "compat.fixture.", "enabled", "compat.epoch.fixture."
-    )
-    monkeypatch.setattr(metadata, "_POLICIES", policies)
-    assert bridge._consent_generation_key(source) == (
-        "compat.epoch.fixture." + bridge._source_id(source)
-    )
-    policies[("fixture-provider", "loan")] = ("compat.fixture.loan.", "enabled", None)
-    assert bridge._consent_generation_key(source) is None
-
-
-def test_epoch_key_has_no_provider_name_dispatch():
-    import ast
-    import inspect
-    tree = ast.parse(inspect.getsource(bridge._consent_generation_key))
-    literal_providers = {"kobo", "numilog", "bnf-pret", "paris"}
-    assert not any(
-        isinstance(value, ast.Constant) and value.value in literal_providers
-        for value in ast.walk(tree)
-    )
+def test_no_supplier_policy_lookup_survives():
+    assert not hasattr(metadata, "_POLICIES")
+    assert not hasattr(bridge, "_POLICIES")
+    assert not hasattr(metadata, "_consent_generation_key")
