@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import threading
 import time
 
@@ -18,7 +18,7 @@ from cifereca.plugin_api import (
 )
 from cifereca_numilog_public_client import (
     fetch_public_search, fetch_public_search_url, public_search_url,
-    _RetainedSearchPage, _parse_retained_search_input,
+    _RetainedSearchPage, _parse_retained_search_input, _transport_digest,
 )
 from cifereca_numilog_public import PublicSearchPage, PublicSearchParseError, _query
 
@@ -52,6 +52,12 @@ DESCRIPTOR = ProviderDescriptor(
         "Accès HTTP direct, conditions de robots et pages suivantes restent à qualifier.",
     ),
 )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _ReservedPublicRefresh:
+    execute: object
+    release: object
 
 
 class NumilogPublicSession(ProviderSession):
@@ -263,6 +269,115 @@ class NumilogPublicSession(ProviderSession):
                     yield raw
         finally:
             self._navigation_lock.release()
+
+    def _reserve_exact_public_refresh(self, input_token, record_id, transport_digest,
+                                      *, hold_start_authority):
+        """Private opt-in refresh of ONE previously attested Search page.
+
+        Caller is the trusted Core composition, not GTK or generic Search.
+        It supplies current consent/policy via a guard, never a URL.
+        The original entry must still be live; this is not a discovery
+        endpoint, background TTL refresh or a cache-miss recovery.
+        """
+        if (not self._retain_public_search_inputs
+                or type(input_token) is not str or len(input_token) != 32
+                or any(ch not in "0123456789abcdef" for ch in input_token)
+                or type(record_id) is not str or not 1 <= len(record_id) <= 160
+                or type(transport_digest) is not str or len(transport_digest) != 64
+                or not callable(hold_start_authority)):
+            raise ProviderCapabilityError("Numilog : public_catalog_refresh_scope_forbidden")
+
+        cache = self._public_cache
+        if not self._navigation_lock.acquire(blocking=False):
+            raise ProviderError("Numilog : public_catalog_refresh_busy")
+        try:
+            if (not self.connected or self.credential_id != "__public__"
+                    or self.credentials or self._accounts):
+                raise ProviderCapabilityError("Numilog : public_catalog_refresh_scope_forbidden")
+            generation = self._navigation_epoch
+            if not cache._lock.acquire(blocking=False):
+                raise ProviderError("Numilog : public_catalog_refresh_busy")
+            try:
+                slot, epoch, key, raw, previous = cache._reserve_retained_refresh_locked(
+                    input_token, record_id, transport_digest,
+                )
+            finally:
+                cache._lock.release()
+        finally:
+            self._navigation_lock.release()
+
+        lock = threading.Lock()
+        phase = "reserved"
+        started = False
+
+        def release():
+            nonlocal phase
+            with lock:
+                if phase != "reserved":
+                    return
+                phase = "done"
+            cache._release_reserved(slot)
+
+        def before_get(control):
+            nonlocal started
+            # External policy guard must not acquire Storage. Actual transport
+            # start is linearized here, after HTTP client construction. A
+            # revoke AFTER this point cannot unsend an admitted request.
+            control.check_cancelled()
+            with hold_start_authority() as allowed:
+                if allowed is not True:
+                    raise ProviderError("Numilog : public_catalog_refresh_revoked")
+                with self._navigation_lock, cache._lock:
+                    entry, ttl = cache._peek_retained_input_locked(input_token)
+                    if (started or not self.connected
+                            or self._navigation_epoch != generation
+                            or self.credential_id != "__public__"
+                            or self.credentials or self._accounts
+                            or cache._epoch != epoch or cache._inflight is not slot
+                            or entry is None or entry.raw_input != raw or ttl < 1
+                            or _transport_digest(raw._url) != transport_digest):
+                        raise ProviderError("Numilog : public_catalog_refresh_revoked")
+                    control.check_cancelled()
+                    started = True
+
+        def execute(control):
+            nonlocal phase
+            with lock:
+                if phase != "reserved":
+                    raise ProviderError("Numilog : public_catalog_refresh_consumed")
+                phase = "running"
+            try:
+                def load():
+                    fresh = fetch_public_search_url(
+                        raw._url, _retain_input=True,
+                        _before_get=lambda: before_get(control),
+                    )
+                    if not started or type(fresh) is not _RetainedSearchPage:
+                        raise ProviderError("Numilog : public_catalog_refresh_invalid")
+                    matches = [row for row in fresh.page.items if row.record_id == record_id]
+                    if (len(matches) != 1
+                            or any(getattr(matches[0], attr) != getattr(previous, attr)
+                                   for attr in ("docbase", "medium", "revision_id", "type"))):
+                        raise ProviderError("Numilog : public_catalog_refresh_coordinate_changed")
+                    control.check_cancelled()
+                    return fresh
+
+                fresh = cache._run_reserved(key, slot, epoch, load)
+                row, = [item for item in fresh.page.items if item.record_id == record_id]
+                row, = self._public_rows((row,))
+                self._assert_public_generation(generation)
+                control.check_cancelled()
+                from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+                response = ProviderSearchResponse(
+                    results=[row], public_notices=(PublicSearchNotice(row),),
+                )
+                return response, int(time.time())
+            finally:
+                cache._release_reserved(slot)
+                with lock:
+                    phase = "done"
+
+        return _ReservedPublicRefresh(execute, release)
 
     def _reparse_retained_public_row(self, token, record_id):
         """Run the existing offline parser on the exact retained input.
