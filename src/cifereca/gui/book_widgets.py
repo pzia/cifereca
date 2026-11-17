@@ -76,6 +76,7 @@ class CoverView(Gtk.Overlay):
         self._priority = 10
         self._decode_retry = False
         self._document_check = None
+        self._document_decode_retry = None
         # Optional N0 paint observation: attached only by a Core source
         # adapter that already owns an exact N2 decision/lease. Never a
         # source of bibliographic evidence or provider access.
@@ -133,6 +134,7 @@ class CoverView(Gtk.Overlay):
         self._decode_retry = False
         self._on_texture_applied = None
         self._document_check = None
+        self._document_decode_retry = None
         self._set_logical_size(self._width, self._height)
         self.picture.set_paintable(None)
         self.placeholder.set_visible(True)
@@ -237,6 +239,24 @@ class CoverView(Gtk.Overlay):
         # thumbnail path. N0 paint receipts retain their exact source.
         self._url = request.source_uri
 
+        def retry_document_decode() -> None:
+            # GDK rejected physical N3 bytes, NOT their documentary N2
+            # source. Re-enter the exact gateway (including EPUB extraction,
+            # source tokens and subscriptions), never force a raw URI load.
+            # The corrupt cache file has already been invalidated.
+            if generation != self._generation:
+                return
+            self.bind_document(
+                service, document, variant=variant, priority=priority,
+                on_texture_applied=on_texture_applied,
+                is_current=is_current,
+            )
+            # bind_document resets the widget. Bound the repair to one
+            # attempt per binding/source notification, not an idle loop.
+            self._decode_retry = True
+
+        self._document_decode_retry = retry_document_decode
+
     def bind_url(
         self, loader: CoverLoader, url: str | None, *,
         priority: int = 10,
@@ -336,7 +356,31 @@ class CoverView(Gtk.Overlay):
                     detail={"code": "cover_decode_failed"},
                     level="detailed",
                 )
-            if not self._decode_retry and self._loader is not None and self._url:
+            if generation != self._generation:
+                # A synchronous GTK signal may have rebound this widget.
+                # Never schedule repair or clear another binding.
+                loader.note_ui_stale()
+                return False
+            if check is not None:
+                # Document bindings must never downgrade to _start_cover_request
+                # (N3 URL API). Recheck the original owner's lease AND N2 CAS
+                # after GDK failed, before asking N2 for a bounded repair.
+                try:
+                    current = check() is True
+                except Exception:
+                    current = False
+                repair = getattr(self, "_document_decode_retry", None)
+                if current and not self._decode_retry and callable(repair):
+                    self._decode_retry = True
+                    try:
+                        repair()
+                    except (TypeError, ValueError, RuntimeError):
+                        self._show_missing()
+                else:
+                    if not current:
+                        loader.note_ui_stale()
+                    self._show_missing()
+            elif not self._decode_retry and self._loader is not None and self._url:
                 self._decode_retry = True
                 self._start_cover_request(force=True)
             else:
