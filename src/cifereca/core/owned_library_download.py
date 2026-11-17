@@ -18,7 +18,9 @@ def owned_library_download_target(
     """Passively select one exact source origin, never a stored pseudo-right."""
     if type(identity_id) is not str or not identity_id:
         return None
-    if type(entry) is dict and type(entry.get("possessions")) in (list, tuple):
+    if (type(entry) is dict
+            and entry.get("source") != "private_catalog_observation"
+            and type(entry.get("possessions")) in (list, tuple)):
         identity = identity_id
         origins = [
             row for row in entry["possessions"]
