@@ -21,7 +21,7 @@ from cifereca.gui.borrower_public_c_bridge import (
 )
 from cifereca.models import Account, HistoryItem
 from cifereca.storage import Storage
-from tests.test_core_p0_6366_borrower_public_c_lists_detail import bibliography
+from tests.test_core_p0_6366_borrower_public_c_lists_detail import bibliography, borrower_descriptors
 
 
 def _account():
@@ -60,7 +60,7 @@ def _service(db, account, row):
         _account_context_epoch=7, _source_context_epoch=9,
         config=NS(get=lambda _key, default: default),
         diagnostics=NS(add=lambda *_a, **_kw: None),
-        last_history=[],
+        last_history=[], provider_descriptors=borrower_descriptors,
         # Cached history uses the already-registered Core session without
         # reconnecting: model the same native session registry and key here.
         _sessions={(account.provider_id, account.credential_id): session},
