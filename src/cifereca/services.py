@@ -2441,7 +2441,11 @@ class LibraryService:
         self.storage.cache_put("holdings", key, asdict(detail), ttl)
         return detail
 
-    def renew(self, loan: Loan, *, confirmed: bool = False) -> dict[str, Any]:
+    def capture_admitted_loan_renewal(self, loan: Loan):
+        from .core.provider_loan_renewal import capture_admitted_loan_renewal
+        return capture_admitted_loan_renewal(self, loan)
+
+    def renew(self, loan: Loan, *, confirmed: bool = False, admission=None) -> dict[str, Any]:
         """Manually renew a physical loan when its source declares support.
 
         A GUI button, a cached CanRenew flag or a truthy confirmation is not
@@ -2469,7 +2473,7 @@ class LibraryService:
         from .core.provider_loan_renewal import renew as scoped_renew
         try:
             with InterProcessLock(self._return_operation_lock_file(loan)):
-                return scoped_renew(self, loan)
+                return scoped_renew(self, loan, admission=admission)
         except LockBusyError:
             return {
                 "status": "blocked", "code": "loan_action_busy",

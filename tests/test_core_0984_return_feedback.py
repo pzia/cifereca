@@ -29,6 +29,6 @@ def test_loan_renewal_still_has_its_own_feedback_without_return_mutation():
     assert (GUI / "loan_renewal_feedback.py").is_file()
     controller = (GUI / "loans_controller.py").read_text(encoding="utf-8")
     assert "loan_renewal_feedback(result)" in controller
-    assert "lambda: service.renew(loan, confirmed=True)" in controller
+    assert "lambda: service.renew(loan, confirmed=True, **options)" in controller
     assert "self.service.return_digital(" not in controller
     assert "self.service.return_loan_prefer_adept(" not in controller

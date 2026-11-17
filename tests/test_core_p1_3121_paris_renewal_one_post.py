@@ -340,7 +340,7 @@ def test_gui_renewal_never_proclaims_success_from_unverified_post():
     # The worker now captures the original Core service before scheduling;
     # it must NOT reread self.service after a view/account rebind (P0 #5833).
     assert "service = self.service" in block
-    assert "lambda: service.renew(loan, confirmed=True)" in block
+    assert "lambda: service.renew(loan, confirmed=True, **options)" in block
     assert "success_toast=" not in block
     assert "Prêt prolongé" not in block
 
@@ -458,4 +458,70 @@ def test_mutating_original_selected_loan_cannot_retarget_consent(tmp_path, momen
             assert session.posts[0][0] == original
     finally:
         ui.id = original
+        service.close()
+
+
+@pytest.mark.parametrize("moment", ["before", "read", "post"])
+def test_admitted_renewal_keeps_exact_borrower_during_navigation(tmp_path, moment):
+    service, a, ui, session = setup(tmp_path)
+    try:
+        admitted = service.capture_admitted_loan_renewal(ui)
+        assert admitted is not None
+        assert session.reads == session.posts == []
+        def switch():
+            service.select_identity("alex")
+            service.select_identity("default")
+        if moment == "before":
+            service.select_identity("alex")
+        elif moment == "read":
+            session.during_read = switch
+        else:
+            session.during_post = switch
+        result = service.renew(ui, confirmed=True, admission=admitted)
+        assert result["status"] == "submitted"
+        assert session.reads == ["reader"]
+        assert len(session.posts) == 1 and session.posts[0][2] == "reader"
+        assert service.renew(ui, confirmed=True, admission=admitted)["status"] == "submitted"
+        assert len(session.posts) == 1
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("change", ["source_epoch", "loan_branch", "replacement_loan"])
+def test_admitted_renewal_rejects_revocation_before_inventory_or_claim(tmp_path, change):
+    service, a, ui, session = setup(tmp_path)
+    key = _source_key(ui)
+    try:
+        admitted = service.capture_admitted_loan_renewal(ui)
+        assert admitted is not None
+        if change == "source_epoch":
+            service._source_context_epoch += 1
+        elif change == "loan_branch":
+            ui.provider = "other-branch"
+        else:
+            ui = replace(ui)
+        assert service.renew(ui, confirmed=True, admission=admitted)["status"] == "blocked"
+        assert session.reads == session.posts == []
+        assert service.storage.loan_renewal_state(key) is None
+    finally:
+        service.close()
+
+
+def test_admitted_renewal_source_revoked_after_claim_never_posts(tmp_path, monkeypatch):
+    service, a, ui, session = setup(tmp_path)
+    try:
+        admitted = service.capture_admitted_loan_renewal(ui)
+        assert admitted is not None
+        real_claim = service.storage.loan_renewal_claim_once
+        def revoke(key, operation):
+            claimed, row = real_claim(key, operation)
+            if claimed:
+                service._source_context_epoch += 1
+            return claimed, row
+        monkeypatch.setattr(service.storage, "loan_renewal_claim_once", revoke)
+        result = service.renew(ui, confirmed=True, admission=admitted)
+        assert result["status"] == "blocked"
+        assert session.posts == []
+        assert service.storage.loan_renewal_state(_source_key(ui))["status"] == "blocked"
+    finally:
         service.close()
