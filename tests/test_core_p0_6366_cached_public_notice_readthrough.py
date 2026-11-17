@@ -205,3 +205,42 @@ def test_cached_public_coordinate_replay_rejects_stale_private_and_signed_rows()
         [clean], identity_id=None,
     )
     assert not hasattr(clean, "_core_notice_cover_document_ref")
+
+
+def test_cached_recommendation_binding_requires_original_worker_receipt(tmp_path):
+    from cifereca.gui.plugin_public_c_binding import (
+        issue_public_c_binding, public_c_binding_revision,
+    )
+    service = _service(tmp_path)
+    session = _Public()
+    service._sessions = {session.provider_id: session}
+    try:
+        live = service.search("Progressive Book", provider_id=session.provider_id,
+                              force=True)[0]
+        ref = live._core_notice_canonical_cover_document_ref
+        with service.storage._lock, service.storage._connect() as db:
+            db.execute("DELETE FROM metadata WHERE key LIKE 'notice.c.observation.v1:%'")
+        cached = service.search("Progressive Book", provider_id=session.provider_id,
+                                force=False)[0]
+        from cifereca.core.notice_c_cached_revision import matching_cached_public_canonical_ref
+        # Bind under an explicitly captured viewer, independent of fixture defaults.
+        search_orchestration._stamp_cached_public_notice_refs(
+            [cached], identity_id="alice", storage=service.storage,
+        )
+        assert matching_cached_public_canonical_ref(cached, identity_id="alice") == ref
+        window = NS(service=NS(current_identity=NS(identity_id="alice"),
+                               _account_context_epoch=1, _source_context_epoch=2))
+        document, receipt = issue_public_c_binding(window, cached, identity_id="alice")
+        assert document == ref
+        assert public_c_binding_revision(window, ref, receipt) == 1
+        assert issue_public_c_binding(window, replace(cached), identity_id="alice") is None
+        cached.title = "Wrong edition"
+        assert public_c_binding_revision(window, ref, receipt) is None
+        cached.title = live.title
+        window.service._account_context_epoch += 1
+        assert public_c_binding_revision(window, ref, receipt) is None
+        window.service.current_identity.identity_id = "bob"
+        assert issue_public_c_binding(window, cached, identity_id="bob") is None
+        assert session.calls == 1
+    finally:
+        service.close()
