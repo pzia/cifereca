@@ -81,6 +81,7 @@ class BorrowActionScopeLease:
     _account_is_primary: bool
     _context_epoch: int
     _provider_epoch: object = field(default=None, repr=False)
+    _reader_scope: object | None = field(default=None, repr=False)
 
     def current(self, service: object) -> bool:
         try:
@@ -89,8 +90,11 @@ class BorrowActionScopeLease:
             if (type(account) is not Account or type(item) is not SearchResult
                     or state is None
                     or type(self._context_epoch) is not int
-                    or type(getattr(service, "_account_context_epoch", None)) is not int
-                    or service._account_context_epoch != self._context_epoch
+                    or (self._reader_scope is None and (
+                        type(getattr(service, "_account_context_epoch", None)) is not int
+                        or service._account_context_epoch != self._context_epoch))
+                    or (self._reader_scope is not None
+                        and not self._reader_scope.current(service))
                     or state.get("_epoch") != self._provider_epoch
                     or state.get("_closed") is True
                     or state.get("connected") is not True):
@@ -120,9 +124,14 @@ class BorrowActionScopeLease:
             ]
             if len(exact) != 1 or exact[0].get("enabled") is not True:
                 return False
-            identity = getattr(service, "current_identity", None)
-            if (getattr(identity, "identity_id", None) != identity_id
-                    or service.identity_by_id(identity_id) is None
+            if self._reader_scope is None:
+                identity = getattr(service, "current_identity", None)
+                if getattr(identity, "identity_id", None) != identity_id:
+                    return False
+            elif (self._reader_scope.identity_id != identity_id
+                  or service._provider_enabled_for_identity(provider, identity_id) is not True):
+                return False
+            if (service.identity_by_id(identity_id) is None
                     or service.storage.identity_for_connection(
                         provider, credential) != identity_id
                     or service._sessions.get(
@@ -132,17 +141,20 @@ class BorrowActionScopeLease:
             registered = _inert_session_accounts(session)
             if (registered is None
                     or sum(x is account for x in registered) != 1
-                    or sum(x is account for x in service.accounts) != 1
-                    or service._session_for_source(provider, credential) is not session):
+                    or sum(x is account for x in service.accounts) != 1):
                 return False
-            return True
+            if self._reader_scope is None:
+                return service._session_for_source(provider, credential) is session
+            return (service._session_for_account(account) is session
+                    and self._reader_scope.current(service)
+                    and _fields(account, item) == self._original_fields)
         except Exception:
             return False
 
 
 def capture_borrow_action_scope(
     service: object, item: SearchResult, account: Account,
-    session: object, *, expected_identity_id: str,
+    session: object, *, expected_identity_id: str, reader_scope=None,
 ) -> BorrowActionScopeLease | None:
     """Capture *before* all I/O, re-check after each read and before the POST.
 
@@ -153,7 +165,15 @@ def capture_borrow_action_scope(
             or not expected_identity_id or type(account.is_primary) is not bool):
         return None
     fields = _fields(account, item)
-    epoch = getattr(service, "_account_context_epoch", None)
+    if reader_scope is not None:
+        from .search_orchestration import SearchReadScope
+        if (type(reader_scope) is not SearchReadScope
+                or reader_scope.identity_id != expected_identity_id
+                or not reader_scope.current(service)):
+            return None
+        epoch = reader_scope.source_epoch
+    else:
+        epoch = getattr(service, "_account_context_epoch", None)
     session_state = _inert_session_state(session)
     if (not _valid_fields(fields) or type(epoch) is not int
             or session_state is None):
@@ -163,6 +183,7 @@ def capture_borrow_action_scope(
         _expected_identity_id=expected_identity_id,
         _original_fields=fields, _account_is_primary=account.is_primary,
         _context_epoch=epoch, _provider_epoch=session_state.get("_epoch"),
+        _reader_scope=reader_scope,
     )
     return lease if lease.current(service) else None
 
