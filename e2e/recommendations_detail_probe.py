@@ -1302,9 +1302,28 @@ def main():
             MainWindow.download_direct_item.__get__(window)
         )
         window._activity_result = state["in_place_activity"].append
-        service.obtain_search_item = lambda item: (
-            state["in_place_obtain"].append(item) or
-            NS(path=None, acquisition=NS(action="command"))
+        legacy_account = NS(identity_id="alice", provider_id="fixture",
+                            credential_id="fixture-public", unique_id="fixture-account")
+        service.accounts_for_identity = lambda identity: (
+            [legacy_account] if identity == "alice" else []
+        )
+        admitted_items = {}
+        def capture_legacy(item, *, identity_id, account_id, confirmed):
+            assert (identity_id, account_id, confirmed) == ("alice", "fixture-account", True)
+            assert item is state["in_place_item"]
+            assert not state["in_place_obtain"]
+            mandate = object()
+            admitted_items[mandate] = item
+            return mandate
+
+        def execute_legacy(mandate):
+            state["in_place_obtain"].append(admitted_items.pop(mandate))
+            return NS(path=None, acquisition=NS(action="command"))
+
+        service.capture_confirmed_legacy_search_offer = capture_legacy
+        service.obtain_admitted_legacy_search_offer = execute_legacy
+        service.obtain_search_item = lambda *_: (_ for _ in ()).throw(
+            AssertionError("old acquisition fallback reached")
         )
         window.runner = NS(submit=lambda *a, **kw:
                            state["in_place_jobs"].append((a, kw)))
