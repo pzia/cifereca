@@ -14,7 +14,7 @@ from .search_orchestration import SearchReadScope
 from .source_context import source_context_epoch
 from .private_inventory_row_scope import private_row_account_matches
 from .selected_source_offer import (
-    SourceOfferTarget, _resolve, select_source_offer_target,
+    SourceOfferTarget, _ConfirmedOfferUse, _resolve, select_source_offer_target,
 )
 
 
@@ -108,7 +108,7 @@ def capture_confirmed_selected_offer(
     target = SourceOfferTarget(
         identity_id, item.source_provider, item.source_credential, account_id,
         item.record_id, branch, session, source_epoch=reader_scope.source_epoch,
-        reader_scope=reader_scope,
+        reader_scope=reader_scope, _confirmed_use=_ConfirmedOfferUse(),
     )
     _resolve(service, target)
     return target
