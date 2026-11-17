@@ -31,7 +31,7 @@ def _host():
     env = {"__package__": "cifereca.gui", "SearchStateField": SearchStateField,
            "TaskPriority": NS(USER_ACTION=1), "merge_results": merge_results,
            "GLib": NS(idle_add=lambda fn, *args: scheduled.append((fn, args))),
-           "progressive_online_search": Mock(return_value=NS(warnings=[]))}
+           "progressive_online_search": Mock(return_value=(NS(warnings=[], cancelled=False), ()))}
     cls = ast.ClassDef(name="Host", bases=[], keywords=[], body=[*descriptors, *methods], decorator_list=[])
     module = ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(
         module="__future__", names=[ast.alias(name="annotations")], level=0), cls], type_ignores=[]))
@@ -40,6 +40,8 @@ def _host():
     host.service = NS(current_identity=NS(identity_id="alice"),
                       search_known_catalog=Mock(return_value=[{"key": "local"}]),
                       last_search=[], last_search_warnings=[])
+    registered = host.service.current_identity
+    host.service.identity_by_id = lambda key: registered if key == registered.identity_id else None
     host.search_controls = NS(state=lambda: QueryState("Dumas"))
     host.search_button, host.search_global_button = object(), object()
     host._search_generation = 0
@@ -242,22 +244,22 @@ def test_online_search_queued_for_a_never_dispatches_to_replaced_core_b():
     host._populate_search.assert_not_called()
 
 
-def test_online_search_queued_a_b_a_cannot_start_foreign_get():
-    from cifereca.plugin_api import Cancelled
+def test_online_search_queued_a_b_a_runs_for_original_reader_without_publication():
     host = _host()
+    original = host.service.current_identity
     host.run_search(True)
     task = host.requests[-1]
     host.service.current_identity = NS(identity_id="bob")
     host.service.current_identity = NS(identity_id="alice")
-    with pytest.raises(Cancelled):
-        task.work()
-    host.online.assert_not_called()
-    task.failed(Cancelled("old account"))
+    task.work()
+    assert host.online.call_args.kwargs["request_scope"].identity is original
+    assert not host.online.call_args.kwargs["control"].cancelled()
+    task.done((NS(warnings=[], cancelled=False), ()))
     assert host._online_pending_key is None
-    host.show_error.assert_not_called()
+    host._populate_search.assert_not_called()
 
 
-@pytest.mark.parametrize("epoch", ["_account_context_epoch", "_source_context_epoch"])
+@pytest.mark.parametrize("epoch", ["_source_context_epoch"])
 def test_online_search_revoked_core_epoch_cannot_start_provider_io(epoch):
     from cifereca.plugin_api import Cancelled
     host = _host()
@@ -408,3 +410,24 @@ def test_online_known_c_late_preview_and_empty_page_never_replace_current_ui(
         host._populate_search.assert_not_called()
     finally:
         db.close()
+
+
+def test_navigation_account_epoch_only_filters_publication_and_final_rows_are_local():
+    host = _host()
+    host.service._account_context_epoch = 1
+    host.run_search(True)
+    pending = host.requests[-1]
+    host.service._account_context_epoch = 2
+    pending.work()
+    assert not host.online.call_args.kwargs["control"].cancelled()
+    pending.done((NS(warnings=[], cancelled=False), (NS(id="old"),)))
+    host._populate_search.assert_not_called()
+    host.run_search(True)
+    row = NS(id="correct", source_provider="public")
+    host.service.last_search = [NS(id="other")]
+    host.service.last_search_warnings = ["other request"]
+    host.requests[-1].done((NS(warnings=["partial"], cancelled=False), (row,)))
+    assert host._remote_search_results == [row]
+    assert host._online_search_warnings == ("partial",)
+    assert host.service.last_search[0].id == "other"
+    assert host.service.last_search_warnings == ["other request"]
