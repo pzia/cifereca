@@ -3995,11 +3995,6 @@ class LibraryService:
                 raise OwnedDownloadRejected("owned_download_unavailable")
         return obtain_owned_library_item(self, target)
 
-    def prepare_direct_download(self, item: SearchResult) -> tuple[Path, str]:
-        """Compatibility wrapper around the normalized direct acquisition."""
-        result = self.acquire_direct_item(item)
-        return result.path or result.target_dir or self.default_downloads_dir(), result.url
-
     def library_dir(self) -> Path:
         """Functional local library owned by cifereca.
 
@@ -5622,14 +5617,6 @@ class LibraryService:
             is_acsm=is_acsm, mime_type=self.acquisition.mime_type_for(path, hook_item),
             library_target_dir=library_target_dir, acquisition_factory=Acquisition,
         )
-
-    def prepare_digital_download(self, loan: Loan, *, force_refresh: bool = False) -> tuple[Path, str]:
-        """0.3.2 compatibility wrapper around ``acquire_digital_loan``."""
-        result = self.acquire_digital_loan(loan, force_refresh=True) if force_refresh else self.acquire_digital_loan(loan)
-        path = result.path
-        if path is None:
-            raise ProviderConfigurationError("L'acquisition numérique n'a produit aucun fichier local")
-        return path, result.url
 
     def _download_filename(self, response, loan: Loan, content_type: str) -> str:
         disposition = response.headers.get("content-disposition", "")
