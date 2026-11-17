@@ -542,6 +542,28 @@ class LibraryService:
             requesting_identity_id=requesting_id, scope_current=scope_current,
         )
 
+    def capture_admitted_cross_profile_borrow(
+        self, *, captured_preview, selected_option_id: str,
+        expected_edition_id: str, observations: object,
+        confirmed: bool = False, now: int | None = None,
+    ):
+        """Capture exact confirmed lender choice before TaskRunner enqueue."""
+        from .core.borrow_for_identity_executor import prepare_cross_profile_borrow
+        requesting_id, scope_current = _cross_profile_snapshot_read_scope(
+            self, captured_preview,
+        )
+        return prepare_cross_profile_borrow(
+            self, captured_preview=captured_preview,
+            selected_option_id=selected_option_id,
+            expected_edition_id=expected_edition_id, observations=observations,
+            confirmed=confirmed, now=now, requesting_identity_id=requesting_id,
+            scope_current=scope_current, admit_at_confirmation=True,
+        )
+
+    def execute_admitted_cross_profile_borrow(self, admitted):
+        from .core.borrow_for_identity_executor import execute_admitted_cross_profile_borrow
+        return execute_admitted_cross_profile_borrow(self, admitted)
+
     def execute_cross_profile_borrow(
         self, *, captured_preview, selected_option_id: str,
         expected_edition_id: str, observations: object,
