@@ -81,6 +81,28 @@ def test_cover_loader_tracks_ui_decode_cost(tmp_path, monkeypatch):
 
 
 
+def test_cover_loader_recent_decode_percentiles_are_bounded(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    loader = CoverLoader(max_workers=2)
+    try:
+        empty = loader.stats()
+        assert empty["ui_decode_recent_count"] == 0
+        assert "ui_decode_recent_p95_ms" not in empty
+        loader.note_ui_decode(10000.0)
+        for value in range(1, 1025):
+            loader.note_ui_decode(float(value) / 100)
+        for invalid in (float("nan"), float("inf"), -1.0):
+            loader.note_ui_decode(invalid)
+        stats = loader.stats()
+        assert stats["ui_decode_count"] == 1025
+        assert stats["ui_decode_max_ms"] == 10000.0
+        assert stats["ui_decode_recent_count"] == 1024
+        assert stats["ui_decode_recent_p50_ms"] == 5.12
+        assert stats["ui_decode_recent_p95_ms"] == 9.73
+    finally:
+        loader.close()
+
+
 def test_oversized_remote_cover_is_not_cached_or_delivered(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     loader = CoverLoader(max_workers=2)
