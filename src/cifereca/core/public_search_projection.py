@@ -23,6 +23,7 @@ _BIBLIOGRAPHY = frozenset({
     "language", "languages", "original_language", "isbn", "isbns", "series",
     "collection", "publisher", "subjects", "subject", "genres", "genre",
     "authors", "contributors", "edition", "tags", "keywords", "themes",
+    "awards", "prizes", "literary_prizes",
 })
 
 
@@ -163,10 +164,13 @@ def _project_public_notice(
         value = public.metadata.get(name)
         if value is None:
             continue
-        if type(value) is str and _public_bibliographic_text(value):
+        # Awards are short, explicitly declared bibliographic labels, not
+        # free-form user annotations or arbitrary supplier structures.
+        limit = 240 if name in ("awards", "prizes", "literary_prizes") else 8192
+        if type(value) is str and _public_bibliographic_text(value, limit=limit):
             metadata[name] = value
         elif (type(value) in (list, tuple) and len(value) <= 32
-              and all(type(part) is str and _public_bibliographic_text(part)
+              and all(type(part) is str and _public_bibliographic_text(part, limit=limit)
                       for part in value)):
             metadata[name] = list(value)
         else:
