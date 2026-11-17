@@ -31,7 +31,8 @@ def result_row(item, *, purchase_evidence=None, identity_id=None,
     Delivery and verified local presence are independently admitted by Core.
     """
     result = asdict(item)
-    result['owned'] = False
+    # An unknown documentary status stays unknown; no positive hint survives.
+    result['owned'] = None if item.owned is None else False
     # asdict() includes every ClassificationEvidence.raw_code, which is
     # upstream-supplied and may contain sensitive data. Publish only the
     # versioned, fixed-vocabulary UI projection; never emit provenance raw.
