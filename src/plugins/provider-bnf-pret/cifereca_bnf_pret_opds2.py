@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from cifereca.plugin_api.catalogue_json import (
+from cifereca.plugin_api import (
     CatalogueJSONError, parse_bounded_catalogue_json, validate_catalogue_json,
 )
 from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
