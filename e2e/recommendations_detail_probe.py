@@ -1282,7 +1282,9 @@ def main():
         service.availability_display_label = (
             lambda _item, _detail: "Disponible"
         )
-        service.identities = [NS(identity_id="alice", label="Alice")]
+        service.identities = [service.current_identity]
+        service.current_identity.label = "Alice"
+        service.identity_by_id = lambda key: service.identities[0] if key == "alice" else None
         service.local_placement_for_source = lambda **_kw: None
         window._add_catalogue_action = lambda *_a: None
         window._identity_context_generation = 8
@@ -1327,9 +1329,11 @@ def main():
         state["in_place_item"] = item
         state["in_place_detail"] = detail
         service.can_direct_download = lambda candidate: candidate is item
-        service.holdings = lambda candidate, _query, *, force=False: (
-            state["in_place_holdings"].append(candidate) or detail
-        )
+        def holdings_for_scope(scope, candidate, _query, *, force=False):
+            assert scope.current(service) and scope.identity_id == "alice"
+            return state["in_place_holdings"].append(candidate) or detail
+
+        service.holdings_for_scope = holdings_for_scope
         window._loaded_search_context = (
             "édition", "title", "all", "alice",
         )
