@@ -64,6 +64,7 @@ def test_borrower_detail_n3_callback_checks_live_source_and_producer_generation(
         assert name == "document"
         assert service is documents and document == expected.document
         assert kwargs["variant"] == "detail" and kwargs["priority"] == 0
+        assert kwargs["minimum_revision"] == receipt.epoch
         assert INTRUDER not in repr(sink.calls)
         check = kwargs["is_current"]
         assert callable(check) and check() is True
