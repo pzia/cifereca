@@ -133,9 +133,19 @@ def pytest_configure(config):
     anchor, replacement = environ["CIFERECA_MUTATION_ANCHOR"], environ["CIFERECA_MUTATION_REPLACEMENT"]
     if source.count(anchor) != 1:
         raise RuntimeError("mutation_anchor_mismatch")
+    original = getattr(owner, function)
     namespace = dict(module.__dict__)
     exec(compile(textwrap.dedent(source.replace(anchor, replacement)), "<mutation-probe>", "exec"), namespace)
-    setattr(owner, function, namespace[function])
+    mutant = namespace[function]
+    setattr(owner, function, mutant)
+    # The Plugin API re-exports the public reader at package import time.
+    # A test importing that supported path must observe the same mutant,
+    # rather than accidentally calling the cached original.
+    if module.__name__ == "cifereca.plugin_api.loan_inventory" and owner is module:
+        api = importlib.import_module("cifereca.plugin_api")
+        if getattr(api, function, None) is not original:
+            raise RuntimeError("mutation_public_alias_mismatch")
+        setattr(api, function, mutant)
 '''
 
 
