@@ -3,6 +3,7 @@
 The transport is a synthetic registered adapter, not a qualified supplier.
 The default pump remains unable to execute fetch jobs.
 """
+from contextlib import nullcontext
 from threading import Event
 from time import monotonic
 
@@ -31,6 +32,7 @@ class Transport:
         self.source = source
         self.owner = owner
         self.mode = mode
+        self.authority = None
         self.calls = []
 
     def reserve(self, permit):
@@ -42,7 +44,8 @@ class Transport:
 
         def execute(control):
             control.check_cancelled()
-            self.calls.append("execute")
+            with self.authority.transport_start_guard(permit):
+                self.calls.append("execute")
             if self.mode == "offline":
                 raise OSError("synthetic network failure")
             if self.mode == "revoked":
@@ -59,7 +62,7 @@ class Transport:
                 public_cover_url=row.thumbnail_url,
             )
 
-        return ReservedPublicFetch(permit, execute, lambda: self.calls.append("release"))
+        return ReservedPublicFetch(permit, execute, lambda: self.calls.append("release"), nullcontext)
 
 
 def setup(db, mode):
@@ -69,6 +72,7 @@ def setup(db, mode):
     authority = PublicFetchAuthority(db, clock=lambda: 100)
     ref = request(authority, source, owner)
     transport = Transport(source, owner, mode)
+    transport.authority = authority
     execution = PublicFetchExecution(authority, (PublicFetchPort(
         source.observation.key.provider_id, TRANSPORT, IMPLEMENTATION, transport.reserve,
     ),))
