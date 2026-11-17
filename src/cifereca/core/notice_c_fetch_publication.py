@@ -26,7 +26,7 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
 
     Trusted adapter only. The result MUST originate in the just-reserved
     authorized transport, not an old cached SearchResult or a guessed
-    supplier URL. Firmware/parser version authority is the producer's
+    supplier URL. Transport/parser version authority is the producer's
     responsibility; the receipt checks equality, not network provenance.
 
     The returned PreparedSource is single-use, and can be run only while
@@ -122,6 +122,10 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
             # Do not publish a half-reconciled source. Unlike CPU reparse,
             # another attempt cannot use the already consumed GET permit.
             raise UnavailableNoticeWork("notice_fetch_dependents_refused")
+        # The guard is still held. Recheck the deadline after the dirty-C
+        # scan as well; never commit work already expired during calculation.
+        if authority._lookup(permit.lease.ref).permit is not permit:
+            raise UnavailableNoticeWork("notice_fetch_authority_unavailable")
         return True
 
     return PreparedSource(publish, guard)
