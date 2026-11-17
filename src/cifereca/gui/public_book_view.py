@@ -263,9 +263,24 @@ class PublicBookMasterDetailView:
             if public_c_document is None:
                 panel.show_item_detail(item, detail)
             else:
-                panel.show_public_c_search_document(
-                    item, detail=detail, public_c_document=public_c_document,
+                from .plugin_public_c_guard import staged_plugin_exact_public_c
+                admitted, stage = staged_plugin_exact_public_c(
+                    self, panel, public_c_document,
                 )
+                if admitted:
+                    with stage:
+                        panel.show_public_c_search_document(
+                            item, detail=detail,
+                            public_c_document=public_c_document,
+                        )
+                else:
+                    # Do not fall back to the private supplier's image URL:
+                    # the old C association is revoked, not a new source.
+                    from dataclasses import replace
+                    panel.show_item_detail(
+                        replace(item, thumbnail_url=None),
+                        replace(detail, thumbnail_url=None),
+                    )
         else:
             panel.show_search_document(item, detail=detail, cover_evidence=proof)
         # Search appends these same Core local/open/send/owned actions after
@@ -298,9 +313,21 @@ class PublicBookMasterDetailView:
             if public_c_document is None:
                 panel.show_search(item, loading=False)
             else:
-                panel.show_public_c_search_document(
-                    item, loading=False, public_c_document=public_c_document,
+                from .plugin_public_c_guard import staged_plugin_exact_public_c
+                admitted, stage = staged_plugin_exact_public_c(
+                    self, panel, public_c_document,
                 )
+                if admitted:
+                    with stage:
+                        panel.show_public_c_search_document(
+                            item, loading=False,
+                            public_c_document=public_c_document,
+                        )
+                else:
+                    from dataclasses import replace
+                    panel.show_search(
+                        replace(item, thumbnail_url=None), loading=False,
+                    )
         else:
             panel.show_search_document(item, cover_evidence=proof)
         from .query_model import result_row
