@@ -91,3 +91,89 @@ def test_other_source_primary_must_match_exact_native_account(tmp_path):
         ) == (None, "adept_borrower_ambiguous")
     finally:
         service.close()
+
+
+def _registered_primary_source(service, loan, *, alias):
+    from types import SimpleNamespace as NS
+    from cifereca.providers import ProviderDescriptor, ProviderCapabilities
+
+    provider = "synthetic-lender"
+    service.storage.provider_connection_put({
+        "provider_id": provider, "credential_id": loan.source_credential,
+        "identity_id": "alice",
+    })
+    service.accounts.append(replace(
+        service.accounts[0], provider_id=provider,
+    ))
+    descriptor = ProviderDescriptor(
+        id=provider, display_name="Synthetic", description="Test",
+        state="ready", capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias=alias,
+    )
+    return replace(loan, source_provider=provider), NS(descriptor=descriptor)
+
+
+def test_adept_primary_uses_installed_alias_not_historical_literal(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        loan, plugin = _registered_primary_source(service, loan, alias="reader-main")
+        monkeypatch.setattr(service.registry, "maybe_get", lambda _key: plugin)
+        original = service.explicit_adept_borrower_grant_for_source
+        grant_reader = Mock(wraps=original)
+        monkeypatch.setattr(service, "explicit_adept_borrower_grant_for_source", grant_reader)
+
+        assert service._paris_adept_identity_for_loan(
+            replace(loan, source_account_id="reader-main"),
+            connection_identity_id="alice",
+        ) == ("alice", None)
+        grant_reader.assert_called_once_with(
+            provider_id="synthetic-lender", credential_id=loan.source_credential,
+            account_id="primary", connection_identity_id="alice",
+        )
+        grant_reader.reset_mock()
+        assert service._paris_adept_identity_for_loan(
+            replace(loan, source_account_id="primary"),
+            connection_identity_id="alice",
+        ) == (None, "adept_borrower_ambiguous")
+        grant_reader.assert_not_called()
+    finally:
+        service.close()
+
+
+def test_adept_literal_primary_is_not_implicit_alias_when_plugin_declares_none(
+    tmp_path, monkeypatch,
+):
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        loan, plugin = _registered_primary_source(service, loan, alias=None)
+        monkeypatch.setattr(service.registry, "maybe_get", lambda _key: plugin)
+        assert service._paris_adept_identity_for_loan(
+            replace(loan, source_account_id="primary"),
+            connection_identity_id="alice",
+        ) == (None, "adept_borrower_ambiguous")
+        assert service._paris_adept_identity_for_loan(
+            replace(loan, source_account_id=""),
+            connection_identity_id="alice",
+        ) == ("alice", None)
+    finally:
+        service.close()
+
+
+def test_adept_declared_alias_cannot_choose_a_duplicate_literal_reader(
+    tmp_path, monkeypatch,
+):
+    service, loan = service_with_linked_borrower(tmp_path)
+    try:
+        loan, plugin = _registered_primary_source(service, loan, alias="reader-main")
+        monkeypatch.setattr(service.registry, "maybe_get", lambda _key: plugin)
+        service.accounts.append(replace(
+            service.accounts[1], provider_id=loan.source_provider,
+            unique_id="reader-main",
+        ))
+        assert service._paris_adept_identity_for_loan(
+            replace(loan, source_account_id="reader-main"),
+            connection_identity_id="alice",
+        ) == (None, "adept_borrower_ambiguous")
+    finally:
+        service.close()
