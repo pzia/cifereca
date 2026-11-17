@@ -126,7 +126,7 @@ def test_worker_rechecks_kind_generation_and_publish_rollback(tmp_path):
         b = enqueue(storage, aggregate("B"), a.generation)
         assert bridge.submit(a).result(timeout=5) == "obsolete"
         assert observed == []
-        assert bridge.submit(b).result(timeout=5) == "retry"
+        assert bridge.submit(b).result(timeout=5) == "transient_failure"
         assert storage.metadata_get("synthetic-aggregate-publication") is None
         failed = journal.read_job(storage, b)
         assert (failed.state, failed.attempts, failed.due) == ("pending", 1, 2)
