@@ -212,8 +212,8 @@ def refresh_history(
     # of legacy provider HistoryItem DTOs. Do this AFTER cache serialization:
     # no private C witness or synthesized owner enters persisted data.
     from .notice_c_borrower_public_projection import (
-                attach_borrower_public_c, borrower_public_c_descriptors,
-            )
+        attach_borrower_public_c, borrower_public_c_descriptors,
+    )
     if self._history_source_lease_current(
         account, session, scope=source_scope, epoch=source_epoch,
     ):
@@ -222,7 +222,7 @@ def refresh_history(
             attach_borrower_public_c(
                 self.storage, qualified, identity_id=account.identity_id,
                 account_epoch=epoch, source_epoch=source_epoch,
-                    descriptors=borrower_public_c_descriptors(self, source_epoch=source_epoch),
+                descriptors=borrower_public_c_descriptors(self, source_epoch=source_epoch),
             )
     if self._account_context_epoch == epoch and self.current_account is account:
         self.last_history = rows
