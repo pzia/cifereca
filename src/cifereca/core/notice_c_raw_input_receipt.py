@@ -165,7 +165,12 @@ def record_public_raw_input_receipt(
         fields = (scope, state, transport_digest, parser_family_digest,
                   parser_implementation_digest, input_digest, len(body))
         if old is not None and old == PublicRawInputReceipt(*fields, old.generation_token):
-            # No extension of lifetime based on receipt replay alone.
+            # Replay never extends retention; the owner may shorten it.
+            db.execute(
+                "UPDATE cache SET expires_at=MIN(expires_at,?) "
+                "WHERE namespace=? AND cache_key=?",
+                (now + ttl_seconds, _NAMESPACE, key),
+            )
             return old
         count = db.execute(
             "SELECT count(*) FROM (SELECT cache_key FROM cache "
