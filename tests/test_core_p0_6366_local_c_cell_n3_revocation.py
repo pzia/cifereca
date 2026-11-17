@@ -174,6 +174,7 @@ def test_real_cell_passes_local_public_c_time_guard_into_n3(view):
     name, args, kw = calls[0]
     assert args[1] == row._cover_document_ref
     assert kw["variant"] == "list"
+    assert kw["minimum_revision"] == row._cover_public_c_link.epoch
     check = kw["is_current"]
     assert callable(check) and check()
     # The UI list cell itself may have been recycled while the N3 load ran.
