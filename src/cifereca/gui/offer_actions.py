@@ -52,14 +52,15 @@ def download_action_label(
 
 
 def private_notice_download_hint_allowed(
-    item: Any, *, purchase_evidence=None, identity_id=None,
-    account_context_epoch=None, source_context_epoch=None,
+    item: Any, *, service=None, identity_id=None,
+    purchase_evidence=None, account_context_epoch=None, source_context_epoch=None,
 ) -> bool:
     """Passive guard for an unqualified private inventory download hint.
 
-    A supplier's owned/downloadable flag or general direct_download capability
-    is not independent proof for a private library row without a delivery URL.
-    Public provider download policies remain outside this private-only guard.
+    A private library row without an explicit delivery URL needs the native
+    Core selected-offer hint, not an old Entitlement. The compatibility keyword
+    arguments cannot authorize this action. Public delivery is independent.
+    A positive hint only permits the separate Core offer check after consent.
     """
     if getattr(item, "source_credential", None) == "__public__":
         return True
@@ -77,12 +78,11 @@ def private_notice_download_hint_allowed(
         return True
     if getattr(item, "source_collection", None) != "library":
         return False
-    from .query_model import result_row
-    return result_row(
-        item, purchase_evidence=purchase_evidence, identity_id=identity_id,
-        account_context_epoch=account_context_epoch,
-        source_context_epoch=source_context_epoch,
-    )["state"] == "remote_owned"
+    from ..core.private_inventory_row_scope import selected_private_offer_hint
+    if (type(getattr(item, "metadata", None)) is dict
+            and item.metadata.get("search_provenance") == "known_catalog_stale"):
+        return False
+    return selected_private_offer_hint(service, item, identity_id=identity_id) is True
 
 
 def public_catalogue_download_hint_allowed(item: Any) -> bool:
