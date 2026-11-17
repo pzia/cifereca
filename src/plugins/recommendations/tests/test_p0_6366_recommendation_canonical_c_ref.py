@@ -252,3 +252,78 @@ def test_revision_aware_host_packet_forwarded_and_refreshes_neutral_detail(tmp_p
         assert db.entitlements() == []
     finally:
         db.close()
+
+def test_real_reopened_c_candidates_rank_and_render_without_supplier(tmp_path, monkeypatch):
+    from cifereca.brokers import CatalogBrokerImpl
+    from cifereca.core.notice_cover_repository import _opaque_key
+    from cifereca.core.notice_c_recommendation_known import known_public_c_binding_facts
+    from recommendation_service import compute_recommendations
+    import recommendation_service
+
+    filename = tmp_path / "offline-rank.sqlite"
+    db = Storage(filename)
+    try:
+        live = _verified(db)
+        ref = live._core_notice_canonical_cover_document_ref
+        epoch = live._core_notice_canonical_cover_document_epoch
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key=?",
+                        (_opaque_key(live._core_notice_cover_document_ref),))
+    finally:
+        db.close()
+    restored = Storage(filename)
+    try:
+        delegate = CatalogBrokerImpl(NS(storage=restored))
+
+        class OfflineCatalogue:
+            known_public_notices = delegate.known_public_notices
+            def searchable_providers(self):
+                return []
+            def search(self, *_a, **_kw):
+                raise AssertionError("no provider session")
+            search_progressive = search
+
+        monkeypatch.setattr(recommendation_service, "build_queries",
+                            lambda *a, **kw: ("Même", "titre"))
+        library = NS(library_entries=lambda **kw: [
+            {"title": "Autre livre", "author": "Même auteur"},
+        ])
+        result = compute_recommendations(
+            library, OfflineCatalogue(), "reader-1",
+            exclude_owned=False, max_queries=2,
+        )
+        assert len(result.ranked) == 1
+        ranked = result.ranked[0]
+        assert len(ranked.notices) == 1
+        assert ranked.notices[0].item is ranked.item
+        assert not ranked.notices[0].has_source_coordinates
+        assert result.network_batches == result.cache_batches == 0
+        assert result.catalogue_observations == ()
+        assert known_public_c_binding_facts(ranked.item) == (ref, epoch)
+        view, _, _, _, _ = _view(ranked.notices)
+        opaque = object()
+        view.host.public_notice_cover_ref = lambda item, **kw: (
+            known_public_c_binding_facts(item) or (None, None)
+        )[0]
+        view.host.public_notice_cover_binding = lambda item, **kw: (
+            (ref, opaque) if known_public_c_binding_facts(item) == (ref, epoch)
+            else None
+        )
+        view._ranked = [ranked]
+        view._exact_notice_state = None
+        view._matches = lambda candidate: candidate is ranked
+        view._candidate_key = lambda _: "offline:one"
+        rows, details = [], []
+        view._master.show_rows = lambda items, **kw: rows.append(tuple(items))
+        view._master.show_detail = details.append
+        view._render(preserve_summary=True)
+        row = rows[-1][0]
+        assert row.cover_document_ref == ref
+        assert row.cover_document_receipt is opaque
+        assert row.thumbnail_url is None
+        view._selected_row(row)
+        assert details[-1].cover_document_ref == ref
+        assert not ranked.notices[0].has_source_coordinates
+        assert restored.entitlements() == []
+    finally:
+        restored.close()
