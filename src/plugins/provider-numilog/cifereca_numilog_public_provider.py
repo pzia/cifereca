@@ -202,7 +202,7 @@ class NumilogPublicSession(ProviderSession):
         if not self._retain_public_search_inputs:
             raise ProviderCapabilityError("Numilog public : replay_scope_forbidden")
         epoch = self._navigation_epoch_snapshot()
-        url = self._validate_search(query, page, field, scope)
+        url = self._validate_search(query, page, field, "all" if scope == "catalog" else scope)
         self._assert_public_generation(epoch)
         entry = self._get_page_entry(query, page, field, url)
         if type(entry) is not _RetainedSearchPage:
@@ -253,6 +253,8 @@ class NumilogPublicSession(ProviderSession):
         page = _parse_retained_search_input(raw)
         matches = [row for row in page.items if row.record_id == record_id]
         if (len(matches) != 1 or matches[0].docbase != previous[0].docbase
+                or matches[0].medium != previous[0].medium
+                or matches[0].revision_id != previous[0].revision_id
                 or matches[0].type != previous[0].type):
             raise ProviderError("Numilog : public_catalog_replay_coordinate_changed")
         latest, _ttl = self._read_retained_public_input(token)
