@@ -296,3 +296,32 @@ def test_facade_does_not_rebind_to_different_profile_with_same_edition(harness):
     )
     assert result["status"] == "blocked"
     assert session.actions == 0
+
+
+
+@pytest.mark.parametrize("declared,observed,expected", [
+    (None, "", "confirmed"),
+    ("primary", "primary", "confirmed"),
+    ("main_reader", "main_reader", "confirmed"),
+    (None, "primary", "verification_unavailable"),
+    ("main_reader", "primary", "verification_unavailable"),
+    ("primary", "other_reader", "verification_unavailable"),
+])
+def test_normal_lender_confirmation_uses_declared_observed_borrower_alias(
+    harness, declared, observed, expected,
+):
+    service, account, session, item, option, scope = setup(
+        harness, "borrower:" + observed,
+    )
+    session.descriptor = replace(
+        session.descriptor, existing_primary_loan_account_alias=declared,
+    )
+    result = execute(service, option, item, scope)
+    assert result["status"] == expected
+    assert result["retry_borrow"] is False
+    assert session.actions == 1
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, item),
+    )["status"] == expected
+    assert execute(service, option, item, scope)["status"] == "blocked"
+    assert session.actions == 1
