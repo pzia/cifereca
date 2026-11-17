@@ -356,6 +356,14 @@ def plugin_replay_required(changed: list[str], root: Path = ROOT) -> bool:
     ):
         return True
     reachable = {edge["target"] for edge in edges if edge.get("target") is not None}
+    # A deletion/rename removes the target from the current tree, not the
+    # importing edge. A reachable root fixture may now have an unresolved
+    # edge to the changed module. Replay its plugin consumers as well.
+    if any(
+        edge["consumer"] in reachable and edge["target_module"] in modules
+        for edge in graph["root_to_root_direct"]
+    ):
+        return True
     if any(
         edge["owner"] == "root_tests" and edge["consumer"] in reachable
         for edge in graph["unresolved_dynamic_or_pytest_plugins"]

@@ -41,6 +41,9 @@ def _controller():
     namespace = {
         "Account": Account, "SearchResult": SearchResult, "copy": copy,
         "_capture_borrow_ui_scope": _capture_borrow_ui_scope,
+        "prepare_confirmed_manual_borrow": lambda service, selected, **scope: (
+            lambda: service.borrow_manual(selected, **scope)
+        ),
     }
     exec(compile(ast.fix_missing_locations(ast.Module(
         body=[method], type_ignores=[])), str(CONTROLLER), "exec"), namespace)

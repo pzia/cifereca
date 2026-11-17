@@ -456,6 +456,30 @@ class LibraryService:
             requesting_identity_id=requesting_id, scope_current=scope_current,
         )
 
+    def preview_borrow_for_identity_scope(
+        self, *, identity_id: str, expected_edition_id: str,
+        observations: object, now: int | None = None,
+    ):
+        """Reader-bound advisory preview; non-executable, no supplier I/O."""
+        from .core.borrow_for_identity_live import preview_borrow_for_scope
+        scope = search_orchestration.capture_search_read_scope(self, identity_id)
+        return preview_borrow_for_scope(
+            self, reader_scope=scope, expected_edition_id=expected_edition_id,
+            observations=observations, now=now,
+        )
+
+    def revalidate_scoped_borrow_lender_choice(
+        self, *, captured, selected_option_id: str,
+        expected_edition_id: str, observations: object, now: int | None = None,
+    ):
+        """Revalidate an original reader-bound choice; no mutation authority."""
+        from .core.borrow_for_identity_live import revalidate_borrow_for_scope
+        return revalidate_borrow_for_scope(
+            self, captured=captured, selected_option_id=selected_option_id,
+            expected_edition_id=expected_edition_id, observations=observations,
+            now=now,
+        )
+
     def revalidate_borrow_lender_choice(
         self, *, captured_preview, selected_option_id: str,
         expected_edition_id: str, observations: object,
@@ -1555,101 +1579,42 @@ class LibraryService:
         session = self._session_for_account(account)
         if not session.capabilities.loans:
             return []
-        # Capture immutable read coordinates before *either* provider I/O
-        # path. A mutable legacy Account must not move an observation to a
-        # different identity, borrower or cache key while loans() is running.
+        # A single typed observation boundary for every installed producer.
+        # The public ABI adapter alone can translate a legacy positive list;
+        # missing/mixed provenance never becomes a cacheable observation.
+        from .plugin_api.loan_inventory import read_loan_inventory
+        from .providers.base import ProviderDescriptor
         request_scope = (
             account.identity_id, account.provider_id,
-            account.credential_id, account.unique_id,
+            account.credential_id, account.unique_id, account.is_primary,
         )
         request_epoch = source_context_epoch(self)
-        request_session_fields = (
-            getattr(session, "provider_id", None),
-            getattr(session, "credential_id", None),
-            getattr(session, "connected", None),
-        )
-        session_key = self._session_key(
-            request_scope[1], request_scope[2],
-        )
-        registered_at_read = self._sessions.get(session_key) is session
-        # Prefer the atomic, scoped v2 observation where published. The v1
-        # list reader stays available for old installed plugin packages; it
-        # is never consulted as a second read of an opt-in snapshot.
-        # A provider can expose a property whose getter performs a remote
-        # request. Capability discovery must not execute that property or
-        # silently fall back to the v1 reader when the typed declaration is
-        # malformed; read_loan_inventory validates it without a second GET.
-        raw_reader = inspect.getattr_static(
-            session, "loan_inventory_snapshot", None,
-        )
-        if raw_reader is not None:
-            from .plugin_api.loan_inventory import read_loan_inventory
-            snapshot = read_loan_inventory(session, account, descriptor=inspect.getattr_static(session, "descriptor", None))
-            if snapshot.status in ("failed", "cancelled"):
-                raise ProviderConfigurationError("loan_inventory_read_unavailable")
-            # The reader already checks the account and mutable session
-            # fields; additionally protect against an ABA source rebind or
-            # replacement of the registered provider during the I/O.
-            if (source_context_epoch(self) != request_epoch
-                    or self._session_for_account(account) is not session):
-                raise ProviderConfigurationError("loan_inventory_scope_changed")
-            rows = list(snapshot.loans)
-        else:
-            rows = session.loans(account)
-            # Legacy v1 has no immutable envelope or post-I/O scope guard.
-            # Close that gap before any normalization or cache publication,
-            # including in-place account edits, session swaps and ABA epoch
-            # changes. Preserve non-registered legacy test/plugin shims:
-            # only assert a registry lease if it existed at admission.
-            if (
-                source_context_epoch(self) != request_epoch
-                or (
-                    account.identity_id, account.provider_id,
-                    account.credential_id, account.unique_id,
-                ) != request_scope
-                or (
-                    getattr(session, "provider_id", None),
-                    getattr(session, "credential_id", None),
-                    getattr(session, "connected", None),
-                ) != request_session_fields
-                or (registered_at_read and self._sessions.get(session_key) is not session)
-            ):
-                raise ProviderConfigurationError("loan_inventory_scope_changed")
-        # Never silently rewrite a supplier-provided different identity into
-        # the selected account. Validate the entire batch before mutation,
-        # caching or entitlement persistence; provider exceptions remain closed.
-        from .plugin_api.loan_inventory import LoanInventoryScope
-        from .providers.base import ProviderDescriptor
-        # Positive rows may use a primary alias only when the installed
-        # provider descriptor declares it for this exact empty-ID borrower.
-        # The v1 read remains supported, but may not infer Paris or any
-        # other provider's alias from a name alone.
+        session_key = self._session_key(request_scope[1], request_scope[2])
         descriptor = inspect.getattr_static(session, "descriptor", None)
         if descriptor is not None and type(descriptor) is not ProviderDescriptor:
-            descriptor = None
+            raise ProviderConfigurationError("loan_inventory_read_unavailable")
+
+        def still_bound():
+            return (
+                source_context_epoch(self) == request_epoch
+                and (account.identity_id, account.provider_id,
+                     account.credential_id, account.unique_id, account.is_primary)
+                    == request_scope
+                and self._sessions.get(session_key) is session
+                and inspect.getattr_static(session, "descriptor", None) is descriptor
+            )
+
         try:
-            scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
+            snapshot = read_loan_inventory(
+                session, account, descriptor=descriptor, scope_current=still_bound,
+            )
         except ValueError as exc:
-            raise ProviderConfigurationError(
-                "Inventaire de prêts : périmètre de compte non conforme"
-            ) from exc
-        borrowers = {account.unique_id}
-        if scope.primary_account_alias is not None:
-            borrowers.add(scope.primary_account_alias)
-        if type(rows) is not list or any(
-            type(row) is not Loan
-            or (row.identity_id is not None and row.identity_id != account.identity_id)
-            or row.source_provider != account.provider_id
-            or row.source_credential != account.credential_id
-            or (row.source_account_id is not None
-                and row.source_account_id not in borrowers)
-            for row in rows
-        ):
-            raise ProviderConfigurationError("Inventaire de prêts : périmètre de compte non conforme")
-        for row in rows:
-            row.identity_id = account.identity_id
-            if row.source_account_id is None:
-                row.source_account_id = account.unique_id
+            raise ProviderConfigurationError("loan_inventory_read_unavailable") from exc
+        if not still_bound() or snapshot.reason_code == "scope_changed":
+            raise ProviderConfigurationError("loan_inventory_scope_changed")
+        if snapshot.status in ("failed", "cancelled"):
+            raise ProviderConfigurationError("loan_inventory_read_unavailable")
+        rows = list(snapshot.loans)
         serial = []
         for row in rows:
             d = asdict(row); d["raw"] = {}
@@ -2464,6 +2429,16 @@ class LibraryService:
         """Historical synchronous facade; no inferred deferred admission."""
         return self._renew_with_admission(loan, confirmed=confirmed)
 
+    def capture_confirmed_loan_renewal(
+        self, loan: Loan, *, identity_id: str, account_id: str, confirmed: bool,
+    ):
+        """Passive admission for an exact reader/borrower, independent of GTK."""
+        from .core.provider_loan_renewal import capture_confirmed_loan_renewal
+        return capture_confirmed_loan_renewal(
+            self, loan, identity_id=identity_id, account_id=account_id,
+            confirmed=confirmed,
+        )
+
     def renew_admitted_loan(self, loan: Loan, *, confirmed: bool = False, admission) -> dict[str, Any]:
         from .core.provider_loan_renewal import RenewalAdmission
         if type(admission) is not RenewalAdmission:
@@ -2693,15 +2668,6 @@ class LibraryService:
 
     def default_downloads_dir(self) -> Path:
         return self.acquisition.target_dir("", "ebook")
-
-    def _kobo_adapter(self):
-        """Inert compatibility seam for legacy ADEPT test injection only.
-
-        The former concrete runtime selector is retired. No product path
-        may obtain a plugin through this method; use the verified plugin
-        service and typed acquisition/inventory contracts instead.
-        """
-        raise ProviderConfigurationError("legacy_kobo_runtime_adapter_retired")
 
     def _required_plugin_service(self, plugin_id: str) -> Any:
         manager = self._plugin_manager
@@ -3960,11 +3926,6 @@ class LibraryService:
             if getattr(selected, "identity_id", None) != target.identity_id:
                 raise OwnedDownloadRejected("owned_download_unavailable")
         return obtain_owned_library_item(self, target)
-
-    def prepare_direct_download(self, item: SearchResult) -> tuple[Path, str]:
-        """Compatibility wrapper around the normalized direct acquisition."""
-        result = self.acquire_direct_item(item)
-        return result.path or result.target_dir or self.default_downloads_dir(), result.url
 
     def library_dir(self) -> Path:
         """Functional local library owned by cifereca.
@@ -5588,14 +5549,6 @@ class LibraryService:
             is_acsm=is_acsm, mime_type=self.acquisition.mime_type_for(path, hook_item),
             library_target_dir=library_target_dir, acquisition_factory=Acquisition,
         )
-
-    def prepare_digital_download(self, loan: Loan, *, force_refresh: bool = False) -> tuple[Path, str]:
-        """0.3.2 compatibility wrapper around ``acquire_digital_loan``."""
-        result = self.acquire_digital_loan(loan, force_refresh=True) if force_refresh else self.acquire_digital_loan(loan)
-        path = result.path
-        if path is None:
-            raise ProviderConfigurationError("L'acquisition numérique n'a produit aucun fichier local")
-        return path, result.url
 
     def _download_filename(self, response, loan: Loan, content_type: str) -> str:
         disposition = response.headers.get("content-disposition", "")
