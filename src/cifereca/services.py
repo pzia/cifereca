@@ -3656,7 +3656,12 @@ class LibraryService:
         except Exception:
             return False
 
-    def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None, _legacy_admission=None) -> Acquisition:
+    def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None) -> Acquisition:
+        return LibraryService._acquire_direct_item_readmitted(self, item, _admission=_admission)
+
+    def _acquire_direct_item_readmitted(
+        self, item: SearchResult, *, _admission=None, _legacy_admission=None,
+    ) -> Acquisition:
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
             raise ProviderConfigurationError(
                 "Résultat connu hors ligne : acquisition indisponible"
@@ -3897,7 +3902,7 @@ class LibraryService:
 
         def acquire(selected):
             try:
-                result = LibraryService._acquire_direct_item_impl(
+                result = LibraryService._acquire_direct_item_readmitted(
                     self, selected, _legacy_admission=target,
                 )
             except Exception as exc:
