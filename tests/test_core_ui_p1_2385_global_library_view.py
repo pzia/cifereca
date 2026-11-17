@@ -102,16 +102,22 @@ class _HostileLibraryViewOwner:
         raise AssertionError("provider-owned view marker equality must not run")
 
 
-@pytest.mark.parametrize(("owner", "marker"), [
-    ("alice", "alice"),
-    ("alice", None),
-    ("alice", "bob"),
-    ("bob", "alice"),
-    ("alice", _HostileLibraryViewOwner()),
-    (False, "alice"),
+@pytest.mark.parametrize(("owner", "marker", "active"), [
+    ("alice", "alice", "bob"),
+    ("alice", None, "bob"),
+    ("alice", "bob", "bob"),
+    ("bob", "alice", "bob"),
+    ("alice", _HostileLibraryViewOwner(), "bob"),
+    (False, "alice", "bob"),
+    (False, None, "bob"),
+    ("", None, "bob"),
+    (None, None, "bob"),
+    (_HostileLibraryViewOwner(), None, "bob"),
+    ("alice", None, None),
+    ("alice", None, _HostileLibraryViewOwner()),
 ])
 def test_foreign_book_does_not_load_provider_detail_or_supplier_actions(
-    monkeypatch, owner, marker,
+    monkeypatch, owner, marker, active,
 ):
     from cifereca.gui import library_detail_controller
     monkeypatch.setattr(
@@ -130,7 +136,7 @@ def test_foreign_book_does_not_load_provider_detail_or_supplier_actions(
         "title": "Alice book", "source": "loan", "loan_id": "private-a",
     }
     svc = NS(
-        current_identity=NS(identity_id="bob"),
+        current_identity=NS(identity_id=active) if active is not None else None,
         provider_display_name=lambda x: x,
         identity_by_id=lambda x: NS(label=x),
     )
