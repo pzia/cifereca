@@ -746,12 +746,16 @@ class BookListCell(Gtk.Box):
             from .plugin_public_c_guard import plugin_public_c_cell_current
             receipt = getattr(item, "_cover_plugin_c_receipt", None)
             bind_epoch = self._bind_epoch
-            return {"is_current": lambda: (
+            options = {"is_current": lambda: (
                 self._bind_epoch == bind_epoch
                 and self._bound_key == item.key
                 and self._thumbnail_item is item
                 and plugin_public_c_cell_current(item, receipt)
             )}
+            revision = getattr(receipt, "minimum_revision", None)
+            if revision is not None:
+                options["minimum_revision"] = revision
+            return options
         known_source = getattr(item, "_cover_known_public_c_source", None)
         if known_source is not None:
             from .search_known_public_c_guard import known_public_c_cell_current

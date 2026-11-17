@@ -392,6 +392,9 @@ class UiBookListEntry:
     thumbnail_url: str | None = None
     # Core-originated exact DocumentRef; no inferred proof/rights in plugins.
     cover_document_ref: object | None = None
+    # Optional opaque receipt from public_notice_cover_binding. Forward it
+    # unchanged; it is neither a provider field nor a serialized capability.
+    cover_document_receipt: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1089,6 +1092,20 @@ class UiPublicNoticeCoverHost(UiPageHost, Protocol):
     def public_notice_cover_ref(
         self, item: object, *, identity_id: str,
     ) -> object | None: ...
+
+
+@runtime_checkable
+class UiPublicNoticeCoverBindingHost(UiPublicNoticeCoverHost, Protocol):
+    """Optional revision-aware extension of the legacy exact-C reference port.
+
+    Returns (DocumentRef, opaque Core receipt) or None. Forward the receipt
+    unchanged in UiBookListEntry.cover_document_receipt; never reconstruct,
+    serialize or interpret it. The standard CoreUI adapter validates it.
+    """
+
+    def public_notice_cover_binding(
+        self, item: object, *, identity_id: str,
+    ) -> tuple[object, object] | None: ...
 
 
 @runtime_checkable

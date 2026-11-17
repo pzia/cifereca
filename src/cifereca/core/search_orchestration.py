@@ -2152,6 +2152,7 @@ def _stamp_cached_public_notice_refs(
             "_core_notice_cover_document_epoch",
             "_core_notice_canonical_cover_document_ref",
             "_core_notice_canonical_cover_document_epoch",
+            "_core_persisted_c_revision_witness",
         ):
             row.__dict__.pop(key, None)
         safe_url = _shared_catalogue_cover_url(row.thumbnail_url)
@@ -2229,6 +2230,7 @@ def _mirror_remote_results(
             row.__dict__.pop("_core_notice_cover_document_epoch", None)
             row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
             row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
+            row.__dict__.pop("_core_persisted_c_revision_witness", None)
             row.__dict__.pop("_core_notice_cross_provider_proof", None)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
@@ -2424,6 +2426,8 @@ def _mirror_remote_results(
                             row._core_notice_canonical_cover_document_epoch = (
                                 canonical.epoch
                             )
+                            from .notice_c_live_revision import stamp_persisted_c_revision
+                            stamp_persisted_c_revision(row, canonical)
                 # Reconcile only when TWO separately persisted public source
                 # observations have a real common v14 completed OriginLink.
                 # This is a single worker-only scan per Search batch; no
@@ -2451,6 +2455,8 @@ def _mirror_remote_results(
                         continue
                     row._core_notice_canonical_cover_document_ref = shared.document
                     row._core_notice_canonical_cover_document_epoch = shared.epoch
+                    from .notice_c_live_revision import stamp_persisted_c_revision
+                    stamp_persisted_c_revision(row, shared)
                     row._core_notice_cross_provider_proof = (
                         _CORE_ORIGIN_LINK_C_WITNESS,
                         persisted.document.source_key,

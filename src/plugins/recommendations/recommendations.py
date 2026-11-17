@@ -655,7 +655,7 @@ def _public_cover_url(item: Any) -> str | None:
 
 def _attested_recommendation_c_cover(
     ranked: Any, *, host: Any, identity_id: str | None,
-    catalogue_sources: tuple[str, ...],
+    catalogue_sources: tuple[str, ...], with_receipt: bool = False,
 ):
     """Reuse an already published Core C, never a recommendation ISBN join.
 
@@ -672,10 +672,10 @@ def _attested_recommendation_c_cover(
             or any(type(x) is not str for x in catalogue_sources)
             or type(ranked.notices) is not tuple
             or len(ranked.notices) != 1):
-        return None
+        return (None, None) if with_receipt else None
     original = ranked.notices[0]
     if type(original) is not CatalogNoticeVariant:
-        return None
+        return (None, None) if with_receipt else None
     item = ranked.item
     if (type(item) is not SearchResult
             or original.item is not item
@@ -688,15 +688,20 @@ def _attested_recommendation_c_cover(
                 and original.source_provider not in catalogue_sources)
             or type(ranked.sources) is not tuple
             or set(ranked.sources) != {original.source_provider}):
-        return None
+        return (None, None) if with_receipt else None
     # Plugins cannot inspect Core witnesses, reference proofs, SQLite or
     # provider execution state. The public host gate owns this admission.
     # A legacy/headless host without the opt-in method cannot mint C.
+    if with_receipt:
+        # Optional newer port. An opaque receipt is passed through unchanged;
+        # the plugin never interprets its revision, identity or source proof.
+        bind = getattr(host, "public_notice_cover_binding", None)
+        if callable(bind):
+            packet = bind(item, identity_id=identity_id)
+            return packet if type(packet) is tuple and len(packet) == 2 else (None, None)
     resolve = getattr(host, "public_notice_cover_ref", None)
-    return (
-        resolve(item, identity_id=identity_id)
-        if callable(resolve) else None
-    )
+    document = resolve(item, identity_id=identity_id) if callable(resolve) else None
+    return (document, None) if with_receipt else document
 
 
 def _attested_catalogue_isbns(
@@ -2672,10 +2677,10 @@ class UxRecommendationsView:
                 identity_for_cover = self.selected_identity_id()
             except (AttributeError, TypeError):
                 identity_for_cover = None
-            cover_ref = _attested_recommendation_c_cover(
+            cover_ref, cover_receipt = _attested_recommendation_c_cover(
                 ranked, host=getattr(self, "host", None),
                 identity_id=identity_for_cover,
-                catalogue_sources=catalogue_sources,
+                catalogue_sources=catalogue_sources, with_receipt=True,
             )
             rows.append(
                 UiBookListEntry(
@@ -2688,6 +2693,7 @@ class UxRecommendationsView:
                            else ""),
                     thumbnail_url=_public_cover_url(item),
                     cover_document_ref=cover_ref,
+                    cover_document_receipt=cover_receipt,
                 )
             )
 
@@ -2737,6 +2743,7 @@ class UxRecommendationsView:
                         # not reopen that detail solely because public row
                         # metadata was enriched on the same ranked object.
                         selection.get("row_presentation") != presentation
+                        or selection.get("cover_document_receipt") != row.cover_document_receipt
                         or selection["generation"] != self._generation
                         or selection["provisional"] != self._provisional_active
                     ))
@@ -2829,6 +2836,7 @@ class UxRecommendationsView:
             }
             self._exact_notice_state = state
         state["provisional"] = self._provisional_active
+        state["cover_document_receipt"] = getattr(row, "cover_document_receipt", None)
         state["row_presentation"] = (
             row.title, row.subtitle, row.thumbnail_url,
             row_cover_ref,

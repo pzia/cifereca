@@ -202,3 +202,53 @@ def test_raw_gtk_list_item_reuses_only_revalidated_c_cover(tmp_path):
         assert db.entitlements() == []
     finally:
         db.close()
+
+def test_revision_aware_host_packet_forwarded_and_refreshes_neutral_detail(tmp_path):
+    # The plugin operates solely on the new public binding port; it neither
+    # interprets a Core receipt nor changes the standard detail contract.
+    db = Storage(tmp_path / "opaque-receipt.sqlite")
+    try:
+        live = _verified(db)
+        ranked = _ranked(live)
+        view, _, _, _, _ = _view(ranked.notices)
+        view._ranked = [ranked]
+        view.host.public_notice_cover_ref = _host().public_notice_cover_ref
+        view._exact_notice_state = None
+        view._matches = lambda candidate: candidate is ranked
+        view._candidate_key = lambda _: "canonical:one"
+        document = live._core_notice_canonical_cover_document_ref
+        packet = [object()]
+        view.host.public_notice_cover_binding = (
+            lambda item, *, identity_id: (document, packet[0])
+        )
+        rows, details = [], []
+        view._master.show_rows = lambda items, **kw: rows.append(tuple(items))
+        view._master.show_detail = details.append
+
+        view._render(preserve_summary=True)
+        first = rows[-1][0]
+        assert first.cover_document_ref == document
+        assert first.cover_document_receipt is packet[0]
+        view._selected_row(first)
+        assert details[-1].cover_document_ref == document
+        assert view._exact_notice_state["cover_document_receipt"] is packet[0]
+
+        # Identical visible title, author, URL and canonical ref; only the
+        # opaque Core binding changes during a progressive redraw.
+        packet[0] = object()
+        previously_rendered = len(details)
+        view._render(preserve_summary=True)
+        assert rows[-1][0].cover_document_receipt is packet[0]
+        assert len(details) == previously_rendered + 1
+        assert view._exact_notice_state["cover_document_receipt"] is packet[0]
+        assert details[-1].cover_document_ref == document
+
+        # The new port's refusal must not be upgraded into a C by calling
+        # the weaker compatibility port again.
+        view.host.public_notice_cover_binding = lambda *args, **kw: None
+        view._render(preserve_summary=True)
+        assert rows[-1][0].cover_document_ref is None
+        assert rows[-1][0].cover_document_receipt is None
+        assert db.entitlements() == []
+    finally:
+        db.close()
