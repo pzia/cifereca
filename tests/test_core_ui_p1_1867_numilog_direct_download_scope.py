@@ -102,6 +102,20 @@ class NumilogOfferFixture:
         return LibraryService.can_direct_download(self, item)
 
 
+def install_private_hint_fixture(service, session=None):
+    fixture = NumilogOfferFixture()
+    if session is None:
+        session = fixture.session
+    else:
+        session.capabilities = fixture.session.capabilities
+        session.selected_purchase_branch = fixture.session.selected_purchase_branch
+        session.private_inventory_row_contract = fixture.session.private_inventory_row_contract
+    service.accounts = fixture.accounts
+    service._session_key = fixture._session_key
+    service._sessions = {fixture._session_key("numilog", CREDENTIAL): session}
+    return session
+
+
 def test_private_verified_inventory_offer_preserves_manual_button_hint():
     service = NumilogOfferFixture()
     assert service.can_direct(private_purchase()) is True
@@ -172,13 +186,14 @@ def test_real_private_inventory_keeps_opt_in_search_button_but_not_local_file():
     book = private_purchase()
     host._remote_search_results = [book]
     host.service.can_direct_download = Mock(return_value=True)
-    host.service.storage = NS(entitlements=Mock(return_value=[_owned_ledger_right()]))
-    host.service._session_for_source = Mock(return_value=NumilogOfferFixture().session)
+    host.service.storage = NS(entitlements=Mock(return_value=[]))
+    session = install_private_hint_fixture(host.service)
+    host.service._session_for_source = Mock(return_value=session)
     host._populate_search([book], announce=False)
     row = host.search_page.show_rows.call_args.args[0][0]
     assert row.options["action_label"] == "Vérifier et télécharger"
     assert callable(row.options["action_callback"])
-    assert "Mes achats · fichier local non présumé" in row.meta
+    assert "Mes achats" not in row.meta
     assert "Offre à vérifier" in row.meta
     assert "Fichier local disponible" not in row.meta
     host.service.can_direct_download.assert_called_once_with(book)
@@ -224,7 +239,7 @@ def test_detail_retains_private_purchase_action_when_broker_positive():
     )
     window = NS(service=service, action_button=Mock(return_value=button),
                 download_direct_item=Mock())
-    window._search_purchase_evidence = _proof()
+    install_private_hint_fixture(service)
     panel = NS(window=window, _actions=Mock())
     _direct_download_method()(panel, purchase)
     service.can_direct_download.assert_called_once_with(purchase)
@@ -245,29 +260,27 @@ def test_private_ownership_is_independent_of_local_offer_qualification():
 def test_private_hint_is_supplier_neutral_and_fails_closed_without_exact_proof():
     from cifereca.gui.offer_actions import private_notice_download_hint_allowed
     purchase = private_purchase()
-    generic = replace(purchase, source_provider="fictional-store")
-    assert private_notice_download_hint_allowed(generic) is False
+    # A historical positive right alone cannot authorize even a button.
     assert private_notice_download_hint_allowed(
-        generic, identity_id="alice",
-        purchase_evidence=SearchOwnedEvidence(
-            "alice", frozenset({(
-                "fictional-store", generic.source_credential,
-                generic.source_account_id, generic.record_id, "",
-            )}),
-        ),
+        purchase, identity_id="alice", purchase_evidence=_proof(),
+    ) is False
+    service = NumilogOfferFixture()
+    assert private_notice_download_hint_allowed(
+        purchase, service=service, identity_id="alice",
     ) is True
     assert private_notice_download_hint_allowed(
-        generic, identity_id="bob",
-        purchase_evidence=SearchOwnedEvidence(
-            "alice", frozenset({(
-                "fictional-store", generic.source_credential,
-                generic.source_account_id, generic.record_id, "",
-            )}),
-        ),
+        purchase, service=service, identity_id="bob", purchase_evidence=_proof(),
     ) is False
     assert private_notice_download_hint_allowed(
-        replace(generic, source_collection="public_catalog"),
+        replace(purchase, source_collection="public_catalog"), service=service,
+        identity_id="alice",
     ) is False
     assert private_notice_download_hint_allowed(
-        replace(generic, metadata={"search_provenance": "known_catalog_stale"}),
+        replace(purchase, metadata={"search_provenance": "known_catalog_stale"}),
+        service=service, identity_id="alice",
     ) is False
+    assert private_notice_download_hint_allowed(
+        replace(purchase, source_provider="fictional-store"), service=service,
+        identity_id="alice", purchase_evidence=_proof(),
+    ) is False
+    assert service.source_calls == []
