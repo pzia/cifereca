@@ -303,3 +303,56 @@ def test_public_c_link_preserves_exact_epub_n1_and_rejects_forged_rows(tmp_path)
             assert not hasattr(library_view(wrong), "_cover_public_c_link")
     finally:
         db.close()
+
+
+def test_local_origin_projection_survives_large_unrelated_catalogue(tmp_path):
+    import json
+    from cifereca.core.notice_c_cover_index import (
+        _db_key, canonical_cover_document_ref,
+    )
+
+    db = Storage(tmp_path / "large-local-c.sqlite")
+    try:
+        a, _, path = _real_origins(db, tmp_path)
+        source = _source(db, "seller-a", "edition-a", A_URL)
+        c = persist_exact_public_search_cover(db, source)
+        unrelated = persist_exact_public_search_cover(
+            db, _source(db, "other-provider", "noise-record", B_URL),
+        )
+        with db._lock, db._connect() as sql:
+            raw = sql.execute(
+                "SELECT value FROM metadata WHERE key=?",
+                (_db_key(unrelated.document),),
+            ).fetchone()[0]
+            payload = json.loads(raw)
+            rows = []
+            for n in range(4100):
+                edition = f"edition:unrelated-local-claim-{n}"
+                payload["edition_id"] = edition
+                rows.append((_db_key(canonical_cover_document_ref(edition)),
+                             json.dumps(payload)))
+            sql.executemany("INSERT INTO metadata(key,value) VALUES(?,?)", rows)
+            sql.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
+                        (_db_key(canonical_cover_document_ref("edition:corrupt")), "{"))
+            sql.execute("DELETE FROM metadata WHERE key LIKE 'notice.c.observation.v1:%'")
+        local, recent = _views(db, a.artifact_id, a.placement_id, path)
+        project_local_origin_public_c(db, [local, recent], identity_id="A")
+        assert local["_public_canonical_cover_link"].document == c.document
+        assert recent["_public_canonical_cover_link"].document == c.document
+        assert library_view(local)._cover_document_ref == c.document
+        assert recent_view(recent)._cover_document_ref == c.document
+
+        # A second source edition of the actual record must still veto
+        # the coarse OriginLink, even beyond the previous scan cap.
+        duplicate = persist(db, verified_public(
+            source_provider="seller-a", record_id="edition-a",
+            title="Un ouvrage commun", author="Autrice",
+            docbase="other-catalogue", thumbnail_url=B_URL,
+        ), at=100)
+        persist_exact_public_search_cover(db, duplicate)
+        project_local_origin_public_c(db, [local, recent], identity_id="A")
+        assert "_public_canonical_cover_link" not in local
+        assert "_public_canonical_cover_link" not in recent
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
