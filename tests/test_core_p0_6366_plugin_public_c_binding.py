@@ -38,6 +38,12 @@ def test_revision_receipt_real_host_list_detail_and_progressive_update(
         assert host.public_notice_cover_binding(first, identity_id="alice")[1] == packet
         assert host.public_notice_cover_binding(replace(first), identity_id="alice") is None
         assert host.public_notice_cover_binding(first, identity_id="bob") is None
+        # A changed scalar epoch is not a persisted producer witness and
+        # cannot be elevated into a newly issued opaque binding.
+        first._core_notice_canonical_cover_document_epoch += 1
+        assert host.public_notice_cover_binding(first, identity_id="alice") is None
+        assert public_c_binding_revision(window, doc, packet) is None
+        first._core_notice_canonical_cover_document_epoch -= 1
 
         def publish(binding):
             ref, opaque = binding
