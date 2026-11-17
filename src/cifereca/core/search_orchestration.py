@@ -2232,21 +2232,13 @@ def _mirror_remote_results(
             row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
             row.__dict__.pop("_core_persisted_c_revision_witness", None)
             row.__dict__.pop("_core_notice_cross_provider_proof", None)
-    # Generic exact Core ledger attestation; a legacy descriptive personal
-    # row may lack account/revision, but it never grants an actionable right.
-    # The stronger #5073 UI/action proof remains authoritative for actions.
-    from .catalogue_owned_projection import attested_catalogue_owned_keys
-    verified_owned = attested_catalogue_owned_keys(
-        self.storage, rows, identity_id=identity_id,
-    )
+    # A catalogue mirror contains descriptive observations only. Neither a
+    # historical entitlement nor a supplier-owned flag can select its state.
+    # Private metadata remains scoped; an actual offer requires separate
+    # exact source admission and live verification.
     keyed: list[tuple[str, SearchResult, str, bool]] = []
     for row in rows:
-        owned = row.owned is True and (
-            row.source_provider, identity_id, row.source_credential,
-            row.source_account_id or "", row.record_id, row.revision_id or "",
-        ) in verified_owned
         state = (
-            "remote_owned" if owned else
             # This is descriptive only: a supplier price is not a purchase right.
             "available_to_buy" if type(row.price) is str and bool(row.price.strip()) else
             # A public catalogue notice is not a borrowing right.
@@ -2265,7 +2257,7 @@ def _mirror_remote_results(
         raw_meta = dict(row.metadata or {})
         # "rights" is an untrusted provider claim (possibly a signed
         # token), never a public bibliographic field nor ownership evidence.
-        # The exact Core entitlement ledger alone determines remote_owned.
+        # No legacy or provider right participates in the mirror state.
         # This rule is provider-neutral: unknown plugins must not leak it.
         raw_meta.pop("rights", None)
         allowed_meta = {
