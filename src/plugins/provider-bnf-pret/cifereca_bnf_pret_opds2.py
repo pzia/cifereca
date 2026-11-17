@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Mapping
+
+from cifereca.plugin_api.catalogue_json import (
+    CatalogueJSONError, parse_bounded_catalogue_json, validate_catalogue_json,
+)
 from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
 
 HOME_URL = "https://pret.bnf.fr/v1/home.opds2"
@@ -104,6 +108,8 @@ class Catalog:
     next_url: str | None
     search_template: str | None
     authentication_advertised: bool = False
+    # None URL alone is not proof of the end of a catalogue.
+    next_status: str = "absent"
 
 
 def _catalog_navigation(raw: Any, *, base: str) -> list[Navigation]:
@@ -216,6 +222,14 @@ def parse_catalog(payload: Any, *, url: str = HOME_URL, status: int = 200,
         raise OPDS2ContractError("unexpected_status")
     if not _is_feed_type(content_type):
         raise OPDS2ContractError("invalid_content_type")
+    failure = None
+    try:
+        payload = (parse_bounded_catalogue_json(payload) if type(payload) is bytes
+                   else validate_catalogue_json(payload))
+    except CatalogueJSONError as exc:
+        failure = exc.code
+    if failure is not None:
+        raise OPDS2ContractError("invalid_catalog_json_" + failure)
     base = _safe_link(url)
     if not base or not isinstance(payload, Mapping):
         raise OPDS2ContractError("invalid_catalog")
@@ -237,7 +251,7 @@ def parse_catalog(payload: Any, *, url: str = HOME_URL, status: int = 200,
         publications.extend(_catalog_publications(group.get("publications"), base=base))
     if len(navigation) + len(publications) > MAX_ENTRIES:
         raise OPDS2ContractError("too_many_entries")
-    next_url = None
+    declared_next = []
     search = None
     auth = False
     for link in links:
@@ -245,10 +259,22 @@ def parse_catalog(payload: Any, *, url: str = HOME_URL, status: int = 200,
             raise OPDS2ContractError("invalid_link")
         rel = _rels(link.get("rel"))
         auth |= "authenticate" in rel or "http://opds-spec.org/authenticate" in rel
-        if "next" in rel and _is_feed_type(link.get("type")):
-            next_url = _safe_link(link.get("href"), base=base)
+        if "next" in rel:
+            declared_next.append(_safe_link(link.get("href"), base=base)
+                                 if _is_feed_type(link.get("type")) else None)
         if "search" in rel and _is_feed_type(link.get("type")) and link.get("templated") is True:
             search = _search_template(link.get("href"), base=base)
     if not (navigation or publications):
         raise OPDS2ContractError("empty_catalog")
-    return Catalog(title, tuple(navigation), tuple(publications), next_url, search, auth)
+    next_url = None
+    next_status = "absent"
+    if declared_next:
+        if any(value is None for value in declared_next):
+            next_status = "invalid"
+        elif len(set(declared_next)) != 1:
+            next_status = "ambiguous"
+        else:
+            next_status = "valid"
+            next_url = declared_next[0]
+    return Catalog(title, tuple(navigation), tuple(publications), next_url, search, auth,
+                   next_status=next_status)
