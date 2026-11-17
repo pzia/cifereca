@@ -2140,10 +2140,10 @@ def _stamp_cached_public_notice_refs(
         return
     from .notice_search_cover_producer import admit_public_search_cover
     from .notice_cover_projection import notice_cover_document_ref
-    from .notice_c_cover_index import (
-        canonical_cover_document_ref, read_consolidated_notice_cover,
-    )
+    from .notice_c_exact_source_lookup import exact_public_source_c_many
+    from .notice_c_cached_revision import stamp_cached_c_revision
 
+    pending = []
     for index, row in enumerate(rows):
         if type(row) is not SearchResult:
             continue
@@ -2173,11 +2173,22 @@ def _stamp_cached_public_notice_refs(
             # The UI's GTK bind may only consume the resulting exact ref.
             if storage is None or index >= 256:
                 continue
-            from .notice_c_exact_source_lookup import exact_public_source_c
-            persisted = exact_public_source_c(
-                storage, provider_id=row.source_provider, record_id=row.record_id,
-                docbase=row.docbase, medium=row.medium, source_revision=row.revision_id,
-            )
+            coords = (row.source_provider, row.record_id, row.docbase,
+                      row.medium, row.revision_id)
+            pending.append((row, snapshot, exact, coords))
+        except (ValueError, TypeError, UnicodeError, AttributeError):
+            continue
+
+    # Resolve once against a consistent worker snapshot; never re-scan the
+    # canonical inventory per cache row or keep an intertransaction index.
+    if not pending:
+        return
+    resolved = exact_public_source_c_many(
+        storage, [coords for _, _, _, coords in pending],
+    )
+    for row, snapshot, exact, coords in pending:
+        try:
+            persisted = resolved.get(coords)
             if persisted is None or not persisted.candidates:
                 continue
             for source in persisted.sources:
@@ -2200,7 +2211,6 @@ def _stamp_cached_public_notice_refs(
                     row._core_notice_canonical_cover_document_epoch = (
                         persisted.epoch
                     )
-                    from .notice_c_cached_revision import stamp_cached_c_revision
                     stamp_cached_c_revision(row, persisted, identity_id=identity_id)
                     break
         except (ValueError, TypeError, UnicodeError, AttributeError):
