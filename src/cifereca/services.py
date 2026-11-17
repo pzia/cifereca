@@ -3561,6 +3561,40 @@ class LibraryService:
         )
 
     def can_direct_download(self, item: SearchResult) -> bool:
+        """Synchronous navigation compatibility facade."""
+        return LibraryService._can_direct_download_read(self, item)
+
+    def can_direct_download_for_scope(self, request_scope, item: SearchResult) -> bool:
+        """Passive offer hint for an admitted reader, not acquisition consent."""
+        if type(request_scope) is not search_orchestration.SearchReadScope:
+            return False
+        from .core.private_source_owner_scope import private_source_owner_matches
+
+        def current():
+            try:
+                return (
+                    request_scope.current(self)
+                    and type(item) is SearchResult
+                    and not (type(item.metadata) is dict
+                             and item.metadata.get("catalogue_access") == "shared_read_only")
+                    and (item.source_credential == "__public__"
+                         or private_source_owner_matches(
+                             self, item, identity_id=request_scope.identity_id,
+                         ))
+                    and self._provider_enabled_for_identity(
+                        item.source_provider, request_scope.identity_id,
+                    ) is True
+                )
+            except Exception:
+                return False
+
+        return (current() and LibraryService._can_direct_download_read(
+            self, item, request_scope=request_scope,
+        ) and current())
+
+    def _can_direct_download_read(
+        self, item: SearchResult, *, request_scope=None,
+    ) -> bool:
         """Can this *exact* remote offer show a consented direct-download action?
 
         An unauthenticated catalogue owned=True flag is not a purchase.
@@ -3575,8 +3609,9 @@ class LibraryService:
         from .core.private_source_owner_scope import (
             private_source_owner_matches, public_catalogue_source,
         )
-        admitted_identity_id = getattr(
-            getattr(self, "current_identity", None), "identity_id", None,
+        admitted_identity_id = (
+            request_scope.identity_id if request_scope is not None else
+            getattr(getattr(self, "current_identity", None), "identity_id", None)
         )
         if (item.source_credential != "__public__"
                 and not public_catalogue_source(item)
@@ -3591,8 +3626,12 @@ class LibraryService:
             )
             if private_hint is not None:
                 return private_hint
-            session = self._session_for_source(
-                item.source_provider, item.source_credential,
+            session = (
+                provider_sessions._session_for_source(
+                    self, item.source_provider, item.source_credential,
+                    identity_id=admitted_identity_id,
+                ) if request_scope is not None else
+                self._session_for_source(item.source_provider, item.source_credential)
             )
             from inspect import getattr_static
             if getattr_static(session, "legacy_direct_get_retired", None) is True:
