@@ -243,6 +243,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
     def epochs_current() -> bool:
         return (not getattr(self, "_closed", False)
                 and self.service is holdings_core
+                and request_scope.current(holdings_core)
                 and source_epochs == (
             getattr(self.service, "_account_context_epoch", None),
             getattr(self.service, "_source_context_epoch", None),
@@ -484,6 +485,7 @@ def _load_known_detail(self: SearchDetailHost, item):
     def epochs_current() -> bool:
         return (not getattr(self, "_closed", False)
                 and self.service is holdings_core
+                and request_scope.current(holdings_core)
                 and source_epochs == (
             getattr(self.service, "_account_context_epoch", None),
             getattr(self.service, "_source_context_epoch", None),
