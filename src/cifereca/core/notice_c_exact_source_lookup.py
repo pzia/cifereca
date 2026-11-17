@@ -112,16 +112,92 @@ def exact_public_source_c_many(
         return {}
 
 
+def exact_public_source_c_batch(storage: Any, coordinates):
+    """Resolve a bounded batch from one consistent SQLite read.
+
+    Keys are (provider, record, docbase, medium, revision). No persistent
+    cache: subsequent calls observe new committed C revisions.
+    """
+    from .notice_c_cover_index import _IDENTIFIER
+
+    requested = {}
+    for key in coordinates:
+        if len(requested) >= 256:
+            break
+        provider, record, docbase, medium, revision = key
+        if (any(type(value) is not str
+                or _IDENTIFIER.fullmatch(value) is None
+                or "://" in value or ".." in value
+                for value in (provider, record, docbase))
+                or medium not in ("digital", "physical", "unknown")
+                or (revision is not None
+                    and (type(revision) is not str
+                         or _IDENTIFIER.fullmatch(revision) is None))):
+            continue
+        requested[key] = "edition:" + _coordinate_digest(
+            provider, "public_catalog", record, docbase, medium, revision,
+        )
+    if not requested:
+        return {}
+    matches = {key: [] for key in requested}
+    try:
+        with storage._lock, storage._connect() as db:
+            rows = db.execute(
+                "SELECT key,value FROM metadata WHERE key>=? AND key<? "
+                "ORDER BY key LIMIT ?",
+                (_PREFIX, _PREFIX + "\uffff", _MAX_INDEXED_C + 1),
+            ).fetchall()
+        if len(rows) > _MAX_INDEXED_C:
+            return {}
+        for key, raw in rows:
+            try:
+                parsed = _json(raw)
+                document = canonical_cover_document_ref(parsed["edition_id"])
+                if _db_key(document) != key:
+                    continue
+                consolidated = _decode(raw, document)
+            except (KeyError, TypeError, ValueError):
+                continue
+            sources = consolidated.sources
+            if not sources or any(
+                source.visibility != "public"
+                or source.public_bibliography is None for source in sources
+            ):
+                continue
+            found = set()
+            for source in sources:
+                facts = source.public_bibliography
+                coords = (source.provider_id, facts.record_id, facts.docbase,
+                          facts.medium, facts.source_revision)
+                if requested.get(coords) == facts.edition_id:
+                    found.add(coords)
+            for coords in found:
+                if len(matches[coords]) <= _MAX_RESULTS:
+                    matches[coords].append(consolidated)
+        result = {}
+        for coords, candidates in matches.items():
+            if not candidates or len(candidates) > _MAX_RESULTS:
+                continue
+            related = [x for x in candidates if len(x.sources) > 1]
+            if len(related) == 1:
+                result[coords] = related[0]
+            elif not related and len(candidates) == 1:
+                result[coords] = candidates[0]
+        return result
+    except (sqlite3.Error, AttributeError, TypeError, ValueError):
+        return {}
+
+
 def exact_public_source_c(
-    storage: Any, *,
-    provider_id: str, record_id: str, docbase: str, medium: str,
-    source_revision: str | None,
+    storage: Any, *, provider_id: str, record_id: str, docbase: str,
+    medium: str, source_revision: str | None,
 ) -> ConsolidatedNoticeCover | None:
-    """Compatibility single-coordinate worker lookup."""
-    coords = (provider_id, record_id, docbase, medium, source_revision)
-    if not _valid_coordinates(coords):
+    """Resolve one exact public edition, rejecting conflicting relations."""
+    key = (provider_id, record_id, docbase, medium, source_revision)
+    try:
+        return exact_public_source_c_batch(storage, [key]).get(key)
+    except (TypeError, ValueError):
         return None
-    return exact_public_source_c_many(storage, (coords,)).get(coords)
 
 
-__all__ = ["exact_public_source_c", "exact_public_source_c_many"]
+__all__ = ["exact_public_source_c", "exact_public_source_c_batch"]
