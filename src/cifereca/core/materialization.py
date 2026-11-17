@@ -42,6 +42,7 @@ class MaterializationCoordinator:
         # source can be rebound while a direct download or override runs.
         epoch = self._source_epoch() if self._source_epoch is not None else None
         coords = (item.source_provider, item.source_credential, item.record_id)
+        observed = (item.id, item.source_account_id)
         title = item.title
         identity = self._resolve_identity(*coords[:2])
         owner = getattr(identity, "identity_id", None)
@@ -52,6 +53,7 @@ class MaterializationCoordinator:
             try:
                 return (
                     (item.source_provider, item.source_credential, item.record_id) == coords
+                    and (item.id, item.source_account_id) == observed
                     and (self._source_epoch is None or self._source_epoch() == epoch)
                     and self._resolve_identity(*coords[:2]).identity_id == owner
                     and (self._source_epoch is None or self._source_epoch() == epoch)
@@ -64,13 +66,15 @@ class MaterializationCoordinator:
         acquisition = self._acquire(item)
         if (not still_current()
                 or (acquisition.provider_id, acquisition.credential_id, acquisition.item_id)
-                != (coords[0], coords[1], str(coords[2] or item.id))):
+                != (coords[0], coords[1], str(coords[2] or observed[0]))):
             # Bytes or an override's side effects may already exist. Do not
             # falsely publish them under the replacement borrower.
             raise ProviderConfigurationError("materialization_source_revoked")
         path = acquisition.path
         if path is None or not path.is_file():
             return MaterializationResult(acquisition, None, None, None)
+        if not still_current():
+            raise ProviderConfigurationError("materialization_source_revoked")
         indexed = self._index_path(
             path,
             title=title,
