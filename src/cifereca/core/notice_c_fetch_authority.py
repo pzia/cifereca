@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 import json
-from threading import RLock
+from threading import RLock, get_ident
 import time
 from typing import Callable
 from uuid import uuid4
@@ -170,6 +170,7 @@ class PublicFetchAuthority:
         """
         if type(lease) is not journal.JobLease:
             raise ValueError("notice_fetch_invalid_lease")
+        journal._check_ref(lease.ref)
         with self._lock:
             grant = self._lookup(lease.ref)
         with grant.hold_authority() as allowed:
@@ -218,9 +219,20 @@ class PublicFetchAuthority:
                     if (self._lookup(permit.lease.ref) is not grant
                             or grant.permit is not permit):
                         raise ValueError("notice_fetch_invalid_permit")
+                    active = True
+                    used = False
+                    owner = get_ident()
+
                     def verify(db):
+                        nonlocal used
+                        if not active or used or get_ident() != owner:
+                            raise ValueError("notice_fetch_invalid_publication_guard")
+                        used = True
                         return self._verify_txn(db, grant, permit.lease, self._now())
-                    yield verify
+                    try:
+                        yield verify
+                    finally:
+                        active = False
         finally:
             with self._lock:
                 if self._grants.get(permit.lease.ref) is grant:
