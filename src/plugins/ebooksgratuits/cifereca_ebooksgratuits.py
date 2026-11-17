@@ -6,7 +6,10 @@ from pathlib import Path
 from urllib.parse import urljoin, quote_plus, quote, urlsplit, parse_qsl
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
-import xml.etree.ElementTree as ET
+from cifereca.plugin_api import (
+    CatalogueXMLParseError, parse_bounded_catalogue_xml,
+    MAX_XML_BYTES, MAX_XML_DEPTH, MAX_XML_ELEMENTS,
+)
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession, TemporaryUnavailable, UnsupportedOperation, Conflict, Cancelled
 
 _DOWNLOAD_TRACE = logging.getLogger('cifereca.plugins.ebooksgratuits')
@@ -609,11 +612,11 @@ PLUGIN=Plugin()
 OPDS_FEED = 'https://opds2.ebooksgratuits.org/index.php/feed'
 ATOM = '{http://www.w3.org/2005/Atom}'
 DC = '{http://purl.org/dc/terms/}'
-OPDS_MAX_FEED_BYTES = 2 * 1024 * 1024
+OPDS_MAX_FEED_BYTES = MAX_XML_BYTES
 # 2 MiB of XML can still contain thousands of tiny nodes or deep nesting.
 # Bound the parser independently from the wire size before building a tree.
-OPDS_MAX_ELEMENTS = 12000
-OPDS_MAX_DEPTH = 96
+OPDS_MAX_ELEMENTS = MAX_XML_ELEMENTS
+OPDS_MAX_DEPTH = MAX_XML_DEPTH
 
 
 def _safe_opds_link(feed_url, href, kind):
@@ -709,32 +712,6 @@ def _opds_source_link(session, source_feed_url, raw_href, kind):
             == resolved else None)
 
 
-class _BoundedOPDSTree(ET.TreeBuilder):
-    """Deny DTDs (including UTF-16) and unbounded XML element trees."""
-
-    def __init__(self):
-        super().__init__()
-        self.depth=0
-        self.count=0
-
-    def doctype(self, name, pubid, system):
-        # A raw b'<!DOCTYPE' byte scan misses UTF-16/XML encodings.
-        # This parser callback rejects the declaration before entity use.
-        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
-
-    def start(self, tag, attrs):
-        self.depth+=1
-        self.count+=1
-        if self.depth>OPDS_MAX_DEPTH or self.count>OPDS_MAX_ELEMENTS:
-            raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
-        return super().start(tag,attrs)
-
-    def end(self, tag):
-        result=super().end(tag)
-        self.depth-=1
-        return result
-
-
 def _malformed_opds_protocol():
     """Malformed supplier Atom is not a verified zero or retriable query."""
     failure = ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
@@ -758,28 +735,19 @@ def _is_html_document(root):
 
 
 def _xml_root(content):
-    if type(content) is not bytes or len(content)>OPDS_MAX_FEED_BYTES:
-        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed')
+    # Keep existing provider error policy: malformed XML may represent
+    # protocol unavailability; HTML, DTD and safety refusals may not.
+    failure = None
     try:
-        # Enforce DTD/entity, depth and element budgets during XML parsing.
-        # A prior byte-pattern scan alone cannot qualify non-UTF8 XML.
-        return ET.fromstring(content,parser=ET.XMLParser(target=_BoundedOPDSTree()))
-    except ET.ParseError:
-        # A common reverse proxy or login gateway returns HTTP 200 HTML.
-        # Even invalid HTML syntax is NOT evidence that the public Atom
-        # service itself is unavailable; don't authorize a stale fallback.
-        prefix = content.lstrip(b' \t\r\n\xef\xbb\xbf').lower()[:80]
-        if prefix.startswith((b'<html', b'<!doctype html')):
-            failed = _unverified_html_opds_response()
-        else:
-            failed = _malformed_opds_protocol()
-        # Never raise from inside the ParseError handler: Core deliberately
-        # inspects suppressed __context__ for hidden HTTP refusals, and a
-        # hidden ParseError would reclassify this HTML login as an outage.
-    except (RecursionError, OverflowError, ValueError):
-        # Parser/budget refusals remain non-fallback security failures.
-        raise ProviderError('Ebooks libres et gratuits : invalid_opds_feed') from None
-    raise failed
+        return parse_bounded_catalogue_xml(
+            content, max_bytes=OPDS_MAX_FEED_BYTES,
+            max_depth=OPDS_MAX_DEPTH, max_elements=OPDS_MAX_ELEMENTS,
+        )
+    except CatalogueXMLParseError as exc:
+        failure = exc.code
+    if failure == "malformed":
+        raise _malformed_opds_protocol()
+    raise _unverified_html_opds_response()
 
 
 def _opds_fetch(session,url):
