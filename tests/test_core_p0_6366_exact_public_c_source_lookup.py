@@ -170,3 +170,51 @@ def test_single_source_c_does_not_override_unique_multisource_relation(tmp_path)
         assert find(db, b).document == group.document
     finally:
         db.close()
+
+
+def test_batch_uses_one_sqlite_read_and_independent_conflict_veto(tmp_path, monkeypatch):
+    from cifereca.core.notice_c_exact_source_lookup import exact_public_source_c_many
+
+    db = Storage(tmp_path / "batch-source-lookup.sqlite")
+    try:
+        a = make(db, "bnf", "edition-a")
+        b = make(db, "numilog-catalog", "edition-b")
+        c = make(db, "paris", "edition-c")
+        d = make(db, "other-provider", "edition-d")
+        own = persist_exact_public_search_cover(db, d)
+        for member in (a, b):
+            left = persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:group-left",
+                source=member, relation_proof_id="strong:fixture:left",
+            )
+        for member in (a, c):
+            right = persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:group-right",
+                source=member, relation_proof_id="strong:fixture:right",
+            )
+        keys = [
+            ("bnf", "edition-a", "digital-books", "digital", None),
+            ("numilog-catalog", "edition-b", "digital-books", "digital", None),
+            ("paris", "edition-c", "digital-books", "digital", None),
+            ("other-provider", "edition-d", "digital-books", "digital", None),
+        ]
+        connects = []
+        connect = db._connect
+
+        def counted():
+            connects.append(1)
+            return connect()
+
+        monkeypatch.setattr(db, "_connect", counted)
+        resolved = exact_public_source_c_many(
+            db, [*keys, keys[1], ("bnf", "", "digital-books", "digital", None)],
+        )
+        assert len(connects) == 1
+        assert {key: snapshot.document for key, snapshot in resolved.items()} == {
+            keys[1]: left.document, keys[2]: right.document, keys[3]: own.document,
+        }
+        assert exact_public_source_c_many(db, [keys[0]] * 257) == {}
+        assert exact_public_source_c_many(db, []) == {}
+        assert len(connects) == 1
+    finally:
+        db.close()
