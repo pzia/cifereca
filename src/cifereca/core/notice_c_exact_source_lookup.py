@@ -1,4 +1,4 @@
-"""#6366: bounded Core-only exact public-source → canonical Notice C lookup.
+"""#6366: Core-only exact public-source → canonical Notice C lookup.
 
 The full public catalogue source coordinates, not text, ISBN, an image URL
 or a borrower occurrence, establish an edition. Read one SQLite snapshot per
@@ -6,6 +6,7 @@ worker batch; do not retain an index across transactions or GTK callbacks.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -14,8 +15,9 @@ from .notice_c_cover_index import (
     canonical_cover_document_ref, _db_key,
 )
 from .notice_search_cover_producer import _coordinate_digest
+from .notice_cover_projection import notice_cover_document_ref
+from .notice_source_observation import NoticeSourceKey
 
-_MAX_INDEXED_C = 4096
 _MAX_RESULTS = 32
 _MAX_BATCH = 256
 
@@ -40,64 +42,92 @@ def _valid_coordinates(value: object) -> bool:
 def exact_public_source_c_many(
     storage: Any, coordinates: list[PublicSourceCoordinates] | tuple[PublicSourceCoordinates, ...],
 ) -> dict[PublicSourceCoordinates, ConsolidatedNoticeCover]:
-    """Resolve at most 256 exact coordinates using a single bounded C scan.
+    """Resolve at most 256 exact coordinates in one SQLite snapshot.
 
     Results are independent: contradictory relations or too many claims for
     one coordinate veto THAT coordinate, not the other exact editions.
-    Invalid/absent sources are omitted. No IO when there are no valid keys;
-    exceeding the scan budget fails closed for the entire batch.
+    Invalid/absent sources are omitted. No IO when there are no valid keys.
+    Only exact candidate rows cross the SQLite/Python boundary; unrelated C
+    rows never consume a requested coordinate's ambiguity budget.
     """
     if type(coordinates) not in (list, tuple) or len(coordinates) > _MAX_BATCH:
         return {}
-    wanted = {
-        key: "edition:" + _coordinate_digest(
-            key[0], "public_catalog", key[1], key[2], key[3], key[4],
+    wanted = {}
+    source_refs = set()
+    for key in coordinates:
+        if not _valid_coordinates(key):
+            continue
+        provider, record, docbase, medium, revision = key
+        edition = "edition:" + _coordinate_digest(
+            provider, "public_catalog", record, docbase, medium, revision,
         )
-        for key in coordinates if _valid_coordinates(key)
-    }
+        try:
+            source = NoticeSourceKey(
+                provider_id=provider, visibility="public", identity_id=None,
+                credential_id=None, account_id=None,
+                branch_id="search.public.catalogue",
+                record_id="search:" + _coordinate_digest(
+                    provider, "public_catalog", record,
+                ),
+                edition_id=edition,
+                manifestation_role={
+                    "digital": "digital", "physical": "print", "unknown": "unknown",
+                }[medium],
+            )
+            source_refs.add(notice_cover_document_ref(source).source_key)
+        except (TypeError, ValueError, UnicodeError):
+            continue
+        wanted[key] = edition
     if not wanted:
         return {}
     matches: dict[PublicSourceCoordinates, list[ConsolidatedNoticeCover]] = {}
     rejected: set[PublicSourceCoordinates] = set()
     try:
         with storage._lock, storage._connect() as db:
-            raw_rows = db.execute(
-                "SELECT key,value FROM metadata WHERE key>=? AND key<? "
-                "ORDER BY key LIMIT ?",
-                (_PREFIX, _PREFIX + "\uffff", _MAX_INDEXED_C + 1),
-            ).fetchall()
-        if len(raw_rows) > _MAX_INDEXED_C:
-            return {}
-        for key, raw in raw_rows:
-            try:
-                parsed = _json(raw)
-                document = canonical_cover_document_ref(parsed["edition_id"])
-                if _db_key(document) != key:
+            # The metadata prefix remains the authoritative storage. JSON1
+            # filters by exact source DocumentRef, not bibliographic text.
+            # A malformed JSON row cannot abort lookup of unrelated C.
+            cursor = db.execute(
+                "SELECT m.key,m.value FROM metadata AS m "
+                "WHERE m.key>=? AND m.key<? AND EXISTS ("
+                "SELECT 1 FROM json_each(CASE WHEN json_valid(m.value) "
+                "THEN m.value ELSE '{}' END, '$.sources') AS src "
+                "WHERE src.key IN (SELECT value FROM json_each(?))) "
+                "ORDER BY m.key",
+                (_PREFIX, _PREFIX + "\uffff", json.dumps(sorted(source_refs))),
+            )
+            # Keep the Python validator authoritative. The SQL predicate
+            # is only a prefilter, never a document or access proof.
+            for key, raw in cursor:
+                try:
+                    parsed = _json(raw)
+                    document = canonical_cover_document_ref(parsed["edition_id"])
+                    if _db_key(document) != key:
+                        continue
+                    consolidated = _decode(raw, document)
+                except (KeyError, TypeError, ValueError):
                     continue
-                consolidated = _decode(raw, document)
-            except (KeyError, TypeError, ValueError):
-                continue
-            sources = consolidated.sources
-            if not sources or any(
-                source.visibility != "public"
-                or source.public_bibliography is None for source in sources
-            ):
-                continue
-            found = set()
-            for source in sources:
-                bio = source.public_bibliography
-                coords = (source.provider_id, bio.record_id, bio.docbase,
-                          bio.medium, bio.source_revision)
-                if coords in wanted and wanted[coords] == bio.edition_id:
-                    found.add(coords)
-            for coords in found:
-                if coords in rejected:
+                sources = consolidated.sources
+                if not sources or any(
+                    source.visibility != "public"
+                    or source.public_bibliography is None for source in sources
+                ):
                     continue
-                entries = matches.setdefault(coords, [])
-                entries.append(consolidated)
-                if len(entries) > _MAX_RESULTS:
-                    rejected.add(coords)
-                    matches.pop(coords, None)
+                found = set()
+                for source in sources:
+                    bio = source.public_bibliography
+                    coords = (source.provider_id, bio.record_id, bio.docbase,
+                              bio.medium, bio.source_revision)
+                    if coords in wanted and wanted[coords] == bio.edition_id:
+                        found.add(coords)
+                for coords in found:
+                    if coords in rejected:
+                        continue
+                    entries = matches.setdefault(coords, [])
+                    entries.append(consolidated)
+                    if len(entries) > _MAX_RESULTS:
+                        rejected.add(coords)
+                        matches.pop(coords, None)
         resolved = {}
         for coords, entries in matches.items():
             # A single proven multi-source edition supersedes its own
