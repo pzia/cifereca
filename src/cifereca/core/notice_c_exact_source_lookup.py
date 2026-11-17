@@ -1,10 +1,8 @@
 """#6366: bounded Core-only exact public-source → canonical Notice C lookup.
 
-A Loan/History source is NOT an edition relation. Consumers must provide the
-complete, independently attested *public catalogue* source coordinates; an
-upstream loan ID, title, ISBN, thumbnail URL or provider alone is insufficient.
-This reader does not infer permissions or cross-profile ownership and must run
-on an existing Core worker, never the GTK render path.
+The full public catalogue source coordinates, not text, ISBN, an image URL
+or a borrower occurrence, establish an edition. Read one SQLite snapshot per
+worker batch; do not retain an index across transactions or GTK callbacks.
 """
 from __future__ import annotations
 
@@ -12,45 +10,56 @@ import sqlite3
 from typing import Any
 
 from .notice_c_cover_index import (
-    ConsolidatedNoticeCover, _PREFIX, _decode, _json,
+    ConsolidatedNoticeCover, _PREFIX, _decode, _json, _IDENTIFIER,
     canonical_cover_document_ref, _db_key,
 )
 from .notice_search_cover_producer import _coordinate_digest
 
 _MAX_INDEXED_C = 4096
 _MAX_RESULTS = 32
+_MAX_BATCH = 256
+
+PublicSourceCoordinates = tuple[str, str, str, str, str | None]
 
 
-def exact_public_source_c(
-    storage: Any, *,
-    provider_id: str, record_id: str, docbase: str, medium: str,
-    source_revision: str | None,
-) -> ConsolidatedNoticeCover | None:
-    """Find a C only for a fully observed, unambiguous public source edition.
+def _valid_coordinates(value: object) -> bool:
+    if type(value) is not tuple or len(value) != 5:
+        return False
+    provider, record, docbase, medium, revision = value
+    return (
+        all(type(part) is str and _IDENTIFIER.fullmatch(part) is not None
+            and "://" not in part and ".." not in part
+            for part in (provider, record, docbase))
+        and type(medium) is str and medium in ("digital", "physical", "unknown")
+        and (revision is None or (
+            type(revision) is str and _IDENTIFIER.fullmatch(revision) is not None
+        ))
+    )
 
-    The source's own C and a stronger, explicitly persisted multi-source C
-    may coexist. Prefer the unique C with the most independently admitted
-    public sources; contradictory multi-source canonical claims are ambiguous\n    regardless of their relative source counts.
-    Fail closed on unbounded indices and corrupt matching canonical records.
+
+def exact_public_source_c_many(
+    storage: Any, coordinates: list[PublicSourceCoordinates] | tuple[PublicSourceCoordinates, ...],
+) -> dict[PublicSourceCoordinates, ConsolidatedNoticeCover]:
+    """Resolve at most 256 exact coordinates using a single bounded C scan.
+
+    Results are independent: contradictory relations or too many claims for
+    one coordinate veto THAT coordinate, not the other exact editions.
+    Invalid/absent sources are omitted. No IO when there are no valid keys;
+    exceeding the scan budget fails closed for the entire batch.
     """
-    from .notice_c_cover_index import _IDENTIFIER
-
-    if (any(type(value) is not str
-            or _IDENTIFIER.fullmatch(value) is None
-            or "://" in value or ".." in value
-            for value in (provider_id, record_id, docbase))
-            or medium not in ("digital", "physical", "unknown")
-            or (source_revision is not None
-                and (type(source_revision) is not str
-                     or _IDENTIFIER.fullmatch(source_revision) is None))):
-        return None
-    try:
-        edition_id = "edition:" + _coordinate_digest(
-            provider_id, "public_catalog", record_id, docbase,
-            medium, source_revision,
+    if type(coordinates) not in (list, tuple) or len(coordinates) > _MAX_BATCH:
+        return {}
+    wanted = {
+        key: "edition:" + _coordinate_digest(
+            key[0], "public_catalog", key[1], key[2], key[3], key[4],
         )
-        # Exact coordinates are compared with validated, retained public
-        # bibliographies. Do not trust an index key or a supplied C ref alone.
+        for key in coordinates if _valid_coordinates(key)
+    }
+    if not wanted:
+        return {}
+    matches: dict[PublicSourceCoordinates, list[ConsolidatedNoticeCover]] = {}
+    rejected: set[PublicSourceCoordinates] = set()
+    try:
         with storage._lock, storage._connect() as db:
             raw_rows = db.execute(
                 "SELECT key,value FROM metadata WHERE key>=? AND key<? "
@@ -58,8 +67,7 @@ def exact_public_source_c(
                 (_PREFIX, _PREFIX + "\uffff", _MAX_INDEXED_C + 1),
             ).fetchall()
         if len(raw_rows) > _MAX_INDEXED_C:
-            return None
-        matches: list[ConsolidatedNoticeCover] = []
+            return {}
         for key, raw in raw_rows:
             try:
                 parsed = _json(raw)
@@ -72,38 +80,48 @@ def exact_public_source_c(
             sources = consolidated.sources
             if not sources or any(
                 source.visibility != "public"
-                or source.public_bibliography is None
-                for source in sources
+                or source.public_bibliography is None for source in sources
             ):
                 continue
-            if any(
-                source.provider_id == provider_id
-                and source.public_bibliography.edition_id == edition_id
-                and source.public_bibliography.record_id == record_id
-                and source.public_bibliography.docbase == docbase
-                and source.public_bibliography.medium == medium
-                and source.public_bibliography.source_revision == source_revision
-                for source in sources
-            ):
-                matches.append(consolidated)
-                if len(matches) > _MAX_RESULTS:
-                    return None
-        if not matches:
-            return None
-        # One-source C rows are automatic per-source projections. A
-        # multi-source C is an independently attested edition relationship.
-        # Prefer exactly ONE such relationship over the automatic source C.
-        # Two competing multi-source C records are contradictory proofs:
-        # counting suppliers must never decide which canonical edition wins.
-        related = [x for x in matches if len(x.sources) > 1]
-        if len(related) > 1:
-            return None
-        if related:
-            return related[0]
-        # A single source claimed by several canonical IDs is ambiguous.
-        return matches[0] if len(matches) == 1 else None
+            found = set()
+            for source in sources:
+                bio = source.public_bibliography
+                coords = (source.provider_id, bio.record_id, bio.docbase,
+                          bio.medium, bio.source_revision)
+                if coords in wanted and wanted[coords] == bio.edition_id:
+                    found.add(coords)
+            for coords in found:
+                if coords in rejected:
+                    continue
+                entries = matches.setdefault(coords, [])
+                entries.append(consolidated)
+                if len(entries) > _MAX_RESULTS:
+                    rejected.add(coords)
+                    matches.pop(coords, None)
+        resolved = {}
+        for coords, entries in matches.items():
+            # A single proven multi-source edition supersedes its own
+            # per-source C; competing multi-source claims never rank by size.
+            related = [entry for entry in entries if len(entry.sources) > 1]
+            if len(related) == 1:
+                resolved[coords] = related[0]
+            elif not related and len(entries) == 1:
+                resolved[coords] = entries[0]
+        return resolved
     except (sqlite3.Error, AttributeError, TypeError, ValueError):
+        return {}
+
+
+def exact_public_source_c(
+    storage: Any, *,
+    provider_id: str, record_id: str, docbase: str, medium: str,
+    source_revision: str | None,
+) -> ConsolidatedNoticeCover | None:
+    """Compatibility single-coordinate worker lookup."""
+    coords = (provider_id, record_id, docbase, medium, source_revision)
+    if not _valid_coordinates(coords):
         return None
+    return exact_public_source_c_many(storage, (coords,)).get(coords)
 
 
-__all__ = ["exact_public_source_c"]
+__all__ = ["exact_public_source_c", "exact_public_source_c_many"]
