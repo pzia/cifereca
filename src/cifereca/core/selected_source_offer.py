@@ -230,7 +230,14 @@ def select_library_source_offer_target(
         if len(candidates) != 1:
             return None
         candidate = candidates[0]
-        credential = None
+        # The historical card is only a coordinate hint for a fresh offer.
+        # An upstream account ID alone can be reused under a different
+        # credential after reconfiguration. Never reconstruct that source.
+        credential = candidate.get("credential_id")
+        if (type(credential) is not str or not credential
+                or len(credential) > 1024
+                or any(c in credential for c in "\x00\r\n")):
+            return None
     provider = candidate.get("provider_id")
     item_id = candidate.get("item_id")
     account_id = candidate.get("account_id")
@@ -246,7 +253,7 @@ def select_library_source_offer_target(
         and account.identity_id == identity
         and account.provider_id == provider
         and account.unique_id == account_id
-        and (not native_origin or account.credential_id == credential)
+        and account.credential_id == credential
     ]
     if len(accounts) != 1:
         return None

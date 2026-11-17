@@ -98,7 +98,7 @@ def test_library_card_uses_one_identity_for_all_origin_preflights(monkeypatch):
     host = Headless()
     accounts = [
         {"identity_id": "alice", "provider_id": "future-books",
-         "account_id": "account-A", "item_id": "edition-1",
+         "credential_id": "card-A", "account_id": "account-A", "item_id": "edition-1",
          "kind": "owned", "state": "active"},
         {"identity_id": "bob", "provider_id": "future-books",
          "account_id": "other", "item_id": "edition-2",
