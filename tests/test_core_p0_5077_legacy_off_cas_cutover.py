@@ -11,7 +11,7 @@ import pytest
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.core.source_auto_consent_bridge import _source_id, legacy_source_auto_policy
 from cifereca.core.source_sync_consent import (
-    read_policy, scope_for_account, policy_key, source_enablement_key,
+    read_policy, scope_for_account, policy_key, source_enablement_key, inventory_epoch_key,
 )
 from tests.test_core_p0_2055_bnf_explicit_stage import connected_core
 
@@ -91,15 +91,12 @@ def test_legacy_writer_cannot_overwrite_existing_generic_cas_policy(connected_co
     assert not downloaded
 
 
-def test_legacy_revision_failure_rolls_back_inventory_preference(connected_core):
+def test_neutral_revision_failure_rolls_back_inventory_preference(connected_core):
     service, _session, account, _loan, _state, downloaded = connected_core
-    from cifereca.core.legacy_source_consent_metadata import _consent_generation_key
     scope = scope_for_account(account)
     pref = source_enablement_key(scope)
-    revision = _consent_generation_key(scope)
-    assert revision is not None
-    # An unconfigured, legacy-free source still rotates the historical epoch
-    # before old readers can reuse their previously admitted snapshot.
+    revision = inventory_epoch_key(scope)
+    # An unconfigured source uses the same fence for every provider.
     with service.storage._lock, service.storage._connect() as db:
         db.execute(
             "CREATE TRIGGER deny_legacy_epoch BEFORE INSERT ON metadata "
