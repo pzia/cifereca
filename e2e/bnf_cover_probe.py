@@ -875,6 +875,17 @@ def main() -> int:
         capture("11-bnf-late-library-loan-list-and-detail")
         assert len(image_gets) == 2, "Late local cover must not initiate GET"
         report["checks"]["late_library_repaints_real_gtk_loan_list"] = True
+        from notice_c_borrower_views_contract import verify_borrower_c_views
+        window = app_window[0]
+        loan = next(item for item in window.service.last_loans
+                    if item.record_id == RESOURCES[0])
+        verify_borrower_c_views(
+            window, loan, parsed[0], bnf.DESCRIPTOR,
+            later=later, capture=capture, report=report, complete=complete,
+            checkpoint=lambda stage: (stages.append(stage), save()),
+        )
+
+    def complete():
         report["status"] = "PASS"
         result[0] = 0
         save()
