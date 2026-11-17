@@ -169,3 +169,12 @@ def test_reject_ineligible_legacy_action(tmp_path, reason):
     with pytest.raises(ProviderConfigurationError, match="legacy_direct_admission_unavailable"):
         admit(host, item, account=account, confirm=confirm)
     assert host.calls == []
+
+
+def test_retained_internal_dto_cannot_change_admitted_offer(tmp_path):
+    host = Host(tmp_path)
+    target = admit(host)
+    target._item.record_id = "different-edition"
+    with pytest.raises(ProviderConfigurationError, match="source_revoked"):
+        execute(host, target)
+    assert host.calls == []
