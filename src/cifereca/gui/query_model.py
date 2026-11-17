@@ -55,8 +55,14 @@ def online_search(service, state):
 
 
 
-def progressive_online_search(service, state, on_batch, control=None):
+def progressive_online_search(service, state, on_batch, control=None, *, request_scope=None):
     providers = tuple(provider for provider in state.providers if provider != 'local')
+    if request_scope is not None:
+        return service.search_progressive_result_for_scope(
+            request_scope, state.text, scope=state.scope, force=True,
+            provider_ids=providers, field=state.field, content_types=state.types,
+            on_batch=on_batch, control=control,
+        )
     return service.search_progressive(
         state.text, state.scope, force=True, provider_ids=providers, field=state.field,
         content_types=state.types, on_batch=on_batch, control=control,
