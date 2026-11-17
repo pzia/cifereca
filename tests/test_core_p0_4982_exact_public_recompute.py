@@ -151,3 +151,27 @@ def test_no_relation_reconstruction_or_implementation_downgrade(tmp_path):
         assert read_consolidated_notice_cover(db, own.document) == group
     finally:
         db.close()
+
+
+def test_prepared_singleton_cannot_overwrite_new_multi_source_membership(tmp_path):
+    db = Storage(tmp_path / "exact.sqlite")
+    try:
+        a = source(db, "Titre", 10)
+        own = persist_exact_public_search_cover(db, a)
+        ref = request(db, own)
+        prepared = prepare_exact_public_recompute(db, journal.read_job(db, ref).spec)
+        b = persist(db, verified_public(
+            source_provider="seller-b", record_id="different", title="Titre",
+        ), at=11)
+        group = persist_consolidated_cover_source(
+            db, canonical_edition_id=a.observation.key.edition_id, source=b,
+            relation_proof_id="fixture:strong:multi",
+        )
+        assert group.document == own.document and len(group.sources) == 2
+        with pytest.raises(ValueError, match="inputs_changed"):
+            finish(db, ref, prepared)
+        assert read_consolidated_notice_cover(db, own.document) == group
+        assert journal.read_job(db, ref).state == "pending"
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
