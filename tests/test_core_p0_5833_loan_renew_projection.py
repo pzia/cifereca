@@ -121,3 +121,28 @@ def test_unadmitted_renewal_never_schedules_any_worker(mutation):
     assert jobs == []
     renew.assert_not_called()
     assert visible == []
+
+
+def test_renewal_captures_real_core_admission_before_queue():
+    host, service, renew, loan, jobs, visible = _host()
+    admission = object()
+    service.capture_admitted_loan_renewal = Mock(return_value=admission)
+    service.renew_admitted_loan = renew
+    _renew_fn()(host, loan, None)
+    service.capture_admitted_loan_renewal.assert_called_once_with(loan)
+    assert len(jobs) == 1
+    service.current_identity = NS(identity_id="bob")
+    service._account_context_epoch += 1
+    result = jobs[0][0][1]()
+    renew.assert_called_once_with(loan, confirmed=True, admission=admission)
+    jobs[0][0][2](result)
+    assert visible == []
+
+
+def test_renewal_core_admission_denied_never_enqueues():
+    host, service, renew, loan, jobs, visible = _host()
+    service.capture_admitted_loan_renewal = Mock(return_value=None)
+    _renew_fn()(host, loan, None)
+    assert not jobs
+    renew.assert_not_called()
+    assert visible == [{"status": "blocked", "code": "loan_scope_unverified"}]
