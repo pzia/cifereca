@@ -43,8 +43,9 @@ def _binding_facts(item: object, identity_id: str):
     known = known_public_c_binding_facts(item)
     if known is not None:
         return known
-    document = (matching_live_public_canonical_ref(item, identity_id=identity_id)
-                or matching_cached_public_canonical_ref(item, identity_id=identity_id))
+    document = matching_live_public_canonical_ref(item, identity_id=identity_id)
+    if document is None:
+        document = matching_cached_public_canonical_ref(item, identity_id=identity_id)
     epoch = persisted_live_c_revision(item, document)
     return (document, epoch) if document is not None and epoch is not None else None
 

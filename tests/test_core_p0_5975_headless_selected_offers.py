@@ -98,7 +98,7 @@ def test_library_card_uses_one_identity_for_all_origin_preflights(monkeypatch):
     host = Headless()
     accounts = [
         {"identity_id": "alice", "provider_id": "future-books",
-         "account_id": "account-A", "item_id": "edition-1",
+         "credential_id": "card-A", "account_id": "account-A", "item_id": "edition-1",
          "kind": "owned", "state": "active"},
         {"identity_id": "bob", "provider_id": "future-books",
          "account_id": "other", "item_id": "edition-2",
@@ -191,3 +191,36 @@ def test_core_selection_workers_do_not_reference_current_identity():
                 for node in ast.walk(tree)
             )
             assert "current_identity" not in code
+
+
+def test_library_click_admission_survives_navigation_but_not_source_revoke(monkeypatch):
+    host = Headless()
+    host._source_context_epoch = 19
+    monkeypatch.setattr(selection, "has_complete_delivery_abi", lambda _session: True)
+    monkeypatch.setattr(selection, "exact_private_inventory_binding_valid",
+                        lambda *_args, **_kwargs: True)
+    passive = selection.select_source_offer_target(
+        host, provider_id="future-books", credential_id="card-A",
+        item_id="edition-1", identity_id="alice", expected_epoch=7,
+    )
+    admitted = selection.admit_library_source_offer(
+        host, passive, identity_id="alice", account_epoch=7, source_epoch=19,
+    )
+    assert admitted.selection_epoch is None and admitted.source_epoch == 19
+    host._account_context_epoch = 9
+    assert selection._resolve(host, admitted) == (admitted, host.account)
+    with pytest.raises(ValueError, match="selected_library_source_revoked"):
+        selection.admit_library_source_offer(
+            host, passive, identity_id="alice", account_epoch=9, source_epoch=19,
+        )
+    calls = []
+    monkeypatch.setattr(owned, "obtain_owned_library_item",
+                        lambda service, target: calls.append(selection._resolve(service, target)))
+    LibraryService.obtain_admitted_owned_library_offer(host, admitted)
+    assert calls == [(admitted, host.account)]
+    host._source_context_epoch = 20
+    with pytest.raises(ValueError, match="selected_source_binding_changed"):
+        selection._resolve(host, admitted)
+    with pytest.raises(owned.OwnedDownloadRejected):
+        LibraryService.obtain_admitted_owned_library_offer(host, passive)
+    assert calls == [(admitted, host.account)]

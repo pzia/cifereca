@@ -851,9 +851,6 @@ def test_residual_adept_facade_signals_have_source_scoped_reviews():
         "site-9db736c5a6459afb19e60a9a": (
             "safety_guard_pending_contract", "adept_return_status_for_loan",
         ),
-        "site-a99f3f4da32247a6a6efec04": (
-            "safety_guard_pending_contract", "check_normal_paris_adept_runtime",
-        ),
     }
     for site_id, (classification, caller) in expected.items():
         row = reviews[site_id]
@@ -871,3 +868,13 @@ def test_residual_adept_facade_signals_have_source_scoped_reviews():
     source = (root / "src/cifereca/services.py").read_text(encoding="utf-8")
     for _classification, method in expected.values():
         assert f"def {method}(" in source
+
+
+def test_retired_saved_paris_adept_facade_has_no_stale_ast_review():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    ledger = json.loads((root / "docs/provider-business-coupling-review.json").read_text())
+    assert "site-a99f3f4da32247a6a6efec04" not in {r["id"] for r in ledger["reviews"]}
+    source = (root / "src/cifereca/services.py").read_text()
+    assert "def normal_paris_adept_status(" not in source
+    assert "def check_normal_paris_adept_runtime(" not in source

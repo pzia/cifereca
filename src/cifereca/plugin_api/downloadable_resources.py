@@ -11,7 +11,7 @@ This module does not introduce a second synchronization executor.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -286,8 +286,33 @@ def as_legacy_rights_snapshot(snapshot: ResourceSnapshot) -> ProviderRightsSnaps
     The v1 right_id slot is the *resource identifier*, not a synthetic grant.
     Core consent, source binding and positive delivery checks remain mandatory.
     """
-    if type(snapshot) is not ResourceSnapshot:
+    if (type(snapshot) is not ResourceSnapshot
+            or type(snapshot.schema_version) is not str
+            or snapshot.schema_version != DOWNLOADABLE_RESOURCE_CONTRACT
+            or type(snapshot.scope) is not ProviderRightsScope
+            or type(snapshot.resources) is not tuple
+            or len(snapshot.resources) > _MAX_ROWS):
         raise ValueError("invalid_downloadable_snapshot_adapter")
+    # The compatibility transport drops per-resource scope and branch.
+    # Revalidate the native observations before that irreversible projection,
+    # not after: a foreign nested source must never become a local v1 row.
+    scope = replace(snapshot.scope)
+    resources = []
+    for item in snapshot.resources:
+        if (type(item) is not ResourceObservation
+                or type(item.source) is not SourceReference
+                or type(item.source.scope) is not ProviderRightsScope
+                or type(item.capability) is not DownloadCapability
+                or (item.right is not None and type(item.right) is not OptionalRightMetadata)):
+            raise ValueError("invalid_downloadable_snapshot_adapter")
+        source = replace(item.source, scope=replace(item.source.scope))
+        if source.scope != scope or source.branch != snapshot.branch:
+            raise ValueError("downloadable_resource_scope_mismatch")
+        resources.append(replace(
+            item, source=source, capability=replace(item.capability),
+            right=replace(item.right) if item.right is not None else None,
+        ))
+    snapshot = replace(snapshot, scope=scope, resources=tuple(resources))
     return ProviderRightsSnapshot(
         scope=snapshot.scope, branch=snapshot.branch,
         rights=tuple(

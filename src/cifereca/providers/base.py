@@ -348,6 +348,12 @@ class ProviderDescriptor:
     # supplies a read-only migration fallback. This is NOT a download or right.
     # No Core brand table or provider getter is involved in resolving a link.
     public_catalogue_base_option_key: str | None = None
+    # Optional, append-only descriptive contract v1. Each tuple declares
+    # (private occurrence branch, medium, public catalogue docbase, exact
+    # public revision). The provider attests that record_id names the same
+    # edition in these two APIs. None matches ONLY an unrevisioned public
+    # source. No right, public disclosure, GET or mutation is authorized.
+    borrower_public_edition_branches_v1: tuple[tuple[str, str, str, str | None], ...] = ()
 
 
 class ProviderSession(ABC):

@@ -345,3 +345,62 @@ def test_v2_authenticated_available_offer_reaches_real_core_file_and_origin(
     assert second["canonical_execution"]["downloaded"] == 0
     assert gets == ["signed-right-offer"]
     assert len(reads) == 2
+
+
+@pytest.mark.parametrize("change", ["scope", "branch", "schema", "duplicate", "capability"])
+def test_v2_projection_does_not_erase_invalid_native_resource_coordinates(scope, change):
+    row = observed(scope)
+    v2 = snapshot(scope, row)
+    if change == "scope":
+        object.__setattr__(row.source, "scope", ProviderRightsScope(
+            "other-profile", "seller", "credential-a", "buyer-a",
+        ))
+    elif change == "branch":
+        object.__setattr__(row.source, "branch", "other-branch")
+    elif change == "schema":
+        object.__setattr__(v2, "schema_version", "unknown/999")
+    elif change == "duplicate":
+        object.__setattr__(v2, "resources", (row, row))
+    else:
+        object.__setattr__(row.capability, "offer_id", "")
+    with pytest.raises(ValueError):
+        as_legacy_rights_snapshot(v2)
+
+
+@pytest.mark.parametrize("foreign_page", [False, True])
+@pytest.mark.parametrize("coordinate", ["scope", "branch"])
+def test_inventory_refuses_foreign_native_resource_before_legacy_projection(
+    rig, foreign_page, coordinate,
+):
+    service, db, _root = rig
+    initial = from_legacy_rights_snapshot(service.snapshot)
+    row = replace(
+        initial.resources[0],
+        source=replace(initial.resources[0].source, resource_id="next-resource"),
+    )
+    foreign = replace(
+        initial, resources=(row,), status="partial", coverage="partial",
+        pagination_complete=False, resume_cursor="",
+    )
+    if coordinate == "scope":
+        object.__setattr__(row.source, "scope", replace(initial.scope,
+                                                       account_id="foreign-borrower"))
+    else:
+        object.__setattr__(row.source, "branch", "foreign-branch")
+    first = replace(initial, status="partial", coverage="partial",
+                    pagination_complete=False, resume_cursor="next-page")
+    reads = []
+
+    def read(_account, **kwargs):
+        reads.append(kwargs.get("resume_cursor"))
+        return first if foreign_page and len(reads) == 1 else foreign
+
+    service.session.downloadable_resource_snapshot = read
+    # A continuation carrying a foreign nested resource invalidates the
+    # entire batch, exactly like a continuation with a foreign envelope.
+    result = read_account_rights_snapshot(service, service.account)
+    assert result.status == "failed"
+    assert result.rights == ()
+    assert reads == ([None, "next-page"] if foreign_page else [None])
+    assert refs(db) == ([], 0)
+    assert db.placements() == [] and db.entitlements() == []

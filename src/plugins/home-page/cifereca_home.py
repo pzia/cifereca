@@ -131,6 +131,16 @@ def _loan_scope_not_configured(row):
     return True
 
 
+def _purchase_count(stats):
+    """Prefer the new descriptive Core field; old Core snapshots still render."""
+    native = "observed_purchase_sources" in stats
+    key = "observed_purchase_sources" if native else "remote_owned_rights"
+    value = stats.get(key)
+    count = value if type(value) is int and value >= 0 else "—"
+    label = "sources d’achat observées" if native else "droits d’achat distants"
+    return label, count
+
+
 def statistics_lines(row):
     stats=row.get('statistics')
     if not isinstance(stats,dict):return ['Statistiques : Core029 requis']
@@ -145,10 +155,13 @@ def statistics_lines(row):
         lines.append('Origines fournisseur attestées : '+ ' · '.join(
             f"{SOURCE_NAMES.get(key,key)} : {count}" for key,count in sorted(sources.items())
         ))
-    lines.append(f"{stats.get('local_placements',0)} emplacements · {stats.get('remote_owned_rights',0)} droits d’achat distants")
+    purchase_label, purchase_count = _purchase_count(stats)
+    lines.append(f"{stats.get('local_placements',0)} emplacements · {purchase_count} {purchase_label}")
     if loans is None and not _loan_scope_not_configured(row):
         lines.append('Prêts de bibliothèque non actualisés')
-    lines.append('Inventaire local et droits d’achat distincts des prêts de bibliothèque. Les sources peuvent se chevaucher.')
+    lines.append('Inventaire local et achats observés distincts des prêts de bibliothèque. Les sources peuvent se chevaucher.'
+                 if "observed_purchase_sources" in stats else
+                 'Inventaire local et droits d’achat distincts des prêts de bibliothèque. Les sources peuvent se chevaucher.')
     return lines
 
 def overview_counts_lines(stats, *, row=None):
@@ -166,9 +179,10 @@ def overview_counts_lines(stats, *, row=None):
         if row is not None and _loan_scope_not_configured(row)
         else f"prêts de bibliothèque connus : {number('known_loans')}"
     )
+    purchase_label, purchase_count = _purchase_count(stats)
     return (
         f"Livres locaux : {number('local_books')} · {loan_text}",
-        f"Droits d’achat distants : {number('remote_owned_rights')} "
+        f"{purchase_label.capitalize()} : {purchase_count} "
         "(ne prouvent pas la présence d’un fichier local)",
     )
 
@@ -625,9 +639,10 @@ def build_page(host,controllers,public_providers=PUBLIC_PROVIDERS,identity_broke
             secondary=Gtk.Expander(label='Profil, appareils et inventaire')
             extra=Gtk.Box(orientation=Gtk.Orientation.VERTICAL,spacing=3)
             if stats is not None:
+                purchase_label, purchase_count = _purchase_count(stats)
                 compact_row(extra,
                     f"Emplacements : {stats.get('local_placements') if stats.get('local_placements') is not None else '—'}"
-                    +f" · droits d’achat distants : {stats.get('remote_owned_rights') if stats.get('remote_owned_rights') is not None else '—'}")
+                    +f" · {purchase_label} : {purchase_count}")
             ade='lié' if row.get('adept_profile_id') else 'non lié'
             compact_row(extra,'Compte ADE : '+ade+' · '+readers_text(row))
             if row.get('deep_last_at') is not None:

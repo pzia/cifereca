@@ -21,7 +21,7 @@ from cifereca.gui.borrower_public_c_bridge import (
 )
 from cifereca.models import Account, HistoryItem
 from cifereca.storage import Storage
-from tests.test_core_p0_6366_borrower_public_c_lists_detail import bibliography
+from tests.test_core_p0_6366_borrower_public_c_lists_detail import bibliography, borrower_descriptors
 
 
 def _account():
@@ -60,7 +60,7 @@ def _service(db, account, row):
         _account_context_epoch=7, _source_context_epoch=9,
         config=NS(get=lambda _key, default: default),
         diagnostics=NS(add=lambda *_a, **_kw: None),
-        last_history=[],
+        last_history=[], provider_descriptors=borrower_descriptors,
         # Cached history uses the already-registered Core session without
         # reconnecting: model the same native session registry and key here.
         _sessions={(account.provider_id, account.credential_id): session},
@@ -186,7 +186,7 @@ def test_pinned_history_never_overwrites_conflicting_upstream_borrower(
     account = _account()
     row = _provider_history(**corrupt)
     original = (row.identity_id, row.source_account_id)
-    assert _pinned_history_c_rows([row], account) == []
+    assert _pinned_history_c_rows([row], account, descriptors=borrower_descriptors()) == []
     assert (row.identity_id, row.source_account_id) == original
 
 
@@ -253,6 +253,26 @@ def test_supplier_branch_change_revokes_previously_admitted_history_c(tmp_path):
 def test_missing_native_edition_proof_does_not_rewrite_history_owner(change):
     account = _account()
     item = _provider_history(**change)
-    assert _pinned_history_c_rows([item], account) == []
+    assert _pinned_history_c_rows([item], account, descriptors=borrower_descriptors()) == []
     assert item.identity_id is None
     assert item.source_account_id is None
+
+
+def test_history_without_installed_branch_declaration_preserves_raw_owner(tmp_path):
+    db = Storage(tmp_path / "no-branch-declaration.sqlite")
+    try:
+        bibliography(db, provider="paris", record="edition-paris", docbase="DILICOM")
+        account = _account()
+        row = _provider_history()
+        service, state = _service(db, account, row)
+        service.provider_descriptors = lambda: ()
+        assert refresh_history(service, force=True, account=account) == [row]
+        assert state["reads"] == 1
+        assert row.identity_id is None and row.source_account_id is None
+        assert borrower_public_c_receipt(row, identity_id="alice") is None
+        cached, = refresh_history(service, force=False, account=account)
+        assert state["reads"] == 1
+        assert cached.identity_id is None and cached.source_account_id is None
+        assert borrower_public_c_receipt(cached, identity_id="alice") is None
+    finally:
+        db.close()

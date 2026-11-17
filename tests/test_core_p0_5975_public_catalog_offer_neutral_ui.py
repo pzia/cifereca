@@ -117,13 +117,16 @@ def test_other_public_delivery_contract_and_private_exact_purchases_remain_indep
 
     from cifereca.gui.offer_actions import private_notice_download_hint_allowed
     from tests.test_core_ui_p1_1867_numilog_direct_download_scope import (
-        private_purchase, _proof,
+        private_purchase, _proof, NumilogOfferFixture,
     )
     private = private_purchase()
     assert public_catalogue_download_hint_allowed(private) is True
     assert private_notice_download_hint_allowed(private) is False
     assert private_notice_download_hint_allowed(
         private, purchase_evidence=_proof(), identity_id="alice",
+    ) is False
+    assert private_notice_download_hint_allowed(
+        private, service=NumilogOfferFixture(), identity_id="alice",
     ) is True
 
 

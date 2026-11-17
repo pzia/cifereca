@@ -128,7 +128,8 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
         if stats:
             local = _dashboard_count(stats, "local_books")
             loans = _dashboard_count(stats, "known_loans")
-            owned = _dashboard_count(stats, "remote_owned_rights")
+            native_purchases = "observed_purchase_sources" in stats
+            owned = _dashboard_count(stats, "observed_purchase_sources" if native_purchases else "remote_owned_rights")
             loan_label = (
                 "aucune source de prêt configurée"
                 if _dashboard_has_no_loan_source(card, stats)
@@ -139,7 +140,9 @@ def render_dashboard(window, *, Gtk, add_css) -> None:
             # A distant store entitlement is neither a library loan nor
             # evidence of a downloaded EPUB. Never add these three counts.
             rights=Gtk.Label(
-                label=f"{owned} droits d’achat distants · fichier local non présumé",
+                label=(f"{owned} sources d’achat observées · fichier local non présumé"
+                       if native_purchases else
+                       f"{owned} droits d’achat distants · fichier local non présumé"),
                 xalign=0,
             )
             rights.set_wrap(True);box.append(rights)

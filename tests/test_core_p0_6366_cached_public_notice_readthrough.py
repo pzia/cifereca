@@ -206,7 +206,6 @@ def test_cached_public_coordinate_replay_rejects_stale_private_and_signed_rows()
     )
     assert not hasattr(clean, "_core_notice_cover_document_ref")
 
-
 def test_cached_recommendation_binding_requires_original_worker_receipt(tmp_path):
     from cifereca.gui.plugin_public_c_binding import (
         issue_public_c_binding, public_c_binding_revision,
@@ -244,3 +243,45 @@ def test_cached_recommendation_binding_requires_original_worker_receipt(tmp_path
         assert session.calls == 1
     finally:
         service.close()
+
+
+def test_cached_multisource_batch_shares_exact_c_after_sqlite_restart(tmp_path, monkeypatch):
+    from cifereca.core.notice_c_cached_revision import matching_cached_public_canonical_ref
+    from cifereca.gui.search_document_cover_bridge import exact_remote_search_document
+    from cifereca.storage import Storage
+    from tests.test_core_p0_6366_origin_attested_public_c import _origins, _source_rows, _mirror
+    from tests.test_core_p1_6168_search_remote_document_gateway import host
+
+    filename = tmp_path / "cached-multisource.sqlite"
+    db = Storage(filename)
+    try:
+        _origins(db, tmp_path)
+        a, b = _source_rows()
+        assert _mirror(db, a) == 1 and _mirror(db, b) == 1
+        shared = b._core_notice_canonical_cover_document_ref
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key LIKE 'notice.c.observation.v1:%'")
+    finally:
+        db.close()
+
+    db = Storage(filename)
+    try:
+        rows = [replace(a), replace(b)]
+        connect = db._connect
+        calls = []
+        def counted_connect():
+            calls.append(1)
+            return connect()
+        monkeypatch.setattr(db, "_connect", counted_connect)
+        search_orchestration._stamp_cached_public_notice_refs(
+            rows, identity_id="alice", storage=db,
+        )
+        assert calls == [1]
+        for row in rows:
+            assert matching_cached_public_canonical_ref(row, identity_id="alice") == shared
+            window, _, key = host(row)
+            assert exact_remote_search_document(window, row, key).document == shared
+            assert matching_cached_public_canonical_ref(replace(row), identity_id="alice") is None
+            assert matching_cached_public_canonical_ref(row, identity_id="bob") is None
+    finally:
+        db.close()

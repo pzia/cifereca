@@ -116,14 +116,30 @@ def _add_owned_download(window, detail, item, TaskPriority):
         mapped = getattr(_button, 'get_mapped', None)
         if callable(mapped) and not mapped():
             return
-        # The button and target were admitted against this exact Core.
-        # A queued worker may never resolve a replacement MainWindow.service.
-        obtain = service.obtain_owned_library_item
+        # Convert the passive target at the click, while its navigation
+        # context is still current. The Core source lease, not a widget or
+        # the selected profile, is then the execution authority.
+        try:
+            admitted = service.capture_admitted_owned_library_offer(target)
+            obtain = service.obtain_admitted_owned_library_offer
+            if (type(admitted) is not SourceOfferTarget
+                    or admitted != target or admitted.session is not target.session
+                    or admitted.selection_epoch is not None
+                    or admitted.source_epoch != source_epoch or not current()):
+                return
+        except Exception:
+            if current():
+                window.show_error(failure, 'Téléchargement du livre possédé')
+            return
+
         def work():
-            if not current():
-                raise RuntimeError('Le contexte du téléchargement a changé.')
             try:
-                return obtain(target)
+                if source_context_epoch(service) != source_epoch:
+                    raise ValueError("selected_library_source_revoked")
+            except Exception:
+                raise RuntimeError('Le contexte du téléchargement a changé.') from None
+            try:
+                return obtain(admitted)
             except Cancelled:
                 raise
             except Exception:

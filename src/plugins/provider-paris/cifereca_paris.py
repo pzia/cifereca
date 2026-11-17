@@ -168,6 +168,8 @@ def _paris_loan_branch_coverage(rows, upstream, medium, failed):
 DESCRIPTOR = ProviderDescriptor(
     id="paris",
     existing_primary_loan_account_alias="primary",
+    # Loan/Handing RecordId == Search RscId only in the digital DILICOM branch.
+    borrower_public_edition_branches_v1=(("DILICOM", "digital", "DILICOM", None),),
     # Navigation only: the provider, never Core, declares which configured
     # public portal option takes precedence over catalogue_url/homepage.
     public_catalogue_base_option_key="base_url",

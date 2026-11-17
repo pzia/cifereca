@@ -1,4 +1,4 @@
-"""P0 #5056: purchased catalogue mirror needs independently stored rights."""
+"""P0 #5518: catalogue mirroring never reads historical purchase rights."""
 from dataclasses import replace
 from types import SimpleNamespace as NS
 import pytest
@@ -10,10 +10,8 @@ class Storage:
     def __init__(self, rights):
         self.rights = rights
         self.upserts = []
-    def entitlements(self, *, provider_id=None, state):
-        assert state == "active"
-        return [x for x in self.rights if provider_id is None
-                or x.get("provider_id") == provider_id]
+    def entitlements(self, **_scope):
+        pytest.fail("catalogue mirroring must not read historical rights")
     def catalog_entries_by_ids(self, ids):
         return {}
     def catalog_entries_upsert_many(self, rows):
@@ -48,9 +46,9 @@ def mirror(row, rights, identity="alice"):
 
 
 @pytest.mark.parametrize("provider", ["fictional-a", "fictional-b"])
-def test_provider_neutral_positive_and_missing_right(provider):
+def test_provider_neutral_mirror_ignores_positive_and_missing_right(provider):
     assert mirror(book(provider), []) == "remote_catalog"
-    assert mirror(book(provider), [right(provider)]) == "remote_owned"
+    assert mirror(book(provider), [right(provider)]) == "remote_catalog"
 
 
 @pytest.mark.parametrize("change", [
@@ -74,21 +72,28 @@ def test_public_or_stale_rows_remain_nonowned(changes):
 
 def test_legacy_personal_inventory_without_account_or_revision():
     row = book(account=None, revision=None)
-    assert mirror(row, [right()]) == "remote_owned"
+    assert mirror(row, [right()]) == "remote_catalog"
     assert mirror(row, []) == "remote_catalog"
-    from cifereca.core.search_owned_evidence import (
-        snapshot_search_owned_evidence, search_result_has_verified_purchase,
-    )
-    service = NS(storage=Storage([right()]), current_identity=NS(identity_id="alice"))
-    proof = snapshot_search_owned_evidence(service, identity_id="alice")
-    assert proof is not None  # strict actionable evidence really evaluated
-    assert not search_result_has_verified_purchase(
-        row, proof, current_identity_id="alice",
-    )
 
 
-def test_every_provider_needs_ledger_without_hardcoded_exemption():
+def test_old_positive_mirror_has_been_physically_retired():
     import inspect
     source = inspect.getsource(_mirror_remote_results)
-    assert "attested_catalogue_owned_keys(" in source
+    assert "attested_catalogue_owned_keys(" not in source
+    assert '"remote_owned" if' not in source
     assert 'row.source_provider not in {"kobo", "numilog"}' not in source
+
+
+def test_private_collection_and_exact_revision_remain_scoped_even_without_right():
+    storage = Storage([right()])
+    service = NS(storage=storage)
+    row = book()
+    assert _mirror_remote_results(service, [row], identity_id="alice") == 1
+    observed = storage.upserts[0]
+    assert observed["identity_id"] == "alice"
+    assert observed["local_state"] == "remote_catalog"
+    assert observed["metadata"]["source_collection"] == "library"
+    assert observed["metadata"]["source_credential"] == "card"
+    assert observed["metadata"]["source_account_id"] == "acc"
+    assert observed["metadata"]["source_revision"] == "revision"
+

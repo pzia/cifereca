@@ -1104,23 +1104,6 @@ class LibraryService:
             primary_connection_id=primary_connection_id,
         )
 
-    def normal_paris_adept_status(self, identity_id: str) -> dict[str, Any]:
-        """Historical Settings facade: select the saved Paris source only.
-
-        Supplier selection belongs to the legacy UI/config adapter; the
-        Core readiness decision is shared by all source providers.
-        """
-        saved = (
-            self.config.identity(identity_id) or {}
-            if type(identity_id) is str else {}
-        )
-        status = self.normal_source_adept_status(
-            identity_id, source_provider_id="paris", source_label="Paris",
-            primary_connection_id=saved.get("primary_paris_connection_id"),
-        )
-        status["paris_label"] = status.pop("source_label")
-        return status
-
     def _inspect_source_adept_runtime(self, identity_id: str, status_reader) -> dict[str, object]:
         """One explicit runtime inventory, fenced by the same saved scope."""
         from .core.adept_runtime_observation import describe_adept_runtime
@@ -1161,16 +1144,6 @@ class LibraryService:
                 source_label=source_label,
                 primary_connection_id=primary_connection_id,
             ),
-        )
-
-    def check_normal_paris_adept_runtime(self, identity_id: str) -> dict[str, object]:
-        """Historical Settings facade: preserve saved-choice revalidation.
-
-        The snapshot reader deliberately reloads the persisted Paris choice
-        before and after the explicit runtime enumeration.
-        """
-        return self._inspect_source_adept_runtime(
-            identity_id, lambda: self.normal_paris_adept_status(identity_id),
         )
 
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:
@@ -3721,6 +3694,41 @@ class LibraryService:
                 or self._account_context_epoch != epoch):
             return None
         return target
+
+    def capture_admitted_owned_library_offer(self, target):
+        """Admit the exact Library click before enqueueing a delivery."""
+        from .core.owned_library_download import OwnedDownloadRejected
+        from .core.selected_source_offer import admit_library_source_offer
+        from .core.source_context import source_context_epoch
+
+        try:
+            identity = self.current_identity
+            account_epoch = self._account_context_epoch
+            source_epoch = source_context_epoch(self)
+            admitted = admit_library_source_offer(
+                self, target, identity_id=getattr(identity, "identity_id", None),
+                account_epoch=account_epoch, source_epoch=source_epoch,
+            )
+            if (self.current_identity is not identity
+                    or self._account_context_epoch != account_epoch
+                    or source_context_epoch(self) != source_epoch):
+                raise ValueError("selected_library_source_revoked")
+            return admitted
+        except Exception:
+            raise OwnedDownloadRejected("owned_download_unavailable") from None
+
+    def obtain_admitted_owned_library_offer(self, target):
+        """Execute a previously admitted exact Library offer, without navigation."""
+        from .core.owned_library_download import (
+            OwnedDownloadRejected, obtain_owned_library_item,
+        )
+        from .core.selected_source_offer import SourceOfferTarget
+        if (type(target) is not SourceOfferTarget
+                or type(target.source_epoch) is not int
+                or target.source_epoch < 0
+                or target.selection_epoch is not None):
+            raise OwnedDownloadRejected("owned_download_unavailable")
+        return obtain_owned_library_item(self, target)
 
     def obtain_owned_library_item(self, target):
         from .core.owned_library_download import (

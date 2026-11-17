@@ -46,6 +46,8 @@ def test_two_accounts_same_provider_item_do_not_merge_remote_possessions(tmp_pat
         by_title = {r["title"]: r for r in rows}
         assert by_title["Private A"]["possessions"][0]["account_id"] == "buyer-a"
         assert by_title["Private B"]["possessions"][0]["account_id"] == "buyer-b"
+        assert by_title["Private A"]["possessions"][0]["credential_id"] == "card-a"
+        assert by_title["Private B"]["possessions"][0]["credential_id"] == "card-b"
         assert by_title["Private A"]["entitlement_id"] == "right-a"
         assert by_title["Private B"]["entitlement_id"] == "right-b"
         assert service.storage.entitlements() == before

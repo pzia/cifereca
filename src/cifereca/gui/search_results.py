@@ -528,11 +528,7 @@ def _render_search_results(self) -> int:
         )
         private_hint_ok = (public_catalogue_download_hint_allowed(item)
                            and private_notice_download_hint_allowed(
-            item,
-            purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-            identity_id=identity_id,
-            account_context_epoch=getattr(self.service, "_account_context_epoch", None),
-            source_context_epoch=getattr(self.service, "_source_context_epoch", None),
+            item, service=self.service, identity_id=identity_id,
         ))
         direct = (
             False if (stale_known or not private_hint_ok)
