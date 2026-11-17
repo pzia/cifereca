@@ -6,7 +6,7 @@ from pathlib import Path
 from urllib.parse import urljoin, quote_plus, quote, urlsplit, parse_qsl
 import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
-from cifereca.plugin_api.catalogue_xml import (
+from cifereca.plugin_api import (
     CatalogueXMLParseError, parse_bounded_catalogue_xml,
     MAX_XML_BYTES, MAX_XML_DEPTH, MAX_XML_ELEMENTS,
 )
