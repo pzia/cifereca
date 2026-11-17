@@ -95,7 +95,7 @@ class NoticeWorkRuntime:
         with self._lock:
             if self._closed:
                 return None
-        return self._pump.tick()
+        return self._pump.tick(control=control)
 
     def _scan_finished(self, handle):
         with self._lock:
