@@ -373,9 +373,8 @@ def test_same_public_c_six_list_detail_paths_and_reopened_offline_cache(tmp_path
         db.close()
 
     # Reopen the database AND physical cache with a new service and loader.
-    # The transient same-call Recommendation token intentionally does not
-    # survive restart; only the five independently durable routes are claimed
-    # here. A cached recommendation read-through needs its own Core receipt.
+    # No live witness survives restart. The real C cursor and the exact
+    # cached source worker are two independent, read-only recommendation routes.
     restored = Storage(filename)
 
     @contextmanager
@@ -388,10 +387,20 @@ def test_same_public_c_six_list_detail_paths_and_reopened_offline_cache(tmp_path
     try:
         reception.warm_index()
         _search(restored, reception)
+        from cifereca.core.notice_c_recommendation_known import known_public_notice_candidates
+        from cifereca.core.search_orchestration import _stamp_cached_public_notice_refs
+        from cifereca.core.notice_c_recommendation_known import known_public_c_binding_facts
+        known = next(row for row in known_public_notice_candidates(restored, TITLE)
+                     if known_public_c_binding_facts(row)[0] == ref)
+        _recommendations(known, reception)
+        cached = replace(live)
+        _stamp_cached_public_notice_refs([cached], identity_id=OWNER, storage=restored)
+        assert cached._core_notice_canonical_cover_document_ref == ref
+        _recommendations(cached, reception)
         _local(restored, reception, artifact, placement, path)
         _borrowers(restored, reception)
-        assert len(reception.bindings) == 10
-        reception.assert_n2_reads(10)
+        assert len(reception.bindings) == 14
+        reception.assert_n2_reads(14)
         assert reception.reads == [ref]
         assert gets == [URL]
         assert restored.entitlements() == [] and restored.acquisitions() == []
