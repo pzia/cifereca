@@ -2045,6 +2045,19 @@ class LibraryService:
             executor=_SEARCH_EXECUTOR, logger=_TRACE_LOG, **options,
         )
 
+    def search_progressive_result_for_scope(self, request_scope, query: str, **options):
+        """Return the scoped summary and final ranked rows without global UI state.
+
+        A cancelled request returns no final rows. Progressive callbacks retain
+        their existing contract and must independently filter stale UI delivery.
+        """
+        if request_scope is None:
+            raise ValueError("search_read_scope_required")
+        return search_orchestration.search_progressive(
+            self, query, request_scope=request_scope, return_rows=True,
+            executor=_SEARCH_EXECUTOR, logger=_TRACE_LOG, **options,
+        )
+
     def search_local_library(
         self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
     ) -> list[dict[str, Any]]:
