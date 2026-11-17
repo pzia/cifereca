@@ -247,6 +247,7 @@ class PublicBookMasterDetailView:
 
     def show_existing_search_detail(
         self, item, detail, *, context_sections=(), public_c_document=None,
+        c_selection_is_current=None,
     ) -> None:
         """Render Core's actual Search detail/actions in this plugin panel.
 
@@ -263,9 +264,22 @@ class PublicBookMasterDetailView:
             if public_c_document is None:
                 panel.show_item_detail(item, detail)
             else:
-                panel.show_public_c_search_document(
-                    item, detail=detail, public_c_document=public_c_document,
+                from .plugin_public_c_guard import staged_plugin_exact_public_c
+                admitted, stage = staged_plugin_exact_public_c(
+                    self, panel, public_c_document,
+                    selection_is_current=c_selection_is_current,
                 )
+                if admitted:
+                    with stage:
+                        panel.show_public_c_search_document(
+                            item, detail=detail,
+                            public_c_document=public_c_document,
+                        )
+                else:
+                    # A stale async completion must not overwrite even
+                    # the NEW selection's existing detail with an empty pane.
+                    # Neither old image nor old source/account actions run.
+                    return
         else:
             panel.show_search_document(item, detail=detail, cover_evidence=proof)
         # Search appends these same Core local/open/send/owned actions after
@@ -284,6 +298,7 @@ class PublicBookMasterDetailView:
 
     def show_existing_search_unavailable(
         self, item, *, context_sections=(), public_c_document=None,
+        c_selection_is_current=None,
     ) -> None:
         """Match Search's non-mutating detail fallback after holdings failure.
 
@@ -298,9 +313,21 @@ class PublicBookMasterDetailView:
             if public_c_document is None:
                 panel.show_search(item, loading=False)
             else:
-                panel.show_public_c_search_document(
-                    item, loading=False, public_c_document=public_c_document,
+                from .plugin_public_c_guard import staged_plugin_exact_public_c
+                admitted, stage = staged_plugin_exact_public_c(
+                    self, panel, public_c_document,
+                    selection_is_current=c_selection_is_current,
                 )
+                if admitted:
+                    with stage:
+                        panel.show_public_c_search_document(
+                            item, loading=False,
+                            public_c_document=public_c_document,
+                        )
+                else:
+                    # The offline callback is equally stale. Leave the
+                    # current selection's panel untouched (not even empty).
+                    return
         else:
             panel.show_search_document(item, cover_evidence=proof)
         from .query_model import result_row

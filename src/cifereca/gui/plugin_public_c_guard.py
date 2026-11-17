@@ -8,7 +8,7 @@ This guard only reads already-published GTK/Core state. No IO or rights.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from ..core.book_cover_projection import CoverDocumentScope
 from ..core.notice_c_cover_index import is_canonical_cover_document
@@ -124,8 +124,49 @@ def plugin_public_c_detail_current(
     return callable(get_selected) and get_selected() is selected
 
 
+def staged_plugin_exact_public_c(
+    view: Any, panel: Any, document: object, *,
+    selection_is_current: Callable[[], bool] | None = None,
+):
+    """Return a render-scoped N3 check for an in-place exact Search detail.
+
+    The known-v2 exact worker verifies the source before calling the plugin
+    adapter, but its canonical image may finish after the selection changes.
+    Reuse the *same* original recommendation receipt as list and ordinary
+    plugin detail; never trust a fresh canonical ref by itself.
+    """
+    from contextlib import nullcontext
+    if not is_canonical_cover_document(document):
+        return False, nullcontext()
+    selected = selected_plugin_public_c(view, document)
+    if selected is None:
+        return False, nullcontext()
+    row, receipt = selected
+
+    def same_original_recommendation() -> bool:
+        # The explicit-click callback comes from the recommendation that
+        # launched the worker. Another recommendation may reference the SAME
+        # public C edition, so the current DocumentRef / GTK row alone does
+        # not prove that the old worker belongs to its replacement.
+        if selection_is_current is not None:
+            try:
+                if (not callable(selection_is_current)
+                        or selection_is_current() is not True):
+                    return False
+            except Exception:
+                return False
+        return plugin_public_c_detail_current(view, row, receipt)
+
+    if not same_original_recommendation():
+        return False, nullcontext()
+    from .local_public_c_detail_guard import staged_local_public_c_detail
+    return True, staged_local_public_c_detail(
+        panel, same_original_recommendation,
+    )
+
+
 __all__ = [
     "PinnedPluginPublicC", "pin_plugin_public_c", "plugin_public_c_current",
     "plugin_public_c_cell_current", "selected_plugin_public_c",
-    "plugin_public_c_detail_current",
+    "plugin_public_c_detail_current", "staged_plugin_exact_public_c",
 ]

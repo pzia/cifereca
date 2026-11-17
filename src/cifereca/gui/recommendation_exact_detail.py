@@ -225,6 +225,7 @@ def present_loaded_search_detail_in_place(
         presentation_kwargs = {"context_sections": context_sections}
         if known_source and public_c_document is not None:
             presentation_kwargs["public_c_document"] = public_c_document
+            presentation_kwargs["c_selection_is_current"] = is_current
         view.show_existing_search_detail(item, detail, **presentation_kwargs)
 
     def failed(_error: BaseException) -> None:
@@ -250,6 +251,7 @@ def present_loaded_search_detail_in_place(
             presentation_kwargs = {"context_sections": context_sections}
             if known_source and public_c_document is not None:
                 presentation_kwargs["public_c_document"] = public_c_document
+                presentation_kwargs["c_selection_is_current"] = is_current
             fallback(item, **presentation_kwargs)
         window.toast("Disponibilités indisponibles pour cette notice.", 5)
 
