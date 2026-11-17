@@ -19,6 +19,7 @@ def bind_declared_document_cover(
     cover: Any, loader: Any, service: Any, document: object, *,
     variant: CoverVariant, priority: int,
     is_current: Callable[[], bool] | None = None,
+    minimum_revision: int | None = None,
 ) -> bool:
     """Bind an exact reference, or fail closed without legacy URL fallback."""
     if (type(document) is not CoverDocumentScope
@@ -39,6 +40,8 @@ def bind_declared_document_cover(
         options = {"variant": variant, "priority": priority}
         if is_current is not None:
             options["is_current"] = is_current
+        if minimum_revision is not None:
+            options["minimum_revision"] = minimum_revision
         cover.bind_document(service, document, **options)
     except (TypeError, ValueError, RuntimeError):
         cover.bind_url(loader, None, priority=priority)
