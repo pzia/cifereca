@@ -89,7 +89,7 @@ def test_coordinator_coalesces_ticks_and_detaches_observer(tmp_path, monkeypatch
     entered, release = Event(), Event()
     with open_core(tmp_path, notice_work_admission=budget) as core:
         runtime = core.notice_work
-        def scan():
+        def scan(*, control=None):
             entered.set()
             assert release.wait(10)
             return "scanned"
