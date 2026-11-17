@@ -2056,6 +2056,7 @@ class LibraryService:
         self, query: str, *, field: str = "all", scope: str = "all",
         provider_ids: tuple[str, ...] = (), page: int = 0,
         page_size: int = 50, max_scan: int = 10000,
+        group_by_document: bool = False,
     ):
         """Read public descriptive Notice C from SQLite without provider I/O.
 
@@ -2067,7 +2068,7 @@ class LibraryService:
         return search_public_notice_c(
             self.storage, query, field=field, scope=scope,
             provider_ids=provider_ids, page=page, page_size=page_size,
-            max_scan=max_scan,
+            max_scan=max_scan, group_by_document=group_by_document,
         )
 
     def search_known_catalog(

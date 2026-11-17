@@ -71,6 +71,11 @@ class PublicNoticeCPage:
     unindexed_sources: int
     status: str  # "partial" | "budget_exceeded"
     has_more: bool
+    # In grouped mode hits contains one representative per visible C.
+    # matching_sources preserves every matching, independently attested
+    # contribution for those representatives. known_matches stays a source count.
+    matching_sources: tuple[PublicNoticeCHit, ...] = ()
+    known_documents: int | None = None
 
 
 def _fold(value: str) -> str:
@@ -233,6 +238,7 @@ def search_public_notice_c(
     scope: str = "all", provider_ids: tuple[str, ...] = (),
     page: int = 0, page_size: int = _MAX_MATCHES,
     max_scan: int = _MAX_SCAN, now: int | None = None,
+    group_by_document: bool = False,
 ) -> PublicNoticeCPage:
     """Search durable public C source rows without a supplier or account GET.
 
@@ -247,6 +253,7 @@ def search_public_notice_c(
             or type(provider_ids) is not tuple or len(provider_ids) > 128
             or any(type(provider) is not str or not provider
                    for provider in provider_ids)
+            or type(group_by_document) is not bool
             or type(page) is not int or not 0 <= page <= 200
             or type(page_size) is not int or not 1 <= page_size <= _MAX_MATCHES
             or type(max_scan) is not int or not 1 <= max_scan <= 30000
@@ -443,7 +450,9 @@ def search_public_notice_c(
         _fold(item.title), item.provider_id, item.document.source_key,
     ))
     offset = page * page_size
-    selected = matches[offset:offset + page_size]
+    # Resolve the exact document before choosing a page. In grouped mode
+    # a C is the unit of pagination, not its individual provider facts.
+    selected = matches if group_by_document else matches[offset:offset + page_size]
     if selected and canonical_routes:
         # Live source hits keep their own text and current source revision.
         # A canonical index may change only the N2 ref after verifying the
@@ -471,12 +480,32 @@ def search_public_notice_c(
                     )
             canonical_hits.append(hit)
         selected = canonical_hits
+    matching_sources = ()
+    known_documents = None
+    if group_by_document:
+        # Use a stable ordering of matching source facts, including edition
+        # coordinates as the tie-breaker independent of source TTL and N2.
+        selected.sort(key=lambda hit: (
+            _fold(hit.title), hit.provider_id, hit.edition_id,
+            hit.record_id, hit.docbase, hit.medium, hit.source_revision or "",
+            hit.document.source_key,
+        ))
+        groups: dict[CoverDocumentScope, list[PublicNoticeCHit]] = {}
+        for hit in selected:
+            groups.setdefault(hit.document, []).append(hit)
+        known_documents = len(groups)
+        page_groups = list(groups.values())[offset:offset + page_size]
+        selected = [group[0] for group in page_groups]
+        matching_sources = tuple(hit for group in page_groups for hit in group)
     return PublicNoticeCPage(
         hits=tuple(selected),
         known_matches=len(matches), scanned_sources=scanned,
         unindexed_sources=unindexed,
         status="budget_exceeded" if exceeded else "partial",
-        has_more=exceeded or offset + page_size < len(matches),
+        has_more=exceeded or offset + page_size < (
+            known_documents if known_documents is not None else len(matches)
+        ),
+        matching_sources=matching_sources, known_documents=known_documents,
     )
 
 
