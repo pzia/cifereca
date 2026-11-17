@@ -83,6 +83,8 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
                 return (
                     live[0]
                     and source_context_epoch(service) == epoch
+                    and (target.reader_scope is None
+                         or target.reader_scope.current(service))
                     and service.accounts is registry
                     and service._sessions is sessions
                     and service.storage is storage
