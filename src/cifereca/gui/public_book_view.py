@@ -247,7 +247,7 @@ class PublicBookMasterDetailView:
 
     def show_existing_search_detail(
         self, item, detail, *, context_sections=(), public_c_document=None,
-        c_selection_is_current=None,
+        c_selection_is_current=None, public_c_minimum_revision=None,
     ) -> None:
         """Render Core's actual Search detail/actions in this plugin panel.
 
@@ -268,6 +268,7 @@ class PublicBookMasterDetailView:
                 admitted, stage = staged_plugin_exact_public_c(
                     self, panel, public_c_document,
                     selection_is_current=c_selection_is_current,
+                    minimum_revision=public_c_minimum_revision,
                 )
                 if admitted:
                     with stage:
@@ -298,7 +299,7 @@ class PublicBookMasterDetailView:
 
     def show_existing_search_unavailable(
         self, item, *, context_sections=(), public_c_document=None,
-        c_selection_is_current=None,
+        c_selection_is_current=None, public_c_minimum_revision=None,
     ) -> None:
         """Match Search's non-mutating detail fallback after holdings failure.
 
@@ -317,6 +318,7 @@ class PublicBookMasterDetailView:
                 admitted, stage = staged_plugin_exact_public_c(
                     self, panel, public_c_document,
                     selection_is_current=c_selection_is_current,
+                    minimum_revision=public_c_minimum_revision,
                 )
                 if admitted:
                     with stage:

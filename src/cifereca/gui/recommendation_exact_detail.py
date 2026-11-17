@@ -182,10 +182,28 @@ def present_loaded_search_detail_in_place(
 
     # Source-C lookup and holdings run on the SAME existing Core worker.
     # A plugin recommendation cannot contribute documentary evidence here.
-    public_c_document = None
+    public_c_snapshot = None
+
+    def c_click_current() -> bool:
+        # N3 and N4 must check the *exact* explicit click, even when the
+        # recommendation selection remains the same and another variant
+        # is consulted. This predicate is GTK-side and never reopens SQL.
+        return (
+            getattr(view, "_cifereca_exact_detail_request_token", None)
+                is request_token
+            and getattr(window, "service", None) is service
+            and not getattr(window, "_closed", False)
+            and window._identity_context_generation == generation
+            and window._search_generation == search_generation
+            and getattr(window, "_shell_page_rebuild_token", None) is shell_token
+            and getattr(service.current_identity, "identity_id", None) == identity_id
+            and source_context_epoch(service) == source_epoch
+            and _view_mapped(view)
+            and is_current() is True
+        )
 
     def work() -> ItemDetail:
-        nonlocal public_c_document
+        nonlocal public_c_snapshot
         if not source_current() or not loaded_facts_current():
             from ..plugin_api import Cancelled
             raise Cancelled("Source de consultation périmée.")
@@ -195,9 +213,9 @@ def present_loaded_search_detail_in_place(
                 from ..plugin_api import Cancelled
                 raise Cancelled("Notice catalogue modifiée.")
             from ..core.notice_c_recommendation_projection import (
-                known_recommendation_public_c_document,
+                known_recommendation_public_c_snapshot,
             )
-            public_c_document = known_recommendation_public_c_document(
+            public_c_snapshot = known_recommendation_public_c_snapshot(
                 service.storage, known_snapshot, **coords,
             )
         return service.holdings(item, query, force=False)
@@ -223,9 +241,10 @@ def present_loaded_search_detail_in_place(
         elif _loaded_item(window, coords) is not item:
             return
         presentation_kwargs = {"context_sections": context_sections}
-        if known_source and public_c_document is not None:
-            presentation_kwargs["public_c_document"] = public_c_document
-            presentation_kwargs["c_selection_is_current"] = is_current
+        if known_source and public_c_snapshot is not None:
+            presentation_kwargs["public_c_document"] = public_c_snapshot.document
+            presentation_kwargs["public_c_minimum_revision"] = public_c_snapshot.epoch
+            presentation_kwargs["c_selection_is_current"] = c_click_current
         view.show_existing_search_detail(item, detail, **presentation_kwargs)
 
     def failed(_error: BaseException) -> None:
@@ -249,9 +268,10 @@ def present_loaded_search_detail_in_place(
         fallback = getattr(view, "show_existing_search_unavailable", None)
         if callable(fallback):
             presentation_kwargs = {"context_sections": context_sections}
-            if known_source and public_c_document is not None:
-                presentation_kwargs["public_c_document"] = public_c_document
-                presentation_kwargs["c_selection_is_current"] = is_current
+            if known_source and public_c_snapshot is not None:
+                presentation_kwargs["public_c_document"] = public_c_snapshot.document
+                presentation_kwargs["public_c_minimum_revision"] = public_c_snapshot.epoch
+                presentation_kwargs["c_selection_is_current"] = c_click_current
             fallback(item, **presentation_kwargs)
         window.toast("Disponibilités indisponibles pour cette notice.", 5)
 

@@ -115,13 +115,15 @@ def test_exact_search_detail_uses_same_plugin_c_n3_lease(method):
     # Capture the delayed N3 callback while the render stage is active.
     checks = []
     def capture(*args, **kwargs):
+        assert panel._next_public_c_minimum_revision == 3
         checks.append(panel._next_local_public_c_check)
     panel.show_public_c_search_document.side_effect = capture
     panel.show_public_c_search_document.reset_mock()
     if method.endswith("unavailable"):
-        fn(view, search, public_c_document=doc)
+        fn(view, search, public_c_document=doc, public_c_minimum_revision=3)
     else:
-        fn(view, search, details, public_c_document=doc)
+        fn(view, search, details, public_c_document=doc, public_c_minimum_revision=3)
+    assert panel._next_public_c_minimum_revision is None
     assert len(checks) == 1 and callable(checks[0])
     assert checks[0]()
     view._public_c_page_generation += 1

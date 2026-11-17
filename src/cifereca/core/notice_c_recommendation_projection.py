@@ -9,16 +9,18 @@ from __future__ import annotations
 from typing import Any
 
 from .book_cover_projection import CoverDocumentScope
-from .notice_c_cover_index import is_canonical_cover_document
+from .notice_c_cover_index import (
+    ConsolidatedNoticeCover, is_canonical_cover_document,
+)
 from .notice_c_exact_source_lookup import exact_public_source_c
 
 
-def known_recommendation_public_c_document(
+def known_recommendation_public_c_snapshot(
     storage: Any, row: object, *, identity_id: str,
     provider: str, credential: str, record_id: str, docbase: str,
     source_collection: str,
-) -> CoverDocumentScope | None:
-    """Return C solely for a verified, exact, anonymous public v2 source.
+) -> ConsolidatedNoticeCover | None:
+    """Return the persisted C snapshot solely for a verified, exact, anonymous public v2 source.
 
     A v3/revisioned mirror or an account-bound offer is not this contract:
     their own qualified source routes must publish their versioned refs.
@@ -55,7 +57,24 @@ def known_recommendation_public_c_document(
     if (consolidated is None
             or not is_canonical_cover_document(consolidated.document)):
         return None
-    return consolidated.document
+    return consolidated
 
 
-__all__ = ["known_recommendation_public_c_document"]
+def known_recommendation_public_c_document(
+    storage: Any, row: object, *, identity_id: str,
+    provider: str, credential: str, record_id: str, docbase: str,
+    source_collection: str,
+) -> CoverDocumentScope | None:
+    """Compatibility projection of the exact persisted C snapshot."""
+    snapshot = known_recommendation_public_c_snapshot(
+        storage, row, identity_id=identity_id, provider=provider,
+        credential=credential, record_id=record_id, docbase=docbase,
+        source_collection=source_collection,
+    )
+    return snapshot.document if snapshot is not None else None
+
+
+__all__ = [
+    "known_recommendation_public_c_document",
+    "known_recommendation_public_c_snapshot",
+]

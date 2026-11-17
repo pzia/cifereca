@@ -30,6 +30,8 @@ class VerifiedSearchDocumentCover:
     document: CoverDocumentScope
     context: tuple[int, int, int, int]
     candidates: tuple[CoverCandidate, ...]
+    # Captured at publication; a new persisted epoch revokes old receipts.
+    minimum_revision: int | None = None
 
     @property
     def row_signature(self) -> tuple[int, VerifiedSearchDocumentCover]:
@@ -86,6 +88,20 @@ def _current(
         return None
     scope = _scope(item, identity_id)
     return (scope, context) if scope is not None else None
+
+
+def _persisted_notice_revision(item: SearchResult, document: CoverDocumentScope) -> int | None:
+    """Only the exact Core-stamped ref may carry its persisted epoch."""
+    if not is_notice_cover_document(document):
+        return None
+    canonical = getattr(item, "_core_notice_canonical_cover_document_ref", None)
+    exact = getattr(item, "_core_notice_cover_document_ref", None)
+    field = (
+        "_core_notice_canonical_cover_document_epoch" if document == canonical
+        else "_core_notice_cover_document_epoch" if document == exact else None
+    )
+    epoch = getattr(item, field, None) if field is not None else None
+    return epoch if type(epoch) is int and 1 <= epoch < 2**63 else None
 
 
 def exact_remote_search_document(
@@ -150,6 +166,7 @@ def exact_remote_search_document(
                 return VerifiedSearchDocumentCover(
                     source_item=item, row_key=row_key,
                     document=canonical, context=context, candidates=(),
+                    minimum_revision=_persisted_notice_revision(item, canonical),
                 )
         return None
     # Only a real Core producer may attach an already-persisted Notice C
@@ -208,6 +225,7 @@ def exact_remote_search_document(
         source_item=item, row_key=row_key,
         document=scope, context=context,
         candidates=tuple(candidates),
+        minimum_revision=_persisted_notice_revision(item, scope),
     )
 
 
@@ -344,13 +362,8 @@ def register_exact_search_document(
         # Only the *live Core producer* has a persisted C epoch. A cached
         # SearchResult replays its exact ref without inventing an epoch;
         # a routine GTK rebind on an unchanged source causes no SQLite I/O.
-        epoch = getattr(
-            item,
-            ("_core_notice_canonical_cover_document_epoch"
-             if document == canonical else "_core_notice_cover_document_epoch"),
-            None,
-        )
-        if type(epoch) is int and epoch > 0:
+        epoch = evidence.minimum_revision
+        if epoch is not None:
             service.refresh_cached_source_if_newer(document, epoch)
         return True
     adapter = getattr(window, "search_document_cover_registry", None)

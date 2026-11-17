@@ -177,6 +177,8 @@ class DetailPanel(Gtk.Box):
                 cover.bind_document(
                     service, document, variant="detail", priority=0,
                     is_current=lambda: search_document_is_current(self.window, cover_evidence),
+                    **({"minimum_revision": cover_evidence.minimum_revision}
+                       if cover_evidence.minimum_revision is not None else {}),
                 )
             else:
                 cover.bind_url(self.window.covers, None, priority=0)

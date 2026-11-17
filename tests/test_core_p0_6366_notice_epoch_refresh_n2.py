@@ -362,3 +362,32 @@ def test_positive_producer_epoch_retries_a_preexisting_unknown_n2_miss_once(
         covers.close()
         loader.close()
         db.close()
+
+def test_live_search_receipt_pins_the_exact_persisted_epoch(tmp_path):
+    from cifereca.gui.search_document_cover_bridge import search_document_is_current
+    from tests.test_core_p0_6366_search_c_first_n3_scope import _cell_method
+
+    db = Storage(tmp_path / "pinned-live-epoch.sqlite")
+    try:
+        item = anonymous_catalogue()
+        window, _, key = host(item)
+        assert mirror(db, item) == 1
+        proof = exact_remote_search_document(window, item, key)
+        assert proof is not None
+        assert proof.minimum_revision == item._core_notice_cover_document_epoch
+        assert search_document_is_current(window, proof)
+        row = NS(_cover_search_evidence=proof)
+        cell = NS(window=window)
+        options = _cell_method("_search_cover_guard")(cell, row)
+        assert options["minimum_revision"] == proof.minimum_revision
+        assert options["is_current"]()
+
+        # Same SearchResult and DocumentRef, but a changed producer stamp
+        # cannot renew the old list/detail callback by mutating its DTO.
+        item._core_notice_cover_document_epoch += 1
+        assert not options["is_current"]()
+        updated = exact_remote_search_document(window, item, key)
+        assert updated.document == proof.document
+        assert updated.minimum_revision == proof.minimum_revision + 1
+    finally:
+        db.close()
