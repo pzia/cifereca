@@ -2,6 +2,7 @@ from __future__ import annotations
 import ast
 import logging
 from collections.abc import Mapping
+from copy import copy
 from dataclasses import dataclass, field
 from inspect import getattr_static
 from datetime import datetime, timezone
@@ -101,6 +102,25 @@ class CatalogBrokerImpl:
         return self.service.catalogue_source_capabilities(identity_id=identity_id)
 
 
+def _observed_acquisition_account(item: Any) -> str | None:
+    """A declared upstream account is a coordinate, never a selector hint."""
+    observed = getattr(item, "source_account_id", None)
+    if observed is not None and (
+            type(observed) is not str or len(observed) > 1024
+            or any(ch in observed for ch in "\x00\r\n")):
+        raise ValueError("observed account invalid")
+    return observed
+
+
+def _observed_acquisition_account_matches(account: Any, observed: str | None) -> bool:
+    if observed is None:
+        return True
+    uid = getattr(account, "unique_id", None)
+    # The broker's display ID may be synthetic for a primary account.
+    return (type(uid) is str and uid == observed
+            and (uid != "" or getattr(account, "is_primary", None) is True))
+
+
 @dataclass(slots=True)
 class AcquisitionBrokerImpl:
     service: Any
@@ -115,6 +135,7 @@ class AcquisitionBrokerImpl:
             raise ValueError("identity_id_required")
         provider = str(getattr(item, "source_provider", "") or "")
         source_credential = str(getattr(item, "source_credential", "") or "")
+        observed = _observed_acquisition_account(item)
         rows = []
         for account in self.service.accounts_for_identity(identity_id):
             if provider and str(getattr(account, "provider_id", "")) != provider:
@@ -123,6 +144,8 @@ class AcquisitionBrokerImpl:
             # credential is eligible.  Search results without a credential may
             # legitimately require an explicit account choice.
             if source_credential and str(getattr(account, "credential_id", "")) != source_credential:
+                continue
+            if not _observed_acquisition_account_matches(account, observed):
                 continue
             ref = _account_ref(self.service, account)
             if ref.connected:
@@ -135,8 +158,19 @@ class AcquisitionBrokerImpl:
         # operation scope before any account enumeration or provider call.
         if type(identity_id) is not str or not identity_id.strip():
             raise ValueError("identity_id_required")
+        if account_id is not None and (
+                type(account_id) is not str or not account_id
+                or len(account_id) > 1024 or any(ch in account_id for ch in "\x00\r\n")):
+            raise ValueError("account_id_invalid")
+        # An unbound item can be reused by other callers. Bind a detached copy.
+        original = item
+        try:
+            item = copy(item)
+        except Exception as exc:
+            raise ValueError("item credential binding unavailable") from exc
+        observed = _observed_acquisition_account(item)
         eligible = self.eligible_accounts(item, identity_id=identity_id)
-        if account_id:
+        if account_id is not None:
             choices = [row for row in eligible if row.account_id == account_id]
             if not choices:
                 raise ValueError(f"account not eligible: {account_id}")
@@ -151,8 +185,7 @@ class AcquisitionBrokerImpl:
             raise ValueError("no eligible connected account")
         else:
             raise ValueError("account selection required")
-        # Preserve the source object but bind the selected credential when the
-        # model supports mutable dataclass attributes (SearchResult does).
+        # Recheck the selected account before dispatching the detached DTO.
         matches = [
             account for account in self.service.accounts_for_identity(chosen.identity_id)
             if (_account_id(account), str(getattr(account, "identity_id", "") or ""),
@@ -160,7 +193,7 @@ class AcquisitionBrokerImpl:
                 str(getattr(account, "credential_id", "") or "")) == (
                     chosen.account_id, chosen.identity_id, chosen.provider_id,
                     chosen.credential_id,
-                )
+                ) and _observed_acquisition_account_matches(account, observed)
         ]
         if len(matches) != 1:
             # Never silently rebind a selected account to another credential.
@@ -168,6 +201,8 @@ class AcquisitionBrokerImpl:
         internal = matches[0]
         exact_credential = str(getattr(internal, "credential_id", "") or "")
         if str(getattr(item, "source_credential", "") or "") != exact_credential:
+            if item is original:
+                raise ValueError("item credential binding unavailable")
             try:
                 setattr(item, "source_credential", exact_credential)
             except (AttributeError, TypeError) as exc:
