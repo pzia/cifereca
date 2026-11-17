@@ -2426,9 +2426,12 @@ class LibraryService:
                     and self._provider_enabled_for_identity(
                         item.source_provider, admitted_identity_id,
                     ) is True
-                    and (public_catalogue_source(item) or private_source_owner_matches(
-                        self, item, identity_id=admitted_identity_id,
-                    ))
+                    and (
+                        (item.source_credential == "__public__" and public_catalogue_source(item))
+                        or private_source_owner_matches(
+                            self, item, identity_id=admitted_identity_id,
+                        )
+                    )
                 )
             return (
                 getattr(getattr(self, "current_identity", None), "identity_id", None)
@@ -2491,6 +2494,8 @@ class LibraryService:
                 self, item.source_provider, item.source_credential,
                 identity_id=admitted_identity_id,
             )
+            if not private_source_current():
+                raise Cancelled("holdings_read_scope_revoked")
         else:
             session = self._session_for_source(item.source_provider, item.source_credential)
         detail = session.holdings(item, search_terms)
