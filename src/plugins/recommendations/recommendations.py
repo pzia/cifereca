@@ -653,6 +653,13 @@ def _public_cover_url(item: Any) -> str | None:
 
 
 
+def _known_public_c_candidate(item: Any) -> bool:
+    # Descriptive display marker only; the Core host alone verifies the
+    # original documentary receipt. This marker can never grant an action.
+    metadata = getattr(item, "metadata", None) if type(item) is SearchResult else None
+    return type(metadata) is dict and metadata.get("notice_c_known") is True
+
+
 def _attested_recommendation_c_cover(
     ranked: Any, *, host: Any, identity_id: str | None,
     catalogue_sources: tuple[str, ...], with_receipt: bool = False,
@@ -661,8 +668,8 @@ def _attested_recommendation_c_cover(
 
     A ranking may unify works from different suppliers for discovery; that
     affinity cluster is NOT an edition identity. Only a single original
-    same-call public SearchResult, with its unforgeable Core source witness
-    and matching exact catalogue variant, can provide a canonical DocumentRef.
+    Core-projected SearchResult, live same-call or durable public C read,
+    with a matching original catalogue variant can provide a canonical ref.
     Pure projection: no DB, network, image I/O or right lookup on GTK.
     """
     if (type(ranked) is not RankedCandidate
@@ -2668,6 +2675,8 @@ class UxRecommendationsView:
             meta_parts = []
             if sources:
                 meta_parts.append(sources)
+            if _known_public_c_candidate(item):
+                meta_parts.append("Notice C connue · disponibilité non vérifiée")
             if reasons:
                 meta_parts.append("Pourquoi : " + reasons)
 
@@ -2931,6 +2940,10 @@ class UxRecommendationsView:
             "recommendation", "Recommandation",
             tuple(recommendation_fields), 10,
         ))
+        if _known_public_c_candidate(item):
+            catalogue_fields.append(DetailField(
+                "known-public-c", "Disponibilité", "Notice connue · non vérifiée",
+            ))
         if catalogue_fields:
             sections.append(
                 DetailSection("catalogue", "Catalogue", tuple(catalogue_fields), 20)
@@ -3474,14 +3487,16 @@ class UxRecommendationsView:
         empty_reason = None
         if not result.books_count:
             empty_reason = "Le profil ne contient aucun livre exploitable."
-        elif not result.providers:
-            empty_reason = "Aucun catalogue connecté ne permet la recherche."
+        elif not result.providers and not result.ranked:
+            empty_reason = "Aucun catalogue connecté ni notice connue correspondante."
         elif not result.queries:
             empty_reason = "Pas assez de métadonnées pour construire des recommandations."
         elif not result.ranked:
             empty_reason = "Aucune recommandation trouvée avec les catalogues actuellement connectés."
         else:
             suffix = f" · {len(result.warnings)} recherche(s) partiellement en erreur" if result.warnings else ""
+            if any(_known_public_c_candidate(row.item) for row in result.ranked):
+                suffix += " · Notices C connues, disponibilités non vérifiées"
             if self._reference_book is not None:
                 self._summary.set_label(
                     f"{len(result.ranked)} recommandations proches de « {_reference_label(self._reference_book)} » "

@@ -88,6 +88,12 @@ class CatalogBrokerImpl:
     def holdings(self, item: Any, **options: Any): return self.service.holdings(item, **options)
     def searchable_providers(self): return self.service.searchable_providers()
     def catalog_entries(self, **options: Any): return self.service.catalog_entries(**options)
+    def known_public_notices(self, query: str, *, scope: str = "all", provider_ids: tuple[str, ...] = ()):
+        """Worker-only descriptive C search; no supplier dispatch or rights."""
+        from .core.notice_c_recommendation_known import known_public_notice_candidates
+        return known_public_notice_candidates(
+            self.service.storage, query, scope=scope, provider_ids=provider_ids,
+        )
     def catalogue_source_capabilities(self, identity_id: str | None = None):
         """Optional additive Core inventory; missing headless owner denies empty."""
         if type(identity_id) is not str or not identity_id:

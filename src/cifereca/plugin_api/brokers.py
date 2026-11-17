@@ -51,6 +51,14 @@ class CatalogBroker(Protocol):
     def catalog_entries(self, **options: Any) -> list[Mapping[str, Any]]: ...
 
 @runtime_checkable
+class KnownPublicNoticeBroker(Protocol):
+    """Optional worker-only partial documentary query, never an offer/session."""
+    def known_public_notices(
+        self, query: str, *, scope: str = "all", provider_ids: tuple[str, ...] = (),
+    ) -> list[Any]: ...
+
+
+@runtime_checkable
 class CatalogueSourceInventoryBroker(Protocol):
     """Optional additive read-only facet on the existing catalog broker.
 
