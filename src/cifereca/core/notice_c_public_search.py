@@ -265,6 +265,9 @@ def search_public_notice_c(
     # SQLite's metadata PK is indexed; the transient range is bounded.
     # The durable query uses a text prefilter, not the legacy profile mirror.
     with storage._lock, storage._connect() as db:
+        # The metadata reads must share a SQLite snapshot, including when
+        # a separate Storage instance updates a source concurrently.
+        db.execute("BEGIN")
         cursor = db.execute(
             "SELECT key,value FROM metadata "
             "WHERE key>=? AND key<? "
@@ -289,6 +292,7 @@ def search_public_notice_c(
                 field=field, needle=needle,
             ):
                 matches.append(record)
+        cursor.close()  # Release the limited statement before registering a UDF.
 
         # Durable C and transient source observations have independent
         # read budgets. A large transient inventory must never hide a small
@@ -328,10 +332,19 @@ def search_public_notice_c(
                         if src.visibility == "public" and src.public_bibliography is not None
                     )
                     for source in public_sources:
-                        if source.source_ref in refs:
-                            staged.setdefault(source.source_ref, []).append((
-                                ref, consolidated, source, len(public_sources),
-                            ))
+                        if source.source_ref not in refs:
+                            continue
+                        # Keep only the information needed to distinguish
+                        # an exact self C, one foreign relation, or conflict.
+                        # Thousands of duplicate claims cannot fill memory.
+                        own_ref = canonical_cover_document_ref(
+                            source.public_bibliography.edition_id,
+                        )
+                        options = staged.setdefault(source.source_ref, [])
+                        if (ref == own_ref
+                                or sum(item[0] != own_ref for item in options) < 2):
+                            options.append((ref, consolidated, source,
+                                            len(public_sources)))
                 except (TypeError, ValueError, KeyError, AttributeError):
                     unindexed += 1
                     continue

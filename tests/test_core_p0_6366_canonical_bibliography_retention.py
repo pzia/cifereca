@@ -220,3 +220,48 @@ def test_unscanned_current_source_vetoes_obsolete_c_text(tmp_path):
         assert db.entitlements() == []
     finally:
         db.close()
+
+
+def test_canonical_text_prefilter_cannot_hide_competing_group(tmp_path):
+    from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
+    db = Storage(tmp_path / "prefilter-conflict.sqlite")
+    try:
+        original = persist(db, verified_public(
+            source_provider="seller-a", record_id="shared-record",
+            title="Ancien nom",
+        ), at=100)
+        b = persist(db, verified_public(
+            source_provider="seller-b", record_id="related-b",
+            title="Autre nom B",
+        ), at=100)
+        first_group = "edition:prefilter-old-group"
+        for member in (original, b):
+            persist_consolidated_cover_source(
+                db, canonical_edition_id=first_group, source=member,
+                relation_proof_id="strong:fixture:old-group",
+            )
+        current = persist(db, verified_public(
+            source_provider="seller-a", record_id="shared-record",
+            title="Éléphant rare",
+        ), at=101)
+        own = persist_exact_public_search_cover(db, current)
+        c = persist(db, verified_public(
+            source_provider="seller-c", record_id="related-c",
+            title="Autre nom C",
+        ), at=100)
+        for member in (current, c):
+            persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:prefilter-new-group",
+                source=member, relation_proof_id="strong:fixture:new-group",
+            )
+        for member in (current, b, c):
+            _drop_short_source(db, member)
+        # The old group does not match the text anywhere. Nevertheless its
+        # conflicting strong claim must be considered: exact self C wins.
+        result = search_public_notice_c(db, "elephant", now=101, max_scan=1)
+        assert len(result.hits) == 1
+        assert result.hits[0].document == own.document
+        assert result.hits[0].title == "Éléphant rare"
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
