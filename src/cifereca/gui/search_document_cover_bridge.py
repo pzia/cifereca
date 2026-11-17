@@ -201,7 +201,7 @@ def exact_remote_search_document(
                 and notice_cover_document_ref(expected.key) == admitted):
             # Preserve the prior exact own-source C on validated cache
             # replay after restart / source TTL expiry. Cross-provider C
-            # still requires the stronger same-call Core OriginLink proof.
+            # requires either same-call or exact persisted Core replay proof.
             from ..core.notice_c_cover_index import (
                 canonical_cover_document_ref, is_canonical_cover_document,
             )
@@ -220,6 +220,9 @@ def exact_remote_search_document(
                 canonical = matching_live_public_canonical_ref(
                     item, identity_id=viewer_id,
                 )
+                if canonical is None:
+                    from ..core.notice_c_cached_revision import matching_cached_public_canonical_ref
+                    canonical = matching_cached_public_canonical_ref(item, identity_id=viewer_id)
                 scope = canonical if canonical is not None else admitted
     return VerifiedSearchDocumentCover(
         source_item=item, row_key=row_key,
