@@ -46,6 +46,7 @@ def _setup():
         _window=window, _rows={source.key: source},
         _public_c_page_generation=7,
         _page=NS(selection=NS(get_selected_item=lambda: selected), detail=panel),
+        _append_recommendation_context=lambda *_args, **_kwargs: None,
     )
     receipt = pin_plugin_public_c(view, source, key=source.key)
     assert receipt is not None
