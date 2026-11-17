@@ -185,9 +185,10 @@ def main() -> int:
             content=images[url], request=request,
         )
 
-    def search_progressive(text, scope="all", force=False, *, provider_ids=(),
+    def search_progressive(request_scope, text, scope="all", force=False, *, provider_ids=(),
                            field="all", content_types=(), on_batch=None,
                            control=None):
+        assert request_scope.current(core.library)
         assert force is True and text == "Synthetic"
         assert not provider_ids and not content_types
         results = tuple(session.search(text, scope="all", field="all"))
@@ -196,12 +197,14 @@ def main() -> int:
                 provider_id="bnf-pret", provider_label="BnF",
                 results=results, result_status="live",
             ))
-        return CatalogSearchSummary(
+        summary = CatalogSearchSummary(
             query=text, result_count=len(results), providers_total=1,
             providers_completed=1, providers_failed=0, warnings=(),
         )
 
-    core.library.search_progressive = search_progressive
+        return summary, results
+
+    core.library.search_progressive_result_for_scope = search_progressive
     core.library.holdings = lambda item, _query="", *, force=False: session.holdings(item)
     report = {
         "scenario": "bnf-covers-1366", "status": "RUNNING",
