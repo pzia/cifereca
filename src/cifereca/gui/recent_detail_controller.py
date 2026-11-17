@@ -101,7 +101,9 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
                 cover_document_ref=link.document,
                 thumbnail_url=None,
             )
-            with staged_local_public_c_detail(detail, check):
+            with staged_local_public_c_detail(
+                detail, check, minimum_revision=link.epoch,
+            ):
                 detail.show_presentation(presentation)
             window._add_book_notice(detail, item)
             window._add_local_book_actions(detail, item)
