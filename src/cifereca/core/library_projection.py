@@ -1616,7 +1616,7 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
         # must not downgrade the shared visible row from active to archived.
         if existing.get("state") == "remote_owned" and remote_state == "remote_archived":
             remote_state = "remote_owned"
-        possession={"identity_id": entitlement_identity, "provider_id": provider_id, "item_id": item_id, "kind": entitlement_type, "account_id": entitlement.get("account_id"), "entitlement_id": entitlement.get("entitlement_id"), "expires_at": entitlement.get("expires_at"), "state": entitlement.get("state") or "active"}
+        possession={"identity_id": entitlement_identity, "provider_id": provider_id, "item_id": item_id, "kind": entitlement_type, "account_id": entitlement.get("account_id"), "credential_id": entitlement.get("credential_id"), "entitlement_id": entitlement.get("entitlement_id"), "expires_at": entitlement.get("expires_at"), "state": entitlement.get("state") or "active"}
         if existing:
             add_unique(existing.setdefault("providers", []), provider_id)
             add_unique(existing.setdefault("identity_ids", []), entitlement_identity)
