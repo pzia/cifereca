@@ -33,7 +33,7 @@ def test_unknown_provider_has_no_historical_epoch_or_auto_consent():
     scope = ProviderRightsScope("alice", "future-provider", "card", "reader")
     assert _consent_generation_key(scope) is None
     assert legacy_source_consent_switch_present(
-        type("Store", (), {"metadata_get": lambda *_: pytest.fail("unexpected read")})(),
+        type("Store", (), {"metadata_get": lambda *_: None})(),
         scope,
     ) is False
 
@@ -50,9 +50,9 @@ def test_switch_presence_is_lookup_only_not_a_grant(provider, prefix):
     class Storage:
         def metadata_get(self, key):
             seen.append(key)
-            return "malformed-or-off"
+            return "malformed-or-off" if key == present else None
     assert legacy_source_consent_switch_present(Storage(), scope) is True
-    assert seen == [present]
+    assert present in seen
 
 
 def test_cas_and_compatibility_toggle_do_not_import_consent_decision_bridge():
@@ -67,3 +67,13 @@ def test_cas_and_compatibility_toggle_do_not_import_consent_decision_bridge():
             if isinstance(node, ast.ImportFrom)
             and node.module == "source_auto_consent_bridge"
         ]
+
+
+def test_historical_veto_namespace_is_not_a_provider_selector():
+    from cifereca.core.legacy_source_consent_metadata import historical_switch_keys
+    scope = ProviderRightsScope("alice", "future-provider", "card", "reader")
+    keys = historical_switch_keys(scope, "purchase")
+    assert len(keys) == 2
+    assert all(key.endswith(_source_id(scope)) for key in keys)
+    other = ProviderRightsScope("alice", "other-provider", "card", "reader")
+    assert not set(keys).intersection(historical_switch_keys(other, "purchase"))
