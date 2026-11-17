@@ -699,6 +699,7 @@ def main():
         # refusal: no capability lookup/decorator/holdings may be requested.
         service.can_direct_download = forbidden
         service.holdings = forbidden
+        service.holdings_for_scope = forbidden
         panel("search")._decorate = forbidden
         window.navigate("search")
         window.search_controls.set_state(QueryState(text="Camille", field="title"), notify=False)
