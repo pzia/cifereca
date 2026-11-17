@@ -102,7 +102,7 @@ class AggregateWorkBridge:
             # Replaced generation, lost lease or dependency: never mutate
             # whichever newer attempt owns the coordinate now.
             return "obsolete"
-        return "retry" if transient else "error"
+        return "transient_failure" if transient else "error"
 
     def _run(self, ref, control):
         control.check_cancelled()
