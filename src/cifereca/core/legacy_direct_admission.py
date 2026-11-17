@@ -7,7 +7,9 @@ session without a durable owner is intentionally not promoted to an action.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from hashlib import sha256
+import json
 from inspect import getattr_static
 from threading import Lock
 
@@ -20,6 +22,15 @@ def _text(value, *, empty=False):
     return (type(value) is str and (empty or bool(value))
             and len(value) <= 1024
             and not any(ord(c) < 32 or ord(c) == 127 for c in value))
+
+
+def _fingerprint(item):
+    # The detached DTO is still a mutable Python dataclass. Freeze its
+    # normalized content as an in-memory digest so even a retained reference
+    # cannot replace an admitted source or offer. Non-JSON data fails closed.
+    encoded = json.dumps(asdict(item), sort_keys=True, ensure_ascii=True,
+                         allow_nan=False, separators=(",", ":")).encode("ascii")
+    return sha256(encoded).digest()
 
 
 def _legacy_shape(item, session):
@@ -62,6 +73,7 @@ class LegacyDirectAdmission:
     account: Account
     connection_epoch: int
     _item: SearchResult
+    _fingerprint: bytes
     _lock: object = field(default_factory=Lock, compare=False)
     _used: list = field(default_factory=lambda: [False], compare=False)
 
@@ -74,7 +86,10 @@ class LegacyDirectAdmission:
             identity, provider, credential, account_id = self.coordinates
             return (
                 self.scope.current(service)
-                and (item is None or (type(item) is SearchResult and item == self._item))
+                and (self._item.source_provider, self._item.source_credential) == (provider, credential)
+                and _fingerprint(self._item) == self._fingerprint
+                and (item is None or (type(item) is SearchResult
+                                      and _fingerprint(item) == self._fingerprint))
                 and _legacy_shape(self._item, self.session)
                 and service._sessions.get(service._session_key(provider, credential)) is self.session
                 and getattr_static(self.session, "provider_id", None) == provider
@@ -127,7 +142,9 @@ def capture_legacy_direct(service, item, *, scope, account_id, confirmed):
         epoch = service.storage.provider_connection_epoch(provider, credential, identity)
         if account is None or type(epoch) is not int or epoch < 1:
             raise ValueError()
-        target = LegacyDirectAdmission(scope, coords, session, account, epoch, deepcopy(item))
+        pinned = deepcopy(item)
+        target = LegacyDirectAdmission(scope, coords, session, account, epoch,
+                                       pinned, _fingerprint(item))
         if not target.current(service):
             raise ValueError()
         return target
