@@ -104,6 +104,7 @@ from .book_references import book_ref_from_row, BookAccessFact, book_access_fact
 from .book_detail_cache import CachedBookDetailContribution, collect_cached_book_details, subscribe_cached_book_detail_changes
 from .llm import LLMRequest, LLMResult, LLMService
 from .document_links import document_links
+from .catalogue_atom import AtomCatalogueFeed, AtomLink, parse_atom_catalogue
 from .catalogue_xml import (
     CatalogueXMLParseError, parse_bounded_catalogue_xml,
     MAX_XML_BYTES, MAX_XML_DEPTH, MAX_XML_ELEMENTS,
@@ -112,6 +113,7 @@ from .catalogue_xml import (
 __all__ = [
     "HTTPX_TRANSPORT", "TraceHTTPTransport", "TraceAsyncHTTPTransport", "TraceHTTPClient", "TraceAsyncHTTPClient",
     "DiagnosticsPseudonyms", "DISPLAY_PSEUDONYMS",
+    "AtomCatalogueFeed", "AtomLink", "parse_atom_catalogue",
     "CatalogueXMLParseError", "parse_bounded_catalogue_xml", "MAX_XML_BYTES", "MAX_XML_DEPTH", "MAX_XML_ELEMENTS",
     "LLMRequest", "LLMResult", "LLMService",
     "CatalogueJSONError", "parse_bounded_catalogue_json", "validate_catalogue_json",

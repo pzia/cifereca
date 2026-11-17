@@ -297,3 +297,56 @@ def test_direct_parser_and_pagination_do_not_claim_outage_for_html_200():
                 assert caught.value.__cause__ is None
     finally:
         session.close()
+
+
+def test_search_single_parse_per_traversed_page(monkeypatch):
+    import cifereca_gutenberg as adapter
+    real = adapter.parse_atom_catalogue
+    parsed = []
+    requests = []
+    first = (b'<feed xmlns="http://www.w3.org/2005/Atom">'
+             b'<link rel="next" href="?query=book&amp;start_index=26"/>'
+             b'</feed>')
+    second = (b'<feed xmlns="http://www.w3.org/2005/Atom">'
+              b'<entry><id>urn:gutenberg:42</id><title>Book</title>'
+              b'<link rel="http://opds-spec.org/acquisition" '
+              b'type="application/epub+zip" href="/ebooks/42.epub3.images"/>'
+              b'</entry></feed>')
+
+    def counted(body):
+        parsed.append(body)
+        return real(body)
+
+    def serve(request):
+        requests.append(request)
+        return httpx.Response(200, content=second if "start_index" in request.url.params else first)
+
+    monkeypatch.setattr(adapter, "parse_atom_catalogue", counted)
+    session, _ = session_with_handler(serve)
+    try:
+        rows = session.search("book", page=1)
+        assert [row.record_id for row in rows] == ["42"]
+        assert parsed == [first, second]
+        assert len(requests) == 2
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("encoding", ("utf-8", "utf-16"))
+def test_search_dtd_rejected_without_fallback_authority(encoding):
+    body = ('<!DOCTYPE feed [<!ENTITY private "PRIVATE_TOKEN_203948">]>'
+            '<feed xmlns="http://www.w3.org/2005/Atom"><title>&private;</title></feed>').encode(encoding)
+    calls = []
+    def serve(request):
+        calls.append(request)
+        return httpx.Response(200, content=body)
+    session, _ = session_with_handler(serve)
+    try:
+        with pytest.raises(ProviderError, match="invalid_opds_feed") as caught:
+            session.search("book")
+        assert len(calls) == 1
+        assert getattr(caught.value, "code", None) is None
+        assert caught.value.__context__ is None
+        assert SECRET not in str(caught.value)
+    finally:
+        session.close()
