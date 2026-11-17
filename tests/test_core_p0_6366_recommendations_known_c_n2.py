@@ -226,6 +226,7 @@ def invoke_recommendation(db, row, *, fail=False, delayed=False, monkeypatch=Non
         toast=lambda *args: errors.append(args),
     )
     view._window = window
+    window._test_recommendation_view = view
     def submit(_label, work, done, failed, **_kwargs):
         submitted.append((work, done, failed))
         if not delayed:
@@ -258,7 +259,8 @@ def test_real_core_worker_propagates_c_to_known_recommendation_detail(
         source = persist(db, verified_public(
             source_provider="bnf", record_id="known-77",
         ))
-        expected = persist_exact_public_search_cover(db, source).document
+        canonical = persist_exact_public_search_cover(db, source)
+        expected = canonical.document
         ok, _w, submitted, painted, calls, errors = invoke_recommendation(
             db, known_row(source), fail=fail, monkeypatch=monkeypatch,
         )
@@ -267,6 +269,7 @@ def test_real_core_worker_propagates_c_to_known_recommendation_detail(
         assert len(painted) == 1
         assert painted[0][0] == ("offline" if fail else "ok")
         assert painted[0][2]["public_c_document"] == expected
+        assert painted[0][2]["public_c_minimum_revision"] == canonical.epoch
         assert callable(painted[0][2]["c_selection_is_current"])
         assert painted[0][2]["c_selection_is_current"]() is True
         assert bool(errors) == fail
@@ -293,5 +296,52 @@ def test_changed_account_epoch_refuses_late_documentary_detail(
         window.service._source_context_epoch += 1
         deliver(produced)
         assert painted == []
+    finally:
+        db.close()
+
+def test_second_exact_click_same_selection_revokes_first_c_n3(
+    tmp_path, monkeypatch,
+):
+    db = Storage(tmp_path / "same-selection-second-click.sqlite")
+    try:
+        source = persist(db, verified_public(
+            source_provider="bnf", record_id="known-77",
+        ))
+        canonical = persist_exact_public_search_cover(db, source)
+        row = known_row(source)
+        ok, window, tasks, painted, _calls, _errors = invoke_recommendation(
+            db, row, delayed=True, monkeypatch=monkeypatch,
+        )
+        assert ok and len(tasks) == 1
+        work, deliver, _failed = tasks[0]
+        deliver(work())
+        assert painted[0][2]["public_c_minimum_revision"] == canonical.epoch
+        first_check = painted[0][2]["c_selection_is_current"]
+        assert first_check()
+
+        # The user consults the same visible recommendation again. Its
+        # selection generation and documentary C may both stay identical.
+        assert route.present_loaded_search_detail_in_place(
+            window, view=window._test_recommendation_view,
+            context_sections=(), is_current=lambda: True,
+            provider="bnf", credential="__public__", record_id=row["item_id"],
+            docbase=row["metadata"]["docbase"],
+            source_collection="public_catalog", identity_id="alice",
+            known_source=True,
+        )
+        assert len(tasks) == 2
+        assert not first_check()
+        work, deliver, _failed = tasks[1]
+        deliver(work())
+        second_check = painted[-1][2]["c_selection_is_current"]
+        assert second_check() and not first_check()
+        # N3's predicate must not re-read the connection/mirror from SQLite.
+        monkeypatch.setattr(
+            window.service.storage, "identity_for_connection",
+            lambda *_args: pytest.fail("N3 re-read storage"),
+        )
+        assert second_check()
+        window.service._source_context_epoch += 1
+        assert not second_check()
     finally:
         db.close()
