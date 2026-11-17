@@ -191,7 +191,13 @@ def _read_source_fence(db, key):
             raise ValueError
         fence = json.loads(raw, object_pairs_hook=_unique_object)
         if (type(fence) is not dict
-                or set(fence) != {"epoch", "last_seen_at", "proof"}
+                or set(fence) not in (
+                    {"epoch", "last_seen_at", "proof"},
+                    {"epoch", "last_seen_at", "proof", "evicted"},
+                )
+                or ("evicted" in fence and (
+                    fence["evicted"] is not True or fence.get("epoch", 0) == 1
+                ))
                 or type(fence["epoch"]) is not int
                 or not 1 <= fence["epoch"] <= _MAX_EPOCH
                 or type(fence["last_seen_at"]) is not int
@@ -204,7 +210,7 @@ def _read_source_fence(db, key):
     return fence
 
 
-def _write_source_fence(db, key, *, epoch, seen_at, proof):
+def _write_source_fence(db, key, *, epoch, seen_at, proof, evicted=False):
     if not 1 <= epoch <= _MAX_EPOCH or not 1 <= seen_at <= _MAX_EPOCH:
         raise ValueError("notice_c_source_fence_overflow")
     db.execute(
@@ -212,8 +218,93 @@ def _write_source_fence(db, key, *, epoch, seen_at, proof):
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (_fence_key(key), json.dumps({
             "epoch": epoch, "last_seen_at": seen_at, "proof": proof,
+            **({"evicted": True} if evicted else {}),
         }, sort_keys=True, separators=(",", ":"))),
     )
+
+
+
+def _checked_source_state(db, document, key):
+    row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+    previous = _decode(row[0], document) if row is not None else None
+    fence = _read_source_fence(db, key)
+    if previous is not None:
+        old_row = json.loads(row[0])
+        seen_at = old_row.get(_LAST_SEEN, previous.observation.observed_at)
+        proof = _source_fingerprint(
+            previous.observation, tuple(old_row["field_path"]),
+            old_row["cover_inventory_complete"],
+        )
+        if fence is not None and (
+            fence.get("evicted") is True or fence["epoch"] != previous.epoch
+            or fence["last_seen_at"] != seen_at or fence["proof"] != proof
+        ):
+            raise ValueError("notice_c_source_fence_corrupt")
+    return row, previous, fence
+
+
+def _qualified_write_epoch(previous, fence):
+    if previous is not None:
+        return previous.epoch
+    if fence is None:
+        return 0
+    if fence.get("evicted") is not True:
+        # A legacy DELETE may have left the last live epoch. Do not expose
+        # that epoch as an absence CAS token: an old worker owns it too.
+        raise ValueError("notice_c_unqualified_eviction")
+    return fence["epoch"]
+
+
+def read_notice_cover_write_epoch(storage: Any, document: CoverDocumentScope) -> int:
+    """Core-only CAS token, not a documentary revision or image snapshot.
+
+    Zero means no observation or fence. A qualified eviction has its own
+    generation. A raw deletion is detected but cannot expose a CAS token
+    until a fresh, independently admitted non-CAS observation is written.
+    """
+    key = _opaque_key(document)
+    if key is None:
+        raise ValueError("notice_c_persisted_scope_invalid")
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN")
+        _, previous, fence = _checked_source_state(db, document, key)
+        return _qualified_write_epoch(previous, fence)
+
+
+def evict_notice_cover(
+    storage: Any, document: CoverDocumentScope, *, expected_epoch: int,
+) -> bool:
+    """Atomic exact retention with the SAME durable per-source fence.
+
+    No automatic TTL, no provider dispatch, no deletion of C/N3 or EPUB.
+    Only the authorized Core retention producer may invoke this port.
+    """
+    key = _opaque_key(document)
+    if (key is None or type(expected_epoch) is not int
+            or not 0 <= expected_epoch < _MAX_EPOCH):
+        raise ValueError("notice_c_persisted_epoch_invalid")
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row, previous, fence = _checked_source_state(db, document, key)
+        epoch = _qualified_write_epoch(previous, fence)
+        if expected_epoch != epoch:
+            raise ValueError("notice_c_persisted_epoch_changed")
+        if previous is None:
+            return False
+        if epoch >= _MAX_EPOCH - 1:
+            raise ValueError("notice_c_persisted_epoch_overflow")
+        old_row = json.loads(row[0])
+        _write_source_fence(
+            db, key, epoch=epoch + 1,
+            seen_at=old_row.get(_LAST_SEEN, previous.observation.observed_at),
+            proof=_source_fingerprint(
+                previous.observation, tuple(old_row["field_path"]),
+                old_row["cover_inventory_complete"],
+            ),
+            evicted=True,
+        )
+        db.execute("DELETE FROM metadata WHERE key=?", (key,))
+        return True
 
 
 def _persist_notice_cover_txn(
@@ -228,22 +319,24 @@ def _persist_notice_cover_txn(
     Shared by the one-source CAS writer and the bounded batched Core search
     writer. The stale/partial/watermark logic MUST be identical in both paths.
     """
-    existing = db.execute(
-        "SELECT value FROM metadata WHERE key=?", (key,),
-    ).fetchone()
-    previous = _decode(existing[0], attribute.document) if existing else None
-    fence = _read_source_fence(db, key)
+    existing, previous, fence = _checked_source_state(
+        db, attribute.document, key,
+    )
     previous_epoch = previous.epoch if previous is not None else 0
     proof = _source_fingerprint(observation, field_path, cover_inventory_complete)
     if previous is None and fence is not None:
-        # An evicted source is not a never-seen source. In particular a
-        # pre-eviction CAS (even with the last epoch) cannot recreate it.
-        if expected_epoch is not None:
-            raise ValueError("notice_c_persisted_epoch_changed")
+        # Explicit eviction advances the CAS token. A raw SQL deletion
+        # leaves the old live token which MUST NOT authorize a new write.
+        qualified = fence.get("evicted") is True
         previous_epoch = fence["epoch"]
+        if expected_epoch is not None and (
+            not qualified or expected_epoch != previous_epoch
+        ):
+            raise ValueError("notice_c_persisted_epoch_changed")
         if (observation.observed_at < fence["last_seen_at"]
                 or (observation.observed_at == fence["last_seen_at"]
-                    and proof != fence["proof"])):
+                    and expected_epoch is None
+                    and (qualified or proof != fence["proof"]))):
             raise ValueError("notice_c_persisted_stale_source")
     elif expected_epoch is not None and expected_epoch != previous_epoch:
         raise ValueError("notice_c_persisted_epoch_changed")
@@ -254,12 +347,6 @@ def _persist_notice_cover_txn(
         old_proof = _source_fingerprint(
             old, tuple(old_row["field_path"]), old_row["cover_inventory_complete"],
         )
-        if fence is not None and (
-            fence["epoch"] != previous_epoch
-            or fence["last_seen_at"] != seen_at
-            or fence["proof"] != old_proof
-        ):
-            raise ValueError("notice_c_source_fence_corrupt")
 
         def retain(*, advance):
             # Migrate a legacy row lazily; keep the same epoch and body.
@@ -431,5 +518,6 @@ def persist_notice_cover_many(
 __all__ = [
     "PersistedNoticeCover", "read_notice_cover", "persist_notice_cover",
     "persist_notice_cover_many",
-    "is_notice_cover_document",
+    "is_notice_cover_document", "read_notice_cover_write_epoch",
+    "evict_notice_cover",
 ]

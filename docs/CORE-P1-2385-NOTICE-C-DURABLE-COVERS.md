@@ -36,3 +36,28 @@ Le port rejoue la validation Notice C et produit un nouvel epoch N2 seulement lo
 Le stockage Core exact, la relance après redémarrage, l'index par source et la lecture N2 effective sont livrés. La première intégration ne branche **pas encore** tous les producteurs #3724 sur ce writer, ni les six vues sur des notices C réelles, ni une souscription SQLite interprocessus. Les tickets #3104 et #6168 restent ouverts pour réception.
 
 Les tests doivent maintenir : public A→B→A, comptes privés distincts, deux éditions avec URL commune, partielles et fausses négatives, provenance ancienne/révision CAS, lecture après redémarrage, callbacks périmés, EPUB prioritaire et absence de nouvelles permissions d'action.
+
+
+## Éviction et générations d’écriture (#4982)
+
+Le writer conserve une unique fence `notice.c.source-fence.v1:` dans les
+metadata SQLite : epoch, watermark et digest de la preuve, aucun corps de
+notice ni URL. Le port `evict_notice_cover(..., expected_epoch=...)` avance
+atomiquement cet epoch et inscrit `evicted: true`, puis retire uniquement
+l'observation. `read_notice_cover_write_epoch` retourne l'epoch d'écriture
+(live ou éviction qualifiée), distinct d'une preuve documentaire et jamais
+utilisable comme révision d'image. Les anciens CAS sont refusés même après
+restart ; seule une observation autorisée utilisant la nouvelle génération
+peut renouveler à la même seconde. Les batchs non-CAS restent soumis au
+watermark, et un échec SQL annule ensemble retrait et fence.
+
+Une suppression SQL directe post-déploiement est protégée par la dernière
+fence active : aucun CAS de réhydratation n'est exposé ; seule une observation
+indépendamment admise sans CAS conforme au watermark peut recréer la source
+avec un epoch supérieur. Les sources supprimées avant déploiement, sans
+marqueur ni observation, ne permettent pas de reconstruire un historique
+perdu. Les fences ne sont pas des caches, leur rétention est durable.
+La C consolidée, N3, les droits et les fichiers restent inchangés.
+Pas de TTL automatique, de scheduler ou de nouveau GET. Coût metadata
+supplémentaire par source à mesurer. La protection du dernier état complet
+après éviction reste une tranche distincte.
