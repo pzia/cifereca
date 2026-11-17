@@ -461,3 +461,82 @@ def test_outer_loan_lock_rejects_hostile_provider_before_bnf_comparison(
         }
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("provider", ["paris", "synthetic-library"])
+@pytest.mark.parametrize("borrower", [None, "", False, 0, object()])
+def test_preget_unproven_positive_borrower_denied_before_rights(
+    tmp_path, monkeypatch, provider, borrower,
+):
+    """A literal None refusal code is not evidence of an ADEPT borrower."""
+    from unittest.mock import Mock
+
+    service, loan = _setup(tmp_path)
+    try:
+        if provider != "paris":
+            loan.source_provider = provider
+            service.storage.provider_connection_put({
+                "provider_id": provider, "credential_id": "source-a",
+                "identity_id": "default", "enabled": True,
+            })
+        borrower_resolver = Mock(return_value=(borrower, None))
+        monkeypatch.setattr(
+            service, "_paris_adept_identity_for_loan", borrower_resolver,
+        )
+        no_rights = Mock(side_effect=AssertionError(
+            "missing borrower must not inspect rights or stage ACSM"
+        ))
+        monkeypatch.setattr(service.storage, "entitlements", no_rights)
+        monkeypatch.setattr(service.storage, "acquisitions", no_rights)
+
+        admission = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert admission.identity is None
+        assert admission.entitlement_id is None
+        assert admission.refusal == {
+            "status": "attention_required", "loan_id": "loan-0",
+            "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+        }
+        borrower_resolver.assert_called_once_with(
+            loan, connection_identity_id="default",
+        )
+        no_rights.assert_not_called()
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("provider", ["paris", "synthetic-library"])
+def test_preget_exceptional_borrower_resolver_failure_is_closed(
+    tmp_path, monkeypatch, provider,
+):
+    from unittest.mock import Mock
+
+    service, loan = _setup(tmp_path)
+    try:
+        if provider != "paris":
+            loan.source_provider = provider
+            service.storage.provider_connection_put({
+                "provider_id": provider, "credential_id": "source-a",
+                "identity_id": "default", "enabled": True,
+            })
+        borrower_resolver = Mock(side_effect=RuntimeError(
+            "private Adobe credential must not escape"
+        ))
+        monkeypatch.setattr(
+            service, "_paris_adept_identity_for_loan", borrower_resolver,
+        )
+        no_rights = Mock(side_effect=AssertionError(
+            "failed borrower resolver must not inspect rights"
+        ))
+        monkeypatch.setattr(service.storage, "entitlements", no_rights)
+        monkeypatch.setattr(service.storage, "acquisitions", no_rights)
+
+        admission = resolve(service, loan, _TRACE_LOG=LOGGER)
+        assert admission.refusal == {
+            "status": "attention_required", "loan_id": "loan-0",
+            "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+        }
+        assert "private" not in repr(admission.refusal)
+        assert admission.identity is None
+        no_rights.assert_not_called()
+    finally:
+        service.close()
