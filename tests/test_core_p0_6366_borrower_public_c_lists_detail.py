@@ -528,3 +528,49 @@ def test_unknown_provider_uses_only_declared_branch_contract(tmp_path):
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+def test_large_c_inventory_keeps_borrower_receipts_in_one_snapshot(tmp_path, monkeypatch):
+    import json
+    from cifereca.core.notice_c_cover_index import (
+        _db_key, canonical_cover_document_ref,
+    )
+
+    db = Storage(tmp_path / "large-borrower-inventory.sqlite")
+    try:
+        _, expected = bibliography(db)
+        _, unrelated = bibliography(db, provider="other-provider", record="unrelated")
+        with db._lock, db._connect() as sql:
+            raw = sql.execute(
+                "SELECT value FROM metadata WHERE key=?", (_db_key(unrelated.document),),
+            ).fetchone()[0]
+            payload = json.loads(raw)
+            rows = []
+            for n in range(4100):
+                edition = f"edition:unrelated-borrower-claim-{n}"
+                payload["edition_id"] = edition
+                rows.append((_db_key(canonical_cover_document_ref(edition)),
+                             json.dumps(payload)))
+            sql.executemany("INSERT INTO metadata(key,value) VALUES(?,?)", rows)
+            sql.execute("DELETE FROM metadata WHERE key LIKE 'notice.c.observation.v1:%'")
+
+        borrowed, returned = loan(), history()
+        missing = [loan(id=f"loan-{n}", record_id=f"absent-{n}") for n in range(300)]
+        foreign = history(identity_id="bob")
+        calls = []
+        connect = db._connect
+        def counted():
+            calls.append(1)
+            return connect()
+        monkeypatch.setattr(db, "_connect", counted)
+        assert admit(db, [borrowed, returned, foreign, *missing]) == 2
+        assert calls == [1]
+        for item in (borrowed, returned):
+            packet = borrower_public_c_receipt(item, identity_id="alice")
+            assert packet.document == expected.document
+            assert borrower_public_c_receipt(item, identity_id="bob") is None
+        for item in (foreign, *missing):
+            assert borrower_public_c_receipt(item, identity_id="alice") is None
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()

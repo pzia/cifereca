@@ -15,19 +15,15 @@ is persisted into public C.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import sqlite3
 import unicodedata
 
 from ..models import HistoryItem, Loan
 from ..providers.base import ProviderDescriptor
 from .source_context import source_context_epoch
 from .book_cover_projection import CoverDocumentScope
-from .notice_c_cover_index import (
-    _PREFIX, _REF_PREFIX, _decode, _json,
-    canonical_cover_document_ref, is_canonical_cover_document,
-)
+from .notice_c_cover_index import is_canonical_cover_document
+from .notice_c_exact_source_lookup import exact_public_source_c_inventory
 
-_MAX_CANONICAL = 4096
 _MAX_ITEMS = 2048
 _BORROWER_PUBLIC_C_TOKEN = object()
 
@@ -197,80 +193,31 @@ def attach_borrower_public_c(
     }
     if not wanted:
         return 0
-    try:
-        with storage._lock, storage._connect() as db:
-            data = db.execute(
-                "SELECT key,value FROM metadata WHERE key>=? AND key<? "
-                "ORDER BY key LIMIT ?",
-                (_PREFIX, _PREFIX + "\uffff", _MAX_CANONICAL + 1),
-            ).fetchall()
-    except (sqlite3.Error, AttributeError, OSError):
-        return 0
-    if len(data) > _MAX_CANONICAL:
-        return 0
-
-    # Index the canonical C by the *same provider-owned upstream record*,
-    # not by any descriptive image or text similarity. A C contributes
-    # only independently attested PUBLIC v2 source bibliographies.
-    indexed = {}
-    for key, raw in data:
-        try:
-            value = _json(raw)
-            document = canonical_cover_document_ref(value["edition_id"])
-            if key != _PREFIX + document.source_key[len(_REF_PREFIX):]:
-                continue
-            c = _decode(raw, document)
-            if not c.sources or not all(
-                src.visibility == "public"
-                and src.public_bibliography is not None
-                for src in c.sources
-            ):
-                continue
-            for src in c.sources:
-                bio = src.public_bibliography
-                # A private DILICOM RecordId can never match an unrelated
-                # public docbase, or a Search source with a newer revision.
-                coords = (
-                    src.provider_id, bio.record_id, bio.medium,
-                    bio.docbase, bio.source_revision,
-                )
-                if coords in wanted:
-                    indexed.setdefault(coords, []).append(
-                        (c, src, bio.docbase),
-                    )
-        except (ValueError, TypeError, AttributeError, KeyError):
-            continue
-
+    # The shared Core lookup resolves the complete public source coordinate
+    # in a single SQLite snapshot. No global catalogue-size veto, separate
+    # C scanner or provider dispatch is needed for a borrower inventory.
+    resolved = exact_public_source_c_inventory(storage, [
+        (provider, record, docbase, medium, revision)
+        for provider, record, medium, docbase, revision in wanted
+    ])
     admitted = {}
-    for coords, options in indexed.items():
-        # The private branch establishes the docbase and admissible public
-        # revision; a competing C source with different coordinates never
-        # enters these options. Multiple refs for this exact edition veto.
-        source_refs = {src.source_ref for _c, src, _db in options}
-        docbases = {db for _c, _src, db in options}
-        if len(source_refs) != 1 or len(docbases) != 1:
+    for coords in wanted:
+        provider, record, medium, docbase, revision = coords
+        canonical = resolved.get((provider, record, docbase, medium, revision))
+        if canonical is None or not canonical.candidates:
             continue
-        # Strong relations are not ranked by source count. Two canonical
-        # multisource claims for this exact public record are contradictory
-        # even when one contains 3 providers and another only 2. Mirror the
-        # fail-closed rule in exact_public_source_c (#6454).
-        related_documents = {
-            c.document for c, _src, _db in options if len(c.sources) > 1
-        }
-        if len(related_documents) > 1:
-            continue
-        # One unambiguous cross-provider C may supersede the automatic
-        # self-edition source row. The source ID alone is not new proof.
-        max_sources = max(len(c.sources) for c, _src, _db in options)
-        strongest = [(c, src) for c, src, _db in options
-                     if len(c.sources) == max_sources]
-        distinct = {c.document for c, _src in strongest}
-        if len(distinct) != 1:
-            continue
-        c, src = strongest[0]
-        if not c.candidates:
-            continue
-        admitted[coords] = c, src
+        sources = [
+            source for source in canonical.sources
+            if source.provider_id == provider
+            and source.public_bibliography is not None
+            and (source.public_bibliography.record_id,
+                 source.public_bibliography.medium,
+                 source.public_bibliography.docbase,
+                 source.public_bibliography.source_revision)
+            == (record, medium, docbase, revision)
+        ]
+        if len(sources) == 1:
+            admitted[coords] = canonical, sources[0]
 
     count = 0
     for item in rows:

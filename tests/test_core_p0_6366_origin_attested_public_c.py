@@ -316,3 +316,159 @@ def test_laundered_cross_ref_and_stale_original_never_bind_live_ui(tmp_path):
         assert db.entitlements() == []
     finally:
         db.close()
+
+
+def test_origin_reconciliation_survives_large_unrelated_source_inventory(tmp_path):
+    import json
+    from cifereca.core.notice_cover_repository import _PREFIX
+
+    db = Storage(tmp_path / "large-origin-inventory.sqlite")
+    try:
+        _origins(db, tmp_path)
+        a, b = _source_rows()
+        assert _mirror(db, a) == 1
+        # A large unrelated source inventory must not veto the actual
+        # provider pair. These deliberately malformed records also check
+        # that the SQL prefilter is safe on invalid persisted JSON.
+        with db._lock, db._connect() as sql:
+            own = sql.execute("SELECT value FROM metadata WHERE key=?",
+                              (_opaque_key(a._core_notice_cover_document_ref),)).fetchone()[0]
+            payload = json.loads(own)
+            payload["key"]["provider_id"] = "unrelated-provider"
+            payload["key"]["record_id"] = "search:unrelated"
+            raw = json.dumps(payload)
+            sql.executemany("INSERT INTO metadata(key,value) VALUES(?,?)",
+                            [(_PREFIX + f"{n:064x}", raw) for n in range(4100)])
+            sql.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
+                        (_PREFIX + "corrupt", "{"))
+        assert _mirror(db, b) == 1
+        linked = read_consolidated_notice_cover(db, b._core_notice_canonical_cover_document_ref)
+        assert len(linked.sources) == 2
+        assert {cover.url for cover in linked.candidates} == {A_URL, B_URL}
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def test_public_group_atomic_rollback_new_existing_and_retry(tmp_path):
+    from cifereca.core.notice_c_cover_index import persist_attested_public_cover_group
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import persist
+
+    path = tmp_path / "atomic-public-group.sqlite"
+    db = Storage(path)
+    target = "edition:atomic-public-group"
+    proof = "strong:fixture:atomic-group"
+    document = canonical_cover_document_ref(target)
+    def store(provider, record, url, at):
+        return persist(db, witnessed(public_row(
+            source_provider=provider, record_id=record,
+            title="L'ouvrage commun", thumbnail_url=url,
+        )), at=at)
+    def commit(*sources):
+        return persist_attested_public_cover_group(
+            db, canonical_edition_id=target, sources=sources,
+            relation_proof_id=proof,
+        )
+    try:
+        a = store("seller-a", "edition-a", A_URL, 100)
+        b = store("seller-b", "edition-b", B_URL, 100)
+        c = store("seller-c", "edition-c", None, 100)
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key=?", (_opaque_key(c.document),))
+        with pytest.raises(ValueError, match="stale_canonical_cover_source"):
+            commit(a, b, c)
+        assert read_consolidated_notice_cover(db, document) is None
+
+        c = store("seller-c", "edition-c", None, 100)
+        good = commit(a, b, c)
+        assert len(good.sources) == 3
+        assert {cover.url for cover in good.candidates} == {A_URL, B_URL}
+        assert commit(a, b, c) == good
+
+        changed = store("seller-a", "edition-a",
+                        "https://covers.example.org/changed.jpg", 101)
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key=?", (_opaque_key(c.document),))
+        with pytest.raises(ValueError, match="stale_canonical_cover_source"):
+            commit(changed, b, c)
+        assert read_consolidated_notice_cover(db, document) == good
+        c = store("seller-c", "edition-c", None, 100)
+        updated = commit(changed, b, c)
+        assert updated.epoch > good.epoch
+        assert len(updated.sources) == 3
+        assert commit(changed, b, c) == updated
+        with pytest.raises(ValueError, match="group_conflict"):
+            commit(changed, b)
+        assert read_consolidated_notice_cover(db, document) == updated
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+    restored = Storage(path)
+    try:
+        assert read_consolidated_notice_cover(restored, document) == updated
+    finally:
+        restored.close()
+
+
+def test_three_completed_origins_expand_existing_c_without_competing_ref(tmp_path):
+    from cifereca.core.notice_c_exact_source_lookup import exact_public_source_c_many
+    path = tmp_path / "three-real-origins.sqlite"
+    db = Storage(path)
+    try:
+        first, _ = _origins(db, tmp_path)
+        a, b = _source_rows()
+        assert _mirror(db, a) == 1 and _mirror(db, b) == 1
+        ref = b._core_notice_canonical_cover_document_ref
+        pair = read_consolidated_notice_cover(db, ref)
+        assert len(pair.sources) == 2
+
+        # Publish a real third completed provider origin to the SAME owner
+        # and placement. No direct canonical-relation injection.
+        c_key, c_snapshot = new_source(
+            "A", provider="seller-c", credential="card-c",
+            edition="edition-c", right="right-c",
+        )
+        register(db, "A", "seller-c", "card-c")
+        third = publish(db, tmp_path / "EBooks", target(tmp_path, "A"),
+                        c_key, c_snapshot)
+        assert third.artifact_id == first.artifact_id
+        assert third.placement_id == first.placement_id
+        third_url = "https://covers.example.org/origin-c.jpg"
+        def c_row(**changes):
+            return witnessed(public_row(**{
+                "source_provider": "seller-c", "record_id": "edition-c",
+                "title": "L'ouvrage commun", "thumbnail_url": third_url,
+                **changes,
+            }))
+        c = c_row()
+        assert _mirror(db, c) == 1
+        assert c._core_notice_canonical_cover_document_ref == ref
+        expanded = read_consolidated_notice_cover(db, ref)
+        assert expanded.epoch > pair.epoch
+        assert len(expanded.sources) == 3
+        assert {x.url for x in expanded.candidates} == {A_URL, B_URL, third_url}
+
+        a2, b2 = _source_rows()
+        assert _mirror(db, a2, b2, c_row()) == 3
+        assert a2._core_notice_canonical_cover_document_ref == ref
+        assert b2._core_notice_canonical_cover_document_ref == ref
+        keys = [(row.source_provider, row.record_id, row.docbase,
+                 row.medium, row.revision_id) for row in (a, b, c)]
+        resolved = exact_public_source_c_many(db, keys)
+        assert set(resolved) == set(keys)
+        assert {snap.document for snap in resolved.values()} == {ref}
+        assert read_consolidated_notice_cover(db, ref) == expanded
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key LIKE 'notice.c.observation.v1:%'")
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+    reopened = Storage(path)
+    try:
+        assert read_consolidated_notice_cover(reopened, ref) == expanded
+        assert {snap.document for snap in
+                exact_public_source_c_many(reopened, keys).values()} == {ref}
+    finally:
+        reopened.close()

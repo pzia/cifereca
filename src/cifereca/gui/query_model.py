@@ -25,25 +25,14 @@ class QueryState:
 
 def result_row(item, *, purchase_evidence=None, identity_id=None,
                account_context_epoch=None, source_context_epoch=None):
-    """Render a verified purchase only with independent Core ledger evidence.
+    """Project a remote notice, never a purchase or local placement.
 
-    Provider flags, inventory scenario and account coordinates are not rights.
-    This pure projection never calls an upstream provider, SQLite or a plugin;
-    absent or invalid evidence has the closed state remote_catalog.
+    Historical evidence/epoch keyword arguments remain inert for compatibility.
+    Delivery and verified local presence are independently admitted by Core.
     """
-    from ..core.search_owned_evidence import search_result_has_verified_purchase
-    verified_purchase = search_result_has_verified_purchase(
-        item, purchase_evidence, current_identity_id=identity_id,
-        current_account_epoch=account_context_epoch,
-        current_source_epoch=source_context_epoch,
-    )
     result = asdict(item)
-    # A provider-supplied owned=True must not bypass the verified state via
-    # the generic row dictionary consumed by filters or action adapters.
-    if verified_purchase:
-        result['owned'] = True
-    elif result.get('owned') is True:
-        result['owned'] = False
+    # An unknown documentary status stays unknown; no positive hint survives.
+    result['owned'] = None if item.owned is None else False
     # asdict() includes every ClassificationEvidence.raw_code, which is
     # upstream-supplied and may contain sensitive data. Publish only the
     # versioned, fixed-vocabulary UI projection; never emit provenance raw.
@@ -52,7 +41,7 @@ def result_row(item, *, purchase_evidence=None, identity_id=None,
     )
     return {**result, 'key': item.id, 'item_id': item.record_id,
             'provider_id': item.source_provider, 'media_format': file_format(item.format),
-            'state': 'remote_owned' if verified_purchase else 'remote_catalog'}
+            'state': 'remote_catalog'}
 
 
 def online_search(service, state):
