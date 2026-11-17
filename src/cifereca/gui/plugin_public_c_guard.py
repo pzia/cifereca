@@ -13,6 +13,7 @@ from typing import Any, Callable
 from ..core.book_cover_projection import CoverDocumentScope
 from ..core.notice_c_cover_index import is_canonical_cover_document
 from ..plugin_api.models import UiBookListEntry
+from .plugin_public_c_binding import public_c_binding_revision
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,8 @@ class PinnedPluginPublicC:
     page_generation: int
     account_epoch: int
     source_epoch: int
+    binding: object | None = field(default=None, repr=False)
+    minimum_revision: int | None = None
 
 
 def pin_plugin_public_c(view: Any, source: object, *, key: str) -> PinnedPluginPublicC | None:
@@ -51,12 +54,19 @@ def pin_plugin_public_c(view: Any, source: object, *, key: str) -> PinnedPluginP
             or type(source_epoch) is not int or source_epoch < 0
             or getattr(window, "_closed", False) is True):
         return None
+    binding = source.cover_document_receipt
+    minimum_revision = None
+    if binding is not None:
+        minimum_revision = public_c_binding_revision(window, document, binding)
+        if minimum_revision is None:
+            return None  # Explicit forged/revoked receipt is not a legacy ref.
     return PinnedPluginPublicC(
         view=view, source_row=source, service=service,
         document=document, key=key, source_key=source.key,
         identity_id=identity,
         page_generation=page_generation,
         account_epoch=account_epoch, source_epoch=source_epoch,
+        binding=binding, minimum_revision=minimum_revision,
     )
 
 
@@ -84,6 +94,10 @@ def plugin_public_c_current(receipt: object) -> bool:
         # as evidence for another entry's C.
         and receipt.source_row.key == receipt.source_key
         and receipt.source_row.cover_document_ref == receipt.document
+        and receipt.source_row.cover_document_receipt is receipt.binding
+        and (receipt.binding is None
+             or public_c_binding_revision(window, receipt.document, receipt.binding)
+                 == receipt.minimum_revision)
         and is_canonical_cover_document(receipt.document)
     )
 
