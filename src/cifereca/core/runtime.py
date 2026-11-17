@@ -65,6 +65,7 @@ class CiferecaCore:
         llm = optional_llm_service(config)
         plugins = PluginManager(
             builtin_ui=builtin_ui,
+            headless=not builtin_ui,
             disable_plugins=no_plugins,
             force_plugins=force_plugins,
             brokers=brokers,
