@@ -203,6 +203,26 @@ class CoverView(Gtk.Overlay):
             old = getattr(self, "_request", None)
             if old is None or not old.active:
                 return False
+            # A fresh N2 source event is NOT a new ownership lease. This
+            # callback is posted from a worker to GTK and may execute after
+            # a profile switch, query change, same-key row replacement or
+            # recommendation click revocation. Validate the original
+            # producer/selection BEFORE scheduling another N2 get_cover.
+            # N2's old CAS token must NOT be tested here: a legitimate
+            # source revision intentionally invalidates it before rebind.
+            if is_current is not None:
+                try:
+                    still_owned = is_current() is True
+                except Exception:
+                    still_owned = False
+                if not still_owned:
+                    loader.note_ui_stale()
+                    # Clear any already painted N4 from the revoked source
+                    # as well as its pending N3 request. Do not affect a
+                    # newer cell: the generation check above wins first.
+                    self.reset()
+                    self._show_missing()
+                    return False
             try:
                 self.bind_document(
                     service, document, variant=variant, priority=priority,
