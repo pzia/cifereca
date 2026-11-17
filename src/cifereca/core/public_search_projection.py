@@ -6,6 +6,7 @@ retains the live search identity/session/generation lease before publication.
 from __future__ import annotations
 
 import re
+import json
 
 from ..models import SearchResult
 from ..plugin_api.provider_search_facets import ProviderSearchResponse, PublicSearchNotice
@@ -53,6 +54,53 @@ def _public_bibliographic_text(
             and _PRIVATE_BIBLIOGRAPHIC_PATTERN.search(value) is None
         ))
     )
+
+
+# Aggregate wire budget for admitted metadata, not a new C storage schema.
+# Individual source text already has its own existing scalar limits.
+_MAX_BIBLIOGRAPHY_BYTES = 32768
+_PRIVATE_LOCATION = re.compile(r"(?i)^(?:[/\\\\]|~[/\\\\]|file:|[a-z]:[/\\\\])")
+
+
+def _public_bibliographic_metadata(raw: object) -> dict | None:
+    """Copy only existing explicit public fields, with an aggregate byte cap.
+
+    No arbitrary provider extras, URLs, credentials, inferred ages, proof
+    relabelling or rights. None means malformed/over-budget, not an empty
+    inventory. Empty dict is a valid declaration with no such fields.
+    This projection is reusable by a later versioned C writer, but cannot
+    establish a source witness or authorize a write on its own.
+    """
+    if type(raw) is not dict or len(raw) > 256:
+        return None
+    projected = {}
+    used = 2  # JSON object delimiters
+    for name in sorted(_BIBLIOGRAPHY):
+        value = raw.get(name)
+        if value is None:
+            continue
+        if type(value) is str:
+            parts = (value,)
+        elif type(value) in (list, tuple) and len(value) <= 32:
+            parts = value
+        else:
+            return None
+        # Explicit literary award labels have a tighter per-value bound.
+        limit = 240 if name in ("awards", "prizes", "literary_prizes") else 8192
+        for part in parts:
+            if (type(part) is not str or not _public_bibliographic_text(part, limit=limit)
+                    or _PRIVATE_LOCATION.match(part.lstrip()) is not None):
+                return None
+        copied = value if type(value) is str else list(parts)
+        # Count the actual bounded UTF-8 JSON, including escaping and keys.
+        # No untrusted/unselected metadata is serialized or traversed.
+        encoded = json.dumps({name: copied}, ensure_ascii=False,
+                             separators=(",", ":")).encode("utf-8")
+        used += len(encoded) - 2 + bool(projected)
+        if used > _MAX_BIBLIOGRAPHY_BYTES:
+            return None
+        projected[name] = copied
+    return projected
 
 
 def _key(row: object) -> tuple | None:
@@ -159,22 +207,10 @@ def _project_public_notice(
                    ) for name in _TEXT_FIELDS)
             or type(public.metadata) is not dict or len(public.metadata) > 256):
         return None
-    metadata = {"catalogue_access": "shared_read_only"}
-    for name in _BIBLIOGRAPHY:
-        value = public.metadata.get(name)
-        if value is None:
-            continue
-        # Awards are short, explicitly declared bibliographic labels, not
-        # free-form user annotations or arbitrary supplier structures.
-        limit = 240 if name in ("awards", "prizes", "literary_prizes") else 8192
-        if type(value) is str and _public_bibliographic_text(value, limit=limit):
-            metadata[name] = value
-        elif (type(value) in (list, tuple) and len(value) <= 32
-              and all(type(part) is str and _public_bibliographic_text(part, limit=limit)
-                      for part in value)):
-            metadata[name] = list(value)
-        else:
-            return None
+    bibliography = _public_bibliographic_metadata(public.metadata)
+    if bibliography is None:
+        return None
+    metadata = {"catalogue_access": "shared_read_only", **bibliography}
     # Construct afresh so future SearchResult fields cannot accidentally gain
     # public visibility through dataclasses.replace/asdict or raw metadata.
     return SearchResult(
