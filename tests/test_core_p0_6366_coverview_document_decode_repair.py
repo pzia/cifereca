@@ -81,6 +81,7 @@ def test_real_document_bind_decode_repair_is_scoped_and_bounded(
         host.bind_document(
             service, DOC, variant=variant, priority=0,
             is_current=lambda: state["owner"],
+            minimum_revision=2,
             on_texture_applied=observer,
         )
         first_generation = host._generation
@@ -94,6 +95,7 @@ def test_real_document_bind_decode_repair_is_scoped_and_bounded(
             assert calls[0][0:2] == calls[1][0:2] == (DOC, variant)
             assert calls[0][2]["width"] == calls[1][2]["width"]
             assert calls[0][2]["height"] == calls[1][2]["height"]
+            assert calls[0][2]["minimum_revision"] == calls[1][2]["minimum_revision"] == 2
             assert host._generation == first_generation + 1
             assert host._request is handles[-1]
             assert host._on_texture_applied is observer

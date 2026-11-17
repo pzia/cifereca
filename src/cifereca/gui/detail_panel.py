@@ -255,6 +255,9 @@ class DetailPanel(Gtk.Box):
                     is_current=getattr(
                         self, "_next_local_public_c_check", None,
                     ),
+                    **({"minimum_revision": self._next_public_c_minimum_revision}
+                       if getattr(self, "_next_public_c_minimum_revision", None)
+                       is not None else {}),
                 )
         else:
             cover.bind_url(self.window.covers, thumbnail, priority=0)

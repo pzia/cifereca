@@ -169,6 +169,7 @@ def bind_borrower_public_c_detail(
         cover.bind_document(
             document_service, document, variant="detail", priority=0,
             is_current=is_current,
+            minimum_revision=receipt.epoch,
         )
     except (TypeError, ValueError, RuntimeError):
         return missing()
