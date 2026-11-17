@@ -48,7 +48,6 @@ def _populate_local_search(self, rows: list[dict[str, Any]]) -> None:
     self._search_local_objects = {str(row.get("key") or f"local:{index}"): row for index, row in enumerate(rows)}
     self._search_detail_cover_by_key = {}
     self._search_mode = "local"
-    self._search_purchase_evidence = None
     self._loaded_search_context = None
     self.search_objects = {}
     shown = self._render_search_results()
@@ -69,17 +68,6 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
         context if identity and
         getattr(self, "_online_source_context", None) == context
         else None
-    )
-    # Read Core's canonical owned-right ledger once, before GTK projection.
-    # No provider transport, session or acquisition is consulted by this view.
-    from cifereca.core.search_owned_evidence import snapshot_search_owned_evidence
-    # Use the same identity pinned for this search batch, not a second
-    # selected-identity lookup after search results were admitted.
-    # A C-only preview has no remotely actionable row: do not read the
-    # entitlement ledger on GTK merely to show public descriptive notices.
-    self._search_purchase_evidence = (
-        snapshot_search_owned_evidence(self.service, identity_id=identity)
-        if rows else None
     )
     self.service.last_search = rows
     self.search_objects = dict(zip(_remote_result_row_keys(rows), rows))
@@ -349,12 +337,7 @@ def _render_search_results(self) -> int:
     identity = self.service.current_identity
     identity_id = getattr(identity, "identity_id", None)
     def project(item):
-        return result_row(
-            item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-            identity_id=identity_id,
-            account_context_epoch=getattr(self.service, "_account_context_epoch", None),
-            source_context_epoch=getattr(self.service, "_source_context_epoch", None),
-        )
+        return result_row(item)
     # Only an already-present public C preview avoids the historical GTK
     # placement read; other (including empty/error) Search paths keep ABI.
     # This prevents redundant synchronous SQL while showing C before HTTP.
@@ -502,16 +485,12 @@ def _render_search_results(self) -> int:
         source = self.service.provider_display_name(item.source_provider)
         stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
         extras: list[str] = list(_stale_catalog_provenance(item.metadata)) if stale_known else []
-        # Source-scoped presentation, not a vendor-name inference of rights.
-        # A public sentinel never attests ownership; a remote-owned row does
-        # not prove any local EPUB/ACSM is present. No extra provider I/O.
+        # Documentary scope is not ownership or local presence.
         if (item.source_credential == "__public__"
                 and item.source_collection == "public_catalog"):
             extras.append("Catalogue public · aucun achat attesté")
-        elif (item.source_collection == "library"
-                and project(item).get("state") == "remote_owned"):
-            extras.append("Mes achats · fichier local non présumé")
-        # result_row() projects unverified ownership as remote_catalog.
+        elif item.source_collection == "library" and not stale_known:
+            extras.append("Notice de bibliothèque · fichier local non présumé")
         meta = " · ".join(x for x in [medium, *extras, item.published_at] if x)
         # An offline public result is never evidence of a current entitlement,
         # a download offer or a verified local placement.

@@ -288,15 +288,7 @@ class PublicBookMasterDetailView:
         # Search appends these same Core local/open/send/owned actions after
         # the same renderer. Rights remain with the common controller.
         from .query_model import result_row
-        self._window._add_local_book_actions(panel, result_row(
-            item, purchase_evidence=getattr(self._window, "_search_purchase_evidence", None),
-            identity_id=getattr(getattr(getattr(self._window, "service", None),
-                                        "current_identity", None), "identity_id", None),
-            account_context_epoch=getattr(getattr(self._window, "service", None),
-                                           "_account_context_epoch", None),
-            source_context_epoch=getattr(getattr(self._window, "service", None),
-                                          "_source_context_epoch", None),
-        ))
+        self._window._add_local_book_actions(panel, result_row(item))
         self._append_recommendation_context(panel, context_sections)
 
     def show_existing_search_unavailable(
@@ -335,15 +327,7 @@ class PublicBookMasterDetailView:
         else:
             panel.show_search_document(item, cover_evidence=proof)
         from .query_model import result_row
-        self._window._add_local_book_actions(panel, result_row(
-            item, purchase_evidence=getattr(self._window, "_search_purchase_evidence", None),
-            identity_id=getattr(getattr(getattr(self._window, "service", None),
-                                        "current_identity", None), "identity_id", None),
-            account_context_epoch=getattr(getattr(self._window, "service", None),
-                                           "_account_context_epoch", None),
-            source_context_epoch=getattr(getattr(self._window, "service", None),
-                                          "_source_context_epoch", None),
-        ))
+        self._window._add_local_book_actions(panel, result_row(item))
         self._append_recommendation_context(panel, context_sections)
 
     def _append_recommendation_context(self, panel, context_sections) -> None:

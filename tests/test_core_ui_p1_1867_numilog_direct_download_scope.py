@@ -17,7 +17,6 @@ import pytest
 from cifereca.core.search import file_format
 from cifereca.services import LibraryService
 from cifereca.gui.query_model import result_row
-from cifereca.core.search_owned_evidence import SearchOwnedEvidence
 from tests.test_search_results_view import _book, _host
 
 
@@ -47,12 +46,10 @@ def _owned_ledger_right():
 
 def _proof():
     purchase = private_purchase()
-    return SearchOwnedEvidence(
-        "alice", frozenset({(
-            purchase.source_provider, purchase.source_credential,
-            purchase.source_account_id, purchase.record_id, "",
-        )}),
-    )
+    return NS(identity_id="alice", rights=frozenset({(
+        purchase.source_provider, purchase.source_credential,
+        purchase.source_account_id, purchase.record_id, "",
+    )}))
 
 
 def private_catalogue_masquerade():
@@ -253,7 +250,7 @@ def test_detail_retains_private_purchase_action_when_broker_positive():
 def test_private_ownership_is_independent_of_local_offer_qualification():
     wrong_scope = replace(private_purchase(), downloadable=False)
     assert result_row(wrong_scope, purchase_evidence=_proof(),
-                      identity_id="alice")["state"] == "remote_owned"
+                      identity_id="alice")["state"] == "remote_catalog"
     assert NumilogOfferFixture().can_direct(wrong_scope) is False
 
 

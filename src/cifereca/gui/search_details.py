@@ -203,11 +203,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         # The stale catalogue is read-only evidence. Merely selecting it must
         # not start a holdings/authentication request to a provider in outage.
         self.search_page.detail.show_search(item, loading=False)
-        self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)), self.search_controls)
+        self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
         return
     from cifereca.gui.search_detail_cover_reuse import visual_search_item
     # Re-selection must not drop a previously attested exact-source image
@@ -220,21 +216,9 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         renderer(item, loading=True, cover_evidence=proof)
     else:
         self.search_page.detail.show_search(visual_search_item(self, item), loading=True)
-    self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)), self.search_controls)
-    self._add_local_book_actions(self.search_page.detail,result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
-    self._request_cached_book_details("search", item.id, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
+    self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
+    self._add_local_book_actions(self.search_page.detail,result_row(item))
+    self._request_cached_book_details("search", item.id, result_row(item))
     selected_id = item.id
     context = self._search_detail_request_context()
     # The four-field selection lease predates Core's independent account
@@ -426,21 +410,9 @@ def _apply_search_detail(
     else:
         presentation = visual_search_detail(self, item, detail)
         self.search_page.detail.show_item_detail(item, presentation)
-    self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)), self.search_controls)
-    self._add_local_book_actions(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
-    self._request_cached_book_details("search", item.id, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
+    self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
+    self._add_local_book_actions(self.search_page.detail, result_row(item))
+    self._request_cached_book_details("search", item.id, result_row(item))
     # Capability-based action; legacy headless hosts without an installed
     # session registry cannot offer it and must not import GTK adapters.
     if getattr(getattr(self, "service", None), "_sessions", None) is not None:
@@ -465,16 +437,8 @@ def _search_detail_error(
         renderer(item, cover_evidence=proof)
     else:
         self.search_page.detail.show_search(visual_search_item(self, item), loading=False)
-    self._add_local_book_actions(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
-    self._request_cached_book_details("search", item.id, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
+    self._add_local_book_actions(self.search_page.detail, result_row(item))
+    self._request_cached_book_details("search", item.id, result_row(item))
     # Provider exceptions can embed account IDs, private file paths or signed
     # URLs. Do not echo their arbitrary text into a user-visible GTK toast.
     self.toast("Disponibilités indisponibles. Réessayez ultérieurement.", 5)
