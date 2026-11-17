@@ -167,18 +167,13 @@ def select_library_source_offer_target(
     if (type(identity) is not str or not identity or len(identity) > 1024
             or any(c in identity for c in "\x00\r\n")):
         return None
-    candidates = [
-        row for row in (entry.get("possessions") or ())
-        if type(row) is dict and row.get("identity_id") == identity
-        and row.get("kind") == "owned" and row.get("state") == "active"
-    ] if type(entry.get("possessions")) in (tuple, list) else []
-    if not candidates:
-        # A catalogue observation is never a pseudo-possession. Its exact
-        # private origin can be selected passively; current delivery remains
-        # a separate producer callback after explicit user action.
+    native_origin = entry.get("source") == "private_catalog_observation"
+    if native_origin:
+        # A private catalogue card has its own exact source. Historical
+        # possessions are not a source selector, fallback or competing
+        # authority for this card.
         refs = entry.get("source_refs")
-        if (entry.get("source") != "private_catalog_observation"
-                or entry.get("state") != "remote_catalog"
+        if (entry.get("state") != "remote_catalog"
                 or type(refs) not in (tuple, list) or len(refs) != 1
                 or type(refs[0]) is not dict):
             return None
@@ -186,18 +181,40 @@ def select_library_source_offer_target(
         if (candidate.get("identity_id") != identity
                 or candidate.get("kind") != "purchase"):
             return None
-    elif len(candidates) == 1:
-        candidate = candidates[0]
+        credential = candidate.get("credential_id")
+        if (type(credential) is not str or not credential
+                or len(credential) > 1024
+                or any(c in credential for c in "\x00\r\n")):
+            return None
     else:
-        return None
+        # Historical possession-only cards still supply display/navigation
+        # coordinates until their own private-inventory observation exists.
+        # They cannot grant an offer or publish bytes.
+        candidates = [
+            row for row in (entry.get("possessions") or ())
+            if type(row) is dict and row.get("identity_id") == identity
+            and row.get("kind") == "owned" and row.get("state") == "active"
+        ] if type(entry.get("possessions")) in (tuple, list) else []
+        if len(candidates) != 1:
+            return None
+        candidate = candidates[0]
+        credential = None
     provider = candidate.get("provider_id")
     item_id = candidate.get("item_id")
     account_id = candidate.get("account_id")
+    if (not all(type(value) is str and value and len(value) <= 1024
+                and not any(c in value for c in "\x00\r\n")
+                for value in (provider, item_id))
+            or type(account_id) is not str or len(account_id) > 1024
+            or any(c in account_id for c in "\x00\r\n")):
+        return None
     accounts = [
         account for account in service.accounts
-        if getattr(account, "identity_id", None) == identity
-        and getattr(account, "provider_id", None) == provider
-        and getattr(account, "unique_id", None) == account_id
+        if type(account) is Account
+        and account.identity_id == identity
+        and account.provider_id == provider
+        and account.unique_id == account_id
+        and (not native_origin or account.credential_id == credential)
     ]
     if len(accounts) != 1:
         return None
