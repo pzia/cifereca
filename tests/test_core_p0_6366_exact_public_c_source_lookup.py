@@ -218,3 +218,56 @@ def test_batch_uses_one_sqlite_read_and_independent_conflict_veto(tmp_path, monk
         assert len(connects) == 1
     finally:
         db.close()
+
+
+def test_exact_lookup_survives_large_catalogue_and_per_source_overflow(tmp_path, monkeypatch):
+    import json
+    from cifereca.core import notice_c_exact_source_lookup as lookup
+    from cifereca.core.notice_c_cover_index import (
+        _db_key, canonical_cover_document_ref,
+    )
+
+    db = Storage(tmp_path / "large-catalogue.sqlite")
+    try:
+        target = make(db, "bnf", "wanted-edition")
+        noisy = make(db, "paris", "unrelated-edition")
+        wanted = persist_exact_public_search_cover(db, target)
+        unrelated = persist_exact_public_search_cover(db, noisy)
+        with db._lock, db._connect() as sql:
+            raw = sql.execute(
+                "SELECT value FROM metadata WHERE key=?",
+                (_db_key(unrelated.document),),
+            ).fetchone()[0]
+            payload = json.loads(raw)
+            rows = []
+            # Independent canonical rows sharing another exact source:
+            # valid persisted JSON, deliberately ambiguous for THAT source.
+            for n in range(4100):
+                edition = f"edition:unrelated-claim-{n}"
+                payload["edition_id"] = edition
+                rows.append((_db_key(canonical_cover_document_ref(edition)),
+                             json.dumps(payload)))
+            sql.executemany("INSERT INTO metadata(key,value) VALUES(?,?)", rows)
+            sql.execute(
+                "INSERT INTO metadata(key,value) VALUES(?,?)",
+                (_db_key(canonical_cover_document_ref("edition:corrupt")), "{bad json"),
+            )
+            sql.execute("DELETE FROM metadata WHERE key LIKE 'notice.c.observation.v1:%'")
+
+        decode = lookup._decode
+        seen = []
+        def counted(raw, document):
+            seen.append(document)
+            return decode(raw, document)
+        monkeypatch.setattr(lookup, "_decode", counted)
+        key = ("bnf", "wanted-edition", "digital-books", "digital", None)
+        noisy_key = ("paris", "unrelated-edition", "digital-books", "digital", None)
+        result = lookup.exact_public_source_c_many(db, [key])
+        assert result[key].document == wanted.document
+        assert seen == [wanted.document]
+        result = lookup.exact_public_source_c_many(db, [key, noisy_key])
+        assert set(result) == {key}
+        assert result[key].document == wanted.document
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
