@@ -8,7 +8,9 @@ from .settings_identity_editor import build_identity_settings_editor
 from .settings_account_editor import build_provider_account_editor
 
 
-def _selected_adept_source(saved: dict[str, Any]) -> tuple[bool, str | None, str | None]:
+def _selected_adept_source(
+    saved: dict[str, Any], descriptors=None,
+) -> tuple[bool, str | None, str | None]:
     """Explicit source pair or an unambiguous marker for historical Settings.
 
     Never repair a malformed new pair by silently selecting legacy Paris.
@@ -18,17 +20,33 @@ def _selected_adept_source(saved: dict[str, Any]) -> tuple[bool, str | None, str
     explicit = ("adept_source_provider_id" in saved
                 or "adept_source_connection_id" in saved)
     if not explicit:
-        # Read-only legacy Config bridge. "primary_paris_connection_id"
-        # explicitly designates the historical Paris source; never infer it
-        # from an ADEPT profile or from the user's current GTK selection.
-        legacy = saved.get("primary_paris_connection_id")
-        if legacy is None:
-            return False, "paris", None
+        # The saved key is a frozen Config compatibility namespace, not a
+        # supplier selector. Only an installed typed policy that declares
+        # this exact selection key can interpret the old setting.
+        from ..providers.base import ManualBorrowPolicy, ProviderDescriptor
+
+        selection_key = "primary_paris_connection_id"
+        legacy = saved.get(selection_key, "")
         if (type(legacy) is not str or len(legacy) > 256
                 or (legacy and (
                     legacy != legacy.strip() or not legacy.isprintable()))):
             return False, None, None
-        return False, "paris", legacy or None
+        if type(descriptors) is not dict:
+            return False, None, None
+        eligible = [
+            provider_id for provider_id, descriptor in descriptors.items()
+            if valid_provider_identifier(provider_id)
+            and type(descriptor) is ProviderDescriptor
+            and descriptor.id == provider_id
+            and descriptor.state == "ready"
+            and descriptor.capabilities.borrow is True
+            and type(descriptor.manual_borrow_policy) is ManualBorrowPolicy
+            and descriptor.manual_borrow_policy.schema == "cifereca.manual-borrow/1"
+            and descriptor.manual_borrow_policy.source_selection_key == selection_key
+        ]
+        if len(eligible) != 1:
+            return False, None, None
+        return False, eligible[0], legacy or None
     provider = saved.get("adept_source_provider_id")
     connection = saved.get("adept_source_connection_id")
     if (not valid_provider_identifier(provider)
@@ -39,9 +57,9 @@ def _selected_adept_source(saved: dict[str, Any]) -> tuple[bool, str | None, str
     return True, provider, connection
 
 
-def _saved_adept_status(core, identity_id: str, saved: dict[str, Any]) -> dict[str, Any]:
+def _saved_adept_status(core, identity_id: str, saved: dict[str, Any], descriptors=None) -> dict[str, Any]:
     """Read saved source only; never infer provider from an ADEPT profile."""
-    explicit, provider, credential = _selected_adept_source(saved)
+    explicit, provider, credential = _selected_adept_source(saved, descriptors)
     if provider is None:
         return {
             "identity_id": identity_id, "status": "to_configure",
@@ -62,7 +80,8 @@ def _local_adept_binding_caption(state: dict[str, Any]) -> str:
         )
     if state.get("status") == "to_configure":
         return "À configurer · liaison compte/profil ADEPT manquante ou non vérifiée."
-    if state.get("reason") == "multiple_paris_connections":
+    reason = state.get("reason")
+    if type(reason) is str and reason.startswith("multiple_") and reason.endswith("_connections"):
         return "À vérifier · plusieurs connexions : choix explicite requis. Aucun profil ADEPT choisi automatiquement."
     return "À vérifier · liaisons locales non attestées. Aucun profil ADEPT choisi automatiquement."
 
@@ -209,7 +228,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
         )
         normal_subtitle = (
             _local_adept_binding_caption(
-                _saved_adept_status(self.service, identity_id, data)
+                _saved_adept_status(self.service, identity_id, data, descriptors)
             )
             if data.get("id")
             else "À configurer · enregistrez l’identité pour vérifier ses liaisons."
@@ -268,8 +287,8 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     "À vérifier · enregistrez les modifications avant le contrôle ADEPT."
                 )
                 return
-            selected_source = _selected_adept_source(saved)
-            start_status = _saved_adept_status(admitted_core, saved_id, saved)
+            selected_source = _selected_adept_source(saved, descriptors)
+            start_status = _saved_adept_status(admitted_core, saved_id, saved, descriptors)
             if start_status.get("status") != "ready":
                 e["normal_adept_status"].set_subtitle(
                     _local_adept_binding_caption(start_status)
@@ -313,9 +332,9 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         and admitted_core.storage.adept_profile_binding_get(
                             "identity", saved_id,
                         ) == stored_profile
-                        and _selected_adept_source(persisted) == selected_source
+                        and _selected_adept_source(persisted, descriptors) == selected_source
                         and _saved_adept_status(
-                            admitted_core, saved_id, persisted,
+                            admitted_core, saved_id, persisted, descriptors,
                         ) == start_status
                     )
                 except Exception:

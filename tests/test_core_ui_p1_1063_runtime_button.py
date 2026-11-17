@@ -16,7 +16,18 @@ SAVED_STATUS = {
 }
 
 
-def _harness(monkeypatch, *, source=None, primary="paris-a"):
+def _harness(monkeypatch, *, source=None, primary="paris-a", legacy_provider="paris"):
+    from cifereca.providers.base import ManualBorrowPolicy, ProviderCapabilities, ProviderDescriptor
+
+    descriptors = {legacy_provider: ProviderDescriptor(
+        id=legacy_provider, display_name="Test lender", description="offline",
+        state="ready", capabilities=ProviderCapabilities(borrow=True),
+        manual_borrow_policy=ManualBorrowPolicy(
+            docbase="FIXTURE", primary_borrower_id="",
+            source_selection_key="primary_paris_connection_id",
+            verification="provider_observed",
+        ),
+    )}
     import copy
     saved = {
         "id": "alice", "label": "Alice", "primary_paris_connection_id": primary,
@@ -65,7 +76,7 @@ def _harness(monkeypatch, *, source=None, primary="paris-a"):
     identities = [saved]
     profile_reads = []
     source_reads = []
-    expected_source = source if source is not None else ("paris", "paris-a")
+    expected_source = source if source is not None else (legacy_provider, "paris-a")
     def source_status(identity, *, source_provider_id, primary_connection_id, source_label=None):
         source_reads.append(("status", source_provider_id, primary_connection_id))
         if expected_source != (source_provider_id, primary_connection_id):
@@ -104,7 +115,7 @@ def _harness(monkeypatch, *, source=None, primary="paris-a"):
     )
     lifetime = SettingsPageLifetime()
     settings_editor_actions.build_settings_editors(
-        host, box=Widget(), descriptors={}, public_ids=set(),
+        host, box=Widget(), descriptors=descriptors, public_ids=set(),
         mark_settings_dirty=Mock(), library_directory=lambda: "/books",
         Gtk=NS(Button=Widget), Adw=NS(), add_css=Mock(),
         page_lifetime=lifetime,
@@ -485,3 +496,37 @@ def test_falsey_persisted_primary_mutation_cannot_be_coerced_into_stale_success(
         # become malformed, without a GTK generation increment.
         args[2](result)
         assert not hasattr(editor["normal_adept_status"], "subtitle")
+
+
+def test_legacy_settings_key_is_interpreted_by_declared_provider(monkeypatch):
+    host, editor, button, submits, reads, _ = _harness(
+        monkeypatch, legacy_provider="future-lender",
+    )
+    assert host._adept_source_reads == [("status", "future-lender", "paris-a")]
+    button.emit("clicked")
+    assert len(submits) == 1
+    assert submits[0][0][1]()["status"] == "observed"
+    assert ("runtime", "future-lender", "paris-a") in host._adept_source_reads
+
+
+def test_unclaimed_or_ambiguously_claimed_historical_key_is_inert():
+    from cifereca.providers.base import ManualBorrowPolicy, ProviderCapabilities, ProviderDescriptor
+    from cifereca.gui.settings_editor_actions import _selected_adept_source
+
+    saved = {"primary_paris_connection_id": "old-connection"}
+    def descriptor(pid, key):
+        return ProviderDescriptor(
+            id=pid, display_name=pid, description="fixture", state="ready",
+            capabilities=ProviderCapabilities(borrow=True),
+            manual_borrow_policy=ManualBorrowPolicy(
+                docbase="FIXTURE", source_selection_key=key,
+            ),
+        )
+    assert _selected_adept_source(saved, {}) == (False, None, None)
+    assert _selected_adept_source(saved, {
+        "paris": descriptor("paris", None),
+    }) == (False, None, None)
+    assert _selected_adept_source(saved, {
+        "one-lender": descriptor("one-lender", "primary_paris_connection_id"),
+        "two-lender": descriptor("two-lender", "primary_paris_connection_id"),
+    }) == (False, None, None)
