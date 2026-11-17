@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
+from threading import Event, Thread
 
 import pytest
 
@@ -134,4 +135,57 @@ def test_refresh_429_uses_existing_cooldown_and_keeps_previous_page(monkeypatch)
         assert len(blocked) == 1
         assert s._public_cache._inflight is None
     finally:
+        s.close()
+
+
+def test_concurrent_close_during_admitted_get_drops_response_and_keeps_slot_until_exit(monkeypatch):
+    s, clock, requests, rows, token, policy, reserve = prepare(monkeypatch)
+    entered, finish, closed = Event(), Event(), Event()
+    errors = []
+    worker = None
+    closer = None
+    try:
+        original = client.parse_public_search
+        def parsing(*args):
+            entered.set()
+            assert finish.wait(5)
+            return original(*args)
+
+        monkeypatch.setattr(client, "parse_public_search", parsing)
+        reservation = reserve()
+
+        def run():
+            try:
+                reservation.execute(control())
+            except Exception as exc:
+                errors.append(exc)
+
+        def close_and_reopen():
+            s.close()
+            s.connect()
+            closed.set()
+
+        worker = Thread(target=run)
+        worker.start()
+        assert entered.wait(5) and len(requests) == 2
+        # Release during execution cannot free the shared HTTP slot.
+        reservation.release()
+        closer = Thread(target=close_and_reopen)
+        closer.start()
+        assert closed.wait(5)
+        with pytest.raises(ProviderError, match="request_in_progress"):
+            s.search("other query")
+        finish.set()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+        assert len(errors) == 1 and "request_invalidated" in str(errors[0])
+        assert s._public_cache._inflight is None
+        assert s._read_retained_public_input(token) == (None, 0)
+        assert len(requests) == 2
+    finally:
+        finish.set()
+        if worker is not None:
+            worker.join(timeout=5)
+        if closer is not None:
+            closer.join(timeout=5)
         s.close()
