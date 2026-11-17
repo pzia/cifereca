@@ -157,6 +157,12 @@ def unique_library_loan(
             return None
         # The library selection is another mutable provider/UI projection.
         # A late source/identity/borrower change cannot retarget the action.
-        return candidates[0] if tuple(item.get(key) for key in scope_keys) == scope else None
+        # Validate types BEFORE comparing: a hostile Mapping.get must never
+        # execute a foreign __eq__ against the pinned original coordinates.
+        current = tuple(item.get(key) for key in scope_keys)
+        if all(type(value) is type(original) and value == original
+               for value, original in zip(current, scope)):
+            return candidates[0]
+        return None
     except Exception:
         return None
