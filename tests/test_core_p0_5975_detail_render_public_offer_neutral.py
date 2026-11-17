@@ -48,7 +48,7 @@ def _show_item_detail():
         "search_detail_borrow_action_candidate": search_detail_borrow_action_candidate,
         "result_row": result_row,
         "document_links": document_links,
-        "_commercial_search_usage": lambda _item, _service, **_kw: "",
+        "_commercial_search_usage": lambda _item, **_kw: "",
         "Adw": NS(PreferencesGroup=lambda: Mock(), ActionRow=lambda: Mock()),
     }
     module = ast.fix_missing_locations(ast.Module(body=[
