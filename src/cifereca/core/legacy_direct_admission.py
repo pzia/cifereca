@@ -83,6 +83,7 @@ class LegacyDirectAdmission:
                 and getattr_static(self.session, "_closed", False) is False
                 and _single_account(service, self.session, self.coordinates) is self.account
                 and service._provider_enabled_for_identity(provider, identity) is True
+                and service.can_direct_download_for_scope(self.scope, self._item) is True
                 and service.storage.provider_scope_account_bound(
                     identity_id=identity, provider_id=provider,
                     credential_id=credential, account_id=account_id,
