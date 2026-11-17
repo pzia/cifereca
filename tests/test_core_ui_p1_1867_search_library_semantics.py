@@ -78,7 +78,7 @@ def test_private_numilog_remains_descriptive_even_with_historical_scope():
             identity_id="alice",
         )
         assert actual["state"] == "remote_catalog"
-        assert actual["owned"] is False
+        assert actual["owned"] is (None if vendor_hint is None else False)
 
 
 def test_anonymous_numilog_search_shows_notice_not_purchase_or_download():
