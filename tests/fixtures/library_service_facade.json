@@ -495,10 +495,6 @@
     "kind": "method",
     "signature": "(self, item: 'SearchResult')"
   },
-  "prepare_direct_download": {
-    "kind": "method",
-    "signature": "(self, item: 'SearchResult') -> 'tuple[Path, str]'"
-  },
   "library_dir": {
     "kind": "method",
     "signature": "(self) -> 'Path'"
@@ -634,10 +630,6 @@
   "acquire_digital_loan": {
     "kind": "method",
     "signature": "(self, loan: 'Loan', *, force_refresh: 'bool' = False) -> 'Acquisition'"
-  },
-  "prepare_digital_download": {
-    "kind": "method",
-    "signature": "(self, loan: 'Loan', *, force_refresh: 'bool' = False) -> 'tuple[Path, str]'"
   },
   "_download_filename": {
     "kind": "method",
