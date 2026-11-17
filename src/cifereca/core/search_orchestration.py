@@ -2153,6 +2153,7 @@ def _stamp_cached_public_notice_refs(
             "_core_notice_canonical_cover_document_ref",
             "_core_notice_canonical_cover_document_epoch",
             "_core_persisted_c_revision_witness",
+            "_core_cached_c_receipt",
         ):
             row.__dict__.pop(key, None)
         safe_url = _shared_catalogue_cover_url(row.thumbnail_url)
@@ -2172,11 +2173,10 @@ def _stamp_cached_public_notice_refs(
             # The UI's GTK bind may only consume the resulting exact ref.
             if storage is None or index >= 256:
                 continue
-            canonical_ref = canonical_cover_document_ref(
-                snapshot.key.edition_id,
-            )
-            persisted = read_consolidated_notice_cover(
-                storage, canonical_ref,
+            from .notice_c_exact_source_lookup import exact_public_source_c
+            persisted = exact_public_source_c(
+                storage, provider_id=row.source_provider, record_id=row.record_id,
+                docbase=row.docbase, medium=row.medium, source_revision=row.revision_id,
             )
             if persisted is None or not persisted.candidates:
                 continue
@@ -2200,6 +2200,8 @@ def _stamp_cached_public_notice_refs(
                     row._core_notice_canonical_cover_document_epoch = (
                         persisted.epoch
                     )
+                    from .notice_c_cached_revision import stamp_cached_c_revision
+                    stamp_cached_c_revision(row, persisted, identity_id=identity_id)
                     break
         except (ValueError, TypeError, UnicodeError, AttributeError):
             # Corrupt/stale canonical metadata is not an absent source or a
@@ -2231,6 +2233,7 @@ def _mirror_remote_results(
             row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
             row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
             row.__dict__.pop("_core_persisted_c_revision_witness", None)
+            row.__dict__.pop("_core_cached_c_receipt", None)
             row.__dict__.pop("_core_notice_cross_provider_proof", None)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
