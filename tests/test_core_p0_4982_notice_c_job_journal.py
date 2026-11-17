@@ -144,3 +144,108 @@ def test_bound_corruption_private_and_wrong_dependency(tmp_path, monkeypatch):
             enqueue(db, spec("fetch_source_notice"))
     finally:
         db.close()
+
+
+def sweep(db, now, limit=32):
+    refs = []
+    after = None
+    examined = corrupt = 0
+    while True:
+        page = journal.read_ready_page(db, now=now, after=after, limit=limit)
+        assert page.examined <= limit
+        refs.extend(page.refs)
+        examined += page.examined
+        corrupt += page.corrupt
+        if page.next_after is None:
+            return tuple(refs), examined, corrupt
+        assert after is None or page.next_after > after
+        after = page.next_after
+
+
+def test_bounded_ready_sweep_restarts_and_never_claims(tmp_path):
+    path = tmp_path / "scan.sqlite"
+    db = Storage(path)
+    refs = [enqueue(db, spec(key=replace(PUBLIC, record_id=f"scan-{i}")))
+            for i in range(70)]
+    order = sorted(refs, key=lambda ref: ref.key)
+    first = journal.claim_job(db, order[0], now=1, lease_seconds=10)
+    later = journal.claim_job(db, order[1], now=1, lease_seconds=10)
+    journal.fail_job(db, later, now=2, transient=True)
+    complete(db, journal.claim_job(db, order[2], now=1, lease_seconds=10))
+    page = journal.read_ready_page(db, now=2, limit=3)
+    assert page.refs == () and page.examined == 3
+    assert page.next_after == order[2].key
+    db.close()
+    db = Storage(path)
+    try:
+        second = journal.read_ready_page(db, now=2,
+                                         after=page.next_after, limit=3)
+        assert second.refs == tuple(order[3:6])
+        ready, examined, corrupt = sweep(db, now=2)
+        assert ready == tuple(order[3:]) and examined == 70 and corrupt == 0
+        assert all(journal.read_job(db, ref).attempts == 0 for ref in ready)
+        assert journal.read_job(db, first.ref).fence == first.fence
+        assert sweep(db, now=3)[0] == tuple(order[1:2] + order[3:])
+        assert sweep(db, now=11)[0] == tuple(order[:2] + order[3:])
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def test_ready_hints_require_exact_claim_and_skip_bad_dependencies(tmp_path):
+    db = Storage(tmp_path / "scan.sqlite")
+    try:
+        source = enqueue(db, spec("fetch_source_notice"))
+        child = enqueue(db, spec(deps=(source,)))
+        link = enqueue(db, spec("relink_notices", deps=(child,)))
+        other = enqueue(db, spec(key=replace(PUBLIC, record_id="unrelated")))
+        assert set(sweep(db, now=1)[0]) == {source, other}
+        complete(db, journal.claim_job(db, source, now=1, lease_seconds=10))
+        assert set(sweep(db, now=2)[0]) == {child, other}
+        newer = enqueue(db, spec("fetch_source_notice", value="B"),
+                        source.generation, now=2)
+        assert set(sweep(db, now=2)[0]) == {newer, other}
+        assert journal.claim_job(db, child, now=2, lease_seconds=10) is None
+        assert journal.read_job(db, link).state == "stale"
+        old = other
+        other = enqueue(db, spec(value="B",
+                            key=replace(PUBLIC, record_id="unrelated")),
+                        old.generation, now=2)
+        with pytest.raises(ValueError, match="generation_changed"):
+            journal.claim_job(db, old, now=2, lease_seconds=10)
+        dependant = enqueue(db, spec(value="B", deps=(newer,)),
+                            child.generation, now=2)
+        with db._lock, db._connect() as conn:
+            conn.execute("UPDATE metadata SET value=? WHERE key=?",
+                         ("bad", journal._PREFIX + newer.key))
+            conn.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
+                         (journal._PREFIX + "bad-key", "ignored"))
+        ready, examined, corrupt = sweep(db, now=2, limit=1)
+        assert ready == (other,) and examined == 4
+        assert corrupt == 2  # bad row and its pending dependant
+        assert journal.read_job(db, other).attempts == 0
+        with pytest.raises(ValueError, match="corrupt"):
+            journal.claim_job(db, dependant, now=2, lease_seconds=10)
+    finally:
+        db.close()
+
+
+def test_ready_scan_exhaustion_and_invalid_cursor(tmp_path):
+    db = Storage(tmp_path / "scan.sqlite")
+    try:
+        ref = enqueue(db, spec())
+        for now in (1, 2, 3):
+            lease = journal.claim_job(db, ref, now=now, lease_seconds=1)
+            assert lease is not None
+        assert sweep(db, now=3)[0] == ()
+        assert sweep(db, now=4)[0] == (ref,)
+        assert journal.claim_job(db, ref, now=4, lease_seconds=1) is None
+        assert journal.read_job(db, ref).reason == "exhausted"
+        assert sweep(db, now=4)[0] == ()
+        for kwargs in ({"now": True}, {"now": -1}, {"now": 1, "limit": 33},
+                       {"now": 1, "limit": False},
+                       {"now": 1, "after": "some-secret"}):
+            with pytest.raises(ValueError, match="invalid_scan"):
+                journal.read_ready_page(db, **kwargs)
+    finally:
+        db.close()
