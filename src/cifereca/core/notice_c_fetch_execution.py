@@ -8,13 +8,14 @@ bounded IO and the origin of the returned observation before registration.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable
 
 from . import notice_c_job_journal as journal
 from .notice_c_fetch_authority import PublicFetchAuthority, PublicFetchPermit
 from .notice_c_fetch_publication import prepare_public_fetch_publication
-from .notice_c_work_bridge import UnavailableNoticeWork
+from .notice_c_work_bridge import PreparedSource, UnavailableNoticeWork
 from .notice_source_observation import _id
 
 
@@ -27,6 +28,9 @@ class ReservedPublicFetch:
     # Idempotent release of the established transport reservation, including
     # when no dispatch occurred; must not perform networking or raise.
     release: Callable
+    # Pin the successful producer generation through the final transaction.
+    # No I/O or Storage access; acquired after the Core authority guard.
+    hold_publication: Callable
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -105,7 +109,8 @@ class PublicFetchExecution:
                 if (type(candidate) is not ReservedPublicFetch
                         or candidate.permit is not permit
                         or not callable(candidate.execute)
-                        or not callable(candidate.release)):
+                        or not callable(candidate.release)
+                        or not callable(candidate.hold_publication)):
                     raise UnavailableNoticeWork("notice_fetch_transport_unavailable")
                 reserved = candidate
             # The session's own reservation must reject a revoked start.
@@ -117,9 +122,21 @@ class PublicFetchExecution:
                 reservation, reserved = reserved, None
                 reservation.release()
             control.check_cancelled()
-            return prepare_public_fetch_publication(
+            with authority._lock:
+                grant = authority._lookup(lease.ref)
+                if grant.permit is not permit or not grant.started:
+                    raise UnavailableNoticeWork("notice_fetch_transport_not_started")
+            prepared = prepare_public_fetch_publication(
                 storage, authority, permit, result, clock=clock,
             )
+
+            @contextmanager
+            def guard():
+                with prepared.hold_input():
+                    with reservation.hold_publication():
+                        yield
+
+            return PreparedSource(prepared.publish, guard)
         except BaseException:
             try:
                 if reserved is not None:
