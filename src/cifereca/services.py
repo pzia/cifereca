@@ -38,7 +38,7 @@ from .core import library_projection, library_mutation
 from .core.source_context import source_context_epoch
 from .core import provider_sessions, search_orchestration
 from .acquisition import Acquisition, AcquisitionManager, AcquisitionResult
-from .acquisition_engine import AcquisitionLedger, AcquisitionReconciler, Entitlement, SourceIdentity
+from .acquisition_engine import AcquisitionReconciler, Entitlement, SourceIdentity
 from .catalog import LocalCatalog
 from .epub_metadata import cached_cover_url
 from .core.covers import candidate as cover_candidate, resolve_cover
@@ -104,67 +104,8 @@ def _cross_profile_snapshot_read_scope(service, captured_preview):
     return _capture_cross_profile_read_scope(service, requesting_identity_id)
 
 
-def _loan_cache_key(account: Account) -> str:
-    """Opaque, unambiguous identity/provider/credential/borrower cache scope.
-
-    The legacy `provider:credential:uid:loans` alias omitted identity, and
-    `:` can occur inside a provider credential or borrower identifier. Do
-    not read old aliases: they cannot be safely attributed retroactively.
-    """
-    if type(account) is not Account:
-        raise ProviderConfigurationError("loan_cache_scope_invalid")
-    parts = (
-        account.identity_id, account.provider_id,
-        account.credential_id, account.unique_id,
-    )
-    if any(type(value) is not str or len(value) > 1024
-           or chr(0) in value for value in parts):
-        raise ProviderConfigurationError("loan_cache_scope_invalid")
-    serialized = json.dumps(parts, ensure_ascii=True, separators=(',', ':'))
-    return "loans.v2:" + hashlib.sha256(serialized.encode('utf-8')).hexdigest()
-
-
-def _cached_loans_for_exact_account(
-    value: object, account: Account, *, descriptor=None,
-) -> list[Loan] | None:
-    """Treat cached rows as untrusted: never rewrite their source/identity.
-
-    A cache hit is only usable if every row still identifies the same
-    provider, credential, account and identity. Corrupt/legacy rows trigger
-    an ordinary fresh provider read, never a cross-account display.
-    """
-    if type(value) is not list or len(value) > 10_000:
-        return None
-    from .plugin_api.loan_scope import loan_matches_account
-    # Exact account IDs need no alias convention. A different observed ID
-    # requires an attestation from this installed provider descriptor, not
-    # an implicit Paris/default-primary fallback encoded in Core.
-    loans = []
-    for value_row in value:
-        if type(value_row) is not dict:
-            return None
-        try:
-            row = Loan(**value_row)
-        except (TypeError, ValueError):
-            return None
-        if not (
-            type(row) is Loan
-            and type(row.id) is str and bool(row.id)
-            and type(row.source_provider) is str
-            and row.source_provider == account.provider_id
-            and type(row.source_credential) is str
-            and row.source_credential == account.credential_id
-            and type(row.source_account_id) is str
-            and (row.source_account_id == account.unique_id
-                 or loan_matches_account(row, account, descriptor))
-            and type(row.identity_id) is str
-            and row.identity_id == account.identity_id
-            and type(row.medium) is str
-            and row.medium in ('digital', 'physical', 'unknown')
-        ):
-            return None
-        loans.append(row)
-    return loans
+# Preserve the historical helper imports for tests and internal clients.
+from .core.loan_display_cache import _loan_cache_key, _cached_loans_for_exact_account
 
 
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+")
@@ -204,7 +145,6 @@ class LibraryService:
         # when the PluginManager is attached.
         self.registry = ProviderRegistry()
         self.acquisition = AcquisitionManager(config, diagnostics)
-        self.acquisition_ledger = AcquisitionLedger(storage)
         self.acquisition_reconciler = AcquisitionReconciler(storage)
         self._sessions: dict[str, ProviderSession] = {}
         self._session_errors: dict[str, str] = {}
@@ -369,6 +309,27 @@ class LibraryService:
             borrowing_account=borrowing_account, exact_notice=exact_notice,
             scope_current=_capture_cross_profile_read_scope(self, requesting_identity_id)[1],
         )
+
+    def capture_admitted_lender_local_copy(
+        self, *, requesting_identity_id: str,
+        borrowing_account: Account, exact_notice: SearchResult,
+        lender_placement_id: str, confirmed: bool = False,
+    ):
+        """Bind the exact presented placement at separate copy consent."""
+        from .core.borrow_for_identity_copy_admission import capture_lender_copy
+        _, current = _capture_cross_profile_read_scope(self, requesting_identity_id)
+        if confirmed is not True or not current():
+            return None
+        admitted = capture_lender_copy(
+            self, requesting_identity_id=requesting_identity_id,
+            borrowing_account=borrowing_account, exact_notice=exact_notice,
+            lender_placement_id=lender_placement_id,
+        )
+        return admitted if current() else None
+
+    def execute_admitted_lender_local_copy(self, admitted):
+        from .core.borrow_for_identity_copy_admission import execute_lender_copy
+        return execute_lender_copy(self, admitted)
 
     def send_confirmed_lender_local_copy(
         self, *, requesting_identity_id: str,
@@ -543,6 +504,28 @@ class LibraryService:
             requesting_identity_id=requesting_id, scope_current=scope_current,
         )
 
+    def capture_admitted_cross_profile_borrow(
+        self, *, captured_preview, selected_option_id: str,
+        expected_edition_id: str, observations: object,
+        confirmed: bool = False, now: int | None = None,
+    ):
+        """Capture exact confirmed lender choice before TaskRunner enqueue."""
+        from .core.borrow_for_identity_executor import prepare_cross_profile_borrow
+        requesting_id, scope_current = _cross_profile_snapshot_read_scope(
+            self, captured_preview,
+        )
+        return prepare_cross_profile_borrow(
+            self, captured_preview=captured_preview,
+            selected_option_id=selected_option_id,
+            expected_edition_id=expected_edition_id, observations=observations,
+            confirmed=confirmed, now=now, requesting_identity_id=requesting_id,
+            scope_current=scope_current, admit_at_confirmation=True,
+        )
+
+    def execute_admitted_cross_profile_borrow(self, admitted):
+        from .core.borrow_for_identity_executor import execute_admitted_cross_profile_borrow
+        return execute_admitted_cross_profile_borrow(self, admitted)
+
     def execute_cross_profile_borrow(
         self, *, captured_preview, selected_option_id: str,
         expected_edition_id: str, observations: object,
@@ -681,9 +664,15 @@ class LibraryService:
             expected_docbase=expected_docbase,
         )
 
+    def capture_admitted_loan_acsm_stage(self, loan: Loan, *, expected_identity_id: str):
+        from .core.loan_action_scope import capture_admitted_loan_stage
+        return capture_admitted_loan_stage(
+            self, loan, expected_identity_id=expected_identity_id,
+        )
+
     def stage_explicit_loan_acsm(
         self, loan: Loan, *, confirmed: bool = False,
-        expected_identity_id: str = "",
+        expected_identity_id: str = "", admitted_lease=None,
     ) -> dict[str, str]:
         """Deliberate provider-selected ACSM candidate, never automatic download.
 
@@ -729,9 +718,15 @@ class LibraryService:
                     or type(expected_identity_id) is not str
                     or expected_identity_id != loan.identity_id):
                 raise LoanActionError(reason("loan_scope_unproven"))
+            if admitted_lease is not None:
+                from .core.loan_action_scope import LoanActionScopeLease
+                if (type(admitted_lease) is not LoanActionScopeLease
+                        or not admitted_lease.admitted_for(self, loan, expected_identity_id)):
+                    raise LoanActionError(reason("loan_scope_unproven"))
             try:
-                session = self._session_for_source(
-                    loan.source_provider, loan.source_credential,
+                session = (
+                    self._session_for_source(loan.source_provider, loan.source_credential)
+                    if admitted_lease is None else admitted_lease._session
                 )
             except Exception:
                 raise LoanActionError(reason("loan_scope_unproven")) from None
@@ -773,6 +768,7 @@ class LibraryService:
                     session, error,
                 ),
                 observe_phase=observation.at,
+                admitted_lease=admitted_lease,
             )
         except LoanActionError as exc:
             observation.emit('failed', exc.code)
@@ -840,7 +836,9 @@ class LibraryService:
             except Exception:
                 raise LoanActionError(reason('loan_scope_unproven')) from None
             from .core.observed_loan_scope import observed_loan
-            from .core.observed_import_provenance import remember_observed_import
+            from .core.observed_import_provenance import (
+                remember_observed_import, observed_loan_provenance_field,
+            )
             display_scope = observed_loan(loan)
             observation.at('adept_import')
             result = self.import_acsm(source, identity_id=expected_identity_id,
@@ -848,7 +846,7 @@ class LibraryService:
                                       placement_provider_id=loan.source_provider)
             remember_observed_import(
                 self, result, display_scope, provider_id=loan.source_provider,
-                provenance_field=prefix + '_observed_loan',
+                provenance_field=observed_loan_provenance_field(loan.source_provider),
             )
         except LoanActionError as exc:
             observation.emit('failed', exc.code)
@@ -1048,62 +1046,66 @@ class LibraryService:
             raise ProviderConfigurationError("provider_connection_identity_unproven")
         return identity
 
-    def normal_paris_adept_status(self, identity_id: str) -> dict[str, Any]:
-        """Read-only status of the normal Paris-primary/ADEPT configuration.
+    def normal_source_adept_status(
+        self, identity_id: str, *, source_provider_id: str,
+        source_label: str | None = None,
+        primary_connection_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Read-only local ADEPT readiness for one exact source, any provider.
 
-        This is *not* an Adobe fulfillment authorization, and it does not
-        reinterpret historical loan provenance or exceptional borrower grants.
+        The caller selects the source/primary connection explicitly; Core
+        does not infer a lender from the UI identity, a loan or Adobe state.
+        This projection never grants an ACSM operation or borrower rights.
         """
-        from .core.adept_source_binding_status import normal_source_adept_status
-
-        if self.identity_by_id(identity_id) is None:
-            return {
-                "identity_id": str(identity_id),
-                "status": "to_configure",
-                "reason": "unknown_identity",
-                "paris_label": None,
-                "adept_profile_id": None,
-            }
-        saved = self.config.identity(identity_id) or {}
-        selected = saved.get("primary_paris_connection_id")
-        connections = self.storage.provider_connections(identity_id=identity_id)
-        if selected is not None:
-            # A retired/disabled config login can still have a legacy SQLite
-            # provider_connections row. An explicit choice needs BOTH a live
-            # local configuration owner and the durable observed connection.
-            candidates = [row for row in self.config.provider_accounts()
-                          if type(row.get("id")) is str
-                          and row["id"] == selected
-                          and type(row.get("provider")) is str
-                          and row["provider"].casefold() == "paris"
-                          and row.get("identity_id") == identity_id
-                          and row.get("enabled", True) is True]
-            if len(candidates) != 1:
-                connections = []
-        status = normal_source_adept_status(
-            source_provider_id="paris", source_label="Paris",
-            identity_id=identity_id,
-            connections=connections,
-            accounts=self.accounts,
-            profile_id=self.storage.adept_profile_binding_get("identity", identity_id),
-            primary_connection_id=selected,
+        from .core.adept_source_binding_status import (
+            normal_source_adept_status as project_source_adept_status,
         )
-        # UI compatibility: only the field name is historic; the Core
-        # binding decision itself is provider-neutral and read-only.
-        status["paris_label"] = status.pop("source_label")
-        return status
+        from .core.provider_identifier import valid_provider_identifier
 
-    def check_normal_paris_adept_runtime(self, identity_id: str) -> dict[str, object]:
-        """Explicit read-only check, NEVER called during Settings rendering.
+        if not valid_provider_identifier(source_provider_id):
+            return {
+                "identity_id": identity_id if type(identity_id) is str else "",
+                "status": "to_configure", "reason": "invalid_source_descriptor",
+                "source_label": None, "adept_profile_id": None,
+            }
+        if type(identity_id) is not str or self.identity_by_id(identity_id) is None:
+            return {
+                "identity_id": identity_id if type(identity_id) is str else "",
+                "status": "to_configure", "reason": "unknown_identity",
+                "source_label": None, "adept_profile_id": None,
+            }
+        connections = self.storage.provider_connections(identity_id=identity_id)
+        if primary_connection_id is not None:
+            # A durable SQLite connection alone does not establish an
+            # explicitly selected login still configured and enabled for
+            # this identity and provider. Do not choose another login.
+            choices = [
+                row for row in self.config.provider_accounts()
+                if type(row.get("id")) is str
+                and row["id"] == primary_connection_id
+                and type(row.get("provider")) is str
+                and row["provider"].casefold() == source_provider_id
+                and row.get("identity_id") == identity_id
+                and row.get("enabled", True) is True
+            ]
+            if len(choices) != 1:
+                connections = []
+        return project_source_adept_status(
+            source_provider_id=source_provider_id,
+            source_label=(source_provider_id if source_label is None else source_label),
+            identity_id=identity_id, connections=connections,
+            accounts=self.accounts,
+            profile_id=self.storage.adept_profile_binding_get(
+                "identity", identity_id,
+            ),
+            primary_connection_id=primary_connection_id,
+        )
 
-        Resolve only the persisted local binding, then enumerate Kobo-Adept
-        profiles once. Not an Adobe login, ACSM operation or borrowing right.
-        The caller must request this check; this method never changes a
-        profile binding even if an old runtime reports a different alias.
-        """
+    def _inspect_source_adept_runtime(self, identity_id: str, status_reader) -> dict[str, object]:
+        """One explicit runtime inventory, fenced by the same saved scope."""
         from .core.adept_runtime_observation import describe_adept_runtime
 
-        before = self.normal_paris_adept_status(identity_id)
+        before = status_reader()
         if before.get("status") != "ready":
             return describe_adept_runtime(before, None)
         try:
@@ -1113,18 +1115,33 @@ class LibraryService:
             selected = self._adept_profile_row(
                 before["adept_profile_id"], profiles,
             )
-            # Profile lookup uses only the pre-enumerated rows: no second
-            # runtime call, fallback to another name, or selected identity.
+            # The runtime cannot select a different profile or change local
+            # source ownership. No Adobe login or signed ACSM operation.
         except Exception:
             return describe_adept_runtime(
                 before, None, runtime_available=False,
             )
-        if self.normal_paris_adept_status(identity_id) != before:
+        if status_reader() != before:
             return {
                 "identity_id": identity_id, "status": "to_verify",
                 "reason": "local_binding_changed", "acsm_ready": None,
             }
         return describe_adept_runtime(before, selected)
+
+    def check_source_adept_runtime(
+        self, identity_id: str, *, source_provider_id: str,
+        source_label: str | None = None,
+        primary_connection_id: str | None = None,
+    ) -> dict[str, object]:
+        """User-invoked, source-neutral ADEPT profile inspection only."""
+        return self._inspect_source_adept_runtime(
+            identity_id,
+            lambda: self.normal_source_adept_status(
+                identity_id, source_provider_id=source_provider_id,
+                source_label=source_label,
+                primary_connection_id=primary_connection_id,
+            ),
+        )
 
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:
         """Enumerate exactly one requested owner, never all accounts or GTK state.
@@ -1962,6 +1979,26 @@ class LibraryService:
         """
         return search_orchestration.search_progressive(self, query, scope, force, provider_id=provider_id, provider_ids=provider_ids, field=field, content_types=content_types, on_batch=on_batch, control=control, on_event=on_event, include_redundant_merged=include_redundant_merged, executor=_SEARCH_EXECUTOR, logger=_TRACE_LOG)
 
+    def search_progressive_for_scope(self, request_scope, query: str, **options):
+        """Independent catalogue reader; never publishes GTK last_search."""
+        return search_orchestration.search_progressive(
+            self, query, request_scope=request_scope,
+            executor=_SEARCH_EXECUTOR, logger=_TRACE_LOG, **options,
+        )
+
+    def search_progressive_result_for_scope(self, request_scope, query: str, **options):
+        """Return the scoped summary and final ranked rows without global UI state.
+
+        A cancelled request returns no final rows. Progressive callbacks retain
+        their existing contract and must independently filter stale UI delivery.
+        """
+        if request_scope is None:
+            raise ValueError("search_read_scope_required")
+        return search_orchestration.search_progressive(
+            self, query, request_scope=request_scope, return_rows=True,
+            executor=_SEARCH_EXECUTOR, logger=_TRACE_LOG, **options,
+        )
+
     def search_local_library(
         self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -1973,6 +2010,25 @@ class LibraryService:
         )
         return search_orchestration.search_local_library(
             self, query, scope, field=field, identity_id=admitted, logger=_TRACE_LOG,
+        )
+
+    def search_public_notice_c(
+        self, query: str, *, field: str = "all", scope: str = "all",
+        provider_ids: tuple[str, ...] = (), page: int = 0,
+        page_size: int = 50, max_scan: int = 10000,
+        group_by_document: bool = False,
+    ):
+        """Read public descriptive Notice C from SQLite without provider I/O.
+
+        Use from a Core search worker, not synchronously on GTK. This initial
+        bounded source cursor never asserts complete query coverage or
+        supplies the live account/holdings capabilities of search().
+        """
+        from .core.notice_c_public_search import search_public_notice_c
+        return search_public_notice_c(
+            self.storage, query, field=field, scope=scope,
+            provider_ids=provider_ids, page=page, page_size=page_size,
+            max_scan=max_scan, group_by_document=group_by_document,
         )
 
     def search_known_catalog(
@@ -2238,6 +2294,27 @@ class LibraryService:
         return enriched
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
+        """Legacy synchronous navigation facade; new clients use a read scope."""
+        return LibraryService._holdings_read(self, item, search_terms, force)
+
+    def holdings_for_scope(
+        self, request_scope, item: SearchResult, search_terms: str = "", force: bool = False,
+    ) -> ItemDetail:
+        """Read exact-source availability for an already admitted reader.
+
+        A selection change is not a revocation; removal/rebind or a policy
+        change is. This is a descriptive read, not borrowing authority.
+        """
+        if (type(request_scope) is not search_orchestration.SearchReadScope
+                or not request_scope.current(self)):
+            raise Cancelled("holdings_read_scope_revoked")
+        return LibraryService._holdings_read(
+            self, item, search_terms, force, request_scope=request_scope,
+        )
+
+    def _holdings_read(
+        self, item: SearchResult, search_terms: str, force: bool, *, request_scope=None,
+    ) -> ItemDetail:
         # Catalogue-only projections do not attest borrower rights. The
         # source's public sentinel or an explicitly read-only projection
         # precludes a private holdings GET, regardless of provider name.
@@ -2274,13 +2351,29 @@ class LibraryService:
         # Pin one synchronous caller context before a cache read or provider
         # GET. Core receives only this admitted identity; an A→B→A selection
         # invalidates the result through the monotone account epoch.
-        admitted_identity_id = getattr(
-            getattr(self, "current_identity", None), "identity_id", None,
-        )
-        admitted_account_epoch = getattr(self, "_account_context_epoch", None)
-        admitted_source_epoch = getattr(self, "_source_context_epoch", None)
+        if request_scope is not None:
+            admitted_identity_id = request_scope.identity_id
+        else:
+            admitted_identity_id = getattr(
+                getattr(self, "current_identity", None), "identity_id", None,
+            )
+            admitted_account_epoch = getattr(self, "_account_context_epoch", None)
+            admitted_source_epoch = getattr(self, "_source_context_epoch", None)
 
         def private_source_current() -> bool:
+            if request_scope is not None:
+                return (
+                    request_scope.current(self)
+                    and self._provider_enabled_for_identity(
+                        item.source_provider, admitted_identity_id,
+                    ) is True
+                    and (
+                        (item.source_credential == "__public__" and public_catalogue_source(item))
+                        or private_source_owner_matches(
+                            self, item, identity_id=admitted_identity_id,
+                        )
+                    )
+                )
             return (
                 getattr(getattr(self, "current_identity", None), "identity_id", None)
                 == admitted_identity_id
@@ -2292,7 +2385,7 @@ class LibraryService:
                     self, item, identity_id=admitted_identity_id,
                 )
             )
-        if not public_catalogue_source(item) and not private_source_current():
+        if (request_scope is not None or not public_catalogue_source(item)) and not private_source_current():
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
@@ -2305,18 +2398,23 @@ class LibraryService:
             )
         # Identical record IDs can belong to different collections. Scope
         # cached availability and offers to the exact source and profile.
-        key = json.dumps((
+        cache_scope = (
             "v2", admitted_identity_id,
             item.source_provider, item.source_credential, item.scenario,
             item.docbase, item.source_collection or "", item.record_id,
-        ), separators=(",", ":"))
+        )
+        if request_scope is not None:
+            # Never inherit old navigation-cache entries or conflate exact
+            # borrower/account coordinates from two editions of a response.
+            cache_scope = ("v3", *cache_scope[1:], item.source_account_id)
+        key = json.dumps(cache_scope, separators=(",", ":"))
         ttl = int(self.config.get("cache.holdings_seconds", 300))
         if not force:
             cached = self.storage.cache_get("holdings", key)
             if isinstance(cached, dict):
                 # A cached rights-bearing response must not outlive a source
                 # owner transfer or an active identity change mid-cache-read.
-                if not public_catalogue_source(item) and not private_source_current():
+                if (request_scope is not None or not public_catalogue_source(item)) and not private_source_current():
                     return ItemDetail(
                         record_id=item.record_id, docbase=item.docbase,
                         title=item.title, author=item.author,
@@ -2327,12 +2425,24 @@ class LibraryService:
                         holdings=[], source_provider=item.source_provider,
                         source_credential=item.source_credential,
                     )
+                cached = dict(cached)
                 cached["holdings"] = [Holding(**x) for x in cached.get("holdings", [])]
                 return ItemDetail(**cached)
-        detail = self._session_for_source(item.source_provider, item.source_credential).holdings(item, search_terms)
+        if request_scope is not None:
+            if not private_source_current():
+                raise Cancelled("holdings_read_scope_revoked")
+            session = provider_sessions._session_for_source(
+                self, item.source_provider, item.source_credential,
+                identity_id=admitted_identity_id,
+            )
+            if not private_source_current():
+                raise Cancelled("holdings_read_scope_revoked")
+        else:
+            session = self._session_for_source(item.source_provider, item.source_credential)
+        detail = session.holdings(item, search_terms)
         # Provider I/O can complete after A→B→A or a SQLite rebind.
         # A revoked read must not publish or cache private borrower details.
-        if not public_catalogue_source(item) and not private_source_current():
+        if (request_scope is not None or not public_catalogue_source(item)) and not private_source_current():
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
@@ -2346,7 +2456,25 @@ class LibraryService:
         self.storage.cache_put("holdings", key, asdict(detail), ttl)
         return detail
 
+    def capture_admitted_loan_renewal(self, loan: Loan):
+        from .core.provider_loan_renewal import capture_admitted_loan_renewal
+        return capture_admitted_loan_renewal(self, loan)
+
     def renew(self, loan: Loan, *, confirmed: bool = False) -> dict[str, Any]:
+        """Historical synchronous facade; no inferred deferred admission."""
+        return self._renew_with_admission(loan, confirmed=confirmed)
+
+    def renew_admitted_loan(self, loan: Loan, *, confirmed: bool = False, admission) -> dict[str, Any]:
+        from .core.provider_loan_renewal import RenewalAdmission
+        if type(admission) is not RenewalAdmission:
+            return {
+                "status": "blocked", "code": "loan_scope_unverified",
+                "provider_request_accepted": False, "provider_verified": False,
+                "retry": "explicit_only",
+            }
+        return self._renew_with_admission(loan, confirmed=confirmed, admission=admission)
+
+    def _renew_with_admission(self, loan: Loan, *, confirmed: bool = False, admission=None) -> dict[str, Any]:
         """Manually renew a physical loan when its source declares support.
 
         A GUI button, a cached CanRenew flag or a truthy confirmation is not
@@ -2374,7 +2502,7 @@ class LibraryService:
         from .core.provider_loan_renewal import renew as scoped_renew
         try:
             with InterProcessLock(self._return_operation_lock_file(loan)):
-                return scoped_renew(self, loan)
+                return scoped_renew(self, loan, admission=admission)
         except LockBusyError:
             return {
                 "status": "blocked", "code": "loan_action_busy",
@@ -2383,10 +2511,11 @@ class LibraryService:
             }
 
     def _return_loan_identity(self, loan: Loan) -> tuple[Account, Any, str]:
-        """Require *exact* Paris borrower provenance before mutating anything."""
+        """Require exact source-bound borrower provenance before mutating anything."""
         return loan_accounts.return_loan_identity(
             loan, resolve_account=self._account_for_loan, session_key=self._session_key,
             lookup_session=lambda key: self._sessions.get(key), attention_error=AttentionRequired,
+            primary_alias_for_provider=lambda provider: loan_accounts.source_primary_alias(self, provider),
         )
 
     def loan_return_state(self, loan: Loan) -> dict[str, Any] | None:
@@ -2413,8 +2542,10 @@ class LibraryService:
         return loan_return_verification.verify_return_digital(self, loan, _TRACE_LOG=_TRACE_LOG)
 
     def verify_paris_return_inventory(self, loan: Loan) -> dict[str, str]:
-        """Fresh exact-account read after ADEPT; never send ReturnDigitalLoan."""
-        return loan_return_verification.verify_paris_return_inventory(self, loan, AttentionRequired=AttentionRequired, _TRACE_LOG=_TRACE_LOG)
+        """Historical ABI: source-neutral typed inventory read, never return POST."""
+        return loan_return_verification.verify_loan_return_inventory(
+            self, loan, AttentionRequired=AttentionRequired, _TRACE_LOG=_TRACE_LOG,
+        )
 
     @staticmethod
     def _return_operation_lock_file(loan: Loan) -> Path:
@@ -2446,9 +2577,10 @@ class LibraryService:
         )
 
     def verify_loan_return(self, loan: Loan) -> dict[str, Any]:
-        """Project one historical ADEPT return receipt; never retry or return.
+        """Read exact source-scoped historical ADEPT receipts for any provider.
 
-        An old checkpoint cannot be selected through inferred borrower
+        This retained response uses the original adobe_first_paris namespace
+        for ABI compatibility, not as a supplier-specific permission. An old checkpoint cannot be selected through inferred borrower
         coordinates, coercible plugin objects or a source changed by a
         preflight/storage callback. This is a read-only compatibility path.
         """
@@ -2463,7 +2595,11 @@ class LibraryService:
         if scope is None or type(loan.medium) is not str:
             return refused
         medium = loan.medium
-        if scope.provider_id.casefold() != "paris" or medium != "digital":
+        # The checkpoint key already includes provider, credential, exact
+        # borrower and loan ID. Voluntary return has been removed for EVERY
+        # provider; this read-only legacy receipt lookup cannot enable it.
+        # Do not restrict a historical ADEPT diagnostic by a supplier name.
+        if medium != "digital":
             return {"status": "not_requested", "scope": "adobe_first_paris"}
         if not scope.borrower_proven:
             return refused
@@ -3122,14 +3258,22 @@ class LibraryService:
         self, source: Path, *, identity_id: str | None = None, provider_id: str = "manual", title: str | None = None,
         placement_provider_id: str | None = None,
     ) -> dict[str, Any]:
-        identity = self.identity_by_id(identity_id) if identity_id else self.current_identity
-        iid = identity.identity_id if identity else identity_id
+        # This is a mutation boundary, not a GTK convenience selector.
+        # Reject absent/malformed coordinates before identity lookup, locks,
+        # ledger writes or filesystem/DRM work.
+        if (type(identity_id) is not str or not identity_id
+                or len(identity_id) > 1024
+                or any(ch in identity_id for ch in "\x00\r\n")):
+            raise ProviderConfigurationError("Identité explicite requise pour l'import ACSM")
+        identity = self.identity_by_id(identity_id)
+        resolved = getattr(identity, "identity_id", None)
+        if type(resolved) is not str or resolved != identity_id:
+            raise ProviderConfigurationError("Aucune Identity active pour l'import ACSM")
+        iid = identity_id
         try:
             # One dedicated import lock also covers two paths containing the
             # same ACSM, and avoids re-entering the global acquisition lock
             # when a provider delegates fulfillment to this public broker.
-            if identity is None:
-                raise ProviderConfigurationError("Aucune Identity active pour l'import ACSM")
             try:
                 with InterProcessLock(acquisition_lock_file().with_name("manual-acsm.lock")):
                     result = self._import_acsm_impl(
@@ -3358,6 +3502,40 @@ class LibraryService:
         )
 
     def can_direct_download(self, item: SearchResult) -> bool:
+        """Synchronous navigation compatibility facade."""
+        return LibraryService._can_direct_download_read(self, item)
+
+    def can_direct_download_for_scope(self, request_scope, item: SearchResult) -> bool:
+        """Passive offer hint for an admitted reader, not acquisition consent."""
+        if type(request_scope) is not search_orchestration.SearchReadScope:
+            return False
+        from .core.private_source_owner_scope import private_source_owner_matches
+
+        def current():
+            try:
+                return (
+                    request_scope.current(self)
+                    and type(item) is SearchResult
+                    and not (type(item.metadata) is dict
+                             and item.metadata.get("catalogue_access") == "shared_read_only")
+                    and (item.source_credential == "__public__"
+                         or private_source_owner_matches(
+                             self, item, identity_id=request_scope.identity_id,
+                         ))
+                    and self._provider_enabled_for_identity(
+                        item.source_provider, request_scope.identity_id,
+                    ) is True
+                )
+            except Exception:
+                return False
+
+        return (current() and LibraryService._can_direct_download_read(
+            self, item, request_scope=request_scope,
+        ) and current())
+
+    def _can_direct_download_read(
+        self, item: SearchResult, *, request_scope=None,
+    ) -> bool:
         """Can this *exact* remote offer show a consented direct-download action?
 
         An unauthenticated catalogue owned=True flag is not a purchase.
@@ -3372,8 +3550,9 @@ class LibraryService:
         from .core.private_source_owner_scope import (
             private_source_owner_matches, public_catalogue_source,
         )
-        admitted_identity_id = getattr(
-            getattr(self, "current_identity", None), "identity_id", None,
+        admitted_identity_id = (
+            request_scope.identity_id if request_scope is not None else
+            getattr(getattr(self, "current_identity", None), "identity_id", None)
         )
         if (item.source_credential != "__public__"
                 and not public_catalogue_source(item)
@@ -3388,8 +3567,12 @@ class LibraryService:
             )
             if private_hint is not None:
                 return private_hint
-            session = self._session_for_source(
-                item.source_provider, item.source_credential,
+            session = (
+                provider_sessions._session_for_source(
+                    self, item.source_provider, item.source_credential,
+                    identity_id=admitted_identity_id,
+                ) if request_scope is not None else
+                self._session_for_source(item.source_provider, item.source_credential)
             )
             from inspect import getattr_static
             if getattr_static(session, "legacy_direct_get_retired", None) is True:
@@ -3415,6 +3598,11 @@ class LibraryService:
             return False
 
     def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None) -> Acquisition:
+        return LibraryService._acquire_direct_item_readmitted(self, item, _admission=_admission)
+
+    def _acquire_direct_item_readmitted(
+        self, item: SearchResult, *, _admission=None, _legacy_admission=None,
+    ) -> Acquisition:
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
             raise ProviderConfigurationError(
                 "Résultat connu hors ligne : acquisition indisponible"
@@ -3458,20 +3646,33 @@ class LibraryService:
             # final SHA and placement through obtain_search_item().
             raise ProviderConfigurationError("canonical_explicit_action_required")
 
-        session = self._session_for_source(
-            item.source_provider, item.source_credential,
-        )
+        def check_legacy_admission():
+            if _legacy_admission is not None and not _legacy_admission.current(self, item):
+                raise ProviderConfigurationError("legacy_direct_source_revoked")
+
+        check_legacy_admission()
+        if _legacy_admission is None:
+            session = self._session_for_source(item.source_provider, item.source_credential)
+            identity = self.identity_for_connection(item.source_provider, item.source_credential)
+        else:
+            session = _legacy_admission.session
+            identity = _legacy_admission.scope.identity
         content_type = self.acquisition.content_type_for(item)
 
-        identity = self.identity_for_connection(item.source_provider, item.source_credential)
         target_dir = (
             self.library_identity_provider_dir(identity.identity_id, item.source_provider)
             if content_type == "ebook" else self.acquisition.target_dir(item.source_provider, content_type)
         )
         if self.acquisition.override_command(item.source_provider):
-            return self.acquisition.run_override(item, target_dir)
+            check_legacy_admission()
+            result = self.acquisition.run_override(item, target_dir)
+            check_legacy_admission()
+            return result
+        check_legacy_admission()
         path, url = session.download_direct(item, target_dir)
+        check_legacy_admission()
         self.acquisition.run_post_download(item, path, url, target_dir)
+        check_legacy_admission()
         try:
             size = path.stat().st_size
         except OSError:
@@ -3539,6 +3740,128 @@ class LibraryService:
                                 provider_id=item.source_provider, facts=safe_facts)
             raise
 
+    def capture_admitted_private_search_offer(self, item: SearchResult):
+        """Snapshot an explicit private Search click before TaskRunner enqueue.
+
+        Returns None only for an ordinary public source without a private
+        session declaration. Missing/broken private authority is a refusal,
+        never permission to fall through to a public/legacy downloader.
+        """
+        from inspect import getattr_static
+        from .core.selected_search_admission import (
+            capture_admitted_selected_search_offer,
+        )
+        from .core.source_context import source_context_epoch
+        if (type(item) is not SearchResult
+                or type(item.source_provider) is not str
+                or type(item.source_credential) is not str):
+            return None  # Legacy non-native UI callers; never an admission.
+        session = self._sessions.get(
+            self._session_key(item.source_provider, item.source_credential)
+        )
+        branch = getattr_static(session, "selected_purchase_branch", None)
+        shape = getattr_static(session, "private_inventory_row_contract", None)
+        if branch is None and shape is None:
+            if item.source_collection == "library" and item.owned is True:
+                raise ProviderConfigurationError(
+                    "selected_search_source_unavailable"
+                )
+            return None
+        selected = self.current_identity
+        account_epoch = self._account_context_epoch
+        source_epoch = source_context_epoch(self)
+        try:
+            target = capture_admitted_selected_search_offer(
+                self, item, identity_id=getattr(selected, "identity_id", None),
+                account_epoch=account_epoch, source_epoch=source_epoch,
+            )
+            if (self.current_identity is not selected
+                    or self._account_context_epoch != account_epoch
+                    or source_context_epoch(self) != source_epoch):
+                raise ValueError("selected_search_context_changed")
+            return target
+        except Exception:
+            # No identity/account/credential, source path or provider detail
+            # may leave the Core boundary on a failed admission.
+            raise ProviderConfigurationError(
+                "selected_search_source_unavailable"
+            ) from None
+
+    def capture_confirmed_private_search_offer(
+        self, item: SearchResult, *, identity_id: str, account_id: str, confirmed: bool,
+    ):
+        """Admit one confirmed exact private offer for a non-GTK Core client.
+
+        Admission is passive. Only obtain_admitted_private_search_offer may
+        execute the returned one-shot mandate through the canonical path.
+        """
+        if confirmed is not True:
+            raise ProviderConfigurationError("selected_search_confirmation_required")
+        from .core.selected_search_admission import capture_confirmed_selected_offer
+        try:
+            scope = search_orchestration.capture_search_read_scope(self, identity_id)
+            return capture_confirmed_selected_offer(
+                self, item, reader_scope=scope, account_id=account_id, confirmed=True,
+            )
+        except Exception:
+            raise ProviderConfigurationError("selected_search_source_unavailable") from None
+
+    def obtain_admitted_private_search_offer(self, target):
+        """Execute the previously admitted exact source, never GTK navigation."""
+        from .core.selected_source_offer import (
+            SourceOfferTarget, obtain_source_offer,
+        )
+        if (type(target) is not SourceOfferTarget
+                or type(target.source_epoch) is not int
+                or target.source_epoch < 0
+                or target.selection_epoch is not None):
+            raise ProviderConfigurationError(
+                "selected_search_source_unavailable"
+            )
+        return obtain_source_offer(self, target)
+
+    def capture_confirmed_legacy_search_offer(
+        self, item: SearchResult, *, identity_id: str, account_id: str, confirmed: bool,
+    ):
+        """One explicit legacy action; no provider GET at admission."""
+        from .core.legacy_direct_admission import capture_legacy_direct
+        try:
+            scope = search_orchestration.capture_search_read_scope(self, identity_id)
+            return capture_legacy_direct(
+                self, item, scope=scope, account_id=account_id, confirmed=confirmed,
+            )
+        except Exception:
+            raise ProviderConfigurationError("legacy_direct_admission_unavailable") from None
+
+    def obtain_admitted_legacy_search_offer(self, target):
+        """Execute the exact admitted legacy connection, never GTK selection."""
+        from .core.legacy_direct_admission import LegacyDirectAdmission
+        from .core.materialization import MaterializationCoordinator
+        if type(target) is not LegacyDirectAdmission:
+            raise ProviderConfigurationError("legacy_direct_admission_unavailable")
+        item = target.claim(self)
+
+        def acquire(selected):
+            try:
+                result = LibraryService._acquire_direct_item_readmitted(
+                    self, selected, _legacy_admission=target,
+                )
+            except Exception as exc:
+                self._record_action(target.identity_id, "acquisition", "failed",
+                                    provider_id=target.coordinates[1],
+                                    facts={"error": type(exc).__name__})
+                raise
+            self._record_action(target.identity_id, "acquisition", "success",
+                                provider_id=target.coordinates[1], facts={"record_id": item.record_id})
+            return result
+
+        return MaterializationCoordinator(
+            acquire=acquire, index_path=self.catalog_index_path,
+            resolve_identity=self.identity_for_connection,
+            source_epoch=lambda: source_context_epoch(self),
+            admission_current=lambda: target.current(self, item),
+        ).obtain(item)
+
     def obtain_search_item(self, item: SearchResult):
         from .core.materialization import MaterializationCoordinator
 
@@ -3571,6 +3894,7 @@ class LibraryService:
             acquire=self.acquire_direct_item,
             index_path=self.catalog_index_path,
             resolve_identity=self.identity_for_connection,
+            source_epoch=lambda: source_context_epoch(self),
         ).obtain(item)
 
     def owned_library_download_target(self, entry):
@@ -3587,6 +3911,41 @@ class LibraryService:
                 or self._account_context_epoch != epoch):
             return None
         return target
+
+    def capture_admitted_owned_library_offer(self, target):
+        """Admit the exact Library click before enqueueing a delivery."""
+        from .core.owned_library_download import OwnedDownloadRejected
+        from .core.selected_source_offer import admit_library_source_offer
+        from .core.source_context import source_context_epoch
+
+        try:
+            identity = self.current_identity
+            account_epoch = self._account_context_epoch
+            source_epoch = source_context_epoch(self)
+            admitted = admit_library_source_offer(
+                self, target, identity_id=getattr(identity, "identity_id", None),
+                account_epoch=account_epoch, source_epoch=source_epoch,
+            )
+            if (self.current_identity is not identity
+                    or self._account_context_epoch != account_epoch
+                    or source_context_epoch(self) != source_epoch):
+                raise ValueError("selected_library_source_revoked")
+            return admitted
+        except Exception:
+            raise OwnedDownloadRejected("owned_download_unavailable") from None
+
+    def obtain_admitted_owned_library_offer(self, target):
+        """Execute a previously admitted exact Library offer, without navigation."""
+        from .core.owned_library_download import (
+            OwnedDownloadRejected, obtain_owned_library_item,
+        )
+        from .core.selected_source_offer import SourceOfferTarget
+        if (type(target) is not SourceOfferTarget
+                or type(target.source_epoch) is not int
+                or target.source_epoch < 0
+                or target.selection_epoch is not None):
+            raise OwnedDownloadRejected("owned_download_unavailable")
+        return obtain_owned_library_item(self, target)
 
     def obtain_owned_library_item(self, target):
         from .core.owned_library_download import (
@@ -3751,11 +4110,11 @@ class LibraryService:
         self.diagnostics.add("ADEPT", "loan binding", "ok" if binding_complete else "warning", detail=detail, level="normal")
 
     def adept_return_status_for_loan(self, loan: Loan) -> dict[str, Any]:
-        """Read-only ADEPT return status from the exact Paris borrower provenance.
+        """Read-only ADEPT return status from exact source borrower provenance.
 
-        Never infer the Adobe owner from the selected UI identity or the Paris
-        connection owner for a linked account. Keep return actions unavailable
-        when the source, loan transaction or origin profile is ambiguous.
+        Never infer the Adobe owner from GTK selection or a different
+        provider's connection. Return actions remain permanently unavailable
+        when the borrower, transaction or origin profile is ambiguous.
         """
         from .core.adept_return_origin import inventory_attests_return_origin
         from .core.adept_return_source_scope import HistoricalLoanSource
@@ -3764,24 +4123,18 @@ class LibraryService:
         scope = HistoricalLoanSource.capture(loan)
         if scope is None:
             return denied
-        borrower_code = None
-        is_paris = scope.provider_id.casefold() == "paris"
-        if is_paris:
-            connection_identity_id = self.storage.identity_for_connection(
-                scope.provider_id, scope.credential_id,
-            )
-            if type(connection_identity_id) is not str or not connection_identity_id:
-                return denied
-            identity = self.identity_by_id(connection_identity_id)
-            if identity is None:
-                return denied
-        else:
-            try:
-                identity = self.identity_for_connection(
-                    scope.provider_id, scope.credential_id,
-                )
-            except ProviderConfigurationError:
-                return denied
+        # Source ownership is exact SQLite provenance for every supplier.
+        # The facade or selected GTK identity is not an alternate owner,
+        # even if a legacy identity_for_connection override returns one.
+        connection_identity_id = self.storage.identity_for_connection(
+            scope.provider_id, scope.credential_id,
+        )
+        if type(connection_identity_id) is not str or not connection_identity_id:
+            return denied
+        identity = self.identity_by_id(connection_identity_id)
+        if (identity is None or type(getattr(identity, "identity_id", None)) is not str
+                or identity.identity_id != connection_identity_id):
+            return denied
         # Source lookup may call a plugin or storage shim. Do not let it
         # retarget the loan, and never read ledger rows with unknown borrower.
         if (not scope.current(loan) or not scope.borrower_proven
@@ -3789,13 +4142,24 @@ class LibraryService:
                 or not identity.identity_id):
             return denied
         bound_identity_id = identity.identity_id
-        borrower_identity_id = bound_identity_id
-        if is_paris:
+        # The historical facade name is retained, but the actual resolver
+        # enforces matching source-scoped v16 borrower proof for all libraries.
+        # Historical v15 Paris rows cannot authorize another provider.
+        try:
             borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
                 loan, connection_identity_id=bound_identity_id,
             )
-            if not scope.current(loan):
-                return denied
+        except Exception:
+            borrower_identity_id, borrower_code = None, "adept_borrower_ambiguous"
+        # No error code is not positive borrower proof. Preserve the same
+        # historical-origin exception as before: only independently attested
+        # inventory may be displayed after a missing/revoked borrower grant.
+        if borrower_code is None and (
+            type(borrower_identity_id) is not str or not borrower_identity_id
+        ):
+            borrower_code = "adept_borrower_ambiguous"
+        if not scope.current(loan):
+            return denied
 
         all_rights = self.storage.entitlements(provider_id=scope.provider_id)
         if not scope.current(loan):
@@ -3803,7 +4167,11 @@ class LibraryService:
         all_acquisitions = self.storage.acquisitions(provider_id=scope.provider_id)
         if not scope.current(loan):
             return denied
-        if is_paris and self._cross_identity_loan_conflict(
+        # Historical ADEPT origin is descriptive, but a foreign owner of
+        # the same provider loan remains a veto for *every* source. Neither
+        # an inventory receipt nor a previously indexed file authorizes an
+        # ADEPT operation; no return mutation is offered by this status.
+        if self._cross_identity_loan_conflict(
             all_acquisitions, provider_loan_id=scope.loan_id,
             identity_id=bound_identity_id,
             entitlements=[
@@ -3824,7 +4192,7 @@ class LibraryService:
             if (row.get("status") != "complete"
                     or row.get("executor") != "kobo-adept"
                     # #989: a manual/imported ADEPT artifact is not proof of
-                    # this automatic Paris loan's fulfillment transaction.
+                    # this exact source loan's fulfillment transaction.
                     or row.get("strategy") != "loan_auto"
                     or not scope.matches_acquisition(
                         row, identity_id=bound_identity_id,
@@ -3877,8 +4245,8 @@ class LibraryService:
             }
         # Grants/current identity profile govern NEW fulfillment. Historical
         # inventory attestation preserves a completed license's own origin.
-        # Exact Paris provenance and cross-identity/duplicate guards above stay.
-        if is_paris and not origin_attested and binding.get("adept_profile_id") and (
+        # Exact provider provenance and cross-identity/duplicate vetoes stay.
+        if not origin_attested and binding.get("adept_profile_id") and (
             self.storage.adept_profile_binding_get(
                 "identity", borrower_identity_id
             ) != binding["adept_profile_id"]
@@ -4035,6 +4403,7 @@ class LibraryService:
         has retargeted the loan, credential, borrower or edition.
         """
         from .core.explicit_reacquire_source import ExplicitReacquireSource
+        from .core.loan_source_epoch import SourceEpochLease, pin_explicit_source_epoch
 
         # Pin BEFORE eligibility: even a read-only eligibility callback may
         # mutate the caller-owned Loan. Preserve all historical eligibility
@@ -4082,12 +4451,27 @@ class LibraryService:
                 )
                 if not source_intact():
                     return source_refusal()
+                # Capture exactly once after the persisted connection-owner
+                # lookup, before identity and borrower callbacks. Reacquisition
+                # must not refresh an older permission after A->B->A.
+                source_lease = (
+                    SourceEpochLease.capture(
+                        self.storage, loan, bound_identity_id,
+                    )
+                    if type(bound_identity_id) is str and bound_identity_id
+                    else None
+                )
+                if (type(bound_identity_id) is str and bound_identity_id
+                        and source_lease is None):
+                    return source_refusal()
                 identity = (
                     self.identity_by_id(bound_identity_id)
                     if type(bound_identity_id) is str and bound_identity_id
                     else None
                 )
-                if not source_intact():
+                if (not source_intact()
+                        or (source_lease is not None
+                            and not source_lease.current(self.storage, loan))):
                     return source_refusal()
                 if (identity is None
                         or type(getattr(identity, "identity_id", None)) is not str
@@ -4098,48 +4482,94 @@ class LibraryService:
                     }
 
                 def admission_intact() -> bool:
-                    return (
-                        source_intact()
-                        and type(getattr(identity, "identity_id", None)) is str
-                        and identity.identity_id == bound_identity_id
-                    )
+                    # A pinned Loan and the owner found at entry are not
+                    # evidence that the SQLite connection remains enabled
+                    # and attached to the same identity after callbacks.
+                    # This is a source-neutral veto, not an ADEPT grant.
+                    if (not source_intact()
+                            or type(getattr(identity, "identity_id", None)) is not str
+                            or identity.identity_id != bound_identity_id
+                            or type(source_lease) is not SourceEpochLease):
+                        return False
+                    try:
+                        return (
+                            self.storage.provider_connection_owner_current(
+                                source.provider_id, source.credential_id,
+                                bound_identity_id,
+                            ) is True
+                            and source_lease.current(self.storage, loan)
+                        )
+                    except Exception:
+                        return False
 
-                if source.provider_id.casefold() == "paris":
-                    _, borrower_code = self._paris_adept_identity_for_loan(
-                        loan, connection_identity_id=bound_identity_id,
+                # Refuse a disabled/rebound source BEFORE even asking the
+                # historical ADEPT borrower resolver for a grant. Its callback
+                # must never be used to revive a revoked connection.
+                if not admission_intact():
+                    return source_refusal()
+
+                # The legacy facade name is ABI compatibility only: its
+                # v16 borrower-grant resolver is scoped to *any* lender.
+                # A linked borrower cannot bypass the pre-staging veto merely
+                # because the source is not Paris. No extra GET/POST occurs.
+                try:
+                    borrower_identity, borrower_code = (
+                        self._paris_adept_identity_for_loan(
+                            loan, connection_identity_id=bound_identity_id,
+                        )
                     )
-                    if not admission_intact():
-                        return source_refusal()
-                    # Literal None is the only approved borrower grant.
-                    if borrower_code is not None:
-                        return {
-                            "status": "attention_required", "loan_id": source.loan_id,
-                            "code": adept_borrower.public_borrower_refusal_code(
+                except Exception:
+                    # A failing source-scoped resolver is not a grant. Keep
+                    # the original explicit refusal before rights or GET.
+                    borrower_identity, borrower_code = (
+                        None, "adept_borrower_ambiguous",
+                    )
+                if not admission_intact():
+                    return source_refusal()
+                # A None refusal code alone is not positive borrower proof.
+                # A source-scoped explicit grant may name a borrower other
+                # than the connection owner; require native evidence only.
+                if (borrower_code is not None
+                        or type(borrower_identity) is not str
+                        or not borrower_identity):
+                    return {
+                        "status": "attention_required", "loan_id": source.loan_id,
+                        "code": (
+                            adept_borrower.public_borrower_refusal_code(
                                 borrower_code,
-                            ), "retry": "explicit_only",
-                        }
-                    conflict_rows = self.storage.acquisitions(
-                        provider_id=source.provider_id,
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    active_rights = self.storage.entitlements(
-                        provider_id=source.provider_id, state="active",
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    conflict = self._cross_identity_loan_conflict(
-                        conflict_rows, provider_loan_id=source.loan_id,
-                        identity_id=bound_identity_id, entitlements=active_rights,
-                    )
-                    if not admission_intact():
-                        return source_refusal()
-                    if conflict:
-                        return {
-                            "status": "attention_required", "loan_id": source.loan_id,
-                            "code": "adept_loan_identity_conflict",
-                            "retry": "explicit_only",
-                        }
+                            ) if borrower_code is not None
+                            else "adept_borrower_ambiguous"
+                        ), "retry": "explicit_only",
+                    }
+                # A persisted acquisition or active entitlement for this
+                # upstream loan can veto a different identity for *any*
+                # source. This is not positive permission to GET or fulfill
+                # ADEPT; the guarded auto-acquisition independently checks
+                # the exact borrower/grant, even after provider staging.
+                # Keep the source-neutral borrower refusal ahead of this
+                # inventory to preserve public/attention precedence.
+                conflict_rows = self.storage.acquisitions(
+                    provider_id=source.provider_id,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                active_rights = self.storage.entitlements(
+                    provider_id=source.provider_id, state="active",
+                )
+                if not admission_intact():
+                    return source_refusal()
+                conflict = self._cross_identity_loan_conflict(
+                    conflict_rows, provider_loan_id=source.loan_id,
+                    identity_id=bound_identity_id, entitlements=active_rights,
+                )
+                if not admission_intact():
+                    return source_refusal()
+                if conflict:
+                    return {
+                        "status": "attention_required", "loan_id": source.loan_id,
+                        "code": "adept_loan_identity_conflict",
+                        "retry": "explicit_only",
+                    }
 
                 previous_rows = self.storage.acquisitions(
                     provider_id=source.provider_id,
@@ -4159,9 +4589,15 @@ class LibraryService:
                 )
                 if not admission_intact():
                     return source_refusal()
-                result = self._acquire_active_loan_automatically(
-                    loan, force_refresh=True,
-                )
+                # Propagate the SAME epoch into nested automatic admission,
+                # ACSM staging, ADEPT profile and one-shot fulfillment.
+                # A fresh nested epoch may be stricter, never a replacement.
+                # Task/thread-scoped handoff with unconditional restoration.
+                # Both public LibraryService acquisition signatures stay fixed.
+                with pin_explicit_source_epoch(source_lease):
+                    result = self._acquire_active_loan_automatically(
+                        loan, force_refresh=True,
+                    )
                 if not admission_intact():
                     return source_refusal()
                 if result.get("status") != "complete":
@@ -4201,42 +4637,71 @@ class LibraryService:
         accounts: Any, *, provider_id: str, account_id: str | None,
         identity_id: str, credential_id: str | None = None,
     ) -> bool:
-        """Fail closed unless the borrower is bound to the requested identity.
+        """Veto unproven ADEPT borrower owners using exact native coordinates.
 
-        Paris uses the literal "primary" for its main-account provenance,
-        while the provider account can have unique_id="". These values
-        identify a borrower only inside the exact provider connection.
+        The primary sentinel is a historical source-account convention, not
+        a supplier-ID dispatch. Untrusted Account fields may never invoke
+        __str__, __bool__, custom equality or a property to create ownership.
+        The linked-borrower conflict still covers *all* credentials of the
+        same provider, so another connection cannot impersonate its identity.
         """
-        if account_id is None:
-            return True
-        borrower = str(account_id).strip()
-        provider = str(provider_id).lower()
-        matching = [
-            account for account in accounts
-            if str(account.provider_id).lower() == provider
-        ]
-        if borrower in {"", "primary"}:
-            if not credential_id:
-                return True
-            matching = [
-                account for account in matching
-                if str(account.credential_id) == str(credential_id)
-                and bool(account.is_primary)
-                and (borrower == "primary" or str(account.unique_id or "") == "")
-            ]
-            return len(matching) != 1 or str(matching[0].identity_id) != identity_id
+        from inspect import getattr_static
 
-        matching = [
-            account for account in matching
-            if str(account.unique_id or "").strip() == borrower
+        if (type(provider_id) is not str or not provider_id
+                or type(account_id) is not str
+                or type(identity_id) is not str or not identity_id
+                or (credential_id is not None and type(credential_id) is not str)):
+            return True
+        provider = provider_id.casefold()
+        borrower = account_id.strip()
+
+        # A malformed provider value cannot be claimed as the requested
+        # source. Once a row claims this provider, its remaining account
+        # fields must be native and complete; otherwise the full predicate
+        # refuses, not first-good-row-wins.
+        source_rows = []
+        try:
+            for account in accounts:
+                row_provider = getattr_static(account, "provider_id", None)
+                if type(row_provider) is not str:
+                    continue
+                if row_provider.casefold() != provider:
+                    continue
+                row_credential = getattr_static(account, "credential_id", None)
+                row_borrower = getattr_static(account, "unique_id", None)
+                row_owner = getattr_static(account, "identity_id", None)
+                row_primary = getattr_static(account, "is_primary", None)
+                if (type(row_credential) is not str or not row_credential
+                        or type(row_borrower) is not str
+                        or type(row_owner) is not str or not row_owner
+                        or type(row_primary) is not bool):
+                    return True
+                source_rows.append((
+                    row_credential, row_borrower, row_owner, row_primary,
+                ))
+        except Exception:
+            # A failed lazy account inventory cannot attest a unique owner.
+            return True
+
+        if borrower in {"", "primary"}:
+            if type(credential_id) is not str or not credential_id:
+                return True
+            matches = [
+                row for row in source_rows
+                if row[0] == credential_id and row[3] is True
+                and (borrower == "primary" or row[1] == "")
+            ]
+            return len(matches) != 1 or matches[0][2] != identity_id
+
+        matches = [
+            row for row in source_rows if row[1].strip() == borrower
         ]
         if credential_id is not None and not any(
-            str(account.credential_id) == str(credential_id)
-            and str(account.identity_id) == identity_id
-            for account in matching
+            row[0] == credential_id and row[2] == identity_id
+            for row in matches
         ):
             return True
-        return {str(account.identity_id) for account in matching} != {identity_id}
+        return {row[2] for row in matches} != {identity_id}
 
     def _write_adept_borrower_grant(
         self, *, provider_id: str, credential_id: str, account_id: str,
@@ -4319,68 +4784,15 @@ class LibraryService:
         self, *, credential_id: str, account_id: str, borrower_identity_id: str,
         confirmed: bool = False,
     ) -> dict[str, Any]:
-        """Explicitly pin a Paris account's exceptional fulfillment identity.
+        """Retired public legacy writer; archived Paris grants remain readable.
 
-        This operation must be initiated by an authorized user, never by sync,
-        and never by guessing from the connected/current UI identity.
+        Never create a new v15 grant, even on an unmigrated connection. The
+        caller must choose the explicit, source-scoped v16 grant API, or
+        explicitly reconfirm and retire an existing historical row. This
+        ABI-preserving failure cannot infer consent from an old configuration.
         """
-        # Grant creation must establish the same native-coordinate evidence
-        # required by the read path. Never coerce plugin-controlled account
-        # fields or caller-provided identity into an authorization scope.
-        if (type(account_id) is not str or type(credential_id) is not str
-                or not credential_id.strip()
-                or type(borrower_identity_id) is not str
-                or not borrower_identity_id.strip()
-                or type(confirmed) is not bool):
-            raise ValueError("ADEPT borrower grant coordinates invalid")
-        borrower = account_id.strip()
-        if borrower in {"", "primary"}:
-            borrower = "primary"
-        matches = [
-            account for account in self.accounts
-            if type(account.provider_id) is str
-            and account.provider_id.casefold() == "paris"
-            and type(account.credential_id) is str
-            and account.credential_id == credential_id
-            and type(account.is_primary) is bool
-            and ((borrower == "primary" and account.is_primary)
-                 or (borrower != "primary" and not account.is_primary
-                     and type(account.unique_id) is str
-                     and account.unique_id.strip() == borrower))
-        ]
-        if len(matches) != 1 or type(matches[0].identity_id) is not str:
-            raise ValueError("Paris borrower not uniquely identified for connection")
-        connection_owner = self.storage.identity_for_connection("paris", credential_id)
-        if type(connection_owner) is not str or matches[0].identity_id != connection_owner:
-            raise ValueError("Paris borrower not uniquely identified for connection")
-        owner = self.identity_by_id(borrower_identity_id)
-        if (owner is None or type(owner.identity_id) is not str
-                or owner.identity_id != borrower_identity_id):
-            raise ValueError("unknown ADEPT borrower identity")
-        profile_id = self.storage.adept_profile_binding_get("identity", owner.identity_id)
-        if type(profile_id) is not str or not profile_id:
-            raise ValueError("ADEPT borrower identity has no stable profile binding")
-        # Compatibility writer must not create a second authority after an
-        # explicitly confirmed v16 grant already exists. The v16 grant has
-        # provider-scoped provenance and is the only valid new binding path.
-        # The persistent no-resurrection rule after v16 revocation belongs
-        # to the storage migration; this guard prevents a live dual write.
-        try:
-            existing_v16 = self.storage.adept_borrower_grant_get(
-                provider_id="paris", credential_id=credential_id,
-                account_id=borrower,
-            )
-        except Exception:
-            raise ValueError("ADEPT borrower grant coordinates invalid") from None
-        if existing_v16 is not None:
-            raise ValueError("ADEPT borrower grant requires v16 binding")
-        self.storage.paris_borrower_adept_binding_put(
-            credential_id=credential_id, account_id=borrower,
-            borrower_identity_id=owner.identity_id, profile_id=profile_id,
-            confirmed=confirmed,
-        )
-        return self.storage.paris_borrower_adept_binding_get(
-            credential_id=credential_id, account_id=borrower,
+        raise ValueError(
+            "Paris ADEPT legacy writer retired; explicit v16 borrower grant required"
         )
 
     def explicit_adept_borrower_grant_for_source(
@@ -4491,13 +4903,8 @@ class LibraryService:
         source_credential = getattr(loan, "source_credential", None)
         source_account = getattr(loan, "source_account_id", None)
         source_record = getattr(loan, "record_id", None)
-        # Web-observed BnF does not confer permission to stage an ACSM. Test
-        # only exact native strings: plugin-owned __eq__ is not a grant.
-        if type(loan) is Loan and type(source_provider) is str and source_provider == "bnf-pret":
-            return {
-                "status": "attention_required",
-                "code": "bnf_web_explicit_only", "retry": "explicit_only",
-            }
+        from .core.loan_source_epoch import inherited_explicit_source_epoch
+        source_lease = inherited_explicit_source_epoch()
         # The historical facade also accepts lightweight loan-like fixtures;
         # they can omit account/edition, but no hostile source value may
         # compute a lock key or change the lock's authorization scope.
@@ -4509,6 +4916,17 @@ class LibraryService:
             return {
                 "status": "attention_required", "loan_id": None,
                 "code": "adept_loan_identity_unproven", "retry": "explicit_only",
+            }
+        # A real, registered session must explicitly declare automatic
+        # acquisition support. No supplier name can override this admission.
+        # Offline test shims without sessions retain the historical path;
+        # deployed supplier I/O independently requires a connected session.
+        from .core.automatic_loan_source_policy import auto_loan_refusal
+        refusal_code = auto_loan_refusal(self, source_provider, source_credential)
+        if refusal_code is not None:
+            return {
+                "status": "attention_required",
+                "code": refusal_code, "retry": "explicit_only",
             }
         loan_key = hashlib.sha256(
             (source_provider.casefold() + "\\0" + source_loan_id.strip()).encode("utf-8")
@@ -4544,6 +4962,20 @@ class LibraryService:
                         "code": "adept_identity_unproven",
                         "reason": "source_scope_changed", "retry": "explicit_only",
                     }
+                if source_lease is not None:
+                    # The explicit recovery pins its epoch before entering
+                    # this nested lock. Reject all ABA and foreign leases;
+                    # do not silently recapture or fall back to auto mode.
+                    from .core.loan_source_epoch import SourceEpochLease
+                    if (type(source_lease) is not SourceEpochLease
+                            or not source_lease.current(self.storage, loan)):
+                        return {
+                            "status": "attention_required",
+                            "loan_id": source_loan_id,
+                            "code": "adept_identity_unproven",
+                            "reason": "source_scope_changed",
+                            "retry": "explicit_only",
+                        }
                 return self._acquire_active_loan_automatically_guarded(
                     loan, force_refresh=force_refresh
                 )
@@ -4577,10 +5009,41 @@ class LibraryService:
         # connection has no persisted owner. Keep this fail-closed at the
         # automatic acquisition boundary; unrelated UI navigation may still
         # use the historical identity_for_connection fallback.
+        from .core.loan_source_epoch import inherited_explicit_source_epoch
+        source_lease = inherited_explicit_source_epoch()
         admission = loan_acquisition_admission.resolve(self, loan, _TRACE_LOG=_TRACE_LOG)
         if admission.refusal is not None:
             return admission.refusal
         identity, entitlement_id = admission.identity, admission.entitlement_id
+        # An explicit recovery brings its original durable epoch, pinned
+        # BEFORE its outer borrower/ledger callbacks. A newer epoch from the
+        # nested auto admission is NOT equivalent after A->B->A rotation.
+        if source_lease is not None:
+            from .core.loan_source_epoch import SourceEpochLease
+            if (type(source_lease) is not SourceEpochLease
+                    or type(admission.source_lease) is not SourceEpochLease
+                    or not source_lease.current(self.storage, loan)
+                    or type(admission.source_lease.epoch) is not int
+                    or source_lease.identity_id != identity.identity_id
+                    or source_lease.epoch != admission.source_lease.epoch):
+                return {
+                    "status": "attention_required",
+                    "loan_id": (admission.source_lease.loan_id
+                                if type(admission.source_lease) is SourceEpochLease
+                                else None),
+                    "code": "adept_identity_unproven",
+                    "reason": "source_scope_changed",
+                    "retry": "explicit_only",
+                }
+        else:
+            # Automatic acquisition uses its own admission-time capture.
+            source_lease = admission.source_lease
+        def source_epoch_refusal() -> dict[str, Any]:
+            return {
+                "status": "attention_required", "loan_id": source_lease.loan_id,
+                "code": "adept_identity_unproven",
+                "reason": "source_scope_changed", "retry": "explicit_only",
+            }
         trace_ref = loan_trace_ref(loan, identity.identity_id)
         local = loan_local_preparation.prepare(
             self, loan, identity=identity, entitlement_id=entitlement_id,
@@ -4589,6 +5052,11 @@ class LibraryService:
             blocked_automatic_adept_retry=blocked_automatic_adept_retry,
             time=time, _TRACE_LOG=_TRACE_LOG,
         )
+        # Local artifact inspection and preparation are callbacks too;
+        # a stale lease must never reuse an artifact or write an acquiring
+        # receipt for a connection that rotated while we prepared it.
+        if not source_lease.current(self.storage, loan):
+            return source_epoch_refusal()
         if local.outcome is not None:
             return local.outcome
         previous = local.previous_state.row
@@ -4606,6 +5074,8 @@ class LibraryService:
         ledger_base = loan_initial_receipt.ledger_base(
             loan, entitlement_id=entitlement_id, identity_id=identity.identity_id,
         )
+        if not source_lease.current(self.storage, loan):
+            return source_epoch_refusal()
         self.storage.acquisition_put(
             loan_initial_receipt.acquiring_receipt(ledger_base, loan, previous_meta)
         )
@@ -4632,6 +5102,7 @@ class LibraryService:
                     previous_meta=previous_meta, retained_acsm=retained_acsm,
                     trace_ref=trace_ref, expected_loan_id=expected_loan_id,
                     expected_record_id=expected_record_id,
+                    source_lease=source_lease,
                     AdeptProfileResolutionError=AdeptProfileResolutionError,
                     adept_acsm_plan=adept_acsm_plan, _TRACE_LOG=_TRACE_LOG,
                 )
@@ -4650,6 +5121,15 @@ class LibraryService:
                     previous_path=previous_path,
                     unique_suffix=lambda: uuid.uuid4().hex,
                 )
+                # Format detection and path planning are external callbacks.
+                # Deny revocation before even unlinking a local ADEPT target.
+                if not source_lease.current(self.storage, loan):
+                    return loan_adept_profile_guard.refuse_staged_source(
+                        self, ledger_base=ledger_base,
+                        previous_meta=previous_meta, retained_acsm=retained_acsm,
+                        trace_ref=trace_ref, expected_loan_id=expected_loan_id,
+                        raw_code="adept_borrower_ambiguous", _TRACE_LOG=_TRACE_LOG,
+                    )
                 try:
                     adept_destination.unlink(missing_ok=True)
                 except OSError:
@@ -4663,12 +5143,32 @@ class LibraryService:
                     title=loan.title,
                     loan_id=loan.id,
                 )
-                result, adept_binding = loan_adept_fulfillment.fulfill(
-                    self, request, profile_name=profile_name,
-                    adept_borrower_identity_id=adept_borrower_identity_id,
-                    trace_ref=trace_ref, time=time, _TRACE_LOG=_TRACE_LOG,
-                    trace_integer=trace_integer,
-                )
+                try:
+                    result, adept_binding = loan_adept_fulfillment.fulfill(
+                        self, request, profile_name=profile_name,
+                        adept_borrower_identity_id=adept_borrower_identity_id,
+                        trace_ref=trace_ref, time=time, _TRACE_LOG=_TRACE_LOG,
+                        trace_integer=trace_integer,
+                        source_epoch_current=lambda: source_lease.current(
+                            self.storage, loan,
+                        ),
+                    )
+                except loan_adept_fulfillment.SourceEpochRevoked:
+                    return loan_adept_profile_guard.refuse_staged_source(
+                        self, ledger_base=ledger_base,
+                        previous_meta=previous_meta, retained_acsm=retained_acsm,
+                        trace_ref=trace_ref, expected_loan_id=expected_loan_id,
+                        raw_code="adept_borrower_ambiguous", _TRACE_LOG=_TRACE_LOG,
+                    )
+                # ADEPT execution may observe connection changes while it is
+                # running. Never publish/index its result under a revoked loan.
+                if not source_lease.current(self.storage, loan):
+                    return loan_adept_profile_guard.refuse_staged_source(
+                        self, ledger_base=ledger_base,
+                        previous_meta=previous_meta, retained_acsm=retained_acsm,
+                        trace_ref=trace_ref, expected_loan_id=expected_loan_id,
+                        raw_code="adept_borrower_ambiguous", _TRACE_LOG=_TRACE_LOG,
+                    )
                 final_path, artifact_drm, artifact_format, artifact_protected, hook_info = adept_artifact_publication.publish(
                     result=result, adept_destination=adept_destination, identity_id=identity.identity_id,
                     acsm_format=acsm_format, loan=loan, repair_mode=repair_mode,
@@ -4677,6 +5177,13 @@ class LibraryService:
                     inspect_artifact=inspect_artifact, adept_acsm_plan=adept_acsm_plan,
                     uuid=uuid, _TRACE_LOG=_TRACE_LOG,
                 )
+                if not source_lease.current(self.storage, loan):
+                    return loan_adept_profile_guard.refuse_staged_source(
+                        self, ledger_base=ledger_base,
+                        previous_meta=previous_meta, retained_acsm=retained_acsm,
+                        trace_ref=trace_ref, expected_loan_id=expected_loan_id,
+                        raw_code="adept_borrower_ambiguous", _TRACE_LOG=_TRACE_LOG,
+                    )
             final_inspection, scan = loan_provider_delivery.index_local_loan_artifact(
                 self, loan, identity, final_path,
                 time=time, _TRACE_LOG=_TRACE_LOG,
@@ -4950,35 +5457,12 @@ class LibraryService:
         source_provider = loan.source_provider
         source_credential = loan.source_credential
         source_borrower = loan.source_account_id
-        primary_alias = None
-        if (type(source_provider) is str and source_provider
-                and type(source_credential) is str and source_credential
-                and type(source_borrower) is str):
-            try:
-                registry = self.registry
-            except AttributeError:
-                # Historical in-memory LibraryService.__new__ adapters.
-                primary_alias = "primary"
-            else:
-                try:
-                    plugin = registry.maybe_get(source_provider)
-                except Exception:
-                    # A corrupt registry lookup is not an absent descriptor
-                    # and cannot revive the legacy primary alias.
-                    plugin = object()
-                if plugin is None:
-                    # No provider is installed yet; preserve inert old lookups.
-                    primary_alias = "primary"
-                else:
-                    from .providers.base import ProviderDescriptor
-                    descriptor = inspect.getattr_static(plugin, "descriptor", None)
-                    primary_alias = (
-                        descriptor.existing_primary_loan_account_alias
-                        if type(descriptor) is ProviderDescriptor
-                        and type(descriptor.id) is str
-                        and descriptor.id == source_provider
-                        else None
-                    )
+        primary_alias = (
+            loan_accounts.source_primary_alias(self, source_provider)
+            if type(source_provider) is str and source_provider
+            and type(source_credential) is str and source_credential
+            and type(source_borrower) is str else None
+        )
         # Registry callbacks are outside this method's trust boundary.
         # A provider/binding edit during alias discovery must not turn an
         # initially admitted source into a different borrower's lookup.

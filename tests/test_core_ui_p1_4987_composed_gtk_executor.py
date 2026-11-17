@@ -117,3 +117,41 @@ def test_real_core_rebind_after_menu_prevents_new_lender_claim(
     assert session.actions == 0
     assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
     assert shown == [] and messages == []
+
+
+def test_real_admitted_lender_borrow_survives_navigation_epoch_not_source_epoch(harness, monkeypatch):
+    service, account, session, item, window, shown, messages, present = setup(
+        harness, monkeypatch,
+    )
+    assert present()
+    Dialog.made[0].respond("choice-0")
+    Dialog.made[1].respond("borrow")
+    assert len(window.runner.jobs) == 1 and session.actions == 0
+    # A full A->B->A navigation epoch changes; provider/session is identical.
+    service._account_context_epoch += 2
+    window._identity_context_generation += 2
+    window._cross_profile_borrow_pending = None
+    _title, work, done, _failed, _kw = window.runner.jobs[0]
+    result = work()
+    assert result["status"] == "confirmed", result
+    assert session.actions == 1
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, item),
+    )["status"] == "confirmed"
+    done(result)
+    assert shown == [] and messages == []
+    assert work()["status"] != "confirmed"
+    assert session.actions == 1
+
+
+def test_real_admitted_lender_borrow_refuses_reconnect_before_dequeue(harness, monkeypatch):
+    service, account, session, item, window, shown, messages, present = setup(
+        harness, monkeypatch,
+    )
+    assert present()
+    Dialog.made[0].respond("choice-0")
+    Dialog.made[1].respond("borrow")
+    service._source_context_epoch += 1
+    assert window.runner.jobs[0][1]()["status"] == "blocked"
+    assert session.actions == 0
+    assert service.storage.metadata_get(borrow_claim_key(account, item)) is None

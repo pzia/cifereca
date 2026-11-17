@@ -17,19 +17,32 @@ from tests.test_core_p0_3171_canonical_sync_stage import rig
 
 
 @pytest.fixture
-def policy(rig, monkeypatch):
+def policy(rig):
     service, db, root = rig
-    # The real Numilog/BnF policies use the same bridge contract, but these
-    # fake-provider test rows isolate Core from any installed plugin.
-    monkeypatch.setitem(bridge._POLICIES, ("seller-a", "purchase"), (
-        "sync.test.provider.auto.", "1", None,
-    ))
+    # A frozen storage format is read as a veto for any exact provider scope.
+    # The synthetic seller requires no installed provider or policy entry.
     persist_attested_source_references(db, service.snapshot)
-    key = "sync.test.provider.auto." + bridge._source_id(service.source.scope)
+    key = "sync.source.materialization.on_start." + bridge._source_id(service.source.scope)
     return service, db, key
 
 
-def test_auto_on_grants_all_current_positive_offers_without_per_right_click(policy):
+def _explicit_source_cas_on(storage, source):
+    """Fixture: emulate an explicit persisted Core source-wide CAS choice."""
+    import json
+    from cifereca.core.source_sync_consent import (
+        policy_key, source_enablement_key,
+    )
+    scope = source.scope
+    storage.metadata_set(source_enablement_key(scope), "1")
+    storage.metadata_set(policy_key(scope), json.dumps({
+        "schema": "cifereca.source-sync-consent/1",
+        "scope": [scope.identity_id, scope.provider_id,
+                  scope.credential_id, scope.account_id],
+        "enabled": True, "revision": "a" * 32,
+    }))
+
+
+def test_legacy_purchase_on_requires_explicit_cas_for_whole_source(policy):
     service, db, key = policy
     other = replace(service.snapshot.rights[0],
                     edition_id="another-edition", right_id="another-right")
@@ -41,10 +54,13 @@ def test_auto_on_grants_all_current_positive_offers_without_per_right_click(poli
                      edition_id="another-edition", right_id="another-right")
     assert read_source_acquisition_consent(service, service.account) == frozenset()
     db.metadata_set(key, "1")
+    # A historical purchase ON no longer grants an authenticated download.
+    assert read_source_acquisition_consent(service, service.account) == frozenset()
+    _explicit_source_cas_on(db, service.source)
     assert read_source_acquisition_consent(service, service.account) == frozenset({
         service.source, second,
     })
-    # Once a source-wide switch is configured, no one-by-one authorization UI.
+    # A source CAS policy replaces one-by-one right authorization UI.
     assert canonical_acquisition_choices(service, service.account) == ()
     with db._lock, db._connect() as conn:
         assert consent_current_in_transaction(conn, service.source)
@@ -60,7 +76,7 @@ def test_auto_off_revokes_even_an_earlier_exact_grant(policy):
         service.source,
     })
     db.metadata_set(key, "1")
-    assert read_source_acquisition_consent(service, service.account)
+    assert read_source_acquisition_consent(service, service.account) == frozenset()
     db.metadata_set(key, "0")
     assert read_source_acquisition_consent(service, service.account) == frozenset()
     with db._lock, db._connect() as conn:
@@ -118,15 +134,16 @@ def test_numilog_epoch_and_bnf_mode_cannot_leak_across_types(policy):
         assert bridge.toggle_state(conn, loan) is None
     db.metadata_set("sync.source.numilog.materialization.epoch.v1." + numilog_id, "a" * 32)
     with db._lock, db._connect() as conn:
-        assert bridge.toggle_state(conn, purchase) == "on"
+        assert bridge.toggle_state(conn, purchase) == "off"
         assert bridge.toggle_state(conn, loan) is None
     db.metadata_set("sync.source.bnf_auto." + bnf_id, "1")
     with db._lock, db._connect() as conn:
         assert bridge.toggle_state(conn, loan) == "off"  # no loan epoch
     db.metadata_set("sync.source.bnf_auto." + bnf_id + ".revision", "b" * 32)
     with db._lock, db._connect() as conn:
-        assert bridge.toggle_state(conn, loan) == "on"
-        assert bridge.toggle_state(conn, purchase) == "on"
+        # A historical loan ON, even with valid epoch, is no longer a grant.
+        assert bridge.toggle_state(conn, loan) == "off"
+        assert bridge.toggle_state(conn, purchase) == "off"
 
 
 def test_unknown_right_with_authenticated_downloadable_file_publishes_without_entitlement(
@@ -146,6 +163,8 @@ def test_unknown_right_with_authenticated_downloadable_file_publishes_without_en
     # owned entitlement merely because its provider permits downloading.
     assert persist_attested_source_references(db, snapshot) in (0, 1)
     db.metadata_set(switch, "1")
+    assert read_source_acquisition_consent(service, service.account) == frozenset()
+    _explicit_source_cas_on(db, service.source)
     assert read_source_acquisition_consent(service, service.account) == frozenset({
         service.source,
     })
@@ -156,6 +175,7 @@ def test_unknown_right_with_authenticated_downloadable_file_publishes_without_en
         db, library_root=tmp_path / "EBooks", path=book,
         source=service.source, snapshot=snapshot, final_sha256=SHA,
         delivery_receipt_ref="authenticated-delivery-receipt",
+        expected_source_policy_revision="a" * 32,
     )
     assert result.artifact_id == "sha256:" + SHA
     assert len(db.placements()) == 1
@@ -178,7 +198,7 @@ def test_kobo_exact_source_opt_in_not_legacy_global_backup_pref(policy):
         assert bridge.toggle_state(conn, kobo) is None
     db.metadata_set("sync.source.materialization.on_start." + sid, "1")
     with db._lock, db._connect() as conn:
-        assert bridge.toggle_state(conn, kobo) == "on"
+        assert bridge.toggle_state(conn, kobo) == "off"
     db.metadata_set("sync.source.materialization.on_start." + sid, "0")
     with db._lock, db._connect() as conn:
         assert bridge.toggle_state(conn, kobo) == "off"
@@ -204,6 +224,7 @@ def test_optional_right_state_does_not_veto_canonical_download(
         ),),
     )
     db.metadata_set(switch, "1")
+    _explicit_source_cas_on(db, service.source)
     service._canonical_persisted_consent = (
         lambda account: LibraryService._canonical_persisted_consent(service, account)
     )
@@ -235,8 +256,8 @@ def test_optional_right_state_does_not_veto_canonical_download(
 
 
 
-def test_legacy_bnf_source_opt_in_is_scope_and_revision_pinned(policy):
-    """Only the existing SOURCE consent transfers to canonical execution."""
+def test_legacy_bnf_source_opt_in_remains_readable_but_never_admits_a_get(policy):
+    """An old ON/revision is descriptive evidence, not CAS permission."""
     service, db, _ = policy
     loan = replace(
         service.source, kind="loan",
@@ -252,9 +273,10 @@ def test_legacy_bnf_source_opt_in_is_scope_and_revision_pinned(policy):
     assert bridge.legacy_source_auto_policy(db, loan.scope, "loan") == (
         "on", "a" * 32,
     )
-    assert bridge.legacy_source_auto_current(db, loan, "a" * 32)
+    assert not bridge.legacy_source_auto_current(db, loan, "a" * 32)
     with db._lock, db._connect() as conn:
-        assert bridge.legacy_source_auto_in_transaction(conn, loan, "a" * 32)
+        assert bridge.toggle_state(conn, loan) == "off"
+        assert not bridge.legacy_source_auto_in_transaction(conn, loan, "a" * 32)
     db.metadata_set(switch, "0")
     assert not bridge.legacy_source_auto_current(db, loan, "a" * 32)
     with db._lock, db._connect() as conn:
@@ -262,7 +284,11 @@ def test_legacy_bnf_source_opt_in_is_scope_and_revision_pinned(policy):
     db.metadata_set(switch + ".revision", "b" * 32)
     db.metadata_set(switch, "1")
     assert not bridge.legacy_source_auto_current(db, loan, "a" * 32)
-    assert bridge.legacy_source_auto_current(db, loan, "b" * 32)
+    assert not bridge.legacy_source_auto_current(db, loan, "b" * 32)
+    # The historical row itself is retained for upgrades and diagnostics.
+    assert bridge.legacy_source_auto_policy(db, loan.scope, "loan") == (
+        "on", "b" * 32,
+    )
 
 
 def test_legacy_bnf_opt_in_does_not_override_source_disable(policy):

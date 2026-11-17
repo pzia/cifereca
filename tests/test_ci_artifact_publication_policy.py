@@ -36,6 +36,13 @@ EXPECTED = {
         ),
     ),
 
+    "p0-test-dependency-inventory.yml": (
+        (
+            "${{ runner.temp }}/cifereca-test-dependencies/core-plugin-consumers.json",
+            "${{ runner.temp }}/cifereca-test-dependencies/core-test-provider-imports.json",
+            "${{ runner.temp }}/cifereca-test-dependencies/provenance.json",
+        ),
+    ),
     "e2e-smoke.yml": (
         ("${{ runner.temp }}/cifereca-e2e-public/summary.json",),
     ),

@@ -739,17 +739,14 @@ class LocalInspection:
                                          for key in scope_keys)]
             own_ledger = [acquisition_rows[i] for i in own_ledger_indices]
             scope = right_scope(right)
-            # BnF's existing Core declaration workflow may only record an
-            # active, exact loan. A catalogue entry, an expired entitlement
-            # or a book title is not a valid BnF loan/file association.
-            bnf_exact_loan = (
-                right.get('state') == 'active'
-                and right.get('entitlement_type') == 'loan'
-                and type(right.get('loan_id')) is str
-                and bool(right['loan_id'])
-            )
+            # A user declaration is a revocable, explicitly lower-trust
+            # *statement* about a file/right pair, not a loan admission or
+            # proof of provider ownership. Its eligibility is structural:
+            # exactly one active, identity-scoped entitlement. A missing
+            # provider-native loan ID cannot mint a loan or authorize ADEPT;
+            # all provider-specific loan proofs remain with their adapters.
             if (scope is not None and scope[0] == identity_id
-                    and (scope[1] != 'bnf-pret' or bnf_exact_loan)
+                    and right.get('state') == 'active'
                     and scope_counts[scope] == 1):
                 self._declared_right_scopes[f'right:{index}'] = scope
             why = _right_explanation(

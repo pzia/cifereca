@@ -1,12 +1,23 @@
 """Recent acquisition detail presenter, using injected window/formatting (#1129)."""
 from __future__ import annotations
 
+from dataclasses import replace
+from ..core.notice_c_local_origin_projection import valid_local_public_c_link
+
 from .local_detail_cover import exact_recent_detail_cover
 from .detail_model import book_detail_presentation
 
 
 def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
     if getattr(window, "_closed", False) or not row:
+        return
+    if getattr(row, "_recent_ambiguous_key", False) is True:
+        # The lookup intentionally keeps the last row for compatibility,
+        # but a duplicate visual key cannot select an exact book/detail.
+        window.recent_page.detail.empty(
+            "Référence ambiguë",
+            "Actualisez les livres récents avant d'ouvrir ce détail.",
+        )
         return
     item = window._recent_objects.get(row.key)
     if not item:
@@ -50,7 +61,9 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
     summary = dict(
         title=str(item.get("title") or "Sans titre"),
         subtitle=str(item.get("author") or ""),
-        thumbnail=item.get("thumbnail_url"),
+        thumbnail=(item.get("thumbnail_url")
+                   if item.get("_public_canonical_cover_link") is None
+                   else None),
         badges=[provenance, "Local"],
         group_title="Récupération",
         rows=[
@@ -61,6 +74,41 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
         ],
     )
     if evidence is None:
+        link = item.get("_public_canonical_cover_link")
+        if (item.get("_exact_local_cover_evidence") is None
+                and valid_local_public_c_link(
+                    link, identity_id=active,
+                    artifact_id=item.get("artifact_id"),
+                    placement_id=item.get("placement_id"),
+                )):
+            from .local_public_c_detail_guard import (
+                local_public_c_detail_check, staged_local_public_c_detail,
+            )
+            check = local_public_c_detail_check(
+                window, row, item, link, view="recent",
+            )
+            # A stale GTK selection with the same placement ID may not
+            # open a different item's C or private local actions.
+            if (getattr(row, "_cover_public_c_link", None) is not None
+                    and not check()):
+                detail.empty(
+                    "Référence périmée",
+                    "Actualisez les livres récents avant d'ouvrir ce détail.",
+                )
+                return
+            presentation = replace(
+                book_detail_presentation(**summary),
+                cover_document_ref=link.document,
+                thumbnail_url=None,
+            )
+            with staged_local_public_c_detail(
+                detail, check, minimum_revision=link.epoch,
+            ):
+                detail.show_presentation(presentation)
+            window._add_book_notice(detail, item)
+            window._add_local_book_actions(detail, item)
+            window._add_facets(detail, item, window.search_controls)
+            return
         # A stale/foreign private proof does NOT authorize a legacy origin
         # URL. Only rows without any Core packet keep their old URL path.
         if item.get("_exact_local_cover_evidence") is not None:

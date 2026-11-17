@@ -459,3 +459,161 @@ def test_mutating_original_selected_loan_cannot_retarget_consent(tmp_path, momen
     finally:
         ui.id = original
         service.close()
+
+
+@pytest.mark.parametrize("moment", ["before", "read", "post"])
+def test_admitted_renewal_keeps_exact_borrower_during_navigation(tmp_path, moment):
+    service, a, ui, session = setup(tmp_path)
+    try:
+        admitted = service.capture_admitted_loan_renewal(ui)
+        assert admitted is not None
+        assert session.reads == session.posts == []
+        def switch():
+            service.select_identity("alex")
+            service.select_identity("default")
+        if moment == "before":
+            service.select_identity("alex")
+        elif moment == "read":
+            session.during_read = switch
+        else:
+            session.during_post = switch
+        result = service.renew_admitted_loan(ui, confirmed=True, admission=admitted)
+        assert result["status"] == "submitted"
+        assert session.reads == ["reader"]
+        assert len(session.posts) == 1 and session.posts[0][2] == "reader"
+        assert service.renew_admitted_loan(ui, confirmed=True, admission=admitted)["status"] == "submitted"
+        assert len(session.posts) == 1
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("change", ["source_epoch", "loan_branch", "replacement_loan"])
+def test_admitted_renewal_rejects_revocation_before_inventory_or_claim(tmp_path, change):
+    service, a, ui, session = setup(tmp_path)
+    key = _source_key(ui)
+    try:
+        admitted = service.capture_admitted_loan_renewal(ui)
+        assert admitted is not None
+        if change == "source_epoch":
+            service._source_context_epoch += 1
+        elif change == "loan_branch":
+            ui.provider = "other-branch"
+        else:
+            ui = replace(ui)
+        assert service.renew_admitted_loan(ui, confirmed=True, admission=admitted)["status"] == "blocked"
+        assert session.reads == session.posts == []
+        assert service.storage.loan_renewal_state(key) is None
+    finally:
+        service.close()
+
+
+def test_admitted_renewal_source_revoked_after_claim_never_posts(tmp_path, monkeypatch):
+    service, a, ui, session = setup(tmp_path)
+    try:
+        admitted = service.capture_admitted_loan_renewal(ui)
+        assert admitted is not None
+        real_claim = service.storage.loan_renewal_claim_once
+        def revoke(key, operation):
+            claimed, row = real_claim(key, operation)
+            if claimed:
+                service._source_context_epoch += 1
+            return claimed, row
+        monkeypatch.setattr(service.storage, "loan_renewal_claim_once", revoke)
+        result = service.renew_admitted_loan(ui, confirmed=True, admission=admitted)
+        assert result["status"] == "blocked"
+        assert session.posts == []
+        assert service.storage.loan_renewal_state(_source_key(ui))["status"] == "blocked"
+    finally:
+        service.close()
+
+
+def test_admitted_renewal_never_uses_navigation_scoped_session_resolver(tmp_path, monkeypatch):
+    service, a, ui, session = setup(tmp_path)
+    try:
+        admission = service.capture_admitted_loan_renewal(ui)
+        assert admission is not None
+        service.select_identity("alex")
+        calls = []
+        def policy(provider_id, identity_id=None):
+            calls.append((provider_id, identity_id))
+            return identity_id == "default"
+        def legacy_resolver(*args, **kwargs):
+            pytest.fail("admitted renewal must not use the navigation-scoped resolver")
+        monkeypatch.setattr(service, "_provider_enabled_for_identity", policy)
+        monkeypatch.setattr(service, "_session_for_source", legacy_resolver)
+        result = service.renew_admitted_loan(ui, confirmed=True, admission=admission)
+        assert result["status"] == "submitted"
+        assert len(session.posts) == 1
+        assert calls and all(value == ("paris", "default") for value in calls)
+    finally:
+        service.close()
+
+
+def test_admitted_renewal_disabled_connection_refuses_before_inventory(tmp_path):
+    service, a, ui, session = setup(tmp_path)
+    try:
+        admission = service.capture_admitted_loan_renewal(ui)
+        assert admission is not None
+        service.storage.provider_connection_put({
+            "identity_id": a.identity_id, "provider_id": a.provider_id,
+            "credential_id": a.credential_id, "label": "Synthetic Paris",
+            "enabled": False, "metadata": {},
+        })
+        assert service.storage.provider_connection_enabled(a.provider_id, a.credential_id) is False
+        assert service.renew_admitted_loan(ui, confirmed=True, admission=admission)["status"] == "blocked"
+        assert session.reads == session.posts == []
+        assert service.storage.loan_renewal_state(_source_key(ui)) is None
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("change", ["navigation", "source", "identity", "account"])
+def test_headless_confirmed_renewal_uses_explicit_scope(tmp_path, change):
+    from cifereca.core.provider_loan_renewal import capture_confirmed_loan_renewal
+    service, a, ui, session = setup(tmp_path)
+    try:
+        service.select_identity("alex")
+        admitted = capture_confirmed_loan_renewal(
+            service, ui, identity_id="default", account_id="reader", confirmed=True,
+        )
+        assert admitted is not None
+        assert session.reads == session.posts == []
+        if change == "navigation":
+            service._account_context_epoch += 2
+        elif change == "source":
+            service._source_context_epoch += 1
+        elif change == "identity":
+            original = service.identity_by_id("default")
+            service.identities = [replace(i) if i is original else i for i in service.identities]
+        else:
+            service.accounts = [replace(a)]
+        result = service.renew_admitted_loan(ui, confirmed=True, admission=admitted)
+        if change == "navigation":
+            assert result["status"] == "submitted"
+            assert len(session.posts) == 1
+            service.renew_admitted_loan(ui, confirmed=True, admission=admitted)
+            assert len(session.posts) == 1
+        else:
+            assert result["status"] == "blocked"
+            assert session.reads == session.posts == []
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("identity,borrower,confirmed", [
+    ("alex", "reader", True), ("default", "other", True),
+    ("default", "reader", False), ("default", "reader", 1),
+])
+def test_headless_renewal_admission_requires_exact_confirmed_borrower(
+    tmp_path, identity, borrower, confirmed,
+):
+    from cifereca.core.provider_loan_renewal import capture_confirmed_loan_renewal
+    service, a, ui, session = setup(tmp_path)
+    try:
+        assert capture_confirmed_loan_renewal(
+            service, ui, identity_id=identity, account_id=borrower, confirmed=confirmed,
+        ) is None
+        assert session.reads == session.posts == []
+        assert service.storage.loan_renewal_state(_source_key(ui)) is None
+    finally:
+        service.close()

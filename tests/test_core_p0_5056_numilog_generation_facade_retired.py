@@ -14,8 +14,9 @@ def test_generic_consent_generation_reads_exact_legacy_numilog_epoch():
 
     scope = ProviderRightsScope("alice", "numilog", "credential-a", "")
     foreign = ProviderRightsScope("alice", "numilog", "credential-b", "")
-    key = bridge._consent_generation_key(scope)
-    assert key is not None and key != bridge._consent_generation_key(foreign)
+    prefix = "sync.source.numilog.materialization.epoch.v1."
+    key = prefix + bridge._source_id(scope)
+    assert key != prefix + bridge._source_id(foreign)
 
     class MemoryMetadata:
         def __init__(self):

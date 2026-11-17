@@ -87,6 +87,7 @@ def test_automatic_acquisitions_are_serialized_in_process(monkeypatch):
     from time import sleep
 
     service = object.__new__(LibraryService)
+    service._sessions = {}  # offline serialization fixture; no supplier I/O
     counters = {"active": 0, "peak": 0}
     monitor = Lock()
 
@@ -145,6 +146,7 @@ def test_automatic_acquisition_lock_uses_same_path_for_shared_loan(monkeypatch):
         lambda self, loan, **kwargs: {"status": "unchanged"},
     )
     service = object.__new__(LibraryService)
+    service._sessions = {}  # offline fixture: no registered supplier can issue I/O
     for identity in ("alice", "bob"):
         loan = SimpleNamespace(id="shared-123", source_provider="paris", source_credential="paris-a", identity_id=identity)
         service._acquire_active_loan_automatically(loan)
@@ -193,7 +195,25 @@ def test_manual_reacquisition_rejects_shared_borrower_before_ledger_update(monke
     monkeypatch.setattr(services, "acquisition_lock_file", lambda: Path("/tmp/acquisition.lock"))
     service = object.__new__(LibraryService)
     service.can_download_loan = lambda loan: True
-    service.storage = SimpleNamespace(identity_for_connection=lambda *args: "alice")
+    service.storage = SimpleNamespace(
+        identity_for_connection=lambda *args: "alice",
+        # Explicit recovery now requires an independently attested live
+        # connection; the test is about a borrower conflict, not a stale
+        # or disabled source.
+        provider_connection_owner_current=lambda provider, credential, identity: (
+            provider, credential, identity
+        ) == ("paris", "paris-a", "alice"),
+        # Both owner and the original SQLite epoch are needed before this
+        # fixture may exercise its independent borrower-conflict refusal.
+        provider_connection_epoch=lambda provider, credential, identity: (
+            1 if (provider, credential, identity)
+            == ("paris", "paris-a", "alice") else None
+        ),
+        provider_connection_epoch_current=lambda provider, credential, identity, epoch: (
+            (provider, credential, identity, epoch)
+            == ("paris", "paris-a", "alice", 1)
+        ),
+    )
     service.identity_by_id = lambda identity_id: SimpleNamespace(identity_id=identity_id)
     service.accounts = [account("alice", "borrower-a"), account("bob", "borrower-a")]
     loan = SimpleNamespace(id="loan-1", source_provider="paris",
@@ -231,6 +251,7 @@ def test_auto_acquisition_lock_busy_never_enters_fulfillment(monkeypatch):
 
     monkeypatch.setattr(LibraryService, "_acquire_active_loan_automatically_guarded", forbidden)
     service = object.__new__(LibraryService)
+    service._sessions = {}  # exercise the scoped-lock path without a live provider
     result = service._acquire_active_loan_automatically(
         SimpleNamespace(id="loan-1", source_provider="paris", source_credential="paris-a")
     )

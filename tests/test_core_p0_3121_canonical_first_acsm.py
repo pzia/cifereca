@@ -135,3 +135,47 @@ def test_other_paris_borrower_keeps_existing_selected_right_path(setup):
         admission_current=lambda: True,
     ) is None
     assert list(attempt.iterdir()) == []
+
+
+@pytest.mark.parametrize("provider", [
+    "paris", "biblioaccess.la-rochelle", "future-lender",
+])
+def test_canonical_first_acsm_stages_any_exact_claimed_source_without_new_get(
+    setup, provider,
+):
+    service, session, account, _old_source, attempt, path, claim, loan = setup
+    from hashlib import sha256
+    # Synthetic stand-in for the real provider/account/edition-scoped
+    # borrow_claim_key, never reuse the fixture's Paris claim as evidence
+    # of a different lender's accepted borrow.
+    key = "loan.borrow.v1:" + sha256(provider.encode("utf-8")).hexdigest()
+    operation = "confirmed-" + sha256(provider.encode("utf-8")).hexdigest()[:20]
+    claim.clear()
+    claim[key] = {
+        "schema": 1, "operation": "loan.borrow", "status": "confirmed",
+        "operation_id": operation, "request_accepted": True,
+        "verification": "positive_active_loan",
+        "verified_loan_id": loan.id,
+    }
+    docbase = "FUTURE_LIBRARY" if provider != "paris" else "DILICOM"
+    account = replace(account, provider_id=provider)
+    loan = replace(
+        loan, source_provider=provider, provider=docbase,
+        ebook_url=None,
+    )
+    source, _ = new_source(
+        "identity-A", provider=provider, credential="credential-A",
+        account="", branch=docbase, edition=loan.record_id,
+        right=loan.id, kind="loan",
+    )
+    assert acsm_cache.remember_initial(
+        path, path.parent, loan, "identity-A", "primary",
+        borrow_claim=(key, operation),
+    )
+    session.loans = lambda _: [loan]
+    staged = stage_claimed_initial_acsm(
+        service, session, account, source, attempt=attempt,
+        admission_current=lambda: True,
+    )
+    assert staged == attempt / "first-offer.acsm"
+    assert staged.read_bytes() == path.read_bytes()

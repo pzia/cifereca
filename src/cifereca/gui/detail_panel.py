@@ -41,21 +41,11 @@ def _commercial_search_usage(item: SearchResult, service=None, *, purchase_evide
     # collection. It cannot establish a currently deliverable private offer.
     if (item.metadata or {}).get("search_provenance") == "known_catalog_stale":
         return "Notice connue hors ligne · droits non actualisés"
-    # Non-commercial sources have no owned-purchase presentation contract.
-    # Scope is documentary, not authorization: the canonical rights ledger
-    # decides ownership. No provider flag or source label can grant it.
+    # Scope is documentary, not a purchase or delivery authorization.
     if (item.source_credential == "__public__"
             and item.source_collection == "public_catalog"):
         return "Catalogue commercial public · aucun achat attesté"
     if item.source_collection == "library":
-        state = result_row(
-            item, purchase_evidence=purchase_evidence,
-            identity_id=getattr(getattr(service, "current_identity", None), "identity_id", None),
-            account_context_epoch=getattr(service, "_account_context_epoch", None),
-            source_context_epoch=getattr(service, "_source_context_epoch", None),
-        )["state"]
-        if state == "remote_owned":
-            return "Mes achats · fichier local non présumé"
         return ("Notice de bibliothèque · aucun droit d'achat attesté"
                 " · disponibilité à vérifier auprès du fournisseur")
     return ""
@@ -71,6 +61,10 @@ class DetailPanel(Gtk.Box):
         # Used only during one synchronous local-detail render. Never a
         # profile-wide association or secondary documentary cache.
         self._next_cover_evidence = None
+        self._next_cover_document_ref = None
+        # Single-render borrowed-public C guard, never a retained GTK proof.
+        self._next_borrower_public_c_receipt = None
+        self._next_local_public_c_check = None
         self.set_orientation(Gtk.Orientation.VERTICAL)
         self.set_vexpand(True)
         self.action_scroll = AdaptiveActionBar(
@@ -173,6 +167,8 @@ class DetailPanel(Gtk.Box):
                 cover.bind_document(
                     service, document, variant="detail", priority=0,
                     is_current=lambda: search_document_is_current(self.window, cover_evidence),
+                    **({"minimum_revision": cover_evidence.minimum_revision}
+                       if cover_evidence.minimum_revision is not None else {}),
                 )
             else:
                 cover.bind_url(self.window.covers, None, priority=0)
@@ -224,10 +220,39 @@ class DetailPanel(Gtk.Box):
         cover.set_valign(Gtk.Align.START)
         header.append(cover)
         evidence = getattr(self, "_next_cover_evidence", None)
-        if evidence is None:
-            cover.bind_url(self.window.covers, thumbnail, priority=0)
-        else:
+        document = getattr(self, "_next_cover_document_ref", None)
+        if evidence is not None:
+            # An independently attested local/search N1 source takes priority.
             self._bind_cover(cover, thumbnail, cover_evidence=evidence)
+        elif document is not None:
+            # Borrower C is public but its association with a Loan/History
+            # item is private and time-scoped. Unlike a generic public Search
+            # ref, a delayed N3 return MUST recheck that exact occurrence.
+            borrower = getattr(
+                self, "_next_borrower_public_c_receipt", None,
+            )
+            if borrower is not None:
+                from .borrower_public_c_bridge import (
+                    bind_borrower_public_c_detail,
+                )
+                bind_borrower_public_c_detail(
+                    self.window, cover, document, borrower,
+                )
+            else:
+                from .declared_document_cover import bind_declared_document_cover
+                bind_declared_document_cover(
+                    cover, self.window.covers,
+                    getattr(self.window, "document_covers", None), document,
+                    variant="detail", priority=0,
+                    is_current=getattr(
+                        self, "_next_local_public_c_check", None,
+                    ),
+                    **({"minimum_revision": self._next_public_c_minimum_revision}
+                       if getattr(self, "_next_public_c_minimum_revision", None)
+                       is not None else {}),
+                )
+        else:
+            cover.bind_url(self.window.covers, thumbnail, priority=0)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         text.set_hexpand(True)
         text.set_valign(Gtk.Align.START)
@@ -703,13 +728,25 @@ class DetailPanel(Gtk.Box):
         sections = sorted(presentation.sections, key=lambda item: item.order)
         essential = [field for section in sections if section.title == "Essentiel"
                      for field in section.fields]
-        self._cover_and_title(
-            presentation.title,
-            presentation.subtitle or None,
-            presentation.thumbnail_url,
-            presentation.badges,
-            essential=essential,
+        # The list and detail get the same opaque Core document. Scope lives
+        # only for this synchronous rendering, never as a second cache.
+        previous_ref = getattr(self, "_next_cover_document_ref", None)
+        # The loan-only public C fallback stages an exact Core reference
+        # synchronously. All other callers keep their regular presentation
+        # ref; a nested render never transfers the staged ref to another book.
+        self._next_cover_document_ref = (
+            getattr(presentation, "cover_document_ref", None) or previous_ref
         )
+        try:
+            self._cover_and_title(
+                presentation.title,
+                presentation.subtitle or None,
+                presentation.thumbnail_url,
+                presentation.badges,
+                essential=essential,
+            )
+        finally:
+            self._next_cover_document_ref = previous_ref
         self._show_description(description)
         for section in sections:
             if section.title == "Essentiel":
@@ -737,6 +774,12 @@ class DetailPanel(Gtk.Box):
                 continue
             button = Gtk.LinkButton(uri=uri, label=str(link.label))
             button.set_tooltip_text(str(link.label))
+            button.connect(
+                "activate-link",
+                lambda clicked: getattr(
+                    clicked, "_cifereca_action_context_revoked", False,
+                ) is True,
+            )
             button._cifereca_action_id = f"document-link:{link.id}"
             button._cifereca_action_priority = 30
             link_buttons.append(button)
@@ -808,9 +851,19 @@ class DetailPanel(Gtk.Box):
                     if not uri:
                         continue
                     button = Gtk.LinkButton(uri=uri, label=str(action.title))
+                    button.connect(
+                        "activate-link",
+                        lambda clicked: getattr(
+                            clicked, "_cifereca_action_context_revoked", False,
+                        ) is True,
+                    )
                 elif callable(action.callback):
                     button = self.window.action_button(str(action.title), str(action.icon_name))
-                    button.connect("clicked", lambda _b, cb=action.callback: cb())
+                    def activate_cached(clicked, cb=action.callback):
+                        if getattr(clicked, "_cifereca_action_context_revoked", False):
+                            return
+                        return cb()
+                    button.connect("clicked", activate_cached)
                 else:
                     continue
                 identifier = f"book-cache:{plugin_id}:{action.id}"
@@ -830,18 +883,16 @@ class DetailPanel(Gtk.Box):
         from cifereca.gui.offer_actions import (
             requires_selected_offer_check, download_action_label,
             private_notice_download_hint_allowed,
+            public_catalogue_download_hint_allowed,
         )
-        # Supplier-neutral private provenance guard; a public catalogue's
-        # existing independent delivery policy is intentionally unchanged.
-        if item.source_provider == "numilog-catalog":
+        # Descriptive public catalogue rows have no implicit download offer.
+        # This guard is independent of supplier identity and does no I/O.
+        if not public_catalogue_download_hint_allowed(item):
             return
         if not private_notice_download_hint_allowed(
-            item,
-            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+            item, service=self.window.service,
             identity_id=getattr(getattr(self.window.service, "current_identity", None),
                                 "identity_id", None),
-            account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
-            source_context_epoch=getattr(self.window.service, "_source_context_epoch", None),
         ):
             return
         if not self.window.service.can_direct_download(item):
@@ -855,6 +906,29 @@ class DetailPanel(Gtk.Box):
         direct = self.window.action_button(label, "document-save-symbolic", suggested=True)
         direct.connect("clicked", lambda _b: self.window.download_direct_item(item, direct))
         self._actions([direct])
+
+    def show_loan_public_c(self, loan: Loan, *, document) -> None:
+        """Render an image-less private Loan with a separately attested
+        PUBLIC C cover. This does not alter loan actions or permissions.
+        """
+        from ..core.notice_c_cover_index import is_canonical_cover_document
+        from .borrower_public_c_bridge import exact_loan_public_c
+        receipt = exact_loan_public_c(self.window, loan)
+        if (type(loan) is not Loan
+                or loan.thumbnail_url is not None
+                or not is_canonical_cover_document(document)
+                or receipt is None or receipt.document != document
+                or self._next_cover_document_ref is not None
+                or self._next_cover_evidence is not None
+                or self._next_borrower_public_c_receipt is not None):
+            raise ValueError("invalid_loan_public_c_detail")
+        self._next_cover_document_ref = document
+        self._next_borrower_public_c_receipt = receipt
+        try:
+            self.show_loan(loan)
+        finally:
+            self._next_cover_document_ref = None
+            self._next_borrower_public_c_receipt = None
 
     def show_loan_local(self, loan: Loan, *, cover_evidence) -> None:
         """Loan view with an owner/entitlement-attested EPUB DocumentRef.
@@ -986,6 +1060,27 @@ class DetailPanel(Gtk.Box):
         decorate = getattr(self.window, '_decorate_book_detail', None)
         if callable(decorate): decorate(self, asdict(item))
 
+    def show_history_public_c(self, item: HistoryItem, *, document) -> None:
+        """History lists/details share a Core-public N2 C; no title search."""
+        from ..core.notice_c_cover_index import is_canonical_cover_document
+        from .borrower_public_c_bridge import exact_history_public_c
+        receipt = exact_history_public_c(self.window, item)
+        if (type(item) is not HistoryItem
+                or item.thumbnail_url is not None
+                or not is_canonical_cover_document(document)
+                or receipt is None or receipt.document != document
+                or self._next_cover_document_ref is not None
+                or self._next_cover_evidence is not None
+                or self._next_borrower_public_c_receipt is not None):
+            raise ValueError("invalid_history_public_c_detail")
+        self._next_cover_document_ref = document
+        self._next_borrower_public_c_receipt = receipt
+        try:
+            self.show_history(item)
+        finally:
+            self._next_cover_document_ref = None
+            self._next_borrower_public_c_receipt = None
+
     def show_history_document(
         self, item: HistoryItem, *, cover_evidence,
     ) -> None:
@@ -1019,6 +1114,7 @@ class DetailPanel(Gtk.Box):
             [medium, item.year or ""],
         )
         if (not item.thumbnail_url and not present_cover
+                and self._next_cover_document_ref is None
                 and self.window.service.current_account.is_primary):
             context = history_cover_context(self.window)
             cover.show_loading()
@@ -1051,7 +1147,8 @@ class DetailPanel(Gtk.Box):
                 item.default_thumbnail_url, resolved,
                 scope=history_cover_request_scope(context),
             )
-        elif not item.thumbnail_url and not present_cover:
+        elif (not item.thumbnail_url and not present_cover
+              and self._next_cover_document_ref is None):
             # Compte lié : pas de requêtes de reconstruction automatiques.
             cover.reset()
         self._group("Historique", [
@@ -1078,16 +1175,35 @@ class DetailPanel(Gtk.Box):
         finally:
             self._next_cover_evidence = None
 
+    def show_public_c_search_document(
+        self, item: SearchResult, *, public_c_document,
+        loading: bool = False, detail: ItemDetail | None = None,
+    ) -> None:
+        """Render a verified C reference without changing the Search facade ABI."""
+        from cifereca.core.notice_c_cover_index import is_canonical_cover_document
+        if not is_canonical_cover_document(public_c_document):
+            raise ValueError("unverified public C document")
+        if getattr(self, "_next_public_c_document", None) is not None:
+            raise RuntimeError("nested public C detail render")
+        self._next_public_c_document = public_c_document
+        try:
+            if detail is None:
+                self.show_search(item, loading=loading)
+            else:
+                self.show_item_detail(item, detail)
+        finally:
+            self._next_public_c_document = None
+
     def show_search(self, item: SearchResult, loading: bool = False) -> None:
+        from cifereca.core.notice_c_cover_index import is_canonical_cover_document
+        candidate = getattr(self, "_next_public_c_document", None)
+        document = candidate if is_canonical_cover_document(candidate) else None
         medium = search_detail_support_label(item)
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
-        usage = _commercial_search_usage(
-            item, self.window.service,
-            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
-        )
+        usage = _commercial_search_usage(item)
         freshness_rows = [
             ("Recherche en ligne", "Indisponible"),
         ] if stale_known else []
@@ -1114,6 +1230,7 @@ class DetailPanel(Gtk.Box):
                 ]),
             ],
             metadata=item.metadata,
+            cover_document_ref=document,
         ), description=item.description)
         if stale_known:
             # A public cache row is neither a current download offer nor a
@@ -1122,8 +1239,10 @@ class DetailPanel(Gtk.Box):
         # A direct-download action must be visible immediately.  Do not wait for
         # the asynchronous holdings request: Gallica has no meaningful holding
         # list and a failed availability lookup must never hide the download.
-        if item.source_provider != "numilog-catalog":
-            self._direct_download_action(item)
+        # Let the shared source-neutral offer guard and Core broker decide.
+        # A catalogue-only row is rejected by _direct_download_action before
+        # any Core eligibility call, regardless of the supplier name.
+        self._direct_download_action(item)
         availability = Adw.PreferencesGroup()
         availability.set_title("Disponibilités")
         row = Adw.ActionRow()
@@ -1222,16 +1341,16 @@ class DetailPanel(Gtk.Box):
         self._append_content(group)
 
     def show_item_detail(self, item: SearchResult, detail: ItemDetail) -> None:
+        from cifereca.core.notice_c_cover_index import is_canonical_cover_document
+        candidate = getattr(self, "_next_public_c_document", None)
+        document = candidate if is_canonical_cover_document(candidate) else None
         medium = search_detail_support_label(item)
         source = self.window.service.provider_display_name(item.source_provider)
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         availability = compact_availability_label(self.window.service.availability_display_label(item, detail))
         visible_availability = catalogue_availability_label(item, availability)
-        usage = _commercial_search_usage(
-            item, self.window.service,
-            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
-        )
+        usage = _commercial_search_usage(item)
         self.show_presentation(book_detail_presentation(
             title=detail.title or item.title,
             subtitle=detail.author or item.author,
@@ -1253,25 +1372,22 @@ class DetailPanel(Gtk.Box):
                     ("Support", medium if fmt else ""),
                 ]),
             ],
-            links=document_links(result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
-                   identity_id=getattr(getattr(self.window.service, "current_identity", None),
-                                       "identity_id", None),
-                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
-                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))),
+            links=document_links(result_row(item)),
             metadata=item.metadata,
+            cover_document_ref=document,
         ), description=getattr(detail, "description", None) or item.description)
-        from cifereca.gui.offer_actions import private_notice_download_hint_allowed
+        from cifereca.gui.offer_actions import (
+            private_notice_download_hint_allowed,
+            public_catalogue_download_hint_allowed,
+        )
         private_hint_ok = private_notice_download_hint_allowed(
-            item,
-            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
+            item, service=self.window.service,
             identity_id=getattr(getattr(self.window.service, "current_identity", None),
                                 "identity_id", None),
-            account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
-            source_context_epoch=getattr(self.window.service, "_source_context_epoch", None),
         )
         direct_download = (
             self.window.service.can_direct_download(item)
-            if private_hint_ok and item.source_provider != "numilog-catalog"
+            if private_hint_ok and public_catalogue_download_hint_allowed(item)
             else False
         )
         # A spent, uncertain loan may no longer be advertised as

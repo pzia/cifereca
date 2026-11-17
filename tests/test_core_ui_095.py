@@ -237,6 +237,9 @@ class SearchCoordinator(unittest.TestCase):
         w.library_controls=NS(state=lambda:QueryState('dumas','author',providers=('paris',)))
         w.search_controls.set_state=Mock()
         w.service=NS(current_identity=NS(identity_id='a'),search_known_catalog=Mock(return_value=[]),search=Mock(return_value=[]),search_progressive=Mock(return_value=NS(warnings=())),last_search=[],last_search_warnings=[])
+        identity = w.service.current_identity
+        w.service.identity_by_id = lambda key: identity if key == identity.identity_id else None
+        w.service.search_progressive_result_for_scope = Mock(return_value=(NS(warnings=(), cancelled=False), ()))
         self.tasks=[]
         w.runner=NS(submit=lambda *args,**kw:self.tasks.append(args))
         w._search_generation=0;w._last_search_query='';w._search_mode='local';w._search_local_objects={};w._remote_search_results=[]
@@ -256,7 +259,7 @@ class SearchCoordinator(unittest.TestCase):
         self.tasks[0][2]([]);w._populate_local_search.assert_not_called()
     def test_online_explicit(self):
         w=self.window;w.run_search(True);self.tasks[0][2](self.tasks[0][1]())
-        w.service.search_progressive.assert_called_once();w._populate_search.assert_called_once()
+        w.service.search_progressive_result_for_scope.assert_called_once();w.service.search_progressive.assert_not_called();w._populate_search.assert_called_once()
     def test_short_query(self):
         w=self.window;w.search_controls.state=lambda:QueryState('a');w.run_search(True)
         self.assertEqual(self.tasks,[]);w.toast.assert_called_once()

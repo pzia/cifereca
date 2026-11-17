@@ -72,7 +72,7 @@ def test_no_public_supplier_name_dispatch_in_core_offer_preflight():
                if isinstance(node, ast.ClassDef) and node.name == "LibraryService")
     method = next(node for node in cls.body
                   if isinstance(node, ast.FunctionDef)
-                  and node.name == "can_direct_download")
+                  and node.name == "_can_direct_download_read")
     body = ast.unparse(method)
     assert "exact_catalogue_download_offer_required" in body
     assert "ebooksgratuits" not in body

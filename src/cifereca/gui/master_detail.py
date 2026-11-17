@@ -45,6 +45,30 @@ def _same_book_row_presentation(old: BookListItem, new: BookListItem) -> bool:
         for field in _BOOK_ROW_VISIBLE_FIELDS
     ):
         return False
+    # Action callbacks are live, source/identity-scoped capabilities. A new
+    # closure may still show the same label/icon but target another account,
+    # Placement or selected offer. The old GTK cell must be rebound instead
+    # of retaining a previously captured action. Identity, not __eq__, is
+    # the appropriate test for an executable callback.
+    if getattr(old, "action_callback", None) is not getattr(new, "action_callback", None):
+        return False
+    # Public C fallback receipts remain tied to one original Core source
+    # object. Their immutable values may compare equal across a worker
+    # replay, even if the old packet has LOST its current-row authority.
+    # The cell's N3 guard (Library/Recent/Loan/History) checks this precise
+    # object identity, so append-fast must follow the same contract. A new
+    # equal-valued receipt needs a rebind to invalidate already-painted N4.
+    for field in (
+        "_cover_public_c_link", "_cover_borrower_public_c_receipt",
+        # Plugin C source snapshots must not carry a previous N3 image
+        # across a rerender even when the opaque C edition is identical.
+        "_cover_plugin_c_receipt",
+        # Core's Search C-first row is a mutable mapping. Equal content
+        # from a new projection cannot inherit the old cell's live witness.
+        "_cover_known_public_c_source",
+    ):
+        if getattr(old, field, None) is not getattr(new, field, None):
+            return False
     # Exact Core evidence, not just its displayed source URL, determines
     # the N2 cache token. A progressive batch with the same key/title/URL
     # must not retain a cell bound to an older edition, Placement or proof.

@@ -62,10 +62,12 @@ def test_cancel_during_indexing_never_publishes_a_tentative_right():
     _assert_no_early_provenance(result)
 
 
-def test_small_index_preserves_exact_attested_links_without_new_reason():
+def test_small_index_preserves_byte_evidence_without_granting_legacy_rights():
     inventory, tables = _fixture(2)
     result = reconcile(inventory, EvidenceSnapshot(tables), seconds=10)
     assert result.reasons == set()
-    assert result.redacted()["counts"]["confirmed_link"] == 2
-    assert result.unverified_rights == []
-    assert sum(edge.certainty == "attested" for edge in result.edges) == 2
+    assert result.redacted()["counts"].get("confirmed_link", 0) == 0
+    assert result.redacted()["counts"]["local_file_without_attested_right"] == 2
+    assert result.unverified_rights == [0, 1]
+    assert sum(edge.certainty == "attested" for edge in result.edges) == 0
+    assert result.redacted()["edge_counts"]["explicit_placement_sha_size"] == 2

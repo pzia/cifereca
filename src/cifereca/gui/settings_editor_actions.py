@@ -8,6 +8,69 @@ from .settings_identity_editor import build_identity_settings_editor
 from .settings_account_editor import build_provider_account_editor
 
 
+def _selected_adept_source(
+    saved: dict[str, Any], descriptors=None,
+) -> tuple[bool, str | None, str | None]:
+    """Explicit source pair or an unambiguous marker for historical Settings.
+
+    Never repair a malformed new pair by silently selecting legacy Paris.
+    """
+    from ..core.provider_identifier import valid_provider_identifier
+
+    explicit = ("adept_source_provider_id" in saved
+                or "adept_source_connection_id" in saved)
+    if not explicit:
+        # The saved key is a frozen Config compatibility namespace, not a
+        # supplier selector. Only an installed typed policy that declares
+        # this exact selection key can interpret the old setting.
+        from ..providers.base import ManualBorrowPolicy, ProviderDescriptor
+
+        selection_key = "primary_paris_connection_id"
+        legacy = saved.get(selection_key, "")
+        if (type(legacy) is not str or len(legacy) > 256
+                or (legacy and (
+                    legacy != legacy.strip() or not legacy.isprintable()))):
+            return False, None, None
+        if type(descriptors) is not dict:
+            return False, None, None
+        eligible = [
+            provider_id for provider_id, descriptor in descriptors.items()
+            if valid_provider_identifier(provider_id)
+            and type(descriptor) is ProviderDescriptor
+            and descriptor.id == provider_id
+            and descriptor.state == "ready"
+            and descriptor.capabilities.borrow is True
+            and type(descriptor.manual_borrow_policy) is ManualBorrowPolicy
+            and descriptor.manual_borrow_policy.schema == "cifereca.manual-borrow/1"
+            and descriptor.manual_borrow_policy.source_selection_key == selection_key
+        ]
+        if len(eligible) != 1:
+            return False, None, None
+        return False, eligible[0], legacy or None
+    provider = saved.get("adept_source_provider_id")
+    connection = saved.get("adept_source_connection_id")
+    if (not valid_provider_identifier(provider)
+            or type(connection) is not str or not connection
+            or len(connection) > 256 or connection != connection.strip()
+            or not connection.isprintable()):
+        return True, None, None
+    return True, provider, connection
+
+
+def _saved_adept_status(core, identity_id: str, saved: dict[str, Any], descriptors=None) -> dict[str, Any]:
+    """Read saved source only; never infer provider from an ADEPT profile."""
+    explicit, provider, credential = _selected_adept_source(saved, descriptors)
+    if provider is None:
+        return {
+            "identity_id": identity_id, "status": "to_configure",
+            "reason": "invalid_source_descriptor", "adept_profile_id": None,
+        }
+    return core.normal_source_adept_status(
+        identity_id, source_provider_id=provider, source_label=provider,
+        primary_connection_id=credential,
+    )
+
+
 def _local_adept_binding_caption(state: dict[str, Any]) -> str:
     """Non-authorizing local settings status, never a provider permission."""
     if state.get("status") == "ready":
@@ -17,7 +80,8 @@ def _local_adept_binding_caption(state: dict[str, Any]) -> str:
         )
     if state.get("status") == "to_configure":
         return "À configurer · liaison compte/profil ADEPT manquante ou non vérifiée."
-    if state.get("reason") == "multiple_paris_connections":
+    reason = state.get("reason")
+    if type(reason) is str and reason.startswith("multiple_") and reason.endswith("_connections"):
         return "À vérifier · plusieurs connexions : choix explicite requis. Aucun profil ADEPT choisi automatiquement."
     return "À vérifier · liaisons locales non attestées. Aucun profil ADEPT choisi automatiquement."
 
@@ -164,7 +228,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
         )
         normal_subtitle = (
             _local_adept_binding_caption(
-                self.service.normal_paris_adept_status(identity_id)
+                _saved_adept_status(self.service, identity_id, data, descriptors)
             )
             if data.get("id")
             else "À configurer · enregistrez l’identité pour vérifier ses liaisons."
@@ -198,24 +262,47 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 return
             # A runtime check concerns the SAVED binding, not an unsaved
             # draft. A save/reopen is required before testing changed inputs.
+            # Pin the Core as soon as the user admits the explicit probe.
+            # The queued worker must never inspect a replacement window Core.
+            admitted_core = self.service
             saved = self.config.identity(saved_id) or {}
-            stored_profile = self.service.storage.adept_profile_binding_get(
+            stored_profile = admitted_core.storage.adept_profile_binding_get(
                 "identity", saved_id,
             ) or ""
             stored_primary = saved.get("primary_paris_connection_id") or ""
+            # A changed/half-filled source pair remains an unsaved draft,
+            # even when its ADEPT profile is unchanged.
+            provider = saved.get("adept_source_provider_id", "")
+            connection = saved.get("adept_source_connection_id", "")
+            provider_row = e.get("adept_source_provider_id")
+            connection_row = e.get("adept_source_connection_id")
             if (e["adept_profile"].get_text() != stored_profile
                     or e["primary_paris_connection_id"].get_text()
-                       != stored_primary):
+                       != stored_primary
+                    or (provider_row is not None
+                        and provider_row.get_text() != provider)
+                    or (connection_row is not None
+                        and connection_row.get_text() != connection)):
                 e["normal_adept_status"].set_subtitle(
                     "À vérifier · enregistrez les modifications avant le contrôle ADEPT."
                 )
                 return
-            start_status = self.service.normal_paris_adept_status(saved_id)
+            selected_source = _selected_adept_source(saved, descriptors)
+            start_status = _saved_adept_status(admitted_core, saved_id, saved, descriptors)
             if start_status.get("status") != "ready":
                 e["normal_adept_status"].set_subtitle(
                     _local_adept_binding_caption(start_status)
                 )
                 return
+            # No more active Paris-specific Core facade in Settings: both the
+            # legacy saved-primary source and new explicit provider pair use
+            # the same source-scoped admission and runtime observation.
+            runtime_method = admitted_core.check_source_adept_runtime
+            runtime_probe = lambda identity: runtime_method(
+                identity, source_provider_id=selected_source[1],
+                source_label=selected_source[1],
+                primary_connection_id=selected_source[2],
+            )
             generations = (
                 getattr(self, "_identity_context_generation", None),
                 getattr(self, "_account_context_generation", None),
@@ -224,9 +311,41 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             button = e["normal_adept_check"]
             button.set_sensitive(False)
 
+            def saved_binding_current():
+                # A local SQLite/Config change may leave both the GTK
+                # generations and the descriptive readiness status unchanged.
+                # Compare *raw saved coordinates* and the persisted ADEPT
+                # identity profile before publishing any asynchronous result.
+                # Unlike the historical Paris-only guard, this also fences
+                # the new explicit provider + connection pair.
+                try:
+                    persisted = self.config.identity(saved_id)
+                    if type(persisted) is not dict:
+                        return False
+                    return (
+                        persisted.get("primary_paris_connection_id", "")
+                            == stored_primary
+                        and persisted.get("adept_source_provider_id", "")
+                            == provider
+                        and persisted.get("adept_source_connection_id", "")
+                            == connection
+                        and admitted_core.storage.adept_profile_binding_get(
+                            "identity", saved_id,
+                        ) == stored_profile
+                        and _selected_adept_source(persisted, descriptors) == selected_source
+                        and _saved_adept_status(
+                            admitted_core, saved_id, persisted, descriptors,
+                        ) == start_status
+                    )
+                except Exception:
+                    # An unreadable source/profile binding is never evidence
+                    # that an old ADEPT runtime result may still be rendered.
+                    return False
+
             def current():
                 return (
                     not getattr(self, "_closed", False)
+                    and self.service is admitted_core
                     and not e.get("deleted")
                     and (page_lifetime is None or page_lifetime.alive)
                     and generations == (
@@ -236,8 +355,11 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     and e["adept_profile"].get_text() == stored_profile
                     and e["primary_paris_connection_id"].get_text()
                         == stored_primary
-                    and self.service.normal_paris_adept_status(saved_id)
-                        == start_status
+                    and (provider_row is None
+                         or provider_row.get_text() == provider)
+                    and (connection_row is None
+                         or connection_row.get_text() == connection)
+                    and saved_binding_current()
                 )
 
             def release():
@@ -264,7 +386,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             try:
                 self.runner.submit(
                     "Vérification ADEPT…",
-                    lambda: self.service.check_normal_paris_adept_runtime(saved_id),
+                    lambda: runtime_probe(saved_id),
                     done, error, control=button,
                 )
             except Exception:
@@ -333,12 +455,19 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
 
             def explicit_probe(_button, *, e=editor, saved=dict(data),
                                pid=provider_id):
+                # Admission belongs to the Core at the explicit click, not to
+                # a later MainWindow binding while TaskRunner waits.
+                admitted_core = self.service
+                generations = (
+                    getattr(self, "_identity_context_generation", None),
+                    getattr(self, "_account_context_generation", None),
+                )
                 # Closed, value-free diagnostic for the repeated field case
                 # where no provider HTTP request follows an attempted test.
                 # No credential, account ID, draft or exception is logged.
                 def record(phase, status="ok"):
                     try:
-                        self.service.diagnostics.add(
+                        admitted_core.diagnostics.add(
                             "PLUGIN", "explicit provider probe UI", status,
                             detail={"provider_id": pid, "phase": phase})
                     except Exception:
@@ -371,6 +500,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         "Enregistrer les modifications avant de tester le compte.")
                     record("blocked_unsaved", "warning")
                     return
+                probe_method = admitted_core.explicit_provider_diagnostic
                 e["_probe_pending"] = True
                 button = e["explicit_probe_button"]
                 button.set_sensitive(False)
@@ -382,6 +512,18 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                     if page_lifetime is None or page_lifetime.alive:
                         button.set_sensitive(True)
 
+                def callback_current():
+                    return (
+                        self.service is admitted_core
+                        and not getattr(self, "_closed", False)
+                        and not e.get("deleted")
+                        and (page_lifetime is None or page_lifetime.alive)
+                        and generations == (
+                            getattr(self, "_identity_context_generation", None),
+                            getattr(self, "_account_context_generation", None),
+                        )
+                    )
+
                 def done(result):
                     release()
                     status = getattr(result, "status", None)
@@ -392,7 +534,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                         "completed_unverified" if observed else "unavailable",
                         "ok" if (live or observed) else "warning",
                     )
-                    if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
+                    if callback_current():
                         e["explicit_probe_status"].set_subtitle(
                             "Connexion vérifiée pour ce test. "
                             "Session temporaire refermée ; aucune modification du compte."
@@ -404,7 +546,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 def error(_exc):
                     release()
                     record("failed", "warning")
-                    if not e.get("deleted") and (page_lifetime is None or page_lifetime.alive):
+                    if callback_current():
                         e["explicit_probe_status"].set_subtitle(
                             "Diagnostic refusé. Enregistrer, activer le compte "
                             "et vérifier l’option de recette.")
@@ -412,7 +554,7 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
                 try:
                     self.runner.submit(
                         "Recette HTTP fournisseur…",
-                        lambda: self.service.explicit_provider_diagnostic(
+                        lambda: probe_method(
                             identity_id=current["identity_id"], provider_id=pid,
                             credential_id=current["id"], user_consent=True,
                         ),

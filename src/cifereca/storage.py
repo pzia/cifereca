@@ -1681,6 +1681,211 @@ class Storage:
                 raise
             version = 17
 
+        # Forward-compatible strengthening of v17: add this idempotent
+        # trigger even to already upgraded databases. The tombstone is an
+        # invariant of the v16 grant row's physical deletion, not a policy
+        # branch in a caller. Historical v15 rows remain readable.
+        db.execute("""
+            CREATE TRIGGER IF NOT EXISTS trg_adept_grant_paris_retire_on_delete
+            AFTER DELETE ON adept_borrower_grants
+            WHEN OLD.provider_id='paris'
+            BEGIN
+                INSERT OR IGNORE INTO paris_adept_grant_retirements
+                    (credential_id, account_id, retired_at)
+                VALUES (OLD.credential_id, OLD.account_id,
+                        CAST(strftime('%s','now') AS INTEGER));
+            END
+        """)
+
+        # Provider-neutral, v17-compatible *auxiliary* generation witness.
+        # Keep schema_version=17 so existing full-release rollback/reader
+        # binaries can open the database. The sidecar is idempotent and all
+        # mutations (including raw SQLite and older Core writers) are fenced
+        # by DB triggers. The tombstones never delete when a connection goes
+        # away, so A -> B -> A or delete -> insert cannot recover an epoch.
+        #
+        # Seed pre-existing rows as generation=1. No historical generation
+        # can be reconstructed from a v17 database; new captures start only
+        # after triggers have been installed in this transaction.
+        db.execute("SAVEPOINT provider_source_epoch_v17")
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS provider_connection_epochs (
+                    provider_id TEXT NOT NULL,
+                    credential_id TEXT NOT NULL,
+                    epoch INTEGER NOT NULL
+                        CHECK (typeof(epoch)='integer' AND epoch > 0
+                               AND epoch < 9223372036854775807),
+                    PRIMARY KEY(provider_id, credential_id)
+                )
+            """)
+            db.execute("""
+                INSERT OR IGNORE INTO provider_connection_epochs
+                    (provider_id, credential_id, epoch)
+                SELECT provider_id, credential_id, 1
+                FROM provider_connections
+            """)
+            # No routine may roll back or erase a historical generation,
+            # including direct SQL cleanup and legacy connection writers.
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_provider_epoch_no_delete
+                BEFORE DELETE ON provider_connection_epochs
+                BEGIN
+                    SELECT RAISE(ABORT, 'source_epoch_retirement_forbidden');
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_provider_epoch_no_rewind
+                BEFORE UPDATE ON provider_connection_epochs
+                WHEN NEW.provider_id != OLD.provider_id
+                     OR NEW.credential_id != OLD.credential_id
+                     OR typeof(NEW.epoch) != 'integer'
+                     OR NEW.epoch <= OLD.epoch
+                BEGIN
+                    SELECT RAISE(ABORT, 'source_epoch_rewind_forbidden');
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_provider_epoch_insert
+                AFTER INSERT ON provider_connections
+                BEGIN
+                    INSERT INTO provider_connection_epochs
+                        (provider_id, credential_id, epoch)
+                    VALUES (NEW.provider_id, NEW.credential_id, 1)
+                    ON CONFLICT(provider_id, credential_id)
+                    DO UPDATE SET epoch=epoch+1;
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_provider_epoch_update
+                AFTER UPDATE ON provider_connections
+                BEGIN
+                    -- Retire the previous scope even if a row was re-keyed.
+                    INSERT INTO provider_connection_epochs
+                        (provider_id, credential_id, epoch)
+                    VALUES (OLD.provider_id, OLD.credential_id, 1)
+                    ON CONFLICT(provider_id, credential_id)
+                    DO UPDATE SET epoch=epoch+1;
+                    -- A move to another previously retired scope must also
+                    -- invalidate every old generation of that new scope.
+                    INSERT INTO provider_connection_epochs
+                        (provider_id, credential_id, epoch)
+                    SELECT NEW.provider_id, NEW.credential_id, 1
+                    WHERE NEW.provider_id != OLD.provider_id
+                       OR NEW.credential_id != OLD.credential_id
+                    ON CONFLICT(provider_id, credential_id)
+                    DO UPDATE SET epoch=epoch+1;
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_provider_epoch_delete
+                AFTER DELETE ON provider_connections
+                BEGIN
+                    INSERT INTO provider_connection_epochs
+                        (provider_id, credential_id, epoch)
+                    VALUES (OLD.provider_id, OLD.credential_id, 1)
+                    ON CONFLICT(provider_id, credential_id)
+                    DO UPDATE SET epoch=epoch+1;
+                END
+            """)
+            db.execute("RELEASE SAVEPOINT provider_source_epoch_v17")
+        except Exception:
+            db.execute("ROLLBACK TO SAVEPOINT provider_source_epoch_v17")
+            db.execute("RELEASE SAVEPOINT provider_source_epoch_v17")
+            raise
+
+        # A confirmed ADEPT v16 grant is mutable and can be revoked and
+        # re-confirmed with the same (identity, borrower, profile) inside one
+        # timestamp tick. Capture a separate, monotone generation by SOURCE
+        # account. Keep tombstones for deleted grants and old v17 databases.
+        #
+        # This is an additive post-v17 invariant; do not change the schema
+        # version or promote archived v15 Paris bindings to live authority.
+        db.execute("SAVEPOINT adept_v16_grant_generation")
+        try:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS adept_borrower_grant_generations (
+                    provider_id TEXT NOT NULL,
+                    credential_id TEXT NOT NULL,
+                    account_id TEXT NOT NULL,
+                    generation INTEGER NOT NULL
+                        CHECK (typeof(generation)='integer' AND generation > 0
+                               AND generation < 9223372036854775807),
+                    PRIMARY KEY(provider_id, credential_id, account_id)
+                )
+            """)
+            db.execute("""
+                INSERT OR IGNORE INTO adept_borrower_grant_generations
+                    (provider_id,credential_id,account_id,generation)
+                SELECT provider_id,credential_id,account_id,1
+                FROM adept_borrower_grants
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_generation_no_delete
+                BEFORE DELETE ON adept_borrower_grant_generations
+                BEGIN
+                    SELECT RAISE(ABORT,'adept_grant_generation_tombstone');
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_generation_no_rewind
+                BEFORE UPDATE ON adept_borrower_grant_generations
+                WHEN NEW.provider_id IS NOT OLD.provider_id
+                  OR NEW.credential_id IS NOT OLD.credential_id
+                  OR NEW.account_id IS NOT OLD.account_id
+                  OR typeof(NEW.generation) != 'integer'
+                  OR NEW.generation <= OLD.generation
+                BEGIN
+                    SELECT RAISE(ABORT,'adept_grant_generation_rewind');
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_generation_insert
+                AFTER INSERT ON adept_borrower_grants
+                BEGIN
+                    INSERT INTO adept_borrower_grant_generations
+                        (provider_id,credential_id,account_id,generation)
+                    VALUES (NEW.provider_id,NEW.credential_id,NEW.account_id,1)
+                    ON CONFLICT(provider_id,credential_id,account_id)
+                    DO UPDATE SET generation=generation+1;
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_generation_update
+                AFTER UPDATE ON adept_borrower_grants
+                BEGIN
+                    INSERT INTO adept_borrower_grant_generations
+                        (provider_id,credential_id,account_id,generation)
+                    VALUES (OLD.provider_id,OLD.credential_id,OLD.account_id,1)
+                    ON CONFLICT(provider_id,credential_id,account_id)
+                    DO UPDATE SET generation=generation+1;
+                    INSERT INTO adept_borrower_grant_generations
+                        (provider_id,credential_id,account_id,generation)
+                    SELECT NEW.provider_id,NEW.credential_id,NEW.account_id,1
+                    WHERE NEW.provider_id IS NOT OLD.provider_id
+                       OR NEW.credential_id IS NOT OLD.credential_id
+                       OR NEW.account_id IS NOT OLD.account_id
+                    ON CONFLICT(provider_id,credential_id,account_id)
+                    DO UPDATE SET generation=generation+1;
+                END
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_adept_grant_generation_delete
+                AFTER DELETE ON adept_borrower_grants
+                BEGIN
+                    INSERT INTO adept_borrower_grant_generations
+                        (provider_id,credential_id,account_id,generation)
+                    VALUES (OLD.provider_id,OLD.credential_id,OLD.account_id,1)
+                    ON CONFLICT(provider_id,credential_id,account_id)
+                    DO UPDATE SET generation=generation+1;
+                END
+            """)
+            db.execute("RELEASE SAVEPOINT adept_v16_grant_generation")
+        except Exception:
+            db.execute("ROLLBACK TO SAVEPOINT adept_v16_grant_generation")
+            db.execute("RELEASE SAVEPOINT adept_v16_grant_generation")
+            raise
+
     @staticmethod
     def _stable_id(prefix: str, *parts: Any) -> str:
         raw = "\x1f".join(str(part or "") for part in parts).encode("utf-8", "surrogatepass")
@@ -2879,6 +3084,58 @@ class Storage:
             row=dict(zip(columns,record)); row["enabled"]=bool(row["enabled"]); row["metadata"]=self._json_load(row.pop("metadata_json")); out.append(row)
         return out
 
+    def provider_connection_epoch(
+        self, provider_id: str, credential_id: str, identity_id: str,
+    ) -> int | None:
+        """Return a live, owner-scoped *negative fence* with a durable epoch.
+
+        A successful read attests only the current enabled connection owner;
+        it is NOT proof of an account, loan, entitlement, ADEPT grant or user
+        consent. Callers must pin the returned epoch before external callbacks
+        and recheck it before acting. The JOIN uses one SQLite read snapshot.
+        """
+        values = (provider_id, credential_id, identity_id)
+        if any(
+            type(value) is not str or not value or len(value) > 1024
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+            for value in values
+        ):
+            return None
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT c.identity_id,c.enabled,e.epoch "
+                "FROM provider_connections AS c "
+                "JOIN provider_connection_epochs AS e "
+                "ON e.provider_id=c.provider_id "
+                "AND e.credential_id=c.credential_id "
+                "WHERE c.provider_id=? AND c.credential_id=? LIMIT 2",
+                (provider_id.casefold(), credential_id),
+            ).fetchall()
+        if len(rows) != 1:
+            return None
+        owner, enabled, epoch = rows[0]
+        if (type(owner) is not str or owner != identity_id
+                or type(enabled) is not int or enabled != 1
+                or type(epoch) is not int or epoch < 1):
+            return None
+        return epoch
+
+    def provider_connection_epoch_current(
+        self, provider_id: str, credential_id: str, identity_id: str,
+        expected_epoch: int,
+    ) -> bool:
+        """Detect A->B->A, disable/re-enable and delete/recreate across calls.
+
+        An epoch captured before staging cannot become valid again when the
+        connection regains the same owner or account descriptor. No provider
+        operation, profile lookup, or write is performed by this predicate.
+        """
+        if type(expected_epoch) is not int or expected_epoch < 1:
+            return False
+        return self.provider_connection_epoch(
+            provider_id, credential_id, identity_id,
+        ) == expected_epoch
+
     def provider_scope_account_bound(
         self, *, identity_id: str, provider_id: str,
         credential_id: str, account_id: str,
@@ -2918,6 +3175,30 @@ class Storage:
                  credential_id, account_id),
             ).fetchall()
             return len(borrowers) == 1
+
+    def provider_connection_owner_current(
+        self, provider_id: str, credential_id: str, identity_id: str,
+    ) -> bool:
+        """Attest a live source owner in one SQLite snapshot, without provider I/O.
+
+        An identity remembered at initial loan admission cannot outlive a
+        disabled, deleted or rebound connection while an ACSM is staged.
+        This is a necessary veto, never an ADEPT profile or borrower grant.
+        """
+        values = (provider_id, credential_id, identity_id)
+        if any(
+            type(value) is not str or not value or len(value) > 1024
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+            for value in values
+        ):
+            return False
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT identity_id,enabled FROM provider_connections "
+                "WHERE provider_id=? AND credential_id=? LIMIT 2",
+                (provider_id.casefold(), credential_id),
+            ).fetchall()
+        return len(rows) == 1 and rows[0] == (identity_id, 1)
 
     def identity_for_connection(self, provider_id: str, credential_id: str) -> str | None:
         with self._lock, self._connect() as db:
@@ -3189,6 +3470,85 @@ class Storage:
              "confirmed_by", "confirmed_at", "updated_at"), row,
         )) if row is not None else None)
 
+    def adept_borrower_grant_generation(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        connection_identity_id: str, borrower_identity_id: str,
+        profile_id: str,
+    ) -> int | None:
+        """One exact, live and explicit ADEPT grant snapshot plus generation.
+
+        A generation is necessary *revocation evidence*, never an independent
+        grant. It can only be obtained for the same positively confirmed,
+        connected, account-attested, borrower/profile-bound v16 row. A v15
+        Paris row, entitlement, UI profile or cache cannot supply authority.
+        """
+        values = (provider_id, credential_id, account_id,
+                  connection_identity_id, borrower_identity_id, profile_id)
+        if any(
+            type(v) is not str or not v or len(v) > 1024
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in v)
+            for v in values
+        ):
+            return None
+        try:
+            scope = self._adept_grant_scope(
+                provider_id=provider_id, credential_id=credential_id,
+                account_id=account_id,
+            )
+        except ValueError:
+            return None
+        with self._lock, self._connect() as db:
+            rows = db.execute(
+                "SELECT version.generation "
+                "FROM adept_borrower_grants AS g "
+                "JOIN adept_borrower_grant_generations AS version "
+                "ON version.provider_id=g.provider_id "
+                "AND version.credential_id=g.credential_id "
+                "AND version.account_id=g.account_id "
+                "JOIN provider_connections AS c "
+                "ON c.provider_id=g.provider_id "
+                "AND c.credential_id=g.credential_id "
+                "AND c.identity_id=g.connection_identity_id "
+                "AND c.enabled=1 "
+                "JOIN provider_accounts AS a "
+                "ON a.provider_id=g.provider_id "
+                "AND a.credential_id=g.credential_id "
+                "AND a.account_id=g.account_id "
+                "AND a.connection_id=c.connection_id "
+                "AND a.identity_id=g.connection_identity_id "
+                "JOIN identities AS i ON i.identity_id=g.borrower_identity_id "
+                "JOIN adept_profile_bindings AS p "
+                "ON p.scope_type='identity' "
+                "AND p.scope_id=g.borrower_identity_id "
+                "AND p.profile_id=g.profile_id "
+                "WHERE g.provider_id=? AND g.credential_id=? "
+                "AND g.account_id=? AND g.confirmed_by='explicit' "
+                "AND g.connection_identity_id=? AND g.borrower_identity_id=? "
+                "AND g.profile_id=? LIMIT 2",
+                (*scope, connection_identity_id, borrower_identity_id,
+                 profile_id),
+            ).fetchall()
+        if len(rows) != 1:
+            return None
+        generation = rows[0][0]
+        return generation if type(generation) is int and generation > 0 else None
+
+    def adept_borrower_grant_generation_current(
+        self, *, provider_id: str, credential_id: str, account_id: str,
+        connection_identity_id: str, borrower_identity_id: str,
+        profile_id: str, expected_generation: int,
+    ) -> bool:
+        """Veto revoked/reconfirmed/swap-back grants, including same-second ABA."""
+        if type(expected_generation) is not int or expected_generation < 1:
+            return False
+        return self.adept_borrower_grant_generation(
+            provider_id=provider_id, credential_id=credential_id,
+            account_id=account_id,
+            connection_identity_id=connection_identity_id,
+            borrower_identity_id=borrower_identity_id,
+            profile_id=profile_id,
+        ) == expected_generation
+
     def adept_borrower_grant_delete(
         self, *, provider_id: str, credential_id: str, account_id: str,
     ) -> None:
@@ -3196,6 +3556,9 @@ class Storage:
             provider_id=provider_id, credential_id=credential_id,
             account_id=account_id,
         )
+        # The v17 SQL trigger handles the Paris tombstone atomically for
+        # *all* deletion paths, including indirect connection/profile cleanup
+        # and external SQLite callers, not only this public API.
         with self._lock, self._connect() as db:
             db.execute(
                 "DELETE FROM adept_borrower_grants WHERE provider_id=? "
@@ -3207,58 +3570,13 @@ class Storage:
         self, *, credential_id: str, account_id: str, borrower_identity_id: str,
         profile_id: str, confirmed: bool = False,
     ) -> None:
-        """Persist an explicit borrower grant; never infer Adobe ownership.
+        """Retired v15 write API, preserved as a fail-closed ABI stub.
 
-        The grant is scoped to one Paris connection and borrower account, and
-        pins the identity's stable ADEPT profile reference. A later profile
-        change invalidates the grant until an explicit reconfirmation.
+        Historical rows remain readable for provenance, safe return handling,
+        explicit v16 reconfirmation and SQLite upgrade. A new legacy binding
+        is never written through the live Core, even after v16 revocation.
         """
-        credential = str(credential_id or "").strip()
-        borrower = str(account_id or "").strip()
-        owner = str(borrower_identity_id or "").strip()
-        profile = str(profile_id or "").strip()
-        if not confirmed:
-            raise ValueError("explicit borrower/ADEPT confirmation required")
-        if not all((credential, borrower, owner, profile)):
-            raise ValueError("Paris borrower and ADEPT identity/profile required")
-        now = int(time.time())
-        with self._lock, self._connect() as db:
-            # A LibraryService preflight is only a snapshot: another process
-            # may commit the canonical v16 grant between that read and this
-            # legacy UPSERT. Lock the SQLite writer BEFORE checking the raw
-            # v16 row, so even a revoked/unreadable v16 proof cannot be
-            # replaced by an independent historical Paris grant.
-            db.execute("BEGIN IMMEDIATE")
-            v16 = db.execute(
-                "SELECT 1 FROM adept_borrower_grants "
-                "WHERE provider_id='paris' AND credential_id=? AND account_id=?",
-                (credential, borrower),
-            ).fetchone()
-            if v16 is not None:
-                raise ValueError("ADEPT borrower grant requires v16 binding")
-            connection = db.execute(
-                "SELECT identity_id FROM provider_connections WHERE provider_id='paris' AND credential_id=?",
-                (credential,),
-            ).fetchone()
-            binding = db.execute(
-                "SELECT profile_id FROM adept_profile_bindings WHERE scope_type='identity' AND scope_id=?",
-                (owner,),
-            ).fetchone()
-            identity = db.execute(
-                "SELECT 1 FROM identities WHERE identity_id=?", (owner,)
-            ).fetchone()
-            if not connection or not identity or not binding or str(binding[0]) != profile:
-                raise ValueError("Paris connection or identity ADEPT profile is not proven")
-            db.execute(
-                "INSERT INTO paris_borrower_adept_bindings "
-                "(credential_id,account_id,connection_identity_id,borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(credential_id,account_id) DO UPDATE SET "
-                "connection_identity_id=excluded.connection_identity_id,"
-                "borrower_identity_id=excluded.borrower_identity_id,"
-                "profile_id=excluded.profile_id,confirmed_by=excluded.confirmed_by,"
-                "confirmed_at=excluded.confirmed_at,updated_at=excluded.updated_at",
-                (credential, borrower, str(connection[0]), owner, profile, "explicit", now, now),
-            )
+        raise ValueError("Paris ADEPT legacy binding writer retired")
 
     def paris_borrower_adept_binding_get(
         self, *, credential_id: str, account_id: str,
@@ -3269,16 +3587,29 @@ class Storage:
             return None
         with self._lock, self._connect() as db:
             row = db.execute(
-                "SELECT connection_identity_id,borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at "
-                "FROM paris_borrower_adept_bindings WHERE credential_id=? AND account_id=?",
+                "SELECT b.connection_identity_id,b.borrower_identity_id,"
+                "b.profile_id,b.confirmed_by,b.confirmed_at,b.updated_at,"
+                "EXISTS(SELECT 1 FROM paris_adept_grant_retirements AS r "
+                "WHERE r.credential_id=b.credential_id AND r.account_id=b.account_id) "
+                "FROM paris_borrower_adept_bindings AS b "
+                "WHERE b.credential_id=? AND b.account_id=?",
                 (credential, borrower),
             ).fetchone()
         if row is None:
             return None
-        return dict(zip(
-            ("connection_identity_id", "borrower_identity_id", "profile_id", "confirmed_by", "confirmed_at", "updated_at"),
-            row,
-        ))
+        return {
+            **dict(zip(
+                ("connection_identity_id", "borrower_identity_id", "profile_id",
+                 "confirmed_by", "confirmed_at", "updated_at"), row[:6],
+            )),
+            "retired_for_authority": bool(row[6]),
+            # Historical table has no provider column: its schema was
+            # exclusively Paris. Expose immutable origin evidence so a
+            # source-neutral Core reader can compare native coordinates
+            # without inventing a provider-specific decision or replaying
+            # an unscoped v15 grant for another library.
+            "source_provider": "paris",
+        }
 
     def paris_borrower_adept_bindings(
         self, *, credential_id: str | None = None,

@@ -1,4 +1,4 @@
-"""Read-only Paris borrower provenance and cross-identity ledger checks.
+"""Read-only source-scoped ADEPT borrower provenance and ledger vetoes.
 
 The service facade retains profile mutation, locks and all acquisition/return
 entry points. This boundary reads existing account and binding evidence only;
@@ -26,11 +26,12 @@ def public_borrower_refusal_code(value: Any) -> str:
 
 
 def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: str) -> tuple[str | None, str | None]:
-    """Resolve the Adobe borrower separately from the Paris connection.
+    """Resolve the Adobe borrower for one exact provider connection.
 
-    The primary account normally uses its proven connection identity.
-    An explicit exceptional grant takes precedence without changing that
-    identity's normal profile. Linked accounts always require a grant.
+    Confirmed source-scoped v16 grants work for any library. Historical v15
+    records retain a fixed provenance and can only veto contradictions.
+    The primary account normally uses its proven connection identity, while
+    linked accounts require an explicit source-bound ADEPT borrower grant.
     """
     # A malformed provider loan cannot attest a borrower by coercing
     # arbitrary objects (or str subclasses) into a stored account key.
@@ -46,40 +47,74 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     credential = loan.source_credential.strip()
     if not credential:
         return None, "adept_borrower_ambiguous"
-    # Account rows can also originate in a provider plugin. Only native
-    # coordinates may attest the source: never invoke untrusted __str__,
-    # __eq__ or subclass methods while selecting ADEPT grant ownership.
-    matches = [
-        account for account in self.accounts
-        if type(account.provider_id) is str
-        and account.provider_id.casefold() == source_provider
-        and type(account.credential_id) is str
-        and account.credential_id == credential
-        and type(account.is_primary) is bool
-        and (
-            (borrower == "primary" and account.is_primary)
-            or (type(account.unique_id) is str
-                and account.unique_id.strip() == borrower)
-        )
-    ]
-    if (len(matches) != 1
-            or type(matches[0].identity_id) is not str
-            or matches[0].identity_id != connection_identity_id):
+    # Reuse the installed provider's existing-loan borrower convention,
+    # including an explicitly declared alias for an empty-ID primary.
+    # The old literal "primary" is a grant-store key, not proof that a
+    # provider reported this borrower. Preserve historical normalization
+    # of loan coordinates, but never choose the account by a Core alias.
+    from types import SimpleNamespace
+    try:
+        account = self._account_for_loan(SimpleNamespace(
+            source_provider=source_provider, source_credential=credential,
+            source_account_id=borrower,
+        ))
+    except Exception:
         return None, "adept_borrower_ambiguous"
-    if matches[0].is_primary:
+    if (type(account.provider_id) is not str
+            or account.provider_id != source_provider
+            or type(account.credential_id) is not str
+            or account.credential_id != credential
+            or type(account.unique_id) is not str
+            or type(account.is_primary) is not bool
+            or type(account.identity_id) is not str
+            or account.identity_id != connection_identity_id):
+        return None, "adept_borrower_ambiguous"
+    is_primary = account.is_primary
+    if is_primary:
+        # A declared observation alias has already been checked against the
+        # exact empty primary UID. Preserve the existing canonical grant
+        # coordinate and cross-connection/duplicate primary veto.
+        conflict_key = "primary" if account.unique_id == "" and borrower else borrower
         if self._borrower_identity_conflict(
             self.accounts, provider_id=source_provider,
-            account_id=borrower, identity_id=connection_identity_id,
+            account_id=conflict_key, identity_id=connection_identity_id,
             credential_id=credential,
         ):
             return None, "adept_borrower_ambiguous"
         borrower = "primary"
 
-    if not matches[0].is_primary and (not borrower or borrower == "primary"):
+    if not is_primary and (not borrower or borrower == "primary"):
         return None, "adept_borrower_ambiguous"
-    binding = self.storage.paris_borrower_adept_binding_get(
-        credential_id=credential, account_id=borrower,
+    # The v15 SQLite table lacks a provider column, and credentials/account
+    # IDs can legitimately collide between libraries. Storage projects its
+    # historical, immutable source provenance; only an exact matching source
+    # may consult that legacy row as a NEGATIVE consistency check. All live
+    # positive borrower authority remains source-scoped v16. This comparison
+    # is data against data, never a Core branch on a supplier name.
+    try:
+        binding = self.storage.paris_borrower_adept_binding_get(
+            credential_id=credential, account_id=borrower,
+        )
+    except Exception:
+        return None, "adept_borrower_ambiguous"
+    if binding is not None:
+        if (type(binding) is not dict
+                or type(binding.get("source_provider")) is not str):
+            return None, "adept_borrower_profile_changed"
+        if binding["source_provider"] != source_provider:
+            binding = None
+    # v16 revocation and explicit reconfirmation leave the historical row
+    # available for provenance, but its old owner must no longer authorize
+    # an ADEPT operation (even after revoke/restore or A→B→A).
+    legacy_retired = (
+        type(binding) is dict
+        and binding.get("retired_for_authority") is True
     )
+    if legacy_retired:
+        binding = None
+    # A v15 record is retained only as a negative consistency check. Only a
+    # separately confirmed v16 grant can positively attest an ADEPT borrower.
+    confirmed_v16_owner: str | None = None
     if binding is not None:
         # During the explicit reconfirmation transition, a concurrent or
         # historically reintroduced legacy row must not silently override a
@@ -112,6 +147,7 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
                     or type(binding.get("profile_id")) is not str
                     or binding["profile_id"] != v16.get("profile_id")):
                 return None, "adept_borrower_profile_changed"
+            confirmed_v16_owner = v16_owner
     if binding is None:
         # The v16 register is independent of the historical Paris grant.
         # This path is positive-only: a linked borrower may be resolved from
@@ -133,7 +169,7 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
             return owner, None
         if reason != "adept_borrower_binding_required":
             return None, public_borrower_refusal_code(reason)
-        if matches[0].is_primary:
+        if is_primary and not legacy_retired:
             return connection_identity_id, None
         return None, "adept_borrower_binding_required"
     # This is a stored *grant*, not an arbitrary provider projection. Never
@@ -155,7 +191,12 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     if (type(current) is not str or current != pinned
             or type(confirmed_by) is not str or confirmed_by != "explicit"):
         return None, "adept_borrower_profile_changed"
-    return owner, None
+    # A validated historical row is still descriptive, not a live grant.
+    # Keeping it readable must never silently authorize acquisition, return
+    # or post-staging ADEPT execution without explicit source-scoped v16 proof.
+    if confirmed_v16_owner is None:
+        return None, "adept_borrower_binding_required"
+    return confirmed_v16_owner, None
 
 
 def _cross_identity_loan_conflict(

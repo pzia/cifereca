@@ -35,7 +35,7 @@ def test_no_valid_price_does_not_create_commercial_state(price):
 def test_price_does_not_mint_a_canonical_owned_entitlement(provider):
     item = replace(book(provider), owned=True, price="9.99")
     assert mirrored_state(item) == "available_to_buy"
-    assert mirrored_state(item, [right(provider)]) == "remote_owned"
+    assert mirrored_state(item, [right(provider)]) == "available_to_buy"
 
 
 @pytest.mark.parametrize("provider", [
@@ -49,6 +49,6 @@ def test_catalogue_medium_never_mints_borrow_availability(provider, medium):
     assert mirrored_state(item) == "remote_catalog"
 
 
-def test_price_does_not_override_attested_owned_right():
+def test_historical_right_does_not_change_descriptive_price():
     item = replace(book("fictional-a"), price="9.99")
-    assert mirrored_state(item, [right()]) == "remote_owned"
+    assert mirrored_state(item, [right()]) == "available_to_buy"

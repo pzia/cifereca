@@ -8,10 +8,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from inspect import getattr_static
+from threading import Lock
 
 from ..models import Account
 from .canonical_delivery_abi import has_complete_delivery_abi
 from .private_inventory_binding import exact_private_inventory_binding_valid
+
+
+class _ConfirmedOfferUse:
+    """Internal, in-process, single attempt; failure requires new confirmation."""
+
+    def __init__(self):
+        self._lock = Lock()
+        self._used = False
+
+    def claim(self):
+        with self._lock:
+            if self._used:
+                raise ValueError("selected_source_confirmation_consumed")
+            self._used = True
 
 
 @dataclass(frozen=True, repr=False)
@@ -27,6 +42,13 @@ class SourceOfferTarget:
     # Pinned by the synchronous Core facade. A→B→A can restore the same
     # identity string but cannot restore the account-context generation.
     selection_epoch: int | None = field(default=None, compare=False)
+    # Only an explicit Core-admitted Search click may use this independent
+    # source lease. Passive/legacy targets retain navigation-epoch semantics.
+    source_epoch: int | None = field(default=None, compare=False)
+    # Explicit headless admission additionally pins the actual registry object
+    # and Core instance, not merely a reusable identity string.
+    reader_scope: object | None = field(default=None, compare=False, repr=False)
+    _confirmed_use: _ConfirmedOfferUse | None = field(default=None, compare=False, repr=False)
 
 
 def _resolve(service, target: SourceOfferTarget):
@@ -37,11 +59,33 @@ def _resolve(service, target: SourceOfferTarget):
     # Production LibraryService publishes a monotone epoch on every identity
     # switch; minimal synthetic facades with no epoch still need all the
     # independent account/session/ABI binding guards below.
-    current_epoch = getattr(service, "_account_context_epoch", None)
-    if (type(current_epoch) not in (int, type(None))
-            or (type(current_epoch) is int and current_epoch < 0)
-            or target.selection_epoch != current_epoch):
-        raise ValueError("selected_source_identity_changed")
+    if target.reader_scope is not None:
+        if type(target._confirmed_use) is not _ConfirmedOfferUse:
+            raise ValueError("selected_source_confirmation_required")
+        from .search_orchestration import SearchReadScope
+        scope = target.reader_scope
+        if (type(scope) is not SearchReadScope
+                or scope.identity_id != target.identity_id
+                or scope.source_epoch != target.source_epoch
+                or not scope.current(service)
+                or service._provider_enabled_for_identity(
+                    target.provider_id, target.identity_id,
+                ) is not True):
+            raise ValueError("selected_source_binding_changed")
+    if target.source_epoch is not None:
+        from .source_context import source_context_epoch
+        if (type(target.source_epoch) is not int
+                or target.source_epoch < 0
+                or target.selection_epoch is not None
+                or source_context_epoch(service) != target.source_epoch):
+            raise ValueError("selected_source_binding_changed")
+    else:
+        # Historical/read-only selection targets remain navigation-scoped.
+        current_epoch = getattr(service, "_account_context_epoch", None)
+        if (type(current_epoch) not in (int, type(None))
+                or (type(current_epoch) is int and current_epoch < 0)
+                or target.selection_epoch != current_epoch):
+            raise ValueError("selected_source_identity_changed")
     accounts = [
         account for account in service.accounts
         if type(account) is Account
@@ -66,6 +110,12 @@ def _resolve(service, target: SourceOfferTarget):
             or not exact_private_inventory_binding_valid(
                 service, account, session=session, provider_id=target.provider_id,
             )):
+        raise ValueError("selected_source_binding_changed")
+    if target.source_epoch is not None:
+        from .source_context import source_context_epoch
+        if source_context_epoch(service) != target.source_epoch:
+            raise ValueError("selected_source_binding_changed")
+    if target.reader_scope is not None and not target.reader_scope.current(service):
         raise ValueError("selected_source_binding_changed")
     return target, account
 
@@ -108,8 +158,47 @@ def select_source_offer_target(
         return None
 
 
+def admit_library_source_offer(
+    service, target: SourceOfferTarget, *, identity_id: str,
+    account_epoch: int, source_epoch: int,
+) -> SourceOfferTarget:
+    """Promote a still-current passive Library selection at explicit click.
+
+    No offer GET here: the canonical executor will qualify current delivery
+    after dequeue. Navigation is required only through admission, not the
+    subsequently admitted source lease.
+    """
+    from dataclasses import replace
+    from .source_context import source_context_epoch
+
+    if (type(target) is not SourceOfferTarget
+            or type(identity_id) is not str or not identity_id
+            or target.identity_id != identity_id
+            or type(account_epoch) is not int or account_epoch < 0
+            or type(source_epoch) is not int or source_epoch < 0
+            or target.source_epoch is not None
+            or target.selection_epoch != account_epoch
+            or service._account_context_epoch != account_epoch
+            or source_context_epoch(service) != source_epoch):
+        raise ValueError("selected_library_source_revoked")
+    _resolve(service, target)
+    admitted = replace(target, selection_epoch=None, source_epoch=source_epoch)
+    _resolve(service, admitted)
+    if (service._account_context_epoch != account_epoch
+            or source_context_epoch(service) != source_epoch):
+        raise ValueError("selected_library_source_revoked")
+    return admitted
+
+
 def obtain_source_offer(service, target: SourceOfferTarget):
     """Core's existing global-lock, single-offer A→B path, without entitlements."""
+    if type(target) is not SourceOfferTarget:
+        raise ValueError("selected_source_target_invalid")
+    if target.reader_scope is not None:
+        if type(target._confirmed_use) is not _ConfirmedOfferUse:
+            raise ValueError("selected_source_confirmation_required")
+        target._confirmed_use.claim()
+
     def resolve(_service, entitlement_id, identity_id, item_id):
         if (entitlement_id is not None or identity_id != target.identity_id
                 or item_id != target.item_id):
@@ -151,18 +240,13 @@ def select_library_source_offer_target(
     if (type(identity) is not str or not identity or len(identity) > 1024
             or any(c in identity for c in "\x00\r\n")):
         return None
-    candidates = [
-        row for row in (entry.get("possessions") or ())
-        if type(row) is dict and row.get("identity_id") == identity
-        and row.get("kind") == "owned" and row.get("state") == "active"
-    ] if type(entry.get("possessions")) in (tuple, list) else []
-    if not candidates:
-        # A catalogue observation is never a pseudo-possession. Its exact
-        # private origin can be selected passively; current delivery remains
-        # a separate producer callback after explicit user action.
+    native_origin = entry.get("source") == "private_catalog_observation"
+    if native_origin:
+        # A private catalogue card has its own exact source. Historical
+        # possessions are not a source selector, fallback or competing
+        # authority for this card.
         refs = entry.get("source_refs")
-        if (entry.get("source") != "private_catalog_observation"
-                or entry.get("state") != "remote_catalog"
+        if (entry.get("state") != "remote_catalog"
                 or type(refs) not in (tuple, list) or len(refs) != 1
                 or type(refs[0]) is not dict):
             return None
@@ -170,18 +254,47 @@ def select_library_source_offer_target(
         if (candidate.get("identity_id") != identity
                 or candidate.get("kind") != "purchase"):
             return None
-    elif len(candidates) == 1:
-        candidate = candidates[0]
+        credential = candidate.get("credential_id")
+        if (type(credential) is not str or not credential
+                or len(credential) > 1024
+                or any(c in credential for c in "\x00\r\n")):
+            return None
     else:
-        return None
+        # Historical possession-only cards still supply display/navigation
+        # coordinates until their own private-inventory observation exists.
+        # They cannot grant an offer or publish bytes.
+        candidates = [
+            row for row in (entry.get("possessions") or ())
+            if type(row) is dict and row.get("identity_id") == identity
+            and row.get("kind") == "owned" and row.get("state") == "active"
+        ] if type(entry.get("possessions")) in (tuple, list) else []
+        if len(candidates) != 1:
+            return None
+        candidate = candidates[0]
+        # The historical card is only a coordinate hint for a fresh offer.
+        # An upstream account ID alone can be reused under a different
+        # credential after reconfiguration. Never reconstruct that source.
+        credential = candidate.get("credential_id")
+        if (type(credential) is not str or not credential
+                or len(credential) > 1024
+                or any(c in credential for c in "\x00\r\n")):
+            return None
     provider = candidate.get("provider_id")
     item_id = candidate.get("item_id")
     account_id = candidate.get("account_id")
+    if (not all(type(value) is str and value and len(value) <= 1024
+                and not any(c in value for c in "\x00\r\n")
+                for value in (provider, item_id))
+            or type(account_id) is not str or len(account_id) > 1024
+            or any(c in account_id for c in "\x00\r\n")):
+        return None
     accounts = [
         account for account in service.accounts
-        if getattr(account, "identity_id", None) == identity
-        and getattr(account, "provider_id", None) == provider
-        and getattr(account, "unique_id", None) == account_id
+        if type(account) is Account
+        and account.identity_id == identity
+        and account.provider_id == provider
+        and account.unique_id == account_id
+        and account.credential_id == credential
     ]
     if len(accounts) != 1:
         return None

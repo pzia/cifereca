@@ -1,5 +1,6 @@
 """CoreUI target action: no preparation/download on render, no stale callbacks."""
 from types import SimpleNamespace as NS
+from dataclasses import replace
 
 import pytest
 
@@ -23,7 +24,11 @@ def setup_action(provider="kobo", operation=None, *, provider_label=None):
         window.service.provider_display_name = lambda _provider: provider_label
     window.service.owned_library_download_target = lambda entry: target
     calls = []
-    window.service.obtain_owned_library_item = lambda requested: calls.append(requested) or NS(path="fake-path")
+    window.service.capture_admitted_owned_library_offer = lambda requested: replace(
+        requested, selection_epoch=None,
+        source_epoch=getattr(window.service, "_source_context_epoch", 0),
+    )
+    window.service.obtain_admitted_owned_library_offer = lambda requested: calls.append(requested) or NS(path="fake-path")
     add_local_book_actions(window, detail, entry, **deps)
     return window, actions, calls, submissions, target
 
@@ -157,7 +162,7 @@ def test_render_is_passive_and_only_explicit_click_submits_one_book():
 
 
 @pytest.mark.parametrize("when", ["before_click", "before_worker", "closed", "detached", "hidden", "identity_roundtrip"])
-def test_stale_identity_closed_window_or_detached_action_never_downloads(when):
+def test_stale_click_blocks_but_admitted_worker_keeps_identity(when):
     window, actions, calls, submissions, _target = setup_action()
     if when == "before_click":
         window.service.current_identity = NS(identity_id="bob")
@@ -171,19 +176,21 @@ def test_stale_identity_closed_window_or_detached_action_never_downloads(when):
         window._identity_context_generation = 2
     actions[0].click()
     if when == "before_worker":
+        # The clicked source remains Alice even though navigation moved.
         window.service.current_identity = NS(identity_id="bob")
-        with pytest.raises(RuntimeError, match="contexte"):
-            submissions[0][0][1]()
+        result = submissions[0][0][1]()
+        assert result.path == "fake-path"
+        assert len(calls) == 1 and calls[0].identity_id == "alice"
+        assert calls[0].source_epoch == 0
     else:
-        assert not submissions
-    assert not calls
+        assert not submissions and not calls
 
 
 def test_worker_and_failure_callback_never_publish_private_provider_errors():
     window, actions, _calls, submissions, _target = setup_action()
     def fail(target):
         raise ValueError("Bearer PRIVATE query /private/path")
-    window.service.obtain_owned_library_item = fail
+    window.service.obtain_admitted_owned_library_offer = fail
     actions[0].click()
     args, _kwargs = submissions[0]
     with pytest.raises(RuntimeError) as caught:
@@ -238,7 +245,7 @@ def test_p1_4664_stale_owned_download_never_queues_after_source_or_detail_revoca
 @pytest.mark.parametrize("change", [
     "source_reconnect", "invalid_source_epoch", "detail_replaced",
 ])
-def test_p1_4664_queued_owned_download_cannot_run_or_publish_after_revocation(change):
+def test_queued_owned_download_source_revokes_but_view_only_filters_publication(change):
     window, actions, calls, submissions, _ = setup_action("kobo")
     button = actions[0]
     button.click()
@@ -250,12 +257,17 @@ def test_p1_4664_queued_owned_download_cannot_run_or_publish_after_revocation(ch
     else:
         button._cifereca_action_context_revoked = True
     args, _kwargs = submissions[0]
-    with pytest.raises(RuntimeError, match="contexte"):
-        args[1]()
+    if change == "detail_replaced":
+        assert args[1]().path == "fake-path"
+        assert len(calls) == 1 and calls[0].identity_id == "alice"
+    else:
+        with pytest.raises(RuntimeError, match="contexte"):
+            args[1]()
+        assert not calls
     before = list(calls)
     args[2](NS(path="synthetic"))
     args[3](RuntimeError("PRIVATE /home/reader"))
-    assert calls == before == []
+    assert calls == before
     assert len(submissions) == 1
 
 
@@ -272,7 +284,10 @@ def test_p1_4664_reconnected_source_only_allows_a_newly_rendered_owned_button():
     window.service._source_context_epoch = 7
     window.service.owned_library_download_target = lambda _entry: target
     calls = []
-    window.service.obtain_owned_library_item = (
+    window.service.capture_admitted_owned_library_offer = (
+        lambda actual: replace(actual, source_epoch=7, selection_epoch=None)
+    )
+    window.service.obtain_admitted_owned_library_offer = (
         lambda actual: calls.append(actual) or NS(path=None)
     )
     add_local_book_actions(window, detail, entry, **deps)
@@ -298,9 +313,8 @@ def test_queued_owned_download_does_not_switch_to_another_core_with_same_identit
         obtain_owned_library_item=lambda t: wrong.append(t),
     )
     work = submissions[0][0][1]
-    with pytest.raises(RuntimeError, match="contexte"):
-        work()
-    assert calls == [] and wrong == []
+    assert work().path == "fake-path"
+    assert calls == [target] and wrong == []
 
 
 def test_old_owned_button_is_not_rebound_to_replacement_core_before_click():
@@ -319,7 +333,7 @@ def test_queued_owned_download_pins_method_even_if_core_method_is_replaced():
     window, actions, calls, submissions, target = setup_action()
     actions[0].click()
     wrong = []
-    window.service.obtain_owned_library_item = lambda t: wrong.append(t)
+    window.service.obtain_admitted_owned_library_offer = lambda t: wrong.append(t)
     result = submissions[0][0][1]()
     assert result.path == "fake-path"
     assert calls == [target] and wrong == []
@@ -340,3 +354,15 @@ def test_late_owned_download_callbacks_ignore_replaced_window_core():
     args[2](NS(path="untrusted-file-path"))
     args[3](RuntimeError("PRIVATE_BEARER"))
     assert ui == [] and calls == []
+
+
+def test_failed_admission_never_enqueues_or_falls_back_to_legacy_worker():
+    window, actions, calls, submissions, _ = setup_action()
+    def refuse(_target):
+        raise ValueError("unavailable")
+    window.service.capture_admitted_owned_library_offer = refuse
+    window.service.show_error = lambda *_args: None
+    window.show_error = lambda *_args: None
+    window.service.obtain_owned_library_item = lambda *_args: pytest.fail("legacy worker")
+    actions[0].click()
+    assert not calls and not submissions

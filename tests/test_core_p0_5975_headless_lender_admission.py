@@ -114,3 +114,138 @@ def test_scope_revoke_before_snapshot_and_plan_does_not_read_lender(harness):
         requesting_identity_id="default", scope_current=lambda: False,
     ).status == "revoked"
     assert session.calls == 0
+
+
+def test_future_lender_declared_primary_selection_is_checked_without_brand(
+    harness,
+):
+    """A non-Paris lender with a typed selected-source key gets the same veto.
+
+    The witness must not call the provider or use the current GTK identity.
+    """
+    from dataclasses import replace
+    from cifereca.providers.base import ManualBorrowPolicy
+    service, account, session = harness
+    provider = "future-lender"
+    account.provider_id = provider
+    session.provider_id = provider
+    session.descriptor = replace(
+        session.descriptor, id=provider,
+        manual_borrow_policy=ManualBorrowPolicy(
+            docbase="DILICOM", primary_borrower_id="",
+            source_selection_key="chosen_future_connection",
+            verification="provider_observed",
+        ),
+    )
+    service._sessions[service._session_key(provider, account.credential_id)] = session
+    service._provider_plugin_ids[provider] = "fixture.paris"
+    service.storage.provider_connection_put({
+        "identity_id": "alex", "provider_id": provider,
+        "credential_id": account.credential_id,
+        "label": "Fictive future lender", "enabled": True, "metadata": {},
+    })
+    service.config.upsert_provider_account({
+        "id": account.credential_id, "provider": provider,
+        "identity_id": "alex", "enabled": True,
+    })
+    configured = service.config.identity("alex")
+    configured["chosen_future_connection"] = account.credential_id
+    service.config.upsert_identity(configured)
+
+    candidate = _candidate()
+    candidate = replace(
+        candidate,
+        notice=replace(candidate.notice, source_provider=provider),
+        evidence=replace(candidate.evidence, provider_id=provider),
+        edition_evidence=replace(
+            candidate.edition_evidence, provider_id=provider,
+        ),
+    )
+    accepted = _preview(service, candidate)
+    assert len(accepted.options) == 1
+    assert accepted.status == "external"
+    assert accepted.options[0].executable is False
+    assert service.current_identity.identity_id == "default"
+    assert session.calls == 0
+
+    configured = service.config.identity("alex")
+    configured["chosen_future_connection"] = "foreign-credential"
+    service.config.upsert_identity(configured)
+    refused = _preview(service, candidate)
+    assert refused.options == ()
+    assert refused.rejection_reasons == ("lender_unavailable",)
+    assert session.calls == 0
+
+
+def test_invalid_typed_lender_policy_is_not_an_override(harness):
+    from dataclasses import replace
+    service, account, session = harness
+    session.descriptor = replace(
+        session.descriptor, manual_borrow_policy="malformed",
+    )
+    result = _preview(service, _candidate())
+    assert result.options == ()
+    assert result.rejection_reasons == ("capability_unverified",)
+    assert session.calls == 0
+
+
+def test_explicit_reader_previews_and_revalidates_without_navigation(harness):
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    service, _account, session = harness
+
+    class Headless:
+        def __getattr__(self, name):
+            if name in {"current_identity", "_account_context_epoch"}:
+                raise AssertionError("navigation read")
+            return getattr(service, name)
+
+    core = Headless()
+    scope = capture_search_read_scope(core, "default")
+    row = _candidate()
+    captured = live.preview_borrow_for_scope(
+        core, reader_scope=scope, expected_edition_id="edition-1",
+        observations=(row,), now=1100,
+    )
+    assert captured.preview.status == "external"
+    assert not captured.preview.executable
+    service._account_context_epoch += 2
+    again = live.preview_borrow_for_scope(
+        core, reader_scope=scope, expected_edition_id="edition-1",
+        observations=(row,), now=1100,
+    )
+    assert captured.preview == again.preview
+    result = live.revalidate_borrow_for_scope(
+        core, captured=captured, selected_option_id=captured.preview.options[0].option_id,
+        expected_edition_id="edition-1", observations=(row,), now=1100,
+    )
+    assert result.status == "current" and not result.executable
+    assert session.calls == 0
+
+
+@pytest.mark.parametrize("change", ["source", "reader", "core", "session"])
+def test_explicit_lender_read_scope_revoked_without_provider_io(harness, change):
+    from dataclasses import replace
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    service, _account, session = harness
+    scope = capture_search_read_scope(service, "default")
+    row = _candidate()
+    captured = live.preview_borrow_for_scope(
+        service, reader_scope=scope, expected_edition_id="edition-1",
+        observations=(row,), now=1100,
+    )
+    core = service
+    if change == "source":
+        service._source_context_epoch += 1
+    elif change == "reader":
+        old = service.identity_by_id("default")
+        service.identities = [replace(i) if i is old else i for i in service.identities]
+    elif change == "session":
+        session._epoch += 1
+    else:
+        core = object()
+    result = live.revalidate_borrow_for_scope(
+        core, captured=captured, selected_option_id=captured.preview.options[0].option_id,
+        expected_edition_id="edition-1", observations=(row,), now=1100,
+    )
+    assert result.status == "revoked" and not result.executable
+    assert session.calls == 0

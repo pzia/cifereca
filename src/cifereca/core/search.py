@@ -487,15 +487,23 @@ class LocalLibrarySearch:
 
 def _known_catalogue_scope_key(
     provider: str, item_id: str, meta: Mapping[str, Any],
-) -> tuple[str, str, str, str, str, str]:
-    """Do not collapse provider IDs reused by distinct accounts/editions.
+    *, catalog_entry_id: object = None,
+) -> tuple[str, ...]:
+    """Never collapse independent source editions before an index C lookup.
 
-    Historical rows without Core's scoped mirror version remain searchable
-    through their old deduplication path, but cannot be used as source proof.
+    v3 mirror keys are opaque immutable IDs of source, account, manifestation
+    AND revision. They are descriptive/read-only: their metadata must not
+    qualify a connected session or ownership. Do not use title/ISBN/image
+    to match a local right to a v3 row. v2 keeps the prior exact behavior.
     """
     credential = meta.get("source_credential")
     docbase = meta.get("docbase")
     collection = meta.get("source_collection")
+    if (meta.get("catalogue_scope_version") == 3
+            and type(catalog_entry_id) is str
+            and len(catalog_entry_id) == 64
+            and all(ch in "0123456789abcdef" for ch in catalog_entry_id)):
+        return ("revisioned-readonly", provider, item_id, catalog_entry_id)
     if (meta.get("catalogue_scope_version") == 2
             and type(credential) is str and credential
             and type(docbase) is str and docbase
@@ -542,7 +550,7 @@ class KnownCatalogSearch:
         # an implicit union-of-profiles catalogue or search result.
         if type(identity_id) is not str or not identity_id:
             return []
-        merged: dict[tuple[str, str, str, str, str, str], dict[str, Any]] = {}
+        merged: dict[tuple[str, ...], dict[str, Any]] = {}
         # Catalogue is the broad known set. Local/right rows below override it
         # because they carry stronger state and paths.
         for raw in self._catalog_entries():
@@ -553,7 +561,10 @@ class KnownCatalogSearch:
             provider = str(row.get("provider_id") or "local")
             item_id = str(row.get("item_id") or row.get("artifact_id") or row.get("catalog_entry_id") or "")
             meta = _metadata(row)
-            merged[_known_catalogue_scope_key(provider, item_id, meta)] = {
+            merged[_known_catalogue_scope_key(
+                provider, item_id, meta,
+                catalog_entry_id=row.get("catalog_entry_id"),
+            )] = {
                 "key": f"known:{row.get('catalog_entry_id')}",
                 "title": str(row.get("title") or "Sans titre"),
                 "author": row.get("author"),

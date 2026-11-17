@@ -8,7 +8,7 @@ No ADEPT, acquisition, right closure or extra provider mutation is permitted.
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import hashlib
 from inspect import getattr_static
 import json
@@ -18,7 +18,10 @@ from typing import Any
 from ..models import Loan
 from ..providers.base import ProviderCapabilities, ProviderDescriptor, ProviderSession
 from ..plugin_api.loan_inventory import read_loan_inventory
-from .loan_action_scope import capture_loan_action_scope, _inert_session_state
+from .loan_action_scope import (
+    LoanActionScopeLease, capture_loan_action_scope, _inert_session_state,
+)
+from .source_context import source_context_epoch
 
 
 def _public(status: str, code: str, *, accepted: bool = False) -> dict[str, Any]:
@@ -119,7 +122,109 @@ def _renew_source_ready_inert(
     )
 
 
-def renew(self, loan: Loan) -> dict[str, Any]:
+def _renewal_scope(loan: Loan) -> tuple:
+    return (
+        loan.identity_id, loan.source_provider, loan.source_credential,
+        loan.source_account_id, loan.id, loan.record_id, loan.provider,
+        loan.medium, loan.state,
+    )
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class RenewalAdmission:
+    loan: Loan
+    scope: tuple
+    lease: LoanActionScopeLease
+
+    def current(self, service, loan: Loan) -> bool:
+        try:
+            return (loan is self.loan and _renewal_scope(loan) == self.scope
+                    and self.lease.admitted_for(
+                        service, self.lease._loan, loan.identity_id,
+                    ))
+        except Exception:
+            return False
+
+
+def capture_admitted_loan_renewal(service, loan: Loan) -> RenewalAdmission | None:
+    """Snapshot the exact borrower and original loan at explicit consent."""
+    try:
+        identity = service.current_identity
+        navigation_epoch = service._account_context_epoch
+        source_epoch = source_context_epoch(service)
+        if (_source_key(loan) is None or loan.medium != "physical"
+                or type(loan.identity_id) is not str or not loan.identity_id
+                or getattr(identity, "identity_id", None) != loan.identity_id
+                or type(loan.record_id) is not str or not loan.record_id
+                or (loan.state is not None and (
+                    type(loan.state) is not str or loan.state.casefold() in {
+                        "returned", "closed", "expired", "cancelled", "canceled",
+                    }))):
+            return None
+        scope = _renewal_scope(loan)
+        account, session, _key = service._return_loan_identity(loan)
+        if (account.identity_id != loan.identity_id
+                or not _renew_source_ready_inert(
+                    session, loan.source_credential, loan.source_provider)):
+            return None
+        normalized = replace(
+            loan, state=loan.state if type(loan.state) is str else "active",
+        )
+        lease = capture_loan_action_scope(
+            service, normalized, account, session,
+            expected_identity_id=loan.identity_id,
+            admitted_source_epoch=source_epoch,
+        )
+        if (lease is None or service.current_identity is not identity
+                or service._account_context_epoch != navigation_epoch
+                or source_context_epoch(service) != source_epoch
+                or _renewal_scope(loan) != scope):
+            return None
+        admission = RenewalAdmission(loan, scope, lease)
+        return admission if admission.current(service, loan) else None
+    except Exception:
+        return None
+
+
+def capture_confirmed_loan_renewal(
+    service, loan: Loan, *, identity_id: str, account_id: str, confirmed: bool,
+) -> RenewalAdmission | None:
+    """Headless exact borrower admission; no lender read, claim or POST."""
+    from .search_orchestration import capture_search_read_scope
+    try:
+        if (confirmed is not True or _source_key(loan) is None
+                or type(identity_id) is not str or identity_id != loan.identity_id
+                or type(account_id) is not str or not account_id
+                or account_id != loan.source_account_id
+                or loan.medium != "physical"
+                or type(loan.record_id) is not str or not loan.record_id
+                or (loan.state is not None and (
+                    type(loan.state) is not str or loan.state.casefold() in {
+                        "returned", "closed", "expired", "cancelled", "canceled",
+                    }))):
+            return None
+        reader = capture_search_read_scope(service, identity_id)
+        scope = _renewal_scope(loan)
+        account, session, _key = service._return_loan_identity(loan)
+        if (account.identity_id != identity_id or account.unique_id != account_id
+                or not _renew_source_ready_inert(
+                    session, loan.source_credential, loan.source_provider)):
+            return None
+        normalized = replace(loan, state=loan.state if type(loan.state) is str else "active")
+        lease = capture_loan_action_scope(
+            service, normalized, account, session,
+            expected_identity_id=identity_id,
+            admitted_source_epoch=reader.source_epoch, reader_scope=reader,
+        )
+        if lease is None or _renewal_scope(loan) != scope:
+            return None
+        admission = RenewalAdmission(loan, scope, lease)
+        return admission if admission.current(service, loan) else None
+    except Exception:
+        return None
+
+
+def renew(self, loan: Loan, *, admission: RenewalAdmission | None = None) -> dict[str, Any]:
     """Called by the Core facade after strict manual consent and its lock."""
     key = _source_key(loan)
     if (key is None
@@ -140,6 +245,10 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         loan.source_account_id, loan.id, loan.record_id, loan.provider,
         loan.medium,
     )
+    if admission is not None and (
+            type(admission) is not RenewalAdmission
+            or not admission.current(self, loan)):
+        return _public("blocked", "loan_scope_unverified")
     previous = self.storage.loan_renewal_state(key)
     if previous is not None:
         if previous["status"] == "submitted":
@@ -164,14 +273,25 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         scope_loan = replace(
             loan, state=loan.state if type(loan.state) is str else "active",
         )
-        lease = capture_loan_action_scope(
-            self, scope_loan, account, session,
-            expected_identity_id=loan.identity_id,
-        )
+        if admission is None:
+            lease = capture_loan_action_scope(
+                self, scope_loan, account, session,
+                expected_identity_id=loan.identity_id,
+            )
+        else:
+            lease = admission.lease
+            if (lease._account is not account or lease._session is not session
+                    or not admission.current(self, loan)):
+                return _public("blocked", "loan_scope_unverified")
         if lease is None:
             return _public("blocked", "loan_scope_unverified")
     except Exception:
         return _public("blocked", "loan_scope_unverified")
+
+    def scope_current():
+        return lease.current(self) and (
+            admission is None or admission.current(self, loan)
+        )
 
     try:
         # Never trust the GUI/cache's raw JSON. The provider's normalizing reader
@@ -180,7 +300,7 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         inventory = read_loan_inventory(session, account, descriptor=getattr_static(session, "descriptor", None))
     except Exception:
         return _public("blocked", "loan_read_unavailable")
-    if (not lease.current(self)
+    if (not scope_current()
             or (
                 loan.identity_id, loan.source_provider, loan.source_credential,
                 loan.source_account_id, loan.id, loan.record_id, loan.provider,
@@ -211,8 +331,10 @@ def renew(self, loan: Loan) -> dict[str, Any]:
     verified = capture_loan_action_scope(
         self, candidate, account, session,
         expected_identity_id=account.identity_id,
+        admitted_source_epoch=lease._source_epoch if admission is not None else None,
+        **({"reader_scope": lease._reader_scope} if admission is not None and lease._reader_scope is not None else {}),
     )
-    if verified is None or not lease.current(self):
+    if verified is None or not scope_current():
         return _public("blocked", "loan_scope_changed")
 
     # Atomic persistent checkpoint: once reserved, neither a timeout,
@@ -226,7 +348,7 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         return _public(
             "verification_unavailable", "renewal_previous_attempt_unverified",
         )
-    if (not lease.current(self) or not verified.current(self)
+    if (not scope_current() or not verified.current(self)
             or (
                 loan.identity_id, loan.source_provider, loan.source_credential,
                 loan.source_account_id, loan.id, loan.record_id, loan.provider,
@@ -252,7 +374,7 @@ def renew(self, loan: Loan) -> dict[str, Any]:
         pass
 
     still_bound = (
-        lease.current(self) and verified.current(self)
+        scope_current() and verified.current(self)
         and (
             loan.identity_id, loan.source_provider, loan.source_credential,
             loan.source_account_id, loan.id, loan.record_id, loan.provider,
@@ -287,4 +409,4 @@ def renew(self, loan: Loan) -> dict[str, Any]:
     return _public(status, reason, accepted=accepted)
 
 
-__all__ = ["renew"]
+__all__ = ["renew", "capture_admitted_loan_renewal", "capture_confirmed_loan_renewal"]

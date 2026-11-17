@@ -448,9 +448,11 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
               seconds: float = 10) -> ReconciliationReport:
     """Compare file/placement/artifact/right evidence without inferring ownership.
 
-    Confirm a provider purchase OriginLink or a full historical entitlement
-    and successful ledger, with exact identity, placement, SHA and size. SHA alone is a
-    present_unlinked byte candidate, never attested right. Missing paths are
+    Confirm only a canonical provider purchase OriginLink with exact identity,
+    placement, stable reference IDs, SHA and size. Historical entitlements and
+    completed acquisition ledgers remain visible as local *unverified* evidence:
+    they cannot themselves confer provider provenance or a confirmed link.
+    SHA alone is a present_unlinked candidate. Missing paths are
     asserted only for completely scanned owning identities; otherwise unknown.
     OPF is retained in Inventory for private inspection, not title matching.
     """
@@ -465,7 +467,6 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
     rights = tables.get('entitlements', [])
     deadline = time.monotonic() + seconds
     comparisons = 0
-    verified = set()
 
     def in_file_stopped():
         # A single path may have thousands of competing rights/placements.
@@ -504,11 +505,6 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
             return result
         artifacts[row['artifact_id']].append(row)
         hashes[(row['sha256'], row['size'])].append((ai, row))
-    acquisitions = defaultdict(list)
-    for row in tables.get('acquisition_ledger', []):
-        if index_stopped():
-            return result
-        acquisitions[row['entitlement_id']].append(row)
     rights_by_placement = defaultdict(list)
     for ri, right in enumerate(rights):
         if index_stopped():
@@ -559,7 +555,6 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
         if len(backup_candidates) > 24:
             result.reasons.add('comparison_budget')
         links = by_path.get((observation.identity_id, observation.path), [])
-        confirmed = []
         canonical = None
         for pi, placement in links:
             comparisons += 1
@@ -596,91 +591,73 @@ def reconcile(inventory: Inventory, snapshot: EvidenceSnapshot, *, cancelled=lam
                 and candidates[0]['media_format'] in {'epub', 'kepub'}
                 and candidates[0]['artifact_id'] == 'sha256:' + observation.sha256
             )
-            if placement['provider_id'] is None and placement['source_item_id'] is None:
-                origin_key = (observation.identity_id, placement['artifact_id'])
-                provider_origins = origins.get(origin_key, [])
-                if len(provider_origins) > 1 or (
-                        provider_origins and present_placements[origin_key] != 1):
+            # Modern canonical provider origins are authoritative for *any*
+            # installed provider. A historical placement may also carry an
+            # exact provider/edition annotation; verify that annotation against
+            # the canonical SourceReference rather than consulting a vendor
+            # whitelist or inferring ownership from legacy metadata.
+            origin_key = (observation.identity_id, placement['artifact_id'])
+            provider_origins = origins.get(origin_key, [])
+            if provider_origins:
+                if (len(provider_origins) != 1
+                        or present_placements[origin_key] != 1):
                     categories.add('ambiguous')
-                elif verified_bytes and provider_origins:
-                    oi, origin = provider_origins[0]
-                    if _attested_purchase_origin(origin):
-                        canonical = oi
+                    continue
+                oi, origin = provider_origins[0]
+                bare_placement = (placement['provider_id'] is None
+                                  and placement['source_item_id'] is None)
+                annotated_placement = (
+                    type(placement['provider_id']) is str
+                    and type(placement['source_item_id']) is str
+                    and placement['provider_id'] == origin['provider_id']
+                    and placement['source_item_id'] == origin['edition_id']
+                )
+                if (verified_bytes and _attested_purchase_origin(origin)
+                        and (bare_placement or annotated_placement)):
+                    canonical = oi
+                else:
+                    # A contradictory or malformed canonical origin must not
+                    # be bypassed by a weaker legacy entitlement/ledger.
+                    categories.add('ambiguous')
+                continue
+            if (placement['provider_id'] is None
+                    or placement['source_item_id'] is None):
                 continue
             edition_rights = rights_by_placement.get((
                 observation.identity_id, placement['provider_id'],
                 placement['source_item_id'],
             ), [])
-            # A placement has provider/edition, but no credential or borrower.
-            # Two rights for that exact identity/provider/edition therefore
-            # cannot be distinguished by bytes or one completed acquisition.
-            # This is true for every provider, including future plugins; an
-            # inactive second right is still competing ownership evidence.
-            # Preserve byte evidence without publishing an attested right.
+            # Historical entitlement/ledger provenance is now a read-only
+            # inspection lead. Even a "complete" acquisition or an old
+            # supplier attested_source is not a signed source-reference
+            # receipt. Retain competing-owner ambiguity without ever
+            # publishing a vendor-specific positive right-to-file edge.
             if len(edition_rights) > 1:
                 categories.add('ambiguous')
-                continue
-            for ri, right in edition_rights:
-                comparisons += 1
-                if in_file_stopped():
-                    break
-                if (right['identity_id'] != observation.identity_id
-                        or right['provider_id'] != placement['provider_id']
-                        or right['item_id'] != placement['source_item_id']
-                        or right['state'] != 'active'
-                        or right.get('entitlement_type') != 'owned'
-                        or right.get('loan_id') or right.get('expires_at')
-                        or right.get('attested_source') != {
-                            'kobo': 'kobo.personal_manifest',
-                            'numilog': 'numilog.authenticated_library',
-                        }.get(right['provider_id'])
-                        or right['provider_id'] not in {'kobo', 'numilog'}
-                        or not all(right.get(k) for k in ('entitlement_id', 'credential_id', 'account_id', 'item_id', 'identity_id', 'provider_id'))):
-                    continue
-                ledger = acquisitions.get(right['entitlement_id'], [])
-                matching = [a for a in ledger[:1] if a['status'] == 'complete'
-                            and a['artifact_id'] == placement['artifact_id']
-                            and all(a.get(k) == right.get(k) for k in ('identity_id', 'provider_id', 'credential_id', 'account_id', 'item_id'))]
-                # Conflicting owner evidence in the linked ledger is not ignored.
-                if matching and len(ledger) == 1 and verified_bytes:
-                    confirmed.append(ri)
-            if 'comparison_budget' in result.reasons or 'cancelled' in result.reasons:
-                break
-        # A single borrower/account scope is not necessarily a single right:
-        # two distinct entitlement rows for the same purchase can both have
-        # valid-looking ledger chains pointing at the *same* file. Do not
-        # coalesce these into one confirmed entitlement by account identity.
-        # Likewise, never confirm when the per-file comparison stopped early:
-        # later uninspected rows could invalidate uniqueness.
-        # Do not publish even a single attested edge until the *entire*
-        # selected-file comparison is complete and uniqueness is established.
-        # A truncated or ambiguous graph may keep byte-level candidates, but
-        # never a right-level attestation (including edge_counts/private UI).
-        if confirmed or canonical is not None:
+        # A canonical purchase origin is the *only* positive file-link
+        # attestation. It already binds source, edition, receipt and owner;
+        # neither a legacy entitlement nor a completed legacy ledger may
+        # override or replace it. Incomplete scans never promote any link.
+        if canonical is not None:
             in_file_stopped()
-        if (len(confirmed) + (canonical is not None) == 1 and len(links) == 1
+        if (canonical is not None and len(links) == 1
                 and not snapshot.reasons
                 and not {'comparison_budget', 'cancelled'} & result.reasons):
             categories.discard('present_unlinked')
             categories.add('confirmed_link')
-            if canonical is not None:
-                result.edges.append(EvidenceEdge(
-                    fi, 'provider_origins', canonical,
-                    'explicit_provider_origin_placement_sha_size', 'attested',
-                ))
-            else:
-                verified.update(confirmed)
-                result.edges.append(EvidenceEdge(
-                    fi, 'entitlements', confirmed[0],
-                    'explicit_right_ledger_placement_sha_size', 'attested',
-                ))
+            result.edges.append(EvidenceEdge(
+                fi, 'provider_origins', canonical,
+                'explicit_provider_origin_placement_sha_size', 'attested',
+            ))
         else:
-            if confirmed or len(links) > 1:
+            if len(links) > 1:
                 categories.add('ambiguous')
             categories.add('local_file_without_attested_right')
         if 'comparison_budget' in result.reasons or 'cancelled' in result.reasons:
             break
-    result.unverified_rights = [i for i, r in enumerate(rights) if r['state'] == 'active' and i not in verified]
+    result.unverified_rights = [
+        i for i, right in enumerate(rights) if right['state'] == 'active'
+    ]
     # Inventory may not include an owning root: never call foreign paths missing.
     # Root completeness is deliberately conservative until captured in Inventory.
     return result

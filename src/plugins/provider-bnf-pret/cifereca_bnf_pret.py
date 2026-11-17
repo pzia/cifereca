@@ -25,6 +25,8 @@ from cifereca_bnf_pret_download import save_private_loan_token, validate_loan_to
 
 DESCRIPTOR = ProviderDescriptor(
     id='bnf-pret', display_name='BnF Prêt', state='ready',
+    # active-loans.resource_id == public Search resource_id on BNF_PRET.
+    borrower_public_edition_branches_v1=(("BNF_PRET", "digital", "BNF_PRET", None),),
     manual_borrow_policy=ManualBorrowPolicy(
         docbase="BNF_PRET", verification="active_only",
     ),

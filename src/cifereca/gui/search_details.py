@@ -37,6 +37,76 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         if not item:
             return
         self._selected_search_id = row.key
+        if item.get("source") == "notice_c_public":
+            # Search C is a descriptive, potentially stale source observation.
+            # It is NEVER an entitlement, a v2 known-available action or a
+            # session/offer. The detail receives the same exact document as
+            # the standard list, without a new provider request or an
+            # arbitrary image URL fallback. No plugin/cached actions.
+            from dataclasses import replace
+            from cifereca.core.book_cover_projection import CoverDocumentScope
+            from cifereca.core.notice_cover_repository import is_notice_cover_document
+            document = item.get("_cover_document_ref")
+            active = getattr(
+                getattr(self.service, "current_identity", None),
+                "identity_id", None,
+            )
+            panel = self.search_page.detail
+            if (type(document) is not CoverDocumentScope
+                    or document.kind != "public_catalogue"
+                    or document.identity_id is not None
+                    or not is_notice_cover_document(document)
+                    or item.get("identity_id") != active):
+                panel.empty("Notice indisponible", "Source documentaire périmée.")
+                return
+            metadata = item.get("metadata")
+            metadata = metadata if type(metadata) is dict else {}
+            stale = metadata.get("notice_c_stale") is True
+            presentation = book_detail_presentation(
+                title=str(item.get("title") or "Sans titre"),
+                subtitle=str(item.get("author") or ""),
+                thumbnail=None,
+                badges=("Notice connue · à actualiser" if stale
+                        else "Notice publique connue",),
+                section_rows=(("Catalogue", (
+                    ("Fournisseur", item.get("provider_id") or "—"),
+                    ("Disponibilité", "Non vérifiée"),
+                    ("Couverture de recherche", "Partielle"),
+                )),),
+                metadata=None,
+            )
+            from cifereca.gui.search_known_public_c_guard import (
+                known_public_c_cell_current,
+            )
+            from cifereca.gui.local_public_c_detail_guard import (
+                staged_local_public_c_detail,
+            )
+            # Consume the receipt already attached at list publication;
+            # a new selection cannot mint freshness for an old GTK row.
+            binding = getattr(row, "_cover_known_public_c_receipt", None)
+            detail_generation = self._search_detail_request_generation
+
+            def current_c_detail() -> bool:
+                if (self._search_detail_request_generation != detail_generation
+                        or not known_public_c_cell_current(self, row, binding)):
+                    return False
+                # Selection can change while N3 is materialising. A shared
+                # catalogue ref never transfers the old detail selection.
+                selection = getattr(self.search_page, "selection", None)
+                get_selected = getattr(selection, "get_selected_item", None)
+                return not callable(get_selected) or get_selected() is row
+
+            if binding is None or not current_c_detail():
+                panel.empty("Notice indisponible", "Source documentaire périmée.")
+                return
+            with staged_local_public_c_detail(
+                panel, current_c_detail, minimum_revision=binding.epoch,
+            ):
+                panel.show_presentation(
+                    replace(presentation, cover_document_ref=document),
+                    description=metadata.get("description"),
+                )
+            return
         description = self._book_description(item)
         # The same *known v2 exact notice* may already have a validated
         # holdings image in the shared N2 decision. Only presentation uses
@@ -133,11 +203,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         # The stale catalogue is read-only evidence. Merely selecting it must
         # not start a holdings/authentication request to a provider in outage.
         self.search_page.detail.show_search(item, loading=False)
-        self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)), self.search_controls)
+        self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
         return
     from cifereca.gui.search_detail_cover_reuse import visual_search_item
     # Re-selection must not drop a previously attested exact-source image
@@ -150,30 +216,25 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
         renderer(item, loading=True, cover_evidence=proof)
     else:
         self.search_page.detail.show_search(visual_search_item(self, item), loading=True)
-    self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)), self.search_controls)
-    self._add_local_book_actions(self.search_page.detail,result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
-    self._request_cached_book_details("search", item.id, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
+    self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
+    self._add_local_book_actions(self.search_page.detail,result_row(item))
+    self._request_cached_book_details("search", item.id, result_row(item))
     selected_id = item.id
     context = self._search_detail_request_context()
     # The four-field selection lease predates Core's independent account
     # and source epochs. A disconnect/rebind can replace the credential
     # session *without changing the selected book ID or GTK generation*.
-    # Gate worker entry AND delivery under that same exact active session
-    # activation; old callbacks must not republish a foreign thumbnail.
+    # Capture Core authority at admission; the account-navigation epoch
+    # gates only publication. Actual source revocation still stops work.
     holdings_core = self.service
     holdings_query = self._last_search_query
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    try:
+        request_scope = capture_search_read_scope(holdings_core, context[3])
+    except (AttributeError, ValueError):
+        self._search_detail_error(self._selected_search_id, item,
+                                  ValueError("holdings_identity_unavailable"), context=context)
+        return
     source_epochs = (
         getattr(self.service, "_account_context_epoch", None),
         getattr(self.service, "_source_context_epoch", None),
@@ -182,6 +243,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
     def epochs_current() -> bool:
         return (not getattr(self, "_closed", False)
                 and self.service is holdings_core
+                and request_scope.current(holdings_core)
                 and source_epochs == (
             getattr(self.service, "_account_context_epoch", None),
             getattr(self.service, "_source_context_epoch", None),
@@ -189,8 +251,9 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
 
     self.runner.submit(
         "Chargement des disponibilités…",
-        lambda: holdings_core.holdings(item, holdings_query, force=False)
-        if epochs_current() else None,
+        lambda: holdings_core.holdings_for_scope(request_scope, item, holdings_query, force=False)
+        if (not getattr(self, "_closed", False) and self.service is holdings_core
+            and request_scope.current(holdings_core)) else None,
         lambda detail: self._apply_search_detail(selected_id, item, detail, context=context)
         if epochs_current() else None,
         lambda exc: self._search_detail_error(selected_id, item, exc, context=context)
@@ -356,21 +419,9 @@ def _apply_search_detail(
     else:
         presentation = visual_search_detail(self, item, detail)
         self.search_page.detail.show_item_detail(item, presentation)
-    self._add_facets(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)), self.search_controls)
-    self._add_local_book_actions(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
-    self._request_cached_book_details("search", item.id, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
+    self._add_facets(self.search_page.detail, result_row(item), self.search_controls)
+    self._add_local_book_actions(self.search_page.detail, result_row(item))
+    self._request_cached_book_details("search", item.id, result_row(item))
     # Capability-based action; legacy headless hosts without an installed
     # session registry cannot offer it and must not import GTK adapters.
     if getattr(getattr(self, "service", None), "_sessions", None) is not None:
@@ -395,16 +446,8 @@ def _search_detail_error(
         renderer(item, cover_evidence=proof)
     else:
         self.search_page.detail.show_search(visual_search_item(self, item), loading=False)
-    self._add_local_book_actions(self.search_page.detail, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
-    self._request_cached_book_details("search", item.id, result_row(item, purchase_evidence=getattr(self, "_search_purchase_evidence", None),
-               identity_id=getattr(getattr(getattr(self, "service", None),
-                                           "current_identity", None), "identity_id", None),
-               account_context_epoch=getattr(getattr(self, "service", None), "_account_context_epoch", None),
-               source_context_epoch=getattr(getattr(self, "service", None), "_source_context_epoch", None)))
+    self._add_local_book_actions(self.search_page.detail, result_row(item))
+    self._request_cached_book_details("search", item.id, result_row(item))
     # Provider exceptions can embed account IDs, private file paths or signed
     # URLs. Do not echo their arbitrary text into a user-visible GTK toast.
     self.toast("Disponibilités indisponibles. Réessayez ultérieurement.", 5)
@@ -427,6 +470,13 @@ def _load_known_detail(self: SearchDetailHost, item):
     context = self._search_detail_request_context()
     holdings_core = self.service
     holdings_query = self._last_search_query
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    try:
+        request_scope = capture_search_read_scope(holdings_core, context[3])
+    except (AttributeError, ValueError):
+        self._search_detail_error(self._selected_search_id, item,
+                                  ValueError("holdings_identity_unavailable"), context=context)
+        return
     source_epochs = (
         getattr(self.service, "_account_context_epoch", None),
         getattr(self.service, "_source_context_epoch", None),
@@ -435,6 +485,7 @@ def _load_known_detail(self: SearchDetailHost, item):
     def epochs_current() -> bool:
         return (not getattr(self, "_closed", False)
                 and self.service is holdings_core
+                and request_scope.current(holdings_core)
                 and source_epochs == (
             getattr(self.service, "_account_context_epoch", None),
             getattr(self.service, "_source_context_epoch", None),
@@ -442,8 +493,9 @@ def _load_known_detail(self: SearchDetailHost, item):
 
     self.runner.submit(
         "Disponibilités…",
-        lambda: holdings_core.holdings(item, holdings_query, force=False)
-        if epochs_current() else None,
+        lambda: holdings_core.holdings_for_scope(request_scope, item, holdings_query, force=False)
+        if (not getattr(self, "_closed", False) and self.service is holdings_core
+            and request_scope.current(holdings_core)) else None,
         lambda detail: self._apply_search_detail(selected, item, detail, context=context)
         if epochs_current() else None,
         priority=TaskPriority.USER_ACTION, kind="holdings", origin="user",

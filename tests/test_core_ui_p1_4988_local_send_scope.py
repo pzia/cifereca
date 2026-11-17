@@ -126,7 +126,10 @@ def test_selected_lender_bridge_only_checks_local_placement_without_loan_post():
     lender_placement = Mock(return_value=None)
     native_send = Mock(side_effect=AssertionError("no send without local placement"))
     h.service.resolve_cross_profile_lender_placement = lender_placement
-    h.service.send_confirmed_lender_local_copy = native_send
+    h.service.capture_admitted_lender_local_copy = Mock(
+        side_effect=AssertionError("no consent without local placement"),
+    )
+    h.service.execute_admitted_lender_local_copy = native_send
     assert offer_selected_lender_local_send(
         h.window, captured_preview=preview,
         selected_option_id=option.option_id,

@@ -86,6 +86,11 @@ def setup(*, multiple=False):
             }
         ),
     )
+    from cifereca.core.borrow_for_identity_executor import AdmittedCrossProfileBorrow
+    service.capture_admitted_cross_profile_borrow = lambda **kw: (
+        AdmittedCrossProfileBorrow(service, lambda: service.execute_cross_profile_borrow(**kw))
+    )
+    service.execute_admitted_cross_profile_borrow = lambda admission: admission._work()
     panel = NS(_rendered_search_detail=(item, object()))
     window = NS(
         service=service, search_page=NS(detail=panel),
@@ -188,7 +193,7 @@ def test_rebound_ui_between_choice_and_confirm_never_schedules(change):
     assert h.window._cross_profile_borrow_pending is None
 
 
-def test_rebinding_after_confirmation_but_before_worker_fails_closed():
+def test_navigation_after_confirmation_keeps_admitted_worker_but_filters_reply():
     h = setup()
     assert h.show()
     Dialog.made[0].respond("choice-0")
@@ -196,8 +201,8 @@ def test_rebinding_after_confirmation_but_before_worker_fails_closed():
     job = h.window.runner.jobs[0]
     h.service.current_identity = NS(identity_id="bob")
     result = job[1]()
-    assert result["status"] == "blocked"
-    assert h.attempts == []
+    assert result["status"] == "confirmed"
+    assert len(h.attempts) == 1
     job[2](result)
     assert h.logs == []
     assert h.window._cross_profile_borrow_pending is None
@@ -217,7 +222,7 @@ def test_stale_choice_or_second_click_cannot_call_mutator():
 
 def test_no_observation_or_core_executor_never_displays_choice():
     h = setup()
-    delattr(h.service, "execute_cross_profile_borrow")
+    delattr(h.service, "execute_admitted_cross_profile_borrow")
     assert h.show() is False and Dialog.made == []
     h = setup()
     assert present(
@@ -270,17 +275,17 @@ def test_duplicate_gtk_responses_schedule_only_one_worker_even_before_runner():
     assert len(h.attempts) == 1
 
 
-def test_cancelled_pending_worker_never_dispatches_supplier_mutation():
+def test_navigation_clearing_ui_token_does_not_revoke_confirmed_action():
     h = setup()
     assert h.show()
     Dialog.made[0].respond("choice-0")
     Dialog.made[1].respond("borrow")
     assert len(h.window.runner.jobs) == 1
-    # Simulate navigation/explicit cancellation revoking the pending token.
+    # Navigation clears the UI token, not the admitted Core source lease.
     h.window._cross_profile_borrow_pending = None
     result = h.window.runner.jobs[0][1]()
-    assert result["status"] == "blocked"
-    assert h.attempts == []
+    assert result["status"] == "confirmed"
+    assert len(h.attempts) == 1
 
 
 def test_positive_callback_renders_only_inert_progress_on_same_detail():
@@ -416,7 +421,7 @@ def test_lender_borrow_worker_never_reads_gtk_detail():
 
 
 @pytest.mark.parametrize("rebind", ["identity", "source", "selection", "page", "detail_epoch"])
-def test_lender_borrow_worker_revokes_scalar_lease_before_provider_post(rebind):
+def test_lender_borrow_worker_revokes_source_not_navigation_before_provider_post(rebind):
     h = setup()
     assert h.show()
     Dialog.made[0].respond("choice-0")
@@ -434,6 +439,10 @@ def test_lender_borrow_worker_revokes_scalar_lease_before_provider_post(rebind):
     else:
         h.window._search_detail_request_generation += 1
     outcome = work()
-    assert outcome["status"] == "blocked"
-    assert outcome["reason_code"] == "lender_scope_revoked"
-    assert h.attempts == []
+    if rebind == "source":
+        assert outcome["status"] == "blocked"
+        assert outcome["reason_code"] == "lender_scope_revoked"
+        assert h.attempts == []
+    else:
+        assert outcome["status"] == "confirmed"
+        assert len(h.attempts) == 1

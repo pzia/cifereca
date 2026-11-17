@@ -80,8 +80,10 @@ def test_existing_identity_preserves_exact_rows_order_and_readonly_id():
         "Langues de lecture (ordre, séparées par des virgules)",
         "Préférer la langue originale",
         "Connexion Paris principale (ID de source)",
+        "Fournisseur de prêt ADEPT (ID de plugin)",
+        "Connexion de prêt ADEPT (ID de source)",
         "Profil ADE lié à cette identité (optionnel)",
-        "Parcours normal · Paris principal et ADEPT",
+        "Parcours normal · source enregistrée et ADEPT",
         "Supprimer cette identité de la configuration",
     ]
     assert editor["id"].text == "alice"
@@ -92,7 +94,7 @@ def test_existing_identity_preserves_exact_rows_order_and_readonly_id():
     assert editor["adept_profile"].text == "alice-profile"
     assert editor["primary_paris_connection_id"].text == ""
     assert group.children[5].title.startswith("Connexion Paris principale")
-    assert group.children[7].subtitle == "État local ADEPT"
+    assert group.children[9].subtitle == "État local ADEPT"
     assert directory.icon == "folder-open-symbolic"
     assert directory in editor["directory"].suffixes
     assert adept in editor["adept_profile"].suffixes
@@ -109,7 +111,7 @@ def test_unsaved_identity_remains_editable_and_not_automatically_bound():
     assert editor["languages"].text == "fr"
     assert editor["prefer_vo"].active is False
     assert editor["adept_profile"].text == ""
-    assert group.children[0].children[7].subtitle == "À configurer"
+    assert group.children[0].children[9].subtitle == "À configurer"
 
 
 def test_adept_status_is_only_rendered_not_inferred_or_refreshed():
@@ -119,8 +121,8 @@ def test_adept_status_is_only_rendered_not_inferred_or_refreshed():
         adept_profile="locally-bound-profile", normal_subtitle=text,
     )
     assert editor["adept_profile"].text == "locally-bound-profile"
-    assert container.children[0].children[7].subtitle == text
-    assert "sans test Adobe" in container.children[0].children[7].tooltip
+    assert container.children[0].children[9].subtitle == text
+    assert "sans test Adobe" in container.children[0].children[9].tooltip
 
 
 def test_builder_does_not_connect_callbacks_mutate_input_or_persist():
@@ -143,7 +145,8 @@ def test_window_keeps_unique_identity_ids_exact_bindings_and_callback_ownership(
     body = ast.unparse(ast.parse(settings_source_text()))
     assert "while identity_id in existing_ids:" in body
     assert "self.service.storage.adept_profile_binding_get(" in body
-    assert "self.service.normal_paris_adept_status(identity_id)" in body
+    assert "_saved_adept_status(self.service, identity_id, data, descriptors)" in body
+    assert "self.service.normal_paris_adept_status(identity_id)" not in body
     assert "build_identity_settings_editor(" in body
     assert "self._choose_identity_directory(" in body
     assert "self._choose_adept_profile(entry, button)" in body

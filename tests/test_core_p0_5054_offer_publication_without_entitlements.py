@@ -139,3 +139,15 @@ def test_missing_current_delivery_offer_rejected_even_with_exact_stage(prepared)
             transaction_guard=lambda _db: True,
         )
     assert rows(store) == (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize("policy_on", [False, True])
+def test_exact_staged_offer_remains_explicit_even_when_auto_off(prepared, policy_on):
+    from tests.test_core_p0_3171_publication_source_revision import _policy
+
+    store, key, _snap, _offer, _root, _path, _receipt, stage, publish = prepared
+    _policy(store, key.scope, policy_on)
+    stage()
+    assert publish().changed
+    assert rows(store) == (1, 1, 1, 1)
+    assert store.entitlements() == []

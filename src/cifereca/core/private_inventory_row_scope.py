@@ -100,6 +100,23 @@ def declared_private_inventory_batch_valid(
         return False
 
 
+def private_row_account_matches(item: SearchResult, account_id: object) -> bool:
+    """An explicit observed account must never be silently replaced.
+
+    Historical credential-scoped rows without an account coordinate remain
+    candidates only; the caller must still independently bind the single
+    exact current account/session and verify the fresh provider offer.
+    """
+    observed = item.source_account_id
+    if observed is None:
+        return True
+    return (
+        type(observed) is str and 0 < len(observed) <= 1024
+        and not any(ch in observed for ch in "\x00\r\n")
+        and type(account_id) is str and observed == account_id
+    )
+
+
 def selected_private_offer_hint(
     service: object, item: object, *, identity_id: str | None = None,
 ) -> bool | None:
@@ -175,6 +192,9 @@ def selected_private_offer_hint(
         if getattr(account, "provider_id", None) == provider
         and getattr(account, "credential_id", None) == credential
     ]
-    if len(accounts) != 1 or accounts[0].identity_id != identity_id:
+    if (len(accounts) != 1 or accounts[0].identity_id != identity_id
+            or not private_row_account_matches(
+                item, getattr(accounts[0], "unique_id", None),
+            )):
         return False
     return getattr(getattr(session, "capabilities", None), "direct_download", None) is True

@@ -63,10 +63,12 @@ def test_live_known_detail_still_queues_one_explicit_holdings_request():
         _last_search_query="Loup",
         service=NS(
             _account_context_epoch=3, _source_context_epoch=9,
-            holdings=lambda *_args, **_kwargs: None,
+            holdings_for_scope=lambda *_args, **_kwargs: None,
         ),
         runner=NS(submit=lambda *args, **kwargs: calls.append((args, kwargs))),
     )
+    registered = NS(identity_id="camille")
+    host.service.identity_by_id = lambda key: registered if key == "camille" else None
     _method("_load_known_detail")(host, NS(id="book"))
     assert host._search_detail_request_generation == 3
     assert len(calls) == 1

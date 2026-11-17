@@ -22,6 +22,8 @@ from .document_cover_service import CoverSourceSnapshot, DocumentCoverService
 class _Published:
     attribute: NoticeCoverAttribute
     revision: int
+    # Monotone source-observation watermark, including ignored partial reads.
+    observed_at: int
 
 
 class NoticeCoverN2Adapter:
@@ -64,6 +66,24 @@ class NoticeCoverN2Adapter:
             if self._closed:
                 raise RuntimeError("notice cover adapter closed")
             previous = self._published.get(attribute.document)
+            if previous is not None:
+                if observation.observed_at < previous.observed_at:
+                    # Out-of-order producer deliveries cannot roll back C's
+                    # last accepted evidence or resurrect a stale N2 token.
+                    self._published.move_to_end(attribute.document)
+                    return attribute.document
+                if (previous.attribute.snapshot_complete
+                        and not attribute.snapshot_complete):
+                    # Incomplete evidence cannot revoke an attested cover
+                    # even when the parser moves the cover field. A new
+                    # mapping becomes authoritative only after its inventory
+                    # is complete. Keep N2's token; advance only freshness.
+                    self._published[attribute.document] = _Published(
+                        previous.attribute, previous.revision,
+                        observation.observed_at,
+                    )
+                    self._published.move_to_end(attribute.document)
+                    return attribute.document
             same = previous is not None and previous.attribute == attribute
             revision = previous.revision if same else self._issued + 1
             service.register(CoverSourceSnapshot(
@@ -73,7 +93,9 @@ class NoticeCoverN2Adapter:
             ))
             if not same:
                 self._issued = revision
-            self._published[attribute.document] = _Published(attribute, revision)
+            self._published[attribute.document] = _Published(
+                attribute, revision, observation.observed_at,
+            )
             self._published.move_to_end(attribute.document)
             while len(self._published) > self._max_documents:
                 self._published.popitem(last=False)

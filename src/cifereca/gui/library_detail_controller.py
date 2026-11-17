@@ -5,6 +5,9 @@ links and actions remain with MainWindow and are passed via its stable facade.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+from ..core.notice_c_local_origin_projection import valid_local_public_c_link
+
 from .local_book_detail_sections import local_book_detail_sections
 from .detail_selection_perf import current_detail_trace
 from .local_detail_cover import exact_local_detail_cover
@@ -21,6 +24,18 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
             "Sélectionnez un livre dans la liste pour afficher ses détails.",
         )
         return
+    if (getattr(row, "_library_ambiguous_key", False) is True
+            or getattr(row, "key", None) in getattr(
+                window, "_library_ambiguous_keys", (),
+            )):
+        # The display key is also the dictionary key for action/detail
+        # lookup. Reject even a stale once-unique GTK row after a new
+        # duplicate-key inventory; a cell rebind is not a permission proof.
+        window.library_page.detail.empty(
+            "Référence ambiguë",
+            "Actualisez la bibliothèque avant d'ouvrir ce détail.",
+        )
+        return
     item = window._library_objects.get(row.key)
     if not item:
         return
@@ -31,9 +46,28 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         getattr(window.service, "current_identity", None), "identity_id", None,
     )
     owner = item.get("identity_id")
+    view_owner = item.get("_library_view_owner")
+    # The global-view marker is presentation metadata, not an ACL. A missing
+    # or altered marker must never reclassify A's book as usable under active
+    # profile B; an inconsistent marker also invalidates private actions.
+    # Validate native identity types before equality: untrusted markers may
+    # carry hostile __eq__ implementations.
+    owner_is_active = (
+        type(active) is str and bool(active)
+        and type(owner) is str and bool(owner) and owner == active
+    )
     foreign = (
-        item.get("_library_view_owner") == owner
-        and type(owner) is str and bool(owner) and owner != active
+        # An explicitly supplied owner must be native and match the active
+        # identity. In particular None/empty/non-native is not an owner,
+        # even when the global-view presentation marker is absent.
+        # Preserve the older unqualified display-row contract only when
+        # the owner field itself is absent; downstream local/provider
+        # admission remains independent of this presentation guard.
+        ("identity_id" in item and not owner_is_active)
+        or (view_owner is not None and (
+            type(view_owner) is not str or not view_owner
+            or not owner_is_active or view_owner != owner
+        ))
     )
     if not foreign and item.get("source") == "loan" and item.get("loan_id"):
         # A merged catalogue notice may not identify the exact borrower.
@@ -60,7 +94,13 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
     presentation = book_detail_presentation(
         title=str(item.get("title") or "Sans titre"),
         subtitle=str(item.get("author") or ""),
-        thumbnail=item.get("thumbnail_url"),
+        # When a Core packet is present, only its exact N2 association can
+        # authorize painting. If rejected (owner/Artifact/Placement), do
+        # NOT substitute an unqualified cached catalogue/legacy URL.
+        thumbnail=(item.get("thumbnail_url")
+                   if item.get("_exact_local_cover_evidence") is None
+                   and item.get("_public_canonical_cover_link") is None
+                   else None),
         badges=[],
         section_rows=local_book_detail_sections(
             item,
@@ -83,7 +123,47 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         if not foreign else None
     )
     if cover_evidence is None:
-        detail.show_presentation(presentation, description=description)
+        link = item.get("_public_canonical_cover_link")
+        pinned_c = (
+            not foreign
+            and item.get("_exact_local_cover_evidence") is None
+            and valid_local_public_c_link(
+                link, identity_id=active,
+                artifact_id=item.get("artifact_id"),
+                placement_id=item.get("placement_id"),
+            )
+        )
+        if pinned_c:
+            # Only the actual current GTK list selection may use this
+            # Artifact/Placement C after an N3 read. A stale once-unique
+            # key cannot open the newer mapped book or paint its cover.
+            from .local_public_c_detail_guard import (
+                local_public_c_detail_check, staged_local_public_c_detail,
+            )
+            check = local_public_c_detail_check(
+                window, row, item, link, view="library",
+            )
+            if (getattr(row, "_cover_public_c_link", None) is not None
+                    and not check()):
+                detail.empty(
+                    "Référence périmée",
+                    "Actualisez la bibliothèque avant d'ouvrir ce détail.",
+                )
+                return
+            presentation = replace(
+                presentation, cover_document_ref=link.document,
+                thumbnail_url=None,
+            )
+            with staged_local_public_c_detail(
+                detail, check, minimum_revision=link.epoch,
+            ):
+                detail.show_presentation(
+                    presentation, description=description,
+                )
+        else:
+            detail.show_presentation(
+                presentation, description=description,
+            )
     else:
         detail.show_local_presentation(
             presentation, description=description, cover_evidence=cover_evidence,

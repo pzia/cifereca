@@ -45,9 +45,9 @@ def test_legacy_primary_fallback_collision_never_grants_literal_borrower(
         )
         with storage._lock, storage._connect() as db:
             db.execute("BEGIN")
-            assert toggle_state(db, primary) == "on"
+            assert toggle_state(db, primary) == "off"
             assert toggle_state(db, literal) == "off"
-            assert toggle_state(db, unrelated) == "on"
+            assert toggle_state(db, unrelated) == "off"
             assert toggle_state(db, padded_unrelated) == "off"
         # The same legacy metadata remains on disk; the Core cannot
         # reinterpret it as consent for a distinct literal borrower.
@@ -82,7 +82,7 @@ def test_explicit_exact_scope_policy_can_enable_literal_borrower(tmp_path):
             assert toggle_state(db, literal) == "on"
             # The generic literal account's policy cannot authorize the
             # distinct empty-primary borrower sharing its legacy SID.
-            assert toggle_state(db, primary) == "on"
+            assert toggle_state(db, primary) == "off"
         assert policy_key(literal.scope) != policy_key(primary.scope)
     finally:
         storage.close()

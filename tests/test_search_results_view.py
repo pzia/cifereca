@@ -115,7 +115,7 @@ def test_remote_ids_remain_distinct_and_local_placement_callback_is_pinned():
 
 def test_progressive_warning_only_announced_once_and_real_selection_is_kept():
     host = _host()
-    host.service.last_search_warnings = ["offline source"]
+    host._online_search_warnings = ["offline source"]
     host.search_page.selection.get_selected_item = lambda: Row("x", "X", "", "", "", None)
     host._populate_search([], announce=False)
     host.toast.assert_not_called()
@@ -143,7 +143,7 @@ def test_facade_passes_row_and_announcement_arguments_unchanged():
 
 def test_provider_warning_with_signed_url_and_account_identifier_is_never_displayed():
     host = _host()
-    host.service.last_search_warnings = [
+    host._online_search_warnings = [
         "Fournisseur: HTTP 403 https://example.test/private?token=SECRET-ABC "
         "/home/personne/secrets/alice@example.test"
     ]
@@ -158,16 +158,16 @@ def test_provider_warning_with_signed_url_and_account_identifier_is_never_displa
         assert forbidden not in message
     # The read-only service warnings remain available for the Core diagnostic
     # pipeline, and no extra provider request occurs from the view.
-    assert host.service.last_search_warnings[0].startswith("Fournisseur: HTTP 403")
+    assert host._online_search_warnings[0].startswith("Fournisseur: HTTP 403")
     host.service.local_placements_for_sources.assert_called_once_with("alice")
 
 
 def test_partial_warning_does_not_toast_for_empty_or_progressive_batches():
     host = _host()
-    host.service.last_search_warnings = []
+    host._online_search_warnings = []
     host._populate_search([], announce=True)
     host.toast.assert_not_called()
-    host.service.last_search_warnings = ["private exception"]
+    host._online_search_warnings = ["private exception"]
     host._populate_search([], announce=False)
     host.toast.assert_not_called()
 
@@ -292,7 +292,7 @@ def test_stale_public_search_warns_partial_degraded_mode_without_provider_secret
     stale = replace(_book("public-provider"), metadata={
         "search_provenance": "known_catalog_stale", "mirrored_at": 1792067400,
     })
-    host.service.last_search_warnings = [
+    host._online_search_warnings = [
         "Provider failed: https://private.invalid/?token=SECRET",
     ]
     host._remote_search_results = [stale]
@@ -316,6 +316,6 @@ def test_degraded_toast_requires_failure_warning_and_final_announcement():
     host._remote_search_results = [stale]
     host._populate_search([stale], announce=True)
     host.toast.assert_not_called()
-    host.service.last_search_warnings = ["source unavailable"]
+    host._online_search_warnings = ["source unavailable"]
     host._populate_search([stale], announce=False)
     host.toast.assert_not_called()

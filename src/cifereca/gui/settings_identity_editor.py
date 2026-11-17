@@ -69,6 +69,29 @@ def build_identity_settings_editor(
     )
     group.add(primary_row)
 
+    # An ADEPT lending source is explicit: provider + saved connection.
+    # Empty fields preserve historical Paris-only display compatibility.
+    # A partial or malformed saved pair is never inferred from another source.
+    source_provider_row = Adw.EntryRow()
+    source_provider_row.set_title("Fournisseur de prêt ADEPT (ID de plugin)")
+    saved_provider = data.get("adept_source_provider_id", "")
+    source_provider_row.set_text(saved_provider if type(saved_provider) is str else "")
+    source_provider_row.set_tooltip_text(
+        "ID du fournisseur déclaré (ex. paris). Avec la connexion ci-dessous, "
+        "définit uniquement le périmètre du diagnostic local ADEPT."
+    )
+    group.add(source_provider_row)
+
+    source_connection_row = Adw.EntryRow()
+    source_connection_row.set_title("Connexion de prêt ADEPT (ID de source)")
+    saved_connection = data.get("adept_source_connection_id", "")
+    source_connection_row.set_text(saved_connection if type(saved_connection) is str else "")
+    source_connection_row.set_tooltip_text(
+        "ID exact d'une connexion active déjà enregistrée pour cette identité. "
+        "Les deux champs sont requis ensemble. Aucun fournisseur n'est deviné."
+    )
+    group.add(source_connection_row)
+
     adept_row = Adw.EntryRow()
     adept_row.set_title("Profil ADE lié à cette identité (optionnel)")
     adept_row.set_text(adept_profile)
@@ -81,7 +104,7 @@ def build_identity_settings_editor(
     # This is recorded local state, not Adobe authorization or the exceptional
     # historical borrower/profile resolver from P0 #976.
     normal_row = Adw.ActionRow()
-    normal_row.set_title("Parcours normal · Paris principal et ADEPT")
+    normal_row.set_title("Parcours normal · source enregistrée et ADEPT")
     normal_row.set_subtitle(normal_subtitle)
     normal_row.set_tooltip_text(
         "État local enregistré, sans test Adobe ni connexion réseau. "
@@ -109,6 +132,8 @@ def build_identity_settings_editor(
         "directory": directory_row, "languages": languages_row,
         "prefer_vo": vo_switch, "adept_profile": adept_row,
         "primary_paris_connection_id": primary_row,
+        "adept_source_provider_id": source_provider_row,
+        "adept_source_connection_id": source_connection_row,
         "normal_adept_check": normal_check, "normal_adept_status": normal_row,
         "deleted": False,
     }

@@ -73,10 +73,77 @@ class PublicBookMasterDetailView:
                 getattr(row, "thumbnail_url", None),
             )
             item = BookListItem(presented_key, *presentation)
+            # The common GTK cell owns N2 lookup by exact DocumentRef. Only
+            # an already attested Core scope may cross this UI boundary:
+            # plugin URL, title, ISBN and public row key cannot create one.
+            from cifereca.core.book_cover_projection import CoverDocumentScope
+            # The Core-attested exact row packet takes precedence over an
+            # optional plugin declaration, even if both are syntactically
+            # valid but name DIFFERENT documents. No URL/title/ISBN join.
+            core_document = getattr(row, "_cover_document_ref", None)
+            declared = getattr(row, "cover_document_ref", None)
+            if type(core_document) is CoverDocumentScope:
+                item._cover_document_ref = core_document
+            elif type(declared) is CoverDocumentScope:
+                item._cover_document_ref = declared
+            elif declared is not None:
+                # An invalid explicit reference must not cause a legacy
+                # fetch of the plugin's unqualified thumbnail URL.
+                item.thumbnail_url = None
             item._public_row_content = presentation
             ui_rows.append(item)
+        # Duplicate public plugin keys are occurrence-local, not document
+        # identities. On a reordered/replaced snapshot, MasterDetailPage
+        # would normally restore the same display key, silently selecting
+        # another source and exposing its detail/actions. Preserve selection
+        # only while the exact original source object remains under that key.
+        from collections import Counter
+        collisions = {
+            key for key, count in Counter(original_keys).items() if count > 1
+        }
+        previous_collisions = getattr(self, "_duplicate_source_keys", set())
+        previous = getattr(self, "_rows", {})
+        selection = getattr(self._page, "selection", None)
+        selected = getattr(selection, "get_selected_item", None)
+        if callable(selected) and type(previous) is dict:
+            active = selected()
+            active_key = getattr(active, "key", None)
+            former = previous.get(active_key)
+            incoming = mapped.get(active_key)
+            if (former is not None and incoming is not None
+                    and former is not incoming
+                    and (str(getattr(former, "key", "")) in
+                         (collisions | previous_collisions)
+                         or str(getattr(incoming, "key", "")) in
+                         (collisions | previous_collisions))):
+                # Clear before replacing the mapping so even synchronous
+                # GTK selection callbacks cannot dispatch a foreign row.
+                selection.set_selected(0xFFFFFFFF)
+        self._duplicate_source_keys = collisions
         # Publish mapping before GTK selection notifications during show_rows.
         self._rows = mapped
+        # An independently Core-attested canonical C may be exposed through
+        # the neutral plugin ABI, but the plugin row is not an evergreen
+        # image lease. Even an identical rerender revokes any pending N3
+        # callback for the previous snapshot/selection.
+        generation = getattr(self, "_public_c_page_generation", 0)
+        self._public_c_page_generation = (
+            generation + 1 if type(generation) is int and generation >= 0
+            else 1
+        )
+        from cifereca.core.notice_c_cover_index import is_canonical_cover_document
+        from cifereca.gui.plugin_public_c_guard import pin_plugin_public_c
+        for ui_item in ui_rows:
+            document = getattr(ui_item, "_cover_document_ref", None)
+            source = mapped.get(ui_item.key)
+            if (is_canonical_cover_document(document)
+                    or getattr(source, "cover_document_receipt", None) is not None):
+                # Keep this veto witness even if the selected identity is
+                # absent or the token is refused: no legacy URL fallback.
+                ui_item._cover_plugin_c_source = source
+                ui_item._cover_plugin_c_receipt = pin_plugin_public_c(
+                    self, source, key=ui_item.key,
+                )
         self._page.show_rows(ui_rows, total_count=total_count)
 
     def set_list_state(self, title: str, description: str = "", icon_name: str = "system-search-symbolic") -> None:
@@ -95,7 +162,41 @@ class PublicBookMasterDetailView:
     def show_detail(self, detail) -> None:
         self._revoke_pending_exact_detail()
         panel = self._page.detail
-        panel.show_presentation(detail)
+        # Keep exactly ONE neutral detail renderer for every plugin shape.
+        # Only canonical C adds an optional current-row N3 lease.
+        from contextlib import nullcontext
+        stage = nullcontext()
+        from cifereca.core.notice_c_cover_index import is_canonical_cover_document
+        document = getattr(detail, "cover_document_ref", None)
+        if is_canonical_cover_document(document):
+            from cifereca.gui.plugin_public_c_guard import (
+                selected_plugin_public_c, plugin_public_c_detail_current,
+            )
+            pinned = selected_plugin_public_c(self, document)
+            if pinned is None:
+                # The public edition exists but its association with the
+                # current recommendation was revoked. Neither the old
+                # DocumentRef nor its raw supplier URL can paint this book.
+                from dataclasses import replace
+                from cifereca.plugin_api.models import UiBookDetailPresentation
+                if type(detail) is UiBookDetailPresentation:
+                    detail = replace(
+                        detail, cover_document_ref=None,
+                        thumbnail_url=None,
+                    )
+            else:
+                selected, receipt = pinned
+                from cifereca.gui.local_public_c_detail_guard import (
+                    staged_local_public_c_detail,
+                )
+                stage = staged_local_public_c_detail(
+                    panel, lambda: plugin_public_c_detail_current(
+                        self, selected, receipt,
+                    ),
+                    minimum_revision=receipt.minimum_revision,
+                )
+        with stage:
+            panel.show_presentation(detail)
         buttons = []
         for action in getattr(detail, "actions", ()) or ():
             raw_uri = str(getattr(action, "uri", "") or "")
@@ -107,11 +208,19 @@ class PublicBookMasterDetailView:
                     continue
                 button = Gtk.LinkButton(uri=uri, label=str(action.title))
                 button.set_tooltip_text(str(action.title))
+                button.connect(
+                    "activate-link",
+                    lambda clicked: getattr(
+                        clicked, "_cifereca_action_context_revoked", False,
+                    ) is True,
+                )
             else:
                 button = action_button(str(action.title), str(action.icon_name or "view-more-symbolic"))
                 callback = getattr(action, "callback", None)
                 if callable(callback):
                     def activate(clicked, cb=callback, action_id=str(action.id)):
+                        if getattr(clicked, "_cifereca_action_context_revoked", False):
+                            return
                         # Capture the real clicked action before its callback
                         # switches routes: mouse clicks need not give GTK focus.
                         window = self._window
@@ -139,7 +248,8 @@ class PublicBookMasterDetailView:
         panel.add_actions(buttons)
 
     def show_existing_search_detail(
-        self, item, detail, *, context_sections=(),
+        self, item, detail, *, context_sections=(), public_c_document=None,
+        c_selection_is_current=None, public_c_minimum_revision=None,
     ) -> None:
         """Render Core's actual Search detail/actions in this plugin panel.
 
@@ -151,25 +261,39 @@ class PublicBookMasterDetailView:
         from .recommendation_exact_cover import loaded_recommendation_cover
         proof = loaded_recommendation_cover(self._window, item, detail)
         if proof is None:
-            panel.show_item_detail(item, detail)
+            # Preserve the legacy renderer ABI for all non-C paths.
+            # Only the attested known-v2 worker passes an exact C ref.
+            if public_c_document is None:
+                panel.show_item_detail(item, detail)
+            else:
+                from .plugin_public_c_guard import staged_plugin_exact_public_c
+                admitted, stage = staged_plugin_exact_public_c(
+                    self, panel, public_c_document,
+                    selection_is_current=c_selection_is_current,
+                    minimum_revision=public_c_minimum_revision,
+                )
+                if admitted:
+                    with stage:
+                        panel.show_public_c_search_document(
+                            item, detail=detail,
+                            public_c_document=public_c_document,
+                        )
+                else:
+                    # A stale async completion must not overwrite even
+                    # the NEW selection's existing detail with an empty pane.
+                    # Neither old image nor old source/account actions run.
+                    return
         else:
             panel.show_search_document(item, detail=detail, cover_evidence=proof)
         # Search appends these same Core local/open/send/owned actions after
         # the same renderer. Rights remain with the common controller.
         from .query_model import result_row
-        self._window._add_local_book_actions(panel, result_row(
-            item, purchase_evidence=getattr(self._window, "_search_purchase_evidence", None),
-            identity_id=getattr(getattr(getattr(self._window, "service", None),
-                                        "current_identity", None), "identity_id", None),
-            account_context_epoch=getattr(getattr(self._window, "service", None),
-                                           "_account_context_epoch", None),
-            source_context_epoch=getattr(getattr(self._window, "service", None),
-                                          "_source_context_epoch", None),
-        ))
+        self._window._add_local_book_actions(panel, result_row(item))
         self._append_recommendation_context(panel, context_sections)
 
     def show_existing_search_unavailable(
-        self, item, *, context_sections=(),
+        self, item, *, context_sections=(), public_c_document=None,
+        c_selection_is_current=None, public_c_minimum_revision=None,
     ) -> None:
         """Match Search's non-mutating detail fallback after holdings failure.
 
@@ -181,19 +305,29 @@ class PublicBookMasterDetailView:
         from .recommendation_exact_cover import loaded_recommendation_cover
         proof = loaded_recommendation_cover(self._window, item)
         if proof is None:
-            panel.show_search(item, loading=False)
+            if public_c_document is None:
+                panel.show_search(item, loading=False)
+            else:
+                from .plugin_public_c_guard import staged_plugin_exact_public_c
+                admitted, stage = staged_plugin_exact_public_c(
+                    self, panel, public_c_document,
+                    selection_is_current=c_selection_is_current,
+                    minimum_revision=public_c_minimum_revision,
+                )
+                if admitted:
+                    with stage:
+                        panel.show_public_c_search_document(
+                            item, loading=False,
+                            public_c_document=public_c_document,
+                        )
+                else:
+                    # The offline callback is equally stale. Leave the
+                    # current selection's panel untouched (not even empty).
+                    return
         else:
             panel.show_search_document(item, cover_evidence=proof)
         from .query_model import result_row
-        self._window._add_local_book_actions(panel, result_row(
-            item, purchase_evidence=getattr(self._window, "_search_purchase_evidence", None),
-            identity_id=getattr(getattr(getattr(self._window, "service", None),
-                                        "current_identity", None), "identity_id", None),
-            account_context_epoch=getattr(getattr(self._window, "service", None),
-                                           "_account_context_epoch", None),
-            source_context_epoch=getattr(getattr(self._window, "service", None),
-                                          "_source_context_epoch", None),
-        ))
+        self._window._add_local_book_actions(panel, result_row(item))
         self._append_recommendation_context(panel, context_sections)
 
     def _append_recommendation_context(self, panel, context_sections) -> None:

@@ -26,7 +26,9 @@ def statistics_lines(stats: Mapping[str, Any]) -> list[str]:
         f"Emplacements locaux indexés présents : {stats['local_placements']}",
         f"Prêts de bibliothèque connus : {loans if loans is not None else 'non actualisés'}",
         f"Sources de prêts observées : {stats['loan_sources_observed']}",
-        f"Droits d’achat distants actifs : {stats['remote_owned_rights']}",
+        (f"Sources d’achat observées : {stats['observed_purchase_sources'] if stats['observed_purchase_sources'] is not None else '—'}"
+         if "observed_purchase_sources" in stats
+         else f"Droits d’achat distants actifs : {stats['remote_owned_rights']}"),
     ]
     for title, key in (
         ("Formats", "formats"),

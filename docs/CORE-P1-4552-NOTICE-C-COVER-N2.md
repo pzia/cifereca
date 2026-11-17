@@ -9,6 +9,12 @@
 - `NoticeCoverN2Adapter.register` dérive le `CoverSourceSnapshot` N2 **du même attribut Notice C**, en projetant les changements documentaires sur une génération CAS strictement croissante. N2 ne persiste ni autre vérité documentaire ni corps de notice. La même révision repart en HIT ; `A→B→A` incrémente la génération et refuse l'ancienne publication.
 - L'UI continue de demander `DocumentCoverService.get_cover(DocumentRef, variant)`. Aucune nouvelle règle de rendu, sélection, droit d'accès ou téléchargement n'est ajoutée. N3 reste l'unique cache matériel commun (URL/EPUB/previews).
 
+## Monotonie des observations et protection de la dernière preuve complète
+
+L'adaptateur conserve la dernière couverture documentaire **complète** quand une nouvelle observation du même `DocumentRef` est `partial`, a un champ de couverture malformé, ou déclare un inventaire incomplet : cet événement reste *inconnu*, jamais une suppression. Aucun nouveau token N2 ni notification GTK n'est émis pour ce retour à `pending`. Le watermark `observed_at` avance néanmoins, empêchant un résultat antérieur, arrivé en retard, de révoquer la décision courante. Une nouvelle observation complète plus récente peut établir une URL différente ou une véritable absence `missing` et invalide alors la décision N2.
+
+`observed_at` n'est pas une révision transactionnelle C : à horodatage égal, l'adaptateur accepte une nouvelle preuve. La persistance Notice C devra assurer elle-même l'ordre CAS strict des publications et la révocation explicite des droits. Ce mécanisme ne conserve aucun corps de notice supplémentaire et ne touche jamais les octets N3.
+
 ## Frontières de preuve et dépendances
 
 Cette première tranche source-catalogue est **volontairement inerte** : elle ne provoque aucun fetch, parsing, observation persistante ou admission automatique depuis la recherche. Le producteur Notice C/#3724 doit choisir un chemin de champ connu et déclarer si son inventaire est complet. La persistance/version des observations est le lot #2385. Une notice source `embedded` **ne peut pas** dériver une preuve `Placement` du seul SHA d'Artifact : le chemin EPUB exact reste sous l'admission Core existante de #6168.

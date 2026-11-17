@@ -9,6 +9,7 @@ from types import SimpleNamespace as NS
 
 from recommendations import UxRecommendationsView
 from recommendation_service import RecommendationResult
+from recommendation_engine import RankedCandidate
 
 
 class Label:
@@ -126,7 +127,8 @@ def test_final_partial_warning_remains_visible_after_filtering():
     view._matches = lambda _row: False
     view._view_filters = lambda: ("Dumas", (), ())
     result = RecommendationResult(
-        books_count=1, queries=("Dumas",), ranked=(object(),),
+        books_count=1, queries=("Dumas",),
+        ranked=(RankedCandidate(item=object(), score=1, reasons=(), sources=("catalogue",)),),
         providers=(("catalogue", "Catalogue"),), warnings=("provider error",),
     )
     view._base_complete(6, result, None)

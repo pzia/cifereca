@@ -3,6 +3,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
+from tests.historical_adept_seed import seed_historical_adept_binding
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 from tests.test_core_p0_5851_generic_adept_grants_v16 import _persist_account
 
@@ -13,7 +14,7 @@ def test_service_writes_exact_native_grant_without_promoting_legacy(tmp_path):
                  account_id="linked-123")
     try:
         _persist_account(service.storage)
-        service.bind_paris_borrower_adept(
+        seed_historical_adept_binding(service, 
             credential_id="alice-paris", account_id="linked-123",
             borrower_identity_id="bob", confirmed=True,
         )

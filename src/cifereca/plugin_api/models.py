@@ -390,6 +390,11 @@ class UiBookListEntry:
     meta: str = ""
     badge: str = ""
     thumbnail_url: str | None = None
+    # Core-originated exact DocumentRef; no inferred proof/rights in plugins.
+    cover_document_ref: object | None = None
+    # Optional opaque receipt from public_notice_cover_binding. Forward it
+    # unchanged; it is neither a provider field nor a serialized capability.
+    cover_document_receipt: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -419,6 +424,8 @@ class UiBookDetailPresentation:
     sections: tuple[DetailSection, ...] = ()
     actions: tuple[UiBookDetailAction, ...] = ()
     links: tuple[DocumentLink, ...] = ()
+    # Matches the list DocumentRef, independent of action permissions.
+    cover_document_ref: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1070,6 +1077,35 @@ class UiSearchNavigationHost(UiPageHost, Protocol):
         online: bool = False, identity_id: str | None = None,
         providers: tuple[str, ...] = (),
     ) -> bool: ...
+
+
+@runtime_checkable
+class UiPublicNoticeCoverHost(UiPageHost, Protocol):
+    """Optional CoreUI attestation bridge for a public canonical Notice C.
+
+    Plugins provide an already loaded original SearchResult and the explicit
+    active viewer; they cannot infer, create or persist a DocumentRef. The
+    host returns the opaque exact C reference or None, never an entitlement
+    or a URL. No provider GET, thumbnail I/O, SQLite or GTK blocking.
+    """
+
+    def public_notice_cover_ref(
+        self, item: object, *, identity_id: str,
+    ) -> object | None: ...
+
+
+@runtime_checkable
+class UiPublicNoticeCoverBindingHost(UiPublicNoticeCoverHost, Protocol):
+    """Optional revision-aware extension of the legacy exact-C reference port.
+
+    Returns (DocumentRef, opaque Core receipt) or None. Forward the receipt
+    unchanged in UiBookListEntry.cover_document_receipt; never reconstruct,
+    serialize or interpret it. The standard CoreUI adapter validates it.
+    """
+
+    def public_notice_cover_binding(
+        self, item: object, *, identity_id: str,
+    ) -> tuple[object, object] | None: ...
 
 
 @runtime_checkable

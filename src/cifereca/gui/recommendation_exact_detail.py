@@ -16,6 +16,7 @@ from ..models import SearchResult, ItemDetail
 from .exact_search_notice_navigation import loaded_notice_key
 from ..task_queue import TaskPriority
 from ..core.source_context import source_context_epoch
+from ..core.search_orchestration import capture_search_read_scope
 
 
 def _loaded_item(window: Any, coords: dict[str, str]) -> SearchResult | None:
@@ -118,6 +119,7 @@ def present_loaded_search_detail_in_place(
         identity = service.current_identity
         if getattr(identity, "identity_id", None) != identity_id:
             return False
+        request_scope = capture_search_read_scope(service, identity_id)
         generation = window._identity_context_generation
         search_generation = window._search_generation
         shell_token = getattr(window, "_shell_page_rebuild_token", None)
@@ -141,6 +143,8 @@ def present_loaded_search_detail_in_place(
         if (getattr(view, "_cifereca_exact_detail_request_token", None)
                 is not request_token
                 or getattr(window, "_closed", False)
+                or getattr(window, "service", None) is not service
+                or not request_scope.current(service)
                 or window._identity_context_generation != generation
                 or window._search_generation != search_generation
                 or getattr(window, "_shell_page_rebuild_token", None) is not shell_token
@@ -180,7 +184,31 @@ def present_loaded_search_detail_in_place(
         except Exception:
             return False
 
+    # Source-C lookup and holdings run on the SAME existing Core worker.
+    # A plugin recommendation cannot contribute documentary evidence here.
+    public_c_snapshot = None
+
+    def c_click_current() -> bool:
+        # N3 and N4 must check the *exact* explicit click, even when the
+        # recommendation selection remains the same and another variant
+        # is consulted. This predicate is GTK-side and never reopens SQL.
+        return (
+            getattr(view, "_cifereca_exact_detail_request_token", None)
+                is request_token
+            and getattr(window, "service", None) is service
+            and not getattr(window, "_closed", False)
+            and window._identity_context_generation == generation
+            and window._search_generation == search_generation
+            and getattr(window, "_shell_page_rebuild_token", None) is shell_token
+            and getattr(service.current_identity, "identity_id", None) == identity_id
+            and source_context_epoch(service) == source_epoch
+            and request_scope.current(service)
+            and _view_mapped(view)
+            and is_current() is True
+        )
+
     def work() -> ItemDetail:
+        nonlocal public_c_snapshot
         if not source_current() or not loaded_facts_current():
             from ..plugin_api import Cancelled
             raise Cancelled("Source de consultation périmée.")
@@ -189,7 +217,15 @@ def present_loaded_search_detail_in_place(
             if current is None or current[1] != known_snapshot:
                 from ..plugin_api import Cancelled
                 raise Cancelled("Notice catalogue modifiée.")
-        return service.holdings(item, query, force=False)
+            from ..core.notice_c_recommendation_projection import (
+                known_recommendation_public_c_snapshot,
+            )
+            public_c_snapshot = known_recommendation_public_c_snapshot(
+                service.storage, known_snapshot, **coords,
+            )
+        # Preserve explicit-click and exact-notice revocation; the actual
+        # provider dispatch must not infer its borrower from GTK navigation.
+        return service.holdings_for_scope(request_scope, item, query, force=False)
 
     def deliver(detail: object) -> None:
         # Exact source admission is necessary even if the context/lease is
@@ -211,9 +247,12 @@ def present_loaded_search_detail_in_place(
                 return
         elif _loaded_item(window, coords) is not item:
             return
-        view.show_existing_search_detail(
-            item, detail, context_sections=context_sections,
-        )
+        presentation_kwargs = {"context_sections": context_sections}
+        if known_source and public_c_snapshot is not None:
+            presentation_kwargs["public_c_document"] = public_c_snapshot.document
+            presentation_kwargs["public_c_minimum_revision"] = public_c_snapshot.epoch
+            presentation_kwargs["c_selection_is_current"] = c_click_current
+        view.show_existing_search_detail(item, detail, **presentation_kwargs)
 
     def failed(_error: BaseException) -> None:
         # A canceled/obsolete lookup is not an availability failure; never
@@ -235,7 +274,12 @@ def present_loaded_search_detail_in_place(
         # Do not project a fake ItemDetail or expose raw provider errors.
         fallback = getattr(view, "show_existing_search_unavailable", None)
         if callable(fallback):
-            fallback(item, context_sections=context_sections)
+            presentation_kwargs = {"context_sections": context_sections}
+            if known_source and public_c_snapshot is not None:
+                presentation_kwargs["public_c_document"] = public_c_snapshot.document
+                presentation_kwargs["public_c_minimum_revision"] = public_c_snapshot.epoch
+                presentation_kwargs["c_selection_is_current"] = c_click_current
+            fallback(item, **presentation_kwargs)
         window.toast("Disponibilités indisponibles pour cette notice.", 5)
 
     try:

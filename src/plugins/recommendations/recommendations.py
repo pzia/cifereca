@@ -18,6 +18,7 @@ from cifereca.plugin_api import (
     UiBookDetailPresentation,
     UiBookListEntry,
     UiPageContribution,
+    SearchResult,
     normalize_language_tag,
 )
 from recommendation_llm import explain_reasons
@@ -649,6 +650,65 @@ def _public_cover_url(item: Any) -> str | None:
         if _external_book_url(public_base) is not None:
             return original
     return None
+
+
+
+def _known_public_c_candidate(item: Any) -> bool:
+    # Descriptive display marker only; the Core host alone verifies the
+    # original documentary receipt. This marker can never grant an action.
+    metadata = getattr(item, "metadata", None) if type(item) is SearchResult else None
+    return type(metadata) is dict and metadata.get("notice_c_known") is True
+
+
+def _attested_recommendation_c_cover(
+    ranked: Any, *, host: Any, identity_id: str | None,
+    catalogue_sources: tuple[str, ...], with_receipt: bool = False,
+):
+    """Reuse an already published Core C, never a recommendation ISBN join.
+
+    A ranking may unify works from different suppliers for discovery; that
+    affinity cluster is NOT an edition identity. Only a single original
+    Core-projected SearchResult, live same-call or durable public C read,
+    with a matching original catalogue variant can provide a canonical ref.
+    Pure projection: no DB, network, image I/O or right lookup on GTK.
+    """
+    if (type(ranked) is not RankedCandidate
+            or type(identity_id) is not str or not identity_id
+            or type(catalogue_sources) is not tuple
+            or len(catalogue_sources) > 128
+            or any(type(x) is not str for x in catalogue_sources)
+            or type(ranked.notices) is not tuple
+            or len(ranked.notices) != 1):
+        return (None, None) if with_receipt else None
+    original = ranked.notices[0]
+    if type(original) is not CatalogNoticeVariant:
+        return (None, None) if with_receipt else None
+    item = ranked.item
+    if (type(item) is not SearchResult
+            or original.item is not item
+            or original.source_provider != item.source_provider
+            or original.source_credential != item.source_credential
+            or original.record_id != item.record_id
+            or original.docbase != item.docbase
+            or original.source_collection != item.source_collection
+            or (catalogue_sources
+                and original.source_provider not in catalogue_sources)
+            or type(ranked.sources) is not tuple
+            or set(ranked.sources) != {original.source_provider}):
+        return (None, None) if with_receipt else None
+    # Plugins cannot inspect Core witnesses, reference proofs, SQLite or
+    # provider execution state. The public host gate owns this admission.
+    # A legacy/headless host without the opt-in method cannot mint C.
+    if with_receipt:
+        # Optional newer port. An opaque receipt is passed through unchanged;
+        # the plugin never interprets its revision, identity or source proof.
+        bind = getattr(host, "public_notice_cover_binding", None)
+        if callable(bind):
+            packet = bind(item, identity_id=identity_id)
+            return packet if type(packet) is tuple and len(packet) == 2 else (None, None)
+    resolve = getattr(host, "public_notice_cover_ref", None)
+    document = resolve(item, identity_id=identity_id) if callable(resolve) else None
+    return (document, None) if with_receipt else document
 
 
 def _attested_catalogue_isbns(
@@ -2161,6 +2221,17 @@ class UxRecommendationsView:
             )
             return False
 
+        # Bind the catalogue to this page's own reader before TaskBroker
+        # queues its work. Legacy broker doubles without the additive facet
+        # retain their historical contract.
+        bind_catalog = getattr(type(catalog_broker), "for_identity", None)
+        if callable(bind_catalog):
+            try:
+                catalog_broker = bind_catalog(catalog_broker, identity_id)
+            except Exception:
+                self._show_calculation_unavailable("Le catalogue du profil n'est plus disponible.")
+                return False
+
         generation = self._generation
         self._refresh_started_at = time.perf_counter()
         self._busy = True
@@ -2215,6 +2286,7 @@ class UxRecommendationsView:
                 return compute_reference_recommendations(
                     catalog_broker,
                     reference,
+                    identity_id=identity_id,
                     scope=self._config_str("scope", "digital"),
                     max_queries=self._config_int("max_queries", 8),
                     per_query=self._config_int("per_query", 50),
@@ -2615,9 +2687,22 @@ class UxRecommendationsView:
             meta_parts = []
             if sources:
                 meta_parts.append(sources)
+            if _known_public_c_candidate(item):
+                meta_parts.append("Notice C connue · disponibilité non vérifiée")
             if reasons:
                 meta_parts.append("Pourquoi : " + reasons)
 
+            # Headless legacy render hosts may omit the identity widget.
+            # They cannot attest a Core public SearchResult, so no C ref.
+            try:
+                identity_for_cover = self.selected_identity_id()
+            except (AttributeError, TypeError):
+                identity_for_cover = None
+            cover_ref, cover_receipt = _attested_recommendation_c_cover(
+                ranked, host=getattr(self, "host", None),
+                identity_id=identity_for_cover,
+                catalogue_sources=catalogue_sources, with_receipt=True,
+            )
             rows.append(
                 UiBookListEntry(
                     key=key,
@@ -2628,6 +2713,8 @@ class UxRecommendationsView:
                            if (score := _public_affinity_score(ranked.score)) is not None
                            else ""),
                     thumbnail_url=_public_cover_url(item),
+                    cover_document_ref=cover_ref,
+                    cover_document_receipt=cover_receipt,
                 )
             )
 
@@ -2664,7 +2751,10 @@ class UxRecommendationsView:
                 # constant, a progressive enrichment may mutate its public
                 # cover/title/author. Keep detail and list on the same view
                 # projection; do not request another supplier search.
-                presentation = (row.title, row.subtitle, row.thumbnail_url)
+                presentation = (
+                    row.title, row.subtitle, row.thumbnail_url,
+                    row.cover_document_ref,
+                )
                 if (
                     selection["ranked"] is not mapping[key]
                     or selection.get("catalogue_sources") != catalogue_sources
@@ -2674,6 +2764,7 @@ class UxRecommendationsView:
                         # not reopen that detail solely because public row
                         # metadata was enriched on the same ranked object.
                         selection.get("row_presentation") != presentation
+                        or selection.get("cover_document_receipt") != row.cover_document_receipt
                         or selection["generation"] != self._generation
                         or selection["provisional"] != self._provisional_active
                     ))
@@ -2732,6 +2823,24 @@ class UxRecommendationsView:
         # never reopen an old page or resurrect a clickable stale action.
         exact_identity = self.selected_identity_id()
         catalogue_sources = self._selected_catalogue_sources()
+        # The normal public adapter passes UiBookListEntry, but a direct GTK
+        # selection or stale-selection probe may pass BookListItem instead.
+        # That widget stores the vetted N2 ref under _cover_document_ref.
+        # Never trust either row shape as authority: revalidate the exact
+        # original SearchResult witness against the current viewer/sources.
+        row_cover_ref = getattr(row, "cover_document_ref", None)
+        if row_cover_ref is None:
+            row_cover_ref = getattr(row, "_cover_document_ref", None)
+        if row_cover_ref is not None:
+            admitted_ref = _attested_recommendation_c_cover(
+                ranked, host=getattr(self, "host", None),
+                identity_id=exact_identity,
+                catalogue_sources=catalogue_sources,
+            )
+            if (admitted_ref is None
+                    or type(row_cover_ref) is not type(admitted_ref)
+                    or row_cover_ref != admitted_ref):
+                row_cover_ref = None
         state = getattr(self, "_exact_notice_state", None)
         if not (
             type(state) is dict
@@ -2748,7 +2857,11 @@ class UxRecommendationsView:
             }
             self._exact_notice_state = state
         state["provisional"] = self._provisional_active
-        state["row_presentation"] = (row.title, row.subtitle, row.thumbnail_url)
+        state["cover_document_receipt"] = getattr(row, "cover_document_receipt", None)
+        state["row_presentation"] = (
+            row.title, row.subtitle, row.thumbnail_url,
+            row_cover_ref,
+        )
         self._llm_selected_row = row
         if self._llm_button is not None:
             self._llm_button.set_sensitive(not self._busy and self._llm_handle is None)
@@ -2839,6 +2952,10 @@ class UxRecommendationsView:
             "recommendation", "Recommandation",
             tuple(recommendation_fields), 10,
         ))
+        if _known_public_c_candidate(item):
+            catalogue_fields.append(DetailField(
+                "known-public-c", "Disponibilité", "Notice connue · non vérifiée",
+            ))
         if catalogue_fields:
             sections.append(
                 DetailSection("catalogue", "Catalogue", tuple(catalogue_fields), 20)
@@ -3243,6 +3360,7 @@ class UxRecommendationsView:
                 title=title,
                 subtitle=author,
                 thumbnail_url=thumbnail,
+                cover_document_ref=row_cover_ref,
                 badges=tuple(badges),
                 sections=tuple(sections),
                 actions=tuple(actions),
@@ -3381,14 +3499,16 @@ class UxRecommendationsView:
         empty_reason = None
         if not result.books_count:
             empty_reason = "Le profil ne contient aucun livre exploitable."
-        elif not result.providers:
-            empty_reason = "Aucun catalogue connecté ne permet la recherche."
+        elif not result.providers and not result.ranked:
+            empty_reason = "Aucun catalogue connecté ni notice connue correspondante."
         elif not result.queries:
             empty_reason = "Pas assez de métadonnées pour construire des recommandations."
         elif not result.ranked:
             empty_reason = "Aucune recommandation trouvée avec les catalogues actuellement connectés."
         else:
             suffix = f" · {len(result.warnings)} recherche(s) partiellement en erreur" if result.warnings else ""
+            if any(_known_public_c_candidate(row.item) for row in result.ranked):
+                suffix += " · Notices C connues, disponibilités non vérifiées"
             if self._reference_book is not None:
                 self._summary.set_label(
                     f"{len(result.ranked)} recommandations proches de « {_reference_label(self._reference_book)} » "

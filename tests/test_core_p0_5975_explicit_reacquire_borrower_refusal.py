@@ -23,6 +23,7 @@ class _HostileRefusal:
         raise AssertionError("private refusal must not be formatted")
 
 
+@pytest.mark.parametrize("provider", ["paris", "biblioaccess.la-rochelle"])
 @pytest.mark.parametrize(("refusal", "public_code"), [
     ("", "adept_borrower_ambiguous"),
     (False, "adept_borrower_ambiguous"),
@@ -33,18 +34,18 @@ class _HostileRefusal:
     ("adept_borrower_binding_required", "adept_borrower_binding_required"),
 ])
 def test_explicit_reacquisition_refuses_malformed_or_falsey_borrower_grant(
-    tmp_path, monkeypatch, refusal, public_code,
+    tmp_path, monkeypatch, refusal, public_code, provider,
 ):
     service = _service(tmp_path)
     try:
         service.storage.provider_connection_put({
-            "provider_id": "paris", "credential_id": "credential-a",
+            "provider_id": provider, "credential_id": "credential-a",
             "identity_id": "default",
         })
         loan = Loan(
             id="loan-1", record_id="edition-1", provider="PNB",
             medium="digital", title="Test admission",
-            source_provider="paris", source_credential="credential-a",
+            source_provider=provider, source_credential="credential-a",
             source_account_id="primary", identity_id="default",
         )
 
@@ -76,7 +77,89 @@ def test_explicit_reacquisition_refuses_malformed_or_falsey_borrower_grant(
             "code": public_code,
             "retry": "explicit_only",
         }
-        assert service.storage.acquisitions(provider_id="paris") == []
-        assert service.storage.entitlements(provider_id="paris") == []
+        assert service.storage.acquisitions(provider_id=provider) == []
+        assert service.storage.entitlements(provider_id=provider) == []
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("provider", ["paris", "biblioaccess.la-rochelle"])
+@pytest.mark.parametrize("borrower", [None, "", False, 0, object()])
+def test_explicit_reacquire_requires_positive_native_borrower_before_rights(
+    tmp_path, monkeypatch, provider, borrower,
+):
+    """(None, None) is not a source-scoped grant for any lender."""
+    service = _service(tmp_path)
+    try:
+        service.storage.provider_connection_put({
+            "provider_id": provider, "credential_id": "credential-a",
+            "identity_id": "default",
+        })
+        loan = Loan(
+            id="loan-1", record_id="edition-1", provider="PNB",
+            medium="digital", title="Test borrower",
+            source_provider=provider, source_credential="credential-a",
+            source_account_id="primary", identity_id="default",
+        )
+
+        def forbidden(*_args, **_kwargs):
+            pytest.fail("unproven borrower reached rights, persistence or GET")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(services_module, "InterProcessLock", lambda *_a: nullcontext())
+            patch.setattr(service, "can_download_loan", lambda _loan: True)
+            patch.setattr(
+                service, "_paris_adept_identity_for_loan",
+                lambda *_a, **_kw: (borrower, None),
+            )
+            patch.setattr(service.storage, "acquisitions", forbidden)
+            patch.setattr(service.storage, "entitlements", forbidden)
+            patch.setattr(service, "_persist_active_loans", forbidden)
+            patch.setattr(service, "_acquire_active_loan_automatically", forbidden)
+            assert service._reacquire_digital_loan_impl(loan) == {
+                "status": "attention_required", "loan_id": "loan-1",
+                "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+            }
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("provider", ["paris", "biblioaccess.la-rochelle"])
+def test_explicit_reacquire_borrower_exception_refuses_before_rights(
+    tmp_path, monkeypatch, provider,
+):
+    service = _service(tmp_path)
+    try:
+        service.storage.provider_connection_put({
+            "provider_id": provider, "credential_id": "credential-a",
+            "identity_id": "default",
+        })
+        loan = Loan(
+            id="loan-1", record_id="edition-1", provider="PNB",
+            medium="digital", title="Test borrower exception",
+            source_provider=provider, source_credential="credential-a",
+            source_account_id="primary", identity_id="default",
+        )
+
+        def forbidden(*_args, **_kwargs):
+            pytest.fail("resolver failure reached rights, persistence or GET")
+
+        def broken_grant(*_args, **_kwargs):
+            raise RuntimeError("private Adobe credential")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(services_module, "InterProcessLock", lambda *_a: nullcontext())
+            patch.setattr(service, "can_download_loan", lambda _loan: True)
+            patch.setattr(service, "_paris_adept_identity_for_loan", broken_grant)
+            patch.setattr(service.storage, "acquisitions", forbidden)
+            patch.setattr(service.storage, "entitlements", forbidden)
+            patch.setattr(service, "_persist_active_loans", forbidden)
+            patch.setattr(service, "_acquire_active_loan_automatically", forbidden)
+            result = service._reacquire_digital_loan_impl(loan)
+            assert result == {
+                "status": "attention_required", "loan_id": "loan-1",
+                "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+            }
+            assert "private" not in repr(result)
     finally:
         service.close()

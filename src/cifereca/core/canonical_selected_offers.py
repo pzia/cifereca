@@ -19,12 +19,74 @@ from ..locking import InterProcessLock
 from ..models import Account
 from ..paths import acquisition_lock_file
 from ..plugin_api.errors import Cancelled
-from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
-from ..plugin_api.downloadable_resources import ResourceSnapshot, as_legacy_rights_snapshot
+from ..plugin_api.provider_rights_observation import (
+    ProviderRightObservation, ProviderRightsScope, ProviderRightsSnapshot,
+)
+from ..plugin_api.downloadable_resources import (
+    DOWNLOADABLE_RESOURCE_CONTRACT, DownloadCapability, OptionalRightMetadata,
+    ResourceObservation, ResourceSnapshot, SourceReference,
+)
 from .convergence_verified_presence import plan_existing_verified_presence
 from .source_convergence import SourceKey
 
 _LOG = logging.getLogger("cifereca")
+
+
+def _selected_resource_transport(selected, key: SourceKey):
+    """Admit a native v2 offer by its own resource coordinates.
+
+    Only the final row is projected for the existing convergence executor.
+    Optional legal metadata is descriptive; it never selects a resource or
+    makes an available offer actionable without the Core lease.
+    """
+    if (type(selected) is not ResourceSnapshot
+            or type(selected.schema_version) is not str
+            or selected.schema_version != DOWNLOADABLE_RESOURCE_CONTRACT
+            or type(selected.scope) is not ProviderRightsScope
+            or type(selected.branch) is not str
+            or type(selected.status) is not str
+            or selected.status not in ("partial", "success")
+            or type(selected.coverage) is not str
+            or selected.coverage != "partial"
+            or type(selected.resources) is not tuple
+            or len(selected.resources) != 1):
+        return None
+    observation = selected.resources[0]
+    if (type(observation) is not ResourceObservation
+            or type(observation.source) is not SourceReference
+            or type(observation.capability) is not DownloadCapability
+            or (observation.right is not None
+                and type(observation.right) is not OptionalRightMetadata)
+            or type(observation.source.scope) is not ProviderRightsScope):
+        return None
+    # Rebuild native typed values so a plugin cannot mutate a once-valid
+    # frozen DTO and have the v1 adapter erase the resource's foreign scope.
+    try:
+        scope = replace(selected.scope)
+        resource_scope = replace(observation.source.scope)
+        source = replace(observation.source, scope=resource_scope)
+        capability = replace(observation.capability)
+        right = replace(observation.right) if observation.right is not None else None
+        observation = replace(observation, source=source,
+                              capability=capability, right=right)
+        selected = replace(selected, scope=scope, resources=(observation,))
+        if (scope != key.scope or selected.branch != key.branch
+                or resource_scope != key.scope
+                or (source.branch, source.edition_id, source.resource_id, source.kind)
+                != (key.branch, key.edition_id, key.right_id, key.kind)):
+            return None
+        # Compatibility of the downstream executor, not a right adjudication.
+        return ProviderRightObservation(
+            edition_id=source.edition_id, right_id=source.resource_id,
+            kind=source.kind, state=right.state if right is not None else "unknown",
+            evidence_kind="provider_response", evidence_ref=observation.evidence_ref,
+            observed_at=observation.observed_at, delivery=capability.state,
+            delivery_offer_id=capability.offer_id,
+            delivery_unavailable_reason=capability.unavailable_reason,
+            provider_revision_id=observation.provider_revision_id,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return None
 
 
 def qualify_selected_offers(
@@ -266,27 +328,23 @@ def qualify_selected_offers(
         if not consent_current(key):
             continue
         if reader_name == "downloadable_selected_offer_snapshot":
-            if type(selected) is not ResourceSnapshot:
-                continue
-            try:
-                selected = as_legacy_rights_snapshot(selected)
-            except (AttributeError, TypeError, ValueError):
-                # A malformed v2 selected claim is not an admitted offer.
-                # The reader has already returned: reject only this resource,
-                # with no legacy fallback, without aborting unrelated A rows.
+            selected_right = _selected_resource_transport(selected, key)
+            if selected_right is None:
                 _LOG.warning("TRACE selected offer code=canonical_selected_v2_invalid")
                 continue
-        if (type(selected) is not ProviderRightsSnapshot
-                or selected.scope != scope or selected.branch != snapshot.branch
-                or selected.status not in ("partial", "success")
-                or selected.coverage != "partial"
-                or len(selected.rights) != 1
-                or selected.rights[0].edition_id != key.edition_id
-                or selected.rights[0].right_id != key.right_id
-                or selected.rights[0].kind != key.kind
-                or not selected.rights[0].provider_attested):
-            continue
-        selected_right = selected.rights[0]
+        else:
+            # The old optional v1 reader is a separate compatibility path.
+            if (type(selected) is not ProviderRightsSnapshot
+                    or selected.scope != scope or selected.branch != snapshot.branch
+                    or selected.status not in ("partial", "success")
+                    or selected.coverage != "partial"
+                    or len(selected.rights) != 1
+                    or selected.rights[0].edition_id != key.edition_id
+                    or selected.rights[0].right_id != key.right_id
+                    or selected.rights[0].kind != key.kind
+                    or not selected.rights[0].provider_attested):
+                continue
+            selected_right = selected.rights[0]
         if selected_right.delivery == "unknown":
             # A previously claimed first-token receipt may outlive the
             # provider's current download link. Require a fresh attested loan,

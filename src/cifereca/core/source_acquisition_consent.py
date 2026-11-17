@@ -339,9 +339,11 @@ def legacy_inventory_enablement_toggle(service, account, enabled, preference_key
     A persisted legacy acquisition switch is retired only on explicit OFF.
     """
     from .legacy_source_consent_metadata import (
-        _consent_generation_key, legacy_source_consent_switch_present,
+        legacy_source_consent_switch_present,
     )
-    from .source_sync_consent import retire_legacy_acquisition_on_source_disable
+    from .source_sync_consent import (
+        inventory_epoch_key, retire_legacy_acquisition_on_source_disable,
+    )
 
     if enabled is False and legacy_source_consent_switch_present(
         service.storage, scope,
@@ -349,12 +351,7 @@ def legacy_inventory_enablement_toggle(service, account, enabled, preference_key
         return retire_legacy_acquisition_on_source_disable(
             service, account, preference_key,
         )
-    # Preserve old revision fences for in-flight operations. Unknown source
-    # types get only the ordinary inventory preference, never an opt-in.
-    revision_key = _consent_generation_key(scope)
-    if revision_key is not None:
-        service.storage.metadata_set_with_revision(
-            preference_key, '1' if enabled else '0', revision_key,
-        )
-    else:
-        service.storage.metadata_set(preference_key, '1' if enabled else '0')
+    # All sources share the same exact revision fence; no legacy epoch write.
+    service.storage.metadata_set_with_revision(
+        preference_key, '1' if enabled else '0', inventory_epoch_key(scope),
+    )

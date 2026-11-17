@@ -52,6 +52,8 @@ class BorrowingOffline(ParisOffline):
             source_account_id=account.unique_id,
             state="active",
         )
+        if isinstance(self.outcome, str) and self.outcome.startswith("borrower:"):
+            loan.source_account_id = self.outcome.removeprefix("borrower:")
         if self.outcome == "wrong_lender":
             loan.identity_id = "default"
         if self.outcome == "inactive":
@@ -355,3 +357,105 @@ def test_explicit_non_active_loan_state_cannot_confirm_or_authorize_transfer(
     )["status"] == "verification_unavailable"
     assert execute(service, row, preview)["status"] == "blocked"
     assert session.actions == 1
+
+
+
+@pytest.mark.parametrize("declared,observed,expected", [
+    (None, "", "confirmed"),
+    ("primary", "primary", "confirmed"),
+    ("main_reader", "main_reader", "confirmed"),
+    (None, "primary", "verification_unavailable"),
+    ("main_reader", "primary", "verification_unavailable"),
+    ("primary", "other_reader", "verification_unavailable"),
+])
+def test_cross_profile_confirmation_uses_declared_observed_borrower_alias(
+    harness, declared, observed, expected,
+):
+    service, account, session, row, preview = setup_borrower(
+        harness, "borrower:" + observed,
+    )
+    session.descriptor = replace(
+        session.descriptor, existing_primary_loan_account_alias=declared,
+    )
+    # Rebuild the menu under the declared policy, never infer from a receipt.
+    preview = _preview(service, row)
+    result = execute(service, row, preview)
+    assert result["status"] == expected
+    assert result["retry_borrow"] is False
+    assert session.actions == 1
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, row.notice),
+    )["status"] == expected
+    assert execute(service, row, preview)["status"] == "blocked"
+    assert session.actions == 1
+
+
+@pytest.mark.parametrize("outcome,expected", [
+    ("confirmed", "confirmed"), ("unsent", "blocked"), ("unknown", "verification_unavailable"),
+])
+def test_headless_confirmed_lender_mandate_consumed_once(harness, outcome, expected):
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    from cifereca.core.borrow_for_identity_live import preview_borrow_for_scope
+    from cifereca.core.borrow_for_identity_action_plan import prepare_lender_plan_for_scope
+    from cifereca.core.borrow_for_identity_executor import (
+        AdmittedCrossProfileBorrow, prepare_confirmed_borrow_for_scope,
+        execute_admitted_cross_profile_borrow,
+    )
+    service, account, session, row, _ = setup_borrower(harness, outcome)
+
+    class Headless:
+        def __getattr__(self, name):
+            if name in {"current_identity", "_account_context_epoch"}:
+                raise AssertionError("navigation read")
+            return getattr(service, name)
+
+    core = Headless()
+    reader = capture_search_read_scope(core, "default")
+    captured = preview_borrow_for_scope(
+        core, reader_scope=reader, expected_edition_id="edition-1",
+        observations=(row,), now=1100,
+    )
+    args = dict(captured=captured, selected_option_id=captured.preview.options[0].option_id,
+                expected_edition_id="edition-1", observations=(row,), now=1100)
+    plan = prepare_lender_plan_for_scope(core, **args)
+    assert plan.status == "ready_for_consent" and not plan.executable
+    assert prepare_confirmed_borrow_for_scope(core, **args, confirmed=1)["status"] == "blocked"
+    mandate = prepare_confirmed_borrow_for_scope(core, **args, confirmed=True)
+    assert type(mandate) is AdmittedCrossProfileBorrow
+    assert session.actions == 0
+    assert service.storage.loan_borrow_state(borrow_claim_key(account, row.notice)) is None
+    service._account_context_epoch += 2
+    assert execute_admitted_cross_profile_borrow(core, mandate)["status"] == expected
+    assert execute_admitted_cross_profile_borrow(core, mandate)["reason_code"] == "borrow_confirmation_consumed"
+    assert session.actions == 1
+
+
+@pytest.mark.parametrize("revoke", ["source", "reader", "lender", "core"])
+def test_headless_lender_mandate_revoked_before_claim(harness, revoke):
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    from cifereca.core.borrow_for_identity_live import preview_borrow_for_scope
+    from cifereca.core.borrow_for_identity_executor import (
+        AdmittedCrossProfileBorrow, prepare_confirmed_borrow_for_scope,
+        execute_admitted_cross_profile_borrow,
+    )
+    service, account, session, row, _ = setup_borrower(harness)
+    captured = preview_borrow_for_scope(
+        service, reader_scope=capture_search_read_scope(service, "default"),
+        expected_edition_id="edition-1", observations=(row,), now=1100,
+    )
+    mandate = prepare_confirmed_borrow_for_scope(
+        service, captured=captured, selected_option_id=captured.preview.options[0].option_id,
+        expected_edition_id="edition-1", observations=(row,), confirmed=True, now=1100,
+    )
+    assert type(mandate) is AdmittedCrossProfileBorrow
+    core = service
+    if revoke == "source":
+        service._source_context_epoch += 1
+    elif revoke in {"reader", "lender"}:
+        identity = service.identity_by_id("default" if revoke == "reader" else "alex")
+        service.identities = [replace(i) if i is identity else i for i in service.identities]
+    else:
+        core = object()
+    assert execute_admitted_cross_profile_borrow(core, mandate)["status"] == "blocked"
+    assert session.actions == 0
+    assert service.storage.loan_borrow_state(borrow_claim_key(account, row.notice)) is None

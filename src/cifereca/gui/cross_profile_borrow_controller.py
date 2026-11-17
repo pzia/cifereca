@@ -19,7 +19,7 @@ def present_cross_profile_lender_choice(
     """Present 0/1/N lender choices and separate, explicit loan confirmation.
 
     Never call provider methods on GTK's main thread. The callback checks
-    the whole menu again both before scheduling and inside the worker;
+    the whole menu at confirmation before scheduling;
     Core owns the atomic claim, post-POST verification and at-most-once rule.
     """
     if (type(expected_item) is not SearchResult
@@ -65,8 +65,9 @@ def present_cross_profile_lender_choice(
                        or option.edition_id != expected_edition_id
                        for option in preview.options)):
             return False
-        execute = service.execute_cross_profile_borrow
-        if not callable(execute):
+        capture = service.capture_admitted_cross_profile_borrow
+        execute = service.execute_admitted_cross_profile_borrow
+        if not callable(capture) or not callable(execute):
             return False
     except Exception:
         # No inferred right from an incomplete screen or absent Core mutator.
@@ -94,32 +95,8 @@ def present_cross_profile_lender_choice(
         except Exception:
             return False
 
-    def worker_current() -> bool:
-        """Only scalar leases and Core identity, never GTK DetailPanel.
-
-        The loan POST worker must not dereference widgets off the GTK thread.
-        The main-thread selection and completion callbacks still use current()
-        to verify the exact rendered notice and panel.
-        """
-        try:
-            return bool(
-                not getattr(window, "_closed", False)
-                and window.service is service
-                and window.search_page is search_page
-                and service.current_identity is identity
-                and identity.identity_id == preview.requesting_identity_id
-                and service._account_context_epoch == context_epoch
-                and service._source_context_epoch == source_epoch
-                and window._identity_context_generation == ui_identity_epoch
-                and window._account_context_generation == ui_account_epoch
-                and window._selected_search_id == selection_id
-                and window._search_detail_request_generation == detail_epoch
-            )
-        except Exception:
-            return False
-
-    def selection_current(option_id: str, *, worker: bool = False) -> bool:
-        guard = worker_current if worker else current
+    def selection_current(option_id: str) -> bool:
+        guard = current
         if not guard():
             return False
         try:
@@ -161,17 +138,26 @@ def present_cross_profile_lender_choice(
             release()
             return
 
-        def work():
-            if (stage["value"] != "submitted"
-                    or getattr(window, "_cross_profile_borrow_pending", None)
-                        is not token
-                    or not selection_current(option_id, worker=True)):
-                return {"status": "blocked", "reason_code": "lender_scope_revoked"}
-            return execute(
+        try:
+            from ..core.borrow_for_identity_executor import AdmittedCrossProfileBorrow
+            admitted = capture(
                 captured_preview=preview, selected_option_id=option_id,
                 expected_edition_id=expected_edition_id,
                 observations=snapshot, confirmed=True,
             )
+            if type(admitted) is not AdmittedCrossProfileBorrow or not current():
+                release()
+                return
+        except Exception:
+            release()
+            return
+
+        def work():
+            # Consent has already fixed both profiles and the lender source.
+            # Navigation or a replaced detail is not a second admission.
+            if service._source_context_epoch != source_epoch:
+                return {"status": "blocked", "reason_code": "lender_scope_revoked"}
+            return execute(admitted)
 
         def completed(result):
             release()

@@ -50,8 +50,10 @@ def host():
         current_identity=NS(identity_id="alice"),
         _account_context_epoch=3,
         _source_context_epoch=7,
-        holdings=lambda *args, **kw: commands.append(("GET", args)) or detail(source),
+        holdings_for_scope=lambda scope, *args, **kw: commands.append(("GET", args)) or detail(source),
     )
+    registered = service.current_identity
+    service.identity_by_id = lambda key: registered if key == "alice" else None
     row = NS(key="provider:display-1")
     owner = NS(
         _closed=False,
@@ -112,9 +114,14 @@ def test_stale_remote_worker_and_both_callbacks_never_act_on_old_session(changed
         owner.service.current_identity.identity_id = "alice"
     else:
         owner._closed = True
-    # Any state change before the queued worker runs must reject its GET.
-    assert work() is None
-    assert commands == []
+    # Navigation only fences delivery; real source revocation or close
+    # still stops the queued work.
+    if changed in {"account", "account_aba"}:
+        assert work().record_id == source.record_id
+        assert len(commands) == 1
+    else:
+        assert work() is None
+        assert commands == []
     done(detail(source))
     error(RuntimeError("provider old session"))
     assert shown == []
@@ -189,8 +196,8 @@ def test_explicit_known_notice_reuses_exact_epoch_guard_at_worker_and_delivery()
     controller("_load_known_detail")(owner2, source2)
     _label, stale_work, stale_done = requests2[0][0]
     owner2.service._account_context_epoch += 1
-    assert stale_work() is None
-    assert commands2 == []
+    assert stale_work().record_id == source2.record_id
+    assert len(commands2) == 1
     stale_done(detail(source2))
     assert shown2 == []
 
@@ -209,7 +216,8 @@ def test_epoch_guard_is_worker_only_not_authority_on_loan_or_entitlement():
         assert "getattr(self.service, '_account_context_epoch', None)" in code
         assert "getattr(self.service, '_source_context_epoch', None)" in code
         assert "if epochs_current() else None" in code
-        assert "holdings_core.holdings(item, holdings_query, force=False)" in code
+        assert "holdings_core.holdings_for_scope(request_scope, item, holdings_query, force=False)" in code
+        assert "request_scope.current(holdings_core)" in code
         assert "self.service is holdings_core" in code
         assert "self._apply_search_detail(" in code
         assert "borrow(" not in code

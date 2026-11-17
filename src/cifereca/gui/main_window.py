@@ -21,6 +21,7 @@ from ..catalogue_link import safe_document_link_url
 from ..config import Config
 from ..core.search import file_format
 from ..core import library_projection
+from ..core.notice_cover_repository import is_notice_cover_document
 from ..identity_selection import identity_change_required
 from ..language import language_label
 from ..diagnostics import Diagnostics
@@ -31,6 +32,7 @@ from ..models import HistoryItem, Holding, ItemDetail, Loan, SearchResult
 from ..services import LibraryService
 from .cover_loader import CoverLoader
 from .document_cover_service import DocumentCoverService
+from .notice_cover_cached_reader import cached_notice_cover_snapshot
 from .local_cover_adapter import LocalCoverEvidenceAdapter
 from .search_document_cover_bridge import SearchDocumentCoverRegistry
 from .book_widgets import BookListCell, BookListItem, CoverView, attribute_tag
@@ -202,7 +204,13 @@ class MainWindow(Adw.ApplicationWindow):
         self.covers = CoverLoader(diagnostics=diagnostics, max_workers=6)
         # All routes share one N2 document cache + one physical N3 loader.
         # Neither cache is partitioned by the currently displayed profile.
-        self.document_covers = DocumentCoverService(self.covers)
+        self.document_covers = DocumentCoverService(
+            self.covers,
+            cached_source_reader=lambda ref: cached_notice_cover_snapshot(
+                self.service, ref,
+            ),
+            cached_source_scope=is_notice_cover_document,
+        )
         # N2 revisions follow exact documents, N3 bytes stay shared on desktop.
         self.local_cover_adapter = LocalCoverEvidenceAdapter()
         self.search_document_cover_registry = SearchDocumentCoverRegistry()
@@ -1302,7 +1310,14 @@ class MainWindow(Adw.ApplicationWindow):
         # Only the exact Core source cover may enter N1. The separately
         # retained History visual fallback is bound to this SAME DTO and is
         # never promoted to documentary evidence or a Loan entitlement.
-        visual_cover = presented.thumbnail_url or cached_history_cover(self, x)
+        from .borrower_public_c_bridge import exact_history_public_c
+        public_c = exact_history_public_c(self, x)
+        # If the exact source has no direct image, choose a real retained
+        # public N2 C over a title-search visual-only History fallback.
+        visual_cover = (
+            None if public_c is not None
+            else presented.thumbnail_url or cached_history_cover(self, x)
+        )
         row = BookListItem(
             x.id, x.title, x.author or "",
             f"Emprunté le {fr_date(x.borrowed_at)} · {x.year or x.document_type or ''}",
@@ -1330,6 +1345,19 @@ class MainWindow(Adw.ApplicationWindow):
             # cached_history_cover() is NOT an authoritative book link.
             row._cover_document_ref = history_evidence.document
             row._cover_history_evidence = history_evidence
+        elif public_c is not None:
+            service = self.service
+            row._cover_document_ref = public_c.document
+            row._cover_borrower_public_c_receipt = public_c
+            row._borrower_public_c_source = x
+            row._borrower_public_c_context = (
+                x.identity_id, service._account_context_epoch,
+                service._source_context_epoch,
+            )
+            row._history_cover_revision = self._history_cover_revision
+            # No legacy HistoryCoverResolver may infer a second cover by title.
+            row.cover_provider = None
+            row.cover_record_id = None
         self._attach_row_facets([row],{x.id:{'author':x.author,'source_provider':x.source_provider}},self.search_controls)
         # The history refresh may replace the cover or its fallback while
         # keeping the same upstream row ID. MasterDetailPage's append-fast
@@ -1348,6 +1376,11 @@ class MainWindow(Adw.ApplicationWindow):
             # A->B->A and history revision changes must force cell rebind
             # even when the same public image URL remains on disk in N3.
             row._public_row_content += (history_evidence,)
+        elif public_c is not None:
+            row._public_row_content += (
+                public_c.document, public_c.epoch,
+                self._history_cover_revision,
+            )
         return row
 
     def _rerender_history(self) -> None:
@@ -1388,7 +1421,9 @@ class MainWindow(Adw.ApplicationWindow):
                 if proof is not None and callable(renderer):
                     renderer(presented, cover_evidence=proof)
                 else:
-                    self.history_page.detail.show_history(presented)
+                    from .borrower_public_c_bridge import show_public_history_c
+                    if not show_public_history_c(self, item, presented):
+                        self.history_page.detail.show_history(presented)
                 self._add_facets(self.history_page.detail, asdict(item), self.search_controls)
                 self._add_local_book_actions(self.history_page.detail, asdict(item))
 
@@ -1650,10 +1685,45 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def choose_adept_loan(self, acquisition_id, loan, control):
-        self.runner.submit("Lecture des prêts ADEPT…", lambda: self.service.adept_loan_choices(acquisition_id),
-            lambda result: self._present_adept_loan_choices(acquisition_id, loan, result),
-            lambda exc: self.show_error(str(exc), "Lecture des prêts impossible"), control=control,
-            priority=TaskPriority.USER_ACTION, kind="adept-inventory")
+        # The queued ADEPT inventory is owned by the Core/loan at the click.
+        # Only GTK presentation is scoped to the still-visible detail page.
+        admitted_core = self.service
+        lookup = admitted_core.adept_loan_choices
+        loan_identity = getattr(loan, "identity_id", None)
+        identity_generation = getattr(self, "_identity_context_generation", None)
+        account_generation = getattr(self, "_account_context_generation", None)
+        account_epoch = getattr(admitted_core, "_account_context_epoch", None)
+
+        def ui_current():
+            live_loan_owner = getattr(loan, "identity_id", None)
+            live_selection = getattr(
+                getattr(admitted_core, "current_identity", None),
+                "identity_id", None,
+            )
+            return (
+                not getattr(self, "_closed", False)
+                and self.service is admitted_core
+                and type(loan_identity) is str and bool(loan_identity)
+                and type(live_loan_owner) is str and live_loan_owner == loan_identity
+                and type(live_selection) is str and live_selection == loan_identity
+                and identity_generation == getattr(self, "_identity_context_generation", None)
+                and account_generation == getattr(self, "_account_context_generation", None)
+                and account_epoch == getattr(admitted_core, "_account_context_epoch", None)
+            )
+
+        def done(result):
+            if ui_current():
+                self._present_adept_loan_choices(acquisition_id, loan, result)
+
+        def failed(_exc):
+            if ui_current():
+                self.show_error("Inventaire ADEPT indisponible", "Lecture des prêts impossible")
+
+        self.runner.submit(
+            "Lecture des prêts ADEPT…", lambda: lookup(acquisition_id),
+            done, failed, control=control, priority=TaskPriority.USER_ACTION,
+            kind="adept-inventory",
+        )
 
     def _present_adept_loan_choices(self, acquisition_id, loan, result):
         return adept_loan_choice_controller.present_adept_loan_choices(
@@ -1661,13 +1731,55 @@ class MainWindow(Adw.ApplicationWindow):
         )
 
     def reconcile_adept_from_detail(self, acquisition_id, loan, control):
+        admitted_core = self.service
+        reconcile = admitted_core.reconcile_adept_acquisition
+        loan_identity = getattr(loan, "identity_id", None)
+        identity_generation = getattr(self, "_identity_context_generation", None)
+        account_generation = getattr(self, "_account_context_generation", None)
+        account_epoch = getattr(admitted_core, "_account_context_epoch", None)
+
+        def ui_current():
+            live_loan_owner = getattr(loan, "identity_id", None)
+            live_selection = getattr(
+                getattr(admitted_core, "current_identity", None),
+                "identity_id", None,
+            )
+            return (
+                not getattr(self, "_closed", False)
+                and self.service is admitted_core
+                and type(loan_identity) is str and bool(loan_identity)
+                and type(live_loan_owner) is str and live_loan_owner == loan_identity
+                and type(live_selection) is str and live_selection == loan_identity
+                and identity_generation == getattr(self, "_identity_context_generation", None)
+                and account_generation == getattr(self, "_account_context_generation", None)
+                and account_epoch == getattr(admitted_core, "_account_context_epoch", None)
+            )
+
         def ok(result):
+            if not ui_current():
+                return
             self.loan_page.detail.show_loan(loan)
-            labels = {"resolved": "Liaison ADEPT vérifiée", "ambiguous": "Plusieurs prêts correspondent : liaison non résolue", "unresolved": "Aucun prêt ne correspond au chemin du fichier", "inventory_error": "Inventaire partiel : liaison non résolue", "profile_missing": "Associez un profil ADEPT à cette identité", "artifact_missing": "Fichier local absent", "binding_conflict": "L’inventaire contredit la liaison enregistrée"}
-            self._activity_result(labels.get(result["status"], "Liaison ADEPT non résolue"))
-        self.runner.submit("Vérification du prêt ADEPT…", lambda: self.service.reconcile_adept_acquisition(acquisition_id), ok,
-            lambda exc: self.show_error(str(exc), "Vérification ADEPT impossible"), control=control,
-            priority=TaskPriority.USER_ACTION, kind="adept-inventory")
+            labels = {
+                "resolved": "Liaison ADEPT vérifiée",
+                "ambiguous": "Plusieurs prêts correspondent : liaison non résolue",
+                "unresolved": "Aucun prêt ne correspond au chemin du fichier",
+                "inventory_error": "Inventaire partiel : liaison non résolue",
+                "profile_missing": "Associez un profil ADEPT à cette identité",
+                "artifact_missing": "Fichier local absent",
+                "binding_conflict": "L’inventaire contredit la liaison enregistrée",
+            }
+            status = result.get("status") if type(result) is dict else None
+            self._activity_result(labels.get(status, "Liaison ADEPT non résolue"))
+
+        def failed(_exc):
+            if ui_current():
+                self.show_error("Vérification ADEPT indisponible", "Vérification ADEPT impossible")
+
+        self.runner.submit(
+            "Vérification du prêt ADEPT…", lambda: reconcile(acquisition_id),
+            ok, failed, control=control, priority=TaskPriority.USER_ACTION,
+            kind="adept-inventory",
+        )
 
     def prepare_explicit_loan_acsm_for_loan(self, loan: Loan, control: Gtk.Widget | None = None) -> None:
         from .explicit_loan_acsm_controller import prepare_explicit_loan_acsm
@@ -1681,21 +1793,44 @@ class MainWindow(Adw.ApplicationWindow):
         # This task operates on the explicitly selected loan. Only the GTK
         # completion view depends on the still-visible identity/account:
         # A→B→A must not reopen an older loan detail or publish a late toast.
+        admitted_core = self.service
+        # Capture the bound producer before TaskRunner queues the request.
+        reacquire = admitted_core.reacquire_digital_loan if not send else None
         selected_identity = getattr(
-            getattr(self.service, "current_identity", None), "identity_id", None,
+            getattr(admitted_core, "current_identity", None), "identity_id", None,
         )
         selected_loan_identity = getattr(loan, "identity_id", None)
+        # Never let a mutable Loan retarget a queued reacquisition to another
+        # source, borrower or upstream loan before Core starts its own checks.
+        source_keys = (
+            "id", "identity_id", "source_provider", "source_credential",
+            "source_account_id", "record_id",
+        )
+        admitted_source = tuple(getattr(loan, key, None) for key in source_keys)
+
+        def source_intact():
+            try:
+                current = tuple(getattr(loan, key, None) for key in source_keys)
+                return all(
+                    type(old) in (str, type(None)) and type(now) is type(old)
+                    and now == old
+                    for old, now in zip(admitted_source, current)
+                )
+            except Exception:
+                return False
+
         identity_generation = getattr(self, "_identity_context_generation", None)
-        account_epoch = getattr(self.service, "_account_context_epoch", None)
+        account_epoch = getattr(admitted_core, "_account_context_epoch", None)
 
         def ui_current() -> bool:
             current_identity = getattr(
-                getattr(self.service, "current_identity", None), "identity_id", None,
+                getattr(admitted_core, "current_identity", None), "identity_id", None,
             )
             current_generation = getattr(self, "_identity_context_generation", None)
-            current_epoch = getattr(self.service, "_account_context_epoch", None)
+            current_epoch = getattr(admitted_core, "_account_context_epoch", None)
             return (
                 not getattr(self, "_closed", False)
+                and self.service is admitted_core
                 and type(selected_identity) is str and bool(selected_identity)
                 and type(selected_loan_identity) is str
                 and selected_loan_identity == selected_identity
@@ -1709,7 +1844,9 @@ class MainWindow(Adw.ApplicationWindow):
         def work():
             if send:
                 raise RuntimeError("L’envoi vers une liseuse nécessite un plugin storage.target.")
-            return self.service.reacquire_digital_loan(loan)
+            if not source_intact():
+                raise ValueError("loan_reacquisition_source_changed")
+            return reacquire(loan)
         def ok(result):
             if not ui_current():
                 return
@@ -1851,11 +1988,13 @@ class MainWindow(Adw.ApplicationWindow):
             source_epoch = source_context_epoch(self.service)
         except ValueError:
             return
-        identity_id = getattr(self.service.current_identity, 'identity_id', None)
+        service = self.service
+        identity_id = getattr(service.current_identity, 'identity_id', None)
         generation = self._identity_context_generation
         def current():
             if (getattr(self, '_closed', False)
-                    or identity_id != getattr(self.service.current_identity, 'identity_id', None)
+                    or self.service is not service
+                    or identity_id != getattr(service.current_identity, 'identity_id', None)
                     or generation != self._identity_context_generation
                     or (control is not None and getattr(
                         control, '_cifereca_action_context_revoked', False
@@ -1865,11 +2004,58 @@ class MainWindow(Adw.ApplicationWindow):
                 return source_context_epoch(self.service) == source_epoch
             except ValueError:
                 return False
+        # Core captures the exact source lease at this explicit click.
+        # No remote GET or durable right is created before enqueue.
+        try:
+            prepare = getattr(service, "capture_admitted_private_search_offer", None)
+            admitted = prepare(item) if callable(prepare) else None
+            if not current():
+                return
+            execute = (
+                getattr(service, "obtain_admitted_private_search_offer", None)
+                if admitted is not None else None
+            )
+            if admitted is None:
+                prepare_legacy = getattr(service, "capture_confirmed_legacy_search_offer", None)
+                if callable(prepare_legacy):
+                    # The old direct-download ABI has no borrower parameter.
+                    # Offer no implicit account choice or cross-profile fallback.
+                    accounts = [
+                        account for account in service.accounts_for_identity(identity_id)
+                        if (account.identity_id, account.provider_id, account.credential_id)
+                        == (identity_id, item.source_provider, item.source_credential)
+                    ]
+                    observed = item.source_account_id
+                    if (len(accounts) != 1
+                            or (observed is not None and observed != accounts[0].unique_id)):
+                        raise ValueError("legacy_direct_account_unproven")
+                    admitted = prepare_legacy(
+                        item, identity_id=identity_id, account_id=accounts[0].unique_id,
+                        confirmed=True,
+                    )
+                    if admitted is None or not current():
+                        return
+                    execute = getattr(service, "obtain_admitted_legacy_search_offer", None)
+            if admitted is not None and not callable(execute):
+                raise ValueError("selected_search_executor_unavailable")
+        except Exception:
+            self.show_error(
+                "Cette source privée n'est plus admissible. Actualisez la notice.",
+                "Obtention indisponible",
+            )
+            return
+
         def work():
+            if admitted is not None:
+                # An admitted task cannot be retargeted to the
+                # currently displayed profile even after A→B→A navigation.
+                # Core alone checks source_epoch and exact persisted owner
+                # before provider I/O and again before publication.
+                return execute(admitted)
             if not current():
                 from ..plugin_api import Cancelled
                 raise Cancelled('Le contexte de l’obtention a changé.')
-            return self.service.obtain_search_item(item)
+            return service.obtain_search_item(item)
 
         def ok(result) -> None:
             if not current():

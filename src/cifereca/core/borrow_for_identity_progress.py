@@ -7,6 +7,8 @@ non-mutating projection of an exact durable claim, not a second loan ledger.
 """
 from __future__ import annotations
 
+from .borrow_for_identity_copy_admission import navigation_epoch_current
+
 from dataclasses import dataclass
 
 from ..models import Account, SearchResult
@@ -70,7 +72,7 @@ def observed_cross_profile_borrow_progress(
 
         def lender_binding_current() -> bool:
             """Read-only, exact owner+enabled guard; never a lending license."""
-            if (getattr(service, "_account_context_epoch", None) != reader_epoch
+            if (not navigation_epoch_current(service, reader_epoch, scope_current)
                     or getattr(service, "_source_context_epoch", None) != source_epoch
                     or service.storage.identity_for_connection(
                         a.provider_id, a.credential_id,
@@ -95,7 +97,7 @@ def observed_cross_profile_borrow_progress(
             # read model must never choose the convenient historical row.
             return (
                 len(exact) == 1 and exact[0].get("enabled") is True
-                and getattr(service, "_account_context_epoch", None) == reader_epoch
+                and navigation_epoch_current(service, reader_epoch, scope_current)
                 and getattr(service, "_source_context_epoch", None) == source_epoch
                 and scope_current() is True
             )

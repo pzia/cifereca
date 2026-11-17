@@ -3,7 +3,11 @@
 Offline Core SQLite and synthetic files; same edition across two accounts must
 not leak the other account's loan or purchase cover into a local placement.
 """
-from cifereca.models import Loan
+from dataclasses import asdict
+from types import SimpleNamespace as NS
+
+from cifereca.models import Account, Loan
+from cifereca.core.loan_display_cache import _loan_cache_key
 from tests.test_core_library_placement_identity_scope import _service
 from tests.test_core_p0_2797_originlink_library_projection import (
     _local_artifact, _source_origin,
@@ -41,13 +45,33 @@ def _source_entitlement(service, *, credential, borrower, cover):
 
 
 def _foreign_loan(service):
-    service.last_loans = [Loan(
+    account = Account(identity_id="alice", provider_id="numilog",
+                      credential_id="card-b", unique_id="buyer-b")
+    connection = service.storage.provider_connection_put({
+        "identity_id": "alice", "provider_id": "numilog", "credential_id": "card-b",
+    })
+    service.storage.provider_account_put({
+        "connection_id": connection, "identity_id": "alice",
+        "provider_id": "numilog", "credential_id": "card-b", "account_id": "buyer-b",
+    })
+    service.accounts.append(account)
+    service._sessions[service._session_key("numilog", "card-b")] = NS(
+        provider_id="numilog", credential_id="card-b", connected=True, close=lambda: None,
+    )
+    loan = Loan(
         id="foreign-loan", provider="Numilog", medium="digital",
         record_id="edition-a", title="Unrelated borrower",
         thumbnail_url=FOREIGN, source_provider="numilog",
         source_credential="card-b", source_account_id="buyer-b",
         identity_id="alice",
-    )]
+    )
+    service.storage.cache_put("account", _loan_cache_key(account), [asdict(loan)], 600)
+
+    class ForbiddenNavigationProjection:
+        def __iter__(self):
+            raise AssertionError("Core Recent consulted mutable last_loans")
+
+    service.last_loans = ForbiddenNavigationProjection()
 
 
 def test_recent_uses_only_exact_borrower_origin_for_remote_covers(tmp_path):

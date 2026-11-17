@@ -324,3 +324,86 @@ def test_public_broker_protocols_and_implementations_have_no_implicit_identity()
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
             inspect.Parameter.KEYWORD_ONLY,
         )
+
+
+def test_acquisition_observed_account_cannot_be_replaced_by_another_borrower():
+    core = FakeCore()
+    first, second = core.accounts_data[:2]
+    first.unique_id = "borrower-A"
+    second.unique_id = "borrower-B"
+    second.credential_id = first.credential_id
+    notice = item(first.credential_id)
+    notice.source_account_id = "borrower-A"
+    broker = AcquisitionBrokerImpl(core)
+    assert [r.account_id for r in broker.eligible_accounts(
+        notice, identity_id="profile-A",
+    )] == ["borrower-A"]
+    with pytest.raises(ValueError, match="not eligible"):
+        broker.acquire(notice, identity_id="profile-A", account_id="borrower-B")
+    assert core.acquisitions == []
+    assert broker.acquire(
+        notice, identity_id="profile-A", account_id="borrower-A",
+    ) == first.credential_id
+    assert notice.source_account_id == "borrower-A"
+
+
+def test_acquisition_does_not_rewrite_shared_unbound_notice():
+    core = FakeCore()
+    core.accounts_data[0].unique_id = "borrower-A"
+    core.accounts_data[1].unique_id = "borrower-B"
+    notice = item()
+    broker = AcquisitionBrokerImpl(core)
+    assert broker.acquire(notice, identity_id="profile-A", account_id="borrower-A") == "cred-A"
+    assert notice.source_credential == ""
+    assert broker.acquire(notice, identity_id="profile-A", account_id="borrower-B") == "cred-B"
+    assert notice.source_credential == ""
+    assert core.acquisitions == ["cred-A", "cred-B"]
+
+
+@pytest.mark.parametrize("observed", [False, 0, [], "bad\nuid", "x" * 1025])
+def test_acquisition_invalid_observed_account_never_enumerates_accounts(observed):
+    core = FakeCore()
+    notice = item("cred-A")
+    notice.source_account_id = observed
+    broker = AcquisitionBrokerImpl(core)
+    with pytest.raises(ValueError, match="observed account invalid"):
+        broker.acquire(notice, identity_id="profile-A")
+    assert core.account_reads == 0
+    assert core.acquisitions == []
+
+
+def test_acquisition_stale_observed_account_never_falls_back_to_unique_credential():
+    core = FakeCore()
+    notice = item("cred-A")
+    notice.source_account_id = "previous-borrower"
+    with pytest.raises(ValueError, match="no eligible connected account"):
+        AcquisitionBrokerImpl(core).acquire(notice, identity_id="profile-A")
+    assert core.acquisitions == []
+
+
+@pytest.mark.parametrize("bad", [False, "", 0, [], "bad\x00uid"])
+def test_acquisition_malformed_explicit_account_is_not_an_omitted_selection(bad):
+    core = FakeCore()
+    with pytest.raises(ValueError, match="account_id_invalid"):
+        AcquisitionBrokerImpl(core).acquire(
+            item("cred-A"), identity_id="profile-A", account_id=bad,
+        )
+    assert core.account_reads == 0
+    assert core.acquisitions == []
+
+
+def test_primary_display_id_cannot_replace_explicit_observed_upstream_uid():
+    core = FakeCore()
+    primary = core.accounts_data[0]
+    primary.unique_id = ""
+    primary.is_primary = True
+    notice = item("cred-A")
+    notice.source_account_id = ""
+    broker = AcquisitionBrokerImpl(core)
+    assert broker.acquire(
+        notice, identity_id="profile-A", account_id="kobo:cred-A:primary",
+    ) == "cred-A"
+    notice.source_account_id = "kobo:cred-A:primary"
+    with pytest.raises(ValueError, match="no eligible connected account"):
+        broker.acquire(notice, identity_id="profile-A")
+    assert core.acquisitions == ["cred-A"]

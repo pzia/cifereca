@@ -72,7 +72,9 @@ def test_real_lender_loan_and_local_placement_trigger_second_send_consent(
             _placement_id="placement-a", loan="confirmed",
         ),
     )
-    monkeypatch.setattr(service, "send_confirmed_lender_local_copy", native)
+    capture = Mock(side_effect=lambda **scope: scope)
+    monkeypatch.setattr(service, "capture_admitted_lender_local_copy", capture)
+    monkeypatch.setattr(service, "execute_admitted_lender_local_copy", native)
     assert len(window.runner.jobs) == 2
     _, check, done, _failed, _kw = window.runner.jobs[1]
     assert native.call_count == 0
@@ -85,10 +87,13 @@ def test_real_lender_loan_and_local_placement_trigger_second_send_consent(
     _title, send_work, send_done, _failed, _kw = window.runner.jobs[2]
     sent = send_work()
     assert sent["status"] == "complete"
-    native.assert_called_once_with(
+    scope = dict(
         requesting_identity_id="default",
-        borrowing_account=account, exact_notice=item, confirmed=True,
+        borrowing_account=account, exact_notice=item,
+        lender_placement_id="placement-a", confirmed=True,
     )
+    capture.assert_called_once_with(**scope)
+    native.assert_called_once_with(scope)
     send_done(sent)
     assert session.actions == 1
     assert window._cross_profile_send_pending is None

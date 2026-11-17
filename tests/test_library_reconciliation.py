@@ -391,13 +391,97 @@ class GraphTests(unittest.TestCase):
         self.placement = dict(placement_id='p', artifact_id=self.artifact, path=str(self.book), identity_id='alice', provider_id='numilog', source_item_id='item', state='present')
         self.snapshot = EvidenceSnapshot({'entitlements':[self.right], 'acquisition_ledger':[self.ledger], 'artifacts':[dict(artifact_id=self.artifact, sha256=f.sha256, size=f.size, media_format='epub')], 'placements':[self.placement]})
 
-    def test_full_explicit_chain_confirms_link_without_any_action_authority(self):
+    def test_historical_purchase_ledger_is_visible_but_no_longer_confirms_link(self):
+        # Exact legacy Numilog metadata + complete acquisition + placement
+        # remain byte evidence, never a canonical purchase OriginLink.
+        before = filesystem(self.root)
         report = reconcile(self.inventory, self.snapshot)
-        self.assertEqual(report.files[0], {'confirmed_link'})
-        self.assertEqual(report.unverified_rights, [])
+        self.assertEqual(
+            report.files[0],
+            {'present_unlinked', 'local_file_without_attested_right'},
+        )
+        self.assertEqual(report.unverified_rights, [0])
+        self.assertFalse([e for e in report.edges if e.certainty == 'attested'])
         self.assertFalse(report.redacted()['acquisition_authorized'])
         self.assertNotIn('PRIVATE', json.dumps(report.redacted()))
         self.assertNotIn(self.inventory.files[0].sha256, json.dumps(report.redacted()))
+        self.assertEqual(before, filesystem(self.root))
+
+    def _canonical_future_purchase_origin(self):
+        from cifereca.core.canonical_publication import _stable
+
+        origin = {
+            'identity_id': 'alice', 'provider_id': 'synthetic-books',
+            'credential_id': 'c', 'account_id': 'account',
+            'branch_id': 'personal_library', 'edition_id': 'item',
+            'right_id': 'right-item', 'reference_kind': 'purchase',
+            'state': 'active', 'evidence_kind': 'provider_response',
+            'evidence_ref': 'private-source-proof',
+            'observed_at': '2026-11-16T07:00:00Z',
+            'receipt_ref': 'completed-delivery',
+            'artifact_id': self.artifact,
+        }
+        keys = ('identity_id', 'provider_id', 'credential_id',
+                'account_id', 'branch_id', 'edition_id', 'right_id',
+                'reference_kind')
+        source_id = _stable('source', *(origin[k] for k in keys))
+        origin['source_reference_id'] = source_id
+        origin['origin_link_id'] = _stable(
+            'origin', 'provider', origin['identity_id'],
+            origin['artifact_id'], source_id, origin['receipt_ref'],
+        )
+        return origin
+
+    def test_canonical_provider_origin_confirms_annotated_legacy_placement_without_brand(self):
+        # A new provider can have an old-style provider+edition placement,
+        # but the right's self-declared source is NOT sufficient authority.
+        for table in ('entitlements', 'acquisition_ledger', 'placements'):
+            self.snapshot.tables[table][0]['provider_id'] = 'synthetic-books'
+        self.right['attested_source'] = 'synthetic-books.personal_manifest'
+        without = reconcile(self.inventory, self.snapshot)
+        self.assertNotIn('confirmed_link', without.files[0])
+        self.assertFalse([e for e in without.edges if e.certainty == 'attested'])
+
+        self.snapshot.tables['provider_origins'] = [
+            self._canonical_future_purchase_origin()
+        ]
+        report = reconcile(self.inventory, self.snapshot)
+        self.assertEqual(report.files[0], {'confirmed_link'})
+        self.assertEqual(
+            [e.table for e in report.edges if e.certainty == 'attested'],
+            ['provider_origins'],
+        )
+        self.assertFalse(report.redacted()['acquisition_authorized'])
+
+    def test_mismatched_canonical_origin_blocks_weaker_legacy_fallback(self):
+        # Historical Numilog receipts never override a contradictory
+        # canonical origin, even though matching bytes remain visible.
+        original = self._canonical_future_purchase_origin()
+        for change in ('foreign_provider', 'foreign_edition',
+                       'foreign_account', 'unverified', 'duplicate'):
+            with self.subTest(change=change):
+                origin = dict(original)
+                if change == 'foreign_provider':
+                    origin['provider_id'] = 'another-provider'
+                elif change == 'foreign_edition':
+                    origin['edition_id'] = 'another-edition'
+                elif change == 'foreign_account':
+                    origin['account_id'] = 'another-account'
+                elif change == 'unverified':
+                    origin['evidence_kind'] = 'legacy_unverified'
+                self.snapshot.tables['provider_origins'] = (
+                    [origin, dict(origin)] if change == 'duplicate'
+                    else [origin]
+                )
+                report = reconcile(self.inventory, self.snapshot)
+                self.assertNotIn('confirmed_link', report.files[0])
+                self.assertIn('ambiguous', report.files[0])
+                self.assertFalse(
+                    [e for e in report.edges if e.certainty == 'attested']
+                )
+        self.snapshot.tables.pop('provider_origins')
+        self.assertEqual(reconcile(self.inventory, self.snapshot).files[0],
+                         {'present_unlinked', 'local_file_without_attested_right'})
 
     def test_artifact_fanout_cancellation_never_confirms_partial_chain(self):
         # A legacy/corrupt snapshot may contain many artifacts under one ID.
@@ -435,7 +519,7 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(report.unverified_rights, [0])
         self.assertNotIn('PRIVATE', json.dumps(report.redacted()))
 
-    def test_29_confirmed_links_are_repeatable_with_unchanged_evidence(self):
+    def test_29_legacy_pairs_remain_unverified_repeatably_without_file_loss(self):
         # #2796: identical cohorts and proof snapshots must not drift 256 -> 227.
         from copy import deepcopy
         from dataclasses import replace
@@ -459,15 +543,16 @@ class GraphTests(unittest.TestCase):
         a = reconcile(self.inventory, self.snapshot, seconds=30)
         b = reconcile(self.inventory, self.snapshot, seconds=30)
         self.assertEqual(a.redacted(), b.redacted())
-        self.assertEqual(a.redacted()['counts']['confirmed_link'], 29)
-        self.assertEqual(len(a.unverified_rights), 0)
+        self.assertEqual(a.redacted()['counts'].get('confirmed_link', 0), 0)
+        self.assertEqual(a.redacted()['counts']['local_file_without_attested_right'], 29)
+        self.assertEqual(len(a.unverified_rights), 29)
         self.assertEqual(before, self.snapshot.tables)
-        # Remove exactly 29 attested proofs: no fabricated rights remain.
+        # Removing a legacy hint changes no rights classification: no
+        # supplier-specific attestation has been silently preserved.
         for right in self.snapshot.tables['entitlements']:
             right['attested_source'] = None
         c = reconcile(self.inventory, self.snapshot, seconds=30)
-        self.assertEqual(c.redacted()['counts'].get('confirmed_link', 0), 0)
-        self.assertEqual(c.redacted()['counts']['local_file_without_attested_right'], 29)
+        self.assertEqual(c.redacted(), a.redacted())
         self.assertEqual(len(c.unverified_rights), 29)
         self.assertNotIn('PRIVATE', json.dumps(c.redacted()))
 

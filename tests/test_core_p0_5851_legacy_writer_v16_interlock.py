@@ -1,8 +1,15 @@
-"""P0 #5851: legacy Paris writer cannot overwrite a live v16 grant."""
+"""P0 #5975: retired Paris ADEPT writers are inert before/after v16.
+
+Archived rows and the SQL v17 retirement trigger stay operational, while
+neither live Core API is allowed to create a new v15 authority.
+"""
 from __future__ import annotations
+
+import sqlite3
 
 import pytest
 
+from tests.historical_adept_seed import seed_historical_adept_binding
 from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 from tests.test_core_p0_5851_generic_adept_grants_v16 import _persist_account
 
@@ -17,124 +24,98 @@ def _write_old(service, borrower="bob"):
     )
 
 
-def test_legacy_writer_does_not_recreate_second_grant_after_v16_write(tmp_path):
-    service, loan = service_with_linked_borrower(tmp_path)
+def _old_storage_put(storage, credential_id="alice-paris"):
+    storage.paris_borrower_adept_binding_put(
+        credential_id=credential_id, account_id="linked-123",
+        borrower_identity_id="bob", profile_id="bob-profile", confirmed=True,
+    )
+
+
+def test_public_legacy_writer_is_closed_even_on_unmigrated_scope(tmp_path):
+    service, _ = service_with_linked_borrower(tmp_path)
+    try:
+        assert service.storage.adept_borrower_grant_get(**SOURCE) is None
+        with pytest.raises(ValueError, match="retired"):
+            _write_old(service)
+        with pytest.raises(ValueError, match="retired"):
+            _old_storage_put(service.storage)
+        assert service.storage.paris_borrower_adept_binding_get(
+            credential_id="alice-paris", account_id="linked-123",
+        ) is None
+    finally:
+        service.close()
+
+
+def test_legacy_writer_cannot_recreate_grant_after_v16_write_or_revoke(tmp_path):
+    service, _ = service_with_linked_borrower(tmp_path)
     try:
         _persist_account(service.storage)
         proof = service.bind_adept_borrower_grant(
             **SOURCE, borrower_identity_id="bob", confirmed=True,
         )
-        assert proof["borrower_identity_id"] == "bob"
-        with pytest.raises(ValueError, match="requires v16 binding"):
-            _write_old(service)
-        with pytest.raises(ValueError, match="requires v16 binding"):
-            _write_old(service, borrower="alice")
+        for borrower in ("bob", "alice"):
+            with pytest.raises(ValueError, match="retired"):
+                _write_old(service, borrower)
+        with pytest.raises(ValueError, match="retired"):
+            _old_storage_put(service.storage)
+        assert service.storage.adept_borrower_grant_get(**SOURCE) == proof
+        service.storage.adept_borrower_grant_delete(**SOURCE)
+        with pytest.raises(ValueError, match="retired"):
+            _old_storage_put(service.storage)
+        assert service.storage.adept_borrower_grant_get(**SOURCE) is None
         assert service.storage.paris_borrower_adept_binding_get(
             credential_id="alice-paris", account_id="linked-123",
         ) is None
-        assert service.storage.adept_borrower_grant_get(**SOURCE) == proof
     finally:
         service.close()
 
 
-def test_reconfirmation_cannot_be_followed_by_legacy_recreation(tmp_path):
-    service, loan = service_with_linked_borrower(tmp_path)
+def test_reconfirmed_archived_row_stays_retired_in_live_core(tmp_path):
+    service, _ = service_with_linked_borrower(tmp_path)
     try:
         _persist_account(service.storage)
-        assert _write_old(service)["borrower_identity_id"] == "bob"
+        historical = seed_historical_adept_binding(
+            service, credential_id="alice-paris", account_id="linked-123",
+            borrower_identity_id="bob", confirmed=True,
+        )
+        assert historical["borrower_identity_id"] == "bob"
         service.reconfirm_legacy_adept_borrower_grant(
             **SOURCE, borrower_identity_id="bob", confirmed=True,
         )
         assert service.storage.paris_borrower_adept_binding_get(
             credential_id="alice-paris", account_id="linked-123",
         ) is None
-        with pytest.raises(ValueError, match="requires v16 binding"):
+        with pytest.raises(ValueError, match="retired"):
             _write_old(service)
+        with pytest.raises(ValueError, match="retired"):
+            _old_storage_put(service.storage)
+        # Raw SQL still obeys the v17 no-resurrection tombstone.
+        with service.storage._lock, service.storage._connect() as db:
+            with pytest.raises(sqlite3.IntegrityError, match="adept_legacy_grant_retired"):
+                db.execute(
+                    "INSERT INTO paris_borrower_adept_bindings "
+                    "(credential_id,account_id,connection_identity_id,"
+                    "borrower_identity_id,profile_id,confirmed_by,confirmed_at,updated_at)"
+                    " VALUES(?,?,?,?,?,'explicit',1,1)",
+                    ("alice-paris", "linked-123", "alice", "bob", "bob-profile"),
+                )
     finally:
         service.close()
 
 
-def test_legacy_writer_remains_available_for_unmigrated_scope(tmp_path):
-    service, loan = service_with_linked_borrower(tmp_path)
+def test_retired_writer_does_not_read_mutable_v16_or_reach_sqlite(tmp_path, monkeypatch):
+    service, _ = service_with_linked_borrower(tmp_path)
     try:
-        assert service.storage.adept_borrower_grant_get(**SOURCE) is None
-        assert _write_old(service)["borrower_identity_id"] == "bob"
-    finally:
-        service.close()
-
-
-def test_legacy_writer_fails_closed_if_v16_evidence_lookup_fails(tmp_path, monkeypatch):
-    service, loan = service_with_linked_borrower(tmp_path)
-    try:
-        def error(**_scope):
-            raise RuntimeError("PRIVATE_GRANT_DATA")
-
-        def forbidden(**_kw):
-            pytest.fail("legacy grant must not be written on storage error")
-
-        monkeypatch.setattr(service.storage, "adept_borrower_grant_get", error)
-        monkeypatch.setattr(service.storage, "paris_borrower_adept_binding_put", forbidden)
-        with pytest.raises(ValueError, match="coordinates invalid") as exc:
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError("retired writer touched SQLite or grant cache")
+        monkeypatch.setattr(service.storage, "adept_borrower_grant_get", forbidden)
+        monkeypatch.setattr(service.storage, "_connect", forbidden)
+        with pytest.raises(ValueError, match="retired") as exc:
             _write_old(service)
+        with pytest.raises(ValueError, match="retired"):
+            _old_storage_put(service.storage)
         assert "PRIVATE" not in str(exc.value)
     finally:
-        service.close()
-
-
-def test_storage_legacy_writer_rechecks_raw_v16_inside_its_transaction(tmp_path):
-    """A direct old Storage API must not recreate a second grant after v16."""
-    service, _loan = service_with_linked_borrower(tmp_path)
-    try:
-        _persist_account(service.storage)
-        proof = service.bind_adept_borrower_grant(
-            **SOURCE, borrower_identity_id="bob", confirmed=True,
-        )
-        with pytest.raises(ValueError, match="requires v16 binding"):
-            service.storage.paris_borrower_adept_binding_put(
-                credential_id="alice-paris", account_id="linked-123",
-                borrower_identity_id="bob", profile_id="bob-profile",
-                confirmed=True,
-            )
-        assert service.storage.paris_borrower_adept_binding_get(
-            credential_id="alice-paris", account_id="linked-123",
-        ) is None
-        assert service.storage.adept_borrower_grant_get(**SOURCE) == proof
-    finally:
-        service.close()
-
-
-def test_v16_created_after_facade_preflight_blocks_legacy_upsert(tmp_path, monkeypatch):
-    """Another writer can commit v16 after the facade reads its absence.
-
-    The historical SQLite writer must veto that fresh v16 row under its own
-    BEGIN IMMEDIATE lease, rather than trust a stale service-level preflight.
-    """
-    service, _loan = service_with_linked_borrower(tmp_path)
-    try:
-        _persist_account(service.storage)
-        original_get = service.storage.adept_borrower_grant_get
-        injected = []
-
-        def race_after_read(**coordinates):
-            before = original_get(**coordinates)
-            if before is None and not injected:
-                service.storage.adept_borrower_grant_put(
-                    **SOURCE, connection_identity_id="alice",
-                    borrower_identity_id="bob", profile_id="bob-profile",
-                    confirmed=True,
-                )
-                injected.append(True)
-            return before
-
-        monkeypatch.setattr(
-            service.storage, "adept_borrower_grant_get", race_after_read,
-        )
-        with pytest.raises(ValueError, match="requires v16 binding"):
-            _write_old(service)
-        assert injected == [True]
-        assert service.storage.paris_borrower_adept_binding_get(
-            credential_id="alice-paris", account_id="linked-123",
-        ) is None
-        assert original_get(**SOURCE)["borrower_identity_id"] == "bob"
-    finally:
+        # Restore the DB seam before service.close() flushes its own state.
+        monkeypatch.undo()
         service.close()
