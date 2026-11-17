@@ -1033,3 +1033,30 @@ def test_bnf_probe_checkpoints_are_saved_before_asynchronous_gtk_wait():
     assert 'report[\'last_stage\'] = label' in lines
     assert 'save()' in lines
     assert lines.index('report[\'last_stage\'] = label') < lines.index('save()')
+
+
+
+def test_book_detail_960_local_c_checkpoint_exports_only_closed_phase():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "book-detail-960"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        for value in ("cold_library_list", "offline_recent_detail", "complete",
+                      "PRIVATE_RECORD", True, {}, None):
+            report.write_text(json.dumps({
+                "local_c_stage": value, "error": "PRIVATE_PATH",
+                "source": "PRIVATE_URL",
+            }))
+            result = module.safe_summary(source)["results"][0]
+            if value in ("cold_library_list", "offline_recent_detail", "complete"):
+                assert result["book_detail_local_c_stage"] == value
+            else:
+                assert "book_detail_local_c_stage" not in result
+            assert "PRIVATE" not in repr(result)
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        report.write_text(json.dumps({"local_c_stage": "complete"}))
+        assert "book_detail_local_c_stage" not in module.safe_summary(source)["results"][0]
