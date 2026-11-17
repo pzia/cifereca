@@ -104,7 +104,7 @@ def test_same_acsm_concurrent_import_is_rejected_without_second_runtime(tmp_path
         return original_runtime(request)
     monkeypatch.setattr(service, 'execute_acquisition_request', runtime)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(service.import_acsm, source, title='Titre')
+        future = pool.submit(service.import_acsm, source, identity_id="alice", title='Titre')
         try:
             assert entered.wait(5)
             with pytest.raises(ProviderConfigurationError, match='déjà en cours'):
