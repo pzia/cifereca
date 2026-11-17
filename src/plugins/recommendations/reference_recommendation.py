@@ -92,6 +92,11 @@ class _ReferenceCatalog:
         return self._filtered(self.catalog.search(query, **kwargs))
 
     def __getattr__(self, name: str):
+        if name == "known_public_notices":
+            reader = getattr(self.catalog, name)
+            def known(query: str, **kwargs: Any):
+                return self._filtered(reader(query, **kwargs))
+            return known
         if name != "search_progressive":
             return getattr(self.catalog, name)
         progressive = getattr(self.catalog, "search_progressive", None)
