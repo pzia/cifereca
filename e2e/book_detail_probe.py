@@ -1068,7 +1068,9 @@ def main():
             # XTEST Tab/Shift-Tab detail recipe; never leave the focus on a
             # destroyed GTK probe when checking native keyboard navigation.
             window.present()
-            later(450, search_initial)
+            # Extend the existing real GTK witness through durable C/N2/N3.
+            from notice_c_cover_contract import verify_notice_c_cover
+            verify_notice_c_cover(window, later, capture, report, search_initial)
 
         later(110, verify_first)
 
