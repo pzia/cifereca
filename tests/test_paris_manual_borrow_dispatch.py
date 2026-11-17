@@ -347,7 +347,7 @@ def test_ui_click_queues_once_and_confirms_through_real_core_and_adapter(tmp_pat
 
 
 @pytest.mark.parametrize("change", ["selection", "identity", "notice", "epoch"])
-def test_ui_change_before_queued_work_creates_no_claim(tmp_path, change):
+def test_ui_navigation_preserves_admitted_work_but_notice_mutation_revokes(tmp_path, change):
     service, session, account, item, state = setup(tmp_path)
     try:
         window, errors, messages, refreshes = view(service, session, account, item)
@@ -362,9 +362,15 @@ def test_ui_change_before_queued_work_creates_no_claim(tmp_path, change):
             item.title = "Other title"
         else:
             service._account_context_epoch += 2
-        assert window.runner.complete_one()["status"] == "blocked"
-        assert state["calls"] == []
-        assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
+        outcome = window.runner.complete_one()
+        if change == "notice":
+            assert outcome["status"] == "blocked"
+            assert state["calls"] == []
+            assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
+        else:
+            assert outcome["status"] == "confirmed"
+            assert state["mutations"] == 1
+            assert service.storage.loan_borrow_state(borrow_claim_key(account, item))["status"] == "confirmed"
         assert messages == refreshes == []
     finally:
         service.close()
