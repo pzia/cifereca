@@ -110,12 +110,16 @@ class _RetainedSearchPage:
     raw_input: _RetainedSearchInput | None
 
 
+def _transport_digest(url):
+    return sha256(
+        ("numilog.public.search.get.v1\0text/html\0fr-FR,fr;q=0.9\0" + url).encode("utf-8")
+    ).hexdigest()
+
+
 def _retained_search_input(body, url):
     if not 1 <= len(body) <= _MAX_RETAINED_BYTES:
         return None
-    transport = sha256(
-        ("numilog.public.search.get.v1\0text/html\0fr-FR,fr;q=0.9\0" + url).encode("utf-8")
-    ).hexdigest()
+    transport = _transport_digest(url)
     return _RetainedSearchInput(
         uuid4().hex, transport, sha256(body).hexdigest(), _PARSER_FAMILY_DIGEST,
         _PARSER_IMPLEMENTATION_DIGEST, url, body,
@@ -128,6 +132,9 @@ def _parse_retained_search_input(raw):
             or type(raw._body) is not bytes
             or not 1 <= len(raw._body) <= _MAX_RETAINED_BYTES
             or sha256(raw._body).hexdigest() != raw.input_digest
+            or type(raw._url) is not str
+            or len(raw._url) > 4096
+            or _transport_digest(raw._url) != raw.transport_digest
             or raw.parser_family_digest != _PARSER_FAMILY_DIGEST):
         raise ProviderError("Numilog : public_catalog_replay_invalid")
     try:
