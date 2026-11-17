@@ -79,7 +79,8 @@ def test_library_cover_action_forces_reinspection_without_download():
     refresh = _method_source(MAIN, "MainWindow", "refresh_library")
 
     assert "refresh_covers=True" in build
-    assert "self.service.catalog_scan(force_covers=True)" in refresh
-    assert "self.service.library_entries(identity_id=identity_id, scan=scan and (not refresh_covers))" in refresh
+    assert "service = self.service" in refresh
+    assert "service.catalog_scan(force_covers=True)" in refresh
+    assert "service.library_entries(identity_id=identity_id, scan=scan and (not refresh_covers))" in refresh
     for forbidden in ("download", "execute_acquisition", "obtain_search_item"):
         assert forbidden not in refresh
