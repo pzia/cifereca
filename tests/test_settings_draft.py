@@ -1913,6 +1913,7 @@ def test_clearing_saved_explicit_adept_source_never_resurrects_legacy_paris(edit
 
 def test_untouched_legacy_paris_identity_remains_readable_without_new_pair(editor):
     from cifereca.gui.settings_editor_actions import _selected_adept_source
+    from cifereca.providers.base import CredentialField, ManualBorrowPolicy
 
     config, values = editor
     config.set("identities", [
@@ -1926,13 +1927,22 @@ def test_untouched_legacy_paris_identity_remains_readable_without_new_pair(edito
         adept_source_connection_id="",
     )
     values["accounts"] = [account("paris", account_id="paris-legacy")]
-    saved = validate(editor, descriptors={
-        "paris": source_selection_descriptor("paris"),
-    }).data["identities"][0]
+    descriptors = {"paris": ProviderDescriptor(
+        id="paris", display_name="Fixture", description="Synthetic lender",
+        state="ready", capabilities=ProviderCapabilities(borrow=True),
+        credential_fields=(CredentialField("username", "User"),),
+        manual_borrow_policy=ManualBorrowPolicy(
+            docbase="FIXTURE", primary_borrower_id="",
+            source_selection_key="primary_paris_connection_id",
+            verification="provider_observed",
+        ),
+    )}
+    saved = validate(editor, descriptors=descriptors).data["identities"][0]
     assert saved["primary_paris_connection_id"] == "paris-legacy"
     assert "adept_source_provider_id" not in saved
     assert "adept_source_connection_id" not in saved
-    assert _selected_adept_source(saved) == (False, "paris", "paris-legacy")
+    assert _selected_adept_source(saved, descriptors) == (False, "paris", "paris-legacy")
+    assert _selected_adept_source(saved, {}) == (False, None, None)
 
 
 def test_preexisting_half_empty_adept_source_marker_stays_fail_closed_on_save(editor):
