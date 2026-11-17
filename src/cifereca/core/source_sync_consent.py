@@ -272,20 +272,12 @@ def _atomic_inventory_toggle(service, account, enabled, preference_key, scope):
     """
     from .source_acquisition_consent import _context, _bound
     from .source_enablement import source_enabled
-    from .legacy_source_consent_metadata import (
-        _POLICIES, _source_id,
-    )
+    from .legacy_source_consent_metadata import historical_consent_keys
 
     storage, coords, current = _context(service, account)
     if not current():
         raise ValueError('source_sync_consent_scope_changed')
-    specs = [
-        spec for (provider, _kind), spec in _POLICIES.items()
-        if provider == scope.provider_id
-    ]
-    legacy_toggle = (
-        specs[0][0] + _source_id(scope) if len(specs) == 1 else None
-    )
+    legacy_keys = historical_consent_keys(scope)
     revision_key = inventory_epoch_key(scope)
     with storage._lock, storage._connect() as db:
         db.execute('BEGIN IMMEDIATE')
@@ -323,11 +315,11 @@ def _atomic_inventory_toggle(service, account, enabled, preference_key, scope):
             }, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
             writes.append((policy_key(scope), payload))
         else:
-            legacy_present = (
-                legacy_toggle is not None
-                and db.execute(
-                    'SELECT 1 FROM metadata WHERE key=?', (legacy_toggle,),
+            legacy_present = any(
+                db.execute(
+                    'SELECT 1 FROM metadata WHERE key=?', (key,),
                 ).fetchone() is not None
+                for key, _old_on, _epoch in legacy_keys
             )
             if not enabled and legacy_present:
                 payload = json.dumps({

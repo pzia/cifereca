@@ -11,9 +11,8 @@ import sqlite3
 import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
-from cifereca.core.source_auto_consent_bridge import (
-    _consent_generation_key, consent_generation,
-)
+from cifereca.core.source_auto_consent_bridge import consent_generation
+from cifereca.core.legacy_source_consent_metadata import historical_consent_keys
 from cifereca.core.source_sync_consent import inventory_epoch_key, scope_for_account
 from cifereca.core.convergence_execution import CompletedDelivery
 from cifereca.core.sync_coordination import synchronize_account_source
@@ -24,12 +23,9 @@ from tests.test_core_p0_3171_canonical_sync_stage import rig, refs
 from tests.test_core_p0_3171_kobo_consent_aba import _kobo
 
 
-@pytest.mark.parametrize(("provider", "has_legacy_epoch"), [
-    ("kobo", True), ("bnf-pret", True),
-    ("paris", False), ("fictional", False),
-])
+@pytest.mark.parametrize("provider", ["kobo", "bnf-pret", "paris", "fictional"])
 def test_all_inventory_switches_rotate_neutral_generation(
-    tmp_path, provider, has_legacy_epoch,
+    tmp_path, provider,
 ):
     storage = Storage(tmp_path / "toggle.sqlite")
     try:
@@ -38,8 +34,7 @@ def test_all_inventory_switches_rotate_neutral_generation(
         account.provider_id = provider
         scope = scope_for_account(account)
         sid = broker._source_id(account)
-        revision_key = _consent_generation_key(scope)
-        assert (revision_key is not None) is has_legacy_epoch
+        revision_keys = [epoch for _switch, _on, epoch in historical_consent_keys(scope)]
         assert consent_generation(storage, scope) is None
         first = broker.set_enabled(sid, False)
         assert first.enabled is False
@@ -48,15 +43,13 @@ def test_all_inventory_switches_rotate_neutral_generation(
         assert disabled_revision.startswith("inventory:")
         assert len(disabled_revision.removeprefix("inventory:")) == 32
         assert storage.metadata_get(inventory_epoch_key(scope)) == disabled_revision.removeprefix("inventory:")
-        if has_legacy_epoch:
-            assert storage.metadata_get(revision_key) is None
+        assert all(storage.metadata_get(key) is None for key in revision_keys)
         second = broker.set_enabled(sid, True)
         assert second.enabled is True
         assert storage.metadata_get(broker._preference_key(sid)) == "1"
         assert consent_generation(storage, scope) != disabled_revision
         assert consent_generation(storage, scope).startswith("inventory:")
-        if has_legacy_epoch:
-            assert storage.metadata_get(revision_key) is None
+        assert all(storage.metadata_get(key) is None for key in revision_keys)
     finally:
         storage.close()
 
@@ -127,16 +120,15 @@ def test_inventory_epoch_replaces_historical_fence_without_rewriting_it(tmp_path
         account = broker.service.accounts[0]
         account.provider_id = provider
         scope = scope_for_account(account)
-        old_key = _consent_generation_key(scope)
-        if old_key is not None:
-            storage.metadata_set(old_key, "a" * 32)
+        # Use the same historical format for every provider, even unknown.
+        old_key = historical_consent_keys(scope)[0][2]
+        storage.metadata_set(old_key, "a" * 32)
         before = consent_generation(storage, scope)
         broker.set_enabled(broker._source_id(account), False)
         after = consent_generation(storage, scope)
         assert after.startswith("inventory:") and after != before
         assert read_policy(storage, scope).mode == "unset"
-        if old_key is not None:
-            assert storage.metadata_get(old_key) == "a" * 32
+        assert storage.metadata_get(old_key) == "a" * 32
         source = SourceKey(scope, "edition", "right", "purchase", "purchases")
         with storage._lock, storage._connect() as db:
             assert consent_generation_in_transaction(db, source) == after

@@ -8,7 +8,7 @@ import pytest
 
 from cifereca.core import source_sync_consent, source_acquisition_consent
 from cifereca.core.legacy_source_consent_metadata import (
-    _consent_generation_key, _source_id, legacy_source_consent_switch_present,
+    historical_consent_keys, _source_id, legacy_source_consent_switch_present,
 )
 from cifereca.core.legacy_source_identifier import legacy_source_id
 from cifereca.plugin_api.provider_rights_observation import ProviderRightsScope
@@ -24,17 +24,16 @@ def test_historical_epoch_names_remain_byte_stable(provider, account, prefix, ep
     scope = ProviderRightsScope("alice", provider, "card", account)
     sid = legacy_source_id("alice", provider, "card", account)
     assert _source_id(scope) == sid
-    assert _consent_generation_key(scope) == (
-        epoch + sid if epoch else prefix + sid + ".revision"
-    )
+    assert (epoch + sid if epoch else prefix + sid + ".revision") in {
+        revision for _switch, _on, revision in historical_consent_keys(scope)
+    }
 
 
 def test_unknown_provider_has_no_historical_epoch_or_auto_consent():
     scope = ProviderRightsScope("alice", "future-provider", "card", "reader")
-    assert _consent_generation_key(scope) is None
+    assert len(historical_consent_keys(scope)) == 3
     assert legacy_source_consent_switch_present(
-        type("Store", (), {"metadata_get": lambda *_: pytest.fail("unexpected read")})(),
-        scope,
+        type("Store", (), {"metadata_get": lambda *_: None})(), scope,
     ) is False
 
 
@@ -50,9 +49,10 @@ def test_switch_presence_is_lookup_only_not_a_grant(provider, prefix):
     class Storage:
         def metadata_get(self, key):
             seen.append(key)
-            return "malformed-or-off"
+            return "malformed-or-off" if key == present else None
     assert legacy_source_consent_switch_present(Storage(), scope) is True
-    assert seen == [present]
+    assert present in seen
+    assert set(seen) <= {key for key, _on, _epoch in historical_consent_keys(scope)}
 
 
 def test_cas_and_compatibility_toggle_do_not_import_consent_decision_bridge():

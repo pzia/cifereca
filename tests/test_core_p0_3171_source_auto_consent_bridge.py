@@ -17,15 +17,12 @@ from tests.test_core_p0_3171_canonical_sync_stage import rig
 
 
 @pytest.fixture
-def policy(rig, monkeypatch):
+def policy(rig):
     service, db, root = rig
-    # The real Numilog/BnF policies use the same bridge contract, but these
-    # fake-provider test rows isolate Core from any installed plugin.
-    monkeypatch.setitem(bridge._POLICIES, ("seller-a", "purchase"), (
-        "sync.test.provider.auto.", "1", None,
-    ))
+    # A frozen storage format is read as a veto for any exact provider scope.
+    # The synthetic seller requires no installed provider or policy entry.
     persist_attested_source_references(db, service.snapshot)
-    key = "sync.test.provider.auto." + bridge._source_id(service.source.scope)
+    key = "sync.source.materialization.on_start." + bridge._source_id(service.source.scope)
     return service, db, key
 
 

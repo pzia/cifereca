@@ -155,8 +155,7 @@ def test_legacy_inventory_writer_refuses_detached_persisted_account(connected_co
     # The in-memory account can remain registered while another process
     # removes its durable binding. The legacy writer must fail closed before
     # it creates an inventory toggle or rotates any historical epoch.
-    from cifereca.core.legacy_source_consent_metadata import _consent_generation_key
-    epoch_key = _consent_generation_key(scope)
+    epoch_key = "sync.source.bnf_auto." + _source_id(scope) + ".revision"
     before_epoch = service.storage.metadata_get(epoch_key)
     with service.storage._lock, service.storage._connect() as db:
         db.execute(
