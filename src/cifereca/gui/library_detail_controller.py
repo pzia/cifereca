@@ -46,9 +46,22 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         getattr(window.service, "current_identity", None), "identity_id", None,
     )
     owner = item.get("identity_id")
+    view_owner = item.get("_library_view_owner")
+    # The global-view marker is presentation metadata, not an ACL. A missing
+    # or altered marker must never reclassify A's book as usable under active
+    # profile B; an inconsistent marker also invalidates private actions.
+    # Validate native identity types before equality: untrusted markers may
+    # carry hostile __eq__ implementations.
+    owner_is_active = (
+        type(active) is str and bool(active)
+        and type(owner) is str and bool(owner) and owner == active
+    )
     foreign = (
-        item.get("_library_view_owner") == owner
-        and type(owner) is str and bool(owner) and owner != active
+        (type(owner) is str and bool(owner) and not owner_is_active)
+        or (view_owner is not None and (
+            type(view_owner) is not str or not view_owner
+            or not owner_is_active or view_owner != owner
+        ))
     )
     if not foreign and item.get("source") == "loan" and item.get("loan_id"):
         # A merged catalogue notice may not identify the exact borrower.
