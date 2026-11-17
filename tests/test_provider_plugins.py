@@ -54,6 +54,7 @@ class FakeSession(ProviderSession):
             id=f"{self.provider_id}:loan", provider="FAKE", medium="digital",
             record_id="r", title=f"Loan {self.provider_id}",
             source_provider=self.provider_id, source_credential=self.credential_id,
+            identity_id=account.identity_id, source_account_id=account.unique_id,
         )]
 
     def search(self, query, scope="all", page=0):

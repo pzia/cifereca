@@ -183,26 +183,21 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
     raw_reader = getattr_static(session, "loan_inventory_snapshot", None)
     if raw_reader is not None and not callable(raw_reader):
         raise ValueError("return_inventory_reader_invalid")
-    typed = raw_reader is not None
-    if typed:
-        from ..plugin_api.loan_inventory import read_loan_inventory
-        descriptor = getattr_static(session, "descriptor", None)
-        snapshot = read_loan_inventory(session, account, descriptor=descriptor)
-        if snapshot.status not in {"success", "partial"}:
-            raise ValueError("return_inventory_unavailable")
-        rows = list(snapshot.loans)
-        # The typed reader validated this exact descriptor against the
-        # account. Do not substitute the historical literal "primary" for
-        # a native empty borrower or a different declared alias.
-        primary_alias = (descriptor.existing_primary_loan_account_alias
-                         if descriptor is not None else None)
-        if getattr_static(session, "descriptor", None) is not descriptor:
-            raise ValueError("return_inventory_source_changed")
-    else:
-        # A legacy v1 result is read once for positive observations only.
-        # Its frozen alias convention cannot authorize absence.
-        rows = session.loans(account)
-        primary_alias = "primary"
+    from ..plugin_api.loan_inventory import read_loan_inventory
+    descriptor = getattr_static(session, "descriptor", None)
+    snapshot = read_loan_inventory(
+        session, account, descriptor=descriptor, scope_current=still_bound,
+    )
+    if not still_bound():
+        raise ValueError("return_inventory_scope_changed")
+    if getattr_static(session, "descriptor", None) is not descriptor:
+        raise ValueError("return_inventory_source_changed")
+    if snapshot.status not in {"success", "partial"}:
+        raise ValueError("return_inventory_unavailable")
+    # Legacy compatibility is now only the validated partial envelope in
+    # Plugin API. No Core-native list reader or implicit primary alias.
+    rows = list(snapshot.loans)
+    primary_alias = snapshot.scope.primary_account_alias
     if not still_bound() or not _paris_inventory_exact_borrower(
         rows, account, primary_alias=primary_alias,
     ):
@@ -211,18 +206,11 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
     if presence is None:
         raise ValueError("return_inventory_branch_ambiguous")
     if not presence:
-        if typed:
-            # Positive observations can prove presence even under partial
-            # coverage. Absence instead needs an atomic, complete branch
-            # attestation for the exact *requested* documentary source and
-            # medium, never a Core hardcoded supplier or catalog branch.
-            if (loan.medium != "digital" or not snapshot.branch_claims_complete(
-                loan.provider.casefold(), loan.medium,
-            )):
-                raise ValueError("return_inventory_not_exhaustive")
-        else:
-            # No atomic pagination proof exists in a v1 list or error channel.
-            raise ValueError("return_inventory_legacy_incomplete")
+        # Partial/legacy envelopes never authorize absence, regardless of
+        # any external error list or supplier-specific branch convention.
+        if (loan.medium != "digital" or not snapshot.branch_claims_complete(
+                loan.provider.casefold(), loan.medium)):
+            raise ValueError("return_inventory_not_exhaustive")
     return presence
 
 

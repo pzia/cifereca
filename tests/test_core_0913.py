@@ -80,7 +80,7 @@ class Core0913(unittest.TestCase):
         self.connect_provider()
         first=self.service.acquire_digital_loan(self.loan); second=self.service.acquire_digital_loan(self.loan)
         self.assertEqual(first.path,second.path); self.session.download_digital.assert_called_once(); self.service.acquisition.run_post_download.assert_called_once()
-        self.service.prepare_digital_download(self.loan,force_refresh=True); self.assertEqual(self.session.download_digital.call_count,2)
+        forced=self.service.acquire_digital_loan(self.loan,force_refresh=True); self.assertIsNotNone(forced.path); self.assertEqual(self.session.download_digital.call_count,2)
     def test_failed_hook_not_cached(self):
         self.connect_provider(); self.service.acquisition.run_post_download.side_effect=RuntimeError('hook')
         with self.assertRaises(RuntimeError): self.service.acquire_digital_loan(self.loan)

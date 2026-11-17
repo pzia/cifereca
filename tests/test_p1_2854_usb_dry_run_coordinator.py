@@ -592,7 +592,7 @@ def test_missing_local_book_is_never_qualified_as_upload(tmp_path, monkeypatch):
     result = inspect(db, root, mount)
     assert result.status == "scanned"
     assert result.rows[0].action == "blocked"
-    assert result.rows[0].reason == "owned_source_unverified"
+    assert result.rows[0].reason == "owned_source_file_missing"
     assert not result.rows[0].executable
 
 
@@ -620,7 +620,7 @@ def test_unavailable_volume_never_hashes_local_epubs(tmp_path, monkeypatch):
     db, root, book, mount = setup(tmp_path)
     monkeypatch.setattr(run, "scan_managed_usb", lambda **_: None)
     monkeypatch.setattr(
-        run, "attest_local_usb_source",
+        run, "inspect_local_usb_source",
         lambda **_: pytest.fail("no local SHA work without complete USB scan"),
     )
     result = inspect(db, root, mount)
@@ -650,7 +650,7 @@ def test_invalid_scanner_output_never_claims_current_presence(
     }[invalid_scan]
     monkeypatch.setattr(run, "scan_managed_usb", lambda **_: changed)
     monkeypatch.setattr(
-        run, "attest_local_usb_source",
+        run, "inspect_local_usb_source",
         lambda **_: pytest.fail("unverified USB scan must not hash local books"),
     )
     result = inspect(db, root, mount)

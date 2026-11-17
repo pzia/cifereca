@@ -382,3 +382,50 @@ def test_own_isbn_match_collector_includes_no_age_record_without_changing_raw():
     assert matched == {
         "ark:/12148/cb465971480", "ark:/12148/cb465971481",
     }
+
+
+@pytest.mark.parametrize("extra", (
+    '<mxc:datafield tag="333"/>',
+    '<mxc:datafield tag="333"><mxc:subfield code="a"/></mxc:datafield>',
+    '<mxc:datafield tag="333"><mxc:subfield code="UPPER">Other</mxc:subfield></mxc:datafield>',
+    '<mxc:datafield tag="333"><mxc:subfield code="a">' + "x"*301 + '</mxc:subfield></mxc:datafield>',
+    '<mxc:datafield tag="333"><mxc:unknown/></mxc:datafield>',
+))
+def test_filtered_out_malformed_audience_field_blocks_qualification(extra):
+    first = _synthetic_cnlj_333()
+    payload = response(first.replace("</mxc:record>", extra + "</mxc:record>"))
+    # The raw extractor can keep useful bounded evidence; qualification
+    # must not treat filtered invalid fields as if they were absent.
+    assert probe.exact_edition_age_fields(payload, ISBN)
+    assert probe.qualified_observed_age_fields(payload, ISBN) == []
+
+
+def test_valid_literal_with_invalid_nested_subfield_never_qualifies():
+    first = _synthetic_cnlj_333().replace(
+        "À partir de 13 ans</mxc:subfield>",
+        "À partir de 13 ans<mxc:unknown/></mxc:subfield>",
+    )
+    assert probe.exact_edition_age_fields(response(first), ISBN)
+    assert probe.qualified_observed_age_fields(response(first), ISBN) == []
+
+
+def test_partial_response_keeps_raw_not_numeric_evidence():
+    first = _synthetic_cnlj_333()
+    for payload in (
+        response(first, total=2),
+        response(first).replace(b"</srw:searchRetrieveResponse>",
+            b"<srw:nextRecordPosition>2</srw:nextRecordPosition></srw:searchRetrieveResponse>"),
+    ):
+        assert probe.exact_edition_age_fields(payload, ISBN)
+        assert probe.qualified_observed_age_fields(payload, ISBN) == []
+
+
+def test_unqualified_secondary_record_does_not_establish_uniqueness():
+    first = _synthetic_cnlj_333()
+    for second in (
+        record(ark="ark:/12148/cb465971481", extra_isbn="9780306406157"),
+        record(ark="ark:/12148/cb465971481").replace("marcxchange", "dublincore"),
+        record(ark="ark:/12148/cb465971481", isbn="not-an-isbn"),
+    ):
+        assert probe.exact_edition_age_fields(response(first, second), ISBN)
+        assert probe.qualified_observed_age_fields(response(first, second), ISBN) == []

@@ -617,3 +617,22 @@ def test_headless_renewal_admission_requires_exact_confirmed_borrower(
         assert service.storage.loan_renewal_state(_source_key(ui)) is None
     finally:
         service.close()
+
+
+def test_headless_renewal_facade_admits_original_account_without_gtk(tmp_path):
+    service, account, ui, session = setup(tmp_path)
+    try:
+        service.select_identity("alex")
+        admission = service.capture_confirmed_loan_renewal(
+            ui, identity_id="default", account_id=account.unique_id, confirmed=True,
+        )
+        assert admission is not None and not session.reads and not session.posts
+        assert service.capture_confirmed_loan_renewal(
+            ui, identity_id="alex", account_id=account.unique_id, confirmed=True,
+        ) is None
+        result = service.renew_admitted_loan(ui, confirmed=True, admission=admission)
+        assert result["status"] == "submitted"
+        assert service.current_identity.identity_id == "alex"
+        assert len(session.posts) == 1
+    finally:
+        service.close()

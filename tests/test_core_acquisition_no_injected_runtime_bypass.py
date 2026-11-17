@@ -72,16 +72,8 @@ def test_kobo_recipe_still_routes_through_installed_runtime():
     assert calls == ["runtime.kobo-adept", request, "runtime.kobo-adept"]
 
 
-def test_installed_library_service_legacy_adapter_is_inert():
-    # Historical tests patch this ABI seam; production must never select
-    # a provider runtime from it or query a plugin manager.
-    class PoisonManager:
-        def status(self, *_):
-            pytest.fail("retired adapter requested plugin status")
-
-        def service(self, *_):
-            pytest.fail("retired adapter requested plugin service")
-
-    host = SimpleNamespace(_plugin_manager=PoisonManager())
-    with pytest.raises(ProviderConfigurationError, match="legacy_kobo_runtime_adapter_retired"):
-        LibraryService._kobo_adapter(host)
+def test_installed_library_service_legacy_adapter_is_removed():
+    # The earlier refusal seam is no longer installed. Keep the three
+    # independent behavioral poison-adapter tests above: no injected
+    # legacy runtime can bypass typed installed-plugin dispatch.
+    assert not hasattr(LibraryService, "_kobo_adapter")

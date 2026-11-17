@@ -11,6 +11,7 @@ import re
 from collections.abc import Mapping
 from html.parser import HTMLParser
 from urllib.parse import unquote, urlsplit
+from unicodedata import category
 
 _MAX_VALUES = 12
 _MAX_TEXT = 240
@@ -69,80 +70,113 @@ _SERIES_TOKEN = re.compile(r"(?<![a-z0-9_])SeriesTitle_(?:idx|exact)(?![a-z0-9_]
 _SERIES_ALLOWED_HOSTS = {"bibliotheques.paris.fr"}
 
 
-def _safe_series_search_href(href: object) -> bool:
-    """Require an internal SearchService series link, not an arbitrary anchor.\n\n    Observed Search snippets use both SeriesTitle_idx and SeriesTitle_exact.
+def _series_link_declared(href: object) -> bool:
+    """Recognize only the already qualified index names, even on bad links."""
+    return (type(href) is str and 0 < len(href) <= 32768
+            and bool(_SERIES_TOKEN.search(unquote(html.unescape(href)))))
 
-    Only a link supplied inside this *result's own* HTML is a candidate.
-    Never fetch/follow its target; it is metadata evidence, not a capability.
-    """
+
+def _safe_series_search_href(href: object) -> bool:
+    """Require the existing internal-link shape; never follow the link."""
     if type(href) is not str or not 1 <= len(href) <= 2048:
         return False
-    if any(ord(c) < 32 or ord(c) == 127 for c in href):
-        return False
     decoded = unquote(html.unescape(href))
-    if not _SERIES_TOKEN.search(decoded):
+    if (not _series_link_declared(href)
+            or any(ch.isspace() or category(ch) in {"Cc", "Cf", "Cs"} or ch == chr(92)
+                   for ch in href)
+            or any(category(ch) in {"Cc", "Cf", "Cs"} or ch == chr(92)
+                   for ch in decoded)):
         return False
     try:
-        parsed = urlsplit(href)
-    except ValueError:
+        # Recheck the decoded representation as well: percent-encoded
+        # authority separators, fragments and credentials cannot qualify.
+        for value in (href, decoded):
+            parsed = urlsplit(value)
+            if parsed.scheme:
+                if (parsed.scheme != "https" or parsed.hostname not in _SERIES_ALLOWED_HOSTS
+                        or parsed.username is not None or parsed.password is not None
+                        or parsed.port not in (None, 443)):
+                    return False
+            elif parsed.netloc or not parsed.path.startswith(("/", "./", "../")):
+                return False
+            if parsed.fragment:
+                return False
+    except (ValueError, UnicodeError):
         return False
-    if parsed.scheme:
-        if (parsed.scheme != "https" or parsed.hostname not in _SERIES_ALLOWED_HOSTS
-                or parsed.username is not None or parsed.password is not None
-                or parsed.port not in (None, 443)):
-            return False
-    elif parsed.netloc or not parsed.path.startswith(("/", "./", "../")):
-        return False
-    return not parsed.fragment
+    return True
 
 
 class _SeriesAnchorParser(HTMLParser):
-    """Bounded, fail-closed HTML extraction; no script, DOM or active links."""
+    """Distinguish an absent relation from rejected/contradictory evidence."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self._inside = False
         self._parts: list[str] = []
+        self._size = 0
         self._invalid = False
         self._count = 0
         self._values: list[str] = []
         self._rejected = False
+        self._active = None
 
     def handle_starttag(self, tag, attrs):
+        if tag in {"script", "style", "template", "noscript", "textarea"}:
+            if self._inside:
+                self._invalid = True
+            if self._active is None:
+                self._active = tag
+            return
         if tag == "a":
             self._count += 1
             if self._count > 64 or self._inside:
                 self._rejected = True
             hrefs = [value for key, value in attrs if key == "href"]
-            self._inside = len(hrefs) == 1 and _safe_series_search_href(hrefs[0])
+            declared = any(_series_link_declared(href) for href in hrefs)
+            self._inside = declared
             self._parts = []
-            self._invalid = False
+            self._size = 0
+            self._invalid = (declared and (
+                self._active is not None
+                or len(hrefs) != 1 or not _safe_series_search_href(hrefs[0])
+            ))
         elif self._inside and tag not in {"span", "b", "i", "em", "strong"}:
             self._invalid = True
 
     def handle_data(self, data):
         if self._inside:
-            self._parts.append(data)
-            if sum(map(len, self._parts)) > 1024:
+            self._size += len(data)
+            if self._size > 1024:
                 self._invalid = True
+            elif not self._invalid:
+                self._parts.append(data)
 
     def handle_endtag(self, tag):
+        if tag == self._active:
+            self._active = None
         if tag == "a":
-            if self._inside and not self._invalid:
-                label = _clean_text("".join(self._parts))
+            if self._inside:
+                label = None if self._invalid else _clean_text("".join(self._parts))
                 if (label is not None and "://" not in label and "@" not in label
                         and not any(s in label.casefold() for s in (
                             "token=", "password=", "secret=", "bearer ", "cookie:",
                         ))):
                     self._values.append(label)
+                else:
+                    self._rejected = True
             self._inside = False
             self._parts = []
+            self._size = 0
 
-    def result(self) -> str | None:
-        if self._rejected:
-            return None
+    def result(self) -> tuple[str, str | None]:
+        if self._rejected or self._inside:
+            return "rejected", None
         unique = {text.casefold(): text for text in self._values}
-        return next(iter(unique.values())) if len(unique) == 1 else None
+        if len(unique) > 1:
+            return "conflict", None
+        if not unique:
+            return "absent", None
+        return "valid", next(iter(unique.values()))
 
 
 def project_attested_search_series(
@@ -169,8 +203,10 @@ def project_attested_search_series(
             parser.close()
         except (ValueError, AssertionError):
             return {}
-        label = parser.result()
-        if label is not None:
+        state, label = parser.result()
+        if state in {"rejected", "conflict"}:
+            return {}
+        if state == "valid" and label is not None:
             found.append((label, field))
     if not found or len({value.casefold() for value, _field in found}) != 1:
         return {}

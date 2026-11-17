@@ -339,3 +339,27 @@ def test_keyword_loaders_are_proven_edges_and_select_transitive_consumers(tmp_pa
     ]
     assert plugin_replay_required(["tests/test_b.py"], tmp_path)
     assert not plugin_replay_required(["tests/test_unrelated.py"], tmp_path)
+
+
+def test_deleted_transitive_root_fixture_still_requires_plugin_replay(tmp_path):
+    _write(tmp_path, "tests/test_a.py", "from tests.test_b import VALUE\n")
+    _write(tmp_path, "tests/test_b.py", "from tests.test_c import VALUE\n")
+    _write(tmp_path, "tests/test_c.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/p/tests/test_p.py", "from tests.test_a import VALUE\n")
+    assert plugin_replay_required(["tests/test_c.py"], tmp_path)
+    (tmp_path / "tests/test_c.py").unlink()
+    graph = inventory(tmp_path)
+    assert any(edge["consumer"] == "tests/test_b.py"
+               and edge["target_module"] == "tests.test_c"
+               and not edge["resolved"]
+               for edge in graph["root_to_root_direct"])
+    assert plugin_replay_required(["tests/test_c.py"], tmp_path)
+    assert not plugin_replay_required(["tests/test_unrelated.py"], tmp_path)
+
+
+def test_deleted_root_fixture_via_plugin_helper_requires_replay(tmp_path):
+    _write(tmp_path, "tests/test_a.py", "from tests.test_removed import VALUE\n")
+    _write(tmp_path, "src/plugins/p/tests/helpers.py", "from tests.test_a import VALUE\n")
+    _write(tmp_path, "src/plugins/p/tests/test_p.py", "from .helpers import VALUE\n")
+    assert plugin_replay_required(["tests/test_removed.py"], tmp_path)
+    assert not plugin_replay_required(["tests/test_unrelated.py"], tmp_path)

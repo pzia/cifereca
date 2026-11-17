@@ -197,8 +197,11 @@ def test_session_mixed_origin_is_rejected_before_normalization(
             capabilities=SimpleNamespace(loans=True),
             loans=lambda _account: [row],
         )
-        monkeypatch.setattr(service, "_session_for_account", lambda _account: session)
-        with pytest.raises(ProviderConfigurationError, match="périmètre de compte"):
+        session.provider_id = account.provider_id
+        session.credential_id = account.credential_id
+        session.connected = True
+        service._sessions[service._session_key(account.provider_id, account.credential_id)] = session
+        with pytest.raises(ProviderConfigurationError, match="loan_inventory_read_unavailable"):
             service._loans_for_account(account, force=True)
         assert getattr(row, field) == value
         assert not service.storage.entitlements()
@@ -332,11 +335,14 @@ def test_legacy_positive_loan_primary_alias_requires_exact_descriptor(
             capabilities=SimpleNamespace(loans=True),
             loans=lambda _account: [row],
         )
-        monkeypatch.setattr(service, "_session_for_account", lambda _account: session)
+        session.provider_id = account.provider_id
+        session.credential_id = account.credential_id
+        session.connected = True
+        service._sessions[service._session_key(account.provider_id, account.credential_id)] = session
         if accepted:
             assert service._loans_for_account(account, force=True)[0].source_account_id == "main"
         else:
-            with pytest.raises(ProviderConfigurationError, match="périmètre de compte"):
+            with pytest.raises(ProviderConfigurationError, match="loan_inventory_read_unavailable"):
                 service._loans_for_account(account, force=True)
     finally:
         service.close()

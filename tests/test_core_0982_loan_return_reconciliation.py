@@ -33,6 +33,7 @@ def _loan(uid="linked-b", credential="paris-a", loan_id="loan-a"):
 
 class Session:
     provider_id = "paris"
+    credential_id = "paris-a"
     connected = True
     capabilities = NS(loans=True)
     def __init__(self, inventory):
@@ -70,7 +71,9 @@ def _library(tmp_path, *, session=None):
                 provider_id="paris", credential_id="paris-b", identity_id="other"),
     ]
     svc._sessions["paris::paris-a"] = session or Session([])
-    svc._sessions["paris::paris-b"] = Session([])
+    second = Session([])
+    second.credential_id = "paris-b"
+    svc._sessions["paris::paris-b"] = second
     return svc
 
 
