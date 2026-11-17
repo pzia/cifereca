@@ -1070,7 +1070,10 @@ def main():
             window.present()
             # Extend the existing real GTK witness through durable C/N2/N3.
             from notice_c_cover_contract import verify_notice_c_cover
-            verify_notice_c_cover(window, later, capture, report, search_initial)
+            def notice_c_complete():
+                later(450, search_initial)
+
+            verify_notice_c_cover(window, later, capture, report, notice_c_complete)
 
         later(110, verify_first)
 
