@@ -203,3 +203,30 @@ def test_complete_typed_inventory_with_native_empty_borrower_can_attest_absence(
     assert _read_paris_return_presence(service, account, session, loan) is False
     assert calls == [account]
     assert session.posts == []
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_legacy_return_reader_uses_single_partial_envelope(present):
+    service, account, session, loan, calls = _rig()
+    del session.loan_inventory_snapshot
+    session.loans = lambda selected: calls.append(selected) or ([loan] if present else [])
+    if present:
+        assert _read_paris_return_presence(service, account, session, loan) is True
+    else:
+        with pytest.raises(ValueError, match="return_inventory_not_exhaustive"):
+            _read_paris_return_presence(service, account, session, loan)
+    assert calls == [account] and session.posts == []
+
+
+def test_legacy_return_does_not_invent_primary_alias():
+    service, account, session, loan, calls = _rig()
+    del session.loan_inventory_snapshot
+    account.unique_id = ""
+    account.is_primary = True
+    loan.source_account_id = ""
+    session.loans = lambda selected: calls.append(selected) or [
+        replace(loan, source_account_id="primary"),
+    ]
+    with pytest.raises(ValueError, match="return_inventory_unavailable"):
+        _read_paris_return_presence(service, account, session, loan)
+    assert calls == [account] and session.posts == []
