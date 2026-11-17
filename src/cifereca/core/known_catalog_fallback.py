@@ -90,7 +90,8 @@ def _durable_public_c_fallback(
             scope="all" if scope == "catalog" else scope, field=field,
             page_size=_MAX_RESULTS, now=current,
         )
-    except (TypeError, ValueError, AttributeError):
+    except Exception:
+        # A local SQLite/read failure is not a successful empty catalogue.
         return empty("unavailable")
     if first.status == "budget_exceeded":
         return empty("scope_budget_exceeded")
