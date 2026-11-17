@@ -3657,6 +3657,11 @@ class LibraryService:
             return False
 
     def _acquire_direct_item_impl(self, item: SearchResult, *, _admission=None) -> Acquisition:
+        return LibraryService._acquire_direct_item_readmitted(self, item, _admission=_admission)
+
+    def _acquire_direct_item_readmitted(
+        self, item: SearchResult, *, _admission=None, _legacy_admission=None,
+    ) -> Acquisition:
         if isinstance(item.metadata, dict) and item.metadata.get("search_provenance") == "known_catalog_stale":
             raise ProviderConfigurationError(
                 "Résultat connu hors ligne : acquisition indisponible"
@@ -3700,20 +3705,33 @@ class LibraryService:
             # final SHA and placement through obtain_search_item().
             raise ProviderConfigurationError("canonical_explicit_action_required")
 
-        session = self._session_for_source(
-            item.source_provider, item.source_credential,
-        )
+        def check_legacy_admission():
+            if _legacy_admission is not None and not _legacy_admission.current(self, item):
+                raise ProviderConfigurationError("legacy_direct_source_revoked")
+
+        check_legacy_admission()
+        if _legacy_admission is None:
+            session = self._session_for_source(item.source_provider, item.source_credential)
+            identity = self.identity_for_connection(item.source_provider, item.source_credential)
+        else:
+            session = _legacy_admission.session
+            identity = _legacy_admission.scope.identity
         content_type = self.acquisition.content_type_for(item)
 
-        identity = self.identity_for_connection(item.source_provider, item.source_credential)
         target_dir = (
             self.library_identity_provider_dir(identity.identity_id, item.source_provider)
             if content_type == "ebook" else self.acquisition.target_dir(item.source_provider, content_type)
         )
         if self.acquisition.override_command(item.source_provider):
-            return self.acquisition.run_override(item, target_dir)
+            check_legacy_admission()
+            result = self.acquisition.run_override(item, target_dir)
+            check_legacy_admission()
+            return result
+        check_legacy_admission()
         path, url = session.download_direct(item, target_dir)
+        check_legacy_admission()
         self.acquisition.run_post_download(item, path, url, target_dir)
+        check_legacy_admission()
         try:
             size = path.stat().st_size
         except OSError:
@@ -3860,6 +3878,48 @@ class LibraryService:
                 "selected_search_source_unavailable"
             )
         return obtain_source_offer(self, target)
+
+    def capture_confirmed_legacy_search_offer(
+        self, item: SearchResult, *, identity_id: str, account_id: str, confirmed: bool,
+    ):
+        """One explicit legacy action; no provider GET at admission."""
+        from .core.legacy_direct_admission import capture_legacy_direct
+        try:
+            scope = search_orchestration.capture_search_read_scope(self, identity_id)
+            return capture_legacy_direct(
+                self, item, scope=scope, account_id=account_id, confirmed=confirmed,
+            )
+        except Exception:
+            raise ProviderConfigurationError("legacy_direct_admission_unavailable") from None
+
+    def obtain_admitted_legacy_search_offer(self, target):
+        """Execute the exact admitted legacy connection, never GTK selection."""
+        from .core.legacy_direct_admission import LegacyDirectAdmission
+        from .core.materialization import MaterializationCoordinator
+        if type(target) is not LegacyDirectAdmission:
+            raise ProviderConfigurationError("legacy_direct_admission_unavailable")
+        item = target.claim(self)
+
+        def acquire(selected):
+            try:
+                result = LibraryService._acquire_direct_item_readmitted(
+                    self, selected, _legacy_admission=target,
+                )
+            except Exception as exc:
+                self._record_action(target.identity_id, "acquisition", "failed",
+                                    provider_id=target.coordinates[1],
+                                    facts={"error": type(exc).__name__})
+                raise
+            self._record_action(target.identity_id, "acquisition", "success",
+                                provider_id=target.coordinates[1], facts={"record_id": item.record_id})
+            return result
+
+        return MaterializationCoordinator(
+            acquire=acquire, index_path=self.catalog_index_path,
+            resolve_identity=self.identity_for_connection,
+            source_epoch=lambda: source_context_epoch(self),
+            admission_current=lambda: target.current(self, item),
+        ).obtain(item)
 
     def obtain_search_item(self, item: SearchResult):
         from .core.materialization import MaterializationCoordinator
