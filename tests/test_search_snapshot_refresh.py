@@ -269,7 +269,11 @@ def test_actual_owned_download_callback_invalidates_after_indexed_path(monkeypat
         item_id='book', branch='purchases', session=object(),
     )
     host.service.owned_library_download_target = Mock(return_value=target)
-    host.service.obtain_owned_library_item = Mock(return_value=NS(path=Path('/synthetic/book.epub')))
+    from dataclasses import replace
+    host.service.capture_admitted_owned_library_offer = Mock(
+        return_value=replace(target, selection_epoch=None, source_epoch=0),
+    )
+    host.service.obtain_admitted_owned_library_offer = Mock(return_value=NS(path=Path('/synthetic/book.epub')))
     handlers = {}
     button = NS(set_tooltip_text=Mock(), connect=lambda signal, cb: handlers.update({signal: cb}))
     host.action_button = lambda *a: button
