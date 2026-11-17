@@ -73,6 +73,8 @@ def walk(widget):
         child = child.get_next_sibling()
 
 
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
@@ -1071,7 +1073,11 @@ def main():
             # Extend the existing real GTK witness through durable C/N2/N3.
             from notice_c_cover_contract import verify_notice_c_cover
             def notice_c_complete():
-                later(450, search_initial)
+                from notice_c_local_views_contract import verify_local_notice_c_views
+                verify_local_notice_c_views(
+                    window, later, capture, report,
+                    lambda: later(450, search_initial),
+                )
 
             verify_notice_c_cover(window, later, capture, report, notice_c_complete)
 

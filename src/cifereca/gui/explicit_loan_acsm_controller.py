@@ -193,12 +193,28 @@ def prepare_explicit_loan_acsm(
         if response != "get" or submitted or not current():
             return
         submitted = True
+        # The production Core captures its source/account/session lease at
+        # consent, not when a deferred worker happens to start.
+        capture = getattr(service, "capture_admitted_loan_acsm_stage", None)
+        options = {}
+        if callable(capture):
+            try:
+                admitted = capture(selected, expected_identity_id=identity_id)
+            except Exception:
+                admitted = None
+            if admitted is None:
+                if current():
+                    window.show_error(
+                        "Actualisez les prêts de ce compte et sélectionnez de nouveau le prêt.",
+                        "Téléchargement ACSM",
+                    )
+                return
+            options["admitted_lease"] = admitted
 
         def work():
-            # Confirmation pins the loan/borrower; do not query the active
-            # GTK identity or window in a queued HTTP worker. Core stage
-            # revalidates the exact source/loan/consent under its own lease.
-            return stage(selected, confirmed=True, expected_identity_id=identity_id)
+            # Core validates its frozen source lease; only GTK delivery
+            # depends on the displayed selection after consent.
+            return stage(selected, confirmed=True, expected_identity_id=identity_id, **options)
 
         def done(result):
             if current() and type(result) is dict and result.get("status") == "candidate_acsm":

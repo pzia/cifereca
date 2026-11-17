@@ -54,7 +54,9 @@ def verify_borrower_c_views(window, loan, record, descriptor, *,
     assert loan.record_id == record.resource_id and loan.title == record.title
     assert loan.medium == "digital"
     url = record.thumbnail_url
-    assert type(url) is str and url.startswith("https://")
+    from cifereca.core.search_orchestration import _shared_catalogue_cover_url
+    assert type(url) is str and _shared_catalogue_cover_url(url) == url
+    assert _shared_catalogue_cover_url(url + "?token=synthetic") is None
     pixels = (92, 37, 186)
     png = BytesIO()
     Image.new("RGB", (400, 600), pixels).save(png, format="PNG")
@@ -210,6 +212,7 @@ def verify_borrower_c_views(window, loan, record, descriptor, *,
             return borrowed, returned
 
         def show(rows):
+            checkpoint("borrower_c_" + label + "_publish")
             state["attached"] = True
             window.loan_page.clear_rows()
             window.history_page.clear_rows()
@@ -288,6 +291,7 @@ def verify_borrower_c_views(window, loan, record, descriptor, *,
                 start_stage(True)
             else:
                 report["checks"]["P0_6366_mainwindow_borrower_views_restart_offline"] = True
+                checkpoint("borrower_c_complete")
                 cleanup()
                 complete()
 

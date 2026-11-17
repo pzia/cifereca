@@ -879,10 +879,26 @@ def main() -> int:
         window = app_window[0]
         loan = next(item for item in window.service.last_loans
                     if item.record_id == RESOURCES[0])
+        # Existing CDN query-bearing URLs are valid display evidence but
+        # deliberately not admitted as durable public-C image candidates.
+        # Parse a separate public card containing a stable, queryless URL.
+        stable_record, = parse_search_page(
+            '<ul class="list-details">' +
+            card(RESOURCES[0], "https://covers.feedbooks.net/item/synthetic-alpha.jpg")
+            + '</ul>'
+        ).records
+        assert stable_record.resource_id == parsed[0].resource_id
+        assert stable_record.title == parsed[0].title
+
+        def checkpoint(stage):
+            stages.append(stage)
+            report["last_stage"] = stage
+            save()
+
         verify_borrower_c_views(
-            window, loan, parsed[0], bnf.DESCRIPTOR,
+            window, loan, stable_record, bnf.DESCRIPTOR,
             later=later, capture=capture, report=report, complete=complete,
-            checkpoint=lambda stage: (stages.append(stage), save()),
+            checkpoint=checkpoint,
         )
 
     def complete():
