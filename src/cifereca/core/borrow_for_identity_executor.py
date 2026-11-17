@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from inspect import getattr_static
+from threading import Lock
 from uuid import uuid4
 
 from ..models import Account
@@ -49,7 +50,7 @@ def prepare_cross_profile_borrow(
     selected_option_id: str, expected_edition_id: str,
     observations: object, confirmed: bool = False, now: int | None = None,
     requesting_identity_id: str | None = None, scope_current=None,
-    admit_at_confirmation: bool = False,
+    admit_at_confirmation: bool = False, reader_scope=None,
 ) -> AdmittedCrossProfileBorrow | dict[str, object]:
     """Admit one explicitly selected lender POST under Core's durable claim.
 
@@ -73,8 +74,18 @@ def prepare_cross_profile_borrow(
                 or not callable(scope_current)
                 or scope_current() is not True):
             return revoked
-        context_epoch = service._account_context_epoch
         source_epoch = service._source_context_epoch
+        if reader_scope is not None:
+            from .search_orchestration import SearchReadScope
+            if (admit_at_confirmation is not True
+                    or type(reader_scope) is not SearchReadScope
+                    or reader_scope.identity_id != requesting_identity_id
+                    or reader_scope.source_epoch != source_epoch
+                    or not reader_scope.current(service)):
+                return revoked
+            context_epoch = reader_scope.source_epoch
+        else:
+            context_epoch = service._account_context_epoch
         if (type(context_epoch) is not int or context_epoch < 0
                 or type(source_epoch) is not int or source_epoch < 0
                 or scope_current() is not True):
@@ -86,6 +97,7 @@ def prepare_cross_profile_borrow(
             observations=observations, now=now,
             requesting_identity_id=requesting_identity_id,
             scope_current=scope_current,
+            **({"reader_scope": reader_scope} if reader_scope is not None else {}),
         )
         if (selection.status != "current" or selection.executable is not False
                 or not selection.borrowing_identity_id
@@ -137,7 +149,8 @@ def prepare_cross_profile_borrow(
         # execution lease. The requester registry, not the selected GTK
         # identity, identifies the original reader after admission.
         requester = service.identity_by_id(requesting_identity_id)
-        if requester is None or not scope_current():
+        lender = service.identity_by_id(account.identity_id)
+        if requester is None or lender is None or not scope_current():
             return revoked
 
         def source_current():
@@ -146,6 +159,10 @@ def prepare_cross_profile_borrow(
                     service.identity_by_id(requesting_identity_id) is requester
                     and requester.identity_id == requesting_identity_id
                     and service._source_context_epoch == source_epoch
+                    and (reader_scope is None or (
+                        reader_scope.current(service)
+                        and service.identity_by_id(account.identity_id) is lender
+                    ))
                 )
             except Exception:
                 return False
@@ -156,6 +173,7 @@ def prepare_cross_profile_borrow(
             borrowing_account=account, exact_notice=notice,
             lender_session=session, scope_current=execution_scope,
             admitted=admit_at_confirmation,
+            **({"reader_scope": reader_scope} if reader_scope is not None else {}),
         )
         if lease is None:
             return revoked
@@ -217,11 +235,44 @@ def prepare_cross_profile_borrow(
     # After this point GTK changes only affect publication.
     if not scope_current() or not current():
         return revoked
-    return AdmittedCrossProfileBorrow(
-        service, lambda: _execute_prepared(
+    attempt_lock = Lock()
+    attempted = False
+
+    def work():
+        nonlocal attempted
+        if reader_scope is not None:
+            with attempt_lock:
+                if attempted:
+                    return _result("blocked", "borrow_confirmation_consumed")
+                attempted = True
+        return _execute_prepared(
             service, account=account, notice=notice, session=session,
             key=key, current=current,
-        ),
+        )
+
+    return AdmittedCrossProfileBorrow(service, work)
+
+
+def prepare_confirmed_borrow_for_scope(
+    service, *, captured, selected_option_id: str, expected_edition_id: str,
+    observations: object, confirmed: bool, now: int | None = None,
+):
+    """Admit one exact clicked option for the original explicit reader."""
+    from .borrow_for_identity_live import ScopedBorrowPreview
+    from .search_orchestration import SearchReadScope
+    if confirmed is not True:
+        return _result("blocked", "borrow_confirmation_required")
+    if (type(captured) is not ScopedBorrowPreview
+            or type(captured.reader_scope) is not SearchReadScope
+            or not captured.reader_scope.current(service)):
+        return _result("blocked", "lender_scope_revoked")
+    scope = captured.reader_scope
+    return prepare_cross_profile_borrow(
+        service, captured_preview=captured.preview, selected_option_id=selected_option_id,
+        expected_edition_id=expected_edition_id, observations=observations,
+        confirmed=True, now=now, requesting_identity_id=scope.identity_id,
+        scope_current=lambda: scope.current(service), admit_at_confirmation=True,
+        reader_scope=scope,
     )
 
 
@@ -319,4 +370,5 @@ def execute_cross_profile_borrow(
 
 
 __all__ = ["execute_cross_profile_borrow", "prepare_cross_profile_borrow",
-           "AdmittedCrossProfileBorrow", "execute_admitted_cross_profile_borrow"]
+           "AdmittedCrossProfileBorrow", "execute_admitted_cross_profile_borrow",
+           "prepare_confirmed_borrow_for_scope"]
