@@ -797,7 +797,11 @@ class BookListCell(Gtk.Box):
             ), "minimum_revision": getattr(borrower, "epoch", None)}
         proof = getattr(item, "_cover_search_evidence", None)
         from .search_document_cover_bridge import search_document_is_current
-        return {"is_current": lambda: search_document_is_current(self.window, proof)}
+        options = {"is_current": lambda: search_document_is_current(self.window, proof)}
+        revision = getattr(proof, "minimum_revision", None)
+        if revision is not None:
+            options["minimum_revision"] = revision
+        return options
 
     def _thumbnail_changed(self, item: BookListItem) -> None:
         if self._thumbnail_item is not item or self._bound_key != item.key:
