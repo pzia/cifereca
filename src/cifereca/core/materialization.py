@@ -31,11 +31,13 @@ class MaterializationCoordinator:
         index_path: Callable[..., dict[str, Any]],
         resolve_identity: Callable[[str, str], Any],
         source_epoch: Callable[[], int] | None = None,
+        admission_current: Callable[[], bool] | None = None,
     ) -> None:
         self._acquire = acquire
         self._index_path = index_path
         self._resolve_identity = resolve_identity
         self._source_epoch = source_epoch
+        self._admission_current = admission_current
 
     def obtain(self, item: SearchResult) -> MaterializationResult:
         # Never choose the publication owner after supplier I/O. The old
@@ -52,7 +54,8 @@ class MaterializationCoordinator:
         def still_current():
             try:
                 return (
-                    (item.source_provider, item.source_credential, item.record_id) == coords
+                    (self._admission_current is None or self._admission_current() is True)
+                    and (item.source_provider, item.source_credential, item.record_id) == coords
                     and (item.id, item.source_account_id) == observed
                     and (self._source_epoch is None or self._source_epoch() == epoch)
                     and self._resolve_identity(*coords[:2]).identity_id == owner
