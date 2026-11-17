@@ -509,3 +509,144 @@ def test_poststaging_borrower_callback_cannot_change_source_or_edition(
     assert receipt["attention_code"] == "adept_borrower_ambiguous"
     assert receipt["metadata"]["provider_loan_id"] == "loan-1"
     assert receipt["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
+
+
+@pytest.mark.parametrize("provider", ["paris", "synthetic-library"])
+@pytest.mark.parametrize("field", [
+    "id", "record_id", "source_provider", "source_credential",
+    "source_account_id",
+])
+def test_staged_acsm_retained_when_native_loan_getter_raises(provider, field):
+    """Every getter failure becomes a durable refusal, never an exception."""
+    base = NS(
+        id="loan-1", record_id="edition-1", source_provider=provider,
+        source_credential="reader", source_account_id="primary",
+    )
+
+    class HostileLoan:
+        def __getattr__(self, name):
+            if name == field:
+                raise RuntimeError("private untrusted loan property")
+            return getattr(base, name)
+
+    invoke, store, borrower, resolver, profiles, *_ = _fixture(
+        provider=provider, loan_override=HostileLoan(),
+    )
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    receipt = store.call_args.args[0]
+    assert receipt["provider_id"] == provider
+    assert receipt["metadata"]["acsm_staging_path"] == (
+        "/synthetic/staged.acsm"
+    )
+    assert "private untrusted" not in repr(receipt)
+
+
+@pytest.mark.parametrize("field", [
+    "id", "record_id", "source_provider", "source_credential",
+    "source_account_id",
+])
+def test_staged_getter_revoked_during_borrower_validation_retains_acsm(field):
+    base = NS(
+        id="loan-1", record_id="edition-1",
+        source_provider="synthetic-library", source_credential="reader",
+        source_account_id="primary",
+    )
+
+    class RevokedLoan:
+        blocked = False
+
+        def __getattr__(self, name):
+            if self.blocked and name == field:
+                raise RuntimeError("private borrower callback corruption")
+            return getattr(base, name)
+
+    loan = RevokedLoan()
+    invoke, store, borrower, resolver, profiles, *_ = _fixture(
+        provider="synthetic-library", loan_override=loan,
+    )
+
+    def revoke(*_args, **_kwargs):
+        loan.blocked = True
+        return "identity-1", None
+
+    borrower.side_effect = revoke
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_called_once()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    assert store.call_args.args[0]["metadata"]["acsm_staging_path"] == (
+        "/synthetic/staged.acsm"
+    )
+
+
+@pytest.mark.parametrize("field", [
+    "id", "record_id", "source_provider", "source_credential",
+    "source_account_id",
+])
+def test_staged_loan_mutation_during_owner_read_is_refused(field):
+    """An enabled-owner read cannot attest a different post-callback loan."""
+    loan = NS(
+        id="loan-1", record_id="edition-1",
+        source_provider="synthetic-library", source_credential="reader",
+        source_account_id="primary",
+    )
+    replacements = {
+        "id": "other-loan", "record_id": "other-edition",
+        "source_provider": "other-library",
+        "source_credential": "other-reader",
+        "source_account_id": "linked-reader",
+    }
+    checks = []
+
+    def changed_owner_read(*args):
+        checks.append(args)
+        setattr(loan, field, replacements[field])
+        return True
+
+    invoke, store, borrower, resolver, profiles, *_ = _fixture(
+        provider="synthetic-library", loan_override=loan,
+        owner_current=changed_owner_read,
+    )
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    assert checks == [("synthetic-library", "reader", "identity-1")]
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+
+
+def test_staged_unreadable_identity_returns_refusal_with_acsm_receipt():
+    class HostileIdentity:
+        @property
+        def identity_id(self):
+            raise RuntimeError("private ADEPT identity getter")
+
+    invoke, store, borrower, resolver, profiles, _loan, options = _fixture(
+        provider="synthetic-library",
+    )
+    options["identity"] = HostileIdentity()
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    assert store.call_args.args[0]["metadata"]["acsm_staging_path"] == (
+        "/synthetic/staged.acsm"
+    )
