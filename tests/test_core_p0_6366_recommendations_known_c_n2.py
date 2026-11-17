@@ -267,6 +267,8 @@ def test_real_core_worker_propagates_c_to_known_recommendation_detail(
         assert len(painted) == 1
         assert painted[0][0] == ("offline" if fail else "ok")
         assert painted[0][2]["public_c_document"] == expected
+        assert callable(painted[0][2]["c_selection_is_current"])
+        assert painted[0][2]["c_selection_is_current"]() is True
         assert bool(errors) == fail
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
