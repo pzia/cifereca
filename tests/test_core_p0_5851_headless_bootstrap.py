@@ -43,9 +43,9 @@ def test_headless_core_does_not_import_external_ui_even_when_forced(tmp_path):
     manifest = _manifest("org.test.headless-mixed", "1.0.0", [
         {"id": "test.headless-ui", "type": "ui.page",
          "entrypoint": "headless_forbidden_ui:PLUGIN", "enabled_by_default": True},
-        {"id": "test.headless-business", "type": "meta.bundle",
+        {"id": "test.headless-business", "type": "runtime.adapter",
          "entrypoint": "headless_business_fixture:PLUGIN", "enabled_by_default": True},
-        {"id": "test.headless-dependent", "type": "meta.bundle",
+        {"id": "test.headless-dependent", "type": "runtime.adapter",
          "entrypoint": "headless_forbidden_dependent:PLUGIN", "enabled_by_default": True,
          "requires": [{"plugin": "test.headless-ui"}]},
     ])
