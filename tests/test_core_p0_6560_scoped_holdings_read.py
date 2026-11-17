@@ -184,3 +184,14 @@ def test_cache_hit_revoked_and_legacy_cache_not_inherited():
 
     core.storage.cache_get = revoke
     assert core.read(scope, item).availability_status == "unknown"
+
+
+def test_public_label_does_not_authorize_foreign_private_session():
+    core = Core()
+    scope = capture_search_read_scope(core, "alice")
+    item = row("card-b")
+    item.source_collection = "public"
+    item.owned = False
+    core.install("card-b", lambda *_: pytest.fail("foreign private GET"))
+    assert core.read(scope, item).availability_status == "unknown"
+    assert core.storage.reads == []
