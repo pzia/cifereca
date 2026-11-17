@@ -207,3 +207,51 @@ def test_scoped_catalog_revoked_source_before_query_never_dispatches(tmp_path, m
             scoped.search_progressive("Progressive Book", on_batch=lambda _: None)
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_scoped_final_rows_belong_to_request_not_global_search(tmp_path, cached):
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    service = setup(tmp_path)
+    service._sessions = {"good": _FakeSession("good")}
+    scope = capture_search_read_scope(service, "alice")
+    try:
+        if cached:
+            service.search_progressive_result_for_scope(scope, "Progressive Book", force=True)
+        service.select_identity("bob")
+        sentinel = _FakeSession("sentinel").search("new profile", "all")
+        service.last_search = sentinel
+        service.last_search_warnings = ["new profile state"]
+        batches = []
+        summary, rows = service.search_progressive_result_for_scope(
+            scope, "Progressive Book", force=not cached, on_batch=batches.append,
+        )
+        assert not summary.cancelled
+        assert rows and len(rows) == summary.result_count
+        assert tuple(row for batch in batches for row in batch.results) == rows
+        assert service.last_search is sentinel
+        assert service.last_search_warnings == ["new profile state"]
+        if cached:
+            assert batches and all(batch.cached for batch in batches)
+    finally:
+        service.close()
+
+
+def test_scoped_final_rows_are_not_returned_after_real_revocation(tmp_path):
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    service = setup(tmp_path)
+    service._sessions = {"good": _FakeSession("good")}
+    scope = capture_search_read_scope(service, "alice")
+    try:
+        batches = []
+        def revoke(batch):
+            batches.append(batch)
+            service._source_context_epoch += 1
+        summary, rows = service.search_progressive_result_for_scope(
+            scope, "Progressive Book", force=True, on_batch=revoke,
+        )
+        assert batches and summary.cancelled
+        assert rows == ()
+        assert service.last_search == []
+    finally:
+        service.close()

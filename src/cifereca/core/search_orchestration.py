@@ -1430,7 +1430,7 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         return [], ["Recherche en flux indisponible"], "StreamProviderFailed", "Recherche en flux indisponible"
 
 
-def search_progressive(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', provider_ids: tuple[str, ...] | list[str] | None=None, field: str='all', content_types: tuple[str, ...] | list[str] | None=None, on_batch: Callable[[Any], None] | None=None, control: Any=None, on_event: Callable[[ProviderSearchEvent], None] | None=None, include_redundant_merged: bool=False, executor, logger, request_scope=None):
+def search_progressive(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', provider_ids: tuple[str, ...] | list[str] | None=None, field: str='all', content_types: tuple[str, ...] | list[str] | None=None, on_batch: Callable[[Any], None] | None=None, control: Any=None, on_event: Callable[[ProviderSearchEvent], None] | None=None, include_redundant_merged: bool=False, executor, logger, request_scope=None, return_rows: bool=False):
     """Parallel federated search with provider-scoped progressive batches.
 
     Providers keep their simple synchronous ``search`` contract.  Core owns
@@ -1448,6 +1448,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     started_dt = datetime.now(timezone.utc)
     started_mono = time.monotonic()
     scoped = request_scope is not None
+    if return_rows and not scoped:
+        raise ValueError("search_read_scope_required")
     with self._search_generation_lock:
         if scoped:
             if type(request_scope) is not SearchReadScope or not request_scope.current(self):
@@ -1613,7 +1615,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                         else:
                             cancelled = True
                 completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                return CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
+                summary = CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
+                return (summary, () if cancelled else tuple(rows)) if return_rows else summary
 
     aggregate: list[SearchResult] = []
     progressive_c_pairs = []
@@ -1899,7 +1902,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 cancelled = True
     self.diagnostics.add("SEARCH", "progressive federated", detail={"providers": provider_key, "field": field, "results": len(rows), "completed": completed_count, "failed": failed, "cancelled": cancelled, "dt_ms": int((time.monotonic()-started_mono)*1000)}, level="detailed")
     completed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    return CatalogSearchSummary(query, len(rows), len(searchable), completed_count, failed, cancelled, tuple(warnings), started_dt.isoformat(timespec="seconds"), completed_at)
+    summary = CatalogSearchSummary(query, len(rows), len(searchable), completed_count, failed, cancelled, tuple(warnings), started_dt.isoformat(timespec="seconds"), completed_at)
+    return (summary, () if cancelled else tuple(rows)) if return_rows else summary
 
 
 def search_local_library(self, query: str, scope: str='all', *, field: str='all', identity_id: str, age: int | None=None, age_kind: str | None=None, logger) -> list[dict[str, Any]]:
