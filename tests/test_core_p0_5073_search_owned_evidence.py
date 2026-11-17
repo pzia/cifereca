@@ -29,7 +29,7 @@ def _old_proof(provider="fictional-provider"):
 def test_supplier_flag_and_exact_historical_proof_cannot_mark_owned(provider, owned):
     row = result_row(_item(provider, owned=owned), purchase_evidence=_old_proof(provider),
                      identity_id="reader-A", account_context_epoch=7, source_context_epoch=9)
-    assert row["state"] == "remote_catalog" and row["owned"] is False
+    assert row["state"] == "remote_catalog" and row["owned"] is (None if owned is None else False)
 
 
 @pytest.mark.parametrize("changes", [
