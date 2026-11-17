@@ -4257,17 +4257,33 @@ class LibraryService:
                 # v16 borrower-grant resolver is scoped to *any* lender.
                 # A linked borrower cannot bypass the pre-staging veto merely
                 # because the source is not Paris. No extra GET/POST occurs.
-                _, borrower_code = self._paris_adept_identity_for_loan(
-                    loan, connection_identity_id=bound_identity_id,
-                )
+                try:
+                    borrower_identity, borrower_code = (
+                        self._paris_adept_identity_for_loan(
+                            loan, connection_identity_id=bound_identity_id,
+                        )
+                    )
+                except Exception:
+                    # A failing source-scoped resolver is not a grant. Keep
+                    # the original explicit refusal before rights or GET.
+                    borrower_identity, borrower_code = (
+                        None, "adept_borrower_ambiguous",
+                    )
                 if not admission_intact():
                     return source_refusal()
-                # Literal None is the only approved borrower grant.
-                if borrower_code is not None:
+                # A None refusal code alone is not positive borrower proof.
+                # A source-scoped explicit grant may name a borrower other
+                # than the connection owner; require native evidence only.
+                if (borrower_code is not None
+                        or type(borrower_identity) is not str
+                        or not borrower_identity):
                     return {
                         "status": "attention_required", "loan_id": source.loan_id,
-                        "code": adept_borrower.public_borrower_refusal_code(
-                            borrower_code,
+                        "code": (
+                            adept_borrower.public_borrower_refusal_code(
+                                borrower_code,
+                            ) if borrower_code is not None
+                            else "adept_borrower_ambiguous"
                         ), "retry": "explicit_only",
                     }
                 # A persisted acquisition or active entitlement for this
