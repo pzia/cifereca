@@ -138,7 +138,7 @@ def test_url_only_path_keeps_prior_success_and_n0_observer_order():
     assert applied == ["receipt"]
 
 
-def test_real_gtk_sink_checks_existing_n2_guard_twice_and_counts_late():
+def test_real_gtk_sink_preserves_three_n2_checks_at_decode_repair_and_paint():
     source = (ROOT / "book_widgets.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     cover = next(c for c in tree.body if isinstance(c, ast.ClassDef)
@@ -147,10 +147,16 @@ def test_real_gtk_sink_checks_existing_n2_guard_twice_and_counts_late():
                  if isinstance(fn, ast.FunctionDef) and fn.name == "_apply_result")
     text = ast.unparse(paint)
     assert "getattr(self, '_document_check', None)" in text
-    assert text.count("current = check() is True") == 2
-    assert text.index("current = check() is True") < text.index(
-        "Gdk.Texture.new_from_file"
-    )
-    assert text.rindex("current = check() is True") < text.index(
-        "loader.note_ui_applied()"
-    )
+    # The decode-failure path gained its own N2/CAS veto before a bounded
+    # repair callback. That is a *third* protection, not a removed guard.
+    # Pin all three boundaries instead of failing on the old count of two.
+    checks = "current = check() is True"
+    assert text.count(checks) == 3
+    before_decode = text.index(checks)
+    during_repair = text.index(checks, before_decode + len(checks))
+    after_decode = text.rindex(checks)
+    decode = text.index("Gdk.Texture.new_from_file")
+    repair = text.index("repair = getattr(self, '_document_decode_retry', None)")
+    paint_success = text.index("loader.note_ui_applied()")
+    assert before_decode < decode < during_repair < repair
+    assert during_repair < after_decode < paint_success
