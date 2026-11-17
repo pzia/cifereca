@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from hashlib import sha256
 import importlib.util
+from inspect import signature
 import json
 from pathlib import Path
 import statistics
@@ -92,6 +93,9 @@ def benchmark(*, chains=512, samples=64):
             # No successful result is claimed for a port absent on main.
             read_page = getattr(journal, "read_ready_page", None)
             counts["scan_port_available"] = callable(read_page)
+            counts["filtered_scan_port_available"] = (
+                callable(read_page) and "supported" in signature(read_page).parameters
+            )
             if callable(read_page):
                 after = None
                 cursors = dict.fromkeys(KINDS)
@@ -116,9 +120,10 @@ def benchmark(*, chains=512, samples=64):
                             examined += result.examined
                         return examined
 
-                    examined = measure("four_filtered_pages8", four_pages)
-                    assert examined <= 32
-                    counts["rotation_examined"] += examined
+                    if counts["filtered_scan_port_available"]:
+                        examined = measure("four_filtered_pages8", four_pages)
+                        assert examined <= 32
+                        counts["rotation_examined"] += examined
 
             def finish(lease):
                 with db._lock, db._connect() as sql:
