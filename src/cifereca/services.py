@@ -3211,14 +3211,22 @@ class LibraryService:
         self, source: Path, *, identity_id: str | None = None, provider_id: str = "manual", title: str | None = None,
         placement_provider_id: str | None = None,
     ) -> dict[str, Any]:
-        identity = self.identity_by_id(identity_id) if identity_id else self.current_identity
-        iid = identity.identity_id if identity else identity_id
+        # This is a mutation boundary, not a GTK convenience selector.
+        # Reject absent/malformed coordinates before identity lookup, locks,
+        # ledger writes or filesystem/DRM work.
+        if (type(identity_id) is not str or not identity_id
+                or len(identity_id) > 1024
+                or any(ch in identity_id for ch in "\x00\r\n")):
+            raise ProviderConfigurationError("Identité explicite requise pour l'import ACSM")
+        identity = self.identity_by_id(identity_id)
+        resolved = getattr(identity, "identity_id", None)
+        if type(resolved) is not str or resolved != identity_id:
+            raise ProviderConfigurationError("Aucune Identity active pour l'import ACSM")
+        iid = identity_id
         try:
             # One dedicated import lock also covers two paths containing the
             # same ACSM, and avoids re-entering the global acquisition lock
             # when a provider delegates fulfillment to this public broker.
-            if identity is None:
-                raise ProviderConfigurationError("Aucune Identity active pour l'import ACSM")
             try:
                 with InterProcessLock(acquisition_lock_file().with_name("manual-acsm.lock")):
                     result = self._import_acsm_impl(
