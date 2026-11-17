@@ -47,7 +47,7 @@ def _history_cache_key(account: Account) -> str:
 
 
 
-def _pinned_history_c_rows(rows: object, account: Account) -> list[HistoryItem]:
+def _pinned_history_c_rows(rows: object, account: Account, *, descriptors: tuple) -> list[HistoryItem]:
     """Qualify borrowed history DTOs only from an exact, leased Core read.
 
     The Paris normalizer (and other legacy adapters) can omit owner fields.
@@ -66,11 +66,12 @@ def _pinned_history_c_rows(rows: object, account: Account) -> list[HistoryItem]:
         return []
     # An account-scoped history read is not, by itself, a proof that the
     # source's book RecordId identifies a public catalogue edition.
-    from .notice_c_borrower_public_projection import _attested_public_edition
+    from .notice_c_borrower_public_projection import _attested_public_edition, _declared_branches
+    declarations = _declared_branches(descriptors)
     qualified: list[HistoryItem] = []
     for item in rows:
         if (type(item) is not HistoryItem
-                or _attested_public_edition(item) is None
+                or _attested_public_edition(item, declarations) is None
                 or item.thumbnail_url is not None
                 or type(item.source_provider) is not str
                 or item.source_provider != account.provider_id
@@ -93,7 +94,7 @@ def _pinned_history_c_rows(rows: object, account: Account) -> list[HistoryItem]:
 
 def _leased_cached_history_c_rows(
     self, rows: list[HistoryItem], *, account: Account,
-    scope: tuple[str, str, str, str], source_epoch: int,
+    scope: tuple[str, str, str, str], source_epoch: int, descriptors: tuple,
 ) -> list[HistoryItem]:
     """Cached history stays readable offline, but no C link without lease.
 
@@ -112,7 +113,7 @@ def _leased_cached_history_c_rows(
             return []
     except (ProviderConfigurationError, AttributeError, TypeError, ValueError):
         return []
-    return _pinned_history_c_rows(rows, account)
+    return _pinned_history_c_rows(rows, account, descriptors=descriptors)
 
 
 def refresh_history(
@@ -150,15 +151,16 @@ def refresh_history(
             from .notice_c_borrower_public_projection import (
                 attach_borrower_public_c, borrower_public_c_descriptors,
             )
+            descriptors = borrower_public_c_descriptors(self, source_epoch=source_epoch)
             qualified = _leased_cached_history_c_rows(
                 self, rows, account=account, scope=source_scope,
-                source_epoch=source_epoch,
+                source_epoch=source_epoch, descriptors=descriptors,
             )
             if qualified:
                 attach_borrower_public_c(
                     self.storage, qualified, identity_id=account.identity_id,
                     account_epoch=epoch, source_epoch=source_epoch,
-                    descriptors=borrower_public_c_descriptors(self, source_epoch=source_epoch),
+                    descriptors=descriptors,
                 )
             if self._account_context_epoch == epoch and self.current_account is account:
                 self.last_history = rows
@@ -214,15 +216,16 @@ def refresh_history(
     from .notice_c_borrower_public_projection import (
         attach_borrower_public_c, borrower_public_c_descriptors,
     )
+    descriptors = borrower_public_c_descriptors(self, source_epoch=source_epoch)
     if self._history_source_lease_current(
         account, session, scope=source_scope, epoch=source_epoch,
     ):
-        qualified = _pinned_history_c_rows(rows, account)
+        qualified = _pinned_history_c_rows(rows, account, descriptors=descriptors)
         if qualified:
             attach_borrower_public_c(
                 self.storage, qualified, identity_id=account.identity_id,
                 account_epoch=epoch, source_epoch=source_epoch,
-                descriptors=borrower_public_c_descriptors(self, source_epoch=source_epoch),
+                descriptors=descriptors,
             )
     if self._account_context_epoch == epoch and self.current_account is account:
         self.last_history = rows
