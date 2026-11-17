@@ -459,3 +459,49 @@ def test_preflight_importerror_logs_module_symbol_without_free_text_or_get(
     assert "PRIVATE_TOKEN" not in event
     assert "Bearer" not in event
     assert "https://" not in event
+
+
+@pytest.mark.parametrize("variant", ["no-right", "inactive", "foreign-scope", "foreign-branch", "foreign-resource", "invalid-capability", "duplicate"])
+def test_native_v2_selected_offer_is_validated_before_legacy_projection(rig, variant):
+    from cifereca.plugin_api.downloadable_resources import (
+        from_legacy_rights_snapshot, OptionalRightMetadata,
+    )
+
+    service, db, root = rig
+    _, downloads = _enabled(service, root)
+    reads = []
+
+    def selected(_account, **kwargs):
+        reads.append(kwargs)
+        reply = from_legacy_rights_snapshot(_selected(service))
+        row = reply.resources[0]
+        # Model mutation after construction; the v1 adapter used to erase
+        # nested source scope and branch before Core compared them.
+        if variant == "no-right":
+            object.__setattr__(row, "right", None)
+        elif variant == "inactive":
+            object.__setattr__(row, "right", OptionalRightMetadata("inactive", "unrelated-legal-id"))
+        elif variant == "foreign-scope":
+            object.__setattr__(row.source, "scope", replace(reply.scope, account_id="other-borrower"))
+        elif variant == "foreign-branch":
+            object.__setattr__(row.source, "branch", "other-branch")
+        elif variant == "foreign-resource":
+            object.__setattr__(row.source, "resource_id", "other-resource")
+        elif variant == "invalid-capability":
+            object.__setattr__(row.capability, "offer_id", "")
+        elif variant == "duplicate":
+            object.__setattr__(reply, "resources", (row, row))
+        return reply
+
+    service.session.downloadable_selected_offer_snapshot = selected
+    service.session.rights_selected_delivery_offer_snapshot = (
+        lambda *_a, **_kw: pytest.fail("native v2 must never fall back to v1")
+    )
+    result = synchronize_account_source(service, service.account)
+    assert len(reads) == 1 and reads[0]["resource_id"] == service.source.right_id
+    good = variant in {"no-right", "inactive"}
+    assert result["canonical_execution"]["downloaded"] == int(good)
+    assert len(downloads) == int(good)
+    assert refs(db)[1] == int(good)
+    assert len(db.placements()) == int(good)
+    assert db.entitlements() == []
