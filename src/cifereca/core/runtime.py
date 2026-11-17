@@ -13,6 +13,7 @@ from ..storage import Storage
 from .llm_service import optional_llm_service
 from ..task_admission import SharedTaskAdmission
 from .notice_c_work_runtime import NoticeWorkRuntime, validate_notice_work_admission
+from .notice_c_reparse_execution import PublicReplayRegistry
 
 
 @dataclass(slots=True)
@@ -45,9 +46,14 @@ class CiferecaCore:
         force_plugins: tuple[str, ...] = (),
         activate_plugins: bool = True,
         notice_work_admission: SharedTaskAdmission | None = None,
+        notice_replay_registry: PublicReplayRegistry | None = None,
     ) -> Self:
         # Explicit trusted composition/acceptance option only; ordinary
         # CLI and GTK startup retain their current admission and behavior.
+        if notice_replay_registry is not None and (
+                type(notice_replay_registry) is not PublicReplayRegistry
+                or notice_work_admission is None):
+            raise ValueError("notice_reparse_invalid_registry")
         if notice_work_admission is not None:
             validate_notice_work_admission(notice_work_admission)
         config = Config(config_path) if config_path is not None else Config()
@@ -72,7 +78,8 @@ class CiferecaCore:
         brokers = (build_public_brokers(library) if notice_work_admission is None
                    else build_public_brokers(library, task_admission=notice_work_admission))
         notice_work = (None if notice_work_admission is None else
-                       NoticeWorkRuntime(storage, brokers["tasks"]))
+                       NoticeWorkRuntime(storage, brokers["tasks"],
+                                         replay_registry=notice_replay_registry))
         llm = optional_llm_service(config)
         plugins = PluginManager(
             builtin_ui=builtin_ui,
