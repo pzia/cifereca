@@ -406,16 +406,22 @@ def _private_search_owner(self, session: ProviderSession) -> str | None:
 _CORE_LIVE_PUBLIC_C_WRITER: ContextVar[bool] = ContextVar(
     "cifereca_core_live_public_c_writer", default=False,
 )
+_CORE_PROGRESSIVE_C_WRITTEN: ContextVar[bool] = ContextVar(
+    "cifereca_core_progressive_c_written", default=False,
+)
 
 
 def _mirror_live_search_results(
     service, rows: list[SearchResult], *, identity_id: str,
+    c_already_ingested: bool = False,
 ) -> int:
     """Invoke the legacy mirror ABI while requiring a same-call C witness."""
     token = _CORE_LIVE_PUBLIC_C_WRITER.set(True)
+    ingested = _CORE_PROGRESSIVE_C_WRITTEN.set(c_already_ingested)
     try:
         return service._mirror_remote_results(rows, identity_id=identity_id)
     finally:
+        _CORE_PROGRESSIVE_C_WRITTEN.reset(ingested)
         _CORE_LIVE_PUBLIC_C_WRITER.reset(token)
 
 
@@ -1544,6 +1550,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 return CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
 
     aggregate: list[SearchResult] = []
+    progressive_c_pairs = []
+    early_c = on_batch is not None
     warnings: list[str] = []
     failed = completed_count = 0
     cancelled = False
@@ -1709,6 +1717,18 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                             f"{session.descriptor.display_name}: "
                             + _stale_public_fallback_warning(offline.status)
                         ]
+                if early_c and identity is not None and not request_cancelled():
+                    # Public C observations have no account/rights; the private
+                    # catalogue mirror remains a final, admitted aggregate.
+                    # Never publish a batch before its documentary producer.
+                    _clear_public_c_stamps(live_rows)
+                    progressive_c_pairs.extend(_ingest_public_search_c(
+                        self, live_rows, identity_id=identity.identity_id,
+                        now=int(time.time()), require_public_cover_witness=True,
+                    ))
+                    if request_cancelled():
+                        cancelled = True
+                        break
                 aggregate.extend(provider_rows)
                 warnings.extend(provider_warnings)
                 completed_count += 1
@@ -1753,8 +1773,20 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         ]
         try: _mirror_live_search_results(
             self, live_results, identity_id=identity.identity_id,
+            c_already_ingested=early_c,
         )
         except Exception: logger.warning("TRACE catalog mirror progressive search code=mirror_failed")
+        if early_c and not request_cancelled():
+            # A later supplier can complete a strong edition relation. Reuse
+            # the already persisted source snapshots; don't write observations
+            # twice or resurrect a superseded duplicate result.
+            keep = {id(row) for row in live_results}
+            pairs = [pair for pair in progressive_c_pairs if id(pair[0]) in keep]
+            if len({pair[0].source_provider for pair in pairs}) > 1:
+                try:
+                    _reconcile_progressive_public_c(self.storage, pairs, restore_own=True)
+                except Exception:
+                    logger.warning("TRACE notice c progressive code=late_reconciliation_failed")
     cancelled = cancelled or request_cancelled()
     if not cancelled and not warnings and failed == 0:
         self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
@@ -2222,16 +2254,8 @@ def _mirror_remote_results(
     if type(identity_id) is not str or not identity_id.strip():
         return 0
     now = int(time.time())
-    # Revoke a former producer association before validating current rows.
-    # A mutable supplier result may be reused by a later source batch.
-    for row in rows:
-        if type(row) is SearchResult:
-            row.__dict__.pop("_core_notice_cover_document_ref", None)
-            row.__dict__.pop("_core_notice_cover_document_epoch", None)
-            row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
-            row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
-            row.__dict__.pop("_core_persisted_c_revision_witness", None)
-            row.__dict__.pop("_core_notice_cross_provider_proof", None)
+    if not _CORE_PROGRESSIVE_C_WRITTEN.get():
+        _clear_public_c_stamps(rows)
     # Generic exact Core ledger attestation; a legacy descriptive personal
     # row may lack account/revision, but it never grants an actionable right.
     # The stronger #5073 UI/action proof remains authoritative for actions.
@@ -2350,9 +2374,32 @@ def _mirror_remote_results(
             },
         })
     self.storage.catalog_entries_upsert_many(upserts)
-    # #6366: this is the real Core ingestion boundary for *parsed* live
-    # supplier rows. No GTK binder, extra provider GET or N3 cache HIT may
-    # create a Notice C source. Preserve the old catalogue mirror for now.
+    if not _CORE_PROGRESSIVE_C_WRITTEN.get():
+        _ingest_public_search_c(
+            self, rows, identity_id=identity_id, now=now,
+            require_public_cover_witness=require_public_cover_witness,
+        )
+    return len(upserts)
+
+def _clear_public_c_stamps(rows):
+    # Revoke a former producer association before validating current rows.
+    # A mutable supplier result may be reused by a later source batch.
+    for row in rows:
+        if type(row) is SearchResult:
+            row.__dict__.pop("_core_notice_cover_document_ref", None)
+            row.__dict__.pop("_core_notice_cover_document_epoch", None)
+            row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
+            row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
+            row.__dict__.pop("_core_persisted_c_revision_witness", None)
+            row.__dict__.pop("_core_notice_cross_provider_proof", None)
+            row.__dict__.pop("_core_cached_c_receipt", None)
+
+
+def _ingest_public_search_c(self, rows, *, identity_id, now,
+                            require_public_cover_witness=False):
+    """Persist public observations before publishing their batch; no legacy mirror."""
+    pairs = []
+    # The same public-document writer serves sync and progressive batches.
     #
     # Production Storage owns the durable source index. Test/fake storage
     # backends without that index keep the existing mirror contract.
@@ -2364,7 +2411,7 @@ def _mirror_remote_results(
         from .notice_c_cover_index import persist_exact_public_search_cover
         producing_rows = []
         observations = []
-        for _key, row, _state, _qualified in keyed:
+        for row in rows:
             if ((require_public_cover_witness or _CORE_LIVE_PUBLIC_C_WRITER.get())
                     and not _verified_public_cover_witness(row)):
                 # Do not promote an arbitrary legacy/private SearchResult to C.
@@ -2411,6 +2458,7 @@ def _mirror_remote_results(
                     # index retains its own N2 revision and source proofs.
                     if (persisted.observation.parser_version == "2"
                             and _verified_public_cover_witness(row)):
+                        canonical = None
                         try:
                             canonical = persist_exact_public_search_cover(
                                 self.storage, persisted,
@@ -2428,45 +2476,53 @@ def _mirror_remote_results(
                             )
                             from .notice_c_live_revision import stamp_persisted_c_revision
                             stamp_persisted_c_revision(row, canonical)
-                # Reconcile only when TWO separately persisted public source
-                # observations have a real common v14 completed OriginLink.
-                # This is a single worker-only scan per Search batch; no
-                # supplier dispatch, GTK SQLite read or title/ISBN join.
-                from .notice_c_origin_link_producer import (
-                    reconcile_origin_linked_public_batch,
-                    _CORE_ORIGIN_LINK_C_WITNESS,
-                )
-                verified_sources = [
-                    persisted for row, persisted in zip(
-                        producing_rows, persisted_batch,
-                    )
-                    if (persisted is not None
-                        and persisted.observation.parser_version == "2"
-                        and _verified_public_cover_witness(row))
-                ]
-                linked = reconcile_origin_linked_public_batch(
-                    self.storage, verified_sources,
-                ) if verified_sources else {}
-                for row, persisted in zip(producing_rows, persisted_batch):
-                    if persisted is None or not _verified_public_cover_witness(row):
-                        continue
-                    shared = linked.get(persisted.document.source_key)
-                    if shared is None:
-                        continue
-                    row._core_notice_canonical_cover_document_ref = shared.document
-                    row._core_notice_canonical_cover_document_epoch = shared.epoch
-                    from .notice_c_live_revision import stamp_persisted_c_revision
-                    stamp_persisted_c_revision(row, shared)
-                    row._core_notice_cross_provider_proof = (
-                        _CORE_ORIGIN_LINK_C_WITNESS,
-                        persisted.document.source_key,
-                        shared.document.source_key,
-                        shared.epoch,
-                    )
+                        pairs.append((row, persisted, canonical))
+                _reconcile_progressive_public_c(self.storage, pairs)
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # Catalogue mirror remains independent. A broken source
                 # index cannot invent a cover or leak provider bytes/paths.
                 logging.getLogger("cifereca").warning(
                     "TRACE notice c public search code=source_batch_failed"
                 )
-    return len(upserts)
+    return pairs
+
+
+def _reconcile_progressive_public_c(storage, pairs, *, restore_own=False):
+    """Restamp only currently verified persisted editions, never reobserve."""
+    from .notice_c_origin_link_producer import (
+        reconcile_origin_linked_public_batch, _CORE_ORIGIN_LINK_C_WITNESS,
+    )
+    from .notice_c_live_revision import stamp_persisted_c_revision
+
+    current = [(row, source, own) for row, source, own in pairs
+               if _verified_public_cover_witness(row)
+               and getattr(row, "_core_notice_cover_document_ref", None) == source.document
+               and getattr(row, "_core_notice_cover_document_epoch", None) == source.epoch]
+    if restore_own:
+        for row, source, own in current:
+            row.__dict__.pop("_core_notice_cross_provider_proof", None)
+            if own is None:
+                row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
+                row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
+                row.__dict__.pop("_core_persisted_c_revision_witness", None)
+            else:
+                row._core_notice_canonical_cover_document_ref = own.document
+                row._core_notice_canonical_cover_document_epoch = own.epoch
+                stamp_persisted_c_revision(row, own)
+    # Only one writer; late reconciliation reuses accepted source snapshots.
+    linked = reconcile_origin_linked_public_batch(
+        storage, [source for _row, source, _own in current],
+    ) if current else {}
+    for row, source, _own in current:
+        shared = linked.get(source.document.source_key)
+        if shared is None:
+            continue
+        row._core_notice_canonical_cover_document_ref = shared.document
+        row._core_notice_canonical_cover_document_epoch = shared.epoch
+        stamp_persisted_c_revision(row, shared)
+        row._core_notice_cross_provider_proof = (
+            _CORE_ORIGIN_LINK_C_WITNESS, source.document.source_key,
+            shared.document.source_key, shared.epoch,
+        )
+
+
