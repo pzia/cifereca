@@ -150,3 +150,56 @@ def test_generic_exact_reader_rejects_reserved_and_malformed_source_ids():
 def test_historical_module_return_verifier_is_only_an_alias_of_neutral_reader():
     # No provider-name based runtime delegation and no public ABI removal.
     assert verify_paris_return_inventory is verify_loan_return_inventory
+
+
+@pytest.mark.parametrize("declared,row_id,present", [
+    (None, "", True),
+    ("main-reader", "main-reader", True),
+    ("main-reader", "", True),
+    (None, "primary", False),
+    ("main-reader", "primary", False),
+])
+def test_primary_borrower_uses_installed_alias_not_historical_literal(
+    declared, row_id, present,
+):
+    from cifereca.providers.base import ProviderDescriptor, ProviderCapabilities
+
+    service, account, session, loan, calls = _rig()
+    account.unique_id = ""
+    account.is_primary = True
+    loan.source_account_id = ""
+    session.descriptor = ProviderDescriptor(
+        id=account.provider_id, display_name="Future lender",
+        description="offline", state="ready",
+        capabilities=ProviderCapabilities(loans=True),
+        existing_primary_loan_account_alias=declared,
+    )
+    row = replace(loan, source_account_id=row_id)
+
+    def read(selected):
+        calls.append(selected)
+        return LoanInventorySnapshot(
+            scope=LoanInventoryScope.for_account(selected, descriptor=session.descriptor),
+            loans=(row,), status="success", branches=(
+                LoanBranchCoverage("pbnb", "digital", "complete", pagination_complete=True),
+            ),
+        )
+
+    session.loan_inventory_snapshot = read
+    if present:
+        assert _read_paris_return_presence(service, account, session, loan) is True
+    else:
+        with pytest.raises(ValueError, match="return_inventory_unavailable"):
+            _read_paris_return_presence(service, account, session, loan)
+    assert calls == [account]
+    assert session.posts == []
+
+
+def test_complete_typed_inventory_with_native_empty_borrower_can_attest_absence():
+    service, account, session, loan, calls = _rig()
+    account.unique_id = ""
+    account.is_primary = True
+    loan.source_account_id = ""
+    assert _read_paris_return_presence(service, account, session, loan) is False
+    assert calls == [account]
+    assert session.posts == []
