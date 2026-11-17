@@ -135,7 +135,9 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
                 presentation, cover_document_ref=link.document,
                 thumbnail_url=None,
             )
-            with staged_local_public_c_detail(detail, check):
+            with staged_local_public_c_detail(
+                detail, check, minimum_revision=link.epoch,
+            ):
                 detail.show_presentation(
                     presentation, description=description,
                 )
