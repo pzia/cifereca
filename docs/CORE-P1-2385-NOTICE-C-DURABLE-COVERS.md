@@ -61,3 +61,19 @@ La C consolidée, N3, les droits et les fichiers restent inchangés.
 Pas de TTL automatique, de scheduler ou de nouveau GET. Coût metadata
 supplémentaire par source à mesurer. La protection du dernier état complet
 après éviction reste une tranche distincte.
+
+### Observation partielle après éviction
+
+Une source évincée n'a plus de preuve descriptive locale à restituer. Une
+observation partielle **différente** ne recrée donc pas sa ligne et ne masque
+pas la C consolidée : le writer renvoie `None`, conserve le digest et la
+génération du fence et avance atomiquement son watermark. Le batch conserve
+son contrat résultat par position. Une ancienne preuve complète ou un CAS
+révoqué ne peut pas gagner contre cette fraîcheur. L'identique replay d'une
+preuve initialement pending reste admis selon les règles CAS existantes.
+Une preuve complète fraîche peut réhydrater la source.
+
+Ce choix est conservateur pour un ancien fence de preuve pending qui ne
+contient plus le corps : une preuve partielle **modifiée** reste inconnue
+jusqu'à une observation complète. Les sources purgées avant tout fence ne
+sont pas rétroactivement réparées. Aucun nouveau stockage, GET ni droit.
