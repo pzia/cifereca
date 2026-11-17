@@ -82,9 +82,9 @@ def _safe_series_search_href(href: object) -> bool:
         return False
     decoded = unquote(html.unescape(href))
     if (not _series_link_declared(href)
-            or any(ch.isspace() or category(ch) in {"Cc", "Cf", "Cs"} or ch == "\\\\"
+            or any(ch.isspace() or category(ch) in {"Cc", "Cf", "Cs"} or ch == chr(92)
                    for ch in href)
-            or any(category(ch) in {"Cc", "Cf", "Cs"} or ch == "\\\\"
+            or any(category(ch) in {"Cc", "Cf", "Cs"} or ch == chr(92)
                    for ch in decoded)):
         return False
     try:
