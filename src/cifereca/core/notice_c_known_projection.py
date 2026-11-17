@@ -15,6 +15,7 @@ from typing import Any
 
 from .notice_c_public_search import PublicNoticeCPage, PublicNoticeCHit
 from .notice_cover_repository import is_notice_cover_document
+from .notice_c_cover_index import _MAX_SOURCES
 
 _MAX = 50
 
@@ -55,7 +56,7 @@ def merge_public_notice_c_known_rows(
 ) -> list[dict[str, Any]]:
     """Present known C before the mirror; source C never conveys rights.
 
-    The C query cursor limits itself to 50 known observations, so this first
+    The C query cursor limits itself to 50 known documents or source facts, so this first
     stage has no claim to full query coverage. An empty page is unknown, not
     evidence that a provider has zero documents.
     """
@@ -64,10 +65,21 @@ def merge_public_notice_c_known_rows(
             or len(page.hits) > _MAX):
         raise ValueError("invalid_known_public_c_projection")
 
+    hits = page.hits
+    if page.known_documents is not None:
+        # A grouped page can carry up to 32 exact sources per visible C.
+        # Do not reintroduce an unrelated group or silently truncate its
+        # admitted matching alternatives when suppressing public mirrors.
+        hits = page.matching_sources
+        if (type(hits) is not tuple or len(hits) > _MAX * _MAX_SOURCES
+                or any(type(hit) is not PublicNoticeCHit for hit in hits)
+                or any(type(hit) is not PublicNoticeCHit for hit in page.hits)
+                or {hit.document for hit in hits} != {hit.document for hit in page.hits}):
+            raise ValueError("invalid_grouped_public_c_projection")
     rows: list[dict[str, Any]] = []
     admitted: list[PublicNoticeCHit] = []
     by_document: dict[str, dict[str, Any]] = {}
-    for hit in page.hits:
+    for hit in hits:
         if (type(hit) is not PublicNoticeCHit
                 or hit.document.kind != "public_catalogue"
                 or hit.document.identity_id is not None

@@ -335,6 +335,7 @@ def test_online_reads_public_notice_c_before_provider_without_gtk_sqlite(
             assert query == "Dumas"
             assert kwargs == {
                 "field": "all", "scope": "all", "provider_ids": (),
+                "group_by_document": True,
             }
             return search_public_notice_c(db, query, **kwargs)
         host.service.search_public_notice_c = Mock(side_effect=read)

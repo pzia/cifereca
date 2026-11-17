@@ -221,3 +221,61 @@ def test_stale_canonical_epoch_never_rebinds_changed_live_source(tmp_path):
         assert db.entitlements() == []
     finally:
         db.close()
+
+
+
+def test_grouped_pages_preserve_matching_sources_and_do_not_repeat_a_c(tmp_path):
+    filename = tmp_path / "grouped-pages.sqlite"
+    db = Storage(filename)
+    try:
+        a, b = sources(db)
+        group = shared(db, a, b)
+        other = persist(db, verified_public(
+            source_provider="seller-z", record_id="other",
+            title="Deux sources: Z",
+        ), at=100)
+        own = persist_exact_public_search_cover(db, other)
+        def page(storage, n, **kwargs):
+            return search_public_notice_c(
+                storage, "deux sources", now=100, page=n, page_size=1,
+                group_by_document=True, **kwargs,
+            )
+        def assert_pages(storage):
+            first, second, last = (page(storage, n) for n in range(3))
+            assert first.known_matches == second.known_matches == 3
+            assert first.known_documents == second.known_documents == 2
+            assert first.has_more and not second.has_more
+            assert len(first.hits) == len(second.hits) == 1
+            assert first.hits[0].document == group.document
+            assert second.hits[0].document == own.document
+            assert len(first.matching_sources) == 2
+            assert {hit.provider_id for hit in first.matching_sources} == {
+                "bnf", "numilog-catalog",
+            }
+            assert not last.hits and not last.matching_sources and not last.has_more
+            for viewer in ("alice", "bob", "carol"):
+                rows = merge_public_notice_c_known_rows([], first, identity_id=viewer)
+                assert len(rows) == 1
+                assert rows[0]["identity_id"] == viewer
+                alternative = rows[0]["metadata"]["notice_c_source_alternatives"]
+                assert len(alternative) == 1
+                assert alternative[0]["provider_id"] == "numilog-catalog"
+                assert rows[0]["thumbnail_url"] is None
+                assert not rows[0].get("download_url")
+            filtered = page(storage, 0, provider_ids=("numilog-catalog",))
+            assert filtered.known_matches == filtered.known_documents == 1
+            assert len(filtered.matching_sources) == 1
+            assert filtered.hits[0].document == group.document
+            assert not filtered.has_more
+            assert storage.entitlements() == [] and storage.acquisitions() == []
+        assert_pages(db)
+        purge(db, a, b, other)
+        assert_pages(db)
+    finally:
+        db.close()
+
+    restored = Storage(filename)
+    try:
+        assert_pages(restored)
+    finally:
+        restored.close()

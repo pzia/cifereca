@@ -1852,7 +1852,7 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
             try:
                 c_page = search_public_notice_c(
                     self.storage, query, field=field, scope=scope,
-                    provider_ids=tuple(provider_ids or ()),
+                    provider_ids=tuple(provider_ids or ()), group_by_document=True,
                 )
                 c_rows = merge_public_notice_c_known_rows(
                     [], c_page, identity_id=resolved_identity,
