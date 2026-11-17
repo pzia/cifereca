@@ -76,15 +76,19 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                 metadata=None,
             )
             from cifereca.gui.search_known_public_c_guard import (
-                pin_known_public_c, known_public_c_cell_current,
+                known_public_c_cell_current,
             )
             from cifereca.gui.local_public_c_detail_guard import (
                 staged_local_public_c_detail,
             )
-            binding = pin_known_public_c(self, row, item)
+            # Consume the receipt already attached at list publication;
+            # a new selection cannot mint freshness for an old GTK row.
+            binding = getattr(row, "_cover_known_public_c_receipt", None)
+            detail_generation = self._search_detail_request_generation
 
             def current_c_detail() -> bool:
-                if not known_public_c_cell_current(self, row, binding):
+                if (self._search_detail_request_generation != detail_generation
+                        or not known_public_c_cell_current(self, row, binding)):
                     return False
                 # Selection can change while N3 is materialising. A shared
                 # catalogue ref never transfers the old detail selection.
@@ -95,7 +99,9 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
             if binding is None or not current_c_detail():
                 panel.empty("Notice indisponible", "Source documentaire périmée.")
                 return
-            with staged_local_public_c_detail(panel, current_c_detail):
+            with staged_local_public_c_detail(
+                panel, current_c_detail, minimum_revision=binding.epoch,
+            ):
                 panel.show_presentation(
                     replace(presentation, cover_document_ref=document),
                     description=metadata.get("description"),
