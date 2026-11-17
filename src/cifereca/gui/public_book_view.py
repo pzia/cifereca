@@ -274,13 +274,9 @@ class PublicBookMasterDetailView:
                             public_c_document=public_c_document,
                         )
                 else:
-                    # Exact Search's worker callback can be delivered after
-                    # the selection has moved. Its old *actions* are just as
-                    # stale as its C image; do not render either.
-                    panel.empty(
-                        "Notice indisponible",
-                        "La sélection ou sa source a changé.",
-                    )
+                    # A stale async completion must not overwrite even
+                    # the NEW selection's existing detail with an empty pane.
+                    # Neither old image nor old source/account actions run.
                     return
         else:
             panel.show_search_document(item, detail=detail, cover_evidence=proof)
@@ -325,13 +321,8 @@ class PublicBookMasterDetailView:
                             public_c_document=public_c_document,
                         )
                 else:
-                    # The offline fallback carries the same original worker
-                    # lease. A missing selection is not permission to render
-                    # its old public C, provider URL or account actions.
-                    panel.empty(
-                        "Notice indisponible",
-                        "La sélection ou sa source a changé.",
-                    )
+                    # The offline callback is equally stale. Leave the
+                    # current selection's panel untouched (not even empty).
                     return
         else:
             panel.show_search_document(item, cover_evidence=proof)
