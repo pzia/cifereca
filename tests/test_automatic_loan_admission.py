@@ -27,7 +27,7 @@ def _setup(tmp_path, *, bound=True, linked=False):
 def _forbid_work(service, monkeypatch):
     def forbidden(*_a, **_kw): pytest.fail('initial admission cannot mutate, inspect artifacts or contact a provider')
     for name in ('acquire_digital_loan', 'execute_acquisition_request', '_kobo_adapter', 'catalog_index_path'):
-        monkeypatch.setattr(service, name, forbidden)
+        monkeypatch.setattr(service, name, forbidden, raising=name != "_kobo_adapter")
     for name in ('catalog_entries', 'acquisition_put', 'entitlement_put'):
         monkeypatch.setattr(service.storage, name, forbidden)
 

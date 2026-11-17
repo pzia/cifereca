@@ -27,7 +27,6 @@ def test_real_guards_are_counted_and_persisted_without_fulfillment(tmp_path, mon
                     'identity_id': 'alex', 'item_id': loan.record_id, 'status': 'complete',
                     'strategy': 'loan_auto', 'metadata': {'provider_loan_id': loan.id}})
         monkeypatch.setattr(service, '_loans_for_account', lambda *_a, **_kw: loans)
-        monkeypatch.setattr(service, '_kobo_adapter', lambda: NS(available=lambda: False))
         monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
         monkeypatch.setattr(service, 'acquire_digital_loan', lambda *_a, **_kw: pytest.fail('guard cannot fetch ACSM'))
         monkeypatch.setattr(service, 'execute_acquisition_request', lambda *_a: pytest.fail('guard cannot fulfill'))
@@ -101,7 +100,6 @@ def test_two_identity_field_scenario_reports_eight_refusals_without_acquisition(
                 source_account_id=account.unique_id, identity_id=account.identity_id, raw={'synthetic': True})
                 for i in range(4)]
         monkeypatch.setattr(service, '_loans_for_account', loans)
-        monkeypatch.setattr(service, '_kobo_adapter', lambda: NS(available=lambda: False))
         monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
         monkeypatch.setattr(service, 'acquire_digital_loan', lambda *_a, **_kw: pytest.fail('refusal must prevent ACSM acquisition'))
         monkeypatch.setattr(service, 'execute_acquisition_request', lambda *_a: pytest.fail('refusal must prevent fulfillment'))
@@ -143,7 +141,6 @@ def test_only_exact_attention_guard_codes_contribute(tmp_path, monkeypatch, stat
         loan = Loan(id='loan', record_id='edition', provider='PNB', medium='digital', title='Synthetic',
                     source_provider='paris', source_credential='source-a', source_account_id='borrower-a', raw={'synthetic': True})
         monkeypatch.setattr(service, '_loans_for_account', lambda *_a, **_kw: [loan])
-        monkeypatch.setattr(service, '_kobo_adapter', lambda: NS(available=lambda: False))
         monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
         monkeypatch.setattr(service, '_acquire_active_loan_automatically', lambda _: {'status': status, 'code': code})
         enable_synthetic_paris_opening(service)

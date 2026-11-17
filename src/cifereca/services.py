@@ -2728,15 +2728,6 @@ class LibraryService:
     def default_downloads_dir(self) -> Path:
         return self.acquisition.target_dir("", "ebook")
 
-    def _kobo_adapter(self):
-        """Inert compatibility seam for legacy ADEPT test injection only.
-
-        The former concrete runtime selector is retired. No product path
-        may obtain a plugin through this method; use the verified plugin
-        service and typed acquisition/inventory contracts instead.
-        """
-        raise ProviderConfigurationError("legacy_kobo_runtime_adapter_retired")
-
     def _required_plugin_service(self, plugin_id: str) -> Any:
         manager = self._plugin_manager
         if manager is None:
