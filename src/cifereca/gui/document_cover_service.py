@@ -793,8 +793,13 @@ class DocumentCoverService:
         callback: Callable[[Path | None], None], *,
         width: int = 180, height: int = 270,
         on_source_changed: Callable[[], None] | None = None,
+        minimum_revision: int | None = None,
     ) -> CoverReadRequest:
         """Use N2 HIT first; only N3 fetch/extraction follows an N1 selection.
+
+        A Core-attested persisted C epoch is an optional read floor, not an
+        N1 source decision. While the bounded cached-source worker refreshes
+        an older snapshot, neither variant may materialize that stale N2.
 
         A missing physical EPUB image never makes the already-attested
         embedded source lose its N1 preference to a cached catalogue URL.
@@ -813,6 +818,12 @@ class DocumentCoverService:
         if (type(width) is not int or type(height) is not int
                 or not 1 <= width <= 2048 or not 1 <= height <= 2048):
             raise ValueError("invalid preview dimensions")
+        if minimum_revision is not None:
+            from ..core.notice_cover_repository import is_notice_cover_document
+            if (type(minimum_revision) is not int
+                    or not 1 <= minimum_revision < 2**63
+                    or not is_notice_cover_document(document)):
+                raise ValueError("invalid Notice C read revision")
         handle = CoverReadRequest()
         with self._lock:
             if self._closed:
@@ -820,9 +831,19 @@ class DocumentCoverService:
             if on_source_changed is not None:
                 self._subscribe_source(document, handle, on_source_changed)
             snapshot = self._snapshots.get(document)
+            below_floor = (
+                snapshot is not None and minimum_revision is not None
+                and snapshot.revision < minimum_revision
+            )
             if snapshot is None:
                 self._stats["n2_miss"] += 1
                 self._stats["n2_source_unknown"] += 1
+                decision = None
+            elif below_floor:
+                # A previous consumer could have selected an older URI.
+                # Do not resolve, reuse, or materialize that token on this
+                # newer receipt. The producer still owns the source data.
+                self._stats["n2_miss"] += 1
                 decision = None
             else:
                 self._snapshots.move_to_end(document)
@@ -894,6 +915,7 @@ class DocumentCoverService:
                         and self._snapshots.get(document) is snapshot
                         and (
                             snapshot is None
+                            or below_floor
                             or self.decisions.peek(
                                 document, revision=snapshot.revision,
                             ) is decision
@@ -905,6 +927,11 @@ class DocumentCoverService:
                 self._read_source_on_n2_miss(
                     document, handle, on_source_changed,
                 )
+            if minimum_revision is not None and (snapshot is None or below_floor):
+                # For a cold read this also preserves an epoch arriving
+                # behind an already-active MISS. The common worker remains
+                # responsible for reading and publishing exact evidence.
+                self.refresh_cached_source_if_newer(document, minimum_revision)
             callback(None)
             return handle
         # The return handle exposes the N2 source before any synchronous
