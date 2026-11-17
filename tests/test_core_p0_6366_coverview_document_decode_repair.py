@@ -139,3 +139,33 @@ def test_document_without_repair_callback_never_downgrades_to_url():
     assert apply(host, host._generation, loader, FILE) is False
     assert "missing" in events
     assert not any(isinstance(e, tuple) and e[0] == "RAW" for e in events)
+
+
+@pytest.mark.parametrize("documentary", [True, False])
+def test_raw_url_bind_cannot_coalesce_with_pending_document_request(documentary):
+    host, loader, _picture, events, _apply = env()
+    host._url = URI
+    host._priority = 10
+    host._document_check = (lambda: True) if documentary else None
+    host._document_decode_retry = (lambda: None) if documentary else None
+    host.spinner.get_visible = lambda: True
+    host._request = NS(cancel=lambda: events.append("cancelled"))
+    reset = method("CoverView", "reset")
+    host.reset = lambda: reset(host)
+    host._start_cover_request = lambda **kw: events.append(("RAW", kw))
+    bind_url = method("CoverView", "bind_url")
+    initial_generation = host._generation
+    bind_url(host, loader, URI, priority=10)
+    if documentary:
+        # Same physical URI, different authority. Reuse of the old
+        # DocumentRef's pending request/observer would mix binding modes.
+        assert host._generation == initial_generation + 1
+        assert host._document_check is None
+        assert host._document_decode_retry is None
+        assert "cancelled" in events
+        assert ("RAW", {"force": False}) in events
+    else:
+        # Pure URL bindings retain the pre-existing in-flight optimization.
+        assert host._generation == initial_generation
+        assert "cancelled" not in events
+        assert ("RAW", {"force": False}) not in events
