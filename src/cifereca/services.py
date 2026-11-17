@@ -104,67 +104,8 @@ def _cross_profile_snapshot_read_scope(service, captured_preview):
     return _capture_cross_profile_read_scope(service, requesting_identity_id)
 
 
-def _loan_cache_key(account: Account) -> str:
-    """Opaque, unambiguous identity/provider/credential/borrower cache scope.
-
-    The legacy `provider:credential:uid:loans` alias omitted identity, and
-    `:` can occur inside a provider credential or borrower identifier. Do
-    not read old aliases: they cannot be safely attributed retroactively.
-    """
-    if type(account) is not Account:
-        raise ProviderConfigurationError("loan_cache_scope_invalid")
-    parts = (
-        account.identity_id, account.provider_id,
-        account.credential_id, account.unique_id,
-    )
-    if any(type(value) is not str or len(value) > 1024
-           or chr(0) in value for value in parts):
-        raise ProviderConfigurationError("loan_cache_scope_invalid")
-    serialized = json.dumps(parts, ensure_ascii=True, separators=(',', ':'))
-    return "loans.v2:" + hashlib.sha256(serialized.encode('utf-8')).hexdigest()
-
-
-def _cached_loans_for_exact_account(
-    value: object, account: Account, *, descriptor=None,
-) -> list[Loan] | None:
-    """Treat cached rows as untrusted: never rewrite their source/identity.
-
-    A cache hit is only usable if every row still identifies the same
-    provider, credential, account and identity. Corrupt/legacy rows trigger
-    an ordinary fresh provider read, never a cross-account display.
-    """
-    if type(value) is not list or len(value) > 10_000:
-        return None
-    from .plugin_api.loan_scope import loan_matches_account
-    # Exact account IDs need no alias convention. A different observed ID
-    # requires an attestation from this installed provider descriptor, not
-    # an implicit Paris/default-primary fallback encoded in Core.
-    loans = []
-    for value_row in value:
-        if type(value_row) is not dict:
-            return None
-        try:
-            row = Loan(**value_row)
-        except (TypeError, ValueError):
-            return None
-        if not (
-            type(row) is Loan
-            and type(row.id) is str and bool(row.id)
-            and type(row.source_provider) is str
-            and row.source_provider == account.provider_id
-            and type(row.source_credential) is str
-            and row.source_credential == account.credential_id
-            and type(row.source_account_id) is str
-            and (row.source_account_id == account.unique_id
-                 or loan_matches_account(row, account, descriptor))
-            and type(row.identity_id) is str
-            and row.identity_id == account.identity_id
-            and type(row.medium) is str
-            and row.medium in ('digital', 'physical', 'unknown')
-        ):
-            return None
-        loans.append(row)
-    return loans
+# Preserve the historical helper imports for tests and internal clients.
+from .core.loan_display_cache import _loan_cache_key, _cached_loans_for_exact_account
 
 
 SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._()\- àâäéèêëîïôöùûüçÀÂÄÉÈÊËÎÏÔÖÙÛÜÇ]+")
