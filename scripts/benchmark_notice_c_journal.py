@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 from hashlib import sha256
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 import statistics
@@ -92,6 +93,9 @@ def benchmark(*, chains=512, samples=64):
             # No successful result is claimed for a port absent on main.
             read_page = getattr(journal, "read_ready_page", None)
             counts["scan_port_available"] = callable(read_page)
+            counts["filtered_scan_port_available"] = (
+                callable(read_page) and "supported" in inspect.signature(read_page).parameters
+            )
             if callable(read_page):
                 after = None
                 cursors = dict.fromkeys(KINDS)
@@ -104,21 +108,22 @@ def benchmark(*, chains=512, samples=64):
                     assert page.examined <= 32 and page.corrupt == 0
                     counts["scan_examined"] += page.examined
 
-                    def four_pages():
-                        examined = 0
-                        for kind in KINDS:
-                            result = read_page(
-                                db, now=NOW, after=cursors[kind], limit=8,
-                                supported=((kind, IMPLEMENTATION),),
-                            )
-                            cursors[kind] = result.next_after
-                            assert result.corrupt == 0
-                            examined += result.examined
-                        return examined
+                    if counts["filtered_scan_port_available"]:
+                        def four_pages():
+                            examined = 0
+                            for kind in KINDS:
+                                result = read_page(
+                                    db, now=NOW, after=cursors[kind], limit=8,
+                                    supported=((kind, IMPLEMENTATION),),
+                                )
+                                cursors[kind] = result.next_after
+                                assert result.corrupt == 0
+                                examined += result.examined
+                            return examined
 
-                    examined = measure("four_filtered_pages8", four_pages)
-                    assert examined <= 32
-                    counts["rotation_examined"] += examined
+                        examined = measure("four_filtered_pages8", four_pages)
+                        assert examined <= 32
+                        counts["rotation_examined"] += examined
 
             def finish(lease):
                 with db._lock, db._connect() as sql:
