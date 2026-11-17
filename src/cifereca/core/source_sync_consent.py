@@ -45,6 +45,11 @@ def policy_key(scope):
     return _PREFIX + hashlib.sha256(encoded.encode('ascii')).hexdigest()
 
 
+def inventory_epoch_key(scope):
+    """Exact source inventory fence; not a source-wide acquisition policy."""
+    return 'sync.source.inventory-epoch.v1.' + policy_key(scope).removeprefix(_PREFIX)
+
+
 def _unique_policy_object(pairs):
     value = {}
     for key, item in pairs:
@@ -268,7 +273,7 @@ def _atomic_inventory_toggle(service, account, enabled, preference_key, scope):
     from .source_acquisition_consent import _context, _bound
     from .source_enablement import source_enabled
     from .legacy_source_consent_metadata import (
-        _POLICIES, _source_id, _consent_generation_key,
+        _POLICIES, _source_id,
     )
 
     storage, coords, current = _context(service, account)
@@ -281,7 +286,7 @@ def _atomic_inventory_toggle(service, account, enabled, preference_key, scope):
     legacy_toggle = (
         specs[0][0] + _source_id(scope) if len(specs) == 1 else None
     )
-    revision_key = _consent_generation_key(scope)
+    revision_key = inventory_epoch_key(scope)
     with storage._lock, storage._connect() as db:
         db.execute('BEGIN IMMEDIATE')
         # A live in-memory Account is not proof that its persisted identity,
@@ -330,7 +335,7 @@ def _atomic_inventory_toggle(service, account, enabled, preference_key, scope):
                     'enabled': False, 'revision': secrets.token_hex(16),
                 }, ensure_ascii=True, sort_keys=True, separators=(',', ':'))
                 writes.append((policy_key(scope), payload))
-            elif revision_key is not None:
+            else:
                 writes.append((revision_key, secrets.token_hex(16)))
         for key, value in writes:
             db.execute(
@@ -347,8 +352,8 @@ def set_inventory_source_enabled(service, account, enabled, preference_key):
 
     Only an explicit OFF of a persisted historical acquisition switch
     creates CAS OFF. ON never migrates an old preference to canonical ON.
-    Legacy epoch writing remains temporary until #5077 can remove the
-    compatibility readers without breaking already-started operations.
+    Unconfigured sources rotate an exact, provider-neutral inventory epoch;
+    historical acquisition metadata is read-only compatibility evidence.
     """
     if type(enabled) is not bool:
         raise ValueError("invalid source enabled preference")
