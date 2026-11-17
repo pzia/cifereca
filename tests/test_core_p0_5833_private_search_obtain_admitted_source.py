@@ -211,3 +211,76 @@ def test_click_preserves_matching_explicit_account(rig):
         rig, replace(_item(), source_account_id="borrower"),
     )
     assert target.account_id == "borrower" and target.source_epoch == 11
+
+
+def _explicit_reader(rig):
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    rig.identity_by_id = lambda key: rig.reader if key == "reader" else None
+    rig._provider_enabled_for_identity = lambda provider, identity: (
+        provider == "numilog" and identity == "reader"
+    )
+    rig.poison_navigation = True
+    # Deliberately invalid navigation epoch: this client has no GTK lease.
+    rig._account_context_epoch = "no navigation"
+    return capture_search_read_scope(rig, "reader")
+
+
+def test_confirmed_headless_offer_is_exact_and_single_attempt(rig, monkeypatch):
+    from cifereca.core.selected_search_admission import capture_confirmed_selected_offer
+    from cifereca.core import explicit_owned_canonical
+    scope = _explicit_reader(rig)
+    target = capture_confirmed_selected_offer(
+        rig, _item(), reader_scope=scope, account_id="borrower", confirmed=True,
+    )
+    assert target.reader_scope is scope
+    assert target.identity_id == "reader" and target.account_id == "borrower"
+    assert target.selection_epoch is None and target.source_epoch == 11
+    calls = []
+
+    def canonical(service, admitted, *, resolve, right_current):
+        assert service is rig and admitted is target
+        assert resolve(service, None, "reader", "edition") == (target, None)
+        assert right_current(service, target) is True
+        calls.append(admitted)
+        return "completed"
+
+    monkeypatch.setattr(explicit_owned_canonical, "obtain_explicit_owned", canonical)
+    assert LibraryService.obtain_admitted_private_search_offer(rig, target) == "completed"
+    with pytest.raises(ValueError, match="confirmation_consumed"):
+        LibraryService.obtain_admitted_private_search_offer(rig, target)
+    assert calls == [target]
+
+
+@pytest.mark.parametrize("confirmed,account_id", [
+    (False, "borrower"), (1, "borrower"), (None, "borrower"),
+    (True, "wrong"), (True, ""), (True, "borrower\n"),
+])
+def test_headless_admission_refuses_missing_confirmation_or_exact_account(
+    rig, confirmed, account_id,
+):
+    from cifereca.core.selected_search_admission import capture_confirmed_selected_offer
+    scope = _explicit_reader(rig)
+    with pytest.raises(ValueError):
+        capture_confirmed_selected_offer(
+            rig, _item(), reader_scope=scope, account_id=account_id, confirmed=confirmed,
+        )
+
+
+@pytest.mark.parametrize("revoked", ["registry", "policy", "source", "core"])
+def test_headless_mandate_revalidates_reader_and_source(rig, revoked):
+    from cifereca.core.selected_search_admission import capture_confirmed_selected_offer
+    scope = _explicit_reader(rig)
+    target = capture_confirmed_selected_offer(
+        rig, _item(), reader_scope=scope, account_id="borrower", confirmed=True,
+    )
+    service = rig
+    if revoked == "registry":
+        rig.reader = NS(identity_id="reader")
+    elif revoked == "policy":
+        rig._provider_enabled_for_identity = lambda *_: False
+    elif revoked == "source":
+        rig._source_context_epoch += 1
+    else:
+        service = Host()
+    with pytest.raises(ValueError, match="selected_source_binding_changed"):
+        selected._resolve(service, target)
