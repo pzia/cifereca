@@ -1,6 +1,7 @@
 """Conservative offline fallback for a failed *public* provider search (#1916).
 
-Only mirrored public catalogue rows of the active identity may be returned.
+Use the active identity's historical mirror, or independently admitted public C
+when that mirror has no matching facts. No foreign legacy mirror authority.
 This is not a purchase, loan, holding, download or fresh provider result.
 """
 from __future__ import annotations
@@ -66,6 +67,88 @@ class KnownPublicFallbackPage:
     page_size: int
     matched_count: int
     has_more: bool
+
+
+def _durable_public_c_fallback(
+    storage, *, provider_id, query, scope, field, content_types,
+    current, page, page_size, empty,
+):
+    """Installation-wide C is independently public, not a relabelled mirror.
+
+    The current C cursor supports only these fields. On a bounded source
+    budget failure or an incomplete type-filtered cohort, report an
+    unavailable inventory rather than fabricate a filtered total.
+    """
+    if field not in {"all", "title", "author", "publisher"}:
+        return empty("no_known_results")
+    if scope not in {"all", "digital", "physical", "unknown", "catalog"}:
+        return empty("no_known_results")
+    from .notice_c_public_search import search_public_notice_c
+    try:
+        first = search_public_notice_c(
+            storage, query, provider_ids=(provider_id,),
+            scope="all" if scope == "catalog" else scope, field=field,
+            page_size=_MAX_RESULTS, now=current,
+        )
+    except (TypeError, ValueError, AttributeError):
+        return empty("unavailable")
+    if first.status == "budget_exceeded":
+        return empty("scope_budget_exceeded")
+    # The legacy fallback counts only results no older than its cutoff
+    # and supports file-type filters. Within one C page we can apply both
+    # before pagination without pretending an unseen page is complete.
+    if first.has_more:
+        return empty("scope_budget_exceeded")
+    candidates = []
+    by_key = {}
+    for hit in first.hits:
+        if (hit.provider_id != provider_id or hit.last_seen_at > current
+                or current - hit.last_seen_at > _MAX_AGE_SECONDS):
+            continue
+        # C provenance is strictly decoded by its own reader. Never copy
+        # a URL, authority, active viewer, or action token into the DTO.
+        key = "known-stale-c:" + hit.edition_id
+        if key in by_key:
+            return empty("unavailable")
+        by_key[key] = hit
+        candidates.append({
+            "key": key, "provider_id": provider_id, "item_id": hit.record_id,
+            "title": hit.title, "author": hit.author, "publisher": hit.publisher,
+            "description": hit.description, "medium": hit.medium,
+            "media_format": hit.media_format, "metadata": {},
+        })
+    matched = filter_loaded_results(
+        candidates, "", providers=(provider_id,), scope=scope,
+        content_types=content_types,
+    )
+    count = len(matched)
+    if not count:
+        return empty("no_known_results")
+    start = page * page_size
+    if start >= count:
+        return KnownPublicFallbackPage((), "page_out_of_range", page, page_size, count, False)
+    results = []
+    for candidate in matched[start:start + page_size]:
+        hit = by_key[candidate["key"]]
+        results.append(SearchResult(
+            id=candidate["key"], record_id=hit.record_id, docbase=hit.docbase,
+            medium=hit.medium, title=hit.title, author=hit.author, type=None,
+            format=hit.media_format, publisher=hit.publisher,
+            published_at=None, description=hit.description,
+            scenario="KNOWN_CATALOG_STALE", source_provider=provider_id,
+            source_credential="known-public", source_collection="catalog",
+            revision_id=hit.source_revision,
+            thumbnail_url=None, friendly_url=None, owned=False, downloadable=False,
+            metadata={
+                "search_provenance": "known_catalog_stale",
+                "mirrored_at": hit.last_seen_at,
+                "notice_c_query_status": first.status,
+            },
+        ))
+    return KnownPublicFallbackPage(
+        tuple(results), "known_catalog_stale", page, page_size, count,
+        start + len(results) < count,
+    )
 
 
 def known_public_fallback_page(
@@ -182,7 +265,11 @@ def known_public_fallback_page(
     )
     matched_count = len(matched)
     if not matched_count:
-        return empty("no_known_results")
+        return _durable_public_c_fallback(
+            storage, provider_id=provider_id, query=query, scope=scope,
+            field=field, content_types=content_types, current=current,
+            page=page, page_size=page_size, empty=empty,
+        )
     first = page * page_size
     if first >= matched_count:
         return KnownPublicFallbackPage((), "page_out_of_range", page, page_size, matched_count, False)
