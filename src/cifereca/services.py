@@ -723,9 +723,15 @@ class LibraryService:
             expected_docbase=expected_docbase,
         )
 
+    def capture_admitted_loan_acsm_stage(self, loan: Loan, *, expected_identity_id: str):
+        from .core.loan_action_scope import capture_admitted_loan_stage
+        return capture_admitted_loan_stage(
+            self, loan, expected_identity_id=expected_identity_id,
+        )
+
     def stage_explicit_loan_acsm(
         self, loan: Loan, *, confirmed: bool = False,
-        expected_identity_id: str = "",
+        expected_identity_id: str = "", admitted_lease=None,
     ) -> dict[str, str]:
         """Deliberate provider-selected ACSM candidate, never automatic download.
 
@@ -771,12 +777,19 @@ class LibraryService:
                     or type(expected_identity_id) is not str
                     or expected_identity_id != loan.identity_id):
                 raise LoanActionError(reason("loan_scope_unproven"))
+            if admitted_lease is not None:
+                from .core.loan_action_scope import LoanActionScopeLease
+                if (type(admitted_lease) is not LoanActionScopeLease
+                        or not admitted_lease.admitted_for(self, loan, expected_identity_id)):
+                    raise LoanActionError(reason("loan_scope_unproven"))
             try:
                 session = self._session_for_source(
                     loan.source_provider, loan.source_credential,
                 )
             except Exception:
                 raise LoanActionError(reason("loan_scope_unproven")) from None
+            if admitted_lease is not None and admitted_lease._session is not session:
+                raise LoanActionError(reason("loan_scope_unproven"))
             profile = getattr_static(
                 type(session), "loan_acsm_stage_profile", None,
             )
@@ -815,6 +828,7 @@ class LibraryService:
                     session, error,
                 ),
                 observe_phase=observation.at,
+                admitted_lease=admitted_lease,
             )
         except LoanActionError as exc:
             observation.emit('failed', exc.code)
