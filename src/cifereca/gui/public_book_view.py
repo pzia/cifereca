@@ -192,6 +192,7 @@ class PublicBookMasterDetailView:
                     panel, lambda: plugin_public_c_detail_current(
                         self, selected, receipt,
                     ),
+                    minimum_revision=receipt.minimum_revision,
                 )
         with stage:
             panel.show_presentation(detail)
