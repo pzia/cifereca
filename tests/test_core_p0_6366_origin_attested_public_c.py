@@ -348,3 +348,66 @@ def test_origin_reconciliation_survives_large_unrelated_source_inventory(tmp_pat
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+def test_public_group_atomic_rollback_new_existing_and_retry(tmp_path):
+    from cifereca.core.notice_c_cover_index import persist_attested_public_cover_group
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import (
+        persist, verified_public,
+    )
+
+    path = tmp_path / "atomic-public-group.sqlite"
+    db = Storage(path)
+    target = "edition:atomic-public-group"
+    proof = "strong:fixture:atomic-group"
+    document = canonical_cover_document_ref(target)
+    def store(provider, record, url, at):
+        return persist(db, verified_public(
+            source_provider=provider, record_id=record,
+            title="L'ouvrage commun", thumbnail_url=url,
+        ), at=at)
+    def commit(*sources):
+        return persist_attested_public_cover_group(
+            db, canonical_edition_id=target, sources=sources,
+            relation_proof_id=proof,
+        )
+    try:
+        a = store("seller-a", "edition-a", A_URL, 100)
+        b = store("seller-b", "edition-b", B_URL, 100)
+        c = store("seller-c", "edition-c", None, 100)
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key=?", (_opaque_key(c.document),))
+        with pytest.raises(ValueError, match="stale_canonical_cover_source"):
+            commit(a, b, c)
+        assert read_consolidated_notice_cover(db, document) is None
+
+        c = store("seller-c", "edition-c", None, 100)
+        good = commit(a, b, c)
+        assert len(good.sources) == 3
+        assert {cover.url for cover in good.candidates} == {A_URL, B_URL}
+        assert commit(a, b, c) == good
+
+        changed = store("seller-a", "edition-a",
+                        "https://covers.example.org/changed.jpg", 101)
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key=?", (_opaque_key(c.document),))
+        with pytest.raises(ValueError, match="stale_canonical_cover_source"):
+            commit(changed, b, c)
+        assert read_consolidated_notice_cover(db, document) == good
+        c = store("seller-c", "edition-c", None, 100)
+        updated = commit(changed, b, c)
+        assert updated.epoch > good.epoch
+        assert len(updated.sources) == 3
+        assert commit(changed, b, c) == updated
+        with pytest.raises(ValueError, match="group_conflict"):
+            commit(changed, b)
+        assert read_consolidated_notice_cover(db, document) == updated
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+    restored = Storage(path)
+    try:
+        assert read_consolidated_notice_cover(restored, document) == updated
+    finally:
+        restored.close()

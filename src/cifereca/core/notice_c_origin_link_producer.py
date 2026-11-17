@@ -18,7 +18,7 @@ from hashlib import sha256
 import json
 import sqlite3
 
-from .notice_c_cover_index import persist_consolidated_cover_source
+from .notice_c_cover_index import persist_attested_public_cover_group
 from .notice_cover_repository import (
     PersistedNoticeCover, _PREFIX as _SOURCE_PREFIX, _decode as _decode_source,
 )
@@ -219,12 +219,8 @@ def reconcile_origin_linked_public_batch(
         target = "edition:origin-linked:v1:" + digest
         proof = "core.origin.linked.v1:" + digest
         try:
-            persist_consolidated_cover_source(
-                storage, canonical_edition_id=target, source=first,
-                relation_proof_id=proof,
-            )
-            complete = persist_consolidated_cover_source(
-                storage, canonical_edition_id=target, source=second,
+            complete = persist_attested_public_cover_group(
+                storage, canonical_edition_id=target, sources=(first, second),
                 relation_proof_id=proof,
             )
             if (len(complete.sources) != 2

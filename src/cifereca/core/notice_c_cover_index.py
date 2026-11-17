@@ -314,6 +314,20 @@ def persist_consolidated_cover_source(
     Public safe URLs are copied; private sources retain only opaque locators
     until an authorized, session-aware resolver is implemented.
     """
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        return _persist_consolidated_cover_source_txn(
+            db, canonical_edition_id=canonical_edition_id, source=source,
+            relation_proof_id=relation_proof_id, expected_epoch=expected_epoch,
+        )
+
+
+def _persist_consolidated_cover_source_txn(
+    db: Any, *, canonical_edition_id: str,
+    source: PersistedNoticeCover, relation_proof_id: str,
+    expected_epoch: int | None = None,
+) -> ConsolidatedNoticeCover:
+    """Identical source validation and CAS inside the caller's transaction."""
     document = canonical_cover_document_ref(canonical_edition_id)
     if (type(source) is not PersistedNoticeCover
             or type(relation_proof_id) is not str
@@ -333,104 +347,148 @@ def persist_consolidated_cover_source(
         raise ValueError("invalid_canonical_cover_source")
 
     key = _db_key(document)
+    original = db.execute(
+        "SELECT value FROM metadata WHERE key=?", (source_key,),
+    ).fetchone()
+    if original is None or _decode_source(
+        original[0], source_document,
+    ) != source:
+        raise ValueError("stale_canonical_cover_source")
+    old = db.execute(
+        "SELECT value FROM metadata WHERE key=?", (key,),
+    ).fetchone()
+    previous = _json(old[0]) if old else None
+    if previous is not None and canonical_cover_document_ref(
+        previous["edition_id"],
+    ) != document:
+        raise ValueError("corrupt_canonical_cover")
+    epoch = previous["epoch"] if previous else 0
+    if expected_epoch is not None and expected_epoch != epoch:
+        raise ValueError("canonical_cover_epoch_changed")
+    rows = dict(previous["sources"]) if previous else {}
+    # A partial parser may expose a candidate while declaring its
+    # inventory incomplete. Preserve the source's pending provenance,
+    # but never promote that incomplete cover to an N1 decision.
+    urls = (
+        [x.url for x in source.attribute.candidates]
+        if visibility == "public"
+        and source.attribute.state == "available" else []
+    )
+    incoming = {
+        "provider": source.observation.key.provider_id,
+        "source_revision": source.observation.source_revision,
+        "observed_at": source.observation.observed_at,
+        "source_epoch": source.epoch,
+        "proof": relation_proof_id,
+        "state": (
+            source.attribute.state if visibility == "public"
+            else "pending"
+        ),
+        "urls": urls,
+        "visibility": visibility,
+    }
+    # Copy the already validated public bibliographic *source fact*
+    # alongside its canonical cover record, in the same SQLite commit.
+    # The short-lived provider row may later be purged independently.
+    # Private records and generic cover-only observations never enter
+    # this durable descriptive snapshot.
+    if (visibility == "public"
+            and source.observation.parser_id == "core.search.public-cover"
+            and source.observation.parser_version == "2"):
+        from .notice_c_public_search import _public_observation
+        hit = _public_observation(
+            original[0], key_string=source_key,
+            now=source.observation.observed_at,
+        )
+        if hit is not None and hit.document == source_document:
+            incoming["public_bibliography"] = {
+                "edition_id": hit.edition_id,
+                "record_id": hit.record_id,
+                "docbase": hit.docbase,
+                "medium": hit.medium,
+                "source_revision": hit.source_revision,
+                "title": hit.title,
+                "author": hit.author,
+                "publisher": hit.publisher,
+                "media_format": hit.media_format,
+                "description": hit.description,
+                # The canonical durable snapshot tracks the timestamp
+                # of the actual published *content observation*, not
+                # short-lived provider cache HITs. Otherwise a replay
+                # of unchanged C would churn the N2 epoch and wrongly
+                # make an old source look freshly re-parsed.
+                "last_seen_at": source.observation.observed_at,
+            }
+    if rows.get(source_ref) == incoming:
+        return _decode(old[0], document)
+    if len(rows) >= _MAX_SOURCES and source_ref not in rows:
+        raise ValueError("canonical_cover_sources_overflow")
+    rows[source_ref] = incoming
+    payload = {
+        "schema": 1, "edition_id": canonical_edition_id,
+        "epoch": epoch + 1, "sources": rows,
+    }
+    if payload["epoch"] > _MAX_EPOCH:
+        raise ValueError("canonical_cover_epoch_overflow")
+    raw = json.dumps(
+        payload, ensure_ascii=True, sort_keys=True,
+        separators=(",", ":"), allow_nan=False,
+    )
+    if len(raw.encode("utf-8")) > _MAX_BYTES:
+        raise ValueError("canonical_cover_too_large")
+    admitted = _decode(raw, document)
+    db.execute(
+        "INSERT INTO metadata(key,value) VALUES(?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, raw),
+    )
+    return admitted
+
+
+def persist_attested_public_cover_group(
+    storage: Any, *, canonical_edition_id: str,
+    sources: tuple[PersistedNoticeCover, ...], relation_proof_id: str,
+) -> ConsolidatedNoticeCover:
+    """Commit an already proven exact public group atomically, or nothing.
+
+    The caller establishes the relationship; this writer revalidates every
+    source in one transaction. Never admit an unexpected old membership or
+    publish a partially updated group if a later member has changed.
+    """
+    if (type(sources) is not tuple or not 2 <= len(sources) <= _MAX_SOURCES
+            or any(type(source) is not PersistedNoticeCover
+                   or source.observation.key.visibility != "public"
+                   or source.observation.parser_id != "core.search.public-cover"
+                   or source.observation.parser_version != "2"
+                   for source in sources)):
+        raise ValueError("invalid_canonical_cover_group")
+    refs = {source.document.source_key for source in sources}
+    if len(refs) != len(sources):
+        raise ValueError("invalid_canonical_cover_group")
+    document = canonical_cover_document_ref(canonical_edition_id)
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        original = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (source_key,),
-        ).fetchone()
-        if original is None or _decode_source(
-            original[0], source_document,
-        ) != source:
-            raise ValueError("stale_canonical_cover_source")
-        old = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (key,),
-        ).fetchone()
-        previous = _json(old[0]) if old else None
-        if previous is not None and canonical_cover_document_ref(
-            previous["edition_id"],
-        ) != document:
-            raise ValueError("corrupt_canonical_cover")
-        epoch = previous["epoch"] if previous else 0
-        if expected_epoch is not None and expected_epoch != epoch:
-            raise ValueError("canonical_cover_epoch_changed")
-        rows = dict(previous["sources"]) if previous else {}
-        # A partial parser may expose a candidate while declaring its
-        # inventory incomplete. Preserve the source's pending provenance,
-        # but never promote that incomplete cover to an N1 decision.
-        urls = (
-            [x.url for x in source.attribute.candidates]
-            if visibility == "public"
-            and source.attribute.state == "available" else []
-        )
-        incoming = {
-            "provider": source.observation.key.provider_id,
-            "source_revision": source.observation.source_revision,
-            "observed_at": source.observation.observed_at,
-            "source_epoch": source.epoch,
-            "proof": relation_proof_id,
-            "state": (
-                source.attribute.state if visibility == "public"
-                else "pending"
-            ),
-            "urls": urls,
-            "visibility": visibility,
-        }
-        # Copy the already validated public bibliographic *source fact*
-        # alongside its canonical cover record, in the same SQLite commit.
-        # The short-lived provider row may later be purged independently.
-        # Private records and generic cover-only observations never enter
-        # this durable descriptive snapshot.
-        if (visibility == "public"
-                and source.observation.parser_id == "core.search.public-cover"
-                and source.observation.parser_version == "2"):
-            from .notice_c_public_search import _public_observation
-            hit = _public_observation(
-                original[0], key_string=source_key,
-                now=source.observation.observed_at,
+        old = db.execute("SELECT value FROM metadata WHERE key=?",
+                         (_db_key(document),)).fetchone()
+        if old is not None:
+            previous = _decode(old[0], document)
+            if any(member.source_ref not in refs
+                   or member.visibility != "public"
+                   or member.relation_proof_id != relation_proof_id
+                   for member in previous.sources):
+                raise ValueError("canonical_cover_group_conflict")
+        for source in sources:
+            complete = _persist_consolidated_cover_source_txn(
+                db, canonical_edition_id=canonical_edition_id, source=source,
+                relation_proof_id=relation_proof_id,
             )
-            if hit is not None and hit.document == source_document:
-                incoming["public_bibliography"] = {
-                    "edition_id": hit.edition_id,
-                    "record_id": hit.record_id,
-                    "docbase": hit.docbase,
-                    "medium": hit.medium,
-                    "source_revision": hit.source_revision,
-                    "title": hit.title,
-                    "author": hit.author,
-                    "publisher": hit.publisher,
-                    "media_format": hit.media_format,
-                    "description": hit.description,
-                    # The canonical durable snapshot tracks the timestamp
-                    # of the actual published *content observation*, not
-                    # short-lived provider cache HITs. Otherwise a replay
-                    # of unchanged C would churn the N2 epoch and wrongly
-                    # make an old source look freshly re-parsed.
-                    "last_seen_at": source.observation.observed_at,
-                }
-        if rows.get(source_ref) == incoming:
-            return _decode(old[0], document)
-        if len(rows) >= _MAX_SOURCES and source_ref not in rows:
-            raise ValueError("canonical_cover_sources_overflow")
-        rows[source_ref] = incoming
-        payload = {
-            "schema": 1, "edition_id": canonical_edition_id,
-            "epoch": epoch + 1, "sources": rows,
-        }
-        if payload["epoch"] > _MAX_EPOCH:
-            raise ValueError("canonical_cover_epoch_overflow")
-        raw = json.dumps(
-            payload, ensure_ascii=True, sort_keys=True,
-            separators=(",", ":"), allow_nan=False,
-        )
-        if len(raw.encode("utf-8")) > _MAX_BYTES:
-            raise ValueError("canonical_cover_too_large")
-        admitted = _decode(raw, document)
-        db.execute(
-            "INSERT INTO metadata(key,value) VALUES(?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (key, raw),
-        )
-        return admitted
+        if ({member.source_ref for member in complete.sources} != refs
+                or any(member.visibility != "public"
+                       or member.public_bibliography is None
+                       or member.relation_proof_id != relation_proof_id
+                       for member in complete.sources)):
+            raise ValueError("canonical_cover_group_conflict")
+        return complete
 
 
 def persist_exact_public_search_cover(
@@ -499,5 +557,5 @@ __all__ = [
     "ConsolidatedCoverSource", "ConsolidatedNoticeCover",
     "canonical_cover_document_ref", "is_canonical_cover_document",
     "read_consolidated_notice_cover", "persist_consolidated_cover_source",
-    "persist_exact_public_search_cover",
+    "persist_exact_public_search_cover", "persist_attested_public_cover_group",
 ]
