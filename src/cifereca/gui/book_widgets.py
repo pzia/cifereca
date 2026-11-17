@@ -764,7 +764,7 @@ class BookListCell(Gtk.Box):
                 and known_public_c_cell_current(
                     self.window, item, receipt,
                 )
-            ), "minimum_revision": receipt.epoch}
+            ), "minimum_revision": getattr(receipt, "epoch", None)}
         public_link = getattr(item, "_cover_public_c_link", None)
         if public_link is not None:
             # Bind-time owner and two Core epochs, never a mutable current
