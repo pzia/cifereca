@@ -73,6 +73,16 @@ def test_observed_provider_c_first_and_fast_batch_do_not_wait_for_slow(
         # No legacy result cache or parsed-page reuse can manufacture C-first.
         service.storage.cache_delete_namespace("search")
         fast._public_cache.clear()
+        before_catalog = service.storage.catalog_entries()
+        from cifereca.core import notice_cover_repository
+        original_writer = notice_cover_repository.persist_notice_cover_many
+        writes = []
+
+        def counted_writer(storage, observations, **kwargs):
+            writes.append(len(observations))
+            return original_writer(storage, observations, **kwargs)
+
+        monkeypatch.setattr(notice_cover_repository, "persist_notice_cover_many", counted_writer)
         service._sessions = {fast.provider_id: fast, slow.provider_id: slow}
         host = _host()
         host.service = service
@@ -121,6 +131,9 @@ def test_observed_provider_c_first_and_fast_batch_do_not_wait_for_slow(
                 assert len(host._remote_search_results) == 1
                 assert host._remote_search_results[0]._core_notice_canonical_cover_document_ref == doc
                 assert host._populate_search.call_count >= 2
+                assert writes == [1]
+                # Early C is not an early per-profile catalogue/right mirror.
+                assert service.storage.catalog_entries() == before_catalog
             finally:
                 release_slow.set()
 
@@ -135,7 +148,7 @@ def test_observed_provider_c_first_and_fast_batch_do_not_wait_for_slow(
                 fast.provider_id, slow.provider_id,
             }
 
-        assert len(provider_calls) == 2
+        assert len(provider_calls) == 2 and writes == [1]
         assert read_consolidated_notice_cover(service.storage, doc).epoch == 1
         assert service.storage.entitlements() == []
         assert service.storage.acquisitions() == []
@@ -143,3 +156,72 @@ def test_observed_provider_c_first_and_fast_batch_do_not_wait_for_slow(
         release_slow.set()
         service.close()
         fast.close()
+
+
+def test_progressive_two_public_sources_late_join_without_second_source_write(tmp_path, monkeypatch):
+    from cifereca.core import notice_cover_repository, search_orchestration
+    from cifereca.core.notice_c_known_projection import matching_live_public_canonical_ref
+    from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+    from tests.test_core_p0_6366_origin_attested_public_c import _origins
+    from tests.test_core_p0_6366_real_search_notice_c_ingestion import public_row
+
+    service = _service(tmp_path)
+    release = Event()
+
+    class Public(_FakeSession):
+        def __init__(self, provider, record, color):
+            super().__init__(provider)
+            self.credential_id = "__public__"
+            self.credentials = {}
+            self._accounts = []
+            self.record, self.color = record, color
+
+        def search(self, query, scope, *, field="all", content_types=()):
+            if self.provider_id == "seller-b" and not release.wait(20):
+                raise AssertionError("second fixture not released")
+            row = public_row(
+                id=self.record, record_id=self.record, source_provider=self.provider_id,
+                title="Livre commun", thumbnail_url=f"https://covers.example.org/{self.color}.png",
+            )
+            return search_orchestration._public_rows_from_response(
+                ProviderSearchResponse([row], public_notices=(PublicSearchNotice(row),)),
+                self,
+            )
+
+    writes = []
+    original = notice_cover_repository.persist_notice_cover_many
+    def counted(storage, observations, **kwargs):
+        writes.append(len(observations))
+        return original(storage, observations, **kwargs)
+
+    monkeypatch.setattr(notice_cover_repository, "persist_notice_cover_many", counted)
+    try:
+        _origins(service.storage, tmp_path)
+        service._sessions = {
+            "seller-a": Public("seller-a", "edition-a", "red"),
+            "seller-b": Public("seller-b", "edition-b", "blue"),
+        }
+        first_refs = []
+        batches = []
+        def received(batch):
+            batches.append(batch.provider_id)
+            if batch.provider_id == "seller-a":
+                row = batch.results[0]
+                first_refs.append(getattr(row, "_core_notice_canonical_cover_document_ref", None))
+                release.set()
+
+        summary = service.search_progressive("Livre commun", force=True, on_batch=received)
+        assert not summary.cancelled and summary.providers_failed == 0
+        assert batches == ["seller-a", "seller-b"]
+        assert first_refs and first_refs[0] is not None
+        assert len(service.last_search) == 2
+        assert writes == [1, 1]  # One write per provider, none at final reconciliation.
+        refs = [matching_live_public_canonical_ref(row, identity_id="alice")
+                for row in service.last_search]
+        assert refs[0] is not None and refs[0] == refs[1] != first_refs[0]
+        stored = read_consolidated_notice_cover(service.storage, refs[0])
+        assert len(stored.sources) == 2
+        assert service.storage.entitlements() == []
+    finally:
+        release.set()
+        service.close()
