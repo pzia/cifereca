@@ -41,21 +41,11 @@ def _commercial_search_usage(item: SearchResult, service=None, *, purchase_evide
     # collection. It cannot establish a currently deliverable private offer.
     if (item.metadata or {}).get("search_provenance") == "known_catalog_stale":
         return "Notice connue hors ligne · droits non actualisés"
-    # Non-commercial sources have no owned-purchase presentation contract.
-    # Scope is documentary, not authorization: the canonical rights ledger
-    # decides ownership. No provider flag or source label can grant it.
+    # Scope is documentary, not a purchase or delivery authorization.
     if (item.source_credential == "__public__"
             and item.source_collection == "public_catalog"):
         return "Catalogue commercial public · aucun achat attesté"
     if item.source_collection == "library":
-        state = result_row(
-            item, purchase_evidence=purchase_evidence,
-            identity_id=getattr(getattr(service, "current_identity", None), "identity_id", None),
-            account_context_epoch=getattr(service, "_account_context_epoch", None),
-            source_context_epoch=getattr(service, "_source_context_epoch", None),
-        )["state"]
-        if state == "remote_owned":
-            return "Mes achats · fichier local non présumé"
         return ("Notice de bibliothèque · aucun droit d'achat attesté"
                 " · disponibilité à vérifier auprès du fournisseur")
     return ""
@@ -1213,10 +1203,7 @@ class DetailPanel(Gtk.Box):
         fmt = file_format(item.format).upper()
         essential_support = medium if not fmt else ""
         stale_known = (item.metadata or {}).get("search_provenance") == "known_catalog_stale"
-        usage = _commercial_search_usage(
-            item, self.window.service,
-            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
-        )
+        usage = _commercial_search_usage(item)
         freshness_rows = [
             ("Recherche en ligne", "Indisponible"),
         ] if stale_known else []
@@ -1363,10 +1350,7 @@ class DetailPanel(Gtk.Box):
         essential_support = medium if not fmt else ""
         availability = compact_availability_label(self.window.service.availability_display_label(item, detail))
         visible_availability = catalogue_availability_label(item, availability)
-        usage = _commercial_search_usage(
-            item, self.window.service,
-            purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
-        )
+        usage = _commercial_search_usage(item)
         self.show_presentation(book_detail_presentation(
             title=detail.title or item.title,
             subtitle=detail.author or item.author,
@@ -1388,11 +1372,7 @@ class DetailPanel(Gtk.Box):
                     ("Support", medium if fmt else ""),
                 ]),
             ],
-            links=document_links(result_row(item, purchase_evidence=getattr(self.window, "_search_purchase_evidence", None),
-                   identity_id=getattr(getattr(self.window.service, "current_identity", None),
-                                       "identity_id", None),
-                   account_context_epoch=getattr(self.window.service, "_account_context_epoch", None),
-                   source_context_epoch=getattr(self.window.service, "_source_context_epoch", None))),
+            links=document_links(result_row(item)),
             metadata=item.metadata,
             cover_document_ref=document,
         ), description=getattr(detail, "description", None) or item.description)
