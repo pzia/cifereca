@@ -3828,6 +3828,25 @@ class LibraryService:
                 "selected_search_source_unavailable"
             ) from None
 
+    def capture_confirmed_private_search_offer(
+        self, item: SearchResult, *, identity_id: str, account_id: str, confirmed: bool,
+    ):
+        """Admit one confirmed exact private offer for a non-GTK Core client.
+
+        Admission is passive. Only obtain_admitted_private_search_offer may
+        execute the returned one-shot mandate through the canonical path.
+        """
+        if confirmed is not True:
+            raise ProviderConfigurationError("selected_search_confirmation_required")
+        from .core.selected_search_admission import capture_confirmed_selected_offer
+        try:
+            scope = search_orchestration.capture_search_read_scope(self, identity_id)
+            return capture_confirmed_selected_offer(
+                self, item, reader_scope=scope, account_id=account_id, confirmed=True,
+            )
+        except Exception:
+            raise ProviderConfigurationError("selected_search_source_unavailable") from None
+
     def obtain_admitted_private_search_offer(self, target):
         """Execute the previously admitted exact source, never GTK navigation."""
         from .core.selected_source_offer import (
@@ -3874,6 +3893,7 @@ class LibraryService:
             acquire=self.acquire_direct_item,
             index_path=self.catalog_index_path,
             resolve_identity=self.identity_for_connection,
+            source_epoch=lambda: source_context_epoch(self),
         ).obtain(item)
 
     def owned_library_download_target(self, entry):
