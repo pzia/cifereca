@@ -369,6 +369,27 @@ class LibraryService:
             scope_current=_capture_cross_profile_read_scope(self, requesting_identity_id)[1],
         )
 
+    def capture_admitted_lender_local_copy(
+        self, *, requesting_identity_id: str,
+        borrowing_account: Account, exact_notice: SearchResult,
+        lender_placement_id: str, confirmed: bool = False,
+    ):
+        """Bind the exact presented placement at separate copy consent."""
+        from .core.borrow_for_identity_copy_admission import capture_lender_copy
+        _, current = _capture_cross_profile_read_scope(self, requesting_identity_id)
+        if confirmed is not True or not current():
+            return None
+        admitted = capture_lender_copy(
+            self, requesting_identity_id=requesting_identity_id,
+            borrowing_account=borrowing_account, exact_notice=exact_notice,
+            lender_placement_id=lender_placement_id,
+        )
+        return admitted if current() else None
+
+    def execute_admitted_lender_local_copy(self, admitted):
+        from .core.borrow_for_identity_copy_admission import execute_lender_copy
+        return execute_lender_copy(self, admitted)
+
     def send_confirmed_lender_local_copy(
         self, *, requesting_identity_id: str,
         borrowing_account: Account, exact_notice: SearchResult,

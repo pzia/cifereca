@@ -38,7 +38,10 @@ def prepared(*, present=True):
         "retry_borrow": False,
     })
     h.service.resolve_cross_profile_lender_placement = lookup
-    h.service.send_confirmed_lender_local_copy = native
+    h.service.capture_admitted_lender_local_copy = Mock(
+        side_effect=lambda **scope: scope,
+    )
+    h.service.execute_admitted_lender_local_copy = native
     display = lambda: offer_cross_profile_local_send(
         h.window, borrowing_account=w.account,
         exact_notice=w.notice, expected_item=h.item,
@@ -71,10 +74,12 @@ def test_confirmed_placement_requires_distinct_send_confirmation():
     _, send_work, done, _failed, send_kw = h.window.runner.jobs[1]
     assert send_kw["kind"] == "lender-local-send"
     assert send_work()["status"] == "complete"
-    native.assert_called_once_with(
+    scope = dict(
         requesting_identity_id="bob", borrowing_account=w.account,
-        exact_notice=w.notice, confirmed=True,
+        exact_notice=w.notice, lender_placement_id="placement-a", confirmed=True,
     )
+    h.service.capture_admitted_lender_local_copy.assert_called_once_with(**scope)
+    native.assert_called_once_with(scope)
     done(native.return_value)
     assert h.window._cross_profile_send_pending is None
     assert h.logs and h.logs[-1][0] == "info"
@@ -143,15 +148,15 @@ def test_stale_ui_after_placement_check_never_shows_send_dialog(rebind):
     assert h.window._cross_profile_send_pending is None
 
 
-def test_revoked_send_token_before_worker_never_copies():
+def test_navigation_token_after_copy_consent_does_not_revoke_worker():
     h, _, _, native, display = prepared()
     assert display()
     _, work, done, _, _ = h.window.runner.jobs[0]
     done(work())
     Dialog.made[0].respond("send")
     h.window._cross_profile_send_pending = None
-    assert h.window.runner.jobs[1][1]()["status"] == "blocked"
-    native.assert_not_called()
+    assert h.window.runner.jobs[1][1]()["status"] == "complete"
+    native.assert_called_once()
 
 
 def test_failed_native_copy_preserves_loan_message_without_private_details():
@@ -290,7 +295,7 @@ def test_local_send_worker_never_reads_gtk_detail():
 
 
 @pytest.mark.parametrize("kind", ["source", "identity", "selection", "detail_generation"])
-def test_local_send_worker_rejects_scalar_context_rebound_before_copy(kind):
+def test_local_send_worker_revokes_only_source_after_copy_consent(kind):
     h, _, lookup, native, display = prepared()
     assert display()
     _, check, ready, _failed, _kwargs = h.window.runner.jobs[0]
@@ -305,12 +310,15 @@ def test_local_send_worker_rejects_scalar_context_rebound_before_copy(kind):
         h.window._selected_search_id = "other"
     else:
         h.window._search_detail_request_generation += 1
-    assert work()["status"] == "blocked"
-    native.assert_not_called()
+    if kind == "source":
+        assert work()["status"] == "blocked"
+        native.assert_not_called()
+    else:
+        assert work()["status"] == "complete"
+        native.assert_called_once()
 
 
-
-def test_new_search_page_without_generation_bump_blocks_send_worker():
+def test_new_search_page_without_generation_bump_preserves_confirmed_send():
     h, _, _lookup, native, display = prepared()
     assert display()
     _, check, ready, _failed, _kw = h.window.runner.jobs[0]
@@ -319,5 +327,5 @@ def test_new_search_page_without_generation_bump_blocks_send_worker():
     _, work, _completed, _failed, _kw = h.window.runner.jobs[1]
     # The top-level page may be recreated without touching search selection.
     h.window.search_page = NS(detail=h.window.search_page.detail)
-    assert work()["status"] == "blocked"
-    native.assert_not_called()
+    assert work()["status"] == "complete"
+    native.assert_called_once()

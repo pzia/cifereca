@@ -42,7 +42,8 @@ def offer_cross_profile_local_send(
                 or type(account_epoch) is not int
                 or type(source_epoch) is not int
                 or not callable(service.resolve_cross_profile_lender_placement)
-                or not callable(service.send_confirmed_lender_local_copy)):
+                or not callable(service.capture_admitted_lender_local_copy)
+                or not callable(service.execute_admitted_lender_local_copy)):
             return False
     except Exception:
         return False
@@ -107,7 +108,7 @@ def offer_cross_profile_local_send(
         if owns_token():
             window._cross_profile_send_pending = None
 
-    def send() -> None:
+    def send(placement_id: str) -> None:
         if state["stage"] != "confirm" or not owns_token():
             return
         state["stage"] = "submitted"
@@ -115,14 +116,27 @@ def offer_cross_profile_local_send(
             release()
             return
 
-        def work():
-            if not owns_token() or not worker_current() or state["stage"] != "submitted":
-                return {"status": "blocked"}
-            return service.send_confirmed_lender_local_copy(
+        try:
+            admitted = service.capture_admitted_lender_local_copy(
                 requesting_identity_id=requester,
                 borrowing_account=borrowing_account,
-                exact_notice=exact_notice, confirmed=True,
+                exact_notice=exact_notice, lender_placement_id=placement_id,
+                confirmed=True,
             )
+            execute = service.execute_admitted_lender_local_copy
+            if admitted is None or not current():
+                release()
+                return
+        except Exception:
+            release()
+            return
+
+        def work():
+            # After consent the Core-owned source/placement lease is the
+            # authority. Navigation changes filter completion only.
+            if service._source_context_epoch != source_epoch:
+                return {"status": "blocked"}
+            return execute(admitted)
 
         def completed(outcome):
             release()
@@ -238,7 +252,7 @@ def offer_cross_profile_local_send(
                 if response_id != "send":
                     release()
                 else:
-                    send()
+                    send(result._placement_id)
 
             dialog.connect("response", answered)
             if not current() or not owns_token():
