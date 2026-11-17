@@ -1072,13 +1072,13 @@ def test_bnf_borrower_c_checkpoints_are_closed_and_failure_only():
         report.parent.mkdir(parents=True)
         source = root / "summary.json"
         source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
-        for stage in ("borrower_c_seed", "borrower_c_cold_loans_list",
+        for stage in ("borrower_c_setup", "borrower_c_seed", "borrower_c_cold_loans_list",
                       "borrower_c_offline_history_detail", "borrower_c_complete",
                       "borrower_c_PRIVATE_URL", None, {}):
             report.write_text(json.dumps({"last_stage": stage, "error": "PRIVATE_PATH"}))
             result = module.safe_summary(source)["results"][0]
             if type(stage) is str and stage in {
-                "borrower_c_seed", "borrower_c_cold_loans_list",
+                "borrower_c_setup", "borrower_c_seed", "borrower_c_cold_loans_list",
                 "borrower_c_offline_history_detail", "borrower_c_complete",
             }:
                 assert result["bnf_covers_last_stage"] == stage

@@ -91,7 +91,7 @@ def verify_borrower_c_views(window, loan, record, descriptor, *,
                 provider_id=descriptor.id, credential_id="__public__",
                 credentials={}, _accounts=[],
             ))
-            assert len(admitted) == 1
+            assert len(admitted) == 1 and admitted[0].thumbnail_url == url
             assert _mirror_remote_results(
                 NS(storage=db), admitted, identity_id=owner,
                 require_public_cover_witness=True,
@@ -230,6 +230,11 @@ def verify_borrower_c_views(window, loan, record, descriptor, *,
         def show_route(route, page):
             checkpoint("borrower_c_" + label + "_" + route + "_list")
             window.navigate(route)
+            later(100, guard(lambda: show_list(route, page)))
+
+        def show_list(route, page):
+            if page._narrow_master_detail and page._narrow_detail_visible:
+                page.detail_back.emit("clicked")
             assert page.store.get_n_items() == 1
             row = page.store.get_item(0)
             assert row._cover_document_ref == doc
