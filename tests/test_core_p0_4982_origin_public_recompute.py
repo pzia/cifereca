@@ -122,7 +122,7 @@ def test_origin_graph_revoked_after_prepare_without_public_vector_change(
                     "WHERE provider_id='seller-b'"
                 )
             else:
-                sql.execute("DELETE FROM placements")
+                sql.execute("UPDATE placements SET state='missing'")
         assert capture_public_aggregate_inputs(db, group.document) == before
         with pytest.raises(ValueError, match="relation_changed"):
             finish(db, ref, publication)
