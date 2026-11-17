@@ -39,10 +39,11 @@ def _valid_coordinates(value: object) -> bool:
     )
 
 
-def exact_public_source_c_many(
+def _resolve_public_source_c_many(
     storage: Any, coordinates: list[PublicSourceCoordinates] | tuple[PublicSourceCoordinates, ...],
+    *, max_batch: int,
 ) -> dict[PublicSourceCoordinates, ConsolidatedNoticeCover]:
-    """Resolve at most 256 exact coordinates in one SQLite snapshot.
+    """Resolve a caller-bounded set of exact coordinates in one SQLite snapshot.
 
     Results are independent: contradictory relations or too many claims for
     one coordinate veto THAT coordinate, not the other exact editions.
@@ -50,7 +51,7 @@ def exact_public_source_c_many(
     Only exact candidate rows cross the SQLite/Python boundary; unrelated C
     rows never consume a requested coordinate's ambiguity budget.
     """
-    if type(coordinates) not in (list, tuple) or len(coordinates) > _MAX_BATCH:
+    if type(coordinates) not in (list, tuple) or len(coordinates) > max_batch:
         return {}
     wanted = {}
     source_refs = set()
@@ -142,6 +143,20 @@ def exact_public_source_c_many(
         return {}
 
 
+def exact_public_source_c_many(
+    storage: Any, coordinates: list[PublicSourceCoordinates] | tuple[PublicSourceCoordinates, ...],
+) -> dict[PublicSourceCoordinates, ConsolidatedNoticeCover]:
+    """Resolve up to 256 exact search/cache coordinates in one snapshot."""
+    return _resolve_public_source_c_many(storage, coordinates, max_batch=_MAX_BATCH)
+
+
+def exact_public_source_c_inventory(
+    storage: Any, coordinates: list[PublicSourceCoordinates] | tuple[PublicSourceCoordinates, ...],
+) -> dict[PublicSourceCoordinates, ConsolidatedNoticeCover]:
+    """Resolve up to 2048 exact borrower inventory coordinates together."""
+    return _resolve_public_source_c_many(storage, coordinates, max_batch=2048)
+
+
 def exact_public_source_c(
     storage: Any, *,
     provider_id: str, record_id: str, docbase: str, medium: str,
@@ -154,4 +169,5 @@ def exact_public_source_c(
     return exact_public_source_c_many(storage, (coords,)).get(coords)
 
 
-__all__ = ["exact_public_source_c", "exact_public_source_c_many"]
+__all__ = ["exact_public_source_c", "exact_public_source_c_many",
+           "exact_public_source_c_inventory"]
