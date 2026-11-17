@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -67,22 +68,74 @@ MUTATIONS = (
     ),
 )
 
+# Owner's bounded closure matrix: exactly one witness per invariant.
+# Preserve the original public-transport campaign independently.
+CLOSURE_MUTATIONS = (
+    Mutation(
+        "exact_inventory_credential",
+        'and getattr_static(session, "credential_id", None) == scope.credential_id',
+        "and True",
+        "tests/test_core_p1_3119_loan_inventory_contract.py::test_wrong_session_credential_never_starts_loan_read",
+        target_path="src/cifereca/plugin_api/loan_inventory.py",
+        target_module="cifereca.plugin_api.loan_inventory",
+        target_function="read_loan_inventory",
+    ),
+    Mutation(
+        MUTATIONS[2].name, MUTATIONS[2].anchor, MUTATIONS[2].replacement,
+        MUTATIONS[2].test_node, target_path=MUTATIONS[2].target_path,
+        target_module=MUTATIONS[2].target_module, target_function=MUTATIONS[2].target_function,
+    ),
+    Mutation(
+        "one_shot_confirmed_stage",
+        "if self._used:",
+        "if False:",
+        "tests/test_core_p0_2055_bnf_explicit_stage.py::test_confirmed_headless_loan_stage_survives_navigation_once",
+        target_path="src/cifereca/core/loan_action_scope.py",
+        target_module="cifereca.core.loan_action_scope",
+        target_function="_ConfirmedStageAttempt.claim",
+    ),
+    MUTATIONS[3],
+    Mutation(
+        "retired_legacy_writer_fence",
+        ").fetchone() is not None:\n                return\n            # Without a typed source",
+        ").fetchone() is not None:\n                pass\n            # Without a typed source",
+        "tests/test_core_p0_5975_w1_all_provider_typed_source_cutover.py::test_two_storage_instances_observe_committed_typed_source",
+        target_path="src/cifereca/storage.py",
+        target_module="cifereca.storage",
+        target_function="Storage.backup_put",
+    ),
+    Mutation(
+        "replay_deleted_transitive_dependency",
+        'if any(\n        edge["consumer"] in reachable and edge["target_module"] in modules',
+        'if False and any(\n        edge["consumer"] in reachable and edge["target_module"] in modules',
+        "tests/test_ci_test_core_consumer_graph.py::test_deleted_transitive_root_fixture_still_requires_plugin_replay",
+        target_path="scripts/ci_test_core_consumer_graph.py",
+        target_module="scripts.ci_test_core_consumer_graph",
+        target_function="plugin_replay_required",
+    ),
+)
+
 _PLUGIN = r'''
 """A one-shot pytest plugin for a *subprocess*, never persisted to the repo."""
 import importlib
 import inspect
+import textwrap
 from os import environ
 
 def pytest_configure(config):
     module = importlib.import_module(environ["CIFERECA_MUTATION_MODULE"])
-    function = environ["CIFERECA_MUTATION_FUNCTION"]
-    source = inspect.getsource(getattr(module, function))
+    parts = environ["CIFERECA_MUTATION_FUNCTION"].split(".")
+    owner = module
+    for part in parts[:-1]:
+        owner = getattr(owner, part)
+    function = parts[-1]
+    source = inspect.getsource(getattr(owner, function))
     anchor, replacement = environ["CIFERECA_MUTATION_ANCHOR"], environ["CIFERECA_MUTATION_REPLACEMENT"]
     if source.count(anchor) != 1:
         raise RuntimeError("mutation_anchor_mismatch")
     namespace = dict(module.__dict__)
-    exec(compile(source.replace(anchor, replacement), "<mutation-probe>", "exec"), namespace)
-    setattr(module, function, namespace[function])
+    exec(compile(textwrap.dedent(source.replace(anchor, replacement)), "<mutation-probe>", "exec"), namespace)
+    setattr(owner, function, namespace[function])
 '''
 
 
@@ -109,17 +162,27 @@ def _run_pytest(root: Path, node: str, *, module_dir: Path | None,
     )
 
 
-def campaign(root: Path = ROOT, *, timeout: int = 40) -> dict:
+def campaign(root: Path = ROOT, *, timeout: int = 40,
+             mutations: tuple[Mutation, ...] = MUTATIONS) -> dict:
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True,
+            capture_output=True, check=True, timeout=10,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        sha = None
     report = {
+        "source_sha": sha,
         "schema": "cifereca.security-mutation-probe/1",
-        "subject": "Core public peers, consent and candidate integrity",
+        "subject": ("Owner closure matrix: six invariants" if mutations is CLOSURE_MUTATIONS
+                    else "Core public peers, consent and candidate integrity"),
         "offline": True,
         "probes": [],
     }
     with tempfile.TemporaryDirectory(prefix="cifereca-mutation-") as directory:
         plugin_dir = Path(directory)
         (plugin_dir / "cifereca_mutation_plugin.py").write_text(_PLUGIN, encoding="utf-8")
-        for item in MUTATIONS:
+        for item in mutations:
             source = (root / item.target_path).read_text(encoding="utf-8")
             if source.count(item.anchor) != 1:
                 raise ValueError("missing_or_ambiguous_mutation_anchor:" + item.name)
@@ -127,7 +190,7 @@ def campaign(root: Path = ROOT, *, timeout: int = 40) -> dict:
                 baseline = _run_pytest(root, node, module_dir=None,
                                        mutation=None, timeout=timeout)
                 # No misleading "killed" verdict when the baseline is red.
-                if baseline.returncode != 0:
+                if baseline.returncode != 0 or not re.search(r"\b[1-9]\d* passed\b", baseline.stdout):
                     raise RuntimeError(
                         f"baseline_failed:{item.name}:exit_{baseline.returncode}:\n"
                         + (baseline.stdout + baseline.stderr)[-1200:]
@@ -145,7 +208,7 @@ def campaign(root: Path = ROOT, *, timeout: int = 40) -> dict:
                     "mutant_exit": mutant.returncode,
                     "killed": bool(killed),
                 })
-    report["distinct_mutation_sites"] = len(MUTATIONS)
+    report["distinct_mutation_sites"] = len(mutations)
     report["witnesses"] = len(report["probes"])
     report["passed"] = bool(report["probes"]) and all(
         item["killed"] for item in report["probes"]
@@ -157,11 +220,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout", type=int, default=40)
     parser.add_argument("--json", action="store_true")
+    parser.add_argument("--closure", action="store_true", help="Six owner closure invariants")
     args = parser.parse_args(argv)
     if not 1 <= args.timeout <= 120:
         parser.error("timeout must be between 1 and 120 seconds")
     try:
-        result = campaign(timeout=args.timeout)
+        result = campaign(timeout=args.timeout, mutations=CLOSURE_MUTATIONS if args.closure else MUTATIONS)
     except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"security_mutation_probe_failed: {error}", file=sys.stderr)
         return 1
