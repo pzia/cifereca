@@ -88,3 +88,12 @@ def test_opening_partial_continues_other_loans_and_recovers_without_ui_identity_
         assert service.current_identity.identity_id == 'bob'
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("name", [
+    "_acquire_personal_library_item", "_execute_kobo_acquisition", "sync_kobo_backup",
+    "prepare_direct_download", "prepare_digital_download",
+])
+def test_retired_internal_acquisition_wrappers_do_not_reappear(name):
+    assert not hasattr(LibraryService, name)
+    assert name not in CONTRACTS
