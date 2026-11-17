@@ -6,7 +6,8 @@ grant. It performs no network, storage mutation or ADEPT operation.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from threading import Lock
 from inspect import getattr_static
 from typing import Any
 
@@ -65,6 +66,21 @@ def _exact_loan_fields(loan: Loan) -> tuple[object, ...]:
     )
 
 
+class _ConfirmedStageAttempt:
+    """One confirmed candidate request, even if the attempt fails."""
+
+    def __init__(self):
+        self._lock = Lock()
+        self._used = False
+
+    def claim(self):
+        with self._lock:
+            if self._used:
+                return False
+            self._used = True
+            return True
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class LoanActionScopeLease:
     """Capture a Core action's account/session identity and generation.
@@ -85,6 +101,7 @@ class LoanActionScopeLease:
     _admitted_service: object | None = field(default=None, repr=False)
     _source_epoch: int | None = field(default=None, repr=False)
     _reader_scope: object | None = field(default=None, repr=False)
+    _stage_attempt: _ConfirmedStageAttempt | None = field(default=None, repr=False, compare=False)
 
     def admitted_for(self, service: object, loan: Loan, identity_id: str) -> bool:
         """Only the exact loan and Core that admitted explicit consent."""
@@ -284,5 +301,37 @@ def capture_admitted_loan_stage(service, loan: Loan, *, expected_identity_id: st
         return None
 
 
+def capture_confirmed_loan_stage(
+    service, loan: Loan, *, identity_id: str, account_id: str, confirmed: bool,
+) -> LoanActionScopeLease | None:
+    """Explicit headless staging admission, with no offer read or file write."""
+    from .search_orchestration import capture_search_read_scope
+    try:
+        if (confirmed is not True or type(loan) is not Loan
+                or loan.medium != "digital" or loan.state != "active"
+                or type(identity_id) is not str or identity_id != loan.identity_id
+                or type(account_id) is not str or not account_id
+                or any(c in account_id for c in "\x00\r\n")
+                or account_id != loan.source_account_id):
+            return None
+        scope = capture_search_read_scope(service, identity_id)
+        account = service._account_for_loan(loan)
+        if (type(account) is not Account or account.identity_id != identity_id
+                or account.unique_id != account_id):
+            return None
+        session = service._sessions.get(
+            service._session_key(loan.source_provider, loan.source_credential),
+        )
+        lease = capture_loan_action_scope(
+            service, loan, account, session, expected_identity_id=identity_id,
+            admitted_source_epoch=scope.source_epoch, reader_scope=scope,
+        )
+        if lease is None:
+            return None
+        return replace(lease, _stage_attempt=_ConfirmedStageAttempt())
+    except Exception:
+        return None
+
+
 __all__ = ["LoanActionScopeLease", "capture_loan_action_scope",
-           "capture_admitted_loan_stage"]
+           "capture_admitted_loan_stage", "capture_confirmed_loan_stage"]
