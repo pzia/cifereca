@@ -40,14 +40,8 @@ def legacy_source_consent_switch_present(storage, scope) -> bool:
     The literal-primary ambiguity can only be cleared by explicit fresh CAS.
     """
     try:
-        specs = [
-            spec for (provider, _kind), spec in _POLICIES.items()
-            if provider == scope.provider_id
-        ]
-        if len(specs) != 1:
-            return False
-        prefix, _active, _revision = specs[0]
-        return storage.metadata_get(prefix + _source_id(scope)) is not None
+        return any(storage.metadata_get(key) is not None
+                   for key in historical_switch_keys(scope))
     except Exception:
         # A broken legacy preference cannot be used as migration evidence.
         return False
