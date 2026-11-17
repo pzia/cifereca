@@ -16,15 +16,10 @@ def test_explicit_cas_off_revokes_legacy_on_without_deleting_legacy_row(
 ):
     service, db, _root, calls, broker = source
     key = service.source
-    prefix = "sync.test.cutover.legacy."
-    revision_prefix = "sync.test.cutover.revision."
-    monkeypatch.setitem(
-        bridge._POLICIES, (key.scope.provider_id, key.kind),
-        (prefix, "legacy-on", revision_prefix),
-    )
-    suffix = bridge._source_id(key.scope)
-    db.metadata_set(prefix + suffix, "legacy-on")
-    db.metadata_set(revision_prefix + suffix, "a" * 32)
+    from cifereca.core.legacy_source_consent_metadata import historical_consent_keys
+    switch, old_on, epoch = historical_consent_keys(key.scope, key.kind)[0]
+    db.metadata_set(switch, old_on)
+    db.metadata_set(epoch, "a" * 32)
     with db._lock, db._connect() as conn:
         # Legacy ON is now a veto, not a source-wide grant.
         assert bridge.toggle_state(conn, key) == "off"
@@ -38,21 +33,17 @@ def test_explicit_cas_off_revokes_legacy_on_without_deleting_legacy_row(
     with db._lock, db._connect() as conn:
         assert bridge.toggle_state(conn, key) == "off"
         assert not consent_current_in_transaction(conn, key)
-    assert db.metadata_get(prefix + suffix) == "legacy-on"
-    assert db.metadata_get(revision_prefix + suffix) == "a" * 32
+    assert db.metadata_get(switch) == old_on
+    assert db.metadata_get(epoch) == "a" * 32
     assert calls == []
 
 
 def test_explicit_cas_aba_never_restores_old_epoch(source, monkeypatch):
     service, db, _root, calls, broker = source
     key = service.source
-    prefix = "sync.test.cutover.legacy."
-    monkeypatch.setitem(
-        bridge._POLICIES, (key.scope.provider_id, key.kind),
-        (prefix, "legacy-on", None),
-    )
-    suffix = bridge._source_id(key.scope)
-    db.metadata_set(prefix + suffix, "legacy-on")
+    from cifereca.core.legacy_source_consent_metadata import historical_consent_keys
+    switch, old_on, _epoch = historical_consent_keys(key.scope, key.kind)[0]
+    db.metadata_set(switch, old_on)
     # Legacy unversioned ON is not promoted to a CAS revision.
     assert read_policy(db, key.scope).mode == "unset"
     on = change(source, True)
@@ -64,5 +55,5 @@ def test_explicit_cas_aba_never_restores_old_epoch(source, monkeypatch):
         assert bridge.consent_generation_in_transaction(conn, key) == (
             "source:" + new_on["revision"]
         )
-    assert db.metadata_get(prefix + suffix) == "legacy-on"
+    assert db.metadata_get(switch) == old_on
     assert calls == []
