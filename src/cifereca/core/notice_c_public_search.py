@@ -186,6 +186,48 @@ def _matches_public_c(
     return any(needle in _fold(text) for text in texts)
 
 
+def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit):
+    """Query durable bibliographies without spending the source scan budget.
+
+    SQL is only a text/coordinate prefilter. The strict decoder below still
+    admits every fact and scans ALL claims for each selected exact source.
+    This is not a physical full-text index or a supplier completeness proof.
+    """
+    columns = {
+        "title": ("title",), "author": ("author",),
+        "publisher": ("publisher",),
+        "all": ("title", "author", "publisher", "description"),
+    }[field]
+    raw = "CASE WHEN src.type='object' THEN src.value ELSE '{}' END"
+    texts = " OR ".join(
+        f"instr(cifereca_c_search_fold(json_extract({raw}, "
+        f"'$.public_bibliography.{column}')), ?) > 0"
+        for column in columns
+    )
+    db.create_function("cifereca_c_search_fold", 1,
+                       lambda value: _fold(value) if type(value) is str else "",
+                       deterministic=True)
+    try:
+        rows = db.execute(
+            "SELECT DISTINCT src.key FROM metadata AS m, "
+            "json_each(CASE WHEN json_valid(m.value) THEN m.value ELSE '{}' END, "
+            "'$.sources') AS src "
+            "WHERE m.key>=? AND m.key<? AND typeof(src.key)='text' "
+            f"AND json_extract({raw}, '$.visibility')='public' "
+            f"AND (?='all' OR json_extract({raw}, '$.public_bibliography.medium')=?) "
+            f"AND (?=0 OR json_extract({raw}, '$.provider') "
+            "IN (SELECT value FROM json_each(?))) "
+            f"AND ({texts}) ORDER BY src.key LIMIT ?",
+            (prefix, prefix + "\uffff", scope, scope, len(wanted),
+             json.dumps(sorted(wanted)), *([needle] * len(columns)), limit + 1),
+        ).fetchall()
+    finally:
+        # Storage reuses its worker connection; do not retain query closures.
+        db.create_function("cifereca_c_search_fold", 1, None)
+    return {row[0] for row in rows[:limit]}, len(rows) > limit
+
+
+
 def search_public_notice_c(
     storage: object, query: str, *, field: str = "all",
     scope: str = "all", provider_ids: tuple[str, ...] = (),
@@ -194,7 +236,8 @@ def search_public_notice_c(
 ) -> PublicNoticeCPage:
     """Search durable public C source rows without a supplier or account GET.
 
-    This first-stage cursor has an explicit bounded scan budget, never
+    This cursor bounds transient observations and durable candidate sources
+    independently by max_scan; exact competing claims are always examined. It never
     masquerades a partial page as a complete supplier inventory and returns
     no cached entitlement. No per-viewer key: 3 reader profiles see the same
     admitted public C. Private observations are discarded before projection.
@@ -219,8 +262,8 @@ def search_public_notice_c(
     canonical_routes: dict[str, tuple[object, int, object, str]] = {}
     scanned = unindexed = 0
     exceeded = False
-    # SQLite's metadata PK is indexed; exact-prefix range is a deterministic
-    # bounded cursor and must not enumerate the legacy per-profile mirror.
+    # SQLite's metadata PK is indexed; the transient range is bounded.
+    # The durable query uses a text prefilter, not the legacy profile mirror.
     with storage._lock, storage._connect() as db:
         cursor = db.execute(
             "SELECT key,value FROM metadata "
@@ -247,32 +290,33 @@ def search_public_notice_c(
             ):
                 matches.append(record)
 
-        # A canonical C may contain several independently attested public
-        # source bibliographies. The C is the cover identity, not a licence
-        # to choose one provider's descriptive text as authoritative.
-        # Enumerate bounded canonical rows ONCE; retain exact source facts.
-        if scanned < max_scan:
-            from .notice_c_cover_index import (
-                _PREFIX as _CANON_PREFIX, _json as _canon_json,
-                _decode as _decode_canonical, canonical_cover_document_ref,
-            )
+        # Durable C and transient source observations have independent
+        # read budgets. A large transient inventory must never hide a small
+        # matching retained C, or prevent exact N2 routing of live matches.
+        from .notice_c_cover_index import (
+            _PREFIX as _CANON_PREFIX, _json as _canon_json,
+            _decode as _decode_canonical, canonical_cover_document_ref,
+        )
+        refs, canonical_exceeded = _canonical_candidate_refs(
+            db, prefix=_CANON_PREFIX, wanted=wanted, scope=scope, field=field,
+            needle=needle, limit=max_scan,
+        )
+        exceeded = exceeded or canonical_exceeded
+        refs.update(hit.document.source_key for hit in matches)
+        # Discover every competing canonical claim for each candidate, even
+        # those whose retained text/provider filter did not match this query.
+        # A text prefilter must NEVER select a stronger relation by omission.
+        staged = {}
+        if refs:
             cursor = db.execute(
-                "SELECT key,value FROM metadata "
-                "WHERE key>=? AND key<? ORDER BY key LIMIT ?",
-                (_CANON_PREFIX, _CANON_PREFIX + "\uffff", max_scan - scanned + 1),
+                "SELECT m.key,m.value FROM metadata AS m "
+                "WHERE m.key>=? AND m.key<? AND EXISTS ("
+                "SELECT 1 FROM json_each(CASE WHEN json_valid(m.value) "
+                "THEN m.value ELSE '{}' END, '$.sources') AS src "
+                "WHERE src.key IN (SELECT value FROM json_each(?))) ORDER BY m.key",
+                (_CANON_PREFIX, _CANON_PREFIX + "\uffff", json.dumps(sorted(refs))),
             )
-            canonical_scanned = 0
-            # A source may retain its own self-identity C while also being
-            # admitted into ONE cross-provider C. A sole non-self group with
-            # at least two public observations can supersede that self C.
-            # Contradictory cross-group claims retain the safe self-identity
-            # rather than selecting by group size, text, URL or row order.
-            staged = {}
             for key_string, raw in cursor:
-                if canonical_scanned >= max_scan - scanned:
-                    exceeded = True
-                    break
-                canonical_scanned += 1
                 try:
                     row = _canon_json(raw)
                     ref = canonical_cover_document_ref(row["edition_id"])
@@ -281,86 +325,105 @@ def search_public_notice_c(
                     consolidated = _decode_canonical(raw, ref)
                     public_sources = tuple(
                         src for src in consolidated.sources
-                        if src.public_bibliography is not None
+                        if src.visibility == "public" and src.public_bibliography is not None
                     )
                     for source in public_sources:
-                        staged.setdefault(source.source_ref, []).append((
-                            ref, consolidated, source, len(public_sources),
-                        ))
+                        if source.source_ref in refs:
+                            staged.setdefault(source.source_ref, []).append((
+                                ref, consolidated, source, len(public_sources),
+                            ))
                 except (TypeError, ValueError, KeyError, AttributeError):
-                    # A corrupt canonical index never supplies an identity
-                    # or a public descriptive source.
                     unindexed += 1
                     continue
 
-            if not exceeded:
-                for source_ref, candidates in staged.items():
-                    own = [
-                        item for item in candidates
-                        if item[0] == canonical_cover_document_ref(
-                            item[2].public_bibliography.edition_id
-                        )
-                    ]
-                    foreign = [
-                        item for item in candidates
-                        if item[0] != canonical_cover_document_ref(
-                            item[2].public_bibliography.edition_id
-                        )
-                    ]
-                    if len(foreign) == 1 and foreign[0][3] >= 2:
-                        selected_route = foreign[0]
-                    elif len(own) == 1:
-                        # No foreign relation, or contradictory claims: the
-                        # source's exact independent canonical ref wins.
-                        selected_route = own[0]
-                    elif len(foreign) == 1 and not own:
-                        # Only an explicit multi-public source group may
-                        # rebind an unrelated provider's edition.
-                        selected_route = (
-                            foreign[0] if foreign[0][3] >= 2 else None
-                        )
-                    else:
-                        selected_route = None
-                    if selected_route is None:
-                        continue
-                    ref, consolidated, source, _strength = selected_route
-                    bib = source.public_bibliography
-                    # The index decoder rederives the exact source ref and
-                    # edition from the original provider coordinates.
-                    aggregate_cover = (
-                        "available" if consolidated.candidates
-                        else "missing" if consolidated.snapshot_complete
-                        else "pending"
-                    )
-                    canonical_routes[source_ref] = (
-                        ref, consolidated.epoch, source, aggregate_cover,
-                    )
-                    if source_ref in seen_source_refs:
-                        # A live source observation is more current than the
-                        # retained canonical bibliography. Rebind its N2
-                        # only if its exact epoch and facts still match.
-                        continue
-                    hit = PublicNoticeCHit(
-                        document=ref, provider_id=source.provider_id,
-                        record_id=bib.record_id, docbase=bib.docbase,
-                        medium=bib.medium,
-                        source_revision=bib.source_revision,
-                        title=bib.title, author=bib.author,
-                        publisher=bib.publisher,
-                        media_format=bib.media_format,
-                        description=bib.description,
-                        observed_at=source.observed_at,
-                        last_seen_at=bib.last_seen_at,
-                        epoch=consolidated.epoch,
-                        cover_state=aggregate_cover,
-                        stale=now - bib.last_seen_at > _STALE_AFTER,
-                        edition_id=bib.edition_id,
-                    )
-                    if _matches_public_c(
-                        hit, wanted=wanted, scope=scope,
-                        field=field, needle=needle,
-                    ):
-                        matches.append(hit)
+        # A live observation outside the initial source budget still wins
+        # over its retained older bibliography. Look it up by the *exact*
+        # opaque source key inside the same read; no text-based join.
+        remaining = sorted(set(staged) - seen_source_refs)
+        if remaining:
+            keys = [_PREFIX + ref[len("notice-c:v1:"):] for ref in remaining
+                    if ref.startswith("notice-c:v1:")]
+            cursor = db.execute(
+                "SELECT m.key,m.value FROM json_each(?) AS requested "
+                "JOIN metadata AS m ON m.key=requested.value",
+                (json.dumps(keys),),
+            )
+            for key_string, raw in cursor:
+                current = _public_observation(raw, key_string=key_string, now=now)
+                if current is None:
+                    continue
+                seen_source_refs.add(current.document.source_key)
+                if _matches_public_c(current, wanted=wanted, scope=scope,
+                                     field=field, needle=needle):
+                    matches.append(current)
+
+        for source_ref, candidates in staged.items():
+            own = [
+                item for item in candidates
+                if item[0] == canonical_cover_document_ref(
+                    item[2].public_bibliography.edition_id
+                )
+            ]
+            foreign = [
+                item for item in candidates
+                if item[0] != canonical_cover_document_ref(
+                    item[2].public_bibliography.edition_id
+                )
+            ]
+            if len(foreign) == 1 and foreign[0][3] >= 2:
+                selected_route = foreign[0]
+            elif len(own) == 1:
+                # No foreign relation, or contradictory claims: the
+                # source's exact independent canonical ref wins.
+                selected_route = own[0]
+            elif len(foreign) == 1 and not own:
+                # Only an explicit multi-public source group may
+                # rebind an unrelated provider's edition.
+                selected_route = (
+                    foreign[0] if foreign[0][3] >= 2 else None
+                )
+            else:
+                selected_route = None
+            if selected_route is None:
+                continue
+            ref, consolidated, source, _strength = selected_route
+            bib = source.public_bibliography
+            # The index decoder rederives the exact source ref and
+            # edition from the original provider coordinates.
+            aggregate_cover = (
+                "available" if consolidated.candidates
+                else "missing" if consolidated.snapshot_complete
+                else "pending"
+            )
+            canonical_routes[source_ref] = (
+                ref, consolidated.epoch, source, aggregate_cover,
+            )
+            if source_ref in seen_source_refs:
+                # A live source observation is more current than the
+                # retained canonical bibliography. Rebind its N2
+                # only if its exact epoch and facts still match.
+                continue
+            hit = PublicNoticeCHit(
+                document=ref, provider_id=source.provider_id,
+                record_id=bib.record_id, docbase=bib.docbase,
+                medium=bib.medium,
+                source_revision=bib.source_revision,
+                title=bib.title, author=bib.author,
+                publisher=bib.publisher,
+                media_format=bib.media_format,
+                description=bib.description,
+                observed_at=source.observed_at,
+                last_seen_at=bib.last_seen_at,
+                epoch=consolidated.epoch,
+                cover_state=aggregate_cover,
+                stale=now - bib.last_seen_at > _STALE_AFTER,
+                edition_id=bib.edition_id,
+            )
+            if _matches_public_c(
+                hit, wanted=wanted, scope=scope,
+                field=field, needle=needle,
+            ):
+                matches.append(hit)
 
     # Pagination is over *known* source facts, not a confirmed total.
     matches.sort(key=lambda item: (

@@ -160,3 +160,63 @@ def test_cover_only_canonical_source_never_invents_bibliography(tmp_path):
         assert read_consolidated_notice_cover(db, c.document).candidates
     finally:
         db.close()
+
+
+def test_durable_search_is_not_starved_by_transient_source_budget(tmp_path):
+    db = Storage(tmp_path / "independent-c-search.sqlite")
+    try:
+        source, expected = _make_c(db, verified_public(
+            record_id="durable-target", title="Éléphant rare", author="Autrice",
+        ))
+        _drop_short_source(db, source)
+        for n in range(12):
+            persist(db, verified_public(
+                record_id=f"transient-{n}", title=f"Un autre livre {n}",
+            ))
+            old, _ = _make_c(db, verified_public(
+                record_id=f"durable-{n}", title=f"Document indépendant {n}",
+            ))
+            _drop_short_source(db, old)
+        with db._lock, db._connect() as sql:
+            sql.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
+                        ("notice.c.cover.canonical.v1:corrupt", "{"))
+        page = search_public_notice_c(db, "elephant", field="title",
+                                     now=100, max_scan=2)
+        assert page.status == "budget_exceeded" and page.has_more
+        assert page.scanned_sources == 2
+        assert page.known_matches == 1
+        assert page.hits[0].document == expected.document
+        assert page.hits[0].title == "Éléphant rare"
+        assert search_public_notice_c(db, "elephant", field="author",
+                                     now=100, max_scan=2).hits == ()
+        assert search_public_notice_c(db, "elephant", provider_ids=("foreign",),
+                                     now=100, max_scan=2).hits == ()
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def test_unscanned_current_source_vetoes_obsolete_c_text(tmp_path):
+    db = Storage(tmp_path / "unscanned-current.sqlite")
+    try:
+        rows = [verified_public(record_id=f"candidate-{n}",
+                                title="Ancien titre unique") for n in range(8)]
+        sources = [persist(db, row) for row in rows]
+        ordered = sorted(zip(sources, rows), key=lambda pair: _opaque_key(pair[0].document))
+        source, row = ordered[-1]
+        from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
+        expected = persist_exact_public_search_cover(db, source)
+        current = persist(db, verified_public(record_id=row.record_id,
+                                             title="Titre corrigé"), at=101)
+        assert current.epoch > source.epoch
+        # None of the early transient rows match this title; the retained
+        # old canonical record must not be revived by the independent C scan.
+        for old, _ in ordered[:-1]:
+            assert old.document != current.document
+        result = search_public_notice_c(db, "unique", max_scan=1, now=101)
+        assert result.status == "budget_exceeded"
+        assert all(hit.document != expected.document and hit.record_id != row.record_id
+                   for hit in result.hits)
+        assert db.entitlements() == []
+    finally:
+        db.close()
