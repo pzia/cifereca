@@ -6,6 +6,9 @@ private library URLs, fulfillment or downloads cross this boundary.
 from __future__ import annotations
 
 from email.utils import parsedate_to_datetime
+from dataclasses import dataclass, field
+from hashlib import sha256
+from uuid import uuid4
 import math
 import re
 import time
@@ -17,7 +20,7 @@ import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT, ProviderCapabilityError, ProviderError
 from cifereca_numilog_public_cache import MAX_RATE_LIMIT_PAUSE_SECONDS
 from cifereca_numilog_public import (
-    SEARCH_PATH, MAX_HTML_BYTES, PublicSearchParseError, parse_public_search,
+    SEARCH_PATH, MAX_HTML_BYTES, PublicSearchPage, PublicSearchParseError, parse_public_search,
 )
 
 PUBLIC_ORIGIN = "https://www.numilog.com"
@@ -79,8 +82,62 @@ def public_search_url(query: str, page: int = 0) -> str:
     return PUBLIC_ORIGIN + SEARCH_PATH + "?" + urlencode(params)
 
 
+# Align with the Core receipt's byte bound. Larger accepted pages remain
+# usable for Search, but cannot be retained for this experimental replay.
+_MAX_RETAINED_BYTES = 2 * 1024 * 1024
+_PARSER_FAMILY_DIGEST = sha256(b"numilog.public.search.html").hexdigest()
+# Bump with changes to the replay parser and its dependent HTML helpers.
+_PARSER_IMPLEMENTATION_DIGEST = sha256(b"numilog.public.search.html.v1").hexdigest()
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _RetainedSearchInput:
+    token: str
+    transport_digest: str
+    input_digest: str
+    parser_family_digest: str
+    parser_implementation_digest: str
+    _url: str = field(repr=False)
+    _body: bytes = field(repr=False)
+
+    def __repr__(self):
+        return "_RetainedSearchInput(private)"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _RetainedSearchPage:
+    page: PublicSearchPage
+    raw_input: _RetainedSearchInput | None
+
+
+def _retained_search_input(body, url):
+    if not 1 <= len(body) <= _MAX_RETAINED_BYTES:
+        return None
+    transport = sha256(
+        ("numilog.public.search.get.v1\0text/html\0fr-FR,fr;q=0.9\0" + url).encode("utf-8")
+    ).hexdigest()
+    return _RetainedSearchInput(
+        uuid4().hex, transport, sha256(body).hexdigest(), _PARSER_FAMILY_DIGEST,
+        _PARSER_IMPLEMENTATION_DIGEST, url, body,
+    )
+
+
+def _parse_retained_search_input(raw):
+    """Pure replay of the exact parser input; never a transport operation."""
+    if (type(raw) is not _RetainedSearchInput
+            or type(raw._body) is not bytes
+            or not 1 <= len(raw._body) <= _MAX_RETAINED_BYTES
+            or sha256(raw._body).hexdigest() != raw.input_digest
+            or raw.parser_family_digest != _PARSER_FAMILY_DIGEST):
+        raise ProviderError("Numilog : public_catalog_replay_invalid")
+    try:
+        return parse_public_search(raw._body.decode("utf-8-sig", errors="replace"), raw._url)
+    except PublicSearchParseError:
+        raise ProviderError("Numilog : public_catalog_layout_unverified") from None
+
+
 def fetch_public_search(query: str, *, page: int = 0, field: str = "all",
-                        timeout: float = 15.0):
+                        timeout: float = 15.0, _retain_input: bool = False):
     """Fetch one page with a *new* cookie-free client. Reject redirects.
 
     Parser and HTTP errors are fixed public codes without URLs/body/credentials.
@@ -88,10 +145,14 @@ def fetch_public_search(query: str, *, page: int = 0, field: str = "all",
     """
     if type(field) is not str or field not in _PUBLIC_FIELDS:
         raise ProviderCapabilityError("Numilog : unsupported_public_field")
+    if _retain_input is True:
+        return fetch_public_search_url(public_search_url(query, page), timeout=timeout,
+                                       _retain_input=True)
     return fetch_public_search_url(public_search_url(query, page), timeout=timeout)
 
 
-def fetch_public_search_url(url: str, *, timeout: float = 15.0):
+def fetch_public_search_url(url: str, *, timeout: float = 15.0,
+                            _retain_input: bool = False):
     """Follow only an already-attested public pager/facet URL.
 
     The session enforces source provenance before calling this transport.
@@ -137,9 +198,11 @@ def fetch_public_search_url(url: str, *, timeout: float = 15.0):
         raise ProviderError("Numilog : public_catalog_network_unavailable") from None
 
     try:
-        return parse_public_search(
-            b"".join(chunks).decode("utf-8-sig", errors="replace"), url,
-        )
+        body = b"".join(chunks)
+        page = parse_public_search(body.decode("utf-8-sig", errors="replace"), url)
+        if _retain_input is True:
+            return _RetainedSearchPage(page, _retained_search_input(body, url))
+        return page
     except PublicSearchParseError:
         raise ProviderError("Numilog : public_catalog_layout_unverified") from None
 
