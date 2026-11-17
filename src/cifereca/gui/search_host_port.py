@@ -21,6 +21,7 @@ class SearchControllerHost(Protocol):
     _remote_search_results: Any
     _online_source_context: Any
     _online_source_statuses: Any
+    _online_search_warnings: Any
     _search_response_facets: Any
     _search_mode: Any
 
@@ -75,6 +76,7 @@ SEARCH_RUN_CAPABILITIES = frozenset({
     "_remote_search_results", "_search_local_objects", "_online_pending_key",
     "_online_pending_token", "_online_pending_generation",
     "_online_source_context", "_online_source_statuses", "_online_cover_context", "_search_response_facets",
+    "_online_search_warnings", "_account_context_generation",
     "_populate_search",
     "show_error",
 })

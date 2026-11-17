@@ -232,11 +232,12 @@ def main() -> int:
     session.connect()
     core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
 
-    def search_progressive(text, scope="all", force=False, *, provider_ids=(),
+    def search_progressive(request_scope, text, scope="all", force=False, *, provider_ids=(),
                            field="all", content_types=(), on_batch=None, control=None):
         # All result/error data originates in the REAL adapter's HTTP call.
         # Only this E2E bridge replaces Core federation/installed plugin
         # discovery, and uses Core's published batch/result_status schema.
+        assert request_scope.current(core.library)
         assert force and text == query
         assert field == ("all" if (is_kobo or is_baen) else "title")
         assert not provider_ids and not content_types
@@ -253,20 +254,21 @@ def main() -> int:
             books = ()
             status = "unavailable"
             warnings = ("provider unavailable",)
-        core.library.last_search = list(books)
         if on_batch is not None:
             on_batch(CatalogSearchBatch(
                 provider_id=("baen" if is_baen else "kobo" if is_kobo else "ebooksgratuits"),
                 provider_label=("Baen" if is_baen else "Kobo" if is_kobo else "Ebooks gratuits"),
                 results=books, result_status=status,
             ))
-        return CatalogSearchSummary(
+        summary = CatalogSearchSummary(
             query=text, result_count=len(books), providers_total=1,
             providers_completed=1, providers_failed=int(status == "unavailable"),
             warnings=warnings,
         )
 
-    core.library.search_progressive = search_progressive
+        return summary, books
+
+    core.library.search_progressive_result_for_scope = search_progressive
 
     def record_image(name):
         image = ImageGrab.grab(xdisplay=os.environ["DISPLAY"])

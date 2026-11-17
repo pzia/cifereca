@@ -137,13 +137,14 @@ def test_observed_provider_c_first_and_fast_batch_do_not_wait_for_slow(
             finally:
                 release_slow.set()
 
-            summary = future.result(timeout=15)
+            result = future.result(timeout=15)
+            summary, _rows = result
             assert not summary.cancelled and summary.providers_completed == 2
             assert summary.providers_failed == 0
             callback, args = deliveries.get(timeout=15)
             assert args[0].provider_id == slow.provider_id
             assert callback(*args) is False
-            request.done(summary)
+            request.done(result)
             assert {r.source_provider for r in host._remote_search_results} == {
                 fast.provider_id, slow.provider_id,
             }
