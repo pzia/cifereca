@@ -71,3 +71,20 @@ def _consent_generation_key(scope):
     return (epoch_prefix + sid if epoch_prefix is not None
             else prefix + sid + ".revision")
 
+
+
+def historical_switch_keys(scope, kind=None):
+    """Historical namespaces are negative evidence only; digest includes provider.
+
+    No supplier selection: probe all frozen namespaces of the requested kind.
+    A foreign namespace with the same exact digest is conservative veto evidence.
+    """
+    sid = _source_id(scope)
+    return tuple(dict.fromkeys(prefix + sid for (_, historical_kind),
+                               (prefix, _, _) in _POLICIES.items()
+                               if kind is None or kind == historical_kind))
+
+
+def historical_switch_in_transaction(db, scope, kind=None):
+    return any(db.execute("SELECT 1 FROM metadata WHERE key=?", (key,)).fetchone()
+               is not None for key in historical_switch_keys(scope, kind))
