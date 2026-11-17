@@ -200,3 +200,39 @@ def test_untrusted_book_metadata_no_html_in_projection():
 def test_no_network_or_acquisition_methods_exposed():
     assert not any(hasattr(opds, method) for method in
                    ("borrow", "download", "return_loan", "login", "http_get", "connect"))
+
+
+def test_wire_payload_and_mapping_parity():
+    import json
+    payload = feed()
+    expected = opds.parse_catalog(payload)
+    assert opds.parse_catalog(json.dumps(payload, ensure_ascii=False).encode("utf-8")) == expected
+    assert expected.next_status == "valid"
+
+
+@pytest.mark.parametrize("links,state", [
+    ([], "absent"),
+    ([{"rel": "next", "href": "/v1/books?page=2", "type": "application/opds+json"}], "valid"),
+    ([{"rel": "next", "href": "/v1/books?page=2", "type": "text/html"}], "invalid"),
+    ([{"rel": "next", "href": "https://outside.test/v1/books", "type": "application/opds+json"}], "invalid"),
+    ([{"rel": "next", "href": "/v1/books?page=2", "type": "application/opds+json"},
+      {"rel": "next", "href": "/v1/books?page=3", "type": "application/opds+json"}], "ambiguous"),
+    ([{"rel": "next", "href": "/v1/books?page=2", "type": "application/opds+json"},
+      {"rel": "next", "href": "/v1/books?page=2", "type": "application/opds+json"}], "valid"),
+])
+def test_next_status_never_implies_false_end(links, state):
+    result = opds.parse_catalog(feed(links=links))
+    assert result.next_status == state
+    assert (result.next_url is not None) == (state == "valid")
+
+
+def test_structure_budget_and_status_precedence():
+    cycle = {}
+    cycle["self"] = cycle
+    with pytest.raises(opds.OPDS2ContractError, match="invalid_catalog_json_budget"):
+        opds.parse_catalog(cycle)
+    with pytest.raises(opds.OPDS2ContractError, match="auth_required"):
+        opds.parse_catalog(cycle, status=401)
+    with pytest.raises(opds.OPDS2ContractError, match="invalid_catalog_json_duplicate_member") as caught:
+        opds.parse_catalog(b'{"metadata":{},"metadata":{}}')
+    assert caught.value.__context__ is None
