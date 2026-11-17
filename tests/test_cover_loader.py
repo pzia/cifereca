@@ -201,3 +201,57 @@ def test_cover_cooldown_fallback_can_reenter_loader_without_deadlocking(
         assert loader.stats()["queue"] == 0
     finally:
         loader.close()
+
+
+def test_n3_url_worker_metrics_distinguish_published_bytes_cache_hits_and_failures(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    loader = CoverLoader(max_workers=2)
+    original = loader.client
+    good = "https://covers.example.test/valid.png"
+    bad = "https://covers.example.test/invalid.png"
+    calls = []
+
+    def handler(request):
+        calls.append(str(request.url))
+        if str(request.url) == good:
+            return httpx.Response(200, content=PNG_HEAD,
+                                  headers={"content-type": "image/png"})
+        return httpx.Response(200, content=b"not an image",
+                              headers={"content-type": "text/html"})
+
+    loader.client = httpx.Client(transport=httpx.MockTransport(handler))
+    original.close()
+
+    def fetch(url):
+        done = threading.Event()
+        seen = []
+        loader.load(url, lambda result: (seen.append(result), done.set()))
+        assert done.wait(3.0)
+        loader._queue.join()
+        return seen
+
+    try:
+        assert loader.stats()["n3_url_published_bytes"] == 0
+        assert fetch(good) == [loader._path(good)]
+        first = loader.stats()
+        assert first["download_ok"] == 1
+        assert first["n3_url_published_bytes"] == len(PNG_HEAD)
+        assert 0 <= first["n3_url_ok_avg_ms"] == first["n3_url_ok_max_ms"]
+        assert first["n3_url_failed_avg_ms"] == 0
+        assert fetch(good) == [loader._path(good)]
+        warm = loader.stats()
+        assert warm["cache_hit_valid"] == 1
+        for key in ("download_ok", "n3_url_published_bytes",
+                    "n3_url_ok_avg_ms", "n3_url_ok_max_ms"):
+            assert warm[key] == first[key]
+        assert fetch(bad) == [None]
+        assert fetch(bad) == [None]  # cooldown, not another worker sample
+        failed = loader.stats()
+        assert failed["download_failed"] == 1
+        assert 0 <= failed["n3_url_failed_avg_ms"] == failed["n3_url_failed_max_ms"]
+        assert failed["n3_url_published_bytes"] == len(PNG_HEAD)
+        assert calls == [good, bad]
+    finally:
+        loader.close()
