@@ -135,8 +135,9 @@ class PublicBookMasterDetailView:
         from cifereca.gui.plugin_public_c_guard import pin_plugin_public_c
         for ui_item in ui_rows:
             document = getattr(ui_item, "_cover_document_ref", None)
-            if is_canonical_cover_document(document):
-                source = mapped.get(ui_item.key)
+            source = mapped.get(ui_item.key)
+            if (is_canonical_cover_document(document)
+                    or getattr(source, "cover_document_receipt", None) is not None):
                 # Keep this veto witness even if the selected identity is
                 # absent or the token is refused: no legacy URL fallback.
                 ui_item._cover_plugin_c_source = source
