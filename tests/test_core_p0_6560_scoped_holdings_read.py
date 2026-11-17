@@ -10,6 +10,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
+from cifereca.brokers import CatalogBrokerImpl
 from cifereca.core.search_orchestration import capture_search_read_scope
 from cifereca.models import ItemDetail, SearchResult
 from cifereca.plugin_api import Cancelled
@@ -56,6 +57,8 @@ class Storage:
 
 
 class Core:
+    holdings_for_scope = LibraryService.holdings_for_scope
+
     def __init__(self):
         self.identities = {key: NS(identity_id=key) for key in ("alice", "bob")}
         self.storage = Storage()
@@ -195,3 +198,20 @@ def test_public_label_does_not_authorize_foreign_private_session():
     core.install("card-b", lambda *_: pytest.fail("foreign private GET"))
     assert core.read(scope, item).availability_status == "unknown"
     assert core.storage.reads == []
+
+
+def test_catalog_broker_facets_use_admitted_reader_without_navigation():
+    core = Core()
+    broker = CatalogBrokerImpl(core)
+    alice = broker.for_identity("alice")
+    bob = broker.for_identity("bob")
+    core.install("card-a", lambda item, _: detail(item, "alice"))
+    core.install("card-b", lambda item, _: detail(item, "bob"))
+    assert alice.holdings(row(), force=True).availability_label == "alice"
+    assert bob.holdings(row("card-b", "account-b"), force=True).availability_label == "bob"
+    assert bob.holdings(row()).availability_status == "unknown"
+    with pytest.raises(ValueError):
+        broker.for_identity("missing")
+    core._source_context_epoch += 1
+    with pytest.raises(Cancelled):
+        alice.holdings(row())
