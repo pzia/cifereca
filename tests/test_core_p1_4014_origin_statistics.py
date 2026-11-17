@@ -34,7 +34,8 @@ def test_six_canonical_acquisitions_count_without_placement_provider(store, tmp_
     assert stats["sources"] == {"numilog": 6}
     assert stats["local_books"] == 6
     assert stats["local_books_without_provider_origin"] == 0
-    assert stats["remote_owned_rights"] == 0
+    assert stats["observed_purchase_sources"] == 6
+    assert stats["remote_owned_rights"] is None
 
 
 def test_duplicate_placements_accounts_and_providers_preserve_profile_scope(store, tmp_path):
@@ -69,7 +70,9 @@ def test_duplicate_placements_accounts_and_providers_preserve_profile_scope(stor
     assert stats_b["local_books"] == 1
     assert stats_b["sources"] == {}
     assert stats_b["local_books_without_provider_origin"] == 1
-    assert stats_b["remote_owned_rights"] == 1
+    assert stats_a["observed_purchase_sources"] == 3
+    assert stats_b["observed_purchase_sources"] == 0
+    assert stats_b["remote_owned_rights"] is None
 
 
 def test_missing_placement_and_unavailable_schema_are_distinct(store, tmp_path):
@@ -88,3 +91,31 @@ def test_missing_placement_and_unavailable_schema_are_distinct(store, tmp_path):
     stats = _stats(store, "A")
     assert stats["sources"] == {}
     assert stats["local_books_without_provider_origin"] is None
+
+
+def test_observed_purchase_sources_count_without_local_file_or_legacy_right(store, monkeypatch):
+    from cifereca.core.canonical_sync_stage import persist_attested_source_references
+    from cifereca.gui.statistics_presentation_controller import statistics_lines
+
+    for profile, credential in (("A", "card-A"), ("B", "card-B")):
+        register(store, profile, "synthetic-seller", credential)
+        for kind in ("purchase", "loan"):
+            _, snapshot = new_source(profile, provider="synthetic-seller",
+                                     credential=credential, right=kind, kind=kind)
+            assert persist_attested_source_references(store, snapshot) == 1
+            assert persist_attested_source_references(store, snapshot) == 0
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("statistics read legacy entitlement authority")
+    monkeypatch.setattr(store, "entitlements", forbidden)
+    for profile in ("A", "B"):
+        stats = _stats(store, profile)
+        assert stats["observed_purchase_sources"] == 1
+        assert stats["remote_owned_rights"] is None
+        assert stats["local_books"] == 0
+        assert "Sources d’achat observées : 1" in statistics_lines(stats)
+
+    with store._lock, store._connect() as db:
+        db.execute("UPDATE source_references SET evidence_kind='legacy_unverified' WHERE identity_id='A'")
+    assert _stats(store, "A")["observed_purchase_sources"] == 0
+    assert _stats(store, "B")["observed_purchase_sources"] == 1
