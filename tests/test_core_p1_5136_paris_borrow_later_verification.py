@@ -188,3 +188,42 @@ def test_generic_followup_contains_no_paris_primary_sentinel():
         )
         for node in ast.walk(function)
     )
+
+
+def test_scoped_followup_after_navigation_keeps_checkpoint_read_only(tmp_path):
+    from cifereca.core.borrow_later_verification import prepare_borrow_followup_for_scope
+    service, session, account, item, state, op = _pending(tmp_path)
+    seen = []
+    session.rights_observation_snapshot = lambda a: seen.append(a) or _snapshot(account, item)
+    try:
+        service.select_identity("alex")
+        work = prepare_borrow_followup_for_scope(
+            service, item, identity_id="default", account_id=account.unique_id,
+        )
+        assert callable(work) and seen == []
+        before = service.storage.metadata_get(borrow_claim_key(account, item))
+        service._account_context_epoch += 2
+        assert work()["status"] == "observed_current_loan"
+        assert seen == [account]
+        assert state["mutations"] == 1
+        assert service.storage.metadata_get(borrow_claim_key(account, item)) == before
+        assert service.current_identity.identity_id == "alex"
+    finally:
+        service.close()
+
+
+def test_scoped_followup_cannot_read_after_checkpoint_replacement(tmp_path):
+    from cifereca.core.borrow_later_verification import prepare_borrow_followup_for_scope
+    service, session, account, item, state, op = _pending(tmp_path)
+    seen = []
+    session.rights_observation_snapshot = lambda a: seen.append(a) or _snapshot(account, item)
+    try:
+        work = prepare_borrow_followup_for_scope(
+            service, item, identity_id="default", account_id=account.unique_id,
+        )
+        assert callable(work)
+        service.storage.metadata_set(borrow_claim_key(account, item), "{}")
+        assert work()["status"] == "blocked"
+        assert seen == [] and state["mutations"] == 1
+    finally:
+        service.close()
