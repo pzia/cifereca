@@ -154,6 +154,10 @@ class _UiHost:
         from ..core.notice_c_known_projection import (
             matching_live_public_canonical_ref,
         )
+        from ..core.notice_c_recommendation_known import known_public_c_binding_facts
+        known = known_public_c_binding_facts(item)
+        if known is not None:
+            return known[0]
         return matching_live_public_canonical_ref(
             item, identity_id=identity_id,
         )
