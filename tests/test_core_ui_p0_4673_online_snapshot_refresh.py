@@ -26,8 +26,7 @@ def _deliver(host, row):
     on_batch(NS(results=(row,), provider_id="paris", result_status="live", error_code=""))
     callback, args = host.scheduled.pop()
     assert callback(*args) is False
-    host.service.last_search = [row]
-    request.done(NS(warnings=[]))
+    request.done((NS(warnings=[], cancelled=False), (row,)))
 
 
 def test_same_query_new_online_request_retires_old_paris_detail_and_rows():
