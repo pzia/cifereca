@@ -17,7 +17,7 @@ from cifereca.gui.offer_actions import (
 )
 from tests.test_search_results_view import _book, _host
 from tests.test_core_ui_p1_1867_numilog_direct_download_scope import (
-    _direct_download_method, private_purchase, _proof,
+    _direct_download_method, private_purchase, install_private_hint_fixture,
 )
 
 
@@ -108,9 +108,9 @@ def test_detail_label_uses_v2_contract_instead_of_provider_allowlist(provider):
     window = NS(service=service, action_button=Mock(return_value=button),
                 download_direct_item=Mock())
     if provider == "numilog":
-        # A private-looking inventory card alone cannot activate acquisition.
-        # This positive case supplies the independent Core purchase proof.
-        window._search_purchase_evidence = _proof()
+        # The registered source contract supplies a passive offer hint.
+        # No historical entitlement or provider request is required.
+        install_private_hint_fixture(service, session)
     panel = NS(window=window, _actions=Mock())
     _direct_download_method()(panel, item)
     assert window.action_button.call_args.args[0] == "Vérifier et télécharger"
