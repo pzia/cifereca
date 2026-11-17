@@ -12,6 +12,7 @@ from typing import Any
 
 from ..core.book_cover_projection import CoverDocumentScope
 from ..core.notice_c_known_projection import matching_live_public_canonical_ref
+from ..core.notice_c_live_revision import persisted_live_c_revision
 
 
 _ISSUER = object()
@@ -50,8 +51,8 @@ def issue_public_c_binding(
             or type(source_epoch) is not int or source_epoch < 0):
         return None
     document = matching_live_public_canonical_ref(item, identity_id=identity_id)
-    epoch = getattr(item, "_core_notice_canonical_cover_document_epoch", None)
-    if (document is None or type(epoch) is not int or not 1 <= epoch < 2**63):
+    epoch = persisted_live_c_revision(item, document)
+    if document is None or epoch is None:
         return None
     return document, _PublicCBinding(
         issuer=_ISSUER, window=window, service=service, source=item,
@@ -79,8 +80,7 @@ def public_c_binding_revision(
             != receipt.identity_id
             or getattr(service, "_account_context_epoch", None) != receipt.account_epoch
             or getattr(service, "_source_context_epoch", None) != receipt.source_epoch
-            or getattr(receipt.source, "_core_notice_canonical_cover_document_epoch", None)
-                != receipt.epoch
+            or persisted_live_c_revision(receipt.source, document) != receipt.epoch
             or matching_live_public_canonical_ref(
                 receipt.source, identity_id=receipt.identity_id,
             ) != document):
