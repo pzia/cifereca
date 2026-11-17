@@ -554,3 +554,49 @@ def test_admitted_token_stage_refuses_changed_loan_before_any_get(connected_core
             loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
         )
     assert not downloaded
+
+
+def test_admitted_stage_never_uses_navigation_scoped_session_resolver(
+    connected_core, monkeypatch,
+):
+    service, session, account, loan, state, downloaded = connected_core
+    lease = service.capture_admitted_loan_acsm_stage(
+        loan, expected_identity_id="default",
+    )
+    assert lease is not None
+    service.select_identity("alex")
+    policy_calls = []
+    def policy(provider_id, identity_id=None):
+        policy_calls.append((provider_id, identity_id))
+        return identity_id == "default"
+    def legacy_resolver(*args, **kwargs):
+        pytest.fail("admitted worker must not use the navigation-scoped resolver")
+    monkeypatch.setattr(service, "_provider_enabled_for_identity", policy)
+    monkeypatch.setattr(service, "_session_for_source", legacy_resolver)
+    result = service.stage_explicit_loan_acsm(
+        loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
+    )
+    assert result["status"] == "candidate_acsm"
+    assert len(downloaded) == 1
+    assert policy_calls and all(value == ("bnf-pret", "default") for value in policy_calls)
+
+
+def test_admitted_stage_refuses_disabled_persisted_connection(connected_core):
+    service, session, account, loan, state, downloaded = connected_core
+    lease = service.capture_admitted_loan_acsm_stage(
+        loan, expected_identity_id="default",
+    )
+    assert lease is not None
+    service.storage.provider_connection_put({
+        "identity_id": "default", "provider_id": "bnf-pret",
+        "credential_id": account.credential_id, "label": "BnF",
+        "enabled": False, "metadata": {},
+    })
+    assert service.storage.provider_connection_enabled(
+        "bnf-pret", account.credential_id,
+    ) is False
+    with pytest.raises(ProviderConfigurationError, match="loan_scope_unproven"):
+        service.stage_explicit_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
+        )
+    assert not downloaded

@@ -168,11 +168,20 @@ class LoanActionScopeLease:
             if (session_accounts is None
                     or sum(row is account for row in service.accounts) != 1
                     or sum(row is account for row in session_accounts) != 1
-                    or service._account_for_loan(loan) is not account
-                    or service._session_for_source(provider, credential) is not session):
+                    or service._account_for_loan(loan) is not account):
                 return False
-            return (self._source_epoch is None
-                    or source_context_epoch(service) == self._source_epoch)
+            if self._source_epoch is None:
+                return service._session_for_source(provider, credential) is session
+            # The legacy source resolver asks for provider visibility using
+            # the currently displayed profile. An admitted worker may only
+            # consult policy for its own owner, including the persisted
+            # connection switch, and the explicit account's session.
+            return (
+                service.storage.provider_connection_enabled(provider, credential) is True
+                and service._provider_enabled_for_identity(provider, identity_id)
+                and service._session_for_account(account) is session
+                and source_context_epoch(service) == self._source_epoch
+            )
         except Exception:
             return False
 

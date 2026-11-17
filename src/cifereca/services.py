@@ -783,13 +783,12 @@ class LibraryService:
                         or not admitted_lease.admitted_for(self, loan, expected_identity_id)):
                     raise LoanActionError(reason("loan_scope_unproven"))
             try:
-                session = self._session_for_source(
-                    loan.source_provider, loan.source_credential,
+                session = (
+                    self._session_for_source(loan.source_provider, loan.source_credential)
+                    if admitted_lease is None else admitted_lease._session
                 )
             except Exception:
                 raise LoanActionError(reason("loan_scope_unproven")) from None
-            if admitted_lease is not None and admitted_lease._session is not session:
-                raise LoanActionError(reason("loan_scope_unproven"))
             profile = getattr_static(
                 type(session), "loan_acsm_stage_profile", None,
             )
