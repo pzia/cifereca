@@ -14,7 +14,7 @@ MAX_XML_DEPTH = 96
 
 
 class CatalogueXMLParseError(ValueError):
-    """Closed public reason: malformed, html, forbidden_doctype or budget."""
+    """Closed reason: malformed, html, forbidden_doctype, budget or unsupported."""
     def __init__(self, code):
         super().__init__(code)
         self.code = code
@@ -49,14 +49,14 @@ class _BoundedTree(ET.TreeBuilder):
 def _html_prefix(content):
     # Classification only. Never use a decoded prefix to approve XML.
     # Recognize common proxy/login pages including UTF-16 and UTF-8 BOM.
-    prefix = content[:512]
+    prefix = content  # already bounded; tolerate leading whitespace
     if prefix.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")):
         text = prefix.decode("utf-32", errors="ignore")
     elif prefix.startswith((b"\xff\xfe", b"\xfe\xff")):
         text = prefix.decode("utf-16", errors="ignore")
-    elif prefix.startswith(b"\x00<"):
+    elif prefix.startswith(b"\x00<") or prefix[:2] in (b"\x00 ", b"\x00\n", b"\x00\t", b"\x00\r"):
         text = prefix.decode("utf-16-be", errors="ignore")
-    elif prefix.startswith(b"<\x00"):
+    elif prefix.startswith(b"<\x00") or prefix[:2] in (b" \x00", b"\n\x00", b"\t\x00", b"\r\x00"):
         text = prefix.decode("utf-16-le", errors="ignore")
     else:
         text = prefix.decode("utf-8-sig", errors="ignore")
@@ -93,7 +93,7 @@ def parse_bounded_catalogue_xml(
     except ET.ParseError:
         failure = "html" if _html_prefix(content) else "malformed"
     except (ValueError, LookupError, RecursionError, OverflowError):
-        failure = "malformed"
+        failure = "unsupported"
     if failure is not None:
         # Outside catch: never retain a parser exception in __context__.
         raise CatalogueXMLParseError(failure)
