@@ -158,6 +158,15 @@ class _UiHost:
             item, identity_id=identity_id,
         )
 
+    def public_notice_cover_binding(
+        self, item: object, *, identity_id: str,
+    ) -> tuple[object, object] | None:
+        """Optional exact C reference + opaque Core-owned epoch receipt."""
+        if not self._window_alive():
+            return None
+        from .plugin_public_c_binding import issue_public_c_binding
+        return issue_public_c_binding(self.window, item, identity_id=identity_id)
+
     def can_open_loaded_search_notice(
         self, *, provider: str, credential: str, record_id: str,
         docbase: str, source_collection: str, identity_id: str,
