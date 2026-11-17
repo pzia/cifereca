@@ -249,3 +249,27 @@ def test_explicit_lender_read_scope_revoked_without_provider_io(harness, change)
     )
     assert result.status == "revoked" and not result.executable
     assert session.calls == 0
+
+
+def test_headless_lender_service_facades_bind_original_reader(harness):
+    service, _account, session = harness
+    row = _candidate()
+    service.select_identity("alex")
+    captured = service.preview_borrow_for_identity_scope(
+        identity_id="default", expected_edition_id="edition-1",
+        observations=(row,), now=1100,
+    )
+    assert captured.preview.requesting_identity_id == "default"
+    assert captured.preview.status == "external"
+    kwargs = dict(captured=captured, selected_option_id=captured.preview.options[0].option_id,
+                  expected_edition_id="edition-1", observations=(row,), now=1100)
+    assert service.revalidate_scoped_borrow_lender_choice(**kwargs).status == "current"
+    service._source_context_epoch += 1
+    assert service.revalidate_scoped_borrow_lender_choice(**kwargs).status == "revoked"
+    assert service.current_identity.identity_id == "alex"
+    assert session.calls == 0
+    with pytest.raises(ValueError, match="search_identity_unknown"):
+        service.preview_borrow_for_identity_scope(
+            identity_id="missing", expected_edition_id="edition-1",
+            observations=(row,), now=1100,
+        )
