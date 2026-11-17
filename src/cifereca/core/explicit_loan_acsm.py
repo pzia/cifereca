@@ -64,8 +64,10 @@ def stage_explicit_loan_acsm(
             try:
                 # No primary/legacy fallback: source_account_id was mandatory.
                 account = service._account_for_loan(loan)
-                session = service._session_for_source(
-                    loan.source_provider, loan.source_credential)
+                session = (
+                    service._session_for_source(loan.source_provider, loan.source_credential)
+                    if admitted_lease is None else admitted_lease._session
+                )
                 if (account.identity_id != expected_identity_id
                         or account.provider_id != expected_provider_id
                         or account.credential_id != loan.source_credential
