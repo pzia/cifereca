@@ -63,6 +63,26 @@ def _provider_origin_statistics(storage, identity_id: str) -> tuple[dict[str, in
     return {provider: len(ids) for provider, ids in by_provider.items()}, len(local_artifacts)
 
 
+def _observed_purchase_sources(storage, identity_id: str) -> int | None:
+    """Count exact attested purchase-source observations, never legal rights.
+
+    A snapshot can be historical or incomplete, and no availability, current
+    consent or local placement follows from this number. No legacy entitlement
+    row, public description, or internal transfer contributes to the count.
+    """
+    try:
+        with storage._lock, storage._connect() as db:
+            return int(db.execute(
+                "SELECT COUNT(*) FROM source_references "
+                "WHERE identity_id=? AND reference_kind='purchase' "
+                "AND synchronizable=1 AND evidence_kind='provider_response' "
+                "AND evidence_ref<>''",
+                (identity_id,),
+            ).fetchone()[0])
+    except (SqliteError, AttributeError):
+        return None
+
+
 def identity_statistics(self, identity_id, *, window_seconds: int=2592000):
     """Persisted inventory facts only; no scan, authentication or download."""
     # A direct Core/CLI/HTTP caller must provide a native identity reference.
@@ -91,11 +111,14 @@ def identity_statistics(self, identity_id, *, window_seconds: int=2592000):
         key=hashlib.sha256(f'{account.provider_id}:{account.credential_id}:{account.unique_id}'.encode()).hexdigest()
         if isinstance(observations.get(key),dict):selected.append(observations[key])
     loan_keys={key for row in selected for key in row.get('loan_keys',[])}
-    owned={r['entitlement_id'] for r in self.storage.entitlements(state='active') if r.get('identity_id')==identity_id and r.get('entitlement_type')=='owned'}
+    observed_purchase_sources = _observed_purchase_sources(self.storage, identity_id)
     return {'identity_id':identity_id,'local_books':len(ids),'local_placements':len(placements),'local_files':sum((r.get('metadata') or {}).get('artifact_kind')!='bundle' for r in placements),
             'known_loans':len(loan_keys) if selected else None,'loan_sources_observed':len(selected),
             'loans_observed_at':min((r.get('observed_at') for r in selected),default=None) if all(isinstance(r.get('observed_at'),int) for r in selected) else None,
-            'remote_owned_rights':len(owned),'formats':dict(formats),'sources':sources,'epub_covers':dict(covers),
+            'observed_purchase_sources':observed_purchase_sources,
+            # Deprecated ABI slot: a current legal-right count is no longer
+            # provided. Older clients must not read observations as grants.
+            'remote_owned_rights':None,'formats':dict(formats),'sources':sources,'epub_covers':dict(covers),
             'local_books_without_provider_origin':without_provider_origin,
             'actions':asdict(self.action_statistics(identity_id, window_seconds=window_seconds)),
             'scope':'persisted_inventory_last_observed_provider_loans_and_action_window'}
