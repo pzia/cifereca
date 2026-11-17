@@ -13,7 +13,9 @@ import logging
 
 from .source_convergence import SourceKey
 from .legacy_source_account_id import ambiguous_legacy_source_account_id
-from .source_sync_consent import read_policy, policy_in_transaction
+from .source_sync_consent import (
+    inventory_epoch_key, read_policy, policy_in_transaction,
+)
 
 # Re-export historical names for existing legacy readers/tests. Metadata-key
 # lookup carries no consent decision, provider GET or acquisition permission.
@@ -107,11 +109,14 @@ def consent_generation(storage, scope):
         return "unavailable"
     if generic.configured:
         return ("source:" + generic.revision) if generic.mode != "invalid" else "invalid"
-    key = _consent_generation_key(scope)
-    if key is None:
-        return None
     try:
-        raw = storage.metadata_get(key)
+        inventory = storage.metadata_get(inventory_epoch_key(scope))
+        if inventory is not None:
+            return ("inventory:" + inventory if type(inventory) is str
+                    and _HEX.fullmatch(inventory) else "invalid")
+        # Untouched historical installations retain their previous fence.
+        key = _consent_generation_key(scope)
+        raw = storage.metadata_get(key) if key is not None else None
     except Exception:
         return "unavailable"
     if raw is None:
@@ -130,13 +135,18 @@ def consent_generation_in_transaction(db, source):
         return "unavailable"
     if generic.configured:
         return ("source:" + generic.revision) if generic.mode != "invalid" else "invalid"
-    key = _consent_generation_key(source.scope)
-    if key is None:
-        return None
     try:
         row = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (key,),
+            "SELECT value FROM metadata WHERE key=?",
+            (inventory_epoch_key(source.scope),),
         ).fetchone()
+        if row is not None:
+            inventory = row[0]
+            return ("inventory:" + inventory if type(inventory) is str
+                    and _HEX.fullmatch(inventory) else "invalid")
+        key = _consent_generation_key(source.scope)
+        row = (db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+               if key is not None else None)
     except Exception:
         return "unavailable"
     raw = row[0] if row else None
