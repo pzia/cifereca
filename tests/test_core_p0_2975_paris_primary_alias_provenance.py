@@ -6,6 +6,8 @@ borrower identity must NEVER prove a returned digital loan.
 """
 from __future__ import annotations
 
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
+
 from dataclasses import replace
 
 import pytest
@@ -91,9 +93,8 @@ def test_invalid_secondary_alias_cannot_publish_positive_startup_rights(
         account = _account("", False)
         service.accounts = [account]
         candidate = _loan("new", credential="credential", account="primary")
-        monkeypatch.setattr(
-            service, "_loans_for_account",
-            lambda selected, force=False: [candidate],
+        attach_opening_loan_reader(
+            service, lambda selected, force=False: [candidate],
         )
         report = service.opening_sync()
         active = next(
