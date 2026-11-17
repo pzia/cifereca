@@ -2353,6 +2353,27 @@ class LibraryService:
         return enriched
 
     def holdings(self, item: SearchResult, search_terms: str = "", force: bool = False) -> ItemDetail:
+        """Legacy synchronous navigation facade; new clients use a read scope."""
+        return LibraryService._holdings_read(self, item, search_terms, force)
+
+    def holdings_for_scope(
+        self, request_scope, item: SearchResult, search_terms: str = "", force: bool = False,
+    ) -> ItemDetail:
+        """Read exact-source availability for an already admitted reader.
+
+        A selection change is not a revocation; removal/rebind or a policy
+        change is. This is a descriptive read, not borrowing authority.
+        """
+        if (type(request_scope) is not search_orchestration.SearchReadScope
+                or not request_scope.current(self)):
+            raise Cancelled("holdings_read_scope_revoked")
+        return LibraryService._holdings_read(
+            self, item, search_terms, force, request_scope=request_scope,
+        )
+
+    def _holdings_read(
+        self, item: SearchResult, search_terms: str, force: bool, *, request_scope=None,
+    ) -> ItemDetail:
         # Catalogue-only projections do not attest borrower rights. The
         # source's public sentinel or an explicitly read-only projection
         # precludes a private holdings GET, regardless of provider name.
@@ -2389,13 +2410,29 @@ class LibraryService:
         # Pin one synchronous caller context before a cache read or provider
         # GET. Core receives only this admitted identity; an A→B→A selection
         # invalidates the result through the monotone account epoch.
-        admitted_identity_id = getattr(
-            getattr(self, "current_identity", None), "identity_id", None,
-        )
-        admitted_account_epoch = getattr(self, "_account_context_epoch", None)
-        admitted_source_epoch = getattr(self, "_source_context_epoch", None)
+        if request_scope is not None:
+            admitted_identity_id = request_scope.identity_id
+        else:
+            admitted_identity_id = getattr(
+                getattr(self, "current_identity", None), "identity_id", None,
+            )
+            admitted_account_epoch = getattr(self, "_account_context_epoch", None)
+            admitted_source_epoch = getattr(self, "_source_context_epoch", None)
 
         def private_source_current() -> bool:
+            if request_scope is not None:
+                return (
+                    request_scope.current(self)
+                    and self._provider_enabled_for_identity(
+                        item.source_provider, admitted_identity_id,
+                    ) is True
+                    and (
+                        (item.source_credential == "__public__" and public_catalogue_source(item))
+                        or private_source_owner_matches(
+                            self, item, identity_id=admitted_identity_id,
+                        )
+                    )
+                )
             return (
                 getattr(getattr(self, "current_identity", None), "identity_id", None)
                 == admitted_identity_id
@@ -2407,7 +2444,7 @@ class LibraryService:
                     self, item, identity_id=admitted_identity_id,
                 )
             )
-        if not public_catalogue_source(item) and not private_source_current():
+        if (request_scope is not None or not public_catalogue_source(item)) and not private_source_current():
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
@@ -2420,18 +2457,23 @@ class LibraryService:
             )
         # Identical record IDs can belong to different collections. Scope
         # cached availability and offers to the exact source and profile.
-        key = json.dumps((
+        cache_scope = (
             "v2", admitted_identity_id,
             item.source_provider, item.source_credential, item.scenario,
             item.docbase, item.source_collection or "", item.record_id,
-        ), separators=(",", ":"))
+        )
+        if request_scope is not None:
+            # Never inherit old navigation-cache entries or conflate exact
+            # borrower/account coordinates from two editions of a response.
+            cache_scope = ("v3", *cache_scope[1:], item.source_account_id)
+        key = json.dumps(cache_scope, separators=(",", ":"))
         ttl = int(self.config.get("cache.holdings_seconds", 300))
         if not force:
             cached = self.storage.cache_get("holdings", key)
             if isinstance(cached, dict):
                 # A cached rights-bearing response must not outlive a source
                 # owner transfer or an active identity change mid-cache-read.
-                if not public_catalogue_source(item) and not private_source_current():
+                if (request_scope is not None or not public_catalogue_source(item)) and not private_source_current():
                     return ItemDetail(
                         record_id=item.record_id, docbase=item.docbase,
                         title=item.title, author=item.author,
@@ -2442,12 +2484,24 @@ class LibraryService:
                         holdings=[], source_provider=item.source_provider,
                         source_credential=item.source_credential,
                     )
+                cached = dict(cached)
                 cached["holdings"] = [Holding(**x) for x in cached.get("holdings", [])]
                 return ItemDetail(**cached)
-        detail = self._session_for_source(item.source_provider, item.source_credential).holdings(item, search_terms)
+        if request_scope is not None:
+            if not private_source_current():
+                raise Cancelled("holdings_read_scope_revoked")
+            session = provider_sessions._session_for_source(
+                self, item.source_provider, item.source_credential,
+                identity_id=admitted_identity_id,
+            )
+            if not private_source_current():
+                raise Cancelled("holdings_read_scope_revoked")
+        else:
+            session = self._session_for_source(item.source_provider, item.source_credential)
+        detail = session.holdings(item, search_terms)
         # Provider I/O can complete after A→B→A or a SQLite rebind.
         # A revoked read must not publish or cache private borrower details.
-        if not public_catalogue_source(item) and not private_source_current():
+        if (request_scope is not None or not public_catalogue_source(item)) and not private_source_current():
             return ItemDetail(
                 record_id=item.record_id, docbase=item.docbase,
                 title=item.title, author=item.author,
