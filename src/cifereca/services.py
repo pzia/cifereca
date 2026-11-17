@@ -38,7 +38,7 @@ from .core import library_projection, library_mutation
 from .core.source_context import source_context_epoch
 from .core import provider_sessions, search_orchestration
 from .acquisition import Acquisition, AcquisitionManager, AcquisitionResult
-from .acquisition_engine import AcquisitionLedger, AcquisitionReconciler, Entitlement, SourceIdentity
+from .acquisition_engine import AcquisitionReconciler, Entitlement, SourceIdentity
 from .catalog import LocalCatalog
 from .epub_metadata import cached_cover_url
 from .core.covers import candidate as cover_candidate, resolve_cover
@@ -204,7 +204,6 @@ class LibraryService:
         # when the PluginManager is attached.
         self.registry = ProviderRegistry()
         self.acquisition = AcquisitionManager(config, diagnostics)
-        self.acquisition_ledger = AcquisitionLedger(storage)
         self.acquisition_reconciler = AcquisitionReconciler(storage)
         self._sessions: dict[str, ProviderSession] = {}
         self._session_errors: dict[str, str] = {}
