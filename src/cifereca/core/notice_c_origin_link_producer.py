@@ -24,7 +24,6 @@ from .notice_cover_repository import (
 )
 from .notice_c_public_search import _public_observation, _fold
 
-_MAX_PUBLIC_SOURCES = 4096
 _MAX_ORIGINS = 100000
 
 
@@ -65,39 +64,56 @@ def _public_source_coordinates(
     return key.provider_id, record
 
 
-def _admitted_public_sources(storage) -> dict[tuple[str, str], PersistedNoticeCover] | None:
-    """Bounded scan of real, separately persisted Core source observations."""
-    with storage._lock, storage._connect() as db:
-        rows = db.execute(
-            "SELECT key,value FROM metadata WHERE key>=? AND key<? "
-            "ORDER BY key LIMIT ?",
-            (_SOURCE_PREFIX, _SOURCE_PREFIX + "\uffff", _MAX_PUBLIC_SOURCES + 1),
-        ).fetchall()
-    if len(rows) > _MAX_PUBLIC_SOURCES:
-        return None
+def _admitted_public_sources(
+    storage, wanted: set[tuple[str, str]],
+) -> dict[tuple[str, str], PersistedNoticeCover]:
+    """Read only independently persisted source records relevant to origins."""
+    if not wanted:
+        return {}
+    from .notice_search_cover_producer import _coordinate_digest
+
+    # The source record hash intentionally excludes docbase/revision: every
+    # competing edition of the same provider record must remain visible to
+    # the collision veto. The full decoder still proves the exact source.
+    keys = sorted({
+        (provider, "search:" + _coordinate_digest(provider, "public_catalog", record))
+        for provider, record in wanted
+    })
     admitted: dict[tuple[str, str], PersistedNoticeCover] = {}
     collisions: set[tuple[str, str]] = set()
-    for key_string, raw in rows:
-        hit = _public_observation(
-            raw, key_string=key_string, now=1,
+    with storage._lock, storage._connect() as db:
+        cursor = db.execute(
+            "SELECT key,value FROM metadata WHERE key>=? AND key<? "
+            "AND json_extract(CASE WHEN json_valid(value) THEN value "
+            "ELSE '{}' END, '$.key.visibility')='public' "
+            "AND json_array(json_extract(CASE WHEN json_valid(value) THEN value "
+            "ELSE '{}' END, '$.key.provider_id'), "
+            "json_extract(CASE WHEN json_valid(value) THEN value ELSE '{}' END, "
+            "'$.key.record_id')) IN (SELECT json(value) FROM json_each(?)) "
+            "ORDER BY key",
+            (_SOURCE_PREFIX, _SOURCE_PREFIX + "\uffff", json.dumps(keys)),
         )
-        if hit is None or hit.medium != "digital":
-            continue
-        # Reuse the already fetched indexed source payload; one bounded
-        # SQLite cursor instead of one extra connection per public result.
-        try:
-            source = _decode_source(raw, hit.document)
-        except (ValueError, TypeError, UnicodeError, RecursionError):
-            continue
-        coords = _public_source_coordinates(source)
-        if coords is None:
-            continue
-        if coords in admitted:
-            # Multiple public revisions/editions per provider item are
-            # ambiguous. Do not pick a most-recent or first-listed variant.
-            collisions.add(coords)
-        else:
-            admitted[coords] = source
+        for key_string, raw in cursor:
+            hit = _public_observation(
+                raw, key_string=key_string, now=1,
+            )
+            if hit is None or hit.medium != "digital":
+                continue
+            # Reuse the already fetched indexed source payload; one bounded
+            # SQLite cursor instead of one extra connection per public result.
+            try:
+                source = _decode_source(raw, hit.document)
+            except (ValueError, TypeError, UnicodeError, RecursionError):
+                continue
+            coords = _public_source_coordinates(source)
+            if coords is None:
+                continue
+            if coords in admitted:
+                # Multiple public revisions/editions per provider item are
+                # ambiguous. Do not pick a most-recent or first-listed variant.
+                collisions.add(coords)
+            else:
+                admitted[coords] = source
     for coords in collisions:
         admitted.pop(coords, None)
     return admitted
@@ -136,7 +152,15 @@ def reconcile_origin_linked_public_batch(
     )
     if not verified or len(verified) > _MAX_ORIGINS:
         return {}
-    public = _admitted_public_sources(storage)
+    # Only purchases already attested by the Core publication graph may
+    # participate in reconciliation. Unrelated source rows cannot exhaust
+    # a global scan budget or obscure a competing revision.
+    wanted = {(provider, edition)
+              for _artifact, _owner, provider, _credential, _account, edition, kind in verified
+              if kind == "purchase"}
+    if not (wanted & current_by_coords.keys()):
+        return {}
+    public = _admitted_public_sources(storage, wanted)
     if not public:
         return {}
     current_by_coords = {

@@ -316,3 +316,35 @@ def test_laundered_cross_ref_and_stale_original_never_bind_live_ui(tmp_path):
         assert db.entitlements() == []
     finally:
         db.close()
+
+
+def test_origin_reconciliation_survives_large_unrelated_source_inventory(tmp_path):
+    import json
+    from cifereca.core.notice_cover_repository import _PREFIX
+
+    db = Storage(tmp_path / "large-origin-inventory.sqlite")
+    try:
+        _origins(db, tmp_path)
+        a, b = _source_rows()
+        assert _mirror(db, a) == 1
+        # A large unrelated source inventory must not veto the actual
+        # provider pair. These deliberately malformed records also check
+        # that the SQL prefilter is safe on invalid persisted JSON.
+        with db._lock, db._connect() as sql:
+            own = sql.execute("SELECT value FROM metadata WHERE key=?",
+                              (_opaque_key(a._core_notice_cover_document_ref),)).fetchone()[0]
+            payload = json.loads(own)
+            payload["key"]["provider_id"] = "unrelated-provider"
+            payload["key"]["record_id"] = "search:unrelated"
+            raw = json.dumps(payload)
+            sql.executemany("INSERT INTO metadata(key,value) VALUES(?,?)",
+                            [(_PREFIX + f"{n:064x}", raw) for n in range(4100)])
+            sql.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
+                        (_PREFIX + "corrupt", "{"))
+        assert _mirror(db, b) == 1
+        linked = read_consolidated_notice_cover(db, b._core_notice_canonical_cover_document_ref)
+        assert len(linked.sources) == 2
+        assert {cover.url for cover in linked.candidates} == {A_URL, B_URL}
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
