@@ -7,6 +7,8 @@ last-row-wins right. All tests use offline synthetic SQLite.
 """
 from __future__ import annotations
 
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
+
 from dataclasses import replace
 import json
 from types import SimpleNamespace
@@ -54,9 +56,8 @@ def test_source_scope_rejects_conflicting_duplicate_before_first_write(
         assert not _opening_loans_scoped(account, "default", [first, duplicate])
         # A malformed source is marked failed and NO positive rows from that
         # source reach the startup transaction or dashboard.
-        monkeypatch.setattr(
-            service, "_loans_for_account",
-            lambda selected, force=False: [first, duplicate],
+        attach_opening_loan_reader(
+            service, lambda selected, force=False: [first, duplicate],
         )
         summary = service.opening_sync()
         owner = next(x for x in summary["identities"]
