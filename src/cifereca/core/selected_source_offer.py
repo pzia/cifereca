@@ -30,6 +30,9 @@ class SourceOfferTarget:
     # Only an explicit Core-admitted Search click may use this independent
     # source lease. Passive/legacy targets retain navigation-epoch semantics.
     source_epoch: int | None = field(default=None, compare=False)
+    # Explicit headless admission additionally pins the actual registry object
+    # and Core instance, not merely a reusable identity string.
+    reader_scope: object | None = field(default=None, compare=False, repr=False)
 
 
 def _resolve(service, target: SourceOfferTarget):
@@ -40,6 +43,17 @@ def _resolve(service, target: SourceOfferTarget):
     # Production LibraryService publishes a monotone epoch on every identity
     # switch; minimal synthetic facades with no epoch still need all the
     # independent account/session/ABI binding guards below.
+    if target.reader_scope is not None:
+        from .search_orchestration import SearchReadScope
+        scope = target.reader_scope
+        if (type(scope) is not SearchReadScope
+                or scope.identity_id != target.identity_id
+                or scope.source_epoch != target.source_epoch
+                or not scope.current(service)
+                or service._provider_enabled_for_identity(
+                    target.provider_id, target.identity_id,
+                ) is not True):
+            raise ValueError("selected_source_binding_changed")
     if target.source_epoch is not None:
         from .source_context import source_context_epoch
         if (type(target.source_epoch) is not int
@@ -83,6 +97,8 @@ def _resolve(service, target: SourceOfferTarget):
         from .source_context import source_context_epoch
         if source_context_epoch(service) != target.source_epoch:
             raise ValueError("selected_source_binding_changed")
+    if target.reader_scope is not None and not target.reader_scope.current(service):
+        raise ValueError("selected_source_binding_changed")
     return target, account
 
 
