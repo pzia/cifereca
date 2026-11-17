@@ -80,11 +80,28 @@ def history(**changed):
     return item
 
 
-def admit(db, rows, *, identity_id="alice"):
+def declared_provider(provider, branch, *, public_branch=None, revision=None):
+    from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
+    return ProviderDescriptor(
+        id=provider, display_name="Fixture", description="Fixture",
+        state="ready", capabilities=ProviderCapabilities(),
+        borrower_public_edition_branches_v1=(
+            (branch, "digital", public_branch or branch, revision),
+        ),
+    )
+
+
+def borrower_descriptors():
+    return (declared_provider("bnf-pret", "BNF_PRET"),
+            declared_provider("paris", "DILICOM"))
+
+
+def admit(db, rows, *, identity_id="alice", descriptors=None):
     # All mock borrower reads were admitted at these exact Core generations.
     return attach_borrower_public_c(
         db, rows, identity_id=identity_id,
         account_epoch=7, source_epoch=9,
+        descriptors=borrower_descriptors() if descriptors is None else descriptors,
     )
 
 
@@ -483,5 +500,31 @@ def test_positive_paris_branch_attested_relation_prefers_multisource_c(tmp_path)
             NS(storage=db), combined.document,
         ).candidates} == {URL_A, URL_B}
         assert db.entitlements() == []
+    finally:
+        db.close()
+
+
+def test_unknown_provider_uses_only_declared_branch_contract(tmp_path):
+    db = Storage(tmp_path / "synthetic-provider.sqlite")
+    try:
+        _, expected = bibliography(db, provider="future-lender",
+                                  docbase="PUBLIC_NATIVE")
+        row = loan(source_provider="future-lender", provider="BORROWED_NATIVE")
+        declared = declared_provider("future-lender", "BORROWED_NATIVE",
+                                     public_branch="PUBLIC_NATIVE")
+        assert admit(db, [row]) == 0
+        assert admit(db, [row], descriptors=(declared,)) == 1
+        assert borrower_public_c_receipt(row, identity_id="alice").document == expected.document
+        # Duplicate supplier registrations and ambiguous branch declarations
+        # must revoke any preceding receipt; no legacy brand fallback.
+        assert admit(db, [row], descriptors=(declared, declared)) == 0
+        assert borrower_public_c_receipt(row, identity_id="alice") is None
+        ambiguous = replace(declared, borrower_public_edition_branches_v1=(
+            ("BORROWED_NATIVE", "digital", "PUBLIC_NATIVE", None),
+            ("BORROWED_NATIVE", "digital", "OTHER", None),
+        ))
+        assert admit(db, [row], descriptors=(ambiguous,)) == 0
+        assert admit(db, [row], descriptors=()) == 0
+        assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()

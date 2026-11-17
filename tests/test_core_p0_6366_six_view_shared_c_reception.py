@@ -41,7 +41,7 @@ from tests.test_core_p0_3171_atomic_publication_v14 import (
     new_source, publish, register, target,
 )
 from tests.test_core_p0_6366_borrower_public_c_lists_detail import (
-    loan, history, host_for, cell,
+    loan, history, host_for, cell, borrower_descriptors,
 )
 from tests.test_core_p0_6366_library_recent_public_c import (
     _views, library_view, recent_view,
@@ -268,6 +268,7 @@ def _borrowers(db, reception):
     items = [loan(identity_id=OWNER), history(identity_id=OWNER)]
     assert attach_borrower_public_c(
         db, items, identity_id=OWNER, account_epoch=7, source_epoch=9,
+        descriptors=borrower_descriptors(),
     ) == 2
     for item in items:
         name = "loans" if type(item) is Loan else "history"

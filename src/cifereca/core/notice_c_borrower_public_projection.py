@@ -19,6 +19,8 @@ import sqlite3
 import unicodedata
 
 from ..models import HistoryItem, Loan
+from ..providers.base import ProviderDescriptor
+from .source_context import source_context_epoch
 from .book_cover_projection import CoverDocumentScope
 from .notice_c_cover_index import (
     _PREFIX, _REF_PREFIX, _decode, _json,
@@ -29,31 +31,57 @@ _MAX_CANONICAL = 4096
 _MAX_ITEMS = 2048
 _BORROWER_PUBLIC_C_TOKEN = object()
 
-# Positive same-edition *source* contracts, independently visible on both
-# the borrower inventory and the public catalogue:
-#   Paris ListLoans/ListHandings DILICOM.RecordId == Search.Resource.RscId
-#     and Search.Resource.RscBase == "DILICOM".
-#   BnF active-loans.resource_id == public Search record.resource_id,
-#     both on the native BNF_PRET branch.
-# No generic provider+record equivalence is assumed for other adapters.
-# None means the public Search source did not advertise an edition revision;
-# if a future revision is observed, an old private DTO cannot attest it.
-_PRIVATE_PUBLIC_BRANCH = {
-    ("paris", "DILICOM", "digital"): ("DILICOM", None),
-    ("bnf-pret", "BNF_PRET", "digital"): ("BNF_PRET", None),
-}
+def borrower_public_c_descriptors(service, *, source_epoch: int) -> tuple:
+    """Read only installed registry declarations, never a provider query."""
+    try:
+        if type(source_epoch) is not int or source_context_epoch(service) != source_epoch:
+            return ()
+        descriptors = service.provider_descriptors()
+        if (type(descriptors) not in (list, tuple) or len(descriptors) > 512
+                or source_context_epoch(service) != source_epoch):
+            return ()
+        return tuple(descriptors)
+    except (AttributeError, TypeError, ValueError, RuntimeError, LookupError):
+        return ()
 
 
-def _attested_public_edition(item: Loan | HistoryItem):
-    """Return only an exact native branch -> public source edition contract."""
-    if (type(item.source_provider) is not str
-            or type(item.provider) is not str
-            or type(item.medium) is not str
-            or type(item.record_id) is not str):
-        return None
-    source = _PRIVATE_PUBLIC_BRANCH.get((
-        item.source_provider, item.provider, item.medium,
-    ))
+def _declared_branches(descriptors: object) -> dict:
+    """Accept exact, unambiguous native declarations only."""
+    if type(descriptors) not in (list, tuple) or len(descriptors) > 512:
+        return {}
+    result = {}
+    seen = set()
+    def valid(value):
+        return (type(value) is str and 0 < len(value) <= 160
+                and value == value.strip() and value.isprintable())
+    for descriptor in descriptors:
+        if type(descriptor) is not ProviderDescriptor or not valid(descriptor.id):
+            continue
+        provider = descriptor.id
+        if provider in seen:
+            result.pop(provider, None)
+            continue
+        seen.add(provider)
+        rows = descriptor.borrower_public_edition_branches_v1
+        if descriptor.state != "ready" or type(rows) is not tuple or len(rows) > 64:
+            continue
+        branches = {}
+        for row in rows:
+            if (type(row) is not tuple or len(row) != 4
+                    or not all(valid(value) for value in row[:3])
+                    or row[1] != "digital"
+                    or (row[3] is not None and not valid(row[3]))
+                    or row[:2] in branches):
+                break
+            branches[row[:2]] = row[2:]
+        else:
+            result[provider] = branches
+    return result
+
+
+def _attested_public_edition(item: Loan | HistoryItem, declarations: dict):
+    """Return only an exact plugin-declared branch -> public edition."""
+    source = declarations.get(item.source_provider, {}).get((item.provider, item.medium))
     if source is None:
         return None
     return (item.source_provider, item.record_id, item.medium, *source)
@@ -77,7 +105,6 @@ def _coordinate(item: object, identity_id: str):
             or not 0 < len(item.record_id) <= 160
             or type(item.medium) is not str or item.medium != "digital"
             or type(item.provider) is not str or not item.provider
-            or _attested_public_edition(item) is None
             or type(item.title) is not str or not item.title.strip()
             or type(item.source_credential) is not str
             or not item.source_credential
@@ -143,6 +170,7 @@ class VerifiedBorrowerPublicC:
 def attach_borrower_public_c(
     storage, rows: list, *, identity_id: str,
     account_epoch: int, source_epoch: int,
+    descriptors: object = (),
 ) -> int:
     """Admit only native-branch-proven public editions in one bounded read.
 
@@ -161,10 +189,11 @@ def attach_borrower_public_c(
     for item in rows:
         if type(item) in (Loan, HistoryItem):
             item.__dict__.pop("_core_public_c_cover_receipt", None)
+    declarations = _declared_branches(descriptors)
     wanted = {
         edition for item in rows
         if _coordinate(item, identity_id) is not None
-        if (edition := _attested_public_edition(item)) is not None
+        if (edition := _attested_public_edition(item, declarations)) is not None
     }
     if not wanted:
         return 0
@@ -246,7 +275,7 @@ def attach_borrower_public_c(
     count = 0
     for item in rows:
         coords = _coordinate(item, identity_id)
-        edition = (_attested_public_edition(item)
+        edition = (_attested_public_edition(item, declarations)
                    if coords is not None else None)
         if edition is None or edition not in admitted:
             continue
@@ -297,5 +326,5 @@ def borrower_public_c_receipt(
 
 __all__ = [
     "VerifiedBorrowerPublicC", "attach_borrower_public_c",
-    "borrower_public_c_receipt",
+    "borrower_public_c_receipt", "borrower_public_c_descriptors",
 ]

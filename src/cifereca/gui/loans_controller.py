@@ -407,7 +407,7 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
         # thumbnail of an image-less loan, but never the loan right.
         # This is the existing bounded background worker, not GTK.
         from cifereca.core.notice_c_borrower_public_projection import (
-            attach_borrower_public_c,
+            attach_borrower_public_c, borrower_public_c_descriptors,
         )
         # Headless worker doubles have no storage. Public-cover enrichment
         # is optional; a successful private loan refresh must survive it.
@@ -417,6 +417,7 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
             attach_borrower_public_c(
                 storage, rows, identity_id=identity_id,
                 account_epoch=account_epoch, source_epoch=source_epoch,
+                descriptors=borrower_public_c_descriptors(service, source_epoch=source_epoch),
             )
         # Resolve a missing loan cover only on this existing background
         # worker, once per refresh. Core's library_entries(scan=False) reads
