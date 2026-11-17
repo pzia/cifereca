@@ -3,12 +3,57 @@ from contextlib import contextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from threading import Event, Thread
+from pathlib import Path
 
 import pytest
 
 from cifereca.plugin_api import ProviderError
 import cifereca_numilog_public_client as client
-from test_numilog_public_cache_only_reparse import fixture, session
+import cifereca_numilog_public_provider as provider
+from cifereca_numilog_public_cache import PublicCatalogueCache
+
+BODY = (Path(__file__).parent / "fixtures" /
+        "public_search_jefferson_20261016.html").read_bytes()
+
+
+def fixture(monkeypatch, *, status=200):
+    requests = []
+
+    class Response:
+        status_code = status
+        headers = {"content-type": "text/html; charset=utf-8"}
+
+        def iter_bytes(self):
+            for start in range(0, len(BODY), 1024):
+                yield BODY[start:start + 1024]
+
+    class Transport:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        @contextmanager
+        def stream(self, method, url):
+            requests.append((method, url))
+            yield Response()
+
+    monkeypatch.setattr(client.HTTPX_TRANSPORT, "client", lambda **kwargs: Transport())
+    return requests
+
+
+def session(*, enabled=True):
+    s = provider.NumilogPublicSession(
+        credential_id="__public__", label="", credentials={}, options={},
+        _retain_public_search_inputs=enabled,
+    )
+    clock = [100.0]
+    s._public_cache = PublicCatalogueCache(clock=lambda: clock[0])
+    s.connect()
+    return s, clock
+
+
 
 
 def control():
