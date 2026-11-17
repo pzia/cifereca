@@ -8,7 +8,6 @@ is reachable on this path.
 from __future__ import annotations
 
 from inspect import getattr_static
-import json
 from pathlib import Path
 
 from ..acquisition import Acquisition
@@ -30,10 +29,10 @@ from .source_convergence import SourceKey
 
 def obtain_explicit_owned(service, target, *, resolve, right_current) -> MaterializationResult:
     """Exact, one-shot Core permission; never implicit source-wide Sync consent."""
-    # A selected current provider offer can replace a historical Core right.
-    # The exact source/session and one-shot click remain mandatory.
-    offer_only = getattr(target, "entitlement_id", "invalid") is None
-    if (not callable(resolve) or not callable(right_current)
+    from .selected_source_offer import SourceOfferTarget
+    # The retired entitlement-backed target is no longer executable.
+    if (type(target) is not SourceOfferTarget or target.entitlement_id is not None
+            or not callable(resolve) or not callable(right_current)
             or type(getattr(target, "provider_id", None)) is not str
             or not target.provider_id or type(getattr(target, "branch", None)) is not str
             or not target.branch):
@@ -169,43 +168,9 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
                 """
                 if source != key or not context_current():
                     return False
-                if offer_only:
-                    # No persisted provider rights: publication still performs
-                    # its own BEGIN IMMEDIATE exact owner/source, staged-offer,
-                    # completed receipt, SHA and physical placement checks.
-                    return selected_offer_id[0] is not None
-                try:
-                    rows = db.execute(
-                        "SELECT entitlement_type,state,loan_id,expires_at,"
-                        "metadata_json FROM entitlements "
-                        "WHERE entitlement_id=? AND identity_id=? "
-                        "AND provider_id=? AND credential_id=? "
-                        "AND account_id=? AND item_id=? LIMIT 2",
-                        (target.entitlement_id, target.identity_id,
-                         target.provider_id, target.credential_id,
-                         target.account_id, target.item_id),
-                    ).fetchall()
-                    if len(rows) != 1:
-                        return False
-                    kind, state, loan, expiry, metadata_json = rows[0]
-                    if (kind != "owned" or state != "active"
-                            or loan is not None or expiry is not None):
-                        return False
-                    metadata = json.loads(metadata_json)
-                    return (
-                        type(metadata) is dict
-                        and metadata.get("source") == target.attested_source
-                        and metadata.get("downloadable") is not False
-                        and metadata.get("owned") is not False
-                        and metadata.get("archived") is not True
-                        and all(
-                            metadata.get(name) is None
-                            or type(metadata[name]) is bool
-                            for name in ("downloadable", "owned", "archived")
-                        )
-                    )
-                except Exception:
-                    return False
+                # The publisher independently verifies the durable stage
+                # for this exact selected offer inside the same transaction.
+                return selected_offer_id[0] is not None
 
             result = execute_admitted_convergence(
                 service, account, session, snapshot,
@@ -214,8 +179,7 @@ def obtain_explicit_owned(service, target, *, resolve, right_current) -> Materia
                 persisted_consent=frozenset({key}),
                 consent_still_current=live_permission,
                 explicitly_confirmed_once=True,
-                explicit_entitlement_id=(None if offer_only else target.entitlement_id),
-                explicit_offer_id=(offer_id if offer_only else None),
+                explicit_offer_id=offer_id,
                 publication_guard=publication_guard,
                 deliver=lambda source, chosen: complete_selected_delivery(
                     service, account, session, source, chosen,

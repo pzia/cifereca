@@ -141,33 +141,24 @@ def publish_completed_acquisition(
         raise ValueError("canonical_invalid_epoch_guard")
     if transaction_guard is not None and not callable(transaction_guard):
         raise ValueError("canonical_invalid_transaction_guard")
-    # An explicit click has two mutually exclusive admission modes:
-    # legacy scoped entitlement (transition only), or a Core-owned receipt
-    # for the *currently selected provider offer*. Neither a boolean nor a
-    # stale source-reference row may grant B. Both modes require an
-    # independent, exact transaction_guard.
-    offer_mode = explicit_offer_id is not None or explicit_staged_path is not None
+    # Only the explicitly selected offer and its Core-owned completed
+    # stage can admit one-shot B. The retired entitlement keyword is a
+    # fail-closed compatibility input, not a second admission mode.
     if (type(explicitly_confirmed_once) is not bool
+            or explicit_entitlement_id is not None
             or (not explicitly_confirmed_once and (
-                explicit_entitlement_id is not None or offer_mode))
+                explicit_offer_id is not None or explicit_staged_path is not None))
             or (explicitly_confirmed_once and (
                 transaction_guard is None
                 or expected_source_policy_revision is not None
-                or (offer_mode and explicit_entitlement_id is not None)
-                or (not offer_mode and (
-                    type(explicit_entitlement_id) is not str
-                    or not explicit_entitlement_id
-                    or len(explicit_entitlement_id) > 256
-                    or any(ord(c) < 32 for c in explicit_entitlement_id)))
-                or (offer_mode and (
-                    type(explicit_offer_id) is not str
-                    or not explicit_offer_id
-                    or len(explicit_offer_id) > 256
-                    or any(ord(c) < 32 for c in explicit_offer_id)
-                    or not isinstance(explicit_staged_path, Path)
-                    or not explicit_staged_path.is_absolute()))))):
+                or type(explicit_offer_id) is not str
+                or not explicit_offer_id
+                or len(explicit_offer_id) > 256
+                or any(ord(ch) < 32 for ch in explicit_offer_id)
+                or not isinstance(explicit_staged_path, Path)
+                or not explicit_staged_path.is_absolute()))):
         raise ValueError("canonical_explicit_transaction_guard_required")
-    if offer_mode and (
+    if explicitly_confirmed_once and (
             source.kind != "purchase" or not row.delivery_attested
             or row.delivery_offer_id != explicit_offer_id):
         raise ValueError("canonical_explicit_selected_offer_unattested")
@@ -254,37 +245,20 @@ def publish_completed_acquisition(
                     or policy.revision != expected_source_policy_revision):
                 raise ValueError("canonical_source_policy_revoked")
         if explicitly_confirmed_once:
-            if offer_mode:
-                # The exact Core-completed delivery was staged only AFTER GET
-                # and physical byte inspection. Check the staged source,
-                # account, selected offer, bytes and supplier receipt in THIS
-                # transaction, not via any historical pseudo-right.
-                # The staging path differs from the promoted final path:
-                # canonical_promotion copies (it does not move) the bytes.
-                from .explicit_selected_offer_stage import (
-                    selected_offer_stage_current_in_transaction,
-                )
-                if not selected_offer_stage_current_in_transaction(
-                    db, source, offer_id=explicit_offer_id,
-                    path=explicit_staged_path, final_sha256=final_sha256,
-                    delivery_receipt_ref=delivery_receipt_ref,
-                    adept_receipt_ref=adept_receipt_ref,
-                ):
-                    raise ValueError("canonical_explicit_offer_stage_unproven")
-            else:
-                # Historical compatibility path until all callers stop
-                # persisting pseudo-rights. Never adopt it for new providers.
-                rows = db.execute(
-                    "SELECT 1 FROM entitlements WHERE entitlement_id=? "
-                    "AND identity_id=? AND provider_id=? AND credential_id=? "
-                    "AND account_id=? AND item_id=? "
-                    "AND entitlement_type='owned' AND state='active' "
-                    "AND loan_id IS NULL AND expires_at IS NULL LIMIT 2",
-                    (explicit_entitlement_id, scope.identity_id, scope.provider_id,
-                     scope.credential_id, scope.account_id, source.edition_id),
-                ).fetchall()
-                if len(rows) != 1 or source.kind != "purchase":
-                    raise ValueError("canonical_explicit_right_unproven")
+            # The Core-completed delivery was staged only AFTER GET and
+            # physical inspection. Check the exact offer, source, bytes and
+            # receipts in this transaction; a historical entitlement has
+            # no publication authority.
+            from .explicit_selected_offer_stage import (
+                selected_offer_stage_current_in_transaction,
+            )
+            if not selected_offer_stage_current_in_transaction(
+                db, source, offer_id=explicit_offer_id,
+                path=explicit_staged_path, final_sha256=final_sha256,
+                delivery_receipt_ref=delivery_receipt_ref,
+                adept_receipt_ref=adept_receipt_ref,
+            ):
+                raise ValueError("canonical_explicit_offer_stage_unproven")
         if transaction_guard is not None and transaction_guard(db) is not True:
             raise ValueError("canonical_publication_policy_changed")
         # Do not rely on a caller's old account-to-credential binding.

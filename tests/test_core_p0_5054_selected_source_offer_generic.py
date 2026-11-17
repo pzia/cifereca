@@ -128,7 +128,7 @@ def test_exact_current_offer_uses_generic_publisher_without_entitlement(monkeypa
 
     def execute(_service, _account, _session, snapshot, **kw):
         calls.append(("execute", None))
-        assert kw["explicit_entitlement_id"] is None
+        assert "explicit_entitlement_id" not in kw
         assert kw["explicit_offer_id"] == "current-offer"
         assert kw["explicitly_confirmed_once"] is True
         assert kw.get("expected_source_policy_revision") is None
@@ -177,5 +177,23 @@ def test_missing_current_offer_cannot_dispatch_convergence(monkeypatch, tmp_path
         canonical.obtain_explicit_owned(
             service, target,
             resolve=lambda *_a: (target, None),
+            right_current=lambda *_a, **_kw: True,
+        )
+
+
+def test_retired_entitlement_target_refused_before_offer(monkeypatch, tmp_path):
+    service, _, session, _, _ = _rig(tmp_path)
+    target = SourceOfferTarget(
+        "reader", "fictional-books", "credential-A", "account-A",
+        "edition-1", "private-purchases", session,
+        entitlement_id="legacy-owned",
+    )
+    session.downloadable_selected_offer_snapshot = (
+        lambda *_a, **_kw: pytest.fail("old target must not contact provider")
+    )
+    with pytest.raises(ValueError, match="explicit_canonical_target_invalid"):
+        canonical.obtain_explicit_owned(
+            service, target,
+            resolve=lambda *_a: pytest.fail("legacy target must not resolve"),
             right_current=lambda *_a, **_kw: True,
         )

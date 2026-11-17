@@ -211,7 +211,7 @@ def test_matching_revision_remains_idempotent_after_policy_gate(
 
 
 @pytest.mark.parametrize("policy_on", (False, True))
-def test_explicit_click_publishes_exact_owned_right_even_when_auto_off(
+def test_retired_entitlement_cannot_publish_even_with_exact_owned_row(
     store, tmp_path, policy_on,
 ):
     key, snapshot = new_source()
@@ -225,13 +225,15 @@ def test_explicit_click_publishes_exact_owned_right_even_when_auto_off(
         "entitlement_type": "owned", "state": "active",
         "metadata": {"source": "synthetic-authenticated"},
     })
-    result = publish(
-        store, tmp_path / "EBooks", path, key, snapshot,
-        explicitly_confirmed_once=True, explicit_entitlement_id="exact-owned",
-        transaction_guard=lambda _db: True,
-    )
-    assert result.changed is True
-    assert rows(store) == (1, 1, 1, 1)
+    with pytest.raises(ValueError, match="canonical_explicit_transaction_guard_required"):
+        publish(
+            store, tmp_path / "EBooks", path, key, snapshot,
+            explicitly_confirmed_once=True, explicit_entitlement_id="exact-owned",
+            transaction_guard=lambda _db: True,
+        )
+    assert rows(store) == (0, 0, 0, 0)
+    assert path.read_bytes() == PAYLOAD
+    assert len(store.entitlements()) == 1
 
 
 @pytest.mark.parametrize("proof", ("absent_right", "wrong_right", "no_guard", "guard_revoked"))
