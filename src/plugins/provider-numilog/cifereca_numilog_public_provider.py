@@ -226,6 +226,15 @@ class NumilogPublicSession(ProviderSession):
         self._assert_public_generation(epoch)
         return rows, token
 
+    def _search_response_with_retained_input(self, query, scope="all", *, page=0, field="all"):
+        """Experimental same-call envelope plus anonymous cache coordinate."""
+        from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+
+        rows, token = self._search_with_retained_input(query, scope, page=page, field=field)
+        return ProviderSearchResponse(
+            results=list(rows), public_notices=tuple(PublicSearchNotice(row) for row in rows),
+        ), token
+
     def _read_retained_public_input(self, token):
         """Trusted worker byte receipt input; no fetch or lifetime extension.
 
@@ -433,6 +442,15 @@ class NumilogPublicSession(ProviderSession):
         if latest != raw:
             return None
         return self._public_rows(matches)[0]
+
+    def _reparse_retained_public_response(self, token, record_id):
+        """Explicit public parser output, still subject to Core admission."""
+        from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+
+        row = self._reparse_retained_public_row(token, record_id)
+        if row is None:
+            return None
+        return ProviderSearchResponse(results=[row], public_notices=(PublicSearchNotice(row),))
 
     def _public_rows(self, rows):
         # A public result can never be passed into an owned download session.
