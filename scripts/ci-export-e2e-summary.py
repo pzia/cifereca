@@ -332,7 +332,12 @@ _BNF_COVER_STAGES = frozenset({
     "embedded_loan_list_over_supplier", "embedded_loan_detail_over_supplier",
     "late_library_loan_list_cover", "late_library_loan_detail_cover",
     "search_results",
-    "global_button_visible",
+    "global_button_visible", "borrower_c_setup", "borrower_c_seed", "borrower_c_complete",
+} | {
+    "borrower_c_" + phase + "_" + stage
+    for phase in ("cold", "offline")
+    for stage in ("project", "publish", "loans_list", "loans_detail",
+                  "history_list", "history_detail")
 })
 
 
