@@ -64,18 +64,18 @@ def test_service_profile_observation_is_explicit_and_scoped(tmp_path):
                     {"profile_id": "bob-profile", "name": "Other",
                      "provisioning": {"acsm_fetch_ready": False}}]
         service.kobo_profiles = rows
-        original = service.normal_paris_adept_status("alice")
+        original = service.normal_source_adept_status("alice", source_provider_id="paris")
         assert not calls  # rendering/status lookup never calls the runtime
-        checked = service.check_normal_paris_adept_runtime("alice")
+        checked = service.check_source_adept_runtime("alice", source_provider_id="paris")
         assert checked["status"] == "observed"
         assert checked["acsm_ready"] is True
         assert len(calls) == 1
         # A different identity without Paris must never enumerate ADEPT.
-        assert service.check_normal_paris_adept_runtime("bob")["reason"] == (
+        assert service.check_source_adept_runtime("bob", source_provider_id="paris")["reason"] == (
             "local_binding_unverified"
         )
         assert len(calls) == 1
-        assert service.normal_paris_adept_status("alice") == original
+        assert service.normal_source_adept_status("alice", source_provider_id="paris") == original
         assert service.storage.adept_profile_binding_get("identity", "alice") == (
             "alice-profile"
         )
@@ -92,7 +92,7 @@ def test_missing_duplicate_wrong_profile_and_runtime_errors_are_fail_closed(tmp_
         service.kobo_profiles = lambda: [
             {"profile_id": "another", "provisioning": {"acsm_fetch_ready": True}},
         ]
-        assert service.check_normal_paris_adept_runtime("alice")["reason"] == (
+        assert service.check_source_adept_runtime("alice", source_provider_id="paris")["reason"] == (
             "adept_profile_not_found"
         )
         service.kobo_profiles = lambda: [
@@ -100,13 +100,13 @@ def test_missing_duplicate_wrong_profile_and_runtime_errors_are_fail_closed(tmp_
             {"name": "same", "profile_id": "two", "fetch_capable": True},
         ]
         service.storage.adept_profile_binding_set("identity", "alice", "same")
-        assert service.check_normal_paris_adept_runtime("alice")["reason"] == (
+        assert service.check_source_adept_runtime("alice", source_provider_id="paris")["reason"] == (
             "adept_profile_not_found"
         )
         def broken():
             raise RuntimeError("runtime failed with synthetic credentials")
         service.kobo_profiles = broken
-        assert service.check_normal_paris_adept_runtime("alice")["reason"] == (
+        assert service.check_source_adept_runtime("alice", source_provider_id="paris")["reason"] == (
             "adept_runtime_unavailable"
         )
     finally:
@@ -122,7 +122,7 @@ def test_rebinding_during_profile_enumeration_disallows_old_positive(tmp_path):
             )
             return [{"profile_id": "alice-profile", "fetch_capable": True}]
         service.kobo_profiles = rebind
-        assert service.check_normal_paris_adept_runtime("alice") == {
+        assert service.check_source_adept_runtime("alice", source_provider_id="paris") == {
             "identity_id": "alice", "status": "to_verify",
             "reason": "local_binding_changed", "acsm_ready": None,
         }

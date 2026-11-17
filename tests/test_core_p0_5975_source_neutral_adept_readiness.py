@@ -1,7 +1,6 @@
 """P0 #5975: ADEPT local readiness and explicit probes for any source.
 
-The Paris-compatible Settings facade remains a wrapper, but the same Core
-binding decision runs for future lenders without a branded provider check.
+The same explicit Core binding decision runs for all lenders.
 """
 from __future__ import annotations
 
@@ -34,7 +33,7 @@ def test_two_independent_sources_share_core_adept_readiness_without_cross_provid
             assert status["reason"] == "local_configuration_complete"
             assert status["adept_profile_id"] == "alice-profile"
             assert "source_label" in status and "paris_label" not in status
-        assert service.normal_paris_adept_status("alice")["status"] == "ready"
+        assert service.normal_source_adept_status("alice", source_provider_id="paris")["status"] == "ready"
         # The same credential under a distinct supplier is not evidence
         # that the selected supplier's own connection remains active.
         service.storage.provider_connection_put({
@@ -156,7 +155,7 @@ def test_invalid_or_unknown_source_is_never_a_runtime_admission(tmp_path):
             assert service.check_source_adept_runtime(
                 "alice", source_provider_id=source,
             )["reason"] == "local_binding_unverified"
-        assert service.normal_paris_adept_status("bob")["reason"] == (
+        assert service.normal_source_adept_status("bob", source_provider_id="paris")["reason"] == (
             "missing_paris_connection"
         )
     finally:
@@ -199,36 +198,8 @@ def test_generic_selected_config_revocation_during_runtime_rejects_stale_positiv
         service.close()
 
 
-def test_historical_paris_runtime_facade_reloads_saved_primary_choice(
-    tmp_path,
-):
-    service, _ = service_with_linked_borrower(tmp_path)
-    try:
-        _add_source(service, "paris", "other-paris")
-        service.config.set("providers.accounts", [
-            {"id": "alice-paris", "provider": "paris",
-             "identity_id": "alice", "enabled": True},
-            {"id": "other-paris", "provider": "paris",
-             "identity_id": "alice", "enabled": True},
-        ])
-        service.config.upsert_identity({
-            "id": "alice", "label": "Alice", "directory_name": "alice",
-            "primary_paris_connection_id": "alice-paris",
-        })
-        assert service.normal_paris_adept_status("alice")["status"] == "ready"
+def test_retired_paris_facades_are_not_exposed():
+    from cifereca.services import LibraryService
 
-        def changed_saved_choice():
-            service.config.upsert_identity({
-                "id": "alice", "label": "Alice",
-                "directory_name": "alice",
-                "primary_paris_connection_id": "other-paris",
-            })
-            return [{"profile_id": "alice-profile", "fetch_capable": True}]
-
-        service.kobo_profiles = changed_saved_choice
-        assert service.check_normal_paris_adept_runtime("alice") == {
-            "identity_id": "alice", "status": "to_verify",
-            "reason": "local_binding_changed", "acsm_ready": None,
-        }
-    finally:
-        service.close()
+    assert not hasattr(LibraryService, "normal_paris_adept_status")
+    assert not hasattr(LibraryService, "check_normal_paris_adept_runtime")

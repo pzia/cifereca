@@ -1104,23 +1104,6 @@ class LibraryService:
             primary_connection_id=primary_connection_id,
         )
 
-    def normal_paris_adept_status(self, identity_id: str) -> dict[str, Any]:
-        """Historical Settings facade: select the saved Paris source only.
-
-        Supplier selection belongs to the legacy UI/config adapter; the
-        Core readiness decision is shared by all source providers.
-        """
-        saved = (
-            self.config.identity(identity_id) or {}
-            if type(identity_id) is str else {}
-        )
-        status = self.normal_source_adept_status(
-            identity_id, source_provider_id="paris", source_label="Paris",
-            primary_connection_id=saved.get("primary_paris_connection_id"),
-        )
-        status["paris_label"] = status.pop("source_label")
-        return status
-
     def _inspect_source_adept_runtime(self, identity_id: str, status_reader) -> dict[str, object]:
         """One explicit runtime inventory, fenced by the same saved scope."""
         from .core.adept_runtime_observation import describe_adept_runtime
@@ -1161,16 +1144,6 @@ class LibraryService:
                 source_label=source_label,
                 primary_connection_id=primary_connection_id,
             ),
-        )
-
-    def check_normal_paris_adept_runtime(self, identity_id: str) -> dict[str, object]:
-        """Historical Settings facade: preserve saved-choice revalidation.
-
-        The snapshot reader deliberately reloads the persisted Paris choice
-        before and after the explicit runtime enumeration.
-        """
-        return self._inspect_source_adept_runtime(
-            identity_id, lambda: self.normal_paris_adept_status(identity_id),
         )
 
     def accounts_for_identity(self, identity_id: str | None = None) -> list[Account]:
