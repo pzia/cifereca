@@ -10,9 +10,10 @@ from __future__ import annotations
 from inspect import getattr_static
 from uuid import uuid4
 
-from ..models import Account, Loan, SearchResult
+from ..models import Account, SearchResult
 from ..plugin_api import BorrowRequestNotSubmitted, LendingActionAdmission
 from ..plugin_api.lending_capabilities import assess_lending_operation
+from ..plugin_api.loan_scope import loan_matches_account
 from .borrow_action_scope import _fields
 from .borrow_for_identity_action_scope import capture_cross_profile_borrow_scope
 from .borrow_for_identity_discovery import (
@@ -173,15 +174,8 @@ def execute_normal_lender_borrow(
         )
         # No HTTP status or local candidate is success. Only the provider's
         # verified, exact lender loan can consume a positive checkpoint.
-        if (not current() or type(loan) is not Loan
-                or loan.identity_id != account.identity_id
-                or loan.source_provider != account.provider_id
-                or loan.source_credential != account.credential_id
-                or loan.source_account_id not in (
-                    {account.unique_id, "primary"}
-                    if account.unique_id == "" and account.is_primary is True
-                    else {account.unique_id}
-                )
+        if (not current()
+                or not loan_matches_account(loan, account, session.descriptor)
                 or loan.record_id != exact_notice.record_id
                 or loan.provider != exact_notice.docbase
                 or loan.medium != "digital"

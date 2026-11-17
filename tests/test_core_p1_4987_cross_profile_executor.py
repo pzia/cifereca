@@ -52,6 +52,8 @@ class BorrowingOffline(ParisOffline):
             source_account_id=account.unique_id,
             state="active",
         )
+        if isinstance(self.outcome, str) and self.outcome.startswith("borrower:"):
+            loan.source_account_id = self.outcome.removeprefix("borrower:")
         if self.outcome == "wrong_lender":
             loan.identity_id = "default"
         if self.outcome == "inactive":
@@ -353,5 +355,36 @@ def test_explicit_non_active_loan_state_cannot_confirm_or_authorize_transfer(
     assert service.storage.loan_borrow_state(
         borrow_claim_key(account, row.notice),
     )["status"] == "verification_unavailable"
+    assert execute(service, row, preview)["status"] == "blocked"
+    assert session.actions == 1
+
+
+
+@pytest.mark.parametrize("declared,observed,expected", [
+    (None, "", "confirmed"),
+    ("primary", "primary", "confirmed"),
+    ("main_reader", "main_reader", "confirmed"),
+    (None, "primary", "verification_unavailable"),
+    ("main_reader", "primary", "verification_unavailable"),
+    ("primary", "other_reader", "verification_unavailable"),
+])
+def test_cross_profile_confirmation_uses_declared_observed_borrower_alias(
+    harness, declared, observed, expected,
+):
+    service, account, session, row, preview = setup_borrower(
+        harness, "borrower:" + observed,
+    )
+    session.descriptor = replace(
+        session.descriptor, existing_primary_loan_account_alias=declared,
+    )
+    # Rebuild the menu under the declared policy, never infer from a receipt.
+    preview = _preview(service, row)
+    result = execute(service, row, preview)
+    assert result["status"] == expected
+    assert result["retry_borrow"] is False
+    assert session.actions == 1
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, row.notice),
+    )["status"] == expected
     assert execute(service, row, preview)["status"] == "blocked"
     assert session.actions == 1
