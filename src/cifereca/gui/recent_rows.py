@@ -12,6 +12,7 @@ from typing import Any
 
 from .recent_time import format_recent_timestamp
 from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
+from ..core.notice_c_local_origin_projection import valid_local_public_c_link
 
 
 def project_recent_rows(
@@ -57,12 +58,25 @@ def project_recent_rows(
             except Exception:
                 label = "Source"
         packet = item.get("_exact_local_cover_evidence")
+        link = item.get("_public_canonical_cover_link")
+        safe_link = (
+            packet is None and occurrences[key] == 1
+            and valid_local_public_c_link(
+                link, identity_id=item.get("identity_id"),
+                artifact_id=item.get("artifact_id"),
+                placement_id=item.get("placement_id"),
+            )
+            and item.get("_library_view_owner") in (
+                None, item.get("identity_id"),
+            )
+        )
         # If a Core packet exists, only its exact N2 DocumentRef may supply
         # the cover. A rejected/foreign packet or duplicate key must NEVER
         # downgrade silently to the descriptive legacy thumbnail URL.
         legacy_url = (
             item.get("thumbnail_url")
-            if packet is None and occurrences[key] == 1 else None
+            if packet is None and link is None and occurrences[key] == 1
+            else None
         )
         row = row_factory(
             key,
@@ -81,7 +95,14 @@ def project_recent_rows(
             if (hasattr(row, "__dict__")
                     and type(facts) is VerifiedLocalCoverEvidence
                     and facts.scope.identity_id == item.get("identity_id")
-                    and facts.scope.source_key == key
+                    # Recent GTK key is Placement; N2 uses the same exact
+                    # Artifact+Placement source as Library and its detail.
+                    and facts.scope.source_key == (
+                        "artifact:sha256:" + facts.artifact_sha256
+                    )
+                    and facts.scope.artifact_id == (
+                        "sha256:" + facts.artifact_sha256
+                    )
                     and facts.scope.artifact_id == item.get("artifact_id")
                     and facts.scope.placement_id == item.get("placement_id")
                     and item.get("key") == key):
@@ -90,6 +111,13 @@ def project_recent_rows(
                 row._public_row_content = (
                     "recent", key, item.get("title"), item.get("author"),
                     temporal, label, legacy_url, facts,
+                )
+            elif hasattr(row, "__dict__") and safe_link:
+                row._cover_public_c_link = link
+                row._cover_document_ref = link.document
+                row._public_row_content = (
+                    "recent", key, item.get("title"), item.get("author"),
+                    temporal, label, None, link.document, link.epoch,
                 )
         rows.append(row)
     return rows, objects

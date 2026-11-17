@@ -13,6 +13,7 @@ from threading import Lock
 from typing import Any
 
 from ..core.book_cover_projection import CoverDocumentScope
+from ..core.notice_cover_repository import is_notice_cover_document
 from ..core.search_cover_provenance import project_exact_search_catalogue_cover
 from ..core.covers import CoverCandidate, candidate
 from ..models import SearchResult
@@ -29,6 +30,8 @@ class VerifiedSearchDocumentCover:
     document: CoverDocumentScope
     context: tuple[int, int, int, int]
     candidates: tuple[CoverCandidate, ...]
+    # Captured at publication; a new persisted epoch revokes old receipts.
+    minimum_revision: int | None = None
 
     @property
     def row_signature(self) -> tuple[int, VerifiedSearchDocumentCover]:
@@ -87,6 +90,20 @@ def _current(
     return (scope, context) if scope is not None else None
 
 
+def _persisted_notice_revision(item: SearchResult, document: CoverDocumentScope) -> int | None:
+    """Only the exact Core-stamped ref may carry its persisted epoch."""
+    if not is_notice_cover_document(document):
+        return None
+    canonical = getattr(item, "_core_notice_canonical_cover_document_ref", None)
+    exact = getattr(item, "_core_notice_cover_document_ref", None)
+    field = (
+        "_core_notice_canonical_cover_document_epoch" if document == canonical
+        else "_core_notice_cover_document_epoch" if document == exact else None
+    )
+    epoch = getattr(item, field, None) if field is not None else None
+    return epoch if type(epoch) is int and 1 <= epoch < 2**63 else None
+
+
 def exact_remote_search_document(
     window: Any, item: SearchResult, row_key: str,
 ) -> VerifiedSearchDocumentCover | None:
@@ -128,11 +145,90 @@ def exact_remote_search_document(
             candidates.clear()
         candidates.append(catalogue)
     if not candidates:
+        # An attested image-less public catalogue source still owns a
+        # searchable canonical C. Route list/detail to its N2 UNKNOWN
+        # placeholder, rather than dropping the document for lack of N3.
+        # This is deliberately stricter than the legacy image-bearing path:
+        # only the same-call Core witness and BOTH exact persisted source
+        # references may authorize an empty-candidate C bind.
+        if item.thumbnail_url is None:
+            from ..core.notice_c_known_projection import (
+                matching_live_public_canonical_ref,
+            )
+            viewer_id = getattr(
+                getattr(getattr(window, "service", None), "current_identity", None),
+                "identity_id", None,
+            )
+            canonical = matching_live_public_canonical_ref(
+                item, identity_id=viewer_id,
+            )
+            if canonical is not None:
+                return VerifiedSearchDocumentCover(
+                    source_item=item, row_key=row_key,
+                    document=canonical, context=context, candidates=(),
+                    minimum_revision=_persisted_notice_revision(item, canonical),
+                )
         return None
+    # Only a real Core producer may attach an already-persisted Notice C
+    # reference to its very SearchResult object. Prefer the canonical source
+    # when the sole evidence is that public catalogue field. A different
+    # holdings/origin image is stronger and stays on the exact legacy path
+    # until its own qualified Notice C origin attribute exists.
+    admitted = getattr(item, "_core_notice_cover_document_ref", None)
+    if (scope.kind == "public_catalogue"
+            and len(candidates) == 1
+            and catalogue_facts is not None
+            and candidates[0] == catalogue_facts.catalogue
+            and type(admitted) is CoverDocumentScope
+            and is_notice_cover_document(admitted)
+            and admitted.kind == "public_catalogue"
+            and admitted.provider_id == item.source_provider
+            and admitted.identity_id is None):
+        # A plugin can supply extra attributes on a mutable SearchResult.
+        # Replay the exact Core source-coordinate derivation before trusting
+        # the producer's private stamp; do not borrow another edition's N2.
+        from ..core.notice_search_cover_producer import admit_public_search_cover
+        from ..core.notice_cover_projection import notice_cover_document_ref
+        viewer_id = getattr(
+            getattr(getattr(window, "service", None), "current_identity", None),
+            "identity_id", None,
+        )
+        expected = admit_public_search_cover(
+            item, identity_id=viewer_id,
+            observed_at=1, public_cover_url=catalogue_facts.catalogue.url,
+        )
+        if (expected is not None
+                and notice_cover_document_ref(expected.key) == admitted):
+            # Preserve the prior exact own-source C on validated cache
+            # replay after restart / source TTL expiry. Cross-provider C
+            # requires either same-call or exact persisted Core replay proof.
+            from ..core.notice_c_cover_index import (
+                canonical_cover_document_ref, is_canonical_cover_document,
+            )
+            from ..core.notice_c_known_projection import (
+                matching_live_public_canonical_ref,
+            )
+            cached_c = getattr(
+                item, "_core_notice_canonical_cover_document_ref", None,
+            )
+            own_c = canonical_cover_document_ref(expected.key.edition_id)
+            if (type(cached_c) is CoverDocumentScope
+                    and is_canonical_cover_document(cached_c)
+                    and cached_c == own_c):
+                scope = cached_c
+            else:
+                canonical = matching_live_public_canonical_ref(
+                    item, identity_id=viewer_id,
+                )
+                if canonical is None:
+                    from ..core.notice_c_cached_revision import matching_cached_public_canonical_ref
+                    canonical = matching_cached_public_canonical_ref(item, identity_id=viewer_id)
+                scope = canonical if canonical is not None else admitted
     return VerifiedSearchDocumentCover(
         source_item=item, row_key=row_key,
         document=scope, context=context,
         candidates=tuple(candidates),
+        minimum_revision=_persisted_notice_revision(item, scope),
     )
 
 
@@ -164,6 +260,10 @@ class SearchDocumentCoverRegistry:
         if (type(service) is not DocumentCoverService
                 or type(evidence) is not VerifiedSearchDocumentCover):
             raise TypeError("expected exact remote Search evidence and service")
+        if is_notice_cover_document(evidence.document):
+            # Notice C is read through by the shared worker. Never inject
+            # another unversioned Search source under its exact N2 ref.
+            raise ValueError("notice_c_source_requires_readthrough")
         with self._lock:
             if self._closed:
                 raise RuntimeError("Search document registry closed")
@@ -200,8 +300,25 @@ class SearchDocumentCoverRegistry:
 
 
 def search_document_is_current(window: Any, evidence: VerifiedSearchDocumentCover) -> bool:
-    return evidence == exact_remote_search_document(
+    current = exact_remote_search_document(
         window, evidence.source_item, evidence.row_key,
+    )
+    if evidence == current:
+        return True
+    # Progressive results may already have been bound under the legacy
+    # exact public scope when their source is persisted at batch completion.
+    # Keep that SAME source/candidates/context callback valid until a GTK
+    # rebind. Never convert an old callback into a NEW cover association.
+    return (
+        type(current) is VerifiedSearchDocumentCover
+        and type(evidence) is VerifiedSearchDocumentCover
+        and current.source_item is evidence.source_item
+        and current.row_key == evidence.row_key
+        and current.context == evidence.context
+        and current.candidates == evidence.candidates
+        and evidence.document.kind == "public_catalogue"
+        and evidence.document.source_key.startswith("search-exact:")
+        and is_notice_cover_document(current.document)
     )
 
 
@@ -232,6 +349,26 @@ def register_exact_search_document(
         return False
     if not search_document_is_current(window, evidence):
         return False
+    if is_notice_cover_document(document):
+        # A producer-stamped exact source belongs to persisted Notice C.
+        # Do not also publish a competing N2 source: the widget calls the
+        # common cache, whose bounded worker reads the source/epoch from C.
+        canonical = getattr(
+            item, "_core_notice_canonical_cover_document_ref", None,
+        )
+        if (document not in (
+                    getattr(item, "_core_notice_cover_document_ref", None),
+                    canonical,
+                )
+                or not callable(getattr(service, "_cached_source_reader", None))):
+            return False
+        # Only the *live Core producer* has a persisted C epoch. A cached
+        # SearchResult replays its exact ref without inventing an epoch;
+        # a routine GTK rebind on an unchanged source causes no SQLite I/O.
+        epoch = evidence.minimum_revision
+        if epoch is not None:
+            service.refresh_cached_source_if_newer(document, epoch)
+        return True
     adapter = getattr(window, "search_document_cover_registry", None)
     if type(adapter) is not SearchDocumentCoverRegistry:
         return False

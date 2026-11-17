@@ -11,7 +11,7 @@ from pathlib import Path
 from inspect import getattr_static, isfunction
 from ..models import Loan
 from ..plugin_api import ProviderConfigurationError
-from .loan_action_scope import capture_loan_action_scope
+from .loan_action_scope import LoanActionScopeLease, capture_loan_action_scope
 from .selected_offer_scope import selected_offer_scope_matches
 from .loan_acsm_token_validation import (
     MAX_LOAN_TOKEN_BYTES as _MAX_BYTES,
@@ -27,7 +27,7 @@ def stage_explicit_loan_acsm(
     expected_provider_id: str, selected_branch: str,
     action_error_type, error_codes: dict[str, str],
     classify_activity_error, classify_candidate_error,
-    observe_phase=lambda _phase: None,
+    observe_phase=lambda _phase: None, admitted_lease=None,
 ) -> dict[str, str]:
     """Stage a provider-selected loan ACSM after exact explicit consent."""
     def _refuse(code: str):
@@ -46,6 +46,9 @@ def stage_explicit_loan_acsm(
         _refuse(error_codes["scope"])
 
     def active_identity():
+        if admitted_lease is not None:
+            return (type(admitted_lease) is LoanActionScopeLease
+                    and admitted_lease.admitted_for(service, loan, expected_identity_id))
         return (service.current_identity is not None
                 and service.current_identity.identity_id == expected_identity_id
                 and service.storage.identity_for_connection(
@@ -61,8 +64,10 @@ def stage_explicit_loan_acsm(
             try:
                 # No primary/legacy fallback: source_account_id was mandatory.
                 account = service._account_for_loan(loan)
-                session = service._session_for_source(
-                    loan.source_provider, loan.source_credential)
+                session = (
+                    service._session_for_source(loan.source_provider, loan.source_credential)
+                    if admitted_lease is None else admitted_lease._session
+                )
                 if (account.identity_id != expected_identity_id
                         or account.provider_id != expected_provider_id
                         or account.credential_id != loan.source_credential
@@ -81,10 +86,16 @@ def stage_explicit_loan_acsm(
             # capability. Capture the exact Core account/session/epoch before
             # any staging or provider GET. A same-object in-place mutation
             # must not retain its former authority.
-            lease = capture_loan_action_scope(
-                service, loan, account, session,
-                expected_identity_id=expected_identity_id,
-            )
+            if admitted_lease is None:
+                lease = capture_loan_action_scope(
+                    service, loan, account, session,
+                    expected_identity_id=expected_identity_id,
+                )
+            else:
+                lease = admitted_lease
+                if (lease._account is not account or lease._session is not session
+                        or not lease.admitted_for(service, loan, expected_identity_id)):
+                    _refuse(error_codes["scope"])
             if lease is None:
                 _refuse(error_codes["scope"])
             observe_phase('local_staging')

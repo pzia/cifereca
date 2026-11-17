@@ -264,8 +264,8 @@ _BOOK_DETAIL_STAGES = frozenset({
 def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
     """Expose the last *closed* GUI callback stage, never raw failure data."""
     if scenario not in {
-        "book-detail-1300", "book-detail-1366", "book-detail-1600",
-        "book-detail-1700",
+        "book-detail-960", "book-detail-1280", "book-detail-1300",
+        "book-detail-1366", "book-detail-1600", "book-detail-1700",
     }:
         return {}
     root = source.resolve().parent / scenario
@@ -280,6 +280,18 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
         if type(data) is not dict:
             return {}
         result = {}
+        # Fixed phase names from the isolated synthetic C probe. This cannot
+        # disclose an arbitrary exception, fixture title, URL or account.
+        stage = data.get("local_c_stage")
+        local_stages = {"seed", "complete"} | {
+            prefix + suffix
+            for prefix in ("cold_", "offline_")
+            for suffix in ("project", "library_route", "library_list",
+                           "library_detail", "recent_route", "recent_list",
+                           "recent_detail")
+        }
+        if type(stage) is str and stage in local_stages:
+            result["book_detail_local_c_stage"] = stage
         last = data.get("public_stage")
         if type(last) is str and last in _BOOK_DETAIL_STAGES:
             result["book_detail_last_stage"] = last
@@ -320,7 +332,12 @@ _BNF_COVER_STAGES = frozenset({
     "embedded_loan_list_over_supplier", "embedded_loan_detail_over_supplier",
     "late_library_loan_list_cover", "late_library_loan_detail_cover",
     "search_results",
-    "global_button_visible",
+    "global_button_visible", "borrower_c_setup", "borrower_c_seed", "borrower_c_complete",
+} | {
+    "borrower_c_" + phase + "_" + stage
+    for phase in ("cold", "offline")
+    for stage in ("project", "publish", "loans_list", "loans_detail",
+                  "history_list", "history_detail")
 })
 
 

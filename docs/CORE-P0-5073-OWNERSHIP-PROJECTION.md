@@ -1,34 +1,24 @@
-# P0 #5073 — Propriété affichée sur résultats de recherche
+# Projection des notices distantes de Recherche (#5073 / #5518)
 
-`gui/query_model.py::result_row` n'interprète plus `source_provider=="numilog"`,
-`NUMILOG_LIBRARY`, `source_collection="library"` ni `owned=True`
-comme une preuve de propriété.
+Depuis le cutover #5975, `result_row` publie toute notice distante comme
+`remote_catalog`, sans indicateur positif de possession. L’ancien registre
+Entitlement n'est plus consulté par Recherche, même pour une ligne privée.
+Ses anciennes preuves et flags fournisseur ne sont pas une autorisation.
+Les attributs de source, compte, branche et révision demeurent disponibles.
 
-L'affichage `remote_owned` exige un `SearchOwnedEvidence` immutable,
-construit **une seule fois avant la projection GTK** depuis les droits
-`entitlements(state="active", entitlement_type="owned")` du registre
-canonique Core. Le test croise l'identité actuellement sélectionnée,
-le fournisseur, le credential, l'account, l'édition et sa révision.
-La source fournit des coordonnées mais ne peut pas construire ce snapshot
-dans la GUI ni transformer seule une notice commerciale en droit.
+- Catalogue public : notice descriptive, aucun achat attesté.
+- Bibliothèque distante : notice descriptive, fichier local non présumé.
+- Présence locale : projection de placement indépendante.
+- Offre privée : hint de contrat source sélectionnée, puis vérification live
+  et admission explicite Core, aucun GET au simple rendu.
 
-`SearchResult.source_account_id` est un ajout ABI facultatif ; le plugin
-Numilog le remplit depuis son **unique Account de session déjà chargé**.
-Une notice sans compte exact, un résultat périmé, une révision ou identité
-étrangère, un crédit public, ou un registre incomplet aboutissent à
-`remote_catalog`. La décision est générique (Numilog, Kobo et source
-synthétique). Aucun GET, connexion ou téléchargement n'est effectué lors
-de cette projection ; l'autorisation effective d'acquisition reste en plus
-soumise aux contrats de téléchargement existants.
+Le registre historique reste lisible dans ses périmètres de compatibilité.
+Le registre SourceReference v14 ne conserve pas la révision fournisseur :
+une observation d'achat non révisionnée ne doit pas être présentée comme un
+droit d'édition exact. L'ancien DTO SearchOwnedEvidence et son
+lecteur/validateur sont retirés ; les kwargs historiques de result_row sont
+acceptés mais inertes. Les chemins de Cache/Détail restent distincts.
 
-La preuve n'est pas persistée dans les caches de recherche ni inférée
-des champs libres `metadata`. Une bascule de profil invalide la
-comparaison avec le snapshot de l'identité précédente.
-
-Le snapshot épingle aussi les générations Core `_account_context_epoch` et
-`_source_context_epoch`. Un compte sélectionné ou une session reconnectée
-sous la même identité révoque immédiatement la preuve de la vue précédente.
-
-Les clés d’affichage des résultats ayant un ID fournisseur en collision
-incluent aussi le compte et la révision ; permuter des comptes ne réutilise
-pas la sélection d’une autre édition. Ces clés ne sont jamais une preuve de droit.
+Tests : source synthétique, preuve historique exacte et scope étranger,
+flags mal formés, lecteur de droits empoisonné, offre privée explicite et
+projection locale distinctes.

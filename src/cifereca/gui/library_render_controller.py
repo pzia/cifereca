@@ -5,6 +5,7 @@ identity, cached snapshots, UI widgets and selection stay window-owned.
 """
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 from .gtk_frame_paint_probe import GtkFramePaintProbe
@@ -114,6 +115,14 @@ def render_library(window, entries: list[dict[str, Any]] | None = None, *, perf_
         format_date=fr_date,
         query=getattr(library_search_state, "text", ""),
         field=getattr(library_search_state, "field", "all"),
+    )
+    # Snapshot ambiguous list keys independently of row instances: a
+    # stale GTK selection may outlive the cell rebind and must never open
+    # the last item in a newly ambiguous Library action mapping.
+    counts = Counter(getattr(row, "key", None) for row in rows)
+    window._library_ambiguous_keys = frozenset(
+        key for key, number in counts.items()
+        if type(key) is str and number > 1
     )
     if phase is not None:
         phase("row_projection")  # includes filtering and BookListItem creation

@@ -19,7 +19,7 @@ from ..plugin_api.lending_borrower_eligibility import (
     BorrowerOperationEvidence as ExactEditionBorrowerEvidence,
     assess_borrower_eligibility,
 )
-from ..providers.base import ProviderDescriptor
+from ..providers.base import ManualBorrowPolicy, ProviderDescriptor
 from .borrow_action_scope import borrow_claim_key
 from .borrow_for_identity_preview import (
     BorrowForIdentityPreview, BorrowForIdentityWitness, BorrowOfferRejection,
@@ -210,16 +210,6 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
                 or sum(other is account for other in rows) != 1):
             return "lender_unavailable"
 
-        # Paris's normal borrow contract supports exactly the selected
-        # primary. Other profiles are NEVER activated to inspect this fact.
-        if (evidence.provider_id == "paris"
-                and not configured_primary_source_current(
-                    service, item, evidence.identity_id,
-                    provider_id="paris",
-                    selection_key="primary_paris_connection_id",
-                )):
-            return "lender_unavailable"
-
         plugin_id = service._provider_plugin_ids.get(evidence.provider_id)
         manager = service._plugin_manager
         if type(plugin_id) is not str or not plugin_id or manager is None:
@@ -239,6 +229,25 @@ def _witness(service, row: ObservedBorrowOffer, *, context_epoch: int,
         if (type(descriptor) is not ProviderDescriptor
                 or descriptor.id != evidence.provider_id):
             return "capability_unverified"
+        # Source selection is an installed, typed lender declaration, not a
+        # Core brand name. The same saved-primary binding protects Paris and
+        # any future provider that declares this versioned policy.
+        policy = descriptor.manual_borrow_policy
+        if policy is not None:
+            if (type(policy) is not ManualBorrowPolicy
+                    or policy.schema != "cifereca.manual-borrow/1"
+                    or policy.docbase != item.docbase):
+                return "capability_unverified"
+            if (policy.primary_borrower_id is not None
+                    and account.unique_id != policy.primary_borrower_id):
+                return "lender_unavailable"
+            if (policy.source_selection_key is not None
+                    and configured_primary_source_current(
+                        service, item, evidence.identity_id,
+                        provider_id=evidence.provider_id,
+                        selection_key=policy.source_selection_key,
+                    ) is not True):
+                return "lender_unavailable"
         capability = assess_lending_operation(
             "loan.borrow",
             manifest_capabilities=declaration.capabilities,
@@ -321,6 +330,7 @@ def preview_live_borrow_for_current_identity(
     service, *, expected_edition_id: str,
     observations: object, now: int | None = None,
     requesting_identity_id: str | None = None, scope_current=None,
+    reader_scope=None,
 ) -> BorrowForIdentityPreview:
     """Project live Core owner/session facts without switching identities.
 
@@ -342,7 +352,17 @@ def preview_live_borrow_for_current_identity(
             or not callable(scope_current) or scope_current() is not True):
         raise ValueError("invalid_cross_profile_borrow_context")
     requesting = requesting_identity_id
-    context = getattr(service, "_account_context_epoch", None)
+    # A scoped reader uses its own source generation; the historical GTK
+    # projection keeps its navigation generation for held menus.
+    if reader_scope is not None:
+        from .search_orchestration import SearchReadScope
+        if (type(reader_scope) is not SearchReadScope
+                or reader_scope.identity_id != requesting
+                or not reader_scope.current(service)):
+            raise ValueError("invalid_cross_profile_borrow_context")
+        context = reader_scope.source_epoch
+    else:
+        context = getattr(service, "_account_context_epoch", None)
     if type(context) is not int or context < 0:
         raise ValueError("invalid_cross_profile_borrow_context")
     source = source_context_epoch(service)
@@ -368,7 +388,8 @@ def preview_live_borrow_for_current_identity(
         witnesses=witnesses, now=now, context_epoch=context,
     )
     if (scope_current() is not True
-            or getattr(service, "_account_context_epoch", None) != context
+            or (not reader_scope.current(service) if reader_scope is not None
+                else getattr(service, "_account_context_epoch", None) != context)
             or source_context_epoch(service) != source):
         empty = preview_borrow_for_identity(
             requesting_identity_id=requesting,
@@ -401,6 +422,7 @@ def revalidate_live_borrow_lender_selection(
     selected_option_id: str, expected_edition_id: str,
     observations: object, now: int | None = None,
     requesting_identity_id: str | None = None, scope_current=None,
+    reader_scope=None,
 ) -> BorrowLenderSelection:
     """Re-evaluate the *clicked* option, never pick the first eligible offer.
 
@@ -433,7 +455,7 @@ def revalidate_live_borrow_lender_selection(
             service, expected_edition_id=expected_edition_id,
             observations=observations, now=now,
             requesting_identity_id=requesting_identity_id,
-            scope_current=scope_current,
+            scope_current=scope_current, reader_scope=reader_scope,
         )
         if scope_current() is not True:
             return stale
@@ -465,8 +487,47 @@ def revalidate_live_borrow_lender_selection(
         return stale
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class ScopedBorrowPreview:
+    """In-process read-only result, pinned to the original Core and reader."""
+    reader_scope: object
+    preview: BorrowForIdentityPreview
+
+
+def preview_borrow_for_scope(service, *, reader_scope, expected_edition_id: str,
+                             observations: object, now: int | None = None):
+    from .search_orchestration import SearchReadScope
+    if type(reader_scope) is not SearchReadScope or not reader_scope.current(service):
+        raise ValueError("invalid_cross_profile_borrow_context")
+    result = preview_live_borrow_for_current_identity(
+        service, expected_edition_id=expected_edition_id, observations=observations,
+        now=now, requesting_identity_id=reader_scope.identity_id,
+        scope_current=lambda: reader_scope.current(service), reader_scope=reader_scope,
+    )
+    return ScopedBorrowPreview(reader_scope, result)
+
+
+def revalidate_borrow_for_scope(service, *, captured: ScopedBorrowPreview,
+                                selected_option_id: str, expected_edition_id: str,
+                                observations: object, now: int | None = None):
+    from .search_orchestration import SearchReadScope
+    stale = BorrowLenderSelection("revoked", "selection_stale")
+    if (type(captured) is not ScopedBorrowPreview
+            or type(captured.reader_scope) is not SearchReadScope
+            or not captured.reader_scope.current(service)):
+        return stale
+    scope = captured.reader_scope
+    return revalidate_live_borrow_lender_selection(
+        service, captured_preview=captured.preview, selected_option_id=selected_option_id,
+        expected_edition_id=expected_edition_id, observations=observations, now=now,
+        requesting_identity_id=scope.identity_id,
+        scope_current=lambda: scope.current(service), reader_scope=scope,
+    )
+
+
 __all__ = [
     "ObservedBorrowOffer", "BorrowLenderSelection",
     "preview_live_borrow_for_current_identity",
     "revalidate_live_borrow_lender_selection",
+    "ScopedBorrowPreview", "preview_borrow_for_scope", "revalidate_borrow_for_scope",
 ]

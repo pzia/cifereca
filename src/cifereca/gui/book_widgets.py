@@ -76,6 +76,7 @@ class CoverView(Gtk.Overlay):
         self._priority = 10
         self._decode_retry = False
         self._document_check = None
+        self._document_decode_retry = None
         # Optional N0 paint observation: attached only by a Core source
         # adapter that already owns an exact N2 decision/lease. Never a
         # source of bibliographic evidence or provider access.
@@ -133,6 +134,7 @@ class CoverView(Gtk.Overlay):
         self._decode_retry = False
         self._on_texture_applied = None
         self._document_check = None
+        self._document_decode_retry = None
         self._set_logical_size(self._width, self._height)
         self.picture.set_paintable(None)
         self.placeholder.set_visible(True)
@@ -158,6 +160,7 @@ class CoverView(Gtk.Overlay):
         priority: int = 10,
         on_texture_applied: Callable[[str, Path], None] | None = None,
         is_current: Callable[[], bool] | None = None,
+        minimum_revision: int | None = None,
     ) -> None:
         """Bind N2 DocumentRef before N3; same GTK generation and decode sink.
 
@@ -203,11 +206,33 @@ class CoverView(Gtk.Overlay):
             old = getattr(self, "_request", None)
             if old is None or not old.active:
                 return False
+            # A fresh N2 source event is NOT a new ownership lease. This
+            # callback is posted from a worker to GTK and may execute after
+            # a profile switch, query change, same-key row replacement or
+            # recommendation click revocation. Validate the original
+            # producer/selection BEFORE scheduling another N2 get_cover.
+            # N2's old CAS token must NOT be tested here: a legitimate
+            # source revision intentionally invalidates it before rebind.
+            if is_current is not None:
+                try:
+                    still_owned = is_current() is True
+                except Exception:
+                    still_owned = False
+                if not still_owned:
+                    loader.note_ui_stale()
+                    # Clear any already painted N4 from the revoked source
+                    # as well as its pending N3 request. Do not affect a
+                    # newer cell: the generation check above wins first.
+                    self.reset()
+                    self._show_missing()
+                    return False
             try:
                 self.bind_document(
                     service, document, variant=variant, priority=priority,
                     on_texture_applied=on_texture_applied,
                     is_current=is_current,
+                    **({"minimum_revision": minimum_revision}
+                       if minimum_revision is not None else {}),
                 )
             except (RuntimeError, ValueError, TypeError):
                 self._show_missing()
@@ -226,6 +251,8 @@ class CoverView(Gtk.Overlay):
             width=self._width * scale if variant == "list" else self._width,
             height=self._height * scale if variant == "list" else self._height,
             on_source_changed=source_changed,
+            **({"minimum_revision": minimum_revision}
+               if minimum_revision is not None else {}),
         )
         self._request = request
         # The worker already checked N2, but idle dispatch can run LATER
@@ -236,6 +263,26 @@ class CoverView(Gtk.Overlay):
         # This is the N2-selected URI, NOT a reconstructed URL from the
         # thumbnail path. N0 paint receipts retain their exact source.
         self._url = request.source_uri
+
+        def retry_document_decode() -> None:
+            # GDK rejected physical N3 bytes, NOT their documentary N2
+            # source. Re-enter the exact gateway (including EPUB extraction,
+            # source tokens and subscriptions), never force a raw URI load.
+            # The corrupt cache file has already been invalidated.
+            if generation != self._generation:
+                return
+            self.bind_document(
+                service, document, variant=variant, priority=priority,
+                on_texture_applied=on_texture_applied,
+                is_current=is_current,
+                **({"minimum_revision": minimum_revision}
+                   if minimum_revision is not None else {}),
+            )
+            # bind_document resets the widget. Bound the repair to one
+            # attempt per binding/source notification, not an idle loop.
+            self._decode_retry = True
+
+        self._document_decode_retry = retry_document_decode
 
     def bind_url(
         self, loader: CoverLoader, url: str | None, *,
@@ -250,6 +297,7 @@ class CoverView(Gtk.Overlay):
         # failed request may still be refreshed by an ordinary rebind, and
         # changing loader, URL or priority retains the normal cancellation.
         if (url and self._loader is loader and self._url == url
+                and getattr(self, "_document_check", None) is None
                 and self._priority == priority and self.spinner.get_visible()):
             self._on_texture_applied = (
                 on_texture_applied if callable(on_texture_applied) else None
@@ -336,7 +384,31 @@ class CoverView(Gtk.Overlay):
                     detail={"code": "cover_decode_failed"},
                     level="detailed",
                 )
-            if not self._decode_retry and self._loader is not None and self._url:
+            if generation != self._generation:
+                # A synchronous GTK signal may have rebound this widget.
+                # Never schedule repair or clear another binding.
+                loader.note_ui_stale()
+                return False
+            if check is not None:
+                # Document bindings must never downgrade to _start_cover_request
+                # (N3 URL API). Recheck the original owner's lease AND N2 CAS
+                # after GDK failed, before asking N2 for a bounded repair.
+                try:
+                    current = check() is True
+                except Exception:
+                    current = False
+                repair = getattr(self, "_document_decode_retry", None)
+                if current and not self._decode_retry and callable(repair):
+                    self._decode_retry = True
+                    try:
+                        repair()
+                    except (TypeError, ValueError, RuntimeError):
+                        self._show_missing()
+                else:
+                    if not current:
+                        loader.note_ui_stale()
+                    self._show_missing()
+            elif not self._decode_retry and self._loader is not None and self._url:
                 self._decode_retry = True
                 self._start_cover_request(force=True)
             else:
@@ -571,6 +643,42 @@ class BookListCell(Gtk.Box):
         decision from cached N3 media. A rejected packet never falls back
         silently to a lower-priority supplier URL.
         """
+        borrower_public = getattr(item, "_cover_borrower_public_c_receipt", None)
+        if borrower_public is not None:
+            # N2 loads only the public canonical C on its own worker.
+            # Recycled GTK cells may neither borrow another identity's
+            # occurrence nor reuse a stale account/source generation.
+            if any(getattr(item, name, None) is not None for name in (
+                "_cover_local_evidence", "_cover_history_evidence",
+                "_cover_loan_supplier_evidence", "_cover_search_evidence",
+            )):
+                return False
+            from .borrower_public_c_bridge import admit_borrower_public_c_cell
+            return admit_borrower_public_c_cell(
+                self.window, item, document,
+            )
+        plugin_source = getattr(item, "_cover_plugin_c_source", None)
+        if plugin_source is not None:
+            from .plugin_public_c_guard import plugin_public_c_cell_current
+            return (
+                getattr(item, "_cover_document_ref", None) == document
+                and plugin_public_c_cell_current(
+                    item, getattr(item, "_cover_plugin_c_receipt", None),
+                )
+            )
+        known_source = getattr(item, "_cover_known_public_c_source", None)
+        if known_source is not None:
+            # A persisted C-first row has a valid public document but a
+            # time-scoped Search association. The N3 worker may not paint
+            # it after mode/identity/known-source changes.
+            from .search_known_public_c_guard import known_public_c_cell_current
+            return (
+                getattr(item, "_cover_document_ref", None) == document
+                and known_public_c_cell_current(
+                    self.window, item,
+                    getattr(item, "_cover_known_public_c_receipt", None),
+                )
+            )
         search = getattr(item, "_cover_search_evidence", None)
         if search is not None:
             from .search_document_cover_bridge import register_exact_search_document
@@ -588,6 +696,25 @@ class BookListCell(Gtk.Box):
             return register_exact_loan_supplier(
                 self.window, getattr(item, "_loan_source_item", None),
                 service, supplier, document,
+            )
+        public_link = getattr(item, "_cover_public_c_link", None)
+        if public_link is not None:
+            from .local_public_c_cell_guard import local_public_c_cell_current
+            owner = getattr(self.window, "service", None)
+            context = (
+                getattr(getattr(owner, "current_identity", None),
+                        "identity_id", None),
+                getattr(owner, "_account_context_epoch", None),
+                getattr(owner, "_source_context_epoch", None),
+            )
+            # The document association must still belong to the exact
+            # current Library/Recent mapping, not just a valid older proof
+            # on an equal-key cell. N3 repeats the SAME predicate after IO.
+            return (
+                getattr(item, "_cover_document_ref", None) == document
+                and local_public_c_cell_current(
+                    self.window, item, service=owner, context=context,
+                )
             )
         facts = getattr(item, "_cover_local_evidence", None)
         history = getattr(item, "_cover_history_evidence", None)
@@ -614,9 +741,71 @@ class BookListCell(Gtk.Box):
             return False
 
     def _search_cover_guard(self, item: BookListItem) -> dict:
+        plugin_source = getattr(item, "_cover_plugin_c_source", None)
+        if plugin_source is not None:
+            from .plugin_public_c_guard import plugin_public_c_cell_current
+            receipt = getattr(item, "_cover_plugin_c_receipt", None)
+            bind_epoch = self._bind_epoch
+            options = {"is_current": lambda: (
+                self._bind_epoch == bind_epoch
+                and self._bound_key == item.key
+                and self._thumbnail_item is item
+                and plugin_public_c_cell_current(item, receipt)
+            )}
+            revision = getattr(receipt, "minimum_revision", None)
+            if revision is not None:
+                options["minimum_revision"] = revision
+            return options
+        known_source = getattr(item, "_cover_known_public_c_source", None)
+        if known_source is not None:
+            from .search_known_public_c_guard import known_public_c_cell_current
+            receipt = getattr(item, "_cover_known_public_c_receipt", None)
+            bind_epoch = self._bind_epoch
+            return {"is_current": lambda: (
+                self._bind_epoch == bind_epoch
+                and self._bound_key == item.key
+                and self._thumbnail_item is item
+                and known_public_c_cell_current(
+                    self.window, item, receipt,
+                )
+            ), "minimum_revision": getattr(receipt, "epoch", None)}
+        public_link = getattr(item, "_cover_public_c_link", None)
+        if public_link is not None:
+            # Bind-time owner and two Core epochs, never a mutable current
+            # account lookup at N3 callback time. An A→B→A epoch cannot
+            # revive an old cell, even if its opaque C URL is still cached.
+            from .local_public_c_cell_guard import local_public_c_cell_current
+            owner = getattr(self.window, "service", None)
+            context = (
+                getattr(getattr(owner, "current_identity", None),
+                        "identity_id", None),
+                getattr(owner, "_account_context_epoch", None),
+                getattr(owner, "_source_context_epoch", None),
+            )
+            bind_epoch = self._bind_epoch
+            return {"is_current": lambda: (
+                self._bind_epoch == bind_epoch
+                and self._bound_key == item.key
+                and self._thumbnail_item is item
+                and local_public_c_cell_current(
+                    self.window, item, service=owner, context=context,
+                )
+            ), "minimum_revision": getattr(public_link, "epoch", None)}
+        borrower = getattr(item, "_cover_borrower_public_c_receipt", None)
+        if borrower is not None:
+            # Also recheck after a delayed N3 callback. A recycled cell or
+            # A->B->A account/source transition is not a current occurrence.
+            from .borrower_public_c_bridge import admit_borrower_public_c_cell
+            return {"is_current": lambda: admit_borrower_public_c_cell(
+                self.window, item, getattr(item, "_cover_document_ref", None),
+            ), "minimum_revision": getattr(borrower, "epoch", None)}
         proof = getattr(item, "_cover_search_evidence", None)
         from .search_document_cover_bridge import search_document_is_current
-        return {"is_current": lambda: search_document_is_current(self.window, proof)}
+        options = {"is_current": lambda: search_document_is_current(self.window, proof)}
+        revision = getattr(proof, "minimum_revision", None)
+        if revision is not None:
+            options["minimum_revision"] = revision
+        return options
 
     def _thumbnail_changed(self, item: BookListItem) -> None:
         if self._thumbnail_item is not item or self._bound_key != item.key:
@@ -631,8 +820,21 @@ class BookListCell(Gtk.Box):
                 service, document, variant="list", priority=10,
                 on_texture_applied=getattr(item, "_cover_paint_observer", None),
                 **(self._search_cover_guard(item)
-                   if getattr(item, "_cover_search_evidence", None) is not None else {}),
+                   if (getattr(item, "_cover_search_evidence", None) is not None
+                       or getattr(item, "_cover_borrower_public_c_receipt", None)
+                       is not None
+                       or getattr(item, "_cover_public_c_link", None)
+                       is not None
+                       or getattr(item, "_cover_known_public_c_source", None)
+                       is not None
+                       or getattr(item, "_cover_plugin_c_source", None)
+                       is not None) else {}),
             )
+            return
+        if getattr(item, "_cover_plugin_c_source", None) is not None:
+            # Missing N2 service or revoked document is NOT permission
+            # to load the old plugin thumbnail through the raw URL path.
+            self.cover.bind_url(self.cover_loader, None, priority=10)
             return
         self.cover.bind_url(
             self.cover_loader, item.thumbnail_url or item.default_thumbnail_url,
@@ -722,8 +924,20 @@ class BookListCell(Gtk.Box):
                     service, document, variant="list", priority=10,
                     on_texture_applied=getattr(item, "_cover_paint_observer", None),
                     **(self._search_cover_guard(item)
-                       if getattr(item, "_cover_search_evidence", None) is not None else {}),
+                       if (getattr(item, "_cover_search_evidence", None) is not None
+                       or getattr(item, "_cover_borrower_public_c_receipt", None)
+                       is not None
+                       or getattr(item, "_cover_public_c_link", None)
+                       is not None
+                       or getattr(item, "_cover_known_public_c_source", None)
+                       is not None
+                       or getattr(item, "_cover_plugin_c_source", None)
+                       is not None) else {}),
                 )
+        elif getattr(item, "_cover_plugin_c_source", None) is not None:
+            # A C-specific widget cannot fall back to an unqualified URI
+            # just because its exact N2 service became unavailable.
+            self.cover.bind_url(self.cover_loader, None, priority=10)
         elif item.thumbnail_url:
             self.cover.bind_url(
                 self.cover_loader, item.thumbnail_url, priority=10,

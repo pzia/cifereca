@@ -84,11 +84,11 @@ def test_service_facade_is_identity_scoped_and_never_calls_adobe(tmp_path):
     try:
         service.kobo_profiles = lambda: (_ for _ in ()).throw(AssertionError("No ADEPT runtime"))
         service.acquire_digital_loan = lambda *_: (_ for _ in ()).throw(AssertionError("No ACSM"))
-        status = service.normal_paris_adept_status("alice")
+        status = service.normal_source_adept_status("alice", source_provider_id="paris")
         assert status["status"] == "ready"
         assert status["adept_profile_id"] == "alice-profile"
-        assert service.normal_paris_adept_status("bob")["reason"] == "missing_paris_connection"
-        assert service.normal_paris_adept_status("missing")["reason"] == "unknown_identity"
+        assert service.normal_source_adept_status("bob", source_provider_id="paris")["reason"] == "missing_paris_connection"
+        assert service.normal_source_adept_status("missing", source_provider_id="paris")["reason"] == "unknown_identity"
     finally:
         service.close()
 
@@ -96,11 +96,11 @@ def test_service_facade_is_identity_scoped_and_never_calls_adobe(tmp_path):
 def test_ui_identity_switch_does_not_change_other_identity_status(tmp_path):
     service, _loan = service_with_linked_borrower(tmp_path)
     try:
-        original = service.normal_paris_adept_status("alice")
+        original = service.normal_source_adept_status("alice", source_provider_id="paris")
         service.select_identity("bob")
-        assert service.normal_paris_adept_status("alice") == original
+        assert service.normal_source_adept_status("alice", source_provider_id="paris") == original
         service.storage.adept_profile_binding_set("identity", "alice", None)
-        assert service.normal_paris_adept_status("alice")["reason"] == "missing_adept_profile"
+        assert service.normal_source_adept_status("alice", source_provider_id="paris")["reason"] == "missing_adept_profile"
         # Changing the normal binding cannot mutate exceptional borrower grants.
         assert service.storage.paris_borrower_adept_binding_get(
             credential_id="alice-paris", account_id="linked-123"
@@ -192,14 +192,14 @@ def test_service_facade_honours_persisted_choice_without_modifying_grants(tmp_pa
             {"id": "alice-secondary", "provider": "paris", "identity_id": "alice",
              "enabled": True},
         ])
-        assert service.normal_paris_adept_status("alice")["reason"] == (
+        assert service.normal_source_adept_status("alice", source_provider_id="paris")["reason"] == (
             "multiple_paris_connections"
         )
         service.config.upsert_identity({
             "id": "alice", "label": "Alice", "directory_name": "alice",
             "primary_paris_connection_id": "alice-paris",
         })
-        assert service.normal_paris_adept_status("alice")["status"] == "ready"
+        assert service.normal_source_adept_status("alice", source_provider_id="paris", primary_connection_id="alice-paris")["status"] == "ready"
         # The old SQLite connection can still say enabled after a config
         # disabling. It must not satisfy an explicitly persisted choice.
         service.config.set("providers.accounts", [
@@ -208,7 +208,7 @@ def test_service_facade_honours_persisted_choice_without_modifying_grants(tmp_pa
             {"id": "alice-secondary", "provider": "paris", "identity_id": "alice",
              "enabled": True},
         ])
-        assert service.normal_paris_adept_status("alice")["reason"] == (
+        assert service.normal_source_adept_status("alice", source_provider_id="paris", primary_connection_id="alice-paris")["reason"] == (
             "primary_paris_connection_missing"
         )
         # Restore the exact configured scope before verifying the rest.
@@ -226,7 +226,7 @@ def test_service_facade_honours_persisted_choice_without_modifying_grants(tmp_pa
             "id": "alice", "label": "Alice", "directory_name": "alice",
             "primary_paris_connection_id": "offline",
         })
-        assert service.normal_paris_adept_status("alice")["reason"] == (
+        assert service.normal_source_adept_status("alice", source_provider_id="paris", primary_connection_id="offline")["reason"] == (
             "primary_paris_connection_missing"
         )
     finally:

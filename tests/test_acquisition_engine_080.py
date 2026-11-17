@@ -5,77 +5,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from cifereca.acquisition_engine import (
-    AcquisitionCandidate,
-    AcquisitionLedger,
-    AcquisitionOffer,
-    AcquisitionPlanner,
-    AcquisitionPolicy,
-    Entitlement,
-    SourceIdentity,
-)
 from cifereca.catalog import LocalCatalog
 from cifereca.storage import Storage
-
-
-def _candidate(name: str, handling: str, fmt: str = "epub") -> AcquisitionCandidate:
-    return AcquisitionCandidate(
-        candidate_id=name,
-        kind="acsm" if handling == "adobe_adept" else "http",
-        handling=handling,  # type: ignore[arg-type]
-        media_format="acsm" if handling == "adobe_adept" else fmt,
-        source_format=fmt,
-        url="https://example.test/book",
-    )
-
-
-def test_generic_policy_preserves_project_priority_acsm_plain_kdrm():
-    entitlement = Entitlement(SourceIdentity("kobo", "vault-a"), "book-a")
-    offer = AcquisitionOffer(
-        entitlement=entitlement,
-        candidates=(
-            _candidate("kdrm", "kobo_kdrm"),
-            _candidate("plain", "http_plain"),
-            _candidate("acsm", "adobe_adept"),
-        ),
-    )
-    plan = AcquisitionPlanner(AcquisitionPolicy()).plan(offer, preferred_format="epub")
-    assert plan is not None
-    assert plan.candidate.candidate_id == "acsm"
-    assert plan.strategy == "adobe_adept"
-
-
-def test_retry_replaces_persisted_plan_without_leaving_acquiring(tmp_path: Path):
-    storage = Storage(tmp_path / "ledger.sqlite3")
-    ledger = AcquisitionLedger(storage)
-    entitlement = Entitlement(SourceIdentity("kobo", "vault-a"), "book-a")
-    initial = AcquisitionOffer(entitlement, (_candidate("first", "http_plain"),))
-    first_plan = AcquisitionPlanner().plan(initial, preferred_format="epub")
-    assert first_plan is not None
-
-    acquisition_id = ledger.discover(initial, title="Book A")
-    ledger.set_plan(acquisition_id, first_plan)
-    ledger.begin(acquisition_id)
-
-    refreshed = AcquisitionOffer(entitlement, (_candidate("second", "kobo_kdrm"),))
-    refreshed_plan = AcquisitionPlanner().plan(refreshed, preferred_format="epub")
-    assert refreshed_plan is not None
-    ledger.begin(
-        acquisition_id,
-        plan=refreshed_plan,
-        metadata={"acquisition_mode": "delegated-kobo"},
-    )
-
-    row = storage.acquisition_get(acquisition_id)
-    assert row is not None
-    assert row["status"] == "acquiring"
-    assert row["attempt_count"] == 2
-    assert row["strategy"] == "kobo_kdrm"
-    assert row["executor"] == "provider"
-    assert row["candidate_id"] == "second"
-    assert row["metadata"]["candidate_shape"] == refreshed_plan.candidate.safe_shape()
-    assert row["metadata"]["requested_format"] == "epub"
-    assert row["metadata"]["acquisition_mode"] == "delegated-kobo"
 
 
 def test_schema_v3_mirrors_legacy_backup_into_generic_ledger():

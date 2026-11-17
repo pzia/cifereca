@@ -237,6 +237,12 @@ def compute_recommendations(
 ) -> RecommendationResult:
     total_started = time.perf_counter()
 
+    # Direct Core clients can supply the unbound public broker. The UI
+    # normally binds it already, before enqueue.
+    bind_catalog = getattr(type(catalog_broker), "for_identity", None)
+    if callable(bind_catalog):
+        catalog_broker = bind_catalog(catalog_broker, identity_id)
+
     # Persisted projection only: never trigger a filesystem scan here.
     if snapshot_cache is None:
         snapshot_started = time.perf_counter()
@@ -340,7 +346,8 @@ def compute_recommendations(
             str(bool(cancelled)).lower(),
         )
 
-    if not books or not queries or not providers:
+    known_reader = getattr(catalog_broker, "known_public_notices", None)
+    if not books or not queries or (not providers and not callable(known_reader)):
         # The saved preference revision can change during provider discovery,
         # including when no provider is returned. Never mark that run fresh.
         revoked = cancelled_or_revoked()
@@ -385,6 +392,11 @@ def compute_recommendations(
         str, tuple[Any, float, tuple[str, ...], list[str], dict[tuple[str, ...], CatalogNoticeVariant]]
     ] = {}
     score_cache: dict[tuple[Any, ...], tuple[float, tuple[str, ...]]] = {}
+    # A read-only C projection has no credential. Preserve its original
+    # object across repeated signals within this ranking run; otherwise
+    # the unresolved-variant policy correctly treats each new object as
+    # another occurrence and rejects the sole-edition cover.
+    local_candidates: dict[tuple[str, ...], Any] = {}
 
     def ingest_provisional(rows: list[Any]) -> None:
         for item in rows:
@@ -446,6 +458,36 @@ def compute_recommendations(
                 f"{query} · requête {query_index}/{len(queries)} · catalogues 0/{provider_total} · {results_seen} résultats",
             )
 
+        # Local C is a partial descriptive fallback, not an observed provider
+        # response. Read it on this existing ranking worker before any GET.
+        known_rows = []
+        if callable(known_reader):
+            try:
+                raw_known = list(known_reader(
+                    query, scope=scope,
+                    provider_ids=tuple(str(pid) for pid, _ in providers),
+                ) or ())[:max(10, int(per_query))]
+                for item in raw_known:
+                    key = tuple(str(get_field(item, field, "") or "") for field in (
+                        "id", "source_provider", "record_id", "docbase",
+                        "medium", "revision_id",
+                    ))
+                    known_rows.append(local_candidates.setdefault(key, item))
+            except Exception:
+                warnings.append("known_public_notice_read_failed")
+        if cancelled_or_revoked():
+            was_cancelled = True
+            break
+
+        if not providers:
+            # No session to consult. Use durable public C without inventing
+            # a provider inventory or attempting a supplier request.
+            batches.append(known_rows)
+            results_seen += len(known_rows)
+            ingest_provisional(known_rows)
+            emit_partial(query_index, 0)
+            continue
+
         if callable(progressive):
             def on_batch(batch: Any) -> None:
                 nonlocal provider_done, cache_batches, network_batches, results_seen, was_cancelled
@@ -498,10 +540,21 @@ def compute_recommendations(
                     was_cancelled = True
                 else:
                     warnings.append("catalogue_search_failed")
-            batches.append(_merge_provider_rows(grouped, providers)[: max(10, int(per_query))])
+            rows = _merge_provider_rows(grouped, providers)[:max(10, int(per_query))]
+            # Keep live provider ranking unchanged when it has results; if
+            # offline/empty, C remains usable, not an attested availability.
+            if not rows and not was_cancelled:
+                rows = known_rows
+                results_seen += len(rows)
+                ingest_provisional(rows)
+                if rows:
+                    emit_partial(query_index, provider_done)
+            batches.append(rows)
         else:
             try:
                 rows = list(catalog_broker.search(query, scope=scope, force=False) or [])
+                if not rows:
+                    rows = known_rows
                 results_seen += len(rows)
                 cache_unknown_calls += 1
                 ingest_provisional(rows)
@@ -512,7 +565,12 @@ def compute_recommendations(
                     was_cancelled = True
                 else:
                     warnings.append("catalogue_search_failed")
-                batches.append([])
+                rows = [] if was_cancelled else known_rows
+                results_seen += len(rows)
+                ingest_provisional(rows)
+                batches.append(rows)
+                if rows:
+                    emit_partial(query_index, 0)
 
         if progress and not was_cancelled:
             progress(

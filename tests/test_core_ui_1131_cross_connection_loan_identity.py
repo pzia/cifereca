@@ -370,3 +370,88 @@ def test_actionable_loan_rows_are_never_published_from_partial_inventory():
     assert unambiguous_loan_rows(excessive()) == ()
     assert len(seen) == 10001
     assert unambiguous_loan_rows([exact, replace(exact)]) == (exact,)
+
+
+def test_library_explicit_blank_provenance_cannot_turn_into_unqualified_action():
+    """Blank source coordinates are negative evidence, not wildcard filters."""
+    loan = _loan()
+    for scope in ("provider_id", "identity_id", "item_id", "source_credential"):
+        assert unique_library_loan(
+            [loan], {"loan_id": loan.id, scope: ""},
+        ) is None
+    # Truly unqualified old library entries still work with one unique loan.
+    assert unique_library_loan([loan], {"loan_id": loan.id}) is loan
+    assert unique_library_loan(
+        [loan], {"loan_id": loan.id, "source_account_id": "primary"},
+    ) is loan
+
+
+def test_library_loan_snapshot_cannot_mix_preinventory_key_with_late_borrower():
+    """A lazy provider may mutate the selected library row while yielding."""
+    alice = _loan(credential="paris-a", identity="alice")
+    bob = _loan(credential="paris-b", identity="bob")
+    selected = {
+        "loan_id": alice.id, "provider_id": "paris",
+        "identity_id": "alice", "source_credential": "paris-a",
+    }
+
+    def retarget_during_inventory():
+        yield alice
+        selected.update(identity_id="bob", source_credential="paris-b")
+        yield bob
+
+    assert unique_library_loan(retarget_during_inventory(), selected) is None
+    # Unchanged fully qualified source evidence still selects the exact loan.
+    assert unique_library_loan(
+        [alice, bob], {
+            "loan_id": bob.id, "provider_id": "paris",
+            "identity_id": "bob", "source_credential": "paris-b",
+        },
+    ) is bob
+
+
+def test_library_loan_selection_fails_closed_when_mapping_getter_raises():
+    loan = _loan()
+
+    class FailedGet(dict):
+        def get(self, key, default=None):
+            raise RuntimeError("private provider library projection")
+
+    assert unique_library_loan(
+        [loan], FailedGet(loan_id=loan.id),
+    ) is None
+
+
+def test_library_loan_selection_rechecks_mapping_after_inventory_and_no_eq():
+    loan = _loan()
+
+    class Hostile:
+        def __eq__(self, _other):
+            raise AssertionError("private equality must not run")
+
+    class ChangedGet(dict):
+        reads = 0
+
+        def get(self, key, default=None):
+            self.reads += 1
+            if self.reads > 6 and key == "source_credential":
+                return Hostile()
+            return super().get(key, default)
+
+    selected = ChangedGet(loan_id=loan.id, source_credential="paris-a")
+    assert unique_library_loan([loan], selected) is None
+    assert selected.reads >= 7
+
+
+def test_library_loan_selection_rechecks_scope_after_provider_callback():
+    loan = _loan()
+    item = {
+        "loan_id": loan.id, "provider_id": "paris",
+        "source_credential": "paris-a",
+    }
+
+    def revoke():
+        yield loan
+        item["provider_id"] = "foreign-library"
+
+    assert unique_library_loan(revoke(), item) is None

@@ -6,6 +6,8 @@ The existing "Envoyer à" executor still verifies physical bytes and provenance.
 """
 from __future__ import annotations
 
+from .borrow_for_identity_copy_admission import navigation_epoch_current
+
 from dataclasses import dataclass
 
 from ..models import Account, SearchResult
@@ -71,7 +73,7 @@ def preflight_cross_profile_loan_transfer(
             return denied
         placement = service.storage.placement_get(lender_placement_id)
         if (scope_current() is not True
-                or service._account_context_epoch != reader_epoch
+                or not navigation_epoch_current(service, reader_epoch, scope_current)
                 or service._source_context_epoch != source_epoch
                 or type(placement) is not dict
                 or placement.get("identity_id") != borrowing_account.identity_id

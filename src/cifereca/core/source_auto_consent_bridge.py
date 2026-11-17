@@ -8,17 +8,18 @@ consent is exposed through the versioned plugin/source policy contract.
 """
 from __future__ import annotations
 
-import re
 import logging
 
 from .source_convergence import SourceKey
 from .legacy_source_account_id import ambiguous_legacy_source_account_id
-from .source_sync_consent import read_policy, policy_in_transaction
+from .source_sync_consent import (
+    inventory_epoch_key, read_policy, policy_in_transaction,
+)
 
 # Re-export historical names for existing legacy readers/tests. Metadata-key
 # lookup carries no consent decision, provider GET or acquisition permission.
 from .legacy_source_consent_metadata import (
-    _POLICIES, _HEX, _source_id, _consent_generation_key,
+    _HEX, _source_id, historical_consent_keys, historical_generation,
     legacy_source_consent_switch_present,
 )
 
@@ -26,9 +27,12 @@ from .legacy_source_consent_metadata import (
 def toggle_state(db, source: SourceKey):
     """Read the current committed mode INSIDE the caller's SQLite snapshot.
 
-    'on' grants only eligible exact references via the canonical admission;
-    'off' explicitly revokes them; None means no compatible opt-in was set.
-    A malformed value grants nothing. This method never writes metadata.
+    Only explicit source CAS 'on' grants whole-source acquisition.
+    Any historical source-wide switch, purchase OR loan, is negative
+    compatibility evidence pending explicit re-consent. Old 'on' (even
+    with a valid epoch) must never admit a GET or override a revocation.
+    None means no legacy veto exists against an exact-right permission.
+    This method never writes metadata.
     """
     if type(source) is not SourceKey:
         return "off"
@@ -48,9 +52,6 @@ def toggle_state(db, source: SourceKey):
         # policy. Falling back to an older ON after an unreadable CAS row
         # would resurrect a revoked or unverified automatic acquisition.
         return "off"
-    spec = _POLICIES.get((source.scope.provider_id, source.kind))
-    if spec is None:
-        return None
     # No alternative historical per-right grant can bypass an explicitly
     # disabled loan source. This runs inside the same SQLite transaction as
     # the final local publication guard.
@@ -77,33 +78,18 @@ def toggle_state(db, source: SourceKey):
         scope.provider_id, scope.credential_id, scope.account_id
     ):
         return "off"
-    prefix, active, epoch_prefix = spec
-    sid = _source_id(source.scope)
-    row = db.execute(
-        "SELECT value FROM metadata WHERE key=?", (prefix + sid,),
-    ).fetchone()
-    if row is None:
-        # An installation without this optional source-wide switch keeps
-        # its legacy explicit per-right grants, not an implicit opt-out.
-        return None
-    if row[0] != active:
+    # The digest binds the original owner/source; the frozen formats carry
+    # only the historical kind. A matching row is always a veto, even if
+    # its namespace does not correspond to the source's present provider.
+    try:
+        present = any(
+            db.execute("SELECT 1 FROM metadata WHERE key=?", (key,)).fetchone()
+            is not None
+            for key, _old_on, _epoch in historical_consent_keys(scope, source.kind)
+        )
+    except Exception:
         return "off"
-    # Loan delivery is non-repeatable and cannot inherit the permissive
-    # unversioned legacy purchase switches. A missing loan-source epoch is
-    # never sufficient to authorize a signed ACSM GET.
-    revision_key = (
-        epoch_prefix + sid if epoch_prefix is not None
-        else prefix + sid + ".revision" if source.kind == "loan"
-        else None
-    )
-    if revision_key is not None:
-        revision = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (revision_key,),
-        ).fetchone()
-        if (revision is None or type(revision[0]) is not str
-                or _HEX.fullmatch(revision[0]) is None):
-            return "off"
-    return "on"
+    return "off" if present else None
 
 
 
@@ -122,16 +108,15 @@ def consent_generation(storage, scope):
         return "unavailable"
     if generic.configured:
         return ("source:" + generic.revision) if generic.mode != "invalid" else "invalid"
-    key = _consent_generation_key(scope)
-    if key is None:
-        return None
     try:
-        raw = storage.metadata_get(key)
+        inventory = storage.metadata_get(inventory_epoch_key(scope))
+        if inventory is not None:
+            return ("inventory:" + inventory if type(inventory) is str
+                    and _HEX.fullmatch(inventory) else "invalid")
+        # Untouched historical installations retain their previous fence.
+        return historical_generation(scope, storage.metadata_get)
     except Exception:
         return "unavailable"
-    if raw is None:
-        return None
-    return raw if type(raw) is str and _HEX.fullmatch(raw) else "invalid"
 
 
 def consent_generation_in_transaction(db, source):
@@ -145,49 +130,51 @@ def consent_generation_in_transaction(db, source):
         return "unavailable"
     if generic.configured:
         return ("source:" + generic.revision) if generic.mode != "invalid" else "invalid"
-    key = _consent_generation_key(source.scope)
-    if key is None:
-        return None
     try:
         row = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (key,),
+            "SELECT value FROM metadata WHERE key=?",
+            (inventory_epoch_key(source.scope),),
         ).fetchone()
+        if row is not None:
+            inventory = row[0]
+            return ("inventory:" + inventory if type(inventory) is str
+                    and _HEX.fullmatch(inventory) else "invalid")
+        def read(key):
+            row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+            return row[0] if row else None
+
+        return historical_generation(source.scope, read)
     except Exception:
         return "unavailable"
-    raw = row[0] if row else None
-    if raw is None:
-        return None
-    return raw if type(raw) is str and _HEX.fullmatch(raw) else "invalid"
 
 
 def legacy_source_auto_policy(storage, scope, kind: str) -> tuple[str, str | None]:
     """Read one explicitly configured legacy SOURCE consent (never a right).
 
-    The legacy switch is admitted to canonical A→B only when a separate
-    revision was durably committed with it. Missing/invalid revisions cannot
-    be promoted into a permission after an ON→OFF→ON change. This reader
-    never examines stored entitlements or bibliographic titles.
+    Descriptive compatibility only, with no production admission caller.
+    Exactly one format row and a valid revision are required for display;
+    even a reported historical ON cannot authorize a GET or publication.
     """
     from ..plugin_api.provider_rights_observation import ProviderRightsScope
     if type(scope) is not ProviderRightsScope or type(kind) is not str:
-        return "off", None
-    spec = _POLICIES.get((scope.provider_id, kind))
-    if spec is None:
         return "off", None
     if ambiguous_legacy_source_account_id(
         scope.provider_id, scope.credential_id, scope.account_id,
     ):
         return "off", None
-    prefix, active, epoch_prefix = spec
-    sid = _source_id(scope)
-    revision_key = (epoch_prefix + sid if epoch_prefix is not None
-                    else prefix + sid + ".revision")
     try:
         from .source_sync_consent import source_enablement_key
         from .source_enablement import source_enabled
         if not source_enabled(storage.metadata_get(source_enablement_key(scope))):
             return "off", None
-        value = storage.metadata_get(prefix + sid)
+        present = [
+            (value, active, revision_key)
+            for switch, active, revision_key in historical_consent_keys(scope, kind)
+            if (value := storage.metadata_get(switch)) is not None
+        ]
+        if len(present) != 1:
+            return "off", None
+        value, active, revision_key = present[0]
         revision = storage.metadata_get(revision_key)
     except Exception:
         return "off", None
@@ -197,49 +184,11 @@ def legacy_source_auto_policy(storage, scope, kind: str) -> tuple[str, str | Non
 
 
 def legacy_source_auto_current(storage, source: SourceKey, revision: str) -> bool:
-    """Revalidate source-level ON and the EXACT old generation before GET."""
-    if (type(source) is not SourceKey or type(revision) is not str
-            or _HEX.fullmatch(revision) is None):
-        return False
-    try:
-        # A newly configured CAS source policy supersedes the old toggle,
-        # even if its legacy row still says ON (including ABA).
-        if read_policy(storage, source.scope).configured:
-            return False
-        mode, actual_revision = legacy_source_auto_policy(
-            storage, source.scope, source.kind,
-        )
-        return mode == "on" and actual_revision == revision
-    except Exception:
-        return False
+    """Retired compatibility ABI; historical ON never authorizes a GET."""
+    return False
 
 
 def legacy_source_auto_in_transaction(db, source: SourceKey, revision: str) -> bool:
-    """Final SQLite-transaction fence; protects against consent ABA."""
-    if (type(source) is not SourceKey or type(revision) is not str
-            or _HEX.fullmatch(revision) is None):
-        return False
-    try:
-        # An exact generic CAS source policy takes precedence, irrespective
-        # of a leftover ON row from a past broker UI generation.
-        if policy_in_transaction(db, source.scope).configured:
-            return False
-        from .source_sync_consent import source_enablement_key
-        from .source_enablement import source_enabled
-        enabled_row = db.execute(
-            "SELECT value FROM metadata WHERE key=?",
-            (source_enablement_key(source.scope),),
-        ).fetchone()
-        if not source_enabled(enabled_row[0] if enabled_row else None):
-            return False
-        if toggle_state(db, source) != "on":
-            return False
-        key = _consent_generation_key(source.scope)
-        if key is None:
-            return False
-        row = db.execute(
-            "SELECT value FROM metadata WHERE key=?", (key,),
-        ).fetchone()
-        return row is not None and row[0] == revision
-    except Exception:
-        return False
+    """Retired transaction ABI; no old ON can publish a downloaded file."""
+    return False
+

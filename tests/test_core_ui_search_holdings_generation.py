@@ -68,8 +68,10 @@ def _host():
             self.search_objects = {}
             self.service = NS(
                 current_identity=NS(identity_id="alice"),
-                holdings=lambda *args, **kwargs: NS(title="book"),
+                holdings_for_scope=lambda *args, **kwargs: NS(title="book"),
             )
+            registered = self.service.current_identity
+            self.service.identity_by_id = lambda key: registered if key == "alice" else None
             self.search_controls = object()
             self.search_page = NS(detail=NS(
                 show_item_detail=lambda *_: self.events.append("render"),

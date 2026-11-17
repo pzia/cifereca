@@ -188,3 +188,51 @@ def test_private_loan_or_observation_never_fabricates_purchase_origin(
         assert service.storage.entitlements(provider_id="fictional-provider") == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("variant", ["exact", "missing", "foreign", "ambiguous", "competing-possessions"])
+def test_private_library_card_pins_credential_independently_of_legacy_possessions(
+    monkeypatch, variant,
+):
+    from cifereca.core.owned_library_download import owned_library_download_target
+
+    accounts = [
+        Account(identity_id="default", provider_id="fictional-provider",
+                credential_id=credential, unique_id="same-upstream-id")
+        for credential in ("card-1", "card-2")
+    ]
+    if variant == "ambiguous":
+        accounts.append(accounts[0])
+    service = NS(accounts=accounts)
+    source = {
+        "identity_id": "default", "provider_id": "fictional-provider",
+        "credential_id": "card-1", "account_id": "same-upstream-id",
+        "item_id": "edition-1", "kind": "purchase",
+    }
+    if variant == "missing":
+        del source["credential_id"]
+    elif variant == "foreign":
+        source["credential_id"] = "not-registered"
+    historical = {
+        "identity_id": "default", "provider_id": "other-provider",
+        "account_id": "other", "item_id": "old-edition",
+        "kind": "owned", "state": "active",
+    }
+    card = {
+        "source": "private_catalog_observation", "state": "remote_catalog",
+        "local": False, "source_refs": [source],
+        "possessions": [historical, historical] if variant == "competing-possessions" else [],
+    }
+    marker = object()
+    calls = []
+    monkeypatch.setattr(offers, "select_source_offer_target",
+                        lambda _service, **scope: calls.append(scope) or marker)
+    selected = owned_library_download_target(service, card, identity_id="default")
+    if variant in ("exact", "competing-possessions"):
+        assert selected is marker
+        assert calls == [{
+            "provider_id": "fictional-provider", "credential_id": "card-1",
+            "item_id": "edition-1", "identity_id": "default",
+        }]
+    else:
+        assert selected is None and calls == []

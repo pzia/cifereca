@@ -30,13 +30,13 @@ def test_distinct_homonymous_acsms_preserve_both_artifacts(tmp_path, importer):
     second_source = tmp_path / 'second.acsm'
     first_source.write_text('<fulfillment><id>one</id><format>application/pdf</format></fulfillment>')
     second_source.write_text('<fulfillment><id>two</id><format>application/pdf</format></fulfillment>')
-    first = service.import_acsm(first_source, title='Même titre')
+    first = service.import_acsm(first_source, identity_id="alice", title='Même titre')
     original = Path(first['path']).read_bytes()
-    second = service.import_acsm(second_source, title='Même titre')
+    second = service.import_acsm(second_source, identity_id="alice", title='Même titre')
     assert Path(first['path']).read_bytes() == original
     assert first['path'] != second['path']
     assert len(service.storage.artifacts()) == 2
-    assert service.import_acsm(first_source, title='Même titre')['status'] == 'unchanged'
+    assert service.import_acsm(first_source, identity_id="alice", title='Même titre')['status'] == 'unchanged'
     assert len(requests) == 2
     assert first_source.is_file() and second_source.is_file()
 
@@ -49,7 +49,7 @@ def test_inferred_extension_correction_preserves_existing_pdf(tmp_path, importer
     existing = root / 'Même titre.pdf'
     existing.write_bytes(b'%PDF-1.4\n% already present\n%%EOF\n')
     original = existing.read_bytes()
-    imported = service.import_acsm(source, title='Même titre')
+    imported = service.import_acsm(source, identity_id="alice", title='Même titre')
     assert existing.read_bytes() == original
     assert Path(imported['path']) != existing
     assert Path(imported['path']).suffix == '.pdf'
@@ -67,7 +67,7 @@ def test_unindexed_residue_blocks_before_another_drm_call(tmp_path, importer):
     residue.write_bytes(b'preserved partial output')
     from cifereca.providers import ProviderConfigurationError
     with pytest.raises(ProviderConfigurationError, match='réconciliation'):
-        service.import_acsm(source, title='Titre')
+        service.import_acsm(source, identity_id="alice", title='Titre')
     assert residue.read_bytes() == b'preserved partial output'
     assert not requests
 
@@ -83,7 +83,7 @@ def test_existing_corrected_target_created_during_runtime_is_never_deleted(tmp_p
         return result
     monkeypatch.setattr(service, 'execute_acquisition_request', runtime)
     with pytest.raises(FileExistsError):
-        service.import_acsm(source, title='Titre')
+        service.import_acsm(source, identity_id="alice", title='Titre')
     destination = Path(requests[0]['destination'])
     assert destination.with_suffix('.pdf').read_bytes() == b'preserve competing artifact'
     assert destination.is_file() and source.is_file()
@@ -104,16 +104,16 @@ def test_same_acsm_concurrent_import_is_rejected_without_second_runtime(tmp_path
         return original_runtime(request)
     monkeypatch.setattr(service, 'execute_acquisition_request', runtime)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(service.import_acsm, source, title='Titre')
+        future = pool.submit(service.import_acsm, source, identity_id="alice", title='Titre')
         try:
             assert entered.wait(5)
             with pytest.raises(ProviderConfigurationError, match='déjà en cours'):
-                service.import_acsm(source, title='Titre')
+                service.import_acsm(source, identity_id="alice", title='Titre')
         finally:
             release.set()
         result = future.result(timeout=5)
     assert result['status'] == 'complete' and len(requests) == 1
-    assert service.import_acsm(source, title='Titre')['status'] == 'unchanged'
+    assert service.import_acsm(source, identity_id="alice", title='Titre')['status'] == 'unchanged'
 
 
 def test_symlinked_import_namespace_is_rejected_before_runtime(tmp_path, importer):
@@ -127,7 +127,7 @@ def test_symlinked_import_namespace_is_rejected_before_runtime(tmp_path, importe
     outside.mkdir()
     (root / ('acsm-' + sha256_file(source))).symlink_to(outside, target_is_directory=True)
     with pytest.raises(ProviderConfigurationError, match='ambigu'):
-        service.import_acsm(source, title='Titre')
+        service.import_acsm(source, identity_id="alice", title='Titre')
     assert list(outside.iterdir()) == [] and not requests
 
 
@@ -145,7 +145,7 @@ def test_runtime_output_symlink_is_not_indexed_or_removed(tmp_path, importer, mo
         return {'ok': True, 'artifact': {'path': str(destination)}}
     monkeypatch.setattr(service, 'execute_acquisition_request', runtime)
     with pytest.raises(ProviderConfigurationError, match='inattendu'):
-        service.import_acsm(source, title='Titre')
+        service.import_acsm(source, identity_id="alice", title='Titre')
     assert existing.read_bytes() == b'%PDF-1.4\n% other book\n%%EOF\n'
     assert Path(requests[0]['destination']).is_symlink()
     assert not service.storage.artifacts()
@@ -162,7 +162,7 @@ def test_source_changed_while_staging_never_starts_drm(tmp_path, importer, monke
         return original_copy(source_path, target)
     monkeypatch.setattr(facade.shutil, 'copy2', changed)
     with pytest.raises(ProviderConfigurationError, match='changé'):
-        service.import_acsm(source)
+        service.import_acsm(source, identity_id="alice")
     assert not requests and not service.storage.artifacts()
 
 
@@ -178,7 +178,7 @@ def test_staging_symlink_never_overwrites_another_file(tmp_path, importer):
     existing.write_bytes(b'keep original foreign file')
     (work / 'source.acsm').symlink_to(existing)
     with pytest.raises(ProviderConfigurationError, match='ambigu'):
-        service.import_acsm(source)
+        service.import_acsm(source, identity_id="alice")
     assert existing.read_bytes() == b'keep original foreign file'
     assert not requests
 
@@ -198,7 +198,7 @@ def test_acsm_import_is_visible_to_local_library_without_rescan(importer, tmp_pa
         lambda **_kwargs: pytest.fail("local refresh must not scan the filesystem"),
     )
 
-    result = service.import_acsm(source, provider_id="numilog", title="Fictional fresh book")
+    result = service.import_acsm(source, identity_id="alice", provider_id="numilog", title="Fictional fresh book")
     assert result["status"] == "complete"
     assert len(requests) == 1
     after = service.library_entries(identity_id=identity_id, scan=False)

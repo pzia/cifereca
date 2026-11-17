@@ -108,13 +108,15 @@ class PluginManager:
         diagnostics: Any | None = None,
         config_store: PluginConfigStore | None = None,
         builtin_ui: bool = False,
+        headless: bool = False,
         disable_plugins: bool = False,
         force_plugins: Iterable[str] = (),
         brokers: dict[str, object] | None = None,
         core_services: dict[str, object] | None = None,
         python_dependencies: PythonDependencyManager | None = None,
     ) -> None:
-        self._builtin_ui = bool(builtin_ui)
+        self._headless = bool(headless)
+        self._builtin_ui = bool(builtin_ui) and not self._headless
         self._disable_plugins = bool(disable_plugins)
         self._force_plugins = {str(value).strip() for value in force_plugins if str(value).strip()}
         self._brokers = dict(brokers or {})
@@ -185,7 +187,11 @@ class PluginManager:
                     _MAINTENANCE_SAFETY_HOLDS.get(descriptor.id)
                     if descriptor.type == "maintenance.tool" else None
                 )
-                enabled = safety_issue is None and (
+                # Presentation entrypoints are not a business dependency of
+                # a headless Core. Keep their installed manifest visible,
+                # but never probe/import/activate them (even when forced).
+                presentation_excluded = self._headless and descriptor.type.startswith("ui.")
+                enabled = safety_issue is None and not presentation_excluded and (
                     descriptor.id in self._force_plugins
                     or (not self._disable_plugins and configured_enabled)
                 )
@@ -194,7 +200,8 @@ class PluginManager:
                 self._records[descriptor.id] = _RuntimeRecord(
                     descriptor=descriptor, package=package, enabled=enabled, effective_priority=effective,
                     state="disabled" if not enabled else "ready",
-                    reason="maintenance_safety_hold" if safety_issue else "",
+                    reason=("maintenance_safety_hold" if safety_issue else
+                            "headless_ui_excluded" if presentation_excluded else ""),
                     reason_detail={"issue": safety_issue} if safety_issue else None,
                 )
 

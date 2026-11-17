@@ -1791,3 +1791,175 @@ def test_untyped_persisted_primary_id_never_becomes_a_plausible_saved_binding(ed
 def test_empty_primary_remains_optional_for_single_connection_legacy(editor):
     draft = validate(editor)
     assert "primary_paris_connection_id" not in draft.data["identities"][0]
+
+
+def test_adept_source_pair_is_saved_exact_without_provider_guess_or_legacy_writer(editor):
+    config, values = editor
+    before = deepcopy(config.data)
+    values["identities"][0].update(
+        adept_source_provider_id="future-library",
+        adept_source_connection_id="alice-reader",
+    )
+    draft = validate(editor)
+    saved = draft.data["identities"][0]
+    assert saved["adept_source_provider_id"] == "future-library"
+    assert saved["adept_source_connection_id"] == "alice-reader"
+    assert "primary_paris_connection_id" not in saved
+    assert config.data == before
+    # Headless callers missing the new widgets retain the exact persisted pair.
+    config.set("identities", [
+        dict(id="alice", directory_name="alice",
+             adept_source_provider_id="future-library",
+             adept_source_connection_id="alice-reader"),
+    ])
+    values["identities"][0].pop("adept_source_provider_id")
+    values["identities"][0].pop("adept_source_connection_id")
+    retained = validate(editor).data["identities"][0]
+    assert retained["adept_source_provider_id"] == "future-library"
+    assert retained["adept_source_connection_id"] == "alice-reader"
+
+
+@pytest.mark.parametrize(("provider", "connection"), [
+    ("future-library", ""),
+    ("", "alice-reader"),
+    ("Future-Library", "alice-reader"),
+    ("future-library", " reader "),
+    ("future-library", "reader\nother"),
+    (True, "alice-reader"),
+    ("future-library", 123),
+    ("future-library", "x" * 257),
+])
+def test_adept_source_pair_invalid_draft_cannot_be_committed(
+    editor, provider, connection,
+):
+    config, values = editor
+    before = deepcopy(config.data)
+    values["identities"][0].update(
+        adept_source_provider_id=provider,
+        adept_source_connection_id=connection,
+    )
+    with pytest.raises(SettingsValidationError, match="Source ADEPT"):
+        validate(editor)
+    assert config.data == before
+
+
+def test_corrupt_saved_adept_source_pair_refuses_unrelated_settings_save(editor):
+    config, values = editor
+    config.set("identities", [
+        dict(id="alice", directory_name="alice",
+             adept_source_provider_id={"provider": "PRIVATE"},
+             adept_source_connection_id="old-reader"),
+    ])
+    before = deepcopy(config.data)
+    values["identities"][0]["label"] = "Unrelated"
+    with pytest.raises(SettingsValidationError, match="Source ADEPT historique"):
+        validate(editor)
+    assert config.data == before
+
+
+def test_clearing_saved_explicit_adept_source_never_resurrects_legacy_paris(editor):
+    """Clearing a chosen future source is a revocation, not fallback to Paris."""
+    from cifereca.gui.settings_editor_actions import (
+        _saved_adept_status, _selected_adept_source,
+    )
+    config, values = editor
+    config.set("identities", [
+        dict(
+            id="alice", directory_name="alice",
+            primary_paris_connection_id="paris-legacy",
+            adept_source_provider_id="future-library",
+            adept_source_connection_id="future-reader",
+        ),
+    ])
+    before = deepcopy(config.data)
+    values["identities"][0].update(
+        primary_paris_connection_id="paris-legacy",
+        adept_source_provider_id="",
+        adept_source_connection_id="",
+    )
+    values["accounts"] = [account("paris", account_id="paris-legacy")]
+    draft = validate(editor, descriptors={
+        "paris": source_selection_descriptor("paris"),
+    })
+    saved = draft.data["identities"][0]
+    assert saved["primary_paris_connection_id"] == "paris-legacy"
+    # Both blank fields are retained: explicit-source absence is NOT the
+    # same as revocation of an already configured explicit source.
+    assert "adept_source_provider_id" in saved
+    assert "adept_source_connection_id" in saved
+    assert saved["adept_source_provider_id"] == ""
+    assert saved["adept_source_connection_id"] == ""
+    assert _selected_adept_source(saved) == (True, None, None)
+
+    class Core:
+        def normal_source_adept_status(self, *_args, **_kwargs):
+            raise AssertionError("cleared source reactivated historical Paris")
+
+    status = _saved_adept_status(Core(), "alice", saved)
+    assert status["status"] == "to_configure"
+    assert status["reason"] == "invalid_source_descriptor"
+    assert config.data == before
+
+    # The tombstone is not merely a transient draft flag: a real Save +
+    # Config reload must not erase it and resurrect the old Paris source.
+    config.data = deepcopy(draft.data)
+    config.save()
+    reopened = Config(config.path)
+    restored = reopened.identity("alice")
+    assert restored["adept_source_provider_id"] == ""
+    assert restored["adept_source_connection_id"] == ""
+    assert _selected_adept_source(restored) == (True, None, None)
+
+
+def test_untouched_legacy_paris_identity_remains_readable_without_new_pair(editor):
+    from cifereca.gui.settings_editor_actions import _selected_adept_source
+    from cifereca.providers.base import CredentialField, ManualBorrowPolicy
+
+    config, values = editor
+    config.set("identities", [
+        dict(id="alice", directory_name="alice",
+             primary_paris_connection_id="paris-legacy"),
+    ])
+    values["identities"][0].update(
+        primary_paris_connection_id="paris-legacy",
+        # The live widgets are empty for never-upgraded identities.
+        adept_source_provider_id="",
+        adept_source_connection_id="",
+    )
+    values["accounts"] = [account("paris", account_id="paris-legacy")]
+    descriptors = {"paris": ProviderDescriptor(
+        id="paris", display_name="Fixture", description="Synthetic lender",
+        state="ready", capabilities=ProviderCapabilities(borrow=True),
+        credential_fields=(CredentialField("username", "User"),),
+        manual_borrow_policy=ManualBorrowPolicy(
+            docbase="FIXTURE", primary_borrower_id="",
+            source_selection_key="primary_paris_connection_id",
+            verification="provider_observed",
+        ),
+    )}
+    saved = validate(editor, descriptors=descriptors).data["identities"][0]
+    assert saved["primary_paris_connection_id"] == "paris-legacy"
+    assert "adept_source_provider_id" not in saved
+    assert "adept_source_connection_id" not in saved
+    assert _selected_adept_source(saved, descriptors) == (False, "paris", "paris-legacy")
+    assert _selected_adept_source(saved, {}) == (False, None, None)
+
+
+def test_preexisting_half_empty_adept_source_marker_stays_fail_closed_on_save(editor):
+    from cifereca.gui.settings_editor_actions import _selected_adept_source
+
+    config, values = editor
+    # A prior version can have one empty marker. An unrelated Settings save
+    # must not erase it and thereby turn on a legacy Paris selection.
+    config.set("identities", [
+        dict(id="alice", directory_name="alice",
+             primary_paris_connection_id="paris-legacy",
+             adept_source_provider_id=""),
+    ])
+    values["accounts"] = [account("paris", account_id="paris-legacy")]
+    saved = validate(editor, descriptors={
+        "paris": source_selection_descriptor("paris"),
+    }).data["identities"][0]
+    assert saved["adept_source_provider_id"] == ""
+    assert saved["adept_source_connection_id"] == ""
+    assert _selected_adept_source(saved) == (True, None, None)

@@ -187,7 +187,7 @@ def test_actual_task_runner_observes_three_correlated_phases_without_private_lab
     runner.close()
 
 
-@pytest.mark.parametrize("kind", ("source-materialize", "kobo-acquisition"))
+@pytest.mark.parametrize("kind", ("source-materialize",))
 def test_actual_task_runner_keeps_failed_worker_outcome_without_payload_in_report(kind):
     TaskRunner, flush = _headless_runner()
     mon = UiPerfMonitor()
@@ -311,3 +311,27 @@ def test_phase_export_remains_closed_for_arbitrary_kind_after_maintenance_fix():
         "maintenance-tool", "other",
     ]
     assert "SIGNED_PRIVATE_URL" not in json.dumps(report)
+
+
+def test_retired_supplier_kind_aggregates_into_generic_phase_category():
+    TaskRunner, flush = _headless_runner()
+    monitor = UiPerfMonitor()
+    monitor.enable_detailed_capture(True)
+    window = NS(
+        _closed=False, ui_perf=monitor, _task_started=Mock(),
+        _task_finished=Mock(), _task_progress_for_task=Mock(),
+    )
+    runner = TaskRunner(window)
+    try:
+        runner.submit(
+            "Private legacy title", lambda: "done",
+            kind="kobo-acquisition", origin="automatic",
+        )
+        flush()
+        report = monitor.performance_report()
+        assert "other.worker" in report["stats"]
+        assert "kobo-acquisition.worker" not in report["stats"]
+        assert all(event["category"] == "other" for event in report["events"])
+        assert "Private legacy title" not in json.dumps(report)
+    finally:
+        runner.close()

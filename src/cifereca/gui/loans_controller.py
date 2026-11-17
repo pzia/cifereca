@@ -15,6 +15,7 @@ from gi.repository import Gtk, Adw
 
 from ..models import Loan
 from ..core.loan_source_identity import loan_source_key, unambiguous_loan_rows
+from ..core.loan_live_projection import current_actionable_loan_rows
 from ..core.covers import candidate
 from ..core.loan_cover_fallback import loan_local_cover, materialized_loan_cover_rows
 from .book_widgets import BookListItem
@@ -202,9 +203,16 @@ def _render_loans(self) -> None:
     # Service cache/async writers can be updated independently of GTK; never
     # trust a mixed-identity last_loans projection at display time.
     identity_id = getattr(getattr(self.service, "current_identity", None), "identity_id", None)
-    all_loans = [loan for loan in self.service.last_loans
-                 if type(loan) is Loan and identity_id is not None
-                 and loan.identity_id == identity_id]
+    # The service cache is independently mutable; only the active GTK
+    # action map can authorize a loan row and its documentary N2 evidence.
+    # In particular, reject a replayed/equal DTO that is not the same object.
+    # Keep the dependency local: headless controller contract harnesses
+    # execute this method independently of module-level imports.
+    from cifereca.core.loan_live_projection import current_actionable_loan_rows
+    all_loans = current_actionable_loan_rows(
+        self.service.last_loans, getattr(self, "loan_objects", {}),
+        identity_id=identity_id,
+    )
     counts = loan_medium_counts(all_loans)
     if hasattr(self, "loan_filter_buttons"):
         for key, button in self.loan_filter_buttons.items():
@@ -261,6 +269,19 @@ def _render_loans(self) -> None:
                 item._cover_document_ref = supplier.document
                 item._cover_loan_supplier_evidence = supplier
                 item._loan_source_item = loan
+            elif display.thumbnail_url is None:
+                # Canonical C never creates a loan/borrower entitlement.
+                # Exact provider-issued book record match was admitted on
+                # the already completed refresh worker.
+                from cifereca.gui.borrower_public_c_bridge import (
+                    exact_loan_public_c,
+                )
+                receipt = exact_loan_public_c(self, loan)
+                if receipt is not None:
+                    item._cover_document_ref = receipt.document
+                    item._cover_borrower_public_c_receipt = receipt
+                    item._borrower_public_c_source = loan
+                    item._borrower_public_c_context = scope_context
         # MasterDetailPage.show_rows has an append-only fast path when keys
         # stay identical. A new exact local cover for the same loan must
         # invalidate that presentation (and repaint the mapped Gtk.ListView),
@@ -276,6 +297,12 @@ def _render_loans(self) -> None:
             item._public_row_content += (evidence,)
         elif getattr(item, "_cover_loan_supplier_evidence", None) is not None:
             item._public_row_content += (item._cover_loan_supplier_evidence,)
+        elif getattr(item, "_cover_borrower_public_c_receipt", None) is not None:
+            # A stable loan key does not imply a stable public C epoch.
+            item._public_row_content += (
+                item._cover_borrower_public_c_receipt.document,
+                item._cover_borrower_public_c_receipt.epoch,
+            )
         ranked_rows.append((due.sort_key, item))
     ranked_rows.sort(key=lambda item: item[0])
     rows = [row for _rank, row in ranked_rows]
@@ -330,7 +357,11 @@ def _render_loans(self) -> None:
                 if not show_supplier_loan_cover(
                     self, fresh, lambda: _loan_display_cover(self, fresh),
                 ):
-                    self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
+                    from cifereca.gui.borrower_public_c_bridge import show_public_loan_c
+                    if not show_public_loan_c(
+                        self, fresh, lambda: _loan_display_cover(self, fresh),
+                    ):
+                        self.loan_page.detail.show_loan(_loan_display_cover(self, fresh))
 
 
 def _loan_selected(self, row: BookListItem | None) -> None:
@@ -346,7 +377,11 @@ def _loan_selected(self, row: BookListItem | None) -> None:
             if not show_supplier_loan_cover(
                 self, loan, lambda: _loan_display_cover(self, loan),
             ):
-                self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
+                from cifereca.gui.borrower_public_c_bridge import show_public_loan_c
+                if not show_public_loan_c(
+                    self, loan, lambda: _loan_display_cover(self, loan),
+                ):
+                    self.loan_page.detail.show_loan(_loan_display_cover(self, loan))
         self._add_local_book_actions(self.loan_page.detail,{'source_provider':loan.source_provider,
             'source_credential':loan.source_credential,'record_id':loan.record_id})
         self._add_facets(self.loan_page.detail, {'source_provider':loan.source_provider,
@@ -362,11 +397,28 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
     # An A -> B -> A round trip has the same identity ID but invalidates an
     # earlier refresh. Guard the GTK callback by the Core account epoch too.
     account_epoch = getattr(service, "_account_context_epoch", None)
+    source_epoch = getattr(service, "_source_context_epoch", None)
     library_revision = getattr(self, "_loan_cover_library_revision", 0)
     def work():
         rows = service.refresh_identity_loans(
             force=force, identity_id=identity_id,
         )
+        # A separate, source-exact, PUBLIC catalogue C may supply the
+        # thumbnail of an image-less loan, but never the loan right.
+        # This is the existing bounded background worker, not GTK.
+        from cifereca.core.notice_c_borrower_public_projection import (
+            attach_borrower_public_c, borrower_public_c_descriptors,
+        )
+        # Headless worker doubles have no storage. Public-cover enrichment
+        # is optional; a successful private loan refresh must survive it.
+        # Production services expose storage and still require exact C proof.
+        storage = getattr(service, "storage", None)
+        if storage is not None:
+            attach_borrower_public_c(
+                storage, rows, identity_id=identity_id,
+                account_epoch=account_epoch, source_epoch=source_epoch,
+                descriptors=borrower_public_c_descriptors(service, source_epoch=source_epoch),
+            )
         # Resolve a missing loan cover only on this existing background
         # worker, once per refresh. Core's library_entries(scan=False) reads
         # local placements/entitlements; it never contacts a catalogue,
@@ -391,7 +443,8 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
             return
         current = service.current_identity
         if (current.identity_id if current else None) == identity_id:
-            if getattr(service, "_account_context_epoch", None) != account_epoch:
+            if (getattr(service, "_account_context_epoch", None) != account_epoch
+                    or getattr(service, "_source_context_epoch", None) != source_epoch):
                 return
             rows, cover_rows = payload
             if getattr(self, "_loan_cover_library_revision", 0) == library_revision:
@@ -523,6 +576,23 @@ def _renew(self, loan: Loan, control: Gtk.Widget) -> None:
 
     if not view_current():
         return
+    capture = getattr(service, "capture_admitted_loan_renewal", None)
+    work = lambda: service.renew(loan, confirmed=True)
+    if callable(capture):
+        try:
+            admission = capture(loan)
+        except Exception:
+            admission = None
+        if admission is None:
+            if view_current():
+                self._renew_result({
+                    "status": "blocked", "code": "loan_scope_unverified",
+                })
+            return
+        renew_admitted = getattr(service, "renew_admitted_loan", None)
+        if not callable(renew_admitted):
+            return
+        work = lambda: renew_admitted(loan, confirmed=True, admission=admission)
 
     def completed(result: Any) -> None:
         # Only the original loans view can show the renewal receipt or
@@ -533,7 +603,7 @@ def _renew(self, loan: Loan, control: Gtk.Widget) -> None:
 
     self.runner.submit(
         "Demande de prolongation…",
-        lambda: service.renew(loan, confirmed=True),
+        work,
         completed,
         control=control, priority=TaskPriority.USER_ACTION, kind="loan-renew",
     )

@@ -16,7 +16,6 @@ def test_core_entrypoints_never_import_deleted_manifest_projector() -> None:
     for path in (
         CORE / "services.py",
         CORE / "core/sync_coordination.py",
-        CORE / "core/search_owned_evidence.py",
     ):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         assert not any(

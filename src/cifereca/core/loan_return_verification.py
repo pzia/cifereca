@@ -12,6 +12,7 @@ from inspect import getattr_static
 from types import SimpleNamespace
 from typing import Any
 from ..models import Account, Loan
+from .provider_identifier import valid_provider_identifier
 
 
 def _paris_inventory_rows_well_formed(rows: Any) -> bool:
@@ -31,11 +32,13 @@ def _paris_inventory_rows_well_formed(rows: Any) -> bool:
     )
 
 
-def _paris_inventory_exact_borrower(rows: Any, account: Any) -> bool:
+def _paris_inventory_exact_borrower(rows: Any, account: Any, *,
+                                     primary_alias: str | None = "primary") -> bool:
     """A complete source can prove absence ONLY for its intended borrower.
 
-    The normal Paris adapter stamps every row with the source credential and
-    borrower, including the primary account sentinel. A foreign member's
+    An installed adapter stamps every row with exact source and borrower
+    coordinates. The historical Paris primary sentinel remains a legacy
+    account convention, not an authority inferred from the provider name. A foreign member's
     rows (or rows missing these coordinates) cannot certify this member's
     loan as returned. A row may omit identity_id in the legacy Paris adapter;
     an explicitly *different* identity is never accepted.
@@ -43,7 +46,7 @@ def _paris_inventory_exact_borrower(rows: Any, account: Any) -> bool:
     if type(account) is not Account or not _paris_inventory_rows_well_formed(rows):
         return False
     if not (
-        type(account.provider_id) is str and account.provider_id == 'paris'
+        valid_provider_identifier(account.provider_id)
         and type(account.credential_id) is str and bool(account.credential_id)
         and type(account.unique_id) is str
         and type(account.identity_id) is str and bool(account.identity_id)
@@ -53,17 +56,20 @@ def _paris_inventory_exact_borrower(rows: Any, account: Any) -> bool:
     # because its returned loan list happens to be empty. In particular,
     # [] + a complete DILICOM status is NOT absence proof for the principal
     # account unless the selected Account really is_primary.
-    if (account.is_primary is not True
-            and account.unique_id in ('', 'primary')):
+    if (type(account.is_primary) is not bool
+            or (account.is_primary is not True
+                and (account.unique_id == "" or account.unique_id == primary_alias))):
         return False
-    borrower = account.unique_id or 'primary'
+    borrowers = {account.unique_id}
+    if account.is_primary and account.unique_id == "" and primary_alias is not None:
+        borrowers.add(primary_alias)
     return all(
         type(row.source_provider) is str
         and row.source_provider == account.provider_id
         and type(row.source_credential) is str
         and row.source_credential == account.credential_id
         and type(row.source_account_id) is str
-        and row.source_account_id == borrower
+        and row.source_account_id in borrowers
         and (row.identity_id is None
              or (type(row.identity_id) is str
                  and row.identity_id == account.identity_id))
@@ -180,24 +186,39 @@ def _read_paris_return_presence(self: Any, account: Account, session: Any,
     typed = raw_reader is not None
     if typed:
         from ..plugin_api.loan_inventory import read_loan_inventory
-        snapshot = read_loan_inventory(session, account, descriptor=getattr_static(session, "descriptor", None))
+        descriptor = getattr_static(session, "descriptor", None)
+        snapshot = read_loan_inventory(session, account, descriptor=descriptor)
         if snapshot.status not in {"success", "partial"}:
             raise ValueError("return_inventory_unavailable")
         rows = list(snapshot.loans)
+        # The typed reader validated this exact descriptor against the
+        # account. Do not substitute the historical literal "primary" for
+        # a native empty borrower or a different declared alias.
+        primary_alias = (descriptor.existing_primary_loan_account_alias
+                         if descriptor is not None else None)
+        if getattr_static(session, "descriptor", None) is not descriptor:
+            raise ValueError("return_inventory_source_changed")
     else:
         # A legacy v1 result is read once for positive observations only.
+        # Its frozen alias convention cannot authorize absence.
         rows = session.loans(account)
-    if not still_bound() or not _paris_inventory_exact_borrower(rows, account):
+        primary_alias = "primary"
+    if not still_bound() or not _paris_inventory_exact_borrower(
+        rows, account, primary_alias=primary_alias,
+    ):
         raise ValueError("return_inventory_scope_changed")
     presence = _paris_loan_presence(rows, loan)
     if presence is None:
         raise ValueError("return_inventory_branch_ambiguous")
     if not presence:
         if typed:
-            # Positive observations can prove a loan is still present under
-            # partial coverage. Absence requires an explicit end of DILICOM
-            # pagination for this *same* account and process context.
-            if not snapshot.branch_claims_complete("dilicom", "digital"):
+            # Positive observations can prove presence even under partial
+            # coverage. Absence instead needs an atomic, complete branch
+            # attestation for the exact *requested* documentary source and
+            # medium, never a Core hardcoded supplier or catalog branch.
+            if (loan.medium != "digital" or not snapshot.branch_claims_complete(
+                loan.provider.casefold(), loan.medium,
+            )):
                 raise ValueError("return_inventory_not_exhaustive")
         else:
             # No atomic pagination proof exists in a v1 list or error channel.
@@ -262,7 +283,7 @@ def verify_return_digital(self, loan: Loan, *, _TRACE_LOG) -> dict[str, Any]:
 
 
 
-def verify_paris_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE_LOG) -> dict[str, str]:
+def verify_loan_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE_LOG) -> dict[str, str]:
     """Fresh exact-account read after ADEPT; never send ReturnDigitalLoan."""
     from .loan_return_guard import return_ref
     try:
@@ -286,3 +307,8 @@ def verify_paris_return_inventory(self, loan: Loan, *, AttentionRequired, _TRACE
             "unavailable": "verification_unavailable",
         }[verification],
     }
+
+
+# Historical public module-level ABI: no provider-specific routing or mutation.
+# New Core call sites use the source-neutral implementation above.
+verify_paris_return_inventory = verify_loan_return_inventory

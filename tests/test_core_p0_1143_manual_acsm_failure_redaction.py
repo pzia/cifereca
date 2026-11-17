@@ -55,7 +55,7 @@ def test_runtime_failure_keeps_original_and_retryable_ledger_without_secrets(
         lambda *_args: (_ for _ in ()).throw(SecretRuntimeError(PRIVATE)),
     )
     with pytest.raises(SecretRuntimeError):
-        service.import_acsm(source)
+        service.import_acsm(source, identity_id="alice")
     row = _assert_ledger_safe(
         service, state="retryable_error",
         code="manual_acsm_failed", message="Import ACSM échoué",
@@ -81,7 +81,7 @@ def test_profile_refusal_retains_safe_remediation_code_without_raw_message(
         raise AdeptProfileResolutionError(PRIVATE, code=incoming_code)
 
     monkeypatch.setattr(service, "resolve_adept_profile_for_identity", unavailable)
-    result = service.import_acsm(source)
+    result = service.import_acsm(source, identity_id="alice")
     assert result["status"] == "attention_required"
     assert result["code"] == expected
     row = _assert_ledger_safe(
@@ -103,7 +103,7 @@ def test_invalid_artifact_reason_never_enters_error_or_ledger(
         lambda *_args: NS(valid=False, media_format="pdf", reason=PRIVATE),
     )
     with pytest.raises(ProviderConfigurationError, match="Artifact ACSM invalide") as error:
-        service.import_acsm(source)
+        service.import_acsm(source, identity_id="alice")
     assert PRIVATE not in str(error.value)
     _assert_ledger_safe(
         service, state="retryable_error",
@@ -122,7 +122,7 @@ def test_index_failure_reason_never_enters_error_or_ledger(
         lambda *_args, **_kwargs: {"status": "failed", "reason": PRIVATE},
     )
     with pytest.raises(ProviderConfigurationError, match="Indexation ACSM impossible") as error:
-        service.import_acsm(source)
+        service.import_acsm(source, identity_id="alice")
     assert PRIVATE not in str(error.value)
     _assert_ledger_safe(
         service, state="retryable_error",

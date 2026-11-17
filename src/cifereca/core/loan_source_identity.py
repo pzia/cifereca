@@ -96,31 +96,15 @@ def unambiguous_loan_rows(loans: Iterable[Any]) -> tuple[Loan, ...]:
 def unique_library_loan(
     loans: Iterable[Any], item: Mapping[str, Any],
 ) -> Any | None:
-    """Allow a library-to-loan action only for a single proven source match.
+    """Select only a single loan matching an immutable native library scope.
 
-    A merged library entry may contain just `loan_id`. Never select the first
-    arbitrary borrower on this evidence. Optional exact provenance fields,
-    when provided by the library, narrow the match; no UI active-identity
-    fallback or title/ISBN heuristic is permitted.
+    A legacy row containing only loan_id may resolve one unambiguous loan.
+    Explicitly supplied source qualifiers must be native, nonempty strings;
+    the account ID alone may be empty (the historical primary sentinel).
+    Never assemble an action identity using a loan key read before a provider
+    callback and source qualifiers read afterwards.
     """
-    # The library row may be plugin-projected. Never coerce opaque objects
-    # (including account credentials or IDs) to strings for action lookup.
     if not isinstance(item, Mapping):
-        return None
-    loan_id = item.get("loan_id")
-    if (type(loan_id) is not str or not 0 < len(loan_id) <= 1024
-            or not loan_id.isprintable()):
-        return None
-    candidates: list[Loan] = []
-    try:
-        for index, loan in enumerate(loans):
-            if index >= 10000:
-                # Not a complete inventory: a later conflicting borrower
-                # could carry the same loan ID. No partial match is safe.
-                return None
-            if _has_native_action_source(loan) and loan.id == loan_id:
-                candidates.append(loan)
-    except Exception:
         return None
     fields = (
         ("source_provider", "provider_id"),
@@ -128,27 +112,57 @@ def unique_library_loan(
         ("record_id", "item_id"),
         ("source_credential", "source_credential"),
     )
-    for loan_attr, item_attr in fields:
-        expected = item.get(item_attr)
-        if expected is not None:
-            if type(expected) is not str or len(expected) > 1024:
+    scope_keys = ("loan_id", *(item_key for _, item_key in fields),
+                  "source_account_id")
+    try:
+        # Pin the complete descriptor before enumerating provider-backed or
+        # otherwise lazy loan rows, which can mutate the library selection.
+        scope = tuple(item.get(key) for key in scope_keys)
+    except Exception:
+        return None
+    loan_id, *qualifiers, account = scope
+    if (type(loan_id) is not str or not 0 < len(loan_id) <= 1024
+            or not loan_id.isprintable()):
+        return None
+    if any(value is not None and (
+        type(value) is not str or not value or len(value) > 1024
+    ) for value in qualifiers):
+        return None
+    if (account is not None
+            and (type(account) is not str or len(account) > 1024)):
+        return None
+
+    candidates: list[Loan] = []
+    try:
+        for index, loan in enumerate(loans):
+            if index >= 10000:
+                # A truncated inventory cannot prove unique source ownership.
                 return None
-            if expected:
+            if _has_native_action_source(loan) and loan.id == loan_id:
+                candidates.append(loan)
+        for (loan_attr, _), expected in zip(fields, qualifiers):
+            if expected is not None:
                 candidates = [
                     loan for loan in candidates
                     if type(getattr(loan, loan_attr, None)) is str
                     and getattr(loan, loan_attr) == expected
                 ]
-    # An explicit empty primary-account ID is NOT an unknown borrower.
-    # Converting both to strings made None and "" indistinguishable and
-    # could attach an action to the wrong exact lending account.
-    account = item.get("source_account_id")
-    if account is not None:
-        if type(account) is not str:
+        if account is not None:
+            candidates = [
+                loan for loan in candidates
+                if type(getattr(loan, "source_account_id", None)) is str
+                and loan.source_account_id == account
+            ]
+        if len(candidates) != 1:
             return None
-        candidates = [
-            loan for loan in candidates
-            if type(getattr(loan, "source_account_id", None)) is str
-            and loan.source_account_id == account
-        ]
-    return candidates[0] if len(candidates) == 1 else None
+        # The library selection is another mutable provider/UI projection.
+        # A late source/identity/borrower change cannot retarget the action.
+        # Validate types BEFORE comparing: a hostile Mapping.get must never
+        # execute a foreign __eq__ against the pinned original coordinates.
+        current = tuple(item.get(key) for key in scope_keys)
+        if all(type(value) is type(original) and value == original
+               for value, original in zip(current, scope)):
+            return candidates[0]
+        return None
+    except Exception:
+        return None

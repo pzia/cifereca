@@ -1033,3 +1033,58 @@ def test_bnf_probe_checkpoints_are_saved_before_asynchronous_gtk_wait():
     assert 'report[\'last_stage\'] = label' in lines
     assert 'save()' in lines
     assert lines.index('report[\'last_stage\'] = label') < lines.index('save()')
+
+
+
+def test_book_detail_960_local_c_checkpoint_exports_only_closed_phase():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "book-detail-960"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        for value in ("cold_library_list", "offline_recent_detail", "complete",
+                      "PRIVATE_RECORD", True, {}, None):
+            report.write_text(json.dumps({
+                "local_c_stage": value, "error": "PRIVATE_PATH",
+                "source": "PRIVATE_URL",
+            }))
+            result = module.safe_summary(source)["results"][0]
+            if value in ("cold_library_list", "offline_recent_detail", "complete"):
+                assert result["book_detail_local_c_stage"] == value
+            else:
+                assert "book_detail_local_c_stage" not in result
+            assert "PRIVATE" not in repr(result)
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        report.write_text(json.dumps({"local_c_stage": "complete"}))
+        assert "book_detail_local_c_stage" not in module.safe_summary(source)["results"][0]
+
+
+
+def test_bnf_borrower_c_checkpoints_are_closed_and_failure_only():
+    module = _module()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "bnf-covers-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        for stage in ("borrower_c_setup", "borrower_c_seed", "borrower_c_cold_loans_list",
+                      "borrower_c_offline_history_detail", "borrower_c_complete",
+                      "borrower_c_PRIVATE_URL", None, {}):
+            report.write_text(json.dumps({"last_stage": stage, "error": "PRIVATE_PATH"}))
+            result = module.safe_summary(source)["results"][0]
+            if type(stage) is str and stage in {
+                "borrower_c_setup", "borrower_c_seed", "borrower_c_cold_loans_list",
+                "borrower_c_offline_history_detail", "borrower_c_complete",
+            }:
+                assert result["bnf_covers_last_stage"] == stage
+            else:
+                assert "bnf_covers_last_stage" not in result
+            assert "PRIVATE" not in repr(result)
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        report.write_text(json.dumps({"last_stage": "borrower_c_complete"}))
+        assert "bnf_covers_last_stage" not in module.safe_summary(source)["results"][0]

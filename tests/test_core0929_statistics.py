@@ -25,7 +25,8 @@ def test_identity_statistics_is_persisted_projection_only():
 
     assert "self.storage.placements(state='present')" in source
     assert "self.storage.artifacts()" in source
-    assert "self.storage.entitlements(state='active')" in source
+    assert "_observed_purchase_sources(self.storage, identity_id)" in source
+    assert "self.storage.entitlements(" not in source
     assert "self.storage.metadata_get('loan_statistics:' + str(identity_id))" in source
 
     forbidden = (
@@ -46,7 +47,8 @@ def test_statistics_distinguish_books_placements_rights_and_unknown_loans():
     assert "'local_books': len(ids)" in source
     assert "'local_placements': len(placements)" in source
     assert "'known_loans': len(loan_keys) if selected else None" in source
-    assert "'remote_owned_rights': len(owned)" in source
+    assert "'observed_purchase_sources': observed_purchase_sources" in source
+    assert "'remote_owned_rights': None" in source
 
 
 def test_statistics_keep_format_source_and_cover_breakdowns():

@@ -22,6 +22,19 @@ Le journal peut contenir des secrets : fichier/rotations locaux restreints (0600
 ## Mission
 Traiter le Core applicatif et le Core UI, dans cet ordre de priorité.
 
+## P0 #5975 — découplage fonctionnel prioritaire (16/11/2026)
+
+Lorsqu'il intervient comme **pilote unique de #5975**, Core choisit le plus petit cutover qui retire effectivement une décision par fournisseur du Core/CoreUI : capacité/contrat plugin source-neutre → consommateurs migrés → ancien chemin fournisseur non autoritatif ou supprimé → tests ciblés → mesure AST/dette métier. Ne pas extraire des milliers de lignes de `LibraryService` ou déployer une nouvelle migration SQLite pour le seul perfectionnement de scénarios limites hors du cutover.
+
+Une liaison avec un EPUB **réellement retéléchargeable sous consentement et offre actuels** peut ne plus être retrouvée ; état « à récupérer » autorisé. Conserver les fichiers locaux uniques, éviter une fausse disponibilité, les mutations sous mauvais compte, les doubles POST, les droits implicites, les fuites de credentials et les corruptions. Les protections de concurrence/ABA rares **sans risque actuel démontré** et l'audit étendu #5376 sont différables ; un défaut concret d'autorisation ou de perte non récupérable reste bloquant. CI/CD garde l'intégration ; les régressions métier et arbitrages de contrat reviennent au pilote.
+
+## P0 #6366 — intégration Notices C minimale (16/11/2026)
+
+Prioriser les producteurs fournisseur **réellement branchés** vers la C SQLite/index durable, la lecture C-first en Search progressive sans GET/parsing sur GTK, le rapprochement par édition attestée, puis la façade unique get_cover(DocumentRef, variant) N1/N2/N3 et les six vues liste/détail. Si l'image n'est pas prouvée, placeholder ; ne jamais dériver l'association sur titre/ISBN/SHA/URL. Tester source réelle, multi-source et non-fusion, reboot/offline, Search rapide/lente, six vues et permissions privées.
+
+Éviter nouveau scheduler #4982 et développement de matrices exhaustives de concurrents/TTL/CAS non nécessaires au résultat observable. La sécurité des comptes, droits, secrets, mutations et fichiers uniques reste impérative ; un effet réel mauvais compte/édition ou gel GTK est bloquant. Conserver les gardes existants. Ne pas confondre achèvement P0 avec clôture des P1 de finition. Voir [#6366](https://github.com/pzia/cifereca/issues/6366).
+
+
 ## Ordre d'itération
 1. Traiter d'abord les sujets Core non-UI : métier, services, stockage, configuration, API publique, framework de plugins.
 2. Ensuite traiter les sujets Core UI : GTK/libadwaita, navigation, composants UI et contrats UI publics.

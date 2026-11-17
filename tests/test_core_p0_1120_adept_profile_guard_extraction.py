@@ -15,12 +15,17 @@ from unittest.mock import Mock
 import pytest
 
 from cifereca.core import adept_acsm_plan, loan_adept_profile_guard
+from cifereca.core.loan_source_epoch import SourceEpochLease
 from cifereca.identities import AdeptProfileResolutionError
 
 
 def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
-             profiles=None):
-    loan = NS(source_provider=provider, source_credential="reader", source_account_id="primary", id="loan-1", record_id="edition-1")
+             profiles=None, owner_current=None,
+             source_epoch_current=None, loan_override=None):
+    loan = (loan_override if loan_override is not None else NS(
+        source_provider=provider, source_credential="reader",
+        source_account_id="primary", id="loan-1", record_id="edition-1",
+    ))
     borrower = Mock(return_value=("identity-1", borrower_code))
     resolver = Mock(return_value=("reader-a", "explicit_binding"))
     if profile_error is not None:
@@ -30,7 +35,17 @@ def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
     ])
     store = Mock()
     owner = NS(
-        storage=NS(acquisition_put=store),
+        storage=NS(
+            acquisition_put=store,
+            provider_connection_owner_current=(
+                owner_current if owner_current is not None
+                else Mock(return_value=True)
+            ),
+            provider_connection_epoch_current=(
+                source_epoch_current if source_epoch_current is not None
+                else Mock(return_value=True)
+            ),
+        ),
         _paris_adept_identity_for_loan=borrower,
         resolve_adept_profile_for_identity=resolver,
         kobo_profiles=provider_profiles,
@@ -48,6 +63,11 @@ def _fixture(*, provider="paris", borrower_code=None, profile_error=None,
         retained_acsm=Path("/synthetic/staged.acsm"),
         trace_ref="0123456789abcdef0123",
         expected_loan_id="loan-1", expected_record_id="edition-1",
+        source_lease=SourceEpochLease(
+            provider_id=provider, credential_id="reader",
+            account_id="primary", loan_id="loan-1", record_id="edition-1",
+            identity_id="identity-1", epoch=1,
+        ),
         AdeptProfileResolutionError=AdeptProfileResolutionError,
         adept_acsm_plan=adept_acsm_plan,
         _TRACE_LOG=logging.getLogger("cifereca.tests.loan-guard"),
@@ -125,11 +145,69 @@ def test_missing_or_positive_readiness_keeps_old_compatibility(profile_row):
     store.assert_not_called()
 
 
-def test_nonparis_profile_resolution_does_not_change_borrower_account():
-    invoke, store, borrower, resolver, profiles, *_ = _fixture(provider="kobo")
+@pytest.mark.parametrize("provider", [
+    "kobo", "biblioaccess.la-rochelle", "future-lender",
+])
+def test_any_acsm_source_revalidates_exact_borrower_before_profile(provider):
+    invoke, store, borrower, resolver, profiles, loan, _opts = _fixture(
+        provider=provider,
+    )
     assert invoke() == ("identity-1", "reader-a")
-    borrower.assert_not_called()
+    borrower.assert_called_once_with(loan, connection_identity_id="identity-1")
+    resolver.assert_called_once_with("identity-1")
     store.assert_not_called()
+
+
+@pytest.mark.parametrize("provider", [
+    "kobo", "biblioaccess.la-rochelle", "future-lender",
+])
+@pytest.mark.parametrize("borrower_code,expected", [
+    ("adept_borrower_binding_required", "adept_borrower_binding_required"),
+    (False, "adept_borrower_ambiguous"),
+])
+def test_other_sources_missing_borrower_grant_keep_staged_acsm_without_adept(
+    provider, borrower_code, expected,
+):
+    invoke, store, borrower, resolver, profiles, loan, opts = _fixture(
+        provider=provider, borrower_code=borrower_code,
+    )
+    assert invoke() == {
+        "status": "attention_required", "loan_id": loan.id,
+        "code": expected, "retry": "explicit_only",
+    }
+    borrower.assert_called_once_with(loan, connection_identity_id="identity-1")
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    receipt = store.call_args.args[0]
+    assert receipt["attention_code"] == expected
+    assert receipt["provider_id"] == provider
+    assert receipt["metadata"]["acsm_staging_path"] == str(opts["retained_acsm"])
+
+
+def test_other_source_borrower_callback_cannot_retarget_poststaging_acsm():
+    invoke, store, borrower, resolver, profiles, loan, _opts = _fixture(
+        provider="future-lender",
+    )
+    def mutate(*_args, **_kwargs):
+        loan.source_account_id = "another-reader"
+        return "identity-1", None
+    borrower.side_effect = mutate
+    assert invoke()["code"] == "adept_borrower_ambiguous"
+    borrower.assert_called_once()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    assert store.call_args.args[0]["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
+
+
+def test_other_source_resolver_exception_fails_closed_and_keeps_acsm():
+    invoke, store, borrower, resolver, profiles, *_ = _fixture(
+        provider="biblioaccess.la-rochelle",
+    )
+    borrower.side_effect = RuntimeError("PRIVATE_PROVIDER_SECRET")
+    assert invoke()["code"] == "adept_borrower_ambiguous"
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    assert store.call_args.args[0]["attention_code"] == "adept_borrower_ambiguous"
 
 
 def test_profile_inventory_failure_is_nonblocking_as_before():
@@ -431,3 +509,144 @@ def test_poststaging_borrower_callback_cannot_change_source_or_edition(
     assert receipt["attention_code"] == "adept_borrower_ambiguous"
     assert receipt["metadata"]["provider_loan_id"] == "loan-1"
     assert receipt["metadata"]["acsm_staging_path"] == "/synthetic/staged.acsm"
+
+
+@pytest.mark.parametrize("provider", ["paris", "synthetic-library"])
+@pytest.mark.parametrize("field", [
+    "id", "record_id", "source_provider", "source_credential",
+    "source_account_id",
+])
+def test_staged_acsm_retained_when_native_loan_getter_raises(provider, field):
+    """Every getter failure becomes a durable refusal, never an exception."""
+    base = NS(
+        id="loan-1", record_id="edition-1", source_provider=provider,
+        source_credential="reader", source_account_id="primary",
+    )
+
+    class HostileLoan:
+        def __getattr__(self, name):
+            if name == field:
+                raise RuntimeError("private untrusted loan property")
+            return getattr(base, name)
+
+    invoke, store, borrower, resolver, profiles, *_ = _fixture(
+        provider=provider, loan_override=HostileLoan(),
+    )
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    receipt = store.call_args.args[0]
+    assert receipt["provider_id"] == provider
+    assert receipt["metadata"]["acsm_staging_path"] == (
+        "/synthetic/staged.acsm"
+    )
+    assert "private untrusted" not in repr(receipt)
+
+
+@pytest.mark.parametrize("field", [
+    "id", "record_id", "source_provider", "source_credential",
+    "source_account_id",
+])
+def test_staged_getter_revoked_during_borrower_validation_retains_acsm(field):
+    base = NS(
+        id="loan-1", record_id="edition-1",
+        source_provider="synthetic-library", source_credential="reader",
+        source_account_id="primary",
+    )
+
+    class RevokedLoan:
+        blocked = False
+
+        def __getattr__(self, name):
+            if self.blocked and name == field:
+                raise RuntimeError("private borrower callback corruption")
+            return getattr(base, name)
+
+    loan = RevokedLoan()
+    invoke, store, borrower, resolver, profiles, *_ = _fixture(
+        provider="synthetic-library", loan_override=loan,
+    )
+
+    def revoke(*_args, **_kwargs):
+        loan.blocked = True
+        return "identity-1", None
+
+    borrower.side_effect = revoke
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_called_once()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    assert store.call_args.args[0]["metadata"]["acsm_staging_path"] == (
+        "/synthetic/staged.acsm"
+    )
+
+
+@pytest.mark.parametrize("field", [
+    "id", "record_id", "source_provider", "source_credential",
+    "source_account_id",
+])
+def test_staged_loan_mutation_during_owner_read_is_refused(field):
+    """An enabled-owner read cannot attest a different post-callback loan."""
+    loan = NS(
+        id="loan-1", record_id="edition-1",
+        source_provider="synthetic-library", source_credential="reader",
+        source_account_id="primary",
+    )
+    replacements = {
+        "id": "other-loan", "record_id": "other-edition",
+        "source_provider": "other-library",
+        "source_credential": "other-reader",
+        "source_account_id": "linked-reader",
+    }
+    checks = []
+
+    def changed_owner_read(*args):
+        checks.append(args)
+        setattr(loan, field, replacements[field])
+        return True
+
+    invoke, store, borrower, resolver, profiles, *_ = _fixture(
+        provider="synthetic-library", loan_override=loan,
+        owner_current=changed_owner_read,
+    )
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    assert checks == [("synthetic-library", "reader", "identity-1")]
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+
+
+def test_staged_unreadable_identity_returns_refusal_with_acsm_receipt():
+    class HostileIdentity:
+        @property
+        def identity_id(self):
+            raise RuntimeError("private ADEPT identity getter")
+
+    invoke, store, borrower, resolver, profiles, _loan, options = _fixture(
+        provider="synthetic-library",
+    )
+    options["identity"] = HostileIdentity()
+    assert invoke() == {
+        "status": "attention_required", "loan_id": "loan-1",
+        "code": "adept_borrower_ambiguous", "retry": "explicit_only",
+    }
+    borrower.assert_not_called()
+    resolver.assert_not_called()
+    profiles.assert_not_called()
+    store.assert_called_once()
+    assert store.call_args.args[0]["metadata"]["acsm_staging_path"] == (
+        "/synthetic/staged.acsm"
+    )

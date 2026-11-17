@@ -74,10 +74,10 @@ class NoticeCoverN2Adapter:
                     return attribute.document
                 if (previous.attribute.snapshot_complete
                         and not attribute.snapshot_complete):
-                    # A partial parsing or malformed cover field is UNKNOWN,
-                    # never a new authoritative absence. Keep the last
-                    # complete source (including an explicit 'missing').
-                    # Advance the seen-time watermark to reject older retries.
+                    # Incomplete evidence cannot revoke an attested cover
+                    # even when the parser moves the cover field. A new
+                    # mapping becomes authoritative only after its inventory
+                    # is complete. Keep N2's token; advance only freshness.
                     self._published[attribute.document] = _Published(
                         previous.attribute, previous.revision,
                         observation.observed_at,

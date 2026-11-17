@@ -46,6 +46,7 @@ def _host():
         def __init__(self):
             self.search_controls = NS(state=lambda: QueryState("Dumas"))
             self.service = NS(current_identity=NS(identity_id="alice"))
+            self.service.identity_by_id = lambda key: self.service.current_identity if key == "alice" else None
             self.runner = Runner()
             self._closed = False
             self._search_generation = 0

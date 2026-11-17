@@ -44,5 +44,6 @@ def test_historical_source_consent_reader_and_revision_fence_stay_in_core():
     )
     # The authoritative persisted key grammar stays in Core, independent of
     # acquisition decision dispatch, and the bridge retains its reader ABI.
-    assert '("bnf-pret", "loan")' in metadata
+    assert '"sync.source.bnf_auto."' in metadata
+    assert '("bnf-pret", "loan")' not in metadata
     assert "revision" in bridge

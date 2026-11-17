@@ -2,6 +2,7 @@ from __future__ import annotations
 import ast
 import logging
 from collections.abc import Mapping
+from copy import copy
 from dataclasses import dataclass, field
 from inspect import getattr_static
 from datetime import datetime, timezone
@@ -79,20 +80,82 @@ def _account_ref(service: Any, account: Any) -> AccountRef:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ScopedCatalogSearch:
+    """Read-only search facet bound to an explicit identity and source epoch."""
+    service: Any
+    request_scope: Any
+
+    def searchable_providers(self):
+        from .core.search_orchestration import searchable_providers
+        return searchable_providers(self.service, request_scope=self.request_scope)
+
+    def search_progressive(self, query: str, **options):
+        return self.service.search_progressive_for_scope(self.request_scope, query, **options)
+
+    def search(self, query: str, **options):
+        rows = []
+        summary = self.search_progressive(
+            query, on_batch=lambda batch: rows.extend(batch.results), **options,
+        )
+        return [] if summary.cancelled else rows
+
+    def holdings(self, item: Any, **options):
+        """Descriptive availability under this reader's admitted Core scope."""
+        return self.service.holdings_for_scope(self.request_scope, item, **options)
+
+    def known_public_notices(self, query: str, **options):
+        # Public C is independent of the reader but a revoked computation
+        # may not continue with new queries after its source scope is gone.
+        if not self.request_scope.current(self.service):
+            return []
+        return CatalogBrokerImpl(self.service).known_public_notices(query, **options)
+
+
 @dataclass(slots=True)
 class CatalogBrokerImpl:
     service: Any
+
+    def for_identity(self, identity_id: str) -> ScopedCatalogSearch:
+        from .core.search_orchestration import capture_search_read_scope
+        return ScopedCatalogSearch(self.service, capture_search_read_scope(self.service, identity_id))
+
     def search(self, query: str, **options: Any): return self.service.search(query, **options)
     def search_progressive(self, query: str, *, on_batch: Callable[[Any], None], control: Any = None, **options: Any):
         return self.service.search_progressive(query, on_batch=on_batch, control=control, **options)
     def holdings(self, item: Any, **options: Any): return self.service.holdings(item, **options)
     def searchable_providers(self): return self.service.searchable_providers()
     def catalog_entries(self, **options: Any): return self.service.catalog_entries(**options)
+    def known_public_notices(self, query: str, *, scope: str = "all", provider_ids: tuple[str, ...] = ()):
+        """Worker-only descriptive C search; no supplier dispatch or rights."""
+        from .core.notice_c_recommendation_known import known_public_notice_candidates
+        return known_public_notice_candidates(
+            self.service.storage, query, scope=scope, provider_ids=provider_ids,
+        )
     def catalogue_source_capabilities(self, identity_id: str | None = None):
         """Optional additive Core inventory; missing headless owner denies empty."""
         if type(identity_id) is not str or not identity_id:
             return ()
         return self.service.catalogue_source_capabilities(identity_id=identity_id)
+
+
+def _observed_acquisition_account(item: Any) -> str | None:
+    """A declared upstream account is a coordinate, never a selector hint."""
+    observed = getattr(item, "source_account_id", None)
+    if observed is not None and (
+            type(observed) is not str or len(observed) > 1024
+            or any(ch in observed for ch in "\x00\r\n")):
+        raise ValueError("observed account invalid")
+    return observed
+
+
+def _observed_acquisition_account_matches(account: Any, observed: str | None) -> bool:
+    if observed is None:
+        return True
+    uid = getattr(account, "unique_id", None)
+    # The broker's display ID may be synthetic for a primary account.
+    return (type(uid) is str and uid == observed
+            and (uid != "" or getattr(account, "is_primary", None) is True))
 
 
 @dataclass(slots=True)
@@ -109,6 +172,7 @@ class AcquisitionBrokerImpl:
             raise ValueError("identity_id_required")
         provider = str(getattr(item, "source_provider", "") or "")
         source_credential = str(getattr(item, "source_credential", "") or "")
+        observed = _observed_acquisition_account(item)
         rows = []
         for account in self.service.accounts_for_identity(identity_id):
             if provider and str(getattr(account, "provider_id", "")) != provider:
@@ -117,6 +181,8 @@ class AcquisitionBrokerImpl:
             # credential is eligible.  Search results without a credential may
             # legitimately require an explicit account choice.
             if source_credential and str(getattr(account, "credential_id", "")) != source_credential:
+                continue
+            if not _observed_acquisition_account_matches(account, observed):
                 continue
             ref = _account_ref(self.service, account)
             if ref.connected:
@@ -129,8 +195,19 @@ class AcquisitionBrokerImpl:
         # operation scope before any account enumeration or provider call.
         if type(identity_id) is not str or not identity_id.strip():
             raise ValueError("identity_id_required")
+        if account_id is not None and (
+                type(account_id) is not str or not account_id
+                or len(account_id) > 1024 or any(ch in account_id for ch in "\x00\r\n")):
+            raise ValueError("account_id_invalid")
+        # An unbound item can be reused by other callers. Bind a detached copy.
+        original = item
+        try:
+            item = copy(item)
+        except Exception as exc:
+            raise ValueError("item credential binding unavailable") from exc
+        observed = _observed_acquisition_account(item)
         eligible = self.eligible_accounts(item, identity_id=identity_id)
-        if account_id:
+        if account_id is not None:
             choices = [row for row in eligible if row.account_id == account_id]
             if not choices:
                 raise ValueError(f"account not eligible: {account_id}")
@@ -145,8 +222,7 @@ class AcquisitionBrokerImpl:
             raise ValueError("no eligible connected account")
         else:
             raise ValueError("account selection required")
-        # Preserve the source object but bind the selected credential when the
-        # model supports mutable dataclass attributes (SearchResult does).
+        # Recheck the selected account before dispatching the detached DTO.
         matches = [
             account for account in self.service.accounts_for_identity(chosen.identity_id)
             if (_account_id(account), str(getattr(account, "identity_id", "") or ""),
@@ -154,7 +230,7 @@ class AcquisitionBrokerImpl:
                 str(getattr(account, "credential_id", "") or "")) == (
                     chosen.account_id, chosen.identity_id, chosen.provider_id,
                     chosen.credential_id,
-                )
+                ) and _observed_acquisition_account_matches(account, observed)
         ]
         if len(matches) != 1:
             # Never silently rebind a selected account to another credential.
@@ -162,6 +238,8 @@ class AcquisitionBrokerImpl:
         internal = matches[0]
         exact_credential = str(getattr(internal, "credential_id", "") or "")
         if str(getattr(item, "source_credential", "") or "") != exact_credential:
+            if item is original:
+                raise ValueError("item credential binding unavailable")
             try:
                 setattr(item, "source_credential", exact_credential)
             except (AttributeError, TypeError) as exc:
@@ -1660,7 +1738,22 @@ class DiagnosticsBrokerImpl:
     def active_checks(self) -> tuple[HealthCheckResult, ...]:
         rows: list[HealthCheckResult] = []
         try:
-            sources = SynchronizationBrokerImpl(self.service).sources()
+            # Health checks describe the whole local installation, not the
+            # profile currently displayed in GTK. A missing scope is
+            # deny-empty in LibraryService.accounts_for_identity; enumerate
+            # the registered owners explicitly instead of reporting a false
+            # healthy zero-source inventory.
+            broker = SynchronizationBrokerImpl(self.service)
+            identity_ids = tuple(
+                identity.identity_id for identity in self.service.identities
+            )
+            if (any(type(key) is not str or not key.strip() for key in identity_ids)
+                    or len(set(identity_ids)) != len(identity_ids)):
+                raise ValueError("invalid_diagnostic_identity_inventory")
+            sources = tuple(
+                source for identity_id in identity_ids
+                for source in broker.sources(identity_id)
+            )
             if not sources:
                 rows.append(HealthCheckResult(
                     "core.sync.sources",

@@ -73,6 +73,8 @@ def walk(widget):
         child = child.get_next_sibling()
 
 
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, type=Path)
@@ -697,6 +699,7 @@ def main():
         # refusal: no capability lookup/decorator/holdings may be requested.
         service.can_direct_download = forbidden
         service.holdings = forbidden
+        service.holdings_for_scope = forbidden
         panel("search")._decorate = forbidden
         window.navigate("search")
         window.search_controls.set_state(QueryState(text="Camille", field="title"), notify=False)
@@ -1068,7 +1071,16 @@ def main():
             # XTEST Tab/Shift-Tab detail recipe; never leave the focus on a
             # destroyed GTK probe when checking native keyboard navigation.
             window.present()
-            later(450, search_initial)
+            # Extend the existing real GTK witness through durable C/N2/N3.
+            from notice_c_cover_contract import verify_notice_c_cover
+            def notice_c_complete():
+                from notice_c_local_views_contract import verify_local_notice_c_views
+                verify_local_notice_c_views(
+                    window, later, capture, report,
+                    lambda: later(450, search_initial),
+                )
+
+            verify_notice_c_cover(window, later, capture, report, notice_c_complete)
 
         later(110, verify_first)
 

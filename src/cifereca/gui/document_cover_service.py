@@ -50,6 +50,9 @@ class CoverSourceSnapshot:
     embedded: AttestedEmbeddedCover | None = None
     verified_epub_path: Path | None = None
     snapshot_complete: bool = True
+    # Only the durable canonical-C cover index can attest a multi-source
+    # same-edition relation for deterministic catalogue tie-breaking.
+    attested_book_identity: str = ""
 
     def __post_init__(self) -> None:
         if type(self.scope) is not CoverDocumentScope:
@@ -58,6 +61,14 @@ class CoverSourceSnapshot:
             raise ValueError("invalid source revision")
         if type(self.snapshot_complete) is not bool:
             raise TypeError("source completeness must be explicit")
+        if (type(self.attested_book_identity) is not str
+                or (self.attested_book_identity and (
+                    not self.scope.source_key.startswith(
+                        "notice-c:canonical-cover:v1:"
+                    )
+                    or self.attested_book_identity != self.scope.source_key
+                ))):
+            raise ValueError("invalid canonical cover relation")
         if (type(self.candidates) is not tuple
                 or len(self.candidates) > _MAX_EVIDENCE):
             raise ValueError("invalid cover source inventory")
@@ -209,6 +220,7 @@ class DocumentCoverService:
         fallback_ttl: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
         cached_source_reader: Callable[[CoverDocumentScope], CoverSourceSnapshot | None] | None = None,
+        cached_source_scope: Callable[[CoverDocumentScope], bool] | None = None,
     ):
         if not isinstance(loader, CoverLoader):
             raise TypeError("expected shared CoverLoader")
@@ -223,6 +235,9 @@ class DocumentCoverService:
             raise ValueError("invalid qualified fallback lifetime")
         if cached_source_reader is not None and not callable(cached_source_reader):
             raise TypeError("cached cover source reader must be callable")
+        if (cached_source_scope is not None and
+                (cached_source_reader is None or not callable(cached_source_scope))):
+            raise TypeError("cached source scope requires a callable reader")
         self.loader = loader
         self.decisions = decisions if decisions is not None else CoverDecisionCache()
         self._max_documents = max_documents
@@ -240,6 +255,7 @@ class DocumentCoverService:
             "n2_hit": 0, "n2_miss": 0, "n2_source_unknown": 0,
             "n2_resolution_miss": 0, "n2_register_new": 0,
             "n2_register_changed": 0, "n2_register_reused": 0,
+            "n2_source_refresh_scheduled": 0,
         }        # N2 documentary source events for currently bound GTK consumers.
         # A newly admitted Notice C value can update an already visible
         # placeholder without a new Search selection or provider request.
@@ -254,11 +270,17 @@ class DocumentCoverService:
         # reader must return cached, already-admitted documentary evidence;
         # it runs in a bounded worker, never inside a GTK widget or N3.
         self._cached_source_reader = cached_source_reader
+        self._cached_source_scope = cached_source_scope
         self._read_pool = (
             ThreadPoolExecutor(max_workers=2, thread_name_prefix="cifereca-cover-source")
             if cached_source_reader is not None else None
         )
         self._read_active: set[CoverDocumentScope] = set()
+        # A newer, producer-attested Notice C epoch may supersede an N2 HIT.
+        # This is a targeted, bounded background re-read, not a per-rebind
+        # source poll or a second documentary authority in GTK.
+        self._refresh_active: set[CoverDocumentScope] = set()
+        self._refresh_targets: dict[CoverDocumentScope, int] = {}
         self._read_waiters: dict[
             CoverDocumentScope, list[tuple[CoverReadRequest, Callable[[], None]]]
         ] = {}
@@ -282,13 +304,25 @@ class DocumentCoverService:
         self._closed = False
 
     def register(self, snapshot: CoverSourceSnapshot) -> None:
-        """Install only a newer exact source snapshot; no HTTP or EPUB I/O."""
+        """Install a newer exact source snapshot; notify viewers after unlock."""
+        self._register_snapshot(snapshot, only_if_absent=False)
+
+    def _register_snapshot(
+        self, snapshot: CoverSourceSnapshot, *, only_if_absent: bool,
+    ) -> None:
+        """CAS on presence for Core read-through, never notify under N2 lock.
+
+        A concurrent stronger producer can win before the worker's persisted
+        source returns. Its live value must not be replaced by a stale worker.
+        """
         if type(snapshot) is not CoverSourceSnapshot:
             raise TypeError("expected attested source inventory")
         with self._lock:
             if self._closed:
                 raise RuntimeError("cover service is closed")
             previous = self._snapshots.get(snapshot.scope)
+            if only_if_absent and previous is not None:
+                return
             if previous is not None:
                 if snapshot.revision < previous.revision:
                     raise ValueError("stale cover source revision")
@@ -422,6 +456,7 @@ class DocumentCoverService:
             fallback = resolve_book_cover(
                 document, snapshot.candidates,
                 revision=snapshot.revision, snapshot_complete=True,
+                attested_book_identity=snapshot.attested_book_identity,
             )
             if (fallback.status != "selected"
                     or fallback.tier not in ("origin", "catalog")):
@@ -542,6 +577,15 @@ class DocumentCoverService:
         pool = self._read_pool
         if reader is None or pool is None:
             return
+        # Legacy loan/local/Search refs cannot be found in the persisted
+        # Notice C source index. A pure Core eligibility predicate avoids
+        # scheduling unnecessary SQLite reads for recycled GTK cells.
+        if self._cached_source_scope is not None:
+            try:
+                if self._cached_source_scope(document) is not True:
+                    return
+            except Exception:
+                return  # Untrusted filter failure is unknown, not missing.
         with self._lock:
             if self._closed:
                 return
@@ -585,14 +629,15 @@ class DocumentCoverService:
                 # A failed or revoked producer read has no negative meaning.
                 # In particular, never log provider credentials or URLs.
                 snapshot = None
+            if (type(snapshot) is CoverSourceSnapshot
+                    and snapshot.scope == document):
+                try:
+                    # The presence CAS runs under lock, but registered GTK
+                    # observers are called only after that lock is released.
+                    self._register_snapshot(snapshot, only_if_absent=True)
+                except (ValueError, TypeError, RuntimeError):
+                    pass
             with self._lock:
-                if (not self._closed and document not in self._snapshots
-                        and type(snapshot) is CoverSourceSnapshot
-                        and snapshot.scope == document):
-                    try:
-                        self.register(snapshot)
-                    except (ValueError, TypeError, RuntimeError):
-                        pass
                 live = not self._closed and document in self._snapshots
                 waiters = self._read_waiters.pop(document, [])
                 self._read_active.discard(document)
@@ -603,6 +648,31 @@ class DocumentCoverService:
                         self._read_cooldown.popitem(last=False)
                 else:
                     self._read_cooldown.pop(document, None)
+                # A later Core producer may have persisted a newer epoch
+                # while this first MISS worker was reading an old snapshot.
+                # Defer the *targeted* re-read until after its flight clears.
+                target = self._refresh_targets.get(document, 0)
+                current_snapshot = self._snapshots.get(document)
+                retry_newer = bool(
+                    target and current_snapshot is not None
+                    and current_snapshot.revision < target
+                )
+                retry_missing = bool(
+                    target and current_snapshot is None and handle.active
+                )
+                if target and not retry_newer:
+                    self._refresh_targets.pop(document, None)
+                if retry_missing:
+                    # The old MISS may have returned unknown just before C
+                    # was written. A positive producer epoch allows ONE
+                    # immediate retry, not a permanent negative cache.
+                    self._read_cooldown.pop(document, None)
+            if retry_newer:
+                self.refresh_cached_source_if_newer(document, target)
+            elif retry_missing:
+                self._read_source_on_n2_miss(
+                    document, handle, source_changed,
+                )
             if live:
                 for waiting_handle, callback in waiters:
                     if (not waiting_handle.active
@@ -622,14 +692,114 @@ class DocumentCoverService:
                 self._read_active.discard(document)
                 self._read_waiters.pop(document, None)
 
+    def refresh_cached_source_if_newer(
+        self, document: CoverDocumentScope, minimum_revision: int,
+    ) -> bool:
+        """Refresh a known N2 source only after a *new Core-persisted* epoch.
+
+        The GUI may forward an ephemeral Core producer stamp, but cannot
+        author the source value: the bounded worker reads Notice C again.
+        A normal N2 HIT/recycled row never triggers SQLite I/O; a changed
+        epoch invalidates only this exact DocumentRef, not shared N3 bytes.
+        Concurrent revisions coalesce into one worker with a bounded retry.
+        """
+        if (type(document) is not CoverDocumentScope
+                or type(minimum_revision) is not int
+                or not 1 <= minimum_revision < 2**63):
+            return False
+        reader, pool = self._cached_source_reader, self._read_pool
+        if reader is None or pool is None:
+            return False
+        if self._cached_source_scope is not None:
+            try:
+                if self._cached_source_scope(document) is not True:
+                    return False
+            except Exception:
+                return False
+        with self._lock:
+            if self._closed:
+                return False
+            current = self._snapshots.get(document)
+            if current is None:
+                # A first N2 MISS may already be reading epoch v1 while the
+                # Core writes v2. Preserve that newer producer hint until the
+                # in-flight worker completes; do not enqueue a second read.
+                if document in self._read_active:
+                    self._refresh_targets[document] = max(
+                        self._refresh_targets.get(document, 0), minimum_revision,
+                    )
+                return False
+            if current.revision >= minimum_revision:
+                return False  # Routine hot bind: no SQLite I/O.
+            self._refresh_targets[document] = max(
+                self._refresh_targets.get(document, 0), minimum_revision,
+            )
+            if document in self._refresh_active:
+                return False
+            if len(self._refresh_active) >= 16:
+                self._refresh_targets.pop(document, None)
+                return False
+            self._refresh_active.add(document)
+            self._stats["n2_source_refresh_scheduled"] += 1
+
+        def work() -> None:
+            try:
+                for _attempt in range(3):
+                    with self._lock:
+                        if self._closed:
+                            return
+                        target = self._refresh_targets.get(document, 0)
+                    try:
+                        latest = reader(document)
+                    except Exception:
+                        # Unknown is not a negative Notice C observation.
+                        latest = None
+                    if type(latest) is CoverSourceSnapshot and latest.scope == document:
+                        try:
+                            self._register_snapshot(
+                                latest, only_if_absent=False,
+                            )
+                        except (ValueError, TypeError, RuntimeError):
+                            # A newer concurrent snapshot can win; never
+                            # roll back to a stale SQLite/source response.
+                            pass
+                    with self._lock:
+                        current = self._snapshots.get(document)
+                        requested = self._refresh_targets.get(document, 0)
+                        if (self._closed or requested <= target
+                                or current is not None
+                                and current.revision >= requested):
+                            return
+                    # A newer Core epoch arrived while the worker was
+                    # reading the older snapshot. Retry only that exact
+                    # source; never fetch a supplier or scan other books.
+            finally:
+                with self._lock:
+                    self._refresh_active.discard(document)
+                    self._refresh_targets.pop(document, None)
+
+        try:
+            pool.submit(work)
+        except RuntimeError:
+            with self._lock:
+                self._refresh_active.discard(document)
+                self._refresh_targets.pop(document, None)
+            return False
+        return True
+
     def get_cover(
         self,
         document: CoverDocumentScope, variant: CoverVariant,
         callback: Callable[[Path | None], None], *,
         width: int = 180, height: int = 270,
         on_source_changed: Callable[[], None] | None = None,
+        minimum_revision: int | None = None,
     ) -> CoverReadRequest:
         """Use N2 HIT first; only N3 fetch/extraction follows an N1 selection.
+
+        A Core-attested persisted C epoch is an optional read floor, not an
+        N1 source decision. While the bounded cached-source worker refreshes
+        an older snapshot, neither variant may materialize that stale N2.
 
         A missing physical EPUB image never makes the already-attested
         embedded source lose its N1 preference to a cached catalogue URL.
@@ -648,6 +818,12 @@ class DocumentCoverService:
         if (type(width) is not int or type(height) is not int
                 or not 1 <= width <= 2048 or not 1 <= height <= 2048):
             raise ValueError("invalid preview dimensions")
+        if minimum_revision is not None:
+            from ..core.notice_cover_repository import is_notice_cover_document
+            if (type(minimum_revision) is not int
+                    or not 1 <= minimum_revision < 2**63
+                    or not is_notice_cover_document(document)):
+                raise ValueError("invalid Notice C read revision")
         handle = CoverReadRequest()
         with self._lock:
             if self._closed:
@@ -655,9 +831,19 @@ class DocumentCoverService:
             if on_source_changed is not None:
                 self._subscribe_source(document, handle, on_source_changed)
             snapshot = self._snapshots.get(document)
+            below_floor = (
+                snapshot is not None and minimum_revision is not None
+                and snapshot.revision < minimum_revision
+            )
             if snapshot is None:
                 self._stats["n2_miss"] += 1
                 self._stats["n2_source_unknown"] += 1
+                decision = None
+            elif below_floor:
+                # A previous consumer could have selected an older URI.
+                # Do not resolve, reuse, or materialize that token on this
+                # newer receipt. The producer still owns the source data.
+                self._stats["n2_miss"] += 1
                 decision = None
             else:
                 self._snapshots.move_to_end(document)
@@ -704,6 +890,7 @@ class DocumentCoverService:
                         self.decisions.resolve_and_publish(
                             token, proofs,
                             snapshot_complete=snapshot.snapshot_complete,
+                            attested_book_identity=snapshot.attested_book_identity,
                         )
                         decision = self.decisions.peek(
                             document, revision=snapshot.revision,
@@ -728,6 +915,7 @@ class DocumentCoverService:
                         and self._snapshots.get(document) is snapshot
                         and (
                             snapshot is None
+                            or below_floor
                             or self.decisions.peek(
                                 document, revision=snapshot.revision,
                             ) is decision
@@ -739,6 +927,11 @@ class DocumentCoverService:
                 self._read_source_on_n2_miss(
                     document, handle, on_source_changed,
                 )
+            if minimum_revision is not None and (snapshot is None or below_floor):
+                # For a cold read this also preserves an epoch arriving
+                # behind an already-active MISS. The common worker remains
+                # responsible for reading and publishing exact evidence.
+                self.refresh_cached_source_if_newer(document, minimum_revision)
             callback(None)
             return handle
         # The return handle exposes the N2 source before any synchronous
@@ -824,7 +1017,23 @@ class DocumentCoverService:
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
             self._closed = True
+            # The widget's CoverReadRequest must be canceled as well as its
+            # service-side observer removed. Otherwise a worker that captured
+            # callbacks before close can post a late GTK rebind to a disposed
+            # window, even though _closed revoked the N2 selection.
+            handles = {handle for bucket in self._source_subscriptions.values()
+                       for handle, _callback in bucket.values()}
+            handles.update(
+                handle for waiters in self._read_waiters.values()
+                for handle, _callback in waiters
+            )
+            handles.update(
+                handle for waiters in self._qualify_waiters.values()
+                for handle, _callback in waiters
+            )
             self._snapshots.clear()
             self._source_subscriptions.clear()
             self._source_subscription_count = 0
@@ -833,12 +1042,18 @@ class DocumentCoverService:
             self._trace_subscriptions.clear()
             self._resolving.clear()
             self._read_active.clear()
+            self._refresh_active.clear()
+            self._refresh_targets.clear()
             self._read_waiters.clear()
             self._read_cooldown.clear()
             self._qualified_fallback.clear()
             self._qualify_active.clear()
             self._qualify_waiters.clear()
             self._qualify_cooldown.clear()
+        # Cancellation may touch N3 or unsubscribe from this service. Do not
+        # hold the service lock while calling foreign request implementations.
+        for handle in handles:
+            handle.cancel()
         self._qualify_pool.shutdown(wait=False, cancel_futures=True)
         if self._read_pool is not None:
             self._read_pool.shutdown(wait=False, cancel_futures=True)

@@ -14,7 +14,8 @@ import logging
 import re
 import unicodedata
 from concurrent.futures import FIRST_COMPLETED, wait
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, field, replace
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from queue import Queue, Empty, Full
 from typing import Any, Callable
@@ -25,6 +26,44 @@ from ..plugin_api import (
     ProviderSearchResponse, ProviderSearchStream, ProviderSearchWithFacets,
 )
 from ..core.provider_stream import consume_provider_stream, SearchStreamFailure, SearchStreamCancelled
+from .source_context import source_context_epoch
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class SearchReadScope:
+    """Core-local reader authority, distinct from the GTK search projection."""
+    service: Any = field(repr=False)
+    identity: Any = field(repr=False)
+    identity_id: str
+    source_epoch: int
+
+    def current(self, service) -> bool:
+        try:
+            return (self.service is service
+                    and service.identity_by_id(self.identity_id) is self.identity
+                    and source_context_epoch(service) == self.source_epoch)
+        except Exception:
+            return False
+
+
+def capture_search_read_scope(service, identity_id: str) -> SearchReadScope:
+    if (type(identity_id) is not str or not identity_id
+            or len(identity_id) > 1024 or any(ch in identity_id for ch in "\x00\r\n")):
+        raise ValueError("search_identity_required")
+    epoch = source_context_epoch(service)
+    identity = service.identity_by_id(identity_id)
+    if identity is None or identity.identity_id != identity_id:
+        raise ValueError("search_identity_unknown")
+    scope = SearchReadScope(service, identity, identity_id, epoch)
+    if not scope.current(service):
+        raise ValueError("search_source_changed")
+    return scope
+
+
+def _search_policy_enabled(service, provider_id, request_scope=None):
+    if request_scope is not None:
+        return service._provider_enabled_for_identity(provider_id, request_scope.identity_id)
+    return service._provider_enabled_for_identity(provider_id)
 
 
 def _log_observed_stream_failure(provider_id: str, phase: str, error: Exception) -> None:
@@ -205,14 +244,16 @@ def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> 
     return label or "—"
 
 
-def searchable_providers(self) -> list[tuple[str, str]]:
-    """Connected provider ids/display names usable by the global search UI."""
+def searchable_providers(self, *, request_scope=None) -> list[tuple[str, str]]:
+    """Connected providers for this reader, or the legacy global search UI."""
+    if request_scope is not None and not request_scope.current(self):
+        return []
     seen: set[str] = set()
     out: list[tuple[str, str]] = []
     for session in self._sessions.values():
         if not session.connected or not session.capabilities.search or session.provider_id in seen:
             continue
-        if (not self._provider_enabled_for_identity(session.provider_id)
+        if (not _search_policy_enabled(self, session.provider_id, request_scope)
                 or not _search_credential_enabled(self, session)):
             continue
         seen.add(session.provider_id)
@@ -399,6 +440,55 @@ def _private_search_owner(self, session: ProviderSession) -> str | None:
     return owner if type(owner) is str and owner else None
 
 
+# A per-search Core-only context keeps LibraryService's frozen mirror ABI.
+# ContextVar isolates overlapping threads and callback-initiated nested searches;
+# no plugin DTO or session can claim this admission scope.
+_CORE_LIVE_PUBLIC_C_WRITER: ContextVar[bool] = ContextVar(
+    "cifereca_core_live_public_c_writer", default=False,
+)
+_CORE_PROGRESSIVE_C_WRITTEN: ContextVar[bool] = ContextVar(
+    "cifereca_core_progressive_c_written", default=False,
+)
+
+
+def _mirror_live_search_results(
+    service, rows: list[SearchResult], *, identity_id: str,
+    c_already_ingested: bool = False,
+) -> int:
+    """Invoke the legacy mirror ABI while requiring a same-call C witness."""
+    token = _CORE_LIVE_PUBLIC_C_WRITER.set(True)
+    ingested = _CORE_PROGRESSIVE_C_WRITTEN.set(c_already_ingested)
+    try:
+        return service._mirror_remote_results(rows, identity_id=identity_id)
+    finally:
+        _CORE_PROGRESSIVE_C_WRITTEN.reset(ingested)
+        _CORE_LIVE_PUBLIC_C_WRITER.reset(token)
+
+
+# In-process, nonserializable Core admission witness. Do not use a provider
+# DTO flag/metadata field (or a cache hit) as permission to publish Notice C.
+_CORE_PUBLIC_COVER_WITNESS = object()
+
+
+def _public_cover_witness_coordinates(row: SearchResult) -> tuple:
+    # Exact same-call source + edition + image; no title, ISBN or N3 SHA join.
+    return (
+        row.id, row.source_provider, row.source_credential,
+        row.source_collection, row.source_account_id, row.record_id,
+        row.docbase, row.medium, row.revision_id, row.scenario,
+        row.thumbnail_url, row.owned, row.downloadable, row.download_url,
+    )
+
+
+def _verified_public_cover_witness(row: SearchResult) -> bool:
+    witness = getattr(row, "_core_same_call_public_cover_witness", None)
+    return (
+        type(witness) is tuple and len(witness) == 2
+        and witness[0] is _CORE_PUBLIC_COVER_WITNESS
+        and witness[1] == _public_cover_witness_coordinates(row)
+    )
+
+
 def _public_rows_from_response(
     response: ProviderSearchResponse, session: ProviderSession,
 ) -> list[SearchResult]:
@@ -407,7 +497,7 @@ def _public_rows_from_response(
     A list-only legacy provider or a response without notices cannot authorize
     foreign-profile publication. Never turn private rows into public notices.
     """
-    from .public_search_projection import project_public_search_result
+    from .public_search_projection import project_public_search_results
     if (type(response) is not ProviderSearchResponse
             or type(response.results) is not list
             or len(response.results) > 10000
@@ -416,14 +506,21 @@ def _public_rows_from_response(
             or len({id(row) for row in response.results}) != len(response.results)):
         # Repeated object identity is not an independently attested notice.
         return []
+    from collections import Counter
+    from ..plugin_api import PublicSearchNotice
+    # Every declaration belongs to this one response. Validate and index
+    # it once; each result then consumes an O(1) source/edition candidate.
+    projections = project_public_search_results(response)
+    if projections is None:
+        return []
+    exact_public_rows = Counter(
+        id(claim.result)
+        for claim in response.public_notices
+        if type(claim) is PublicSearchNotice
+    )
     admitted: list[SearchResult] = []
     for row in response.results:
-        if type(row) is not SearchResult:
-            return []
-        projected = project_public_search_result(
-            response, row, provider_id=row.source_provider,
-            credential_id=row.source_credential,
-        )
+        projected = projections.get(id(row))
         if (
             projected is not None
             and row.source_provider == session.provider_id
@@ -431,6 +528,54 @@ def _public_rows_from_response(
                 getattr(session, "credential_id", None), "__public__",
             )
         ):
+            # The generic foreign-profile public projection deliberately
+            # drops URLs/editions from a PRIVATE session. An actually
+            # anonymous public producer can retain its ordinary catalogue
+            # image, but only when its exact same-call public notice points
+            # to THIS source object, with no credential/account/rights.
+            # A signed/private image still fails the Core catalogue guard.
+            anonymous = (
+                getattr(session, "credential_id", None) == "__public__"
+                and type(getattr(session, "credentials", None)) is dict
+                and not session.credentials
+                and type(getattr(session, "_accounts", None)) is list
+                and not session._accounts
+                and row.source_credential == "__public__"
+                and row.source_collection == "public_catalog"
+                and row.source_account_id is None
+                and row.owned is False and row.downloadable is False
+                and row.download_url is None
+                and exact_public_rows.get(id(row), 0) == 1
+            )
+            if anonymous:
+                image = _shared_catalogue_cover_url(row.thumbnail_url)
+                # An omitted image may attest a public edition, but an
+                # unsafe REJECTED image cannot launder its revision into a
+                # public result or become a Core same-call witness.
+                valid_public_occurrence = (
+                    image is not None or row.thumbnail_url is None
+                )
+                revision = (
+                    row.revision_id
+                    if valid_public_occurrence
+                    and type(row.revision_id) is str
+                    and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", row.revision_id)
+                    else None
+                )
+                projected = replace(
+                    projected, thumbnail_url=image, revision_id=revision,
+                )
+                if valid_public_occurrence:
+                    # Core-only same-call witness; not serialized into the
+                    # shared Search cache or assigned by provider plugins.
+                    from .notice_search_cover_producer import _CORE_PUBLIC_C_WITNESS
+                    projected._core_notice_c_public_bibliography = _CORE_PUBLIC_C_WITNESS
+                    # Independent proof for durable public cover admission.
+                    # Keep the existing v2 bibliography witness intact.
+                    projected._core_same_call_public_cover_witness = (
+                        _CORE_PUBLIC_COVER_WITNESS,
+                        _public_cover_witness_coordinates(projected),
+                    )
             admitted.append(projected)
     return admitted
 
@@ -467,6 +612,45 @@ def _search_owner_cache_scope(
     ))
 
 
+def _search_presentation_cache_scope(
+    identity: object,
+    searchable: list[ProviderSession],
+    owner_leases: tuple[tuple[ProviderSession, str | None], ...],
+) -> str:
+    """Cache by source, not by *viewer*, only for a truly anonymous producer.
+
+    Never generalize this to private, ownerless-but-unknown or mixed sources:
+    their response may reflect a different account. Search projections are
+    already ranked using the selected reader's language preferences, so
+    those preferences remain part of the key until raw source responses and
+    reader ranking are separated. An anonymous source must still return a
+    same-call PublicSearchNotice, independently enforced by the producer
+    response gate; this cache key cannot confer public provenance.
+    """
+    if identity is None:
+        return ""
+    preferences = getattr(identity, "preferences", None)
+    ranking = (
+        f"{','.join(preferences.reading_languages)}:"
+        f"{int(preferences.prefer_original_language)}"
+    )
+    if (len(searchable) == 1 and len(owner_leases) == 1
+            and owner_leases[0][0] is searchable[0]
+            and owner_leases[0][1] is None):
+        session = searchable[0]
+        if (getattr(session, "credential_id", None) == "__public__"
+                and type(getattr(session, "credentials", None)) is dict
+                and not session.credentials
+                and type(getattr(session, "_accounts", None)) is list
+                and not session._accounts
+                and isinstance(session, ProviderSearchWithFacets)):
+            # Source and owner scopes are independently in the cache key.
+            # A NUL domain marker cannot occur in validated identity IDs;
+            # it also prevents a private or malformed source cache collision.
+            return "\0source-anonymous-public-v1:" + ranking
+    return f"{identity.identity_id}:" + ranking
+
+
 def _search_cooldown_clock() -> float:
     return time.monotonic()
 
@@ -501,6 +685,7 @@ def _source_in_retry_after(self, session: ProviderSession, identity: object) -> 
 
 def _record_source_retry_after(
     self, session: ProviderSession, identity: object, credential: object, error: BaseException,
+    *, request_scope=None,
 ) -> None:
     """Remember a native HTTP 429 once; never sleep/retry in a worker."""
     from ..search_failures import search_retry_after_seconds
@@ -510,7 +695,8 @@ def _record_source_retry_after(
     with self._search_generation_lock:
         # A completed request from an old identity/account/session must not
         # throttle a newly selected source or otherwise mutate its state.
-        if (self.current_identity is not identity
+        if ((not request_scope.current(self) if request_scope is not None
+                else self.current_identity is not identity)
                 or getattr(session, "credential_id", None) != credential):
             return
         entries = getattr(self, "_search_retry_after", None)
@@ -680,9 +866,9 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         for session in searchable
     )
     provider_key = ",".join(sorted(x.provider_id for x in searchable)) or requested_provider
-    pref_key = ""
-    if identity is not None:
-        pref_key = f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
+    pref_key = _search_presentation_cache_scope(
+        identity, searchable, owner_leases,
+    )
     virtual_versions = ",".join(
         f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
         for session in searchable
@@ -697,6 +883,10 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         cached = self.storage.cache_get("search", cache_key)
         if isinstance(cached, list):
             rows = [_provider_search_row(SearchResult(**x)) for x in cached]
+            _stamp_cached_public_notice_refs(
+                rows, identity_id=identity.identity_id if identity else None,
+                storage=self.storage,
+            )
             with self._search_generation_lock:
                 if (self._search_generation != search_generation
                         or self.current_identity is not identity
@@ -715,7 +905,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         if not request_current():
             return []
         provider_rows: list[SearchResult] = []
-        provider_seen: set[tuple[str, str, str, str, str]] = set()
+        provider_seen: set[tuple[str, ...]] = set()
         effective_field, contract_warning = _effective_search_field(
             session, field, provider_scope, facade_type=facade_type,
         )
@@ -878,7 +1068,7 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
         return []
     if identity is not None:
         try:
-            self._mirror_remote_results([
+            _mirror_live_search_results(self, [
                 row for row in rows
                 if not isinstance(row.metadata, dict)
                 or row.metadata.get("search_provenance") != "known_catalog_stale"
@@ -982,17 +1172,23 @@ def _search_batch_status(
     return "cached" if cached else "live"
 
 
-def _search_result_scope_key(row: SearchResult) -> tuple[str, str, str, str, str]:
-    """Deduplicate one *exact* supplier notice, never another account/edition.
+def _search_result_scope_key(row: SearchResult) -> tuple[str, ...]:
+    """Deduplicate a *source/edition*, not just its legacy catalogue record.
 
-    The same coordinates are authoritative in the SQLite mirror-v2: a
-    supplier may reuse record IDs across credentials, docbases or collections.
-    An absent collection is the same canonical empty component as mirror-v2.
-    This key is for search result de-duplication only; it grants no rights.
+    A supplier can reuse its record/docbase/collection for multiple revision
+    markers, accounts or physical/digital manifestations. Notice C, N2 and
+    the GTK list already distinguish those; discarding them in federated
+    search before Core ingestion silently loses genuine notices. This key is
+    read-only and grants neither catalogue provenance nor a right.
+
+    Mirror-v2 continues to use its historical storage key while that index is
+    replaced by the universal Notice C catalogue; never promote a dedup key
+    to an ownership/holding witness.
     """
     return (
         row.source_provider, row.source_credential, row.record_id,
         row.docbase, row.source_collection or "",
+        row.source_account_id or "", row.medium, row.revision_id or "",
     )
 
 
@@ -1041,7 +1237,7 @@ def _search_provider_session(
     self, session: ProviderSession, query: str, scope: str, *, field: str = "all",
     content_types: tuple[str, ...] = (), facade_type,
     response_facets: list[CatalogSearchFacet] | None = None,
-    public_only: bool = False,
+    public_only: bool = False, request_scope=None, request_cancelled=None,
 ) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
 
@@ -1050,7 +1246,7 @@ def _search_provider_session(
     """
     provider_scope = "all" if str(scope or "all").casefold() == "unknown" else scope
     provider_rows: list[SearchResult] = []
-    provider_seen: set[tuple[str, str, str, str, str]] = set()
+    provider_seen: set[tuple[str, ...]] = set()
     warnings: list[str] = []
     effective_field, contract_warning = _effective_search_field(
         session, field, provider_scope, facade_type=facade_type,
@@ -1064,8 +1260,10 @@ def _search_provider_session(
         # A legacy search() result cannot attest foreign public provenance.
         provider_scope = "catalog"
         response_facets = None
-    identity = getattr(self, "current_identity", None)
+    identity = request_scope.identity if request_scope is not None else getattr(self, "current_identity", None)
     credential = getattr(session, "credential_id", None)
+    if request_cancelled is not None and request_cancelled():
+        return [], [], "StreamCancelled", "search cancelled"
     if _source_in_retry_after(self, session, identity):
         code = "SearchTemporarilyUnavailable"
         return [], [f"{session.descriptor.display_name}: {_search_problem_label(code)}"], code, _search_problem_label(code)
@@ -1073,6 +1271,8 @@ def _search_provider_session(
     primary_ok = False
     terminal_error_code = terminal_error_message = ""
     for attempt, variant in enumerate(variants):
+        if request_cancelled is not None and request_cancelled():
+            return [], [], "StreamCancelled", "search cancelled"
         if attempt > 0 and primary_ok:
             break
         try:
@@ -1139,7 +1339,7 @@ def _search_provider_session(
             # may carry their raw message.
             failure_code = search_failure_code(exc) or "ProviderSearchFailed"
             if failure_code == "SearchTemporarilyUnavailable":
-                _record_source_retry_after(self, session, identity, credential, exc)
+                _record_source_retry_after(self, session, identity, credential, exc, request_scope=request_scope)
             # An earlier variant returning a legitimate empty 200 does not
             # make a later transport/protocol failure disappear. Record the
             # terminal outage for the source, even when it is variant N>1,
@@ -1166,9 +1366,11 @@ def _search_provider_session(
     return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
 
 
-def _search_virtual_stream_session(self, session: ProviderSession, query: str, scope: str, *, field: str, content_types: tuple[str, ...], generation: int, publish: Callable[[ProviderSearchEvent], None], cancelled: Callable[[], bool], control: Any) -> tuple[list[SearchResult], list[str], str, str]:
+def _search_virtual_stream_session(self, session: ProviderSession, query: str, scope: str, *, field: str, content_types: tuple[str, ...], generation: int, publish: Callable[[ProviderSearchEvent], None], cancelled: Callable[[], bool], control: Any, request_scope=None) -> tuple[list[SearchResult], list[str], str, str]:
     """Worker-only optional stream. Gaps/errors do not poison the cache."""
-    identity = getattr(self, "current_identity", None)
+    if request_scope is not None and cancelled():
+        return [], [], "StreamCancelled", "search cancelled"
+    identity = request_scope.identity if request_scope is not None else getattr(self, "current_identity", None)
     credential = getattr(session, "credential_id", None)
     if _source_in_retry_after(self, session, identity):
         code = "SearchTemporarilyUnavailable"
@@ -1202,6 +1404,11 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         ))
         # Rebuild from a complete catalogue query; do not reuse partial
         # stream results after a dropped message.
+        if request_scope is not None:
+            return _search_provider_session(
+                self, session, query, scope, field=field, content_types=content_types,
+                facade_type=type(self), request_scope=request_scope, request_cancelled=cancelled,
+            )
         return self._search_provider_session(
             session, query, scope, field=field, content_types=content_types,
         )
@@ -1216,14 +1423,14 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         code = search_failure_code(exc)
         if code is not None:
             if code == "SearchTemporarilyUnavailable":
-                _record_source_retry_after(self, session, identity, credential, exc)
+                _record_source_retry_after(self, session, identity, credential, exc, request_scope=request_scope)
             message = _search_problem_label(code)
             return [], [message], code, message
         # Unknown stream failures retain their existing business result.
         return [], ["Recherche en flux indisponible"], "StreamProviderFailed", "Recherche en flux indisponible"
 
 
-def search_progressive(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', provider_ids: tuple[str, ...] | list[str] | None=None, field: str='all', content_types: tuple[str, ...] | list[str] | None=None, on_batch: Callable[[Any], None] | None=None, control: Any=None, on_event: Callable[[ProviderSearchEvent], None] | None=None, include_redundant_merged: bool=False, executor, logger):
+def search_progressive(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', provider_ids: tuple[str, ...] | list[str] | None=None, field: str='all', content_types: tuple[str, ...] | list[str] | None=None, on_batch: Callable[[Any], None] | None=None, control: Any=None, on_event: Callable[[ProviderSearchEvent], None] | None=None, include_redundant_merged: bool=False, executor, logger, request_scope=None, return_rows: bool=False):
     """Parallel federated search with provider-scoped progressive batches.
 
     Providers keep their simple synchronous ``search`` contract.  Core owns
@@ -1240,17 +1447,28 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
 
     started_dt = datetime.now(timezone.utc)
     started_mono = time.monotonic()
+    scoped = request_scope is not None
+    if return_rows and not scoped:
+        raise ValueError("search_read_scope_required")
     with self._search_generation_lock:
-        self._search_generation += 1
-        search_generation = self._search_generation
-        identity = self.current_identity
+        if scoped:
+            if type(request_scope) is not SearchReadScope or not request_scope.current(self):
+                raise ValueError("search_source_changed")
+            identity = request_scope.identity
+            # Independent reader requests do not supersede GTK Search or
+            # another reader. Their own source epoch and control own revocation.
+            search_generation = None
+        else:
+            self._search_generation += 1
+            search_generation = self._search_generation
+            identity = self.current_identity
     requested = {str(x).strip().lower() for x in (provider_ids or ()) if str(x).strip() and str(x).strip().lower() != "local"}
     single = str(provider_id or "all").strip().lower()
     if single != "all": requested.add(single)
     available = [
         session for session in self._sessions.values()
         if session.connected and session.capabilities.search
-        and self._provider_enabled_for_identity(session.provider_id)
+        and _search_policy_enabled(self, session.provider_id, request_scope)
         and _search_credential_enabled(self, session)
         and (not requested or session.provider_id in requested)
     ]
@@ -1287,7 +1505,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         for session in searchable
     )
     provider_key = ",".join(sorted(x.provider_id for x in searchable)) or (",".join(sorted(requested)) or single)
-    pref_key = "" if identity is None else f"{identity.identity_id}:{','.join(identity.preferences.reading_languages)}:{int(identity.preferences.prefer_original_language)}"
+    pref_key = _search_presentation_cache_scope(
+        identity, searchable, owner_leases,
+    )
     types = tuple(sorted(content_types or ()))
     virtual_versions = ",".join(
         f"{entry.plugin_id}:{entry.source_revision}:{entry.catalog_generation}"
@@ -1298,7 +1518,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
     def request_current_locked() -> bool:
-        if (search_generation != self._search_generation
+        if scoped:
+            if not request_scope.current(self):
+                return False
+        elif (search_generation != self._search_generation
                 or self.current_identity is not identity):
             return False
         # A reconnect or a changed Paris primary revokes old results.
@@ -1314,7 +1537,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             if (expected is None or expected[2] is not True
                     or not any(item is session for item in registered)
                     or _inert_search_source_state(session) != expected
-                    or not self._provider_enabled_for_identity(expected[0])
+                    or not _search_policy_enabled(self, expected[0], request_scope)
                     or not _search_credential_enabled(self, session)):
                 return False
         if any(_private_search_owner(self, session) != owner
@@ -1362,6 +1585,13 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     break
                 groups.setdefault(owner, []).append(row)
             if not ambiguous:
+                # Cache rows are not new documentary observations: compute
+                # only exact source coordinates. N2 must still find an already
+                # persisted Notice C source before selecting any image.
+                _stamp_cached_public_notice_refs(
+                    rows, identity_id=identity.identity_id if identity else None,
+                storage=self.storage,
+                )
                 # An empty 200 also earns a cached verdict; session ownership
                 # remains observable for the same selected provider set.
                 delivered = 0
@@ -1380,13 +1610,17 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 if not cancelled:
                     with self._search_generation_lock:
                         if request_current_locked():
-                            self.last_search = rows; self.last_search_warnings = []
+                            if not scoped:
+                                self.last_search = rows; self.last_search_warnings = []
                         else:
                             cancelled = True
                 completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                return CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
+                summary = CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
+                return (summary, () if cancelled else tuple(rows)) if return_rows else summary
 
     aggregate: list[SearchResult] = []
+    progressive_c_pairs = []
+    early_c = on_batch is not None
     warnings: list[str] = []
     failed = completed_count = 0
     cancelled = False
@@ -1433,7 +1667,32 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 break
             entry = self.registry.virtual_entry(session.provider_id)
             response_facets: list[CatalogSearchFacet] = []
-            if id(session) in foreign_owner_sessions:
+            if scoped:
+                # Pass the exact reader and cancellation fence into the
+                # worker. Never recover it from global navigation.
+                foreign = id(session) in foreign_owner_sessions
+                if (not foreign and entry is not None
+                        and "catalog.search.stream" in entry.capabilities
+                        and isinstance(session, ProviderSearchStream)
+                        and self._session_search_capabilities(session).supports_field(field)):
+                    streamed[session.provider_id] = entry.catalog_generation
+                    future = executor.submit(
+                        _search_virtual_stream_session, self, session, query, scope,
+                        field=field, content_types=tuple(content_types or ()),
+                        generation=entry.catalog_generation,
+                        publish=publish_from_provider, cancelled=request_cancelled,
+                        control=control, request_scope=request_scope,
+                    )
+                else:
+                    future = executor.submit(
+                        _search_provider_session, self, session, query, scope,
+                        field=field, content_types=tuple(content_types or ()),
+                        facade_type=type(self), public_only=foreign,
+                        response_facets=(response_facets if not foreign and on_batch is not None
+                                         and isinstance(session, ProviderSearchWithFacets) else None),
+                        request_scope=request_scope, request_cancelled=request_cancelled,
+                    )
+            elif id(session) in foreign_owner_sessions:
                 # Foreign streams have no per-upsert public response provenance.
                 # Force one response-bound worker and suppress stream events.
                 future = executor.submit(
@@ -1552,6 +1811,18 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                             f"{session.descriptor.display_name}: "
                             + _stale_public_fallback_warning(offline.status)
                         ]
+                if early_c and identity is not None and not request_cancelled():
+                    # Public C observations have no account/rights; the private
+                    # catalogue mirror remains a final, admitted aggregate.
+                    # Never publish a batch before its documentary producer.
+                    _clear_public_c_stamps(live_rows)
+                    progressive_c_pairs.extend(_ingest_public_search_c(
+                        self, live_rows, identity_id=identity.identity_id,
+                        now=int(time.time()), require_public_cover_witness=True,
+                    ))
+                    if request_cancelled():
+                        cancelled = True
+                        break
                 aggregate.extend(provider_rows)
                 warnings.extend(provider_warnings)
                 completed_count += 1
@@ -1583,7 +1854,16 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     for row in aggregate: unique[_search_result_scope_key(row)] = row
     rows = list(unique.values())
     variants = self._search_query_variants(query)
-    preference_scores = {id(row): self._search_preference_score(row) for row in rows}
+    if scoped:
+        prefs = identity.preferences
+        preference_scores = {
+            id(row): _search_preference_score(
+                row, reading_languages=tuple(prefs.reading_languages),
+                prefer_original_language=prefs.prefer_original_language is True,
+            ) for row in rows
+        }
+    else:
+        preference_scores = {id(row): self._search_preference_score(row) for row in rows}
     if len(variants) > 1 or any(preference_scores.values()):
         rows.sort(key=lambda row: (self._search_relevance(query, row) if len(variants) > 1 else 0, preference_scores.get(id(row), 0)), reverse=True)
     warnings = list(dict.fromkeys(warnings))
@@ -1594,20 +1874,36 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             row for row in rows
             if row.metadata.get("search_provenance") != "known_catalog_stale"
         ]
-        try: self._mirror_remote_results(live_results, identity_id=identity.identity_id)
+        try: _mirror_live_search_results(
+            self, live_results, identity_id=identity.identity_id,
+            c_already_ingested=early_c,
+        )
         except Exception: logger.warning("TRACE catalog mirror progressive search code=mirror_failed")
+        if early_c and not request_cancelled():
+            # A later supplier can complete a strong edition relation. Reuse
+            # the already persisted source snapshots; don't write observations
+            # twice or resurrect a superseded duplicate result.
+            keep = {id(row) for row in live_results}
+            pairs = [pair for pair in progressive_c_pairs if id(pair[0]) in keep]
+            if len({pair[0].source_provider for pair in pairs}) > 1:
+                try:
+                    _reconcile_progressive_public_c(self.storage, pairs, restore_own=True)
+                except Exception:
+                    logger.warning("TRACE notice c progressive code=late_reconciliation_failed")
     cancelled = cancelled or request_cancelled()
     if not cancelled and not warnings and failed == 0:
         self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
     if not cancelled:
         with self._search_generation_lock:
             if request_current_locked():
-                self.last_search = rows; self.last_search_warnings = warnings
+                if not scoped:
+                    self.last_search = rows; self.last_search_warnings = warnings
             else:
                 cancelled = True
     self.diagnostics.add("SEARCH", "progressive federated", detail={"providers": provider_key, "field": field, "results": len(rows), "completed": completed_count, "failed": failed, "cancelled": cancelled, "dt_ms": int((time.monotonic()-started_mono)*1000)}, level="detailed")
     completed_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    return CatalogSearchSummary(query, len(rows), len(searchable), completed_count, failed, cancelled, tuple(warnings), started_dt.isoformat(timespec="seconds"), completed_at)
+    summary = CatalogSearchSummary(query, len(rows), len(searchable), completed_count, failed, cancelled, tuple(warnings), started_dt.isoformat(timespec="seconds"), completed_at)
+    return (summary, () if cancelled else tuple(rows)) if return_rows else summary
 
 
 def search_local_library(self, query: str, scope: str='all', *, field: str='all', identity_id: str, age: int | None=None, age_kind: str | None=None, logger) -> list[dict[str, Any]]:
@@ -1641,11 +1937,55 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
     from ..core.search import KnownCatalogSearch
 
     resolved_identity = identity_id
+    # The known Search task is ALREADY queued off the GTK main thread.
+    # Read the durable public C cursor FIRST, before consulting per-profile
+    # legacy mirrors/possessions, and before any separate online extension.
+    # The current synchronous known-task callback still returns a combined
+    # snapshot; progressive public C UI batches remain a subsequent gate.
+    c_page = None
+    c_rows = []
+    if (type(query) is str and 2 <= len(query.strip()) <= 160
+            and field in ("all", "title", "author", "publisher")
+            and scope in ("all", "digital", "physical", "unknown")
+            and age is None):
+        from ..storage import Storage
+        if isinstance(getattr(self, "storage", None), Storage):
+            from .notice_c_public_search import search_public_notice_c
+            from .notice_c_known_projection import merge_public_notice_c_known_rows
+            from .search import filter_loaded_results
+            from sqlite3 import Error as SQLiteError
+            try:
+                c_page = search_public_notice_c(
+                    self.storage, query, field=field, scope=scope,
+                    provider_ids=tuple(provider_ids or ()), group_by_document=True,
+                )
+                c_rows = merge_public_notice_c_known_rows(
+                    [], c_page, identity_id=resolved_identity,
+                )
+                if content_types:
+                    c_rows = filter_loaded_results(
+                        c_rows, "", content_types=content_types,
+                    )
+            except (SQLiteError, ValueError, TypeError, AttributeError):
+                # Failed public metadata must never erase private possessions
+                # or turn an unproven empty C page into a search-zero verdict.
+                c_page = None
+                c_rows = []
     rows = KnownCatalogSearch(self.catalog_entries, self.library_entries).search(
         query, identity_id=resolved_identity, scope=scope, field=field,
         providers=provider_ids, content_types=content_types,
         age=age, age_kind=age_kind,
     )
+    if c_page is not None:
+        # Deduplicate a mirror ONLY if its exact, rights-free C source is
+        # itself visible under the requested format filter. A hidden C hit
+        # cannot delete a visible local/mirrored entry.
+        if len(c_rows) == len(c_page.hits):
+            rows = merge_public_notice_c_known_rows(
+                rows, c_page, identity_id=resolved_identity,
+            )
+        else:
+            rows = c_rows + rows
     logger.info(
         "TRACE search known identity=%s query_len=%s scope=%s field=%s results=%s",
         resolved_identity, len(str(query or "")), scope, field, len(rows),
@@ -1738,15 +2078,6 @@ def _public_catalog_url(
         return value
     except (ValueError, AttributeError, TypeError):
         return None
-
-
-def _numilog_public_catalog_url(
-    value: Any, *, cover: bool = False, evidence: str | None = None,
-) -> str | None:
-    """Compatibility for existing plugin callers; no supplier policy here."""
-    return _public_catalog_url(
-        value, cover=cover, evidence=evidence, provider_id="numilog",
-    )
 
 
 _PUBLIC_SEARCH_TEXT_FIELDS = (
@@ -1863,8 +2194,59 @@ def mirrored_catalogue_scoped_id(
     return hashlib.sha256(("mirror-v2\0" + scope).encode()).hexdigest()
 
 
+def mirrored_catalogue_revisioned_id(
+    identity_id: str, row: SearchResult,
+) -> str | None:
+    """Read-only mirror-v3 locator for one unambiguously versioned edition.
+
+    This is a legacy *presentation* cache, not the authority for Notice C or
+    holdings. The source account participates in the opaque hash, not a
+    person's display/profile ID. A malformed revision must not overwrite
+    a valid mirror-v2 row or acquire a v3 source certification.
+    """
+    if (type(row) is not SearchResult
+            or type(row.revision_id) is not str
+            or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", row.revision_id,
+            ) is None
+            or row.medium not in ("digital", "physical", "unknown")
+            or (row.source_account_id is not None
+                and (type(row.source_account_id) is not str
+                     or not row.source_account_id
+                     or len(row.source_account_id) > 512
+                     or "\0" in row.source_account_id))):
+        return None
+    if mirrored_catalogue_scoped_id(
+        identity_id, row.source_provider, row.record_id,
+        row.source_credential, row.docbase, row.source_collection,
+    ) is None:
+        return None
+    coordinates = (
+        identity_id, row.source_provider, row.record_id,
+        row.source_credential, row.docbase, row.source_collection or "",
+        row.source_account_id or "", row.medium, row.revision_id,
+    )
+    raw = json.dumps(coordinates, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(("mirror-v3\0" + raw).encode()).hexdigest()
+
+
 def _mirrored_catalogue_key(identity_id: str, row: SearchResult) -> tuple[str, bool]:
     """Keep historical incomplete scopes read-only; never infer a source."""
+    if row.revision_id not in (None, ""):
+        revised = mirrored_catalogue_revisioned_id(identity_id, row)
+        if revised is not None:
+            return revised, True
+        # An invalid revision must not overwrite a former valid v2 entry.
+        # Keep its exact bad source isolated but NEVER mark it qualified.
+        opaque = (
+            identity_id, row.source_provider, row.record_id,
+            row.source_credential, row.docbase, row.source_collection,
+            row.source_account_id, row.medium, row.revision_id,
+        )
+        raw = json.dumps(opaque, ensure_ascii=True, default=str)
+        return hashlib.sha256(
+            ("mirror-unqualified-revision\0" + raw).encode(),
+        ).hexdigest(), False
     scoped = mirrored_catalogue_scoped_id(
         identity_id, row.source_provider, row.record_id,
         row.source_credential, row.docbase, row.source_collection,
@@ -1875,7 +2257,108 @@ def _mirrored_catalogue_key(identity_id: str, row: SearchResult) -> tuple[str, b
     return hashlib.sha256(legacy.encode()).hexdigest(), False
 
 
-def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str | None=None) -> int:
+def _stamp_cached_public_notice_refs(
+    rows: list[SearchResult], *, identity_id: str | None,
+    storage: object | None = None,
+) -> None:
+    """Replay cached public Search coordinates from the durable C source.
+
+    A cache HIT does NOT recreate the nonserializable Core live-producer
+    witness and is never documentary evidence by itself. For bounded Core
+    workers with storage, upgrade only after reading an already persisted
+    canonical C contribution which exactly matches the public bibliographic
+    source. That index survives the shorter provider-source TTL.
+
+    Source-coordinate-only fallback preserves the old read-through contract;
+    N2 must still independently verify source bytes before showing a cover.
+    No HTTP, source writes, private data, GTK DB access or rights.
+    """
+    if type(identity_id) is not str or not identity_id:
+        return
+    from .notice_search_cover_producer import admit_public_search_cover
+    from .notice_cover_projection import notice_cover_document_ref
+    from .notice_c_exact_source_lookup import exact_public_source_c_many
+    from .notice_c_cached_revision import stamp_cached_c_revision
+
+    admitted = []
+
+    for index, row in enumerate(rows):
+        if type(row) is not SearchResult:
+            continue
+        for key in (
+            "_core_notice_cover_document_ref",
+            "_core_notice_cover_document_epoch",
+            "_core_notice_canonical_cover_document_ref",
+            "_core_notice_canonical_cover_document_epoch",
+            "_core_persisted_c_revision_witness",
+            "_core_cached_c_receipt",
+            "_core_notice_cross_provider_proof",
+        ):
+            row.__dict__.pop(key, None)
+        safe_url = _shared_catalogue_cover_url(row.thumbnail_url)
+        if safe_url is None:
+            continue
+        # A candidate coordinate is not an upstream freshness timestamp.
+        try:
+            snapshot = admit_public_search_cover(
+                row, identity_id=identity_id, observed_at=1,
+                public_cover_url=safe_url,
+            )
+            if snapshot is None:
+                continue
+            exact = notice_cover_document_ref(snapshot.key)
+            row._core_notice_cover_document_ref = exact
+            # Bounded indexed Core read, never a scan of supplier/HTTP cache.
+            # The UI's GTK bind may only consume the resulting exact ref.
+            if storage is None or index >= 256:
+                continue
+            coordinates = (row.source_provider, row.record_id, row.docbase,
+                           row.medium, row.revision_id)
+            admitted.append((row, exact, snapshot, coordinates))
+        except (ValueError, TypeError, UnicodeError, AttributeError):
+            continue
+
+    if not admitted:
+        return
+    resolved = exact_public_source_c_many(storage, [x[3] for x in admitted])
+    for row, exact, snapshot, coordinates in admitted:
+        try:
+            persisted = resolved.get(coordinates)
+            if persisted is None or not persisted.candidates:
+                continue
+            for source in persisted.sources:
+                facts = source.public_bibliography
+                if (source.source_ref == exact.source_key
+                        and source.provider_id == snapshot.key.provider_id
+                        and source.visibility == "public"
+                        and source.state == "available"
+                        and facts is not None
+                        and facts.edition_id == snapshot.key.edition_id
+                        and facts.record_id == row.record_id
+                        and facts.docbase == row.docbase
+                        and facts.medium == row.medium
+                        and facts.source_revision == row.revision_id
+                        and facts.title == row.title
+                        and facts.author == row.author):
+                    row._core_notice_canonical_cover_document_ref = (
+                        persisted.document
+                    )
+                    row._core_notice_canonical_cover_document_epoch = (
+                        persisted.epoch
+                    )
+                    stamp_cached_c_revision(row, persisted, identity_id=identity_id)
+                    break
+        except (ValueError, TypeError, UnicodeError, AttributeError):
+            # Corrupt/stale canonical metadata is not an absent source or a
+            # permission; keep the legacy exact-coordinate read-through.
+            # Never log raw source strings, credentials or signed cover URLs.
+            continue
+
+
+def _mirror_remote_results(
+    self, rows: list[SearchResult], *, identity_id: str | None = None,
+    require_public_cover_witness: bool = False,
+) -> int:
     """Persist remote notices only for an identity pinned at admission.
 
     A catalogue observation is not a right, and GTK navigation is not an
@@ -1886,21 +2369,15 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
     if type(identity_id) is not str or not identity_id.strip():
         return 0
     now = int(time.time())
-    # Generic exact Core ledger attestation; a legacy descriptive personal
-    # row may lack account/revision, but it never grants an actionable right.
-    # The stronger #5073 UI/action proof remains authoritative for actions.
-    from .catalogue_owned_projection import attested_catalogue_owned_keys
-    verified_owned = attested_catalogue_owned_keys(
-        self.storage, rows, identity_id=identity_id,
-    )
+    if not _CORE_PROGRESSIVE_C_WRITTEN.get():
+        _clear_public_c_stamps(rows)
+    # A catalogue mirror contains descriptive observations only. Neither a
+    # historical entitlement nor a supplier-owned flag can select its state.
+    # Private metadata remains scoped; an actual offer requires separate
+    # exact source admission and live verification.
     keyed: list[tuple[str, SearchResult, str, bool]] = []
     for row in rows:
-        owned = row.owned is True and (
-            row.source_provider, identity_id, row.source_credential,
-            row.source_account_id or "", row.record_id, row.revision_id or "",
-        ) in verified_owned
         state = (
-            "remote_owned" if owned else
             # This is descriptive only: a supplier price is not a purchase right.
             "available_to_buy" if type(row.price) is str and bool(row.price.strip()) else
             # A public catalogue notice is not a borrowing right.
@@ -1919,7 +2396,7 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
         raw_meta = dict(row.metadata or {})
         # "rights" is an untrusted provider claim (possibly a signed
         # token), never a public bibliographic field nor ownership evidence.
-        # The exact Core entitlement ledger alone determines remote_owned.
+        # No legacy or provider right participates in the mirror state.
         # This rule is provider-neutral: unknown plugins must not leak it.
         raw_meta.pop("rights", None)
         allowed_meta = {
@@ -1984,8 +2461,175 @@ def _mirror_remote_results(self, rows: list[SearchResult], *, identity_id: str |
                     _safe_public_search_text("description", row.description)
                     if type(row.description) is str else None
                 ),
-                "catalogue_scope_version": 2 if qualified else None,
+                # v3 is a read-only edition-sensitive mirror. Only the
+                # actual Notice C index confers a durable document source;
+                # neither revision nor mirrored availability grants rights.
+                "catalogue_scope_version": (
+                    3 if qualified and row.revision_id not in (None, "")
+                    else 2 if qualified else None
+                ),
+                "source_revision": (
+                    row.revision_id
+                    if qualified and row.revision_id not in (None, "")
+                    else None
+                ),
+                "source_account_id": (
+                    row.source_account_id
+                    if qualified and row.revision_id not in (None, "")
+                    else None
+                ),
             },
         })
     self.storage.catalog_entries_upsert_many(upserts)
+    if not _CORE_PROGRESSIVE_C_WRITTEN.get():
+        _ingest_public_search_c(
+            self, rows, identity_id=identity_id, now=now,
+            require_public_cover_witness=require_public_cover_witness,
+        )
     return len(upserts)
+
+def _clear_public_c_stamps(rows):
+    # Revoke a former producer association before validating current rows.
+    # A mutable supplier result may be reused by a later source batch.
+    for row in rows:
+        if type(row) is SearchResult:
+            row.__dict__.pop("_core_notice_cover_document_ref", None)
+            row.__dict__.pop("_core_notice_cover_document_epoch", None)
+            row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
+            row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
+            row.__dict__.pop("_core_persisted_c_revision_witness", None)
+            row.__dict__.pop("_core_notice_cross_provider_proof", None)
+            row.__dict__.pop("_core_cached_c_receipt", None)
+
+
+def _ingest_public_search_c(self, rows, *, identity_id, now,
+                            require_public_cover_witness=False):
+    """Persist public observations before publishing their batch; no legacy mirror."""
+    pairs = []
+    # The same public-document writer serves sync and progressive batches.
+    #
+    # Production Storage owns the durable source index. Test/fake storage
+    # backends without that index keep the existing mirror contract.
+    from ..storage import Storage
+    if isinstance(self.storage, Storage):
+        import sqlite3
+        from .notice_search_cover_producer import admit_public_search_catalogue
+        from .notice_cover_repository import persist_notice_cover_many
+        from .notice_c_cover_index import persist_exact_public_search_cover
+        producing_rows = []
+        observations = []
+        for row in rows:
+            if ((require_public_cover_witness or _CORE_LIVE_PUBLIC_C_WRITER.get())
+                    and not _verified_public_cover_witness(row)):
+                # Do not promote an arbitrary legacy/private SearchResult to C.
+                continue
+            public_url = _shared_catalogue_cover_url(row.thumbnail_url)
+            # A genuine same-call anonymous PUBLIC notice without any
+            # thumbnail still belongs in C. A rejected unsafe URL does not:
+            # that is not a verified absent image and cannot be a C producer.
+            if public_url is None and row.thumbnail_url is not None:
+                continue
+            try:
+                observed = admit_public_search_catalogue(
+                    row, identity_id=identity_id, observed_at=now,
+                    public_cover_url=public_url,
+                )
+            except (ValueError, TypeError, UnicodeError):
+                observed = None
+            if observed is None:
+                continue
+            producing_rows.append(row)
+            observations.append(observed)
+
+        if observations:
+            try:
+                persisted_batch = persist_notice_cover_many(
+                    self.storage, observations,
+                    field_path=("search_result", "thumbnail_url"),
+                    cover_inventory_complete=True,
+                )
+                for row, persisted in zip(producing_rows, persisted_batch):
+                    if persisted is None:
+                        logging.getLogger("cifereca").warning(
+                            "TRACE notice c public search code=source_persist_failed"
+                        )
+                        continue
+                    # Core stamps only a successfully accepted source and
+                    # its durable epoch. A GTK widget never writes a second
+                    # N2 source or infers an association from an N3 HIT.
+                    row._core_notice_cover_document_ref = persisted.document
+                    row._core_notice_cover_document_epoch = persisted.epoch
+                    # A public C source is exactly related to ITS OWN
+                    # producer-attested edition. No title/ISBN/URL or cross-
+                    # provider identity is inferred here. The canonical
+                    # index retains its own N2 revision and source proofs.
+                    if (persisted.observation.parser_version == "2"
+                            and _verified_public_cover_witness(row)):
+                        canonical = None
+                        try:
+                            canonical = persist_exact_public_search_cover(
+                                self.storage, persisted,
+                            )
+                        except (ValueError, TypeError, OSError, sqlite3.Error):
+                            logging.getLogger("cifereca").warning(
+                                "TRACE notice c public search code=canonical_source_failed"
+                            )
+                        else:
+                            row._core_notice_canonical_cover_document_ref = (
+                                canonical.document
+                            )
+                            row._core_notice_canonical_cover_document_epoch = (
+                                canonical.epoch
+                            )
+                            from .notice_c_live_revision import stamp_persisted_c_revision
+                            stamp_persisted_c_revision(row, canonical)
+                        pairs.append((row, persisted, canonical))
+                _reconcile_progressive_public_c(self.storage, pairs)
+            except (ValueError, TypeError, OSError, sqlite3.Error):
+                # Catalogue mirror remains independent. A broken source
+                # index cannot invent a cover or leak provider bytes/paths.
+                logging.getLogger("cifereca").warning(
+                    "TRACE notice c public search code=source_batch_failed"
+                )
+    return pairs
+
+
+def _reconcile_progressive_public_c(storage, pairs, *, restore_own=False):
+    """Restamp only currently verified persisted editions, never reobserve."""
+    from .notice_c_origin_link_producer import (
+        reconcile_origin_linked_public_batch, _CORE_ORIGIN_LINK_C_WITNESS,
+    )
+    from .notice_c_live_revision import stamp_persisted_c_revision
+
+    current = [(row, source, own) for row, source, own in pairs
+               if _verified_public_cover_witness(row)
+               and getattr(row, "_core_notice_cover_document_ref", None) == source.document
+               and getattr(row, "_core_notice_cover_document_epoch", None) == source.epoch]
+    if restore_own:
+        for row, source, own in current:
+            row.__dict__.pop("_core_notice_cross_provider_proof", None)
+            if own is None:
+                row.__dict__.pop("_core_notice_canonical_cover_document_ref", None)
+                row.__dict__.pop("_core_notice_canonical_cover_document_epoch", None)
+                row.__dict__.pop("_core_persisted_c_revision_witness", None)
+            else:
+                row._core_notice_canonical_cover_document_ref = own.document
+                row._core_notice_canonical_cover_document_epoch = own.epoch
+                stamp_persisted_c_revision(row, own)
+    # Only one writer; late reconciliation reuses accepted source snapshots.
+    linked = reconcile_origin_linked_public_batch(
+        storage, [source for _row, source, _own in current],
+    ) if current else {}
+    for row, source, _own in current:
+        shared = linked.get(source.document.source_key)
+        if shared is None:
+            continue
+        row._core_notice_canonical_cover_document_ref = shared.document
+        row._core_notice_canonical_cover_document_epoch = shared.epoch
+        stamp_persisted_c_revision(row, shared)
+        row._core_notice_cross_provider_proof = (
+            _CORE_ORIGIN_LINK_C_WITNESS, source.document.source_key,
+            shared.document.source_key, shared.epoch,
+        )
+
+

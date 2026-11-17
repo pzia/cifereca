@@ -7,6 +7,8 @@ borrow, fetch content, switch identity or send files.
 """
 from __future__ import annotations
 
+from .borrow_for_identity_copy_admission import navigation_epoch_current
+
 from dataclasses import dataclass
 
 from ..models import Account, SearchResult
@@ -89,7 +91,7 @@ def resolve_cross_profile_lender_placement(
         # expose another borrower's local path. The existing reader rejects
         # ambiguous receipts and verifies the actual local artifact.
         if (scope_current() is not True
-                or service._account_context_epoch != context_epoch
+                or not navigation_epoch_current(service, context_epoch, scope_current)
                 or service._source_context_epoch != source_epoch
                 or type(row) is not dict
                 or row.get("identity_id") != account.identity_id

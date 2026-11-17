@@ -88,9 +88,17 @@ def test_b_own_remote_right_unverified_or_other_edition_never_hides_send():
         ]
 
 
-def test_identical_shared_credential_keeps_existing_redundant_right_policy():
-    _, actions, _, submitted, _ = _actions_for((
+def test_shared_credential_right_does_not_prove_local_copy():
+    _, actions, events, submitted, _ = _actions_for((
         _poss("bob", "vault-a"),
     ))
-    assert [x._cifereca_action_id for x in actions] == ["open-local"]
-    assert submitted == []
+    assert [x._cifereca_action_id for x in actions] == [
+        "open-local", "send-local:bob",
+    ]
+    assert not submitted
+    actions[1].click()
+    assert len(submitted) == 1
+    assert submitted[0][0][1]()["target_identity_id"] == "bob"
+    assert events[-2:] == [
+        ("path", "placement", "alice"), ("send", "placement", "bob"),
+    ]

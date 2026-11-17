@@ -5,6 +5,8 @@ credentials, share an entitlement or synthesize a successful transfer receipt.
 """
 from __future__ import annotations
 
+from .borrow_for_identity_copy_admission import navigation_epoch_current
+
 from .borrow_for_identity_transfer_preflight import (
     preflight_cross_profile_loan_transfer,
 )
@@ -54,7 +56,7 @@ def send_cross_profile_borrowed_placement(
                 "reason_code": preflight.reason_code,
             }
         if (scope_current() is not True
-                or service._account_context_epoch != identity_epoch
+                or not navigation_epoch_current(service, identity_epoch, scope_current)
                 or service._source_context_epoch != source_epoch):
             return {**blocked, "loan": "confirmed",
                     "reason_code": "transfer_context_revoked"}
@@ -67,7 +69,7 @@ def send_cross_profile_borrowed_placement(
         # A revoked in-flight copy remains a filesystem fact; it must not
         # be advertised as a successful action for an obsolete requester.
         if (scope_current() is not True
-                or service._account_context_epoch != identity_epoch
+                or not navigation_epoch_current(service, identity_epoch, scope_current)
                 or service._source_context_epoch != source_epoch):
             return {**blocked, "loan": "confirmed", "delivery": "present",
                     "reason_code": "transfer_context_revoked"}

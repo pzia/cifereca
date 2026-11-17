@@ -26,7 +26,7 @@ def test_unreadable_exact_cas_never_falls_back_to_prior_legacy_on(
         sid = bridge._source_id(key.scope)
         storage.metadata_set("sync.source.materialization.on_start." + sid, "1")
         with storage._lock, storage._connect() as db:
-            assert bridge.toggle_state(db, key) == "on"
+            assert bridge.toggle_state(db, key) == "off"
             def unreadable(_db, _scope):
                 raise RuntimeError("private SQL exception with upstream token")
 

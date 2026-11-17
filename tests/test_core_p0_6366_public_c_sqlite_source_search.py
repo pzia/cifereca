@@ -1,0 +1,205 @@
+"""P0 #6366: public C source bibliography is searchable after cache expiry.
+
+This first stage is a bounded, read-only, independent C source cursor,
+not an account- or ISBN-joined catalogue and never a complete query answer.
+"""
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from cifereca.core.notice_c_public_search import search_public_notice_c
+from cifereca.core.notice_cover_repository import (
+    persist_notice_cover, read_notice_cover,
+)
+from cifereca.core.notice_search_cover_producer import (
+    admit_public_search_cover, admit_public_search_catalogue,
+    _CORE_PUBLIC_C_WITNESS,
+)
+from cifereca.storage import Storage
+from tests.test_core_p0_6366_real_search_notice_c_ingestion import (
+    public_row, URL,
+)
+from tests.test_core_p1_2385_notice_cover_persistence import (
+    PRIVATE, notice,
+)
+
+
+def verified_public(**kwargs):
+    row = public_row(**kwargs)
+    # This flag is assigned by the Core same-call anonymous projector; only
+    # test fixtures attach it directly to model a previously verified result.
+    row._core_notice_c_public_bibliography = _CORE_PUBLIC_C_WITNESS
+    return row
+
+
+def persist(db, row, at=100):
+    obs = admit_public_search_catalogue(
+        row, identity_id="alice", observed_at=at,
+        public_cover_url=row.thumbnail_url,
+    )
+    assert obs is not None
+    return persist_notice_cover(
+        db, obs, field_path=("search_result", "thumbnail_url"),
+        cover_inventory_complete=True,
+    )
+
+
+def test_c_search_reads_two_revisions_without_a_mirror_or_current_profile(tmp_path):
+    path = tmp_path / "source.sqlite"
+    db = Storage(path)
+    try:
+        first = verified_public(revision_id="rev-1", title="Les loups des bois")
+        second = verified_public(revision_id="rev-2", title="Le Loup du Nord")
+        other = verified_public(record_id="another-record", title="Les chiens")
+        saved = [persist(db, row) for row in (first, second, other)]
+        assert len({s.document for s in saved}) == 3
+        # None of the source observations requires entries in the *separate*
+        # legacy search or account-specific catalogue mirror.
+        assert db.catalog_entries() == []
+        page = search_public_notice_c(db, "loup", now=100)
+        assert page.status == "partial"
+        assert page.known_matches == 2
+        assert len(page.hits) == 2
+        assert {x.source_revision for x in page.hits} == {"rev-1", "rev-2"}
+        assert {x.document for x in page.hits} == {
+            saved[0].document, saved[1].document,
+        }
+        assert all(x.stale is False and x.cover_state == "available"
+                   for x in page.hits)
+        assert search_public_notice_c(
+            db, "loup", field="publisher", now=100,
+        ).hits == ()
+        assert search_public_notice_c(
+            db, "loup", provider_ids=("foreign",), now=100,
+        ).hits == ()
+        assert len(search_public_notice_c(
+            db, "loup", page_size=1, page=1, now=100,
+        ).hits) == 1
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+    reopened = Storage(path)
+    try:
+        stale = search_public_notice_c(
+            reopened, "loup", now=100 + 25 * 3600,
+        )
+        assert stale.status == "partial"
+        assert all(x.stale is True for x in stale.hits)
+        assert {x.document for x in stale.hits} == {
+            saved[0].document, saved[1].document,
+        }
+        assert all(read_notice_cover(reopened, x.document)
+                   for x in stale.hits)
+    finally:
+        reopened.close()
+
+
+def test_only_same_call_admitted_safe_public_text_enters_search_index(tmp_path):
+    db = Storage(tmp_path / "privacy.sqlite")
+    try:
+        no_marker = public_row(title="Un catalogue sans preuve d'enveloppe")
+        legacy = persist(db, no_marker)
+        assert legacy.observation.parser_version == "1"
+        assert search_public_notice_c(db, "catalogue", now=100).hits == ()
+
+        private = notice(key=PRIVATE)
+        persist_notice_cover(
+            db, private, field_path=("media", "cover"),
+            cover_inventory_complete=True,
+        )
+        assert search_public_notice_c(db, "livre", now=100).hits == ()
+        assert search_public_notice_c(db, "catalogue", now=100).scanned_sources == 1
+
+        bad = verified_public(
+            record_id="unsafe-source",
+            title="https://private.example.invalid?token=secret",
+        )
+        rejected = persist(db, bad)
+        assert rejected.observation.parser_version == "1"
+        assert search_public_notice_c(db, "private", now=100).hits == ()
+
+        private_account = verified_public(
+            record_id="account-row", source_account_id="borrower",
+        )
+        assert admit_public_search_catalogue(
+            private_account, identity_id="alice",
+            observed_at=100, public_cover_url=URL,
+        ) is None
+        signed = verified_public(
+            record_id="signed-image",
+            thumbnail_url=URL + "?token=secret",
+        )
+        assert admit_public_search_catalogue(
+            signed, identity_id="alice",
+            observed_at=100, public_cover_url=signed.thumbnail_url,
+        ) is None
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def test_budget_exceeded_never_converts_partial_index_to_attested_zero(tmp_path):
+    db = Storage(tmp_path / "large.sqlite")
+    try:
+        for index in range(5):
+            persist(db, verified_public(
+                record_id=f"record-{index}", title=f"Catalogue {index}",
+            ))
+        result = search_public_notice_c(
+            db, "nomatch", max_scan=2, now=100,
+        )
+        assert result.status == "budget_exceeded"
+        assert result.known_matches == 0
+        assert result.has_more is True
+        assert result.scanned_sources == 2
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("invalid", [
+    {"query": "x"}, {"query": "a" * 161},
+    {"query": "book", "max_scan": 30001},
+    {"query": "book", "page_size": 1000},
+    {"query": "book", "provider_ids": ("bnf", "")},
+    {"query": "book", "field": "rights"},
+])
+def test_search_c_rejects_invalid_queries(tmp_path, invalid):
+    db = Storage(tmp_path / "bad.sqlite")
+    try:
+        with pytest.raises(ValueError, match="invalid_notice_c_search_request"):
+            search_public_notice_c(db, **invalid)
+    finally:
+        db.close()
+
+
+def test_legacy_replay_cannot_downgrade_same_call_c_bibliography(tmp_path):
+    db = Storage(tmp_path / "downgrade.sqlite")
+    try:
+        live = verified_public(title="La forêt des loups")
+        rich = persist(db, live, at=100)
+        assert rich.observation.parser_version == "2"
+        assert rich.epoch == 1
+
+        # Cached SearchResult loses the nonserialized Core same-call stamp.
+        cached = replace(live)
+        plain = admit_public_search_cover(
+            cached, identity_id="bob",
+            observed_at=101, public_cover_url=cached.thumbnail_url,
+        )
+        assert plain is not None and plain.parser_version == "1"
+        replay = persist_notice_cover(
+            db, plain, field_path=("search_result", "thumbnail_url"),
+            cover_inventory_complete=True,
+        )
+        assert replay == rich
+        assert read_notice_cover(db, rich.document) == rich
+        c = search_public_notice_c(db, "forêt", now=102)
+        assert len(c.hits) == 1
+        assert c.hits[0].document == rich.document
+        assert c.hits[0].epoch == 1
+        assert c.hits[0].title == live.title
+    finally:
+        db.close()

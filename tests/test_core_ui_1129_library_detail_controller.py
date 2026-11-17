@@ -53,6 +53,7 @@ def _context(item=None, *, can_download=False, resolved_loan=None):
     )
     identity_labels = {"alice": "Alice", "bob": "Bob"}
     service = NS(
+        current_identity=NS(identity_id="alice"),
         identity_by_id=lambda key: NS(label=identity_labels[key])
         if key in identity_labels else None,
         provider_display_name=lambda key: {"paris": "Paris", "kobo": "Kobo"}.get(key, key),

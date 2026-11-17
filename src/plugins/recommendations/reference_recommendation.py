@@ -92,6 +92,11 @@ class _ReferenceCatalog:
         return self._filtered(self.catalog.search(query, **kwargs))
 
     def __getattr__(self, name: str):
+        if name == "known_public_notices":
+            reader = getattr(self.catalog, name)
+            def known(query: str, **kwargs: Any):
+                return self._filtered(reader(query, **kwargs))
+            return known
         if name != "search_progressive":
             return getattr(self.catalog, name)
         progressive = getattr(self.catalog, "search_progressive", None)
@@ -149,6 +154,7 @@ def compute_reference_recommendations(
     catalog_broker: Any,
     book: Any,
     *,
+    identity_id: str | None = None,
     scope: str = "digital",
     max_queries: int = 8,
     per_query: int = 50,
@@ -162,6 +168,11 @@ def compute_reference_recommendations(
 ) -> RecommendationResult:
     """Compute recommendations using only the selected book as profile seed."""
 
+    bind_catalog = getattr(type(catalog_broker), "for_identity", None)
+    if callable(bind_catalog):
+        if type(identity_id) is not str or not identity_id:
+            raise ValueError("search_identity_required")
+        catalog_broker = bind_catalog(catalog_broker, identity_id)
     plan = prepare_reference(book, max_queries=max_queries)
     owned_profile = build_profile(list(owned_books)) if owned_books else None
     return compute_recommendations(

@@ -21,6 +21,7 @@ from ..providers import ProviderConfigurationError
 from ..plugin_api import BundleError, load_bundle_manifest
 from .local_placement_open_guard import scoped_existing_placement_path
 from .local_cover_evidence import project_verified_local_cover_evidence
+from .loan_display_cache import loan_display_rows
 
 
 def _history_cache_key(account: Account) -> str:
@@ -44,6 +45,76 @@ def _history_cache_key(account: Account) -> str:
         json.dumps(scope, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     ).hexdigest()
     return f"history-v4:{digest}"
+
+
+
+def _pinned_history_c_rows(rows: object, account: Account, *, descriptors: tuple) -> list[HistoryItem]:
+    """Qualify borrowed history DTOs only from an exact, leased Core read.
+
+    The Paris normalizer (and other legacy adapters) can omit owner fields.
+    A completed history(account) with a CURRENT native source lease is the
+    positive borrower proof; C's independent public source still decides
+    the document. Do not overwrite a contradictory source/owner, guess an
+    edition, or copy any authorization into the canonical catalogue.
+    The caller must check the lease BEFORE invoking this function.
+    """
+    if (type(account) is not Account or type(rows) is not list
+            or type(account.identity_id) is not str or not account.identity_id
+            or type(account.provider_id) is not str or not account.provider_id
+            or type(account.credential_id) is not str
+            or not account.credential_id
+            or type(account.unique_id) is not str):
+        return []
+    # An account-scoped history read is not, by itself, a proof that the
+    # source's book RecordId identifies a public catalogue edition.
+    from .notice_c_borrower_public_projection import _attested_public_edition, _declared_branches
+    declarations = _declared_branches(descriptors)
+    qualified: list[HistoryItem] = []
+    for item in rows:
+        if (type(item) is not HistoryItem
+                or _attested_public_edition(item, declarations) is None
+                or item.thumbnail_url is not None
+                or type(item.source_provider) is not str
+                or item.source_provider != account.provider_id
+                or type(item.source_credential) is not str
+                or item.source_credential != account.credential_id
+                or type(item.identity_id) not in (str, type(None))
+                or item.identity_id not in (None, account.identity_id)
+                or type(item.source_account_id) not in (str, type(None))
+                or item.source_account_id not in (None, account.unique_id)):
+            continue
+        # Normalize only missing *account* coordinates after a verified
+        # provider read; a supplier-supplied different owner always vetoes.
+        if item.identity_id is None:
+            item.identity_id = account.identity_id
+        if item.source_account_id is None:
+            item.source_account_id = account.unique_id
+        qualified.append(item)
+    return qualified
+
+
+def _leased_cached_history_c_rows(
+    self, rows: list[HistoryItem], *, account: Account,
+    scope: tuple[str, str, str, str], source_epoch: int, descriptors: tuple,
+) -> list[HistoryItem]:
+    """Cached history stays readable offline, but no C link without lease.
+
+    Cache key is borrower-scoped, not provider authority. Validate the exact
+    still-registered provider source before stamping a public C fallback.
+    """
+    try:
+        # Reuse only the already-registered session. A cache hit must not
+        # resolve/reconnect a provider merely to decorate private history.
+        session = self._sessions.get(
+            self._session_key(account.provider_id, account.credential_id),
+        )
+        if session is None or not self._history_source_lease_current(
+            account, session, scope=scope, epoch=source_epoch,
+        ):
+            return []
+    except (ProviderConfigurationError, AttributeError, TypeError, ValueError):
+        return []
+    return _pinned_history_c_rows(rows, account, descriptors=descriptors)
 
 
 def refresh_history(
@@ -75,6 +146,23 @@ def refresh_history(
         cached = self.storage.cache_get("account", key)
         if isinstance(cached, list):
             rows = [HistoryItem(**x) for x in cached]
+            # A cache key is not a current borrower lease. Revalidate the
+            # exact source before filling missing owner coordinates for C.
+            # All enrichment remains on this existing Core worker.
+            from .notice_c_borrower_public_projection import (
+                attach_borrower_public_c, borrower_public_c_descriptors,
+            )
+            descriptors = borrower_public_c_descriptors(self, source_epoch=source_epoch)
+            qualified = _leased_cached_history_c_rows(
+                self, rows, account=account, scope=source_scope,
+                source_epoch=source_epoch, descriptors=descriptors,
+            )
+            if qualified:
+                attach_borrower_public_c(
+                    self.storage, qualified, identity_id=account.identity_id,
+                    account_epoch=epoch, source_epoch=source_epoch,
+                    descriptors=descriptors,
+                )
             if self._account_context_epoch == epoch and self.current_account is account:
                 self.last_history = rows
             self.diagnostics.add("CACHE", "history", detail={"hit": True, "count": len(rows)})
@@ -123,6 +211,23 @@ def refresh_history(
     ):
         raise ProviderConfigurationError("history_source_binding_changed")
     self.storage.cache_put("account", key, [asdict(x) for x in rows], ttl)
+    # Only a still-valid source lease may fill the missing owner fields
+    # of legacy provider HistoryItem DTOs. Do this AFTER cache serialization:
+    # no private C witness or synthesized owner enters persisted data.
+    from .notice_c_borrower_public_projection import (
+        attach_borrower_public_c, borrower_public_c_descriptors,
+    )
+    descriptors = borrower_public_c_descriptors(self, source_epoch=source_epoch)
+    if self._history_source_lease_current(
+        account, session, scope=source_scope, epoch=source_epoch,
+    ):
+        qualified = _pinned_history_c_rows(rows, account, descriptors=descriptors)
+        if qualified:
+            attach_borrower_public_c(
+                self.storage, qualified, identity_id=account.identity_id,
+                account_epoch=epoch, source_epoch=source_epoch,
+                descriptors=descriptors,
+            )
     if self._account_context_epoch == epoch and self.current_account is account:
         self.last_history = rows
     return rows
@@ -435,6 +540,16 @@ def _openable_scoped_placement(self, placement: dict[str, Any], *,
         return False
 
 
+def _scoped_loan_display_index(service, identity_id):
+    """Navigation-independent optional metadata; never a possession proof."""
+    by_scope = {}
+    for row in loan_display_rows(service, identity_id):
+        key = (row.identity_id, row.source_provider, row.source_credential,
+               row.source_account_id, str(row.record_id or row.id))
+        by_scope.setdefault(key, []).append(row)
+    return by_scope
+
+
 def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -> list[dict[str, Any]]:
     """Return recent local materializations, newest first.
 
@@ -472,21 +587,7 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         origin_scopes.setdefault((owner, artifact), set()).add(
             (provider, credential, account, edition, kind)
         )
-    loans_by_scope: dict[tuple[str, str, str, str, str], Loan] = {}
-    for loan in self.last_loans:
-        try:
-            loan_identity = loan.identity_id or self.identity_for_connection(
-                loan.source_provider, loan.source_credential,
-            ).identity_id
-        except Exception:
-            loan_identity = loan.identity_id
-        # None is an unknown borrower, not the empty primary-account ID.
-        if type(loan.source_account_id) is not str or not loan_identity:
-            continue
-        loans_by_scope[(
-            loan_identity, loan.source_provider, loan.source_credential,
-            loan.source_account_id, str(loan.record_id or loan.id),
-        )] = loan
+    loans_by_scope = _scoped_loan_display_index(self, identity_id)
     entitlements_by_scope: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
     for entitlement in self.storage.entitlements():
         key = (
@@ -574,7 +675,8 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
             scope_key = (row_identity, source_provider, credential, borrower, edition)
             # A real provider loan cannot decorate a purchase-only OriginLink
             # (and vice versa), even within the same account and edition.
-            loan = loans_by_scope.get(scope_key) if source_kind == "loan" else None
+            matching = loans_by_scope.get(scope_key, ()) if source_kind == "loan" else ()
+            loan = matching[0] if len(matching) == 1 else None
             if loan is not None:
                 value = cover_candidate(
                     loan.thumbnail_url, tier="origin", source="loan",
@@ -623,7 +725,11 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
                     if verified_source.is_file():
                         recent_cover_facts = project_verified_local_cover_evidence(
                             identity_id=row_identity,
-                            book_key=recent_placement_id,
+                            # Canonical Library key for this very Artifact.
+                            # Placement remains explicit in the DocumentRef,
+                            # so equal EPUB bytes in two placements do NOT
+                            # manufacture an ownership/documentary join.
+                            book_key=f"artifact:sha256:{digest}",
                             artifact_id=recent_artifact_id,
                             placement_id=recent_placement_id,
                             artifact_sha256=digest,
@@ -656,6 +762,13 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         rows.append(entry_view)
         if len(rows) >= max(1, limit):
             break
+    # Existing worker-only Core read; attach exact PUBLIC C fallback only
+    # when a completed provider OriginLink proves this owner/Artifact/
+    # Placement association. Never substitute it for an extracted EPUB.
+    from .notice_c_local_origin_projection import project_local_origin_public_c
+    project_local_origin_public_c(
+        self.storage, rows, identity_id=identity_id,
+    )
     return rows
 
 
@@ -1353,24 +1466,24 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
     # A v0.7 backup projection is not scoped by identity/borrower: even a
     # descriptive title/cover can leak a former owner's private metadata.
     # Present only catalogue, canonical entitlement and scoped loan facts.
-    from .observed_import_provenance import (
-        observed_import_links, provider_scoped_observed_links,
-    )
-    # Retain historical display hints only under their exact source provider.
-    observed_loan_display_aliases = provider_scoped_observed_links(
-        'bnf-pret',
-        observed_import_links(
-            self.storage,
-            [p for rows in placements_by_artifact.values() for p in rows],
-            local_keys, provider_id='bnf-pret',
-            provenance_field='bnf_observed_loan',
+    from .observed_import_provenance import observed_import_links_for_sources
+    # The source of a manual-import display hint is the entitlement's exact
+    # stored provider, never a branded Core selector. The reader accepts
+    # only legacy fields that the generic manual-import writer can produce.
+    # These hints remain display-only; an OriginLink always takes priority.
+    loan_entitlements = self.storage.entitlements()
+    observed_loan_display_aliases = observed_import_links_for_sources(
+        self.storage,
+        [p for rows in placements_by_artifact.values() for p in rows],
+        local_keys,
+        providers=(
+            row.get("provider_id") for row in loan_entitlements
+            if type(row) is dict and row.get("entitlement_type") == "loan"
         ),
     )
-    loans_by_key: dict[tuple[str, str, str | None, str], Loan] = {}
-    for loan in self.last_loans:
-        loans_by_key[(loan.source_provider, loan.source_credential, loan.source_account_id, str(loan.record_id or loan.id))] = loan
+    loans_by_key = _scoped_loan_display_index(self, identity_id)
 
-    for entitlement in self.storage.entitlements():
+    for entitlement in loan_entitlements:
         if not _entitlement_visible_in_library(entitlement):
             continue
         status = str(entitlement.get("state") or "")
@@ -1422,10 +1535,13 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
         meta = dict(entitlement.get("metadata") or {})
         # An active loan may share the same edition/account as an owned right;
         # its title, cover and format must not decorate a purchase possession.
-        loan = (loans_by_key.get((
-            provider_id, str(entitlement.get("credential_id") or ""),
-            entitlement.get("account_id"), item_id,
-        )) if entitlement_type == "loan" else None)
+        matching = (loans_by_key.get(exact_scope, ())
+                    if entitlement_type == "loan"
+                    and type(entitlement.get("account_id")) is str else ())
+        expected_loan = entitlement.get("loan_id")
+        if expected_loan:
+            matching = tuple(row for row in matching if row.id == expected_loan)
+        loan = matching[0] if len(matching) == 1 else None
         loan_extra = dict((loan.raw or {}).get("_cifereca") or {}) if loan is not None and isinstance((loan.raw or {}).get("_cifereca"), dict) else {}
         title = str(meta.get("title") or (loan.title if loan else "") or existing.get("title") or item_id)
         author = meta.get("author") or (loan.author if loan else None) or loan_extra.get("author") or existing.get("author")
@@ -1499,7 +1615,7 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
         # must not downgrade the shared visible row from active to archived.
         if existing.get("state") == "remote_owned" and remote_state == "remote_archived":
             remote_state = "remote_owned"
-        possession={"identity_id": entitlement_identity, "provider_id": provider_id, "item_id": item_id, "kind": entitlement_type, "account_id": entitlement.get("account_id"), "entitlement_id": entitlement.get("entitlement_id"), "expires_at": entitlement.get("expires_at"), "state": entitlement.get("state") or "active"}
+        possession={"identity_id": entitlement_identity, "provider_id": provider_id, "item_id": item_id, "kind": entitlement_type, "account_id": entitlement.get("account_id"), "credential_id": entitlement.get("credential_id"), "entitlement_id": entitlement.get("entitlement_id"), "expires_at": entitlement.get("expires_at"), "state": entitlement.get("state") or "active"}
         if existing:
             add_unique(existing.setdefault("providers", []), provider_id)
             add_unique(existing.setdefault("identity_ids", []), entitlement_identity)
@@ -1624,5 +1740,9 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
         row["source_count"] = len(row.get("source_refs") or [])
         result.append(row)
     result.sort(key=lambda row: (str(row.get("title") or "").casefold(), str(row.get("provider_id") or "")))
+    from .notice_c_local_origin_projection import project_local_origin_public_c
+    project_local_origin_public_c(
+        self.storage, result, identity_id=identity_id,
+    )
     logger.info("TRACE library-entries end identity=%s count=%s dt=%.3fs", identity_id, len(result), time.monotonic()-_lib_started)
     return result

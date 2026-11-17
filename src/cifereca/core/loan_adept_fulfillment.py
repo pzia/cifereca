@@ -4,14 +4,30 @@ The caller retains borrower/profile admission, destination, lock, retry and
 ledger ownership. This stage neither publishes nor indexes the artifact.
 """
 
+class SourceEpochRevoked(RuntimeError):
+    """The pinned source changed before ADEPT execution; no provider detail."""
+
+
 def fulfill(self, request, *, profile_name, adept_borrower_identity_id,
-            trace_ref, time, _TRACE_LOG, trace_integer):
+            trace_ref, time, _TRACE_LOG, trace_integer,
+            source_epoch_current=None):
     _TRACE_LOG.info(
         "TRACE download adept begin loan_ref=%s",
         trace_ref,
     )
     adept_started = time.monotonic()
     originating_profile_id = self._originating_adept_profile_id(adept_borrower_identity_id, profile_name)
+    # The originating-profile lookup is another asynchronous-capable hook.
+    # A previously valid source may have been rebound A->B->A during it.
+    # Check the pinned SQLite generation *after* this hook and immediately
+    # before the one-shot ADEPT execution; never refresh the grant here.
+    if source_epoch_current is not None:
+        try:
+            valid = source_epoch_current() is True
+        except Exception:
+            valid = False
+        if not valid:
+            raise SourceEpochRevoked()
     result = self.execute_acquisition_request(request)
     from ..adept_binding import capture_binding
     adept_binding = capture_binding(result, profile_name=profile_name, profile_id=originating_profile_id)

@@ -4,6 +4,8 @@ from __future__ import annotations
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
+import pytest
+
 from cifereca.gui.library_global_projection import global_library_display_rows
 from cifereca.gui.library_rows import project_library_rows
 from cifereca.gui.library_detail_controller import library_selected
@@ -95,7 +97,28 @@ def test_refresh_global_mode_only_reads_core_projection_without_scans():
     host.service.catalog_scan.assert_not_called()
 
 
-def test_foreign_book_does_not_load_provider_detail_or_supplier_actions(monkeypatch):
+class _HostileLibraryViewOwner:
+    def __eq__(self, _other):
+        raise AssertionError("provider-owned view marker equality must not run")
+
+
+@pytest.mark.parametrize(("owner", "marker", "active"), [
+    ("alice", "alice", "bob"),
+    ("alice", None, "bob"),
+    ("alice", "bob", "bob"),
+    ("bob", "alice", "bob"),
+    ("alice", _HostileLibraryViewOwner(), "bob"),
+    (False, "alice", "bob"),
+    (False, None, "bob"),
+    ("", None, "bob"),
+    (None, None, "bob"),
+    (_HostileLibraryViewOwner(), None, "bob"),
+    ("alice", None, None),
+    ("alice", None, _HostileLibraryViewOwner()),
+])
+def test_foreign_book_does_not_load_provider_detail_or_supplier_actions(
+    monkeypatch, owner, marker, active,
+):
     from cifereca.gui import library_detail_controller
     monkeypatch.setattr(
         library_detail_controller, "local_book_detail_sections",
@@ -107,13 +130,13 @@ def test_foreign_book_does_not_load_provider_detail_or_supplier_actions(monkeypa
         empty=lambda *a: calls.append("empty"),
     )
     item = {
-        "key": "artifact:a", "identity_id": "alice",
-        "_library_view_owner": "alice",
+        "key": "artifact:a", "identity_id": owner,
+        "_library_view_owner": marker,
         "placement_id": "placed-a", "artifact_id": "sha256:a",
         "title": "Alice book", "source": "loan", "loan_id": "private-a",
     }
     svc = NS(
-        current_identity=NS(identity_id="bob"),
+        current_identity=NS(identity_id=active) if active is not None else None,
         provider_display_name=lambda x: x,
         identity_by_id=lambda x: NS(label=x),
     )

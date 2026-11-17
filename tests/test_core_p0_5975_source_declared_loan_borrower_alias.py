@@ -200,3 +200,48 @@ def test_loan_source_fields_must_be_native_and_no_private_values_leak():
             primary_alias="reader-main",
         )
     assert "synthetic" not in str(caught.value)
+
+
+@pytest.mark.parametrize("alias", ["reader-main", "principal-v2", "primary"])
+def test_return_preflight_accepts_installed_alias_not_core_literal(alias):
+    from cifereca.core.loan_return_guard import return_key
+
+    primary = _account()
+    service = _service([primary], alias=alias)
+    session = NS(connected=True)
+    service._sessions = {service._session_key("synthetic", "cred"): session}
+    account, resolved, key = service._return_loan_identity(_loan(alias))
+    assert account is primary and resolved is session
+    assert key == return_key("synthetic", "cred", alias, "loan")
+
+
+@pytest.mark.parametrize("borrower,alias,uid,primary", [
+    ("primary", "reader-main", "", True),
+    ("reader-main", None, "", True),
+    ("reader-main", "reader-main", "", False),
+    ("", "reader-main", "primary", True),
+    ("", "reader-main", "", False),
+    ("reader-main", "reader-main", "other", True),
+])
+def test_return_preflight_independently_refuses_unproven_alias(
+    borrower, alias, uid, primary,
+):
+    from cifereca.plugin_api import AttentionRequired
+
+    account = _account(uid, primary=primary)
+    service = _service([account], alias=alias)
+    # A substituted resolver cannot revive the old alias shortcut.
+    service._account_for_loan = lambda _loan: account
+    service._session_key = lambda *_: pytest.fail("unproven alias reached session")
+    with pytest.raises(AttentionRequired) as denied:
+        service._return_loan_identity(_loan(borrower))
+    assert denied.value.code == "loan_return_borrower_mismatch"
+
+
+def test_return_preflight_literal_borrower_remains_independent_of_alias():
+    linked = _account("primary", primary=False)
+    service = _service([linked], alias="reader-main")
+    session = NS(connected=True)
+    service._sessions = {service._session_key("synthetic", "cred"): session}
+    account, resolved, _key = service._return_loan_identity(_loan("primary"))
+    assert account is linked and resolved is session

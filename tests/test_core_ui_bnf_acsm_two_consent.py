@@ -366,3 +366,32 @@ def test_deferred_acsm_workers_have_no_gtk_selection_or_token_reads():
         assert "current_identity" not in attrs
         assert "_identity_context_generation" not in attrs
         assert "_account_context_generation" not in attrs
+
+
+def test_first_consent_captures_core_source_lease_before_submit():
+    w, _ = window()
+    queue = []
+    admitted = object()
+    w.service.capture_admitted_loan_acsm_stage = Mock(return_value=admitted)
+    w.runner = NS(submit=lambda *args, **kwargs: queue.append(args))
+    start(w)
+    w.service.capture_admitted_loan_acsm_stage.assert_not_called()
+    Dialog.shown[0].respond("get")
+    capture = w.service.capture_admitted_loan_acsm_stage.call_args
+    assert capture.kwargs == {"expected_identity_id": "default"}
+    assert len(queue) == 1
+    w.service.current_identity = NS(identity_id="another")
+    w._identity_context_generation += 1
+    assert queue[0][1]()["status"] == "candidate_acsm"
+    assert w.service.stage_explicit_loan_acsm.call_args.args[0] is capture.args[0]
+    assert w.service.stage_explicit_loan_acsm.call_args.kwargs["admitted_lease"] is admitted
+
+
+def test_denied_core_source_lease_does_not_enqueue_or_get():
+    w, actions = window()
+    w.service.capture_admitted_loan_acsm_stage = Mock(return_value=None)
+    start(w)
+    Dialog.shown[0].respond("get")
+    assert actions == []
+    w.service.stage_explicit_loan_acsm.assert_not_called()
+    w.show_error.assert_called_once()

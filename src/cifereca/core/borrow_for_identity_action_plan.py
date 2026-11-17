@@ -36,7 +36,7 @@ def prepare_cross_profile_lender_action_plan(
     service, *, captured_preview: BorrowForIdentityPreview,
     selected_option_id: str, expected_edition_id: str,
     observations: object, now: int | None = None,
-    requesting_identity_id: str | None = None, scope_current=None,
+    requesting_identity_id: str | None = None, scope_current=None, reader_scope=None,
 ) -> CrossProfileLenderActionPlan:
     """Re-resolve *only* the clicked lender's exact account and edition.
 
@@ -58,8 +58,17 @@ def prepare_cross_profile_lender_action_plan(
                 or not callable(scope_current)
                 or scope_current() is not True):
             return revoked
-        context_epoch = service._account_context_epoch
         source_epoch = source_context_epoch(service)
+        if reader_scope is not None:
+            from .search_orchestration import SearchReadScope
+            if (type(reader_scope) is not SearchReadScope
+                    or reader_scope.identity_id != requesting_identity_id
+                    or reader_scope.source_epoch != source_epoch
+                    or not reader_scope.current(service)):
+                return revoked
+            context_epoch = reader_scope.source_epoch
+        else:
+            context_epoch = service._account_context_epoch
         if (type(context_epoch) is not int or context_epoch < 0
                 or type(source_epoch) is not int or source_epoch < 0
                 or scope_current() is not True):
@@ -71,6 +80,7 @@ def prepare_cross_profile_lender_action_plan(
             observations=observations, now=now,
             requesting_identity_id=requesting_identity_id,
             scope_current=scope_current,
+            **({"reader_scope": reader_scope} if reader_scope is not None else {}),
         )
         if (selection.status != "current" or selection.executable is not False
                 or not selection.borrowing_identity_id
@@ -110,7 +120,8 @@ def prepare_cross_profile_lender_action_plan(
         key = borrow_claim_key(account, notice)
         if (key is None or service.storage.metadata_get(key) is not None
                 or scope_current() is not True
-                or service._account_context_epoch != context_epoch
+                or (not reader_scope.current(service) if reader_scope is not None
+                    else service._account_context_epoch != context_epoch)
                 or source_context_epoch(service) != source_epoch):
             return revoked
         return CrossProfileLenderActionPlan(
@@ -124,4 +135,25 @@ def prepare_cross_profile_lender_action_plan(
         return revoked
 
 
-__all__ = ["CrossProfileLenderActionPlan", "prepare_cross_profile_lender_action_plan"]
+def prepare_lender_plan_for_scope(
+    service, *, captured, selected_option_id: str, expected_edition_id: str,
+    observations: object, now: int | None = None,
+):
+    """Read-only plan for the original scoped preview, never permission."""
+    from .borrow_for_identity_live import ScopedBorrowPreview
+    from .search_orchestration import SearchReadScope
+    if (type(captured) is not ScopedBorrowPreview
+            or type(captured.reader_scope) is not SearchReadScope
+            or not captured.reader_scope.current(service)):
+        return CrossProfileLenderActionPlan("revoked", "lender_plan_revoked")
+    scope = captured.reader_scope
+    return prepare_cross_profile_lender_action_plan(
+        service, captured_preview=captured.preview, selected_option_id=selected_option_id,
+        expected_edition_id=expected_edition_id, observations=observations, now=now,
+        requesting_identity_id=scope.identity_id,
+        scope_current=lambda: scope.current(service), reader_scope=scope,
+    )
+
+
+__all__ = ["CrossProfileLenderActionPlan", "prepare_cross_profile_lender_action_plan",
+           "prepare_lender_plan_for_scope"]

@@ -21,6 +21,19 @@ Faire progresser Cifereca par **une action prioritaire et vérifiable à la fois
 
 **Filtre suspensif `PU` (prioritaire sur P0/P-1/P1/P2) :** avant toute sélection ou reprise de PR, exclure les issues étiquetées `PU`, même dans un chantier actif et même après un `next max`. Ne pas coder, tester, prendre une branche, relancer une PR, merger ou clore une réalisation `PU`. Seul le rôle `backlog` vérifie le nouvel input utilisateur et **retire `PU`** pour réintroduire l'issue dans sa priorité existante. Si une dépendance `PU` bloque entièrement un autre ticket, signaler le blocage au backlog pour étiquetage transitif ; si le travail reste autonome, continuer uniquement dans son périmètre propre. Voir [AGENTS.md](../../AGENTS.md#pu--suspension-dexécution-distincte-de-p0p1p2).
 
+## FOCUS #5975 — ordre de livraison révisé (16/11/2026)
+
+Pour le seul P0 de découplage [#5975](https://github.com/pzia/cifereca/issues/5975), choisir en premier les lots qui **suppriment une décision fournisseur encore exécutée** dans Core/CoreUI et coupent ses anciens appelants/writers. N'entamer ni chasse à tous les AST bruts, ni durcissement générique de concurrence/ABA, ni réconciliation parfaite des liens EPUB récupérables, ni audit exhaustif #5376 avant la sortie du couplage. Une perte de liaison retéléchargeable, rendue honnêtement « à récupérer », est acceptable ; jamais de suppression silencieuse du seul EPUB ni de droit/mutation sous une autre identité.
+
+Chaque « next max » doit viser une coupure utilisable et mesurée, avec tests pertinents et CI requis, puis transmettre la PR au rôle CI/CD. **Un pilote d'implémentation** et **un agent CI/CD d'intégration** peuvent agir simultanément ; CI/CD ne corrige pas l'implémentation métier ni ne résout une divergence d'autorisation à la place du pilote. Un `P-1` différable, y compris #5376, ne constitue pas à lui seul une barrière à la clôture du parent.
+
+## FOCUS #6366 — livraison réelle avant robustesse exhaustive (16/11/2026)
+
+Priorité : **fournisseur réel → C persistante/indexée → Search C-first progressif → N1/N2/N3 communs → six vues liste/détail**, puis test reboot/offline et CI du HEAD. Consolider deux sources seulement avec preuve forte de même édition ; sinon garder des C distinctes. Une miniature manquante devient placeholder. Ne pas créer scheduler P2 #4982, moteur de cache parallèle, ni exiger chaque combinaison TTL/ABA/3 profils/2 comptes, toutes les invalidations et métriques avant la fermeture du P0.
+
+Rester strict sur la bonne édition, les scopes privés et actions, l'absence de faux droit ou de mutation fournisseur sous mauvais compte, l'intégrité SQLite, les copies EPUB irremplaçables et l'absence de blocage GTK. Les autres raffinements restent dans les P1 existants ; l'agent pilote le code, CI/CD suit les gates/merges. Voir [#6366](https://github.com/pzia/cifereca/issues/6366).
+
+
 ## Périmètre strict — invariant d'exécution
 
 **À chaque étape, Focus résout exclusivement le ticket retenu dans les limites de la demande utilisateur.** Une restriction explicite de chantier, fournisseur, rôle ou composant demeure applicable d'un ticket à l'autre jusqu'à nouvel ordre de l'utilisateur. Les règles transversales [AGENTS.md](../../AGENTS.md#périmètre-strict-du-ticket-et-restitution-par-défaut) restent impératives.

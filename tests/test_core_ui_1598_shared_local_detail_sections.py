@@ -157,6 +157,7 @@ class Button:
 def _adapters(item, availability):
     search_projection, library_projection, remote_calls = [], [], []
     service = NS(
+        current_identity=NS(identity_id="alice"),
         provider_display_name=lambda provider: provider.upper(),
         identity_by_id=lambda key: NS(label=f"Profile {key}") if key else None,
         can_download_loan=lambda loan: False,

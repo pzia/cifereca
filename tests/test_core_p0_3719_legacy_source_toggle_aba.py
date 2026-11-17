@@ -11,10 +11,9 @@ import sqlite3
 import pytest
 
 from cifereca.brokers import SynchronizationBrokerImpl
-from cifereca.core.source_auto_consent_bridge import (
-    _consent_generation_key, consent_generation,
-)
-from cifereca.core.source_sync_consent import scope_for_account
+from cifereca.core.source_auto_consent_bridge import consent_generation
+from cifereca.core.legacy_source_consent_metadata import historical_consent_keys
+from cifereca.core.source_sync_consent import inventory_epoch_key, scope_for_account
 from cifereca.core.convergence_execution import CompletedDelivery
 from cifereca.core.sync_coordination import synchronize_account_source
 from cifereca.storage import Storage
@@ -24,12 +23,9 @@ from tests.test_core_p0_3171_canonical_sync_stage import rig, refs
 from tests.test_core_p0_3171_kobo_consent_aba import _kobo
 
 
-@pytest.mark.parametrize(("provider", "has_legacy_epoch"), [
-    ("kobo", True), ("bnf-pret", True),
-    ("paris", False), ("fictional", False),
-])
-def test_legacy_source_switch_uses_existing_acquisition_generation(
-    tmp_path, provider, has_legacy_epoch,
+@pytest.mark.parametrize("provider", ["kobo", "bnf-pret", "paris", "fictional"])
+def test_all_inventory_switches_rotate_neutral_generation(
+    tmp_path, provider,
 ):
     storage = Storage(tmp_path / "toggle.sqlite")
     try:
@@ -38,26 +34,22 @@ def test_legacy_source_switch_uses_existing_acquisition_generation(
         account.provider_id = provider
         scope = scope_for_account(account)
         sid = broker._source_id(account)
-        revision_key = _consent_generation_key(scope)
-        assert (revision_key is not None) is has_legacy_epoch
+        revision_keys = [epoch for _switch, _on, epoch in historical_consent_keys(scope)]
         assert consent_generation(storage, scope) is None
         first = broker.set_enabled(sid, False)
         assert first.enabled is False
         assert storage.metadata_get(broker._preference_key(sid)) == "0"
         disabled_revision = consent_generation(storage, scope)
-        if has_legacy_epoch:
-            assert isinstance(disabled_revision, str) and len(disabled_revision) == 32
-            assert storage.metadata_get(revision_key) == disabled_revision
-        else:
-            assert disabled_revision is None
+        assert disabled_revision.startswith("inventory:")
+        assert len(disabled_revision.removeprefix("inventory:")) == 32
+        assert storage.metadata_get(inventory_epoch_key(scope)) == disabled_revision.removeprefix("inventory:")
+        assert all(storage.metadata_get(key) is None for key in revision_keys)
         second = broker.set_enabled(sid, True)
         assert second.enabled is True
         assert storage.metadata_get(broker._preference_key(sid)) == "1"
-        if has_legacy_epoch:
-            assert consent_generation(storage, scope) != disabled_revision
-            assert len(consent_generation(storage, scope)) == 32
-        else:
-            assert consent_generation(storage, scope) is None
+        assert consent_generation(storage, scope) != disabled_revision
+        assert consent_generation(storage, scope).startswith("inventory:")
+        assert all(storage.metadata_get(key) is None for key in revision_keys)
     finally:
         storage.close()
 
@@ -76,7 +68,7 @@ def test_failed_legacy_source_switch_rolls_back_epoch_and_boolean(
         broker.set_enabled(sid, True)
         preference_key = broker._preference_key(sid)
         initial = (storage.metadata_get(preference_key), consent_generation(storage, scope))
-        assert initial[0] == "1" and len(initial[1]) == 32
+        assert initial[0] == "1" and initial[1].startswith("inventory:")
         with storage._lock, storage._connect() as db:
             db.execute(
                 "CREATE TRIGGER block_source_off BEFORE UPDATE ON metadata "
@@ -95,31 +87,54 @@ def test_failed_legacy_source_switch_rolls_back_epoch_and_boolean(
         storage.close()
 
 
-def test_kobo_legacy_on_off_on_mid_get_cannot_revive_previous_consent(rig):
+def test_kobo_legacy_on_cannot_start_get_or_publish_without_cas(rig):
     service, storage, root, materialization_policy = _kobo(rig)
     storage.metadata_set(materialization_policy, "1")
     assert consent_generation(storage, service.source.scope) is None
-    broker = SynchronizationBrokerImpl(service)
-    sid = broker._source_id(service.account)
     calls = []
 
-    def delivery(key, offer):
-        calls.append(offer.delivery_offer_id)
-        path = root / "A" / "stale-legacy-attempt.pdf"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(BYTES)
-        broker.set_enabled(sid, False)
-        broker.set_enabled(sid, True)
-        # The materialization opt-in remains ON; only the independent source
-        # switch was cycled. The original GET must not inherit the new epoch.
-        assert storage.metadata_get(materialization_policy) == "1"
-        assert consent_generation(storage, service.source.scope) is not None
-        return CompletedDelivery(
-            key, offer.delivery_offer_id, path, SHA, "stale-legacy-receipt",
-        )
+    def forbidden_delivery(*_args):
+        calls.append("unexpected")
+        raise AssertionError("historical Kobo ON cannot admit a new GET")
 
-    service._canonical_right_delivery = delivery
+    service._canonical_right_delivery = forbidden_delivery
     result = synchronize_account_source(service, service.account)
-    assert calls == ["kobo-verified-private-offer"]
+    assert calls == []
     assert result["canonical_execution"]["downloaded"] == 0
     assert storage.placements() == [] and refs(storage)[1] == 0
+    # The old key was neither deleted nor silently converted to CAS ON.
+    assert storage.metadata_get(materialization_policy) == "1"
+    from cifereca.core.source_sync_consent import read_policy
+    assert read_policy(storage, service.source.scope).mode == "unset"
+
+
+@pytest.mark.parametrize("provider", ["kobo", "numilog", "bnf-pret", "fictional"])
+def test_inventory_epoch_replaces_historical_fence_without_rewriting_it(tmp_path, provider):
+    from cifereca.core.source_auto_consent_bridge import consent_generation_in_transaction
+    from cifereca.core.source_convergence import SourceKey
+    from cifereca.core.source_sync_consent import read_policy
+
+    storage = Storage(tmp_path / "cutover.sqlite")
+    try:
+        broker = fake_broker(storage)
+        account = broker.service.accounts[0]
+        account.provider_id = provider
+        scope = scope_for_account(account)
+        # Use the same historical format for every provider, even unknown.
+        old_key = historical_consent_keys(scope)[0][2]
+        storage.metadata_set(old_key, "a" * 32)
+        before = consent_generation(storage, scope)
+        broker.set_enabled(broker._source_id(account), False)
+        after = consent_generation(storage, scope)
+        assert after.startswith("inventory:") and after != before
+        assert read_policy(storage, scope).mode == "unset"
+        assert storage.metadata_get(old_key) == "a" * 32
+        source = SourceKey(scope, "edition", "right", "purchase", "purchases")
+        with storage._lock, storage._connect() as db:
+            assert consent_generation_in_transaction(db, source) == after
+        storage.metadata_set(inventory_epoch_key(scope), "bad")
+        assert consent_generation(storage, scope) == "invalid"
+        with storage._lock, storage._connect() as db:
+            assert consent_generation_in_transaction(db, source) == "invalid"
+    finally:
+        storage.close()

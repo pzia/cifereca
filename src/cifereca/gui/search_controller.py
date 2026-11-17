@@ -164,7 +164,13 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     state = self.search_controls.state()
     if len(state.text) < 2:
         self.toast("Saisissez au moins 2 caractères"); return
-    request_identity = self.service.current_identity.identity_id if self.service.current_identity else None
+    # One Core and account/source snapshot owns the submitted search. GTK
+    # navigation must never choose another database/provider after enqueue.
+    request_core = self.service
+    admitted_identity = getattr(request_core, "current_identity", None)
+    request_identity = getattr(admitted_identity, "identity_id", None)
+    admitted_account_epoch = getattr(request_core, "_account_context_epoch", None)
+    admitted_source_epoch = getattr(request_core, "_source_context_epoch", None)
     online_key = (state, request_identity)
     if force and pending_online_search_matches(
         getattr(self, "_online_pending_key", None), online_key,
@@ -172,14 +178,25 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
         self._search_generation,
     ):
         return
+    request_scope = None
+    if force:
+        from ..core.search_orchestration import capture_search_read_scope
+        try:
+            request_scope = capture_search_read_scope(request_core, request_identity)
+        except ValueError:
+            self.toast("Contexte lecteur indisponible")
+            return
+    identity_generation = getattr(self, "_identity_context_generation", None)
+    account_generation = getattr(self, "_account_context_generation", None)
     self._search_generation += 1
     # A previous Search result must not remain navigable from a plugin while
     # the next request is pending, even if both use the same query text.
     self._loaded_search_context = None
     generation = self._search_generation
-    identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
+    identity_id = request_identity
     # Never reuse source verdicts across requests, accounts or generations.
     self._online_source_statuses = {}
+    self._online_search_warnings = ()
     self._online_source_context = (
         (state.text, state.field, state.scope, identity_id) if force else None
     )
@@ -188,10 +205,22 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     response_facets = getattr(self, "_search_response_facets", None)
     if response_facets is not None:
         response_facets.begin(self._online_source_context)
+    def admitted_core_current():
+        # Navigation only controls GTK delivery, never the admitted worker.
+        return (
+            getattr(request_core, "current_identity", None) is admitted_identity
+            and getattr(request_core, "_account_context_epoch", None) == admitted_account_epoch
+            and getattr(request_core, "_source_context_epoch", None) == admitted_source_epoch
+        )
     def current():
-        if getattr(self, "_closed", False):
+        if (getattr(self, "_closed", False)
+                or self.service is not request_core
+                or not admitted_core_current()
+                or getattr(self, "_identity_context_generation", None) != identity_generation
+                or getattr(self, "_account_context_generation", None) != account_generation
+                or (request_scope is not None and not request_scope.current(request_core))):
             return False
-        identity = self.service.current_identity.identity_id if self.service.current_identity else None
+        identity = getattr(getattr(request_core, "current_identity", None), "identity_id", None)
         live_state = self.search_controls.state()
         # Editing the query text/field/scope invalidates in-flight results
         # immediately, even before the next explicit search. Local facets
@@ -278,15 +307,88 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
             # results (possibly empty); do not display a stale prior query.
             self._populate_search(self._remote_search_results, announce=False)
         return False
+    def deliver_known_c(page):
+        # The SQL cursor ran on the Search worker BEFORE any supplier GET.
+        # GTK receives only already-admitted, non-actionable C descriptors.
+        # Empty/partial C is never a proof of a zero-result remote catalogue.
+        if not current():
+            return False
+        from ..core.notice_c_public_search import PublicNoticeCPage
+        if type(page) is not PublicNoticeCPage or not page.hits:
+            return False
+        from ..core.notice_c_known_projection import merge_public_notice_c_known_rows
+        rows = merge_public_notice_c_known_rows(
+            [], page, identity_id=identity_id,
+        )
+        # Keep independently attested placements/rights already in the known
+        # Search, replacing only this request's old public C preview keys.
+        known = getattr(self, "_search_local_objects", None)
+        preserved = {
+            key: row for key, row in (known or {}).items()
+            if type(row) is dict and row.get("source") != "notice_c_public"
+        } if type(known) is dict else {}
+        for row in rows:
+            preserved[row["key"]] = row
+        self._search_local_objects = preserved
+        self._populate_search(self._remote_search_results, announce=False)
+        return False
     def on_batch(batch):
         GLib.idle_add(deliver_batch, batch)
-    def done(summary):
+    def done(result):
         clear_pending()
         if not current(): return
-        self.service.last_search_warnings = list(summary.warnings)
-        # Batch delivery is progressive; the final render only reconciles
-        # ranking/deduplication with the authoritative aggregate.
-        self._remote_search_results = merge_results(self._remote_search_results, list(self.service.last_search))
+        summary, rows = result
+        if summary.cancelled:
+            return
+        self._online_search_warnings = tuple(summary.warnings)
+        # Final ranking and exact deduplication belong to this request only.
+        self._remote_search_results = list(rows)
         self._populate_search(self._remote_search_results, announce=True)
-    self.runner.submit("Recherche en ligne…", lambda: progressive_online_search(self.service, state, on_batch), done, failed,
+    class AdmittedSearchControl:
+        def cancelled(self):
+            return not request_scope.current(request_core)
+
+    def online_work():
+        # The registered reader/source epoch was captured before enqueue.
+        # A real revocation stops I/O; GTK A→B→A only drops publication.
+        if not request_scope.current(request_core):
+            from ..plugin_api import Cancelled
+            raise Cancelled("Recherche en ligne périmée")
+        # #6366: C-first online extension without a second search engine.
+        # This function runs in TaskRunner's worker; no SQLite read, supplier
+        # HTTP, parse or consolidation is executed on the GTK thread.
+        # The on_batch ABI and existing parallel provider orchestration stay
+        # unchanged; an empty C cursor is merely partial, never a final zero.
+        selected = tuple(dict.fromkeys(
+            provider for provider in state.providers if provider != "local"
+        ))
+        c_reader = getattr(request_core, "search_public_notice_c", None)
+        if (
+            callable(c_reader)
+            and type(state.text) is str
+            and 2 <= len(state.text.strip()) <= 160
+            and state.field in ("all", "title", "author", "publisher")
+            and state.scope in ("all", "digital", "physical", "unknown")
+            and (not state.providers or selected)
+        ):
+            try:
+                page = c_reader(
+                    state.text, field=state.field, scope=state.scope,
+                    provider_ids=selected, group_by_document=True,
+                )
+            except (TypeError, ValueError, OSError):
+                # The ordinary remote extension remains available when the
+                # bounded C cursor cannot be read. Never print raw DB data.
+                page = None
+            if page is not None and request_scope.current(request_core):
+                GLib.idle_add(deliver_known_c, page)
+        if not request_scope.current(request_core):
+            from ..plugin_api import Cancelled
+            raise Cancelled("Recherche en ligne périmée")
+        return progressive_online_search(
+            request_core, state, on_batch, control=AdmittedSearchControl(),
+            request_scope=request_scope,
+        )
+
+    self.runner.submit("Recherche en ligne…", online_work, done, failed,
                        control=self.search_global_button, priority=TaskPriority.USER_ACTION, kind="search-online")

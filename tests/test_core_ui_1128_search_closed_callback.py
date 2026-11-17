@@ -171,6 +171,8 @@ def test_online_failure_of_edited_query_does_not_override_new_gtk_state():
         search_global_button=object(),
         show_error=lambda *args: errors.append(args),
     )
+    registered = host.service.current_identity
+    host.service.identity_by_id = lambda key: registered if key == registered.identity_id else None
     _method("run_search")(host, True)
     assert requests
     values[0] = NS(text="Renard", field="title", scope="all")
@@ -200,6 +202,8 @@ def _pending_online_failure():
         search_global_button=object(),
         show_error=lambda *args: errors.append(args),
     )
+    registered = host.service.current_identity
+    host.service.identity_by_id = lambda key: registered if key == registered.identity_id else None
     _method("run_search")(host, True)
     assert len(requests) == 1
     assert host._online_pending_key is not None

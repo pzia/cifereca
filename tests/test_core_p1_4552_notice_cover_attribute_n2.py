@@ -235,14 +235,25 @@ def test_parser_revision_and_field_mapping_change_requalify_n2(gateway):
         cover_inventory_complete=True,
     )
     adapter.register(
-        service, notice(parser_version="2"),
+        service, notice(parser_version="2", observed_at=2),
         field_path=("media", "cover"),
         cover_inventory_complete=True,
     )
     assert adapter._published[document].revision == 2
+    # A newer *incomplete* mapping is no evidence that the last verified
+    # cover disappeared. Notice C must retain the old N2 token and advance
+    # only the out-of-order observation watermark.
     adapter.register(
-        service, first, field_path=("different", "field"),
+        service, notice(observed_at=3), field_path=("different", "field"),
         cover_inventory_complete=False,
+    )
+    assert adapter._published[document].revision == 2
+    assert service.get_cover(document, "detail", lambda _: None).source_uri == URL
+    # Only a subsequent *complete* inventory can attest that the newly
+    # selected parser field has no cover; then N2 must requalify to missing.
+    adapter.register(
+        service, notice(observed_at=4), field_path=("different", "field"),
+        cover_inventory_complete=True,
     )
     assert adapter._published[document].revision == 3
     assert service.get_cover(document, "detail", lambda _: None).source_uri is None

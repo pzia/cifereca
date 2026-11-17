@@ -31,7 +31,7 @@ def _host():
     env = {"__package__": "cifereca.gui", "SearchStateField": SearchStateField,
            "TaskPriority": NS(USER_ACTION=1), "merge_results": merge_results,
            "GLib": NS(idle_add=lambda fn, *args: scheduled.append((fn, args))),
-           "progressive_online_search": Mock(return_value=NS(warnings=[]))}
+           "progressive_online_search": Mock(return_value=(NS(warnings=[], cancelled=False), ()))}
     cls = ast.ClassDef(name="Host", bases=[], keywords=[], body=[*descriptors, *methods], decorator_list=[])
     module = ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(
         module="__future__", names=[ast.alias(name="annotations")], level=0), cls], type_ignores=[]))
@@ -40,6 +40,8 @@ def _host():
     host.service = NS(current_identity=NS(identity_id="alice"),
                       search_known_catalog=Mock(return_value=[{"key": "local"}]),
                       last_search=[], last_search_warnings=[])
+    registered = host.service.current_identity
+    host.service.identity_by_id = lambda key: registered if key == registered.identity_id else None
     host.search_controls = NS(state=lambda: QueryState("Dumas"))
     host.search_button, host.search_global_button = object(), object()
     host._search_generation = 0
@@ -220,3 +222,212 @@ assert 'cifereca.gui.search_controller' not in sys.modules
 """
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
+
+
+def test_online_search_queued_for_a_never_dispatches_to_replaced_core_b():
+    host = _host()
+    host.run_search(True)
+    pending = host.requests[-1]
+    original = host.service
+    other = NS(
+        current_identity=NS(identity_id="alice"),
+        last_search=[{"key": "private-B"}], last_search_warnings=[],
+    )
+    host.service = other
+    pending.work()
+    assert host.online.call_count == 1
+    assert host.online.call_args.args[0] is original
+    assert host.online.call_args.kwargs["control"].cancelled() is False
+    pending.done(NS(warnings=[]))
+    assert host._remote_search_results == []
+    assert other.last_search_warnings == []
+    host._populate_search.assert_not_called()
+
+
+def test_online_search_queued_a_b_a_runs_for_original_reader_without_publication():
+    host = _host()
+    original = host.service.current_identity
+    host.run_search(True)
+    task = host.requests[-1]
+    host.service.current_identity = NS(identity_id="bob")
+    host.service.current_identity = NS(identity_id="alice")
+    task.work()
+    assert host.online.call_args.kwargs["request_scope"].identity is original
+    assert not host.online.call_args.kwargs["control"].cancelled()
+    task.done((NS(warnings=[], cancelled=False), ()))
+    assert host._online_pending_key is None
+    host._populate_search.assert_not_called()
+
+
+@pytest.mark.parametrize("epoch", ["_source_context_epoch"])
+def test_online_search_revoked_core_epoch_cannot_start_provider_io(epoch):
+    from cifereca.plugin_api import Cancelled
+    host = _host()
+    setattr(host.service, epoch, 11)
+    host.run_search(True)
+    pending = host.requests[-1]
+    setattr(host.service, epoch, 12)
+    with pytest.raises(Cancelled):
+        pending.work()
+    host.online.assert_not_called()
+    pending.done(NS(warnings=[]))
+    host._populate_search.assert_not_called()
+
+
+def test_running_federated_search_receives_core_only_cancellation_lease():
+    host = _host()
+    host.service._account_context_epoch = 5
+    host.service._source_context_epoch = 10
+    host.run_search(True)
+    pending = host.requests[-1]
+    pending.work()
+    lease = host.online.call_args.kwargs["control"]
+    assert lease.cancelled() is False
+    host.service._source_context_epoch = 11
+    assert lease.cancelled() is True
+    # A changed source cannot publish a remote result even if identity and
+    # query text still match exactly.
+    pending.done(NS(warnings=["PRIVATE"]))
+    assert host.service.last_search_warnings == []
+    host._populate_search.assert_not_called()
+
+
+def test_online_a_b_a_same_identity_text_never_publishes_old_batch():
+    host = _host()
+    host.run_search(True)
+    pending = host.requests[-1]
+    pending.work()
+    on_batch = host.online.call_args.args[2]
+    host.service.current_identity = NS(identity_id="bob")
+    host.service.current_identity = NS(identity_id="alice")
+    on_batch(NS(results=[NS(id="private", source_provider="paris")]))
+    dispatch, args = host.scheduled.pop()
+    assert dispatch(*args) is False
+    pending.done(NS(warnings=[]))
+    assert host._remote_search_results == []
+    host._populate_search.assert_not_called()
+
+
+
+def test_online_reads_public_notice_c_before_provider_without_gtk_sqlite(
+    tmp_path,
+):
+    """The C cursor precedes HTTP and GTK receives a read-only C DocumentRef."""
+    from cifereca.storage import Storage
+    from cifereca.core.notice_c_public_search import (
+        PublicNoticeCPage, search_public_notice_c,
+    )
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import (
+        persist, verified_public,
+    )
+
+    db = Storage(tmp_path / "c-first-online.sqlite")
+    try:
+        source = persist(db, verified_public(title="Alexandre Dumas"))
+        host = _host()
+        # A local possession is never displaced by a public C preview.
+        host._last_search_query = "Dumas"
+        host._search_local_objects = {
+            "local": {"key": "local", "source": "known_catalog", "state": "local"},
+            "old-c": {"key": "old-c", "source": "notice_c_public"},
+        }
+        order = []
+        def read(query, **kwargs):
+            order.append("sqlite")
+            assert query == "Dumas"
+            assert kwargs == {
+                "field": "all", "scope": "all", "provider_ids": (),
+                "group_by_document": True,
+            }
+            return search_public_notice_c(db, query, **kwargs)
+        host.service.search_public_notice_c = Mock(side_effect=read)
+        host.online.side_effect = lambda *a, **kw: (
+            order.append("provider") or NS(warnings=[])
+        )
+        host.run_search(True)
+        request = host.requests[-1]
+        request.work()  # runs in the normal TaskRunner worker, NOT GTK
+        assert order == ["sqlite", "provider"]
+        assert host._populate_search.call_count == 0
+        assert len(host.scheduled) == 1
+
+        dispatch, args = host.scheduled.pop(0)
+        assert isinstance(args[0], PublicNoticeCPage)
+        assert dispatch(*args) is False  # only now is GTK allowed to render
+        entries = host._search_local_objects
+        assert "local" in entries and "old-c" not in entries
+        c = [v for v in entries.values() if v["source"] == "notice_c_public"]
+        assert len(c) == 1
+        assert c[0]["_cover_document_ref"] == source.document
+        assert c[0]["thumbnail_url"] is None
+        assert c[0]["local"] is False and c[0]["state"] == "remote_catalog"
+        assert not c[0].get("download_url") and not c[0].get("placement_id")
+        host._populate_search.assert_called_once_with([], announce=False)
+    finally:
+        db.close()
+
+
+def test_online_known_c_late_preview_and_empty_page_never_replace_current_ui(
+    tmp_path,
+):
+    from cifereca.storage import Storage
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import (
+        persist, verified_public,
+    )
+
+    db = Storage(tmp_path / "c-first-stale.sqlite")
+    try:
+        persist(db, verified_public(title="Dumas"))
+        host = _host()
+        host.service.search_public_notice_c = lambda q, **kw: (
+            search_public_notice_c(db, q, **kw)
+        )
+        host.run_search(True)
+        pending = host.requests[-1]
+        pending.work()
+        assert len(host.scheduled) == 1
+        host.run_search(False)  # invalidates the preview before GTK delivery
+        dispatch, args = host.scheduled.pop(0)
+        assert dispatch(*args) is False
+        assert host._populate_search.call_count == 0
+        assert host._search_local_objects == {}
+
+        # An empty C page does not assert a complete zero or erase known rows.
+        host._search_local_objects = {
+            "owned": {"key": "owned", "state": "local", "source": "known_catalog"},
+        }
+        host._last_search_query = "Dumas"
+        host.service.search_public_notice_c = lambda *_a, **_kw: (
+            search_public_notice_c(db, "missing")
+        )
+        host.run_search(True)
+        host.requests[-1].work()
+        assert len(host.scheduled) == 1
+        dispatch, args = host.scheduled.pop(0)
+        assert dispatch(*args) is False
+        assert "owned" in host._search_local_objects
+        host._populate_search.assert_not_called()
+    finally:
+        db.close()
+
+
+def test_navigation_account_epoch_only_filters_publication_and_final_rows_are_local():
+    host = _host()
+    host.service._account_context_epoch = 1
+    host.run_search(True)
+    pending = host.requests[-1]
+    host.service._account_context_epoch = 2
+    pending.work()
+    assert not host.online.call_args.kwargs["control"].cancelled()
+    pending.done((NS(warnings=[], cancelled=False), (NS(id="old"),)))
+    host._populate_search.assert_not_called()
+    host.run_search(True)
+    row = NS(id="correct", source_provider="public")
+    host.service.last_search = [NS(id="other")]
+    host.service.last_search_warnings = ["other request"]
+    host.requests[-1].done((NS(warnings=["partial"], cancelled=False), (row,)))
+    assert host._remote_search_results == [row]
+    assert host._online_search_warnings == ("partial",)
+    assert host.service.last_search[0].id == "other"
+    assert host.service.last_search_warnings == ["other request"]

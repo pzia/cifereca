@@ -2713,7 +2713,13 @@ def main() -> int:
                      if row.get_title() == "Nom affiché"]) == 2
                 and len([row for row in settings_rows(section, Adw.ActionRow)
                          if row.get_title() ==
-                         "Parcours normal · Paris principal et ADEPT"]) == 2
+                         "Parcours normal · source enregistrée et ADEPT"]) == 2
+                and len([row for row in settings_rows(section, Adw.EntryRow)
+                         if row.get_title() ==
+                         "Fournisseur de prêt ADEPT (ID de plugin)"]) == 2
+                and len([row for row in settings_rows(section, Adw.EntryRow)
+                         if row.get_title() ==
+                         "Connexion de prêt ADEPT (ID de source)"]) == 2
             ),
             "library": lambda: any(
                 row.get_title() == "Répertoire global"

@@ -23,7 +23,7 @@ class CrossProfileBorrowScopeLease:
     _requester_identity_id: str
     _account_fields: tuple[object, ...] = field(repr=False)
     _claim_key: str = field(repr=False)
-    _context_epoch: int
+    _context_epoch: int | None
     _source_epoch: int
     _session_epoch: object = field(repr=False)
 
@@ -39,7 +39,8 @@ class CrossProfileBorrowScopeLease:
                     or self._scope_current() is not True
                     or service.identity_by_id(self._requester_identity_id) is None
                     or service.identity_by_id(account.identity_id) is None
-                    or service._account_context_epoch != self._context_epoch
+                    or (self._context_epoch is not None
+                        and service._account_context_epoch != self._context_epoch)
                     or source_context_epoch(service) != self._source_epoch):
                 return False
             fields = _fields(account, notice)
@@ -89,7 +90,8 @@ class CrossProfileBorrowScopeLease:
             fresh_rows = _inert_session_accounts(session)
             return (
                 self._scope_current() is True
-                and service._account_context_epoch == self._context_epoch
+                and (self._context_epoch is None
+                     or service._account_context_epoch == self._context_epoch)
                 and source_context_epoch(service) == self._source_epoch
                 and _fields(account, notice) == self._account_fields
                 and borrow_claim_key(account, notice) == self._claim_key
@@ -112,7 +114,8 @@ class CrossProfileBorrowScopeLease:
 def capture_cross_profile_borrow_scope(
     service: object, *, requesting_identity_id: str,
     borrowing_account: Account, exact_notice: SearchResult,
-    lender_session: object, scope_current=None,
+    lender_session: object, scope_current=None, admitted: bool = False,
+    reader_scope=None,
 ) -> CrossProfileBorrowScopeLease | None:
     """Capture a necessary pre-POST boundary, never authorization or consent."""
     if (type(requesting_identity_id) is not str
@@ -125,8 +128,17 @@ def capture_cross_profile_borrow_scope(
     try:
         fields = _fields(borrowing_account, exact_notice)
         claim = borrow_claim_key(borrowing_account, exact_notice)
-        context = service._account_context_epoch
         source = source_context_epoch(service)
+        if reader_scope is not None:
+            from .search_orchestration import SearchReadScope
+            if (admitted is not True or type(reader_scope) is not SearchReadScope
+                    or reader_scope.identity_id != requesting_identity_id
+                    or reader_scope.source_epoch != source
+                    or not reader_scope.current(service)):
+                return None
+            context = source
+        else:
+            context = service._account_context_epoch
         if (state is None or not _valid_fields(fields)
                 or claim is None
                 or not callable(scope_current)
@@ -143,7 +155,8 @@ def capture_cross_profile_borrow_scope(
             _session=lender_session, _scope_current=scope_current,
             _requester_identity_id=requesting_identity_id,
             _account_fields=fields, _claim_key=claim,
-            _context_epoch=context, _source_epoch=source,
+            _context_epoch=None if admitted is True else context,
+            _source_epoch=source,
             _session_epoch=state.get("_epoch"),
         )
         return lease if lease.current(service) else None
