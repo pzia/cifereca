@@ -16,6 +16,14 @@ from ..core.notice_c_live_revision import persisted_live_c_revision
 from ..core.notice_c_recommendation_known import known_public_c_binding_facts
 
 
+from ..core.notice_c_cached_revision import matching_cached_public_canonical_ref
+
+
+def _matching_ref(item, *, identity_id):
+    return (matching_live_public_canonical_ref(item, identity_id=identity_id)
+            or matching_cached_public_canonical_ref(item, identity_id=identity_id))
+
+
 _ISSUER = object()
 
 
@@ -42,7 +50,7 @@ def _binding_facts(item: object, identity_id: str):
     known = known_public_c_binding_facts(item)
     if known is not None:
         return known
-    document = matching_live_public_canonical_ref(item, identity_id=identity_id)
+    document = _matching_ref(item, identity_id=identity_id)
     epoch = persisted_live_c_revision(item, document)
     return (document, epoch) if document is not None and epoch is not None else None
 
