@@ -151,11 +151,9 @@ def test_revoked_exact_search_detail_has_no_c_or_supplier_image(method, revoke):
         fn(view, search, public_c_document=doc)
     else:
         fn(view, search, _detail(), public_c_document=doc)
-    # Revocation invalidates the old detail's actions as well as its image:
-    # no stale account affordance should be published to the next selection.
-    panel.empty.assert_called_once_with(
-        "Notice indisponible", "La sélection ou sa source a changé.",
-    )
+    # A stale callback must not erase the NEW selection's pane, even with
+    # an empty placeholder. No N3, no previous detail and no actions.
+    panel.empty.assert_not_called()
     panel.show_search.assert_not_called()
     panel.show_item_detail.assert_not_called()
     panel.show_public_c_search_document.assert_not_called()
