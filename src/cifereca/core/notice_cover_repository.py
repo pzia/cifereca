@@ -25,6 +25,8 @@ from .notice_cover_projection import (
 from .notice_source_observation import NoticeSourceKey, NoticeSourceObservation
 
 _PREFIX = "notice.c.observation.v1:"
+# The fence is only a retention watermark, never a second source snapshot.
+_EVICTION_PREFIX = "notice.c.observation-fence.v1:"
 _MAX_BYTES = 131072
 _MAX_EPOCH = 2**63 - 1
 _SOURCE_FIELDS = frozenset((
@@ -161,6 +163,98 @@ def read_notice_cover(storage: Any, document: CoverDocumentScope) -> PersistedNo
     return _decode(row[0], document) if row is not None else None
 
 
+
+def _eviction_key(key: str) -> str:
+    return _EVICTION_PREFIX + key[len(_PREFIX):]
+
+
+def _read_eviction_fence(db: Any, key: str) -> tuple[int, int]:
+    """Exact epoch and last accepted observation time; absent = never evicted."""
+    row = db.execute(
+        "SELECT value FROM metadata WHERE key=?", (_eviction_key(key),),
+    ).fetchone()
+    if row is None:
+        return 0, 0
+    try:
+        raw = row[0]
+        if type(raw) is not str or not 0 < len(raw) <= 128:
+            raise ValueError
+        value = json.loads(raw, object_pairs_hook=_unique_object)
+        if (type(value) is not dict or set(value) != {"epoch", "last_seen_at"}
+                or type(value["epoch"]) is not int
+                or not 2 <= value["epoch"] <= _MAX_EPOCH
+                or type(value["last_seen_at"]) is not int
+                or not 0 <= value["last_seen_at"] <= _MAX_EPOCH):
+            raise ValueError
+        return value["epoch"], value["last_seen_at"]
+    except (TypeError, ValueError, KeyError, OverflowError, RecursionError) as exc:
+        raise ValueError("notice_c_persisted_fence_corrupt") from exc
+
+
+def _checked_source_state(db: Any, document: CoverDocumentScope, key: str):
+    row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+    previous = _decode(row[0], document) if row is not None else None
+    fence_epoch, fence_at = _read_eviction_fence(db, key)
+    if previous is not None and (
+        previous.epoch <= fence_epoch
+        or previous.observation.observed_at < fence_at
+    ):
+        raise ValueError("notice_c_persisted_fence_corrupt")
+    return row, previous, fence_epoch, fence_at
+
+
+def read_notice_cover_write_epoch(storage: Any, document: CoverDocumentScope) -> int:
+    """Core-only CAS token, including a retained eviction generation.
+
+    This is not a documentary read and must never be passed to N2 as an
+    image revision. Zero denotes a genuinely uninitialized source; a
+    missing observation with a fence has a nonzero, different generation.
+    """
+    key = _opaque_key(document)
+    if key is None:
+        raise ValueError("notice_c_persisted_scope_invalid")
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN")
+        _, previous, fence_epoch, _ = _checked_source_state(db, document, key)
+        return previous.epoch if previous is not None else fence_epoch
+
+
+def evict_notice_cover(
+    storage: Any, document: CoverDocumentScope, *, expected_epoch: int,
+) -> bool:
+    """Evict exactly one source without recycling its old CAS generation.
+
+    Called by an authorized Core retention producer, not by N2/GTK. The
+    slot's next generation and freshness watermark survive in the same
+    metadata index. No raw observation, private fields, URL or right is
+    retained in this fence. Canonical C / N3 / local files are untouched.
+    """
+    key = _opaque_key(document)
+    if (key is None or type(expected_epoch) is not int
+            or not 0 <= expected_epoch < _MAX_EPOCH):
+        raise ValueError("notice_c_persisted_epoch_invalid")
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row, previous, fence_epoch, _ = _checked_source_state(db, document, key)
+        epoch = previous.epoch if previous is not None else fence_epoch
+        if expected_epoch != epoch:
+            raise ValueError("notice_c_persisted_epoch_changed")
+        if previous is None:
+            return False
+        if epoch >= _MAX_EPOCH - 1:
+            raise ValueError("notice_c_persisted_epoch_overflow")
+        seen_at = json.loads(row[0]).get(_LAST_SEEN, previous.observation.observed_at)
+        fence = json.dumps({"epoch": epoch + 1, "last_seen_at": seen_at},
+                           sort_keys=True, separators=(",", ":"))
+        db.execute(
+            "INSERT INTO metadata(key,value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (_eviction_key(key), fence),
+        )
+        db.execute("DELETE FROM metadata WHERE key=?", (key,))
+        return True
+
+
 def _persist_notice_cover_txn(
     db: Any, observation: NoticeSourceObservation,
     attribute: NoticeCoverAttribute, key: str,
@@ -173,13 +267,18 @@ def _persist_notice_cover_txn(
     Shared by the one-source CAS writer and the bounded batched Core search
     writer. The stale/partial/watermark logic MUST be identical in both paths.
     """
-    existing = db.execute(
-        "SELECT value FROM metadata WHERE key=?", (key,),
-    ).fetchone()
-    previous = _decode(existing[0], attribute.document) if existing else None
-    previous_epoch = previous.epoch if previous is not None else 0
+    existing, previous, fence_epoch, fence_at = _checked_source_state(
+        db, attribute.document, key,
+    )
+    previous_epoch = previous.epoch if previous is not None else fence_epoch
     if expected_epoch is not None and expected_epoch != previous_epoch:
         raise ValueError("notice_c_persisted_epoch_changed")
+    if previous is None and fence_epoch:
+        # A delayed old producer cannot recreate a purged observation. A
+        # same-second fresh replacement needs the NEW exact fence token.
+        if (observation.observed_at < fence_at
+                or (observation.observed_at == fence_at and expected_epoch is None)):
+            raise ValueError("notice_c_persisted_stale_source")
     if previous is not None:
         old = previous.observation
         # A cache replay or generic cover-only SearchResult is never a new
@@ -216,8 +315,8 @@ def _persist_notice_cover_txn(
         # The watermark is durable even if the current source is older.
         if observation.observed_at == seen_at and expected_epoch is None:
             raise ValueError("notice_c_persisted_stale_source")
-        if previous_epoch >= _MAX_EPOCH:
-            raise ValueError("notice_c_persisted_epoch_overflow")
+    if previous_epoch >= _MAX_EPOCH:
+        raise ValueError("notice_c_persisted_epoch_overflow")
     epoch = previous_epoch + 1
     payload = {
         "schema": 1, "key": asdict(observation.key),
@@ -343,6 +442,6 @@ def persist_notice_cover_many(
 
 __all__ = [
     "PersistedNoticeCover", "read_notice_cover", "persist_notice_cover",
-    "persist_notice_cover_many",
-    "is_notice_cover_document",
+    "persist_notice_cover_many", "evict_notice_cover",
+    "read_notice_cover_write_epoch", "is_notice_cover_document",
 ]

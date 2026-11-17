@@ -147,3 +147,118 @@ def test_tampered_watermark_fails_closed_without_inventing_missing(tmp_path, bad
             publish(db, B, 100)
     finally:
         db.close()
+
+
+def test_transactional_eviction_fences_old_jobs_after_restart(tmp_path):
+    from cifereca.core.notice_cover_repository import (
+        evict_notice_cover, read_notice_cover_write_epoch,
+        persist_notice_cover_many,
+    )
+    from cifereca.core.notice_c_cover_index import (
+        persist_consolidated_cover_source, read_consolidated_notice_cover,
+    )
+    path = tmp_path / "eviction.sqlite"
+    db = Storage(path)
+    try:
+        original = publish(db, A, 10, epoch=0)
+        doc = original.document
+        aggregate = persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:eviction-test", source=original,
+            relation_proof_id="strong:fixture:eviction",
+        )
+        assert publish(db, B, 20, status="partial") == original
+        assert read_notice_cover_write_epoch(db, doc) == 1
+        with pytest.raises(ValueError, match="epoch_changed"):
+            evict_notice_cover(db, doc, expected_epoch=0)
+        assert evict_notice_cover(db, doc, expected_epoch=1)
+        assert read_notice_cover(db, doc) is None
+        assert read_notice_cover_write_epoch(db, doc) == 2
+        assert not evict_notice_cover(db, doc, expected_epoch=2)
+        assert read_consolidated_notice_cover(db, aggregate.document) == aggregate
+        with db._lock, db._connect() as conn:
+            fence = conn.execute(
+                "SELECT value FROM metadata WHERE key LIKE 'notice.c.observation-fence.v1:%'"
+            ).fetchone()[0]
+            assert json.loads(fence) == {"epoch": 2, "last_seen_at": 20}
+            assert A not in fence and B not in fence
+    finally:
+        db.close()
+
+    db = Storage(path)
+    try:
+        assert read_notice_cover_write_epoch(db, doc) == 2
+        for epoch in (0, 1):
+            with pytest.raises(ValueError, match="epoch_changed"):
+                publish(db, B, 30, epoch=epoch)
+        with pytest.raises(ValueError, match="stale_source"):
+            publish(db, B, 19)
+        with pytest.raises(ValueError, match="stale_source"):
+            publish(db, B, 20)
+        # Same-second renewal requires the new write epoch, not an old job.
+        fresh = publish(db, A, 20, epoch=2)
+        assert fresh.epoch == 3 and fresh.document == doc
+        assert fresh != original
+        with pytest.raises(ValueError, match="epoch_changed"):
+            publish(db, B, 21, epoch=1)
+        with pytest.raises(ValueError, match="stale_canonical_cover_source"):
+            persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:eviction-test", source=original,
+                relation_proof_id="strong:fixture:eviction",
+            )
+        assert evict_notice_cover(db, doc, expected_epoch=3)
+        delayed = admit_source_notice(
+            key=KEY, parser_id="bnf-parser", parser_version="1",
+            observed_at=19, status="complete", raw_fields={"media": {"cover": B}},
+        )
+        independent = admit_source_notice(
+            key=KEY, parser_id="bnf-parser", parser_version="1",
+            observed_at=21, status="complete", raw_fields={"media": {"cover": B}},
+        )
+        rejected, current = persist_notice_cover_many(
+            db, [delayed, independent], field_path=("media", "cover"),
+            cover_inventory_complete=True,
+        )
+        assert rejected is None and current.epoch == 5
+        assert read_notice_cover(db, doc) == current
+        assert read_consolidated_notice_cover(db, aggregate.document) == aggregate
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def test_eviction_rollback_and_corrupt_fence_refuse_without_source_loss(tmp_path):
+    from cifereca.core.notice_cover_repository import (
+        evict_notice_cover, read_notice_cover_write_epoch,
+    )
+    db = Storage(tmp_path / "eviction-rollback.sqlite")
+    try:
+        original = publish(db, A, 10)
+        with db._lock, db._connect() as conn:
+            conn.execute(
+                "CREATE TRIGGER fixture_evict_refuse BEFORE DELETE ON metadata "
+                "WHEN OLD.key LIKE 'notice.c.observation.v1:%' "
+                "BEGIN SELECT RAISE(ABORT, 'fixture_evict_refused'); END"
+            )
+        import sqlite3
+        with pytest.raises(sqlite3.IntegrityError, match="fixture_evict_refused"):
+            evict_notice_cover(db, original.document, expected_epoch=1)
+        assert read_notice_cover(db, original.document) == original
+        assert read_notice_cover_write_epoch(db, original.document) == 1
+        with db._lock, db._connect() as conn:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM metadata WHERE key LIKE 'notice.c.observation-fence.v1:%'"
+            ).fetchone()[0] == 0
+            conn.execute("DROP TRIGGER fixture_evict_refuse")
+        assert evict_notice_cover(db, original.document, expected_epoch=1)
+        with db._lock, db._connect() as conn:
+            conn.execute(
+                "UPDATE metadata SET value=? WHERE key LIKE 'notice.c.observation-fence.v1:%'",
+                ('{"epoch":2,"epoch":3,"last_seen_at":10}',),
+            )
+        with pytest.raises(ValueError, match="fence_corrupt"):
+            read_notice_cover_write_epoch(db, original.document)
+        with pytest.raises(ValueError, match="fence_corrupt"):
+            publish(db, B, 30)
+        assert read_notice_cover(db, original.document) is None
+    finally:
+        db.close()

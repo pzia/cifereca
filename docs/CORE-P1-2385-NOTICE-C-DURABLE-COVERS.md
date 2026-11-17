@@ -36,3 +36,24 @@ Le port rejoue la validation Notice C et produit un nouvel epoch N2 seulement lo
 Le stockage Core exact, la relance après redémarrage, l'index par source et la lecture N2 effective sont livrés. La première intégration ne branche **pas encore** tous les producteurs #3724 sur ce writer, ni les six vues sur des notices C réelles, ni une souscription SQLite interprocessus. Les tickets #3104 et #6168 restent ouverts pour réception.
 
 Les tests doivent maintenir : public A→B→A, comptes privés distincts, deux éditions avec URL commune, partielles et fausses négatives, provenance ancienne/révision CAS, lecture après redémarrage, callbacks périmés, EPUB prioritaire et absence de nouvelles permissions d'action.
+
+
+## Éviction exacte et fencing (#4982)
+
+Le port Core `evict_notice_cover(..., expected_epoch=...)` écrit atomiquement
+un watermark d'éviction (epoch+1, last_seen_at) dans le même index metadata
+puis retire seulement la ligne source. Le port `read_notice_cover_write_epoch`
+retourne l'epoch d'écriture, y compris sur source absente ; ce n'est pas un
+snapshot d'image. L'epoch 0 est réservé aux clés jamais initialisées selon ce
+port. Le prochain writer CAS doit porter la nouvelle génération ; les vieux
+jobs et observations antérieures au watermark sont refusés. Le renouvellement
+sans CAS à la même seconde est refusé après éviction. La C durable, N3 et les
+fichiers ne sont pas modifiés. Les fences ne contiennent aucun corps de notice,
+ni URL ni compte, et sont conservés pour empêcher le recyclage d'epoch.
+
+Aucun ordonnanceur/TTL automatique n'est branché dans cette tranche. Les
+purges SQL directes héritées contournent le port et ne bénéficient pas de la
+garantie ; avant activation, les remplacer par l'éviction qualifiée. Une
+source déjà supprimée avant cette évolution ne peut retrouver un historique
+absent. Le coût est une lookup indexée supplémentaire par écriture et au plus
+un petit watermark par source évincée. À mesurer sur le catalogue réel.
