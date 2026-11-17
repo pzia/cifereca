@@ -58,7 +58,7 @@ class AggregateWorkBridge:
     """
 
     def __init__(self, storage, broker, prepare, *, clock=None, on_committed=None,
-                 allow_reparse=False):
+                 allow_reparse=False, allow_relink=False):
         if (type(broker) is not TaskBrokerImpl
                 or not isinstance(broker.shared_admission, SharedTaskAdmission)
                 or broker.shared_admission.reserve_user_slots < 1):
@@ -67,9 +67,10 @@ class AggregateWorkBridge:
             raise ValueError("notice_work_invalid_port")
         if on_committed is not None and not callable(on_committed):
             raise ValueError("notice_work_invalid_observer")
-        if type(allow_reparse) is not bool:
+        if type(allow_reparse) is not bool or type(allow_relink) is not bool:
             raise ValueError("notice_work_invalid_port")
         self._allow_reparse = allow_reparse
+        self._allow_relink = allow_relink
         self._on_committed = on_committed
         self._storage = storage
         self._broker = broker
@@ -130,7 +131,8 @@ class AggregateWorkBridge:
         try:
             job = journal.read_job(self._storage, ref)
             if (job.spec.kind != "recompute_aggregate"
-                    and not (self._allow_reparse and job.spec.kind == "reparse_cached_input")):
+                    and not (self._allow_reparse and job.spec.kind == "reparse_cached_input")
+                    and not (self._allow_relink and job.spec.kind == "relink_notices")):
                 return "unsupported"
             if job.state != "pending":
                 return "not_ready"
@@ -145,7 +147,7 @@ class AggregateWorkBridge:
         try:
             control.check_cancelled()
             prepared = self._prepare(job.spec, control)
-            aggregate = job.spec.kind == "recompute_aggregate"
+            aggregate = job.spec.kind in ("recompute_aggregate", "relink_notices")
             expected = PreparedAggregate if aggregate else PreparedSource
             if (type(prepared) is not expected or not callable(prepared.publish)
                     or (not aggregate and not callable(prepared.hold_input))):
