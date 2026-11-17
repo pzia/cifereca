@@ -525,3 +525,43 @@ def test_admitted_renewal_source_revoked_after_claim_never_posts(tmp_path, monke
         assert service.storage.loan_renewal_state(_source_key(ui))["status"] == "blocked"
     finally:
         service.close()
+
+
+def test_admitted_renewal_never_uses_navigation_scoped_session_resolver(tmp_path, monkeypatch):
+    service, a, ui, session = setup(tmp_path)
+    try:
+        admission = service.capture_admitted_loan_renewal(ui)
+        assert admission is not None
+        service.select_identity("alex")
+        calls = []
+        def policy(provider_id, identity_id=None):
+            calls.append((provider_id, identity_id))
+            return identity_id == "default"
+        def legacy_resolver(*args, **kwargs):
+            pytest.fail("admitted renewal must not use the navigation-scoped resolver")
+        monkeypatch.setattr(service, "_provider_enabled_for_identity", policy)
+        monkeypatch.setattr(service, "_session_for_source", legacy_resolver)
+        result = service.renew(ui, confirmed=True, admission=admission)
+        assert result["status"] == "submitted"
+        assert len(session.posts) == 1
+        assert calls and all(value == ("paris", "default") for value in calls)
+    finally:
+        service.close()
+
+
+def test_admitted_renewal_disabled_connection_refuses_before_inventory(tmp_path):
+    service, a, ui, session = setup(tmp_path)
+    try:
+        admission = service.capture_admitted_loan_renewal(ui)
+        assert admission is not None
+        service.storage.provider_connection_put({
+            "identity_id": a.identity_id, "provider_id": a.provider_id,
+            "credential_id": a.credential_id, "label": "Synthetic Paris",
+            "enabled": False, "metadata": {},
+        })
+        assert service.storage.provider_connection_enabled(a.provider_id, a.credential_id) is False
+        assert service.renew(ui, confirmed=True, admission=admission)["status"] == "blocked"
+        assert session.reads == session.posts == []
+        assert service.storage.loan_renewal_state(_source_key(ui)) is None
+    finally:
+        service.close()
