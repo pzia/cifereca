@@ -15,6 +15,7 @@ from . import notice_c_job_journal as journal
 from . import notice_c_exact_recompute as exact
 from . import notice_c_origin_recompute as origin
 from .notice_c_work_bridge import AggregateWorkBridge, PreparedAggregate
+from .notice_c_reparse_execution import PublicReplayRegistry, prepare_public_reparse
 
 _SUPPORTED = (
     ("recompute_aggregate", exact.IMPLEMENTATION_DIGEST),
@@ -41,20 +42,31 @@ class PublicNoticeWorkPump:
     One instance per Core owner; admission/fencing govern actual execution.
     """
 
-    def __init__(self, storage, broker, *, clock=None, on_committed=None):
+    def __init__(self, storage, broker, *, clock=None, on_committed=None,
+                 replay_registry=None):
         if clock is not None and not callable(clock):
             raise ValueError("notice_work_invalid_clock")
+        if replay_registry is None:
+            replay_registry = PublicReplayRegistry()
+        if type(replay_registry) is not PublicReplayRegistry:
+            raise ValueError("notice_reparse_invalid_registry")
+        self._replay_registry = replay_registry
+        self._supported = _SUPPORTED + replay_registry.supported()
         self._storage = storage
         self._clock = clock if clock is not None else lambda: int(time.time())
         self._bridge = AggregateWorkBridge(
             storage, broker, self._prepare, clock=self._clock,
-            on_committed=on_committed,
+            on_committed=on_committed, allow_reparse=bool(replay_registry.supported()),
         )
         self._after = None
         self._tick_lock = Lock()
 
     def _prepare(self, spec, control):
         control.check_cancelled()
+        if spec.kind == "reparse_cached_input":
+            return prepare_public_reparse(
+                self._storage, self._replay_registry, spec, control, clock=self._clock,
+            )
         if spec.kind != "recompute_aggregate":
             raise ValueError("notice_recompute_unsupported_spec")
         if spec.implementation_digest == exact.IMPLEMENTATION_DIGEST:
@@ -80,7 +92,7 @@ class PublicNoticeWorkPump:
                 control.check_cancelled()
             page = journal.read_ready_page(
                 self._storage, now=self._clock(), after=self._after,
-                supported=_SUPPORTED,
+                supported=self._supported,
             )
             handles = []
             for ref in page.refs:
