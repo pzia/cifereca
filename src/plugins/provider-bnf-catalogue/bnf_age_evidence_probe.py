@@ -47,6 +47,7 @@ def canonical_isbn(raw: object) -> str | None:
 
 def exact_edition_age_fields(
     xml: bytes, isbn: str, *, _matched_arks: set[str] | None = None,
+    _qualification_refusals: set[str] | None = None,
 ) -> list[dict[str, object]]:
     """Inspect BnF MarcXchange fields without guessing an age interval.
 
@@ -88,6 +89,14 @@ def exact_edition_age_fields(
         raise ValueError("sru_record_limit")
     if records and declared_total == 0:
         raise ValueError("sru_count_conflict")
+    def refuse(reason):
+        if _qualification_refusals is not None:
+            _qualification_refusals.add(reason)
+
+    # Raw evidence remains useful on partial pages. A numeric qualification,
+    # however, cannot establish unique own ISBN across an incomplete response.
+    if declared_total != len(records) or root.find(SRU + "nextRecordPosition") is not None:
+        refuse("incomplete_page")
     output: list[dict[str, object]] = []
     for wrapper in records:
         # BnF SRU specifies MARC records via recordSchema=marcxchange and
@@ -97,9 +106,11 @@ def exact_edition_age_fields(
         packings = wrapper.findall(SRU + "recordPacking")
         if (len(schemas) != 1 or (schemas[0].text or "").strip().lower() != "marcxchange"
                 or len(packings) != 1 or (packings[0].text or "").strip() != "xml"):
+            refuse("unqualified_record")
             continue
         data = wrapper.find(SRU + "recordData")
-        if data is None or len(data) != 1:
+        if data is None or len(data) != 1 or len(wrapper.findall(SRU + "recordData")) != 1:
+            refuse("unqualified_record")
             continue
         record = data[0]
         fmt = record.attrib.get("format", "").upper()
@@ -108,9 +119,11 @@ def exact_edition_age_fields(
                 or record.attrib.get("type") != "Bibliographic"
                 or not isinstance(ark, str)
                 or re.fullmatch(r"ark:/12148/cb[0-9]+[a-z0-9]", ark) is None):
+            refuse("unqualified_record")
             continue
         fields = record.findall(MXC + "datafield")
         if len(fields) > MAX_FIELDS:
+            refuse("unqualified_record")
             continue
         own_isbns = []
         for field in fields:
@@ -118,11 +131,16 @@ def exact_edition_age_fields(
                 for sub in field.findall(MXC + "subfield"):
                     if sub.get("code") == "a":
                         own_isbns.append(canonical_isbn(sub.text))
+                        if len(sub):
+                            refuse("unqualified_isbn")
         if not own_isbns or any(value is None for value in own_isbns):
+            refuse("unqualified_isbn")
             continue
         # A notice with two distinct edition ISBNs cannot prove which one
         # the age metadata describes. Exact same-ISBN aliases are harmless.
         if set(own_isbns) != {key}:
+            if key in own_isbns:
+                refuse("ambiguous_isbn")
             continue
         # Exact ISBN records without age fields still create ambiguity.
         # This optional internal collector preserves the public raw API.
@@ -133,11 +151,22 @@ def exact_edition_age_fields(
             if tag not in AGE_TAGS[fmt]:
                 continue
             pairs = []
+            audience = (fmt, tag) in {("UNIMARC", "333"), ("INTERMARC", "833")}
+            if audience and any(child.tag != MXC + "subfield" for child in field):
+                refuse("unqualified_audience")
+            if audience and (field.text or "").strip():
+                refuse("unqualified_audience")
             for sub in field.findall(MXC + "subfield"):
                 code, value = sub.get("code"), sub.text
                 if (type(code) is str and re.fullmatch(r"[a-z0-9]", code)
                         and type(value) is str and 0 < len(value) <= 300):
                     pairs.append((code, value))
+                    if audience and (len(sub) or (sub.tail or "").strip()):
+                        refuse("unqualified_audience")
+                elif audience:
+                    refuse("unqualified_audience")
+            if audience and not pairs:
+                refuse("unqualified_audience")
             if pairs:
                 output.append({
                     "record_ark": ark, "own_isbn13": key, "marc_format": fmt,
@@ -173,7 +202,12 @@ def qualified_observed_age_fields(xml: bytes, isbn: str) -> list[dict[str, objec
     a verified 333. No digital support or Core age range is inferred.
     """
     matched_arks: set[str] = set()
-    observed = exact_edition_age_fields(xml, isbn, _matched_arks=matched_arks)
+    refused: set[str] = set()
+    observed = exact_edition_age_fields(
+        xml, isbn, _matched_arks=matched_arks, _qualification_refusals=refused,
+    )
+    if refused:
+        return []
     audience = [
         row for row in observed
         if (row["marc_format"], row["field_tag"]) in {
