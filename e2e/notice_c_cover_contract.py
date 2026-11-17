@@ -55,12 +55,8 @@ def verify_notice_c_cover(window, later, capture, report, complete):
     def seed():
         assert get_ident() != gtk_thread
         # The E2E checkout contains the actual provider and recorded page.
-        sys.path.insert(0, str(PLUGIN))
-        try:
-            import cifereca_numilog_public_provider as provider
-            from cifereca_numilog_public import parse_public_search
-        finally:
-            sys.path.remove(str(PLUGIN))
+        import cifereca_numilog_public_provider as provider
+        from cifereca_numilog_public import parse_public_search
         parsed = parse_public_search(
             (PLUGIN / "tests/fixtures/observed_search-loup-0.html").read_text(
                 encoding="utf-8",
@@ -103,7 +99,16 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             db.close()
             session.close()
 
-    seed_job = pool.submit(seed)
+    def run_seed():
+        # Provider performs lazy imports during construction/search/close.
+        # Keep its source directory until all fixture activity has ended.
+        sys.path.insert(0, str(PLUGIN))
+        try:
+            return seed()
+        finally:
+            sys.path.remove(str(PLUGIN))
+
+    seed_job = pool.submit(run_seed)
     deadline = monotonic() + 10
 
     def close_stage():
