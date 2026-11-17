@@ -18,10 +18,11 @@ from cifereca.plugin_api import ProviderRightsScope
 from cifereca.storage import Storage
 
 
-@pytest.mark.parametrize("provider,kind", [
-    ("numilog", "purchase"),
-    ("kobo", "purchase"),
-    ("bnf-pret", "loan"),
+@pytest.mark.parametrize("provider,kind,index", [
+    ("numilog", "purchase", 0),
+    ("kobo", "purchase", 2),
+    ("bnf-pret", "loan", 1),
+    ("fictional", "purchase", 0),
 ])
 @pytest.mark.parametrize("cas_failure", [
     "malformed-json",
@@ -29,16 +30,14 @@ from cifereca.storage import Storage
     "duplicate-field",
 ])
 def test_invalid_exact_cas_vetoes_old_on_before_get_and_at_commit(
-    tmp_path, provider, kind, cas_failure,
+    tmp_path, provider, kind, index, cas_failure,
 ):
     storage = Storage(tmp_path / "consent.sqlite3")
     try:
         scope = ProviderRightsScope("identity-a", provider, "credential-a", "account-a")
         source = SourceKey(scope, "edition-a", "resource-a", kind, "branch-a")
-        prefix, active, epoch_prefix = bridge._POLICIES[(provider, kind)]
-        sid = bridge._source_id(scope)
-        switch = prefix + sid
-        revision_key = (epoch_prefix + sid if epoch_prefix else switch + ".revision")
+        from cifereca.core.legacy_source_consent_metadata import historical_consent_keys
+        switch, active, revision_key = historical_consent_keys(scope)[index]
         storage.metadata_set(source_enablement_key(scope), "1")
         storage.metadata_set(switch, active)
         storage.metadata_set(revision_key, "a" * 32)
