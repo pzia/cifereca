@@ -11,7 +11,7 @@ def _pos(provider, *, identity="alice", kind="owned", state="active"):
     return {
         "provider_id": provider, "identity_id": identity,
         "kind": kind, "state": state, "item_id": "edition-1",
-        "account_id": "account-A",
+        "account_id": "account-A", "credential_id": "card-A",
         # Compatibility-only input: never used to authorize source selection.
         "entitlement_id": "obsolete-ownership",
     }
@@ -61,7 +61,7 @@ def test_unregistered_provider_and_duplicate_accounts_never_become_a_target(monk
     ) is None
     service.accounts.append(Account(
         identity_id="alice", provider_id="numilog",
-        credential_id="card-B", unique_id="account-A",
+        credential_id="card-A", unique_id="account-A",
     ))
     assert selection.select_library_source_offer_target(
         service, {"possessions": [_pos("numilog")]}, identity_id="alice",
@@ -101,3 +101,35 @@ def test_owned_download_target_allows_only_the_exact_single_origin(monkeypatch):
     ]}
     assert action.owned_library_download_target(_service(), entry, identity_id="alice") is target
     assert calls == ["selected"]
+
+
+@pytest.mark.parametrize("credential", [None, "", "detached-card", "card-B"])
+def test_historical_card_never_rebinds_to_reused_account_id(monkeypatch, credential):
+    service = _service()
+    old = _pos("numilog")
+    if credential is None:
+        old.pop("credential_id")
+    else:
+        old["credential_id"] = credential
+    monkeypatch.setattr(selection, "select_source_offer_target",
+                        lambda *_a, **_kw: pytest.fail("foreign source selected"))
+    assert selection.select_library_source_offer_target(
+        service, {"possessions": [old]}, identity_id="alice",
+    ) is None
+
+
+def test_distinct_credentials_same_account_do_not_rebind_exact_old_card(monkeypatch):
+    service = _service()
+    service.accounts.append(Account(
+        identity_id="alice", provider_id="numilog",
+        credential_id="card-B", unique_id="account-A",
+    ))
+    marker = object()
+    calls = []
+    monkeypatch.setattr(selection, "select_source_offer_target",
+                        lambda _s, **coords: calls.append(coords) or marker)
+    assert selection.select_library_source_offer_target(
+        service, {"possessions": [_pos("numilog")]}, identity_id="alice",
+    ) is marker
+    assert calls == [{"provider_id": "numilog", "credential_id": "card-A",
+                      "item_id": "edition-1", "identity_id": "alice"}]
