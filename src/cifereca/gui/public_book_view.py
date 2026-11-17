@@ -274,13 +274,14 @@ class PublicBookMasterDetailView:
                             public_c_document=public_c_document,
                         )
                 else:
-                    # Do not fall back to the private supplier's image URL:
-                    # the old C association is revoked, not a new source.
-                    from dataclasses import replace
-                    panel.show_item_detail(
-                        replace(item, thumbnail_url=None),
-                        replace(detail, thumbnail_url=None),
+                    # Exact Search's worker callback can be delivered after
+                    # the selection has moved. Its old *actions* are just as
+                    # stale as its C image; do not render either.
+                    panel.empty(
+                        "Notice indisponible",
+                        "La sélection ou sa source a changé.",
                     )
+                    return
         else:
             panel.show_search_document(item, detail=detail, cover_evidence=proof)
         # Search appends these same Core local/open/send/owned actions after
@@ -324,10 +325,14 @@ class PublicBookMasterDetailView:
                             public_c_document=public_c_document,
                         )
                 else:
-                    from dataclasses import replace
-                    panel.show_search(
-                        replace(item, thumbnail_url=None), loading=False,
+                    # The offline fallback carries the same original worker
+                    # lease. A missing selection is not permission to render
+                    # its old public C, provider URL or account actions.
+                    panel.empty(
+                        "Notice indisponible",
+                        "La sélection ou sa source a changé.",
                     )
+                    return
         else:
             panel.show_search_document(item, cover_evidence=proof)
         from .query_model import result_row
