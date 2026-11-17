@@ -878,3 +878,32 @@ def test_retired_saved_paris_adept_facade_has_no_stale_ast_review():
     source = (root / "src/cifereca/services.py").read_text()
     assert "def normal_paris_adept_status(" not in source
     assert "def check_normal_paris_adept_runtime(" not in source
+
+
+def test_installed_core_has_no_unreviewed_or_active_supplier_business_debt():
+    """Owner 16/11: freeze the semantic cutover, not a raw AST quota.
+
+    The separately inventoried one-time upgrade writers are allowed to open
+    existing installations; they are not live provider authorization routes.
+    A new signal must have an explicit reviewed responsibility, even if the
+    net raw AST count is unchanged. Existing guards must not be deleted to
+    satisfy this test.
+    """
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    report = inventory(root)
+    assert not report["ast_parse_errors"]
+    assert not report["stale_reviews"]
+    assert report["unclassified"] == 0, [
+        site["id"] for site in report["sites"]
+        if site["classification"] == "unclassified"
+    ]
+    assert report["active_business_decisions_to_migrate"] == 0
+    assert (
+        report["active_legacy_writers_to_retire"]
+        == report["retained_non_ast_legacy_migration_writers"]
+    )
+    assert report["dedicated_candidate_physical_lines"] == 0, (
+        report["dedicated_path_candidates"]
+    )
