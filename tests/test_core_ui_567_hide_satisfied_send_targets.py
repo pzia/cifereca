@@ -30,9 +30,9 @@ def _possession(
     )
 
 
-def test_active_remote_possession_hides_only_matching_destination():
+def test_active_remote_possession_never_hides_destination():
     possessions = (_possession("alice"), _possession("bob", item="other"))
-    assert identity_has_attested_possession(
+    assert not identity_has_attested_possession(
         possessions,
         identity_id="alice",
         provider_id="kobo",
@@ -48,7 +48,7 @@ def test_active_remote_possession_hides_only_matching_destination():
     )
 
 
-def test_remote_possession_requires_matching_known_credential():
+def test_remote_possession_is_not_local_even_with_or_without_credential():
     possessions = (_possession("alice", credential="vault-b"),)
     assert not identity_has_attested_possession(
         possessions,
@@ -100,3 +100,12 @@ def test_send_actions_consume_fresh_library_read_projection():
     assert "library_read.for_artifact" in source
     assert "identity_has_attested_possession(" in source
     assert "local_placement_for_source(" in source
+
+
+def test_no_remote_kind_can_satisfy_destination_even_with_exact_credentials():
+    for kind in ("owned", "loan", "license"):
+        assert not identity_has_attested_possession(
+            (_possession("alice", kind=kind, state="active"),),
+            identity_id="alice", provider_id="kobo", source_item_id="book-1",
+            credential_id="vault-a",
+        )

@@ -11,17 +11,17 @@ def identity_has_attested_possession(
     source_item_id: str,
     credential_id: str = "",
 ) -> bool:
-    """Return true only for a current, source-attested possession.
+    """Return true only for a present source-attested local/storage copy.
 
-    Remote rights must be active. Local/storage evidence must be present.
-    When both sides expose a credential, it must match; when the source
-    credential is known but the remote possession omits it, we stay
-    conservative and keep the transfer action visible.
+    Historical remote purchase, loan and licence records cannot prove that
+    the recipient already has the bytes, even with the same credential.
+    The caller separately checks exact local placement and Core independently
+    admits/revalidates any explicit copy. The credential keyword is retained
+    for callers of the previous read-only projection.
     """
     target_identity = str(identity_id or "")
     provider = str(provider_id or "")
     item = str(source_item_id or "")
-    credential = str(credential_id or "")
     if not target_identity or not provider or not item:
         return False
 
@@ -35,19 +35,6 @@ def identity_has_attested_possession(
 
         kind = str(getattr(possession, "kind", "") or "")
         state = str(getattr(possession, "state", "") or "")
-        if kind in {"local", "storage"}:
-            if state == "present":
-                return True
-            continue
-        if kind not in {"owned", "loan", "license"} or state != "active":
-            continue
-
-        if credential:
-            facts = getattr(possession, "facts", {}) or {}
-            possession_credential = str(
-                facts.get("credential_id") if hasattr(facts, "get") else ""
-            )
-            if not possession_credential or possession_credential != credential:
-                continue
-        return True
+        if kind in {"local", "storage"} and state == "present":
+            return True
     return False
