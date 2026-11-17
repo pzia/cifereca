@@ -3920,9 +3920,19 @@ class LibraryService:
         # The historical facade name is retained, but the actual resolver
         # enforces matching source-scoped v16 borrower proof for all libraries.
         # Historical v15 Paris rows cannot authorize another provider.
-        borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
-            loan, connection_identity_id=bound_identity_id,
-        )
+        try:
+            borrower_identity_id, borrower_code = self._paris_adept_identity_for_loan(
+                loan, connection_identity_id=bound_identity_id,
+            )
+        except Exception:
+            borrower_identity_id, borrower_code = None, "adept_borrower_ambiguous"
+        # No error code is not positive borrower proof. Preserve the same
+        # historical-origin exception as before: only independently attested
+        # inventory may be displayed after a missing/revoked borrower grant.
+        if borrower_code is None and (
+            type(borrower_identity_id) is not str or not borrower_identity_id
+        ):
+            borrower_code = "adept_borrower_ambiguous"
         if not scope.current(loan):
             return denied
 
