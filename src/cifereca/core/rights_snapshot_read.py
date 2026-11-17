@@ -248,6 +248,7 @@ def read_account_rights_snapshot(service, account: Account, *,
             except ValueError as exc:
                 if str(exc) in (
                     "invalid_downloadable_snapshot_scope",
+                    "downloadable_resource_scope_mismatch",
                     "invalid_rights_snapshot_scope",
                 ):
                     # An attestation for another account invalidates the
