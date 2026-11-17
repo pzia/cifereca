@@ -12,6 +12,7 @@ reopen a file or infer the mapping between distinct books.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from hashlib import sha256
 import sqlite3
 import json
 import re
@@ -25,6 +26,9 @@ from .notice_cover_projection import (
 from .notice_source_observation import NoticeSourceKey, NoticeSourceObservation
 
 _PREFIX = "notice.c.observation.v1:"
+# A compact per-source fencing record survives short observation eviction.
+# No bibliography, URL, account data or duplicate notice body is stored.
+_FENCE_PREFIX = "notice.c.source-fence.v1:"
 _MAX_BYTES = 131072
 _MAX_EPOCH = 2**63 - 1
 _SOURCE_FIELDS = frozenset((
@@ -161,6 +165,57 @@ def read_notice_cover(storage: Any, document: CoverDocumentScope) -> PersistedNo
     return _decode(row[0], document) if row is not None else None
 
 
+
+def _fence_key(key: str) -> str:
+    return _FENCE_PREFIX + key[len(_PREFIX):]
+
+
+def _source_fingerprint(observation, field_path, inventory_complete):
+    # source_revision already binds exact scope, parser/version and raw
+    # fields. The projection contract is separately part of the proof.
+    raw = json.dumps(
+        [observation.source_revision, list(field_path), inventory_complete],
+        ensure_ascii=True, separators=(",", ":"),
+    )
+    return sha256(raw.encode("ascii")).hexdigest()
+
+
+def _read_source_fence(db, key):
+    row = db.execute("SELECT value FROM metadata WHERE key=?",
+                     (_fence_key(key),)).fetchone()
+    if row is None:
+        return None
+    try:
+        raw = row[0]
+        if type(raw) is not str or len(raw) > 256:
+            raise ValueError
+        fence = json.loads(raw, object_pairs_hook=_unique_object)
+        if (type(fence) is not dict
+                or set(fence) != {"epoch", "last_seen_at", "proof"}
+                or type(fence["epoch"]) is not int
+                or not 1 <= fence["epoch"] <= _MAX_EPOCH
+                or type(fence["last_seen_at"]) is not int
+                or not 1 <= fence["last_seen_at"] <= _MAX_EPOCH
+                or type(fence["proof"]) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", fence["proof"]) is None):
+            raise ValueError
+    except (ValueError, TypeError, KeyError, RecursionError) as exc:
+        raise ValueError("notice_c_source_fence_corrupt") from exc
+    return fence
+
+
+def _write_source_fence(db, key, *, epoch, seen_at, proof):
+    if not 1 <= epoch <= _MAX_EPOCH or not 1 <= seen_at <= _MAX_EPOCH:
+        raise ValueError("notice_c_source_fence_overflow")
+    db.execute(
+        "INSERT INTO metadata(key,value) VALUES(?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (_fence_key(key), json.dumps({
+            "epoch": epoch, "last_seen_at": seen_at, "proof": proof,
+        }, sort_keys=True, separators=(",", ":"))),
+    )
+
+
 def _persist_notice_cover_txn(
     db: Any, observation: NoticeSourceObservation,
     attribute: NoticeCoverAttribute, key: str,
@@ -177,11 +232,45 @@ def _persist_notice_cover_txn(
         "SELECT value FROM metadata WHERE key=?", (key,),
     ).fetchone()
     previous = _decode(existing[0], attribute.document) if existing else None
+    fence = _read_source_fence(db, key)
     previous_epoch = previous.epoch if previous is not None else 0
-    if expected_epoch is not None and expected_epoch != previous_epoch:
+    proof = _source_fingerprint(observation, field_path, cover_inventory_complete)
+    if previous is None and fence is not None:
+        # An evicted source is not a never-seen source. In particular a
+        # pre-eviction CAS (even with the last epoch) cannot recreate it.
+        if expected_epoch is not None:
+            raise ValueError("notice_c_persisted_epoch_changed")
+        previous_epoch = fence["epoch"]
+        if (observation.observed_at < fence["last_seen_at"]
+                or (observation.observed_at == fence["last_seen_at"]
+                    and proof != fence["proof"])):
+            raise ValueError("notice_c_persisted_stale_source")
+    elif expected_epoch is not None and expected_epoch != previous_epoch:
         raise ValueError("notice_c_persisted_epoch_changed")
     if previous is not None:
         old = previous.observation
+        old_row = json.loads(existing[0])
+        seen_at = old_row.get(_LAST_SEEN, old.observed_at)
+        old_proof = _source_fingerprint(
+            old, tuple(old_row["field_path"]), old_row["cover_inventory_complete"],
+        )
+        if fence is not None and (
+            fence["epoch"] != previous_epoch
+            or fence["last_seen_at"] != seen_at
+            or fence["proof"] != old_proof
+        ):
+            raise ValueError("notice_c_source_fence_corrupt")
+
+        def retain(*, advance):
+            # Migrate a legacy row lazily; keep the same epoch and body.
+            # This fence update commits atomically with the row watermark.
+            latest = max(seen_at, observation.observed_at) if advance else seen_at
+            if advance and latest > seen_at:
+                _advance_seen_watermark(db, key, existing[0], latest)
+            if fence is None or latest > seen_at:
+                _write_source_fence(db, key, epoch=previous_epoch,
+                                    seen_at=latest, proof=old_proof)
+            return previous
         # A cache replay or generic cover-only SearchResult is never a new
         # PUBLIC bibliography observation. After a same-call C v2 writer has
         # admitted its source fields, a later legacy v1 cover-only write may
@@ -191,8 +280,7 @@ def _persist_notice_cover_txn(
         if (old.parser_id == observation.parser_id == "core.search.public-cover"
                 and old.parser_version == "2"
                 and observation.parser_version == "1"):
-            return previous
-        seen_at = json.loads(existing[0]).get(_LAST_SEEN, old.observed_at)
+            return retain(advance=False)
         # A delayed worker must not replace a newer accepted observation,
         # even if the latter was partial and kept an older valid cover.
         changed = (old.source_revision != observation.source_revision
@@ -203,21 +291,15 @@ def _persist_notice_cover_txn(
                 and not attribute.snapshot_complete):
             # Incomplete parsing/cover inventory is no tombstone. Persist
             # its *time* (not its untrusted media) to reject older work.
-            _advance_seen_watermark(
-                db, key, existing[0], observation.observed_at,
-            )
-            return previous
+            return retain(advance=True)
         if not changed:
-            _advance_seen_watermark(
-                db, key, existing[0], observation.observed_at,
-            )
-            return previous
+            return retain(advance=True)
         # Same-second source changes require the explicit writer CAS.
         # The watermark is durable even if the current source is older.
         if observation.observed_at == seen_at and expected_epoch is None:
             raise ValueError("notice_c_persisted_stale_source")
-        if previous_epoch >= _MAX_EPOCH:
-            raise ValueError("notice_c_persisted_epoch_overflow")
+    if previous_epoch >= _MAX_EPOCH:
+        raise ValueError("notice_c_persisted_epoch_overflow")
     epoch = previous_epoch + 1
     payload = {
         "schema": 1, "key": asdict(observation.key),
@@ -243,6 +325,8 @@ def _persist_notice_cover_txn(
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (key, encoded),
     )
+    _write_source_fence(db, key, epoch=epoch,
+                        seen_at=observation.observed_at, proof=proof)
     return PersistedNoticeCover(observation, attribute, epoch)
 
 
@@ -257,7 +341,10 @@ def persist_notice_cover(
     The caller is an authorized Core producer, not GTK or a cache HIT.
     Optional epoch CAS protects concurrent source workers. Even without CAS,
     an older timestamp or incomplete later observation cannot silently
-    replace an already complete source. Same proof is idempotent.
+    replace an already complete source while it is retained. Same proof
+    is idempotent on a live row. The compact fence survives source eviction:
+    a fresh admitted no-CAS publication starts a strictly newer generation;
+    an old CAS or changed same-second proof cannot recreate the row.
     """
     attribute = project_notice_cover_attribute(
         observation, field_path=field_path,
