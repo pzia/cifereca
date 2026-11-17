@@ -386,6 +386,11 @@ def compute_recommendations(
         str, tuple[Any, float, tuple[str, ...], list[str], dict[tuple[str, ...], CatalogNoticeVariant]]
     ] = {}
     score_cache: dict[tuple[Any, ...], tuple[float, tuple[str, ...]]] = {}
+    # A read-only C projection has no credential. Preserve its original
+    # object across repeated signals within this ranking run; otherwise
+    # the unresolved-variant policy correctly treats each new object as
+    # another occurrence and rejects the sole-edition cover.
+    local_candidates: dict[tuple[str, ...], Any] = {}
 
     def ingest_provisional(rows: list[Any]) -> None:
         for item in rows:
@@ -452,10 +457,16 @@ def compute_recommendations(
         known_rows = []
         if callable(known_reader):
             try:
-                known_rows = list(known_reader(
+                raw_known = list(known_reader(
                     query, scope=scope,
                     provider_ids=tuple(str(pid) for pid, _ in providers),
                 ) or ())[:max(10, int(per_query))]
+                for item in raw_known:
+                    key = tuple(str(get_field(item, field, "") or "") for field in (
+                        "id", "source_provider", "record_id", "docbase",
+                        "medium", "revision_id",
+                    ))
+                    known_rows.append(local_candidates.setdefault(key, item))
             except Exception:
                 warnings.append("known_public_notice_read_failed")
         if cancelled_or_revoked():
