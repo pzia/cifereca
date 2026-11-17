@@ -5,6 +5,8 @@ file transfer, provider request, or negative loan realization is invoked.
 """
 from __future__ import annotations
 
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
+
 from dataclasses import replace
 import json
 
@@ -41,8 +43,9 @@ def test_conflicting_loan_on_second_page_rejects_entire_account_but_not_sibling(
     service = _service(tmp_path)
     try:
         service.accounts = [wrong, healthy]
-        monkeypatch.setattr(service, "_loans_for_account",
-                            lambda a, *, force=False: list(rows[a.credential_id]))
+        attach_opening_loan_reader(
+            service, lambda a, *, force=False: list(rows[a.credential_id]),
+        )
         monkeypatch.setattr(service, "_acquire_active_loan_automatically",
                             lambda loan: {"status": "unchanged"})
         report = service.opening_sync()
@@ -67,8 +70,9 @@ def test_identical_page_duplicates_are_one_positive_loan(tmp_path, monkeypatch):
     service = _service(tmp_path)
     try:
         service.accounts = [account]
-        monkeypatch.setattr(service, "_loans_for_account",
-                            lambda a, *, force=False: [loan, replace(loan)])
+        attach_opening_loan_reader(
+            service, lambda a, *, force=False: [loan, replace(loan)],
+        )
         monkeypatch.setattr(service, "_acquire_active_loan_automatically",
                             lambda l: {"status": "unchanged"})
         result = service.opening_sync()
@@ -86,8 +90,9 @@ def test_duplicate_ids_from_different_borrowers_do_not_conflict(tmp_path, monkey
     service = _service(tmp_path)
     try:
         service.accounts = [alice, bob]
-        monkeypatch.setattr(service, "_loans_for_account",
-                            lambda a, *, force=False: [loan] if a is alice else [other])
+        attach_opening_loan_reader(
+            service, lambda a, *, force=False: [loan] if a is alice else [other],
+        )
         monkeypatch.setattr(service, "_acquire_active_loan_automatically",
                             lambda l: {"status": "unchanged"})
         service.opening_sync()
