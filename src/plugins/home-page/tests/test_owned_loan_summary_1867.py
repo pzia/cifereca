@@ -58,5 +58,23 @@ class OverviewOwnershipTests(unittest.TestCase):
         self.assertIn("Droits d’achat distants : —", rows[1])
 
 
+def test_native_purchase_observations_are_not_presented_as_rights():
+    stats = {"local_books": 0, "local_placements": 0, "known_loans": 2,
+             "observed_purchase_sources": 7, "remote_owned_rights": 99}
+    row = {"statistics": stats}
+    overview = home.overview_counts_lines(stats)
+    assert "Sources d’achat observées : 7" in overview[1]
+    assert "7 sources d’achat observées" in " ".join(home.statistics_lines(row))
+    assert "99" not in " ".join((*overview, *home.statistics_lines(row)))
+    assert "droits d’achat" not in " ".join((*overview, *home.statistics_lines(row))).lower()
+
+
+def test_unknown_native_purchase_count_never_falls_back_to_legacy_rights():
+    for value in (None, -1, True, "7"):
+        stats = {"local_books": 0, "known_loans": 0,
+                 "observed_purchase_sources": value, "remote_owned_rights": 42}
+        assert "Sources d’achat observées : —" in home.overview_counts_lines(stats)[1]
+
+
 if __name__ == "__main__":
     unittest.main()
