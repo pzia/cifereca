@@ -115,6 +115,7 @@ def capture_cross_profile_borrow_scope(
     service: object, *, requesting_identity_id: str,
     borrowing_account: Account, exact_notice: SearchResult,
     lender_session: object, scope_current=None, admitted: bool = False,
+    reader_scope=None,
 ) -> CrossProfileBorrowScopeLease | None:
     """Capture a necessary pre-POST boundary, never authorization or consent."""
     if (type(requesting_identity_id) is not str
@@ -127,8 +128,17 @@ def capture_cross_profile_borrow_scope(
     try:
         fields = _fields(borrowing_account, exact_notice)
         claim = borrow_claim_key(borrowing_account, exact_notice)
-        context = service._account_context_epoch
         source = source_context_epoch(service)
+        if reader_scope is not None:
+            from .search_orchestration import SearchReadScope
+            if (admitted is not True or type(reader_scope) is not SearchReadScope
+                    or reader_scope.identity_id != requesting_identity_id
+                    or reader_scope.source_epoch != source
+                    or not reader_scope.current(service)):
+                return None
+            context = source
+        else:
+            context = service._account_context_epoch
         if (state is None or not _valid_fields(fields)
                 or claim is None
                 or not callable(scope_current)
