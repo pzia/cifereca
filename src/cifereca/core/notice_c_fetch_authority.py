@@ -44,6 +44,7 @@ class _Grant:
     deadline: int
     hold_authority: Callable
     permit: PublicFetchPermit | None = None
+    started: bool = False
 
 
 class PublicFetchAuthority:
@@ -194,6 +195,36 @@ class PublicFetchAuthority:
                 # under this authorization. A fresh explicit action is needed.
                 grant.permit = permit
                 yield permit
+
+    @contextmanager
+    def transport_start_guard(self, permit):
+        """Late, one-use Core fence immediately before actual transport start.
+
+        The adapter must call this guard at its own transport admission
+        point (after client construction). Hold the owner and registry
+        while the provider checks its session/reservation; release SQLite
+        BEFORE yielding. Never hold any of these guards across HTTP.
+        """
+        if type(permit) is not PublicFetchPermit:
+            raise ValueError("notice_fetch_invalid_permit")
+        with self._lock:
+            grant = self._lookup(permit.lease.ref)
+            if grant.permit is not permit or grant.started:
+                raise ValueError("notice_fetch_invalid_permit")
+        with grant.hold_authority() as allowed:
+            if allowed is not True:
+                raise ValueError("notice_fetch_authority_revoked")
+            with self._lock:
+                if (self._lookup(permit.lease.ref) is not grant
+                        or grant.permit is not permit or grant.started):
+                    raise ValueError("notice_fetch_invalid_permit")
+                with self._storage._lock, self._storage._connect() as db:
+                    db.execute("BEGIN")
+                    self._verify_txn(db, grant, permit.lease, self._now())
+                # If the provider rejects actual start, the permit remains
+                # consumed; the worker clears it and never retries the GET.
+                grant.started = True
+                yield True
 
     @contextmanager
     def publication_guard(self, permit):
