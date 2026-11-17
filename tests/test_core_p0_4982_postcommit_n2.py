@@ -137,3 +137,41 @@ def test_cold_document_is_not_loaded_by_notification(tmp_path):
         covers.close()
         loader.close()
         db.close()
+
+
+def test_postcommit_reread_wins_against_inflight_first_miss(tmp_path, monkeypatch):
+    db = Storage(tmp_path / "miss.sqlite")
+    loader = CoverLoader(max_workers=1)
+    entered, release, notified = Event(), Event(), Event()
+    reads = []
+    def reader(document):
+        snapshot = cached_notice_cover_snapshot(NS(storage=db), document)
+        reads.append(snapshot.revision)
+        if len(reads) == 1:
+            entered.set()
+            assert release.wait(10)
+        return snapshot
+    def fake_load(*args, **kwargs):
+        return NS(cancel=lambda: None)
+    monkeypatch.setattr(loader, "load", fake_load)
+    monkeypatch.setattr(loader, "load_preview", fake_load)
+    covers = DocumentCoverService(loader, cached_source_reader=reader)
+    try:
+        initial = persist_exact_public_search_cover(db, persist(db, row("one", URL), at=10))
+        pending = covers.get_cover(initial.document, "list", lambda _: None,
+                                   on_source_changed=notified.set)
+        assert pending.source_uri is None and entered.wait(10)
+        updated = persist_exact_public_search_cover(db, persist(db, row("one", NEW), at=11))
+        assert covers.refresh_committed_source_in_worker(updated.document, updated.epoch)
+        assert notified.is_set() and reads == [initial.epoch, updated.epoch]
+        release.set()
+        assert covers.get_cover(updated.document, "detail", lambda _: None).source_uri == NEW
+        # The initial worker must finish before verifying the final N2.
+        covers._read_pool.shutdown(wait=True)
+        assert covers.get_cover(updated.document, "list", lambda _: None).source_uri == NEW
+        assert reads == [initial.epoch, updated.epoch]
+    finally:
+        release.set()
+        covers.close()
+        loader.close()
+        db.close()
