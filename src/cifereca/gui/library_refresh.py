@@ -52,32 +52,38 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
     self._library_refresh_explicit_pending = control is not None
     self._library_refresh_generation = getattr(self, "_library_refresh_generation", 0) + 1
     request_generation = self._library_refresh_generation
-    identity_id = self.service.current_identity.identity_id if self.service.current_identity else None
+    service = self.service
+    selected = service.current_identity
+    identity_id = selected.identity_id if selected is not None else None
     generation = self._identity_context_generation
     all_profiles = getattr(self, "_library_all_profiles", False) is True
+    lookup = getattr(service, "identity_by_id", None)
+    admitted_identity = lookup(identity_id) if callable(lookup) and identity_id else None
+
     def work() -> list[dict[str, Any]]:
-        # A request can remain queued while navigation switches identity or
-        # a newer manual refresh supersedes it. Avoid expensive filesystem
-        # scans or service queries for a context whose GTK result must be
-        # discarded anyway (#981). In-flight work is not interrupted.
-        if (getattr(self, "_closed", False)
-                or request_generation != self._library_refresh_generation
-                or not self._identity_request_current(identity_id, generation)):
+        # Scans reconcile the configured local catalogue, not a selected
+        # provider account. Navigation and superseding view requests are
+        # publication guards only. A disposed/replaced service must not
+        # perform a queued scan, and a removed identity cannot be reused.
+        if (getattr(self, "_closed", False) or self.service is not service
+                or type(identity_id) is not str or not identity_id
+                or (callable(lookup) and (admitted_identity is None
+                    or lookup(identity_id) is not admitted_identity))):
             return []
         if all_profiles:
             # Read every per-profile Core projection as independent owner
             # rows; never scan or call a supplier in this browse mode.
             from .library_global_projection import global_library_display_rows
             return global_library_display_rows(
-                self.service.library_entries_all_profiles(),
+                service.library_entries_all_profiles(),
                 viewing_identity_id=identity_id,
             )
         if refresh_covers:
-            self.service.catalog_scan(force_covers=True)
-        return self.service.library_entries(identity_id=identity_id, scan=scan and not refresh_covers)
+            service.catalog_scan(force_covers=True)
+        return service.library_entries(identity_id=identity_id, scan=scan and not refresh_covers)
     def ok(entries: list[dict[str, Any]]) -> None:
-        if (getattr(self, "_closed", False) or
-                request_generation != self._library_refresh_generation):
+        if (getattr(self, "_closed", False) or self.service is not service
+                or request_generation != self._library_refresh_generation):
             return
         self._library_refresh_pending = False
         self._library_refresh_explicit_pending = False
@@ -103,8 +109,8 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
         # selected identity. Do not resubmit work on every return to Library.
         self._library_loaded_generation = generation
     def err(exc: BaseException) -> None:
-        if (getattr(self, "_closed", False) or
-                request_generation != self._library_refresh_generation):
+        if (getattr(self, "_closed", False) or self.service is not service
+                or request_generation != self._library_refresh_generation):
             return
         self._library_refresh_pending = False
         self._library_refresh_explicit_pending = False

@@ -16,7 +16,7 @@ from tests.test_core_ui_identity_async_recent import _harness, _change_identity
     ("refresh_library", "library_entries", "library_shown"),
     ("refresh_recent", "recent_acquisitions", "recent_shown"),
 ])
-def test_queued_old_identity_is_skipped_and_current_retried_once(
+def test_queued_old_identity_executes_and_current_is_retried_once(
     method, service_method, shown,
 ):
     host = _harness()
@@ -26,16 +26,16 @@ def test_queued_old_identity_is_skipped_and_current_retried_once(
     stale = host.runner.requests[-1]
 
     _change_identity(host, "bob")
-    expected_old = [] if method == "refresh_library" else [{"identity_id": "alice"}]
+    expected_old = [{"identity_id": "alice"}]
     assert stale.work() == expected_old
-    assert source.call_count == (0 if method == "refresh_library" else 1)
+    assert source.call_count == 1
     stale.ok(expected_old)
     assert len(host.runner.requests) == 2
     assert getattr(host, shown) == []
 
     current = host.runner.requests[-1]
     assert current.work() == [{"identity_id": "bob"}]
-    assert source.call_count == (1 if method == "refresh_library" else 2)
+    assert source.call_count == 2
     assert source.call_args.kwargs["identity_id"] == "bob"
     current.ok([{"identity_id": "bob"}])
     assert getattr(host, shown) == [[{"identity_id": "bob"}]]
@@ -43,7 +43,7 @@ def test_queued_old_identity_is_skipped_and_current_retried_once(
     # A callback delivered twice may not trigger another source read.
     stale.ok([])
     assert len(host.runner.requests) == 2
-    assert source.call_count == (1 if method == "refresh_library" else 2)
+    assert source.call_count == 2
 
 
 @pytest.mark.parametrize("method,service_method", [
@@ -60,13 +60,13 @@ def test_a_to_b_to_a_queued_work_does_not_reuse_wrong_generation(
     original = host.runner.requests[-1]
     _change_identity(host, "bob")
     _change_identity(host, "alice")
-    assert original.work() == []  # same ID, but a new identity generation
-    assert source.call_count == (0 if method == "refresh_library" else 1)
+    assert original.work() == []  # admission executes; publication generation is stale
+    assert source.call_count == 1
     original.ok([])
     assert len(host.runner.requests) == 2
     active = host.runner.requests[-1]
     active.work()
-    assert source.call_count == (1 if method == "refresh_library" else 2)
+    assert source.call_count == 2
     assert source.call_args.kwargs["identity_id"] == "alice"
 
 
@@ -74,7 +74,7 @@ def test_a_to_b_to_a_queued_work_does_not_reuse_wrong_generation(
     ("refresh_library", "library_entries"),
     ("refresh_recent", "recent_acquisitions"),
 ])
-def test_newer_user_refresh_supersedes_background_worker_without_service_io(
+def test_newer_user_refresh_supersedes_publication_not_admitted_worker(
     method, service_method,
 ):
     host = _harness()
@@ -85,19 +85,19 @@ def test_newer_user_refresh_supersedes_background_worker_without_service_io(
     getattr(host, method)(control=object())
     new = host.runner.requests[-1]
     assert len(host.runner.requests) == 2
-    assert old.work() == ([] if method == "refresh_library" else [{"current": True}])
-    assert source.call_count == (0 if method == "refresh_library" else 1)
+    assert old.work() == [{"current": True}]
+    assert source.call_count == 1
     # The superseded callback must not clear the new pending flag.
     old.ok([])
     assert host._library_refresh_pending if method == "refresh_library" else host._recent_refresh_pending
     assert new.work() == [{"current": True}]
-    assert source.call_count == (1 if method == "refresh_library" else 2)
+    assert source.call_count == 2
     new.ok([{"current": True}])
     assert len(host.runner.requests) == 2
 
 
 @pytest.mark.parametrize("mode", ["scan", "covers"])
-def test_stale_library_scan_must_not_touch_disk_or_cover_provider(mode):
+def test_admitted_library_scan_survives_navigation_without_replay(mode):
     host = _harness()
     source = Mock(return_value=[])
     disk_scan = Mock()
@@ -107,15 +107,19 @@ def test_stale_library_scan_must_not_touch_disk_or_cover_provider(mode):
     old = host.runner.requests[-1]
     _change_identity(host, "bob")
     assert old.work() == []
-    source.assert_not_called()
-    disk_scan.assert_not_called()
+    source.assert_called_once_with(identity_id="alice", scan=mode == "scan")
+    if mode == "covers":
+        disk_scan.assert_called_once_with(force_covers=True)
+    else:
+        disk_scan.assert_not_called()
     old.ok([])
     next_task = host.runner.requests[-1]
     assert next_task.kwargs["control"] is None
     # The stale manual scan is not replayed as an automatic scan.
     next_task.work()
-    source.assert_called_once_with(identity_id="bob", scan=False)
-    disk_scan.assert_not_called()
+    assert source.call_count == 2
+    source.assert_called_with(identity_id="bob", scan=False)
+    assert disk_scan.call_count == (1 if mode == "covers" else 0)
 
 
 @pytest.mark.parametrize("method,service_method", [
@@ -170,9 +174,7 @@ def test_successful_empty_response_records_current_generation_only(
     getattr(host, method)()
     old = host.runner.requests[-1]
     _change_identity(host, "bob")
-    assert old.work() == (
-        [] if method == "refresh_library" else [{"identity_id": "alice"}]
-    )
+    assert old.work() == [{"identity_id": "alice"}]
     old.ok([])
     assert getattr(host, marker, None) is None
     fresh = host.runner.requests[-1]

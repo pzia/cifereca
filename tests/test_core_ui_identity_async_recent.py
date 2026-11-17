@@ -170,3 +170,37 @@ def test_queued_recent_read_survives_window_close_without_retargeting():
     pending.ok([{"identity_id": "alice"}])
     assert host.recent_shown == []
     assert len(host.runner.requests) == 1
+
+
+def test_library_core_replacement_does_not_execute_or_publish_queued_scan():
+    from unittest.mock import Mock
+    host = _harness()
+    first = host.service
+    first.catalog_scan = Mock()
+    first.library_entries = Mock()
+    host.refresh_library(True, control=object(), refresh_covers=True)
+    old = host.runner.requests[-1]
+    host.service = NS(current_identity=NS(identity_id="alice"),
+                      catalog_scan=Mock(), library_entries=Mock())
+    assert old.work() == []
+    old.ok([{"identity_id": "alice", "private": True}])
+    for service in (first, host.service):
+        service.catalog_scan.assert_not_called()
+        service.library_entries.assert_not_called()
+    assert host.library_shown == []
+
+
+def test_library_removed_identity_blocks_queued_scan_without_retargeting():
+    from unittest.mock import Mock
+    host = _harness()
+    identities = {"alice": host.service.current_identity}
+    host.service.identity_by_id = identities.get
+    host.service.catalog_scan = Mock()
+    host.service.library_entries = Mock()
+    host.refresh_library(True, control=object(), refresh_covers=True)
+    old = host.runner.requests[-1]
+    identities.pop("alice")
+    _change_identity(host, "bob")
+    assert old.work() == []
+    host.service.catalog_scan.assert_not_called()
+    host.service.library_entries.assert_not_called()
