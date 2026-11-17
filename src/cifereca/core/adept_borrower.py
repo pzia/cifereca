@@ -47,36 +47,43 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     credential = loan.source_credential.strip()
     if not credential:
         return None, "adept_borrower_ambiguous"
-    # Account rows can also originate in a provider plugin. Only native
-    # coordinates may attest the source: never invoke untrusted __str__,
-    # __eq__ or subclass methods while selecting ADEPT grant ownership.
-    matches = [
-        account for account in self.accounts
-        if type(account.provider_id) is str
-        and account.provider_id.casefold() == source_provider
-        and type(account.credential_id) is str
-        and account.credential_id == credential
-        and type(account.is_primary) is bool
-        and (
-            (borrower == "primary" and account.is_primary)
-            or (type(account.unique_id) is str
-                and account.unique_id.strip() == borrower)
-        )
-    ]
-    if (len(matches) != 1
-            or type(matches[0].identity_id) is not str
-            or matches[0].identity_id != connection_identity_id):
+    # Reuse the installed provider's existing-loan borrower convention,
+    # including an explicitly declared alias for an empty-ID primary.
+    # The old literal "primary" is a grant-store key, not proof that a
+    # provider reported this borrower. Preserve historical normalization
+    # of loan coordinates, but never choose the account by a Core alias.
+    from types import SimpleNamespace
+    try:
+        account = self._account_for_loan(SimpleNamespace(
+            source_provider=source_provider, source_credential=credential,
+            source_account_id=borrower,
+        ))
+    except Exception:
         return None, "adept_borrower_ambiguous"
-    if matches[0].is_primary:
+    if (type(account.provider_id) is not str
+            or account.provider_id != source_provider
+            or type(account.credential_id) is not str
+            or account.credential_id != credential
+            or type(account.unique_id) is not str
+            or type(account.is_primary) is not bool
+            or type(account.identity_id) is not str
+            or account.identity_id != connection_identity_id):
+        return None, "adept_borrower_ambiguous"
+    is_primary = account.is_primary
+    if is_primary:
+        # A declared observation alias has already been checked against the
+        # exact empty primary UID. Preserve the existing canonical grant
+        # coordinate and cross-connection/duplicate primary veto.
+        conflict_key = "primary" if account.unique_id == "" and borrower else borrower
         if self._borrower_identity_conflict(
             self.accounts, provider_id=source_provider,
-            account_id=borrower, identity_id=connection_identity_id,
+            account_id=conflict_key, identity_id=connection_identity_id,
             credential_id=credential,
         ):
             return None, "adept_borrower_ambiguous"
         borrower = "primary"
 
-    if not matches[0].is_primary and (not borrower or borrower == "primary"):
+    if not is_primary and (not borrower or borrower == "primary"):
         return None, "adept_borrower_ambiguous"
     # The v15 SQLite table lacks a provider column, and credentials/account
     # IDs can legitimately collide between libraries. Storage projects its
@@ -162,7 +169,7 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
             return owner, None
         if reason != "adept_borrower_binding_required":
             return None, public_borrower_refusal_code(reason)
-        if matches[0].is_primary and not legacy_retired:
+        if is_primary and not legacy_retired:
             return connection_identity_id, None
         return None, "adept_borrower_binding_required"
     # This is a stored *grant*, not an arbitrary provider projection. Never
