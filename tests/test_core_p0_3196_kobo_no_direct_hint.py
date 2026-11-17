@@ -12,7 +12,7 @@ def test_kobo_direct_download_hint_denies_before_session_or_rights_lookup():
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef)
                and n.name == "LibraryService")
     method = next(n for n in cls.body if isinstance(n, ast.FunctionDef)
-                  and n.name == "can_direct_download")
+                  and n.name == "_can_direct_download_read")
     # A private row is rejected by the generic passive hint before any
     # provider lookup. No supplier-name exception remains in the Core.
     assert "kobo" not in ast.unparse(method).lower()
