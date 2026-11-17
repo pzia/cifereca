@@ -140,7 +140,7 @@ def test_search_success_is_not_failed_by_diagnostics_sink(tmp_path, monkeypatch)
         lambda request: httpx.Response(404),
         diagnostics=FailingDiagnostics(),
     )
-    item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
+    item = session._parse_feed(RESULTS.encode("utf-8"), "https://gallica.bnf.fr/opds/search")[0]
     monkeypatch.setattr(session, "_search_ebooks", lambda query, page, field: [item])
 
     try:
@@ -159,7 +159,7 @@ def test_partial_search_keeps_valid_branch_when_diagnostics_sink_fails(tmp_path,
         include_audio=True,
         diagnostics=FailingDiagnostics(),
     )
-    item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
+    item = session._parse_feed(RESULTS.encode("utf-8"), "https://gallica.bnf.fr/opds/search")[0]
     monkeypatch.setattr(session, "_search_ebooks", lambda query, page, field: [item])
 
     def fail_audio(query, page, field):
@@ -186,7 +186,7 @@ def test_successful_ebook_download_is_not_failed_by_diagnostics_sink(tmp_path):
         transport=transport,
         diagnostics=FailingDiagnostics(),
     )
-    item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
+    item = session._parse_feed(RESULTS.encode("utf-8"), "https://gallica.bnf.fr/opds/search")[0]
 
     try:
         path, url = session.download_direct(item, tmp_path / "downloads")
@@ -206,7 +206,7 @@ def test_physical_scope_is_explicitly_unsupported_and_epub_download_uses_validat
     try:
         with pytest.raises(ProviderCapabilityError, match="unsupported_scope"):
             session.search("anything", "physical")
-        item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
+        item = session._parse_feed(RESULTS.encode("utf-8"), "https://gallica.bnf.fr/opds/search")[0]
         path, url = session.download_direct(item, tmp_path / "downloads")
         assert path.suffix == ".epub"
         assert path.read_bytes() == epub
