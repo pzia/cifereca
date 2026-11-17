@@ -122,6 +122,27 @@ class PublicBookMasterDetailView:
         self._duplicate_source_keys = collisions
         # Publish mapping before GTK selection notifications during show_rows.
         self._rows = mapped
+        # An independently Core-attested canonical C may be exposed through
+        # the neutral plugin ABI, but the plugin row is not an evergreen
+        # image lease. Even an identical rerender revokes any pending N3
+        # callback for the previous snapshot/selection.
+        generation = getattr(self, "_public_c_page_generation", 0)
+        self._public_c_page_generation = (
+            generation + 1 if type(generation) is int and generation >= 0
+            else 1
+        )
+        from cifereca.core.notice_c_cover_index import is_canonical_cover_document
+        from cifereca.gui.plugin_public_c_guard import pin_plugin_public_c
+        for ui_item in ui_rows:
+            document = getattr(ui_item, "_cover_document_ref", None)
+            if is_canonical_cover_document(document):
+                source = mapped.get(ui_item.key)
+                # Keep this veto witness even if the selected identity is
+                # absent or the token is refused: no legacy URL fallback.
+                ui_item._cover_plugin_c_source = source
+                ui_item._cover_plugin_c_receipt = pin_plugin_public_c(
+                    self, source, key=ui_item.key,
+                )
         self._page.show_rows(ui_rows, total_count=total_count)
 
     def set_list_state(self, title: str, description: str = "", icon_name: str = "system-search-symbolic") -> None:
@@ -140,7 +161,40 @@ class PublicBookMasterDetailView:
     def show_detail(self, detail) -> None:
         self._revoke_pending_exact_detail()
         panel = self._page.detail
-        panel.show_presentation(detail)
+        # Keep exactly ONE neutral detail renderer for every plugin shape.
+        # Only canonical C adds an optional current-row N3 lease.
+        from contextlib import nullcontext
+        stage = nullcontext()
+        from cifereca.core.notice_c_cover_index import is_canonical_cover_document
+        document = getattr(detail, "cover_document_ref", None)
+        if is_canonical_cover_document(document):
+            from cifereca.gui.plugin_public_c_guard import (
+                selected_plugin_public_c, plugin_public_c_detail_current,
+            )
+            pinned = selected_plugin_public_c(self, document)
+            if pinned is None:
+                # The public edition exists but its association with the
+                # current recommendation was revoked. Neither the old
+                # DocumentRef nor its raw supplier URL can paint this book.
+                from dataclasses import replace
+                from cifereca.plugin_api.models import UiBookDetailPresentation
+                if type(detail) is UiBookDetailPresentation:
+                    detail = replace(
+                        detail, cover_document_ref=None,
+                        thumbnail_url=None,
+                    )
+            else:
+                selected, receipt = pinned
+                from cifereca.gui.local_public_c_detail_guard import (
+                    staged_local_public_c_detail,
+                )
+                stage = staged_local_public_c_detail(
+                    panel, lambda: plugin_public_c_detail_current(
+                        self, selected, receipt,
+                    ),
+                )
+        with stage:
+            panel.show_presentation(detail)
         buttons = []
         for action in getattr(detail, "actions", ()) or ():
             raw_uri = str(getattr(action, "uri", "") or "")

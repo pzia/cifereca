@@ -585,6 +585,15 @@ class BookListCell(Gtk.Box):
             return admit_borrower_public_c_cell(
                 self.window, item, document,
             )
+        plugin_source = getattr(item, "_cover_plugin_c_source", None)
+        if plugin_source is not None:
+            from .plugin_public_c_guard import plugin_public_c_cell_current
+            return (
+                getattr(item, "_cover_document_ref", None) == document
+                and plugin_public_c_cell_current(
+                    item, getattr(item, "_cover_plugin_c_receipt", None),
+                )
+            )
         known_source = getattr(item, "_cover_known_public_c_source", None)
         if known_source is not None:
             # A persisted C-first row has a valid public document but a
@@ -660,6 +669,17 @@ class BookListCell(Gtk.Box):
             return False
 
     def _search_cover_guard(self, item: BookListItem) -> dict:
+        plugin_source = getattr(item, "_cover_plugin_c_source", None)
+        if plugin_source is not None:
+            from .plugin_public_c_guard import plugin_public_c_cell_current
+            receipt = getattr(item, "_cover_plugin_c_receipt", None)
+            bind_epoch = self._bind_epoch
+            return {"is_current": lambda: (
+                self._bind_epoch == bind_epoch
+                and self._bound_key == item.key
+                and self._thumbnail_item is item
+                and plugin_public_c_cell_current(item, receipt)
+            )}
         known_source = getattr(item, "_cover_known_public_c_source", None)
         if known_source is not None:
             from .search_known_public_c_guard import known_public_c_cell_current
@@ -726,8 +746,15 @@ class BookListCell(Gtk.Box):
                        or getattr(item, "_cover_public_c_link", None)
                        is not None
                        or getattr(item, "_cover_known_public_c_source", None)
+                       is not None
+                       or getattr(item, "_cover_plugin_c_source", None)
                        is not None) else {}),
             )
+            return
+        if getattr(item, "_cover_plugin_c_source", None) is not None:
+            # Missing N2 service or revoked document is NOT permission
+            # to load the old plugin thumbnail through the raw URL path.
+            self.cover.bind_url(self.cover_loader, None, priority=10)
             return
         self.cover.bind_url(
             self.cover_loader, item.thumbnail_url or item.default_thumbnail_url,
@@ -823,8 +850,14 @@ class BookListCell(Gtk.Box):
                        or getattr(item, "_cover_public_c_link", None)
                        is not None
                        or getattr(item, "_cover_known_public_c_source", None)
+                       is not None
+                       or getattr(item, "_cover_plugin_c_source", None)
                        is not None) else {}),
                 )
+        elif getattr(item, "_cover_plugin_c_source", None) is not None:
+            # A C-specific widget cannot fall back to an unqualified URI
+            # just because its exact N2 service became unavailable.
+            self.cover.bind_url(self.cover_loader, None, priority=10)
         elif item.thumbnail_url:
             self.cover.bind_url(
                 self.cover_loader, item.thumbnail_url, priority=10,
