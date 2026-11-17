@@ -123,8 +123,15 @@ def loan_display_rows(service, identity_id: str) -> tuple[Loan, ...]:
                     reader_current()
                     and (account.identity_id, account.provider_id,
                          account.credential_id, account.unique_id) == coords
+                    and sum(type(a) is Account and (
+                        a.identity_id, a.provider_id, a.credential_id, a.unique_id,
+                    ) == coords for a in service.accounts_for_identity(identity_id)) == 1
+                    and any(a is account for a in service.accounts_for_identity(identity_id))
                     and service._sessions.get(key) is session
+                    and getattr_static(session, "provider_id", None) == provider
+                    and getattr_static(session, "credential_id", None) == credential
                     and getattr_static(session, "connected", False) is True
+                    and getattr_static(session, "_closed", False) is False
                     and service._provider_enabled_for_identity(provider, identity_id) is True
                     and service.storage.provider_scope_account_bound(
                         identity_id=identity_id, provider_id=provider,
