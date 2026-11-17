@@ -34,7 +34,7 @@ class Core0917(unittest.TestCase):
     def test_online_same_request_in_flight_is_deduplicated(self):
         w=coordinator_fixture.window_coordinator(); tasks=[]
         w.search_controls=NS(state=lambda:QueryState('harari'))
-        w.service=NS(current_identity=NS(identity_id='i'));w.runner=NS(submit=lambda *args,**kw:tasks.append(args))
+        w.service=NS(current_identity=NS(identity_id='i'));w.service.identity_by_id=lambda key:w.service.current_identity if key=='i' else None;w.runner=NS(submit=lambda *args,**kw:tasks.append(args))
         w._search_generation=0;w._last_search_query='';w._remote_search_results=[]
         w.search_global_button=object();w.run_search(True);generation=w._search_generation;w.run_search(True)
         self.assertEqual(len(tasks),1);self.assertEqual(w._search_generation,generation)
