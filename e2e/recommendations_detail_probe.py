@@ -1746,6 +1746,13 @@ def main():
             (PAIRED_BOOK["author"], "author", True, "alice")
         ]
         report["checks"]["P1_4761_filter_preserves_exact_edition_real_gtk"] = True
+        from notice_c_recommendation_contract import verify_recommendation_c
+        verify_recommendation_c(
+            window, view, later=later, capture=capture, report=report,
+            complete=complete,
+        )
+
+    def complete():
         state["plugin"].deactivate()
         report["status"] = "PASS"
         save()
