@@ -137,6 +137,11 @@ class CoverLoader:
             "cache_invalid": 0,
             "download_ok": 0,
             "download_failed": 0,
+            "n3_url_published_bytes": 0,
+            "n3_url_ok_total_ms": 0.0,
+            "n3_url_ok_max_ms": 0.0,
+            "n3_url_failed_total_ms": 0.0,
+            "n3_url_failed_max_ms": 0.0,
             "decode_failed": 0,
             "ui_applied": 0,
             "ui_stale": 0,
@@ -183,6 +188,15 @@ class CoverLoader:
             total = float(stats.pop("ui_decode_total_ms", 0.0) or 0.0)
             stats["ui_decode_avg_ms"] = round(total / count, 2) if count else 0.0
             stats["ui_decode_max_ms"] = round(float(stats.get("ui_decode_max_ms") or 0.0), 2)
+            # One sample per actual worker attempt, not per subscriber or
+            # cache lookup. Includes transfer, validation and disk publication
+            # (or failure cleanup); excludes queue time, preview and GTK decode.
+            for outcome in ("ok", "failed"):
+                prefix = f"n3_url_{outcome}"
+                attempts = int(stats[f"download_{outcome}"])
+                total_ms = float(stats.pop(f"{prefix}_total_ms"))
+                stats[f"{prefix}_avg_ms"] = round(total_ms / attempts, 2) if attempts else 0.0
+                stats[f"{prefix}_max_ms"] = round(float(stats[f"{prefix}_max_ms"]), 2)
             return {
                 **stats,
                 "queue": self._queue.qsize(),
@@ -732,7 +746,13 @@ class CoverLoader:
                     # private or provider-controlled. Emit only a safe count.
                     _TRACE_LOG.debug("TRACE cover download ok bytes=%s", len(data))
                     with self._lock:
+                        elapsed_ms = max(0.0, (time.perf_counter() - started) * 1000)
                         self._stats["download_ok"] += 1
+                        self._stats["n3_url_published_bytes"] += len(data)
+                        self._stats["n3_url_ok_total_ms"] += elapsed_ms
+                        self._stats["n3_url_ok_max_ms"] = max(
+                            self._stats["n3_url_ok_max_ms"], elapsed_ms,
+                        )
                         self._fail_until.pop(absolute, None)
                 except Exception as exc:  # le fallback visuel gère l'échec
                     error = exc
@@ -742,7 +762,12 @@ class CoverLoader:
                         pass
                     _TRACE_LOG.debug("TRACE cover download failed reason=%s", _cover_failure_code(exc))
                     with self._lock:
+                        elapsed_ms = max(0.0, (time.perf_counter() - started) * 1000)
                         self._stats["download_failed"] += 1
+                        self._stats["n3_url_failed_total_ms"] += elapsed_ms
+                        self._stats["n3_url_failed_max_ms"] = max(
+                            self._stats["n3_url_failed_max_ms"], elapsed_ms,
+                        )
                         self._fail_until[absolute] = time.monotonic() + 90.0
 
                 elapsed = int((time.perf_counter() - started) * 1000)
