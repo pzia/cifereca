@@ -360,7 +360,24 @@ def test_manual_gtk_dispatch_is_provider_neutral_abi_only():
         if isinstance(node, ast.FunctionDef) and node.name == "_present_manual_borrow"
     )
     assert "dispatch" not in [arg.arg for arg in present.args.kwonlyargs]
-    assert "'borrow_manual'" in ast.unparse(present) or '"borrow_manual"' in ast.unparse(present)
+    # The canonical admission now happens before reserving the worker.
+    submit = next(node for node in ast.walk(present)
+                  if isinstance(node, ast.FunctionDef) and node.name == "submit_once")
+    worker = next(node for node in submit.body
+                  if isinstance(node, ast.FunctionDef) and node.name == "work")
+    admissions = [node for node in ast.walk(submit)
+                  if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                  and node.func.id == "prepare_confirmed_manual_borrow"]
+    enqueues = [node for node in ast.walk(submit)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "submit"]
+    assert len(admissions) == len(enqueues) == 1
+    assert admissions[0].lineno < worker.lineno < enqueues[0].lineno
+    assert "return admitted()" in ast.unparse(worker)
+    assert not any(isinstance(node, ast.Attribute)
+                   and node.attr in {"borrow", "borrow_manual", "borrow_explicit_with_claim",
+                                     "current_identity", "current_account"}
+                   for node in ast.walk(worker))
     assert "present_bnf_borrow" not in symbols
     assert "present_paris_borrow" not in symbols
 
