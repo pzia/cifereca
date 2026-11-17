@@ -184,7 +184,7 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
         try:
             request_scope = capture_search_read_scope(request_core, request_identity)
         except ValueError:
-            self.toast("Contexte de recherche indisponible")
+            self.toast("Contexte lecteur indisponible")
             return
     identity_generation = getattr(self, "_identity_context_generation", None)
     account_generation = getattr(self, "_account_context_generation", None)
