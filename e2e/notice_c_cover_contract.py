@@ -120,6 +120,9 @@ def verify_notice_c_cover(window, later, capture, report, complete):
         if state.pop("mainwindow_stage", False):
             # Drop the real page's C rows/selection before closing its
             # temporary loader or restoring the desktop's original N2.
+            page = window.search_page
+            if page._narrow_master_detail and page._narrow_detail_visible:
+                page.detail_back.emit("clicked")
             window._populate_local_search([])
             window.covers = original_loader
             window.document_covers = original_service
@@ -298,35 +301,44 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             assert window.search_page.store.get_n_items() == 1
             row = window.search_page.store.get_item(0)
             assert row._cover_document_ref == doc and row._cover_public_c_epoch == epoch
-            window.search_page.selection.set_selected(0)
-            assert window.search_page.selection.get_selected_item() is row
-            later(40, guard(lambda: check(row.key)))
-
-        def check(key):
             page = window.search_page
-            cells = [cell for cell in walk(page) if isinstance(cell, BookListCell)
-                     and cell.get_mapped() and cell._bound_key == key]
-            detail = [cover for cover in walk(page.detail)
-                      if isinstance(cover, CoverView) and cover.get_mapped()]
-            covers = [cells[0].cover, detail[0]] if len(cells) == len(detail) == 1 else []
-            if not covers or any(
+            # At narrow widths GTK deliberately shows only one pane. Test
+            # the real list before selection, then the real detail after it.
+            if page._narrow_master_detail and page._narrow_detail_visible:
+                page.detail_back.emit("clicked")
+            later(40, guard(lambda: check(row, "list", monotonic() + 8)))
+
+        def check(row, variant, deadline):
+            page = window.search_page
+            if variant == "list":
+                covers = [cell.cover for cell in walk(page) if isinstance(cell, BookListCell)
+                          and cell.get_mapped() and cell._bound_key == row.key]
+            else:
+                covers = [cover for cover in walk(page.detail)
+                          if isinstance(cover, CoverView) and cover.get_mapped()]
+            if len(covers) != 1 or any(
                 not cover.get_mapped()
                 or not isinstance(cover.picture.get_paintable(), Gdk.Texture)
                 or cover.placeholder.get_visible() or cover.spinner.get_visible()
                 for cover in covers
             ):
-                assert monotonic() < until, "MainWindow Search N4 texture timeout"
-                later(40, guard(lambda: check(key)))
+                assert monotonic() < deadline, "MainWindow Search N4 timeout: " + variant
+                later(40, guard(lambda: check(row, variant, deadline)))
                 return
             assert window.view_stack.get_visible_child_name() == "search"
-            for cover in covers:
-                assert cover._loader is loader
-                assert cover._request.source_uri == url and cover._request.still_current
-                # Inspect the actual GDK texture contents, not just the
-                # N3 filename or a truthy image handle.
-                texture = cover.picture.get_paintable()
-                with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
-                    assert image.convert("RGB").getpixel((0, 0)) == pixels
+            cover = covers[0]
+            assert cover._loader is loader
+            assert cover._request.source_uri == url and cover._request.still_current
+            texture = cover.picture.get_paintable()
+            with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
+                assert image.convert("RGB").getpixel((0, 0)) == pixels
+            label = "offline" if offline else "cold"
+            capture("00-notice-c-mainwindow-search-" + variant + "-" + label)
+            if variant == "list":
+                page.selection.set_selected(0)
+                assert page.selection.get_selected_item() is row
+                later(40, guard(lambda: check(row, "detail", monotonic() + 8)))
+                return
             assert reads == [doc]
             assert image_gets == ["cold"]
             stats = loader.stats()
@@ -337,7 +349,6 @@ def verify_notice_c_cover(window, later, capture, report, complete):
                 "image_gets_total": len(image_gets),
                 "gtk_applied": stats["ui_applied"],
             }
-            capture("00-notice-c-mainwindow-search-" + label)
             close_stage()
             if not offline:
                 start_stage(True)
