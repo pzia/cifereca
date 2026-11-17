@@ -12,6 +12,31 @@ from re import fullmatch
 from types import SimpleNamespace
 
 
+def source_primary_alias(service, provider: str) -> str | None:
+    """Installed descriptor owns the existing-loan alias; no registry I/O."""
+    if type(provider) is not str or not provider:
+        return None
+    try:
+        registry = service.registry
+    except AttributeError:
+        return "primary"  # inert legacy in-memory adapters
+    try:
+        plugin = registry.maybe_get(provider)
+    except Exception:
+        return None
+    if plugin is None:
+        return "primary"  # historical uninstalled descriptive lookup
+    from ..providers.base import ProviderDescriptor
+    descriptor = getattr_static(plugin, "descriptor", None)
+    if (type(descriptor) is not ProviderDescriptor
+            or type(descriptor.id) is not str or descriptor.id != provider):
+        return None
+    alias = descriptor.existing_primary_loan_account_alias
+    return (alias if type(alias) is str
+            and fullmatch(r"[a-z][a-z0-9_-]{0,63}", alias) is not None
+            else None)
+
+
 def account_for_loan(
     loan, *, accounts, configuration_error, primary_alias: str | None = None,
 ):
@@ -63,7 +88,8 @@ def account_for_loan(
     raise configuration_error('Compte emprunteur introuvable pour ce prêt')
 
 
-def return_loan_identity(loan, *, resolve_account, session_key, lookup_session, attention_error):
+def return_loan_identity(loan, *, resolve_account, session_key, lookup_session, attention_error,
+                         primary_alias_for_provider=None):
     """Require exact source-bound borrower provenance before mutating anything."""
     from .loan_return_guard import return_key
     # A corrupt or plugin-provided Loan must never be stringified to construct
@@ -104,14 +130,33 @@ def return_loan_identity(loan, *, resolve_account, session_key, lookup_session, 
     unique_id = getattr(account, 'unique_id', None)
     provider_id = getattr(account, 'provider_id', None)
     credential_id = getattr(account, 'credential_id', None)
-    expected = borrower or 'primary'
+    expected = borrower or 'primary'  # frozen v1 receipt serialization
     require_current()
     if (type(unique_id) is not str
             or type(provider_id) is not str
             or type(credential_id) is not str
-            or expected != (unique_id or 'primary')
             or provider_id != provider
             or credential_id != credential):
+        raise attention_error(
+            'Le compte emprunteur de ce prêt ne correspond pas à sa provenance.',
+            code='loan_return_borrower_mismatch',
+        )
+    if primary_alias_for_provider is None:
+        # Historical direct callers of this helper retain v1 behavior.
+        matches = expected == (unique_id or 'primary')
+    else:
+        # The productive facade uses the same installed descriptor as
+        # account_for_loan. A foreign literal alias cannot override it.
+        alias = primary_alias_for_provider(provider)
+        require_current()
+        matches = (
+            (borrower == unique_id and (borrower != ""
+             or getattr(account, "is_primary", None) is True))
+            or (unique_id == "" and getattr(account, "is_primary", None) is True
+                and type(alias) is str and borrower == alias)
+        )
+        require_current()
+    if not matches:
         raise attention_error(
             'Le compte emprunteur de ce prêt ne correspond pas à sa provenance.',
             code='loan_return_borrower_mismatch',

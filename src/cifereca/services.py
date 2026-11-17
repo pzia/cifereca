@@ -2449,10 +2449,11 @@ class LibraryService:
             }
 
     def _return_loan_identity(self, loan: Loan) -> tuple[Account, Any, str]:
-        """Require *exact* Paris borrower provenance before mutating anything."""
+        """Require exact source-bound borrower provenance before mutating anything."""
         return loan_accounts.return_loan_identity(
             loan, resolve_account=self._account_for_loan, session_key=self._session_key,
             lookup_session=lambda key: self._sessions.get(key), attention_error=AttentionRequired,
+            primary_alias_for_provider=lambda provider: loan_accounts.source_primary_alias(self, provider),
         )
 
     def loan_return_state(self, loan: Loan) -> dict[str, Any] | None:
@@ -5232,35 +5233,12 @@ class LibraryService:
         source_provider = loan.source_provider
         source_credential = loan.source_credential
         source_borrower = loan.source_account_id
-        primary_alias = None
-        if (type(source_provider) is str and source_provider
-                and type(source_credential) is str and source_credential
-                and type(source_borrower) is str):
-            try:
-                registry = self.registry
-            except AttributeError:
-                # Historical in-memory LibraryService.__new__ adapters.
-                primary_alias = "primary"
-            else:
-                try:
-                    plugin = registry.maybe_get(source_provider)
-                except Exception:
-                    # A corrupt registry lookup is not an absent descriptor
-                    # and cannot revive the legacy primary alias.
-                    plugin = object()
-                if plugin is None:
-                    # No provider is installed yet; preserve inert old lookups.
-                    primary_alias = "primary"
-                else:
-                    from .providers.base import ProviderDescriptor
-                    descriptor = inspect.getattr_static(plugin, "descriptor", None)
-                    primary_alias = (
-                        descriptor.existing_primary_loan_account_alias
-                        if type(descriptor) is ProviderDescriptor
-                        and type(descriptor.id) is str
-                        and descriptor.id == source_provider
-                        else None
-                    )
+        primary_alias = (
+            loan_accounts.source_primary_alias(self, source_provider)
+            if type(source_provider) is str and source_provider
+            and type(source_credential) is str and source_credential
+            and type(source_borrower) is str else None
+        )
         # Registry callbacks are outside this method's trust boundary.
         # A provider/binding edit during alias discovery must not turn an
         # initially admitted source into a different borrower's lookup.
