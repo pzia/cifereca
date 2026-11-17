@@ -360,7 +360,7 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
             try:
                 page = c_reader(
                     state.text, field=state.field, scope=state.scope,
-                    provider_ids=selected,
+                    provider_ids=selected, group_by_document=True,
                 )
             except (TypeError, ValueError, OSError):
                 # The ordinary remote extension remains available when the
