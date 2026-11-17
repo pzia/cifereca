@@ -49,7 +49,7 @@ def execute_normal_lender_borrow(
                 or not callable(scope_current)
                 or scope_current() is not True):
             return revoked
-        requester = service.current_identity
+        requester = service.identity_by_id(requesting_identity_id)
         context_epoch = service._account_context_epoch
         source_epoch = service._source_context_epoch
         if (requester is None
@@ -118,7 +118,7 @@ def execute_normal_lender_borrow(
                 descriptor = runtime.descriptor
                 enabled_for = getattr(manager, "enabled_for_identity", None)
                 return bool(
-                    service.current_identity is requester
+                    service.identity_by_id(requesting_identity_id) is requester
                     and service._account_context_epoch == context_epoch
                     and service._source_context_epoch == source_epoch
                     and scope_current() is True

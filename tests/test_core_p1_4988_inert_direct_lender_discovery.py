@@ -184,3 +184,17 @@ def test_shared_credential_in_two_profiles_cannot_select_a_lender(harness):
     ))
     assert _discover(service, _candidate().notice) == ()
     assert session.calls == 0
+
+
+def test_explicit_requester_discovery_is_headless_and_rejects_unknown_identity(harness):
+    service, _account, session = harness
+    class Headless:
+        def __getattr__(self, name):
+            if name == "current_identity":
+                pytest.fail("Core worker read navigation")
+            return getattr(service, name)
+    proxy = Headless()
+    choices = _discover(proxy, _candidate().notice)
+    assert len(choices) == 1 and choices[0].lender_identity_id == "alex"
+    assert _discover(proxy, _candidate().notice, requester="missing") == ()
+    assert session.calls == 0
