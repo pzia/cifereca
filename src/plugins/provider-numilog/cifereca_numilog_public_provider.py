@@ -17,6 +17,7 @@ from cifereca.plugin_api import (
 )
 from cifereca_numilog_public_client import (
     fetch_public_search, fetch_public_search_url, public_search_url,
+    _RetainedSearchPage, _parse_retained_search_input,
 )
 from cifereca_numilog_public import PublicSearchPage, PublicSearchParseError, _query
 
@@ -53,7 +54,7 @@ DESCRIPTOR = ProviderDescriptor(
 
 
 class NumilogPublicSession(ProviderSession):
-    def __init__(self, **kwargs):
+    def __init__(self, *, _retain_public_search_inputs=False, **kwargs):
         super().__init__(descriptor=DESCRIPTOR, **kwargs)
         from cifereca_numilog_public_cache import PublicCatalogueCache
         self._public_cache = PublicCatalogueCache()
@@ -62,6 +63,10 @@ class NumilogPublicSession(ProviderSession):
         self._navigation_urls = OrderedDict()
         if self.credentials:
             raise ProviderCapabilityError("Numilog public : credentials_forbidden")
+        if (type(_retain_public_search_inputs) is not bool
+                or (_retain_public_search_inputs and self.credential_id != "__public__")):
+            raise ProviderCapabilityError("Numilog public : replay_scope_forbidden")
+        self._retain_public_search_inputs = _retain_public_search_inputs
 
     def _reset_navigation(self):
         with self._navigation_lock:
@@ -175,11 +180,86 @@ class NumilogPublicSession(ProviderSession):
             raise ProviderError("Numilog public : catalogue non connecté")
         return public_search_url(query, page)  # Before cache, broker or HTTP.
 
+    def _get_page_entry(self, query, page, field, url):
+        def load():
+            if self._retain_public_search_inputs:
+                return fetch_public_search(query, page=page, field=field, _retain_input=True)
+            return fetch_public_search(query, page=page, field=field)
+        return self._public_cache.get(("search", url, field), load)
+
     def _get_page(self, query, page, field, url):
-        return self._public_cache.get(
-            ("search", url, field),
-            lambda: fetch_public_search(query, page=page, field=field),
-        )
+        value = self._get_page_entry(query, page, field, url)
+        return value.page if type(value) is _RetainedSearchPage else value
+
+    def _search_with_retained_input(self, query, scope="all", *, page=0, field="all"):
+        """Trusted opt-in same-call rows + opaque input token (or None).
+
+        This uses the ordinary anonymous search cache/admission path, not a
+        second GET. It does not alter the public SearchResponse ABI or make
+        the factory opt in. Only the explicit future Core producer should
+        consume it, never GTK or a generic cache HIT of SearchResult DTOs.
+        """
+        if not self._retain_public_search_inputs:
+            raise ProviderCapabilityError("Numilog public : replay_scope_forbidden")
+        epoch = self._navigation_epoch_snapshot()
+        url = self._validate_search(query, page, field, scope)
+        self._assert_public_generation(epoch)
+        entry = self._get_page_entry(query, page, field, url)
+        if type(entry) is not _RetainedSearchPage:
+            raise ProviderError("Numilog : public_catalog_replay_invalid")
+        rows = self._public_rows(entry.page.items)
+        token = entry.raw_input.token if entry.raw_input is not None else None
+        self._assert_public_generation(epoch)
+        return rows, token
+
+    def _read_retained_public_input(self, token):
+        """Trusted worker byte receipt input; no fetch or lifetime extension.
+
+        The returned TTL is a conservative, whole-second remaining bound.
+        The caller must recheck the same token before publication and must
+        not persist or log body/URL. Expiry is unknown, not a tombstone.
+        """
+        if (not self._retain_public_search_inputs
+                or type(token) is not str or len(token) != 32
+                or any(ch not in "0123456789abcdef" for ch in token)):
+            raise ProviderCapabilityError("Numilog public : replay_scope_forbidden")
+        epoch = self._navigation_epoch_snapshot()
+        self._assert_public_generation(epoch)
+        entry, ttl = self._public_cache._peek_retained_input(token)
+        self._assert_public_generation(epoch)
+        if entry is None or ttl < 1:
+            return None, 0
+        return entry.raw_input, ttl
+
+    def _reparse_retained_public_row(self, token, record_id):
+        """Run the existing offline parser on the exact retained input.
+
+        Only a previously observed unique record may be selected. A changed
+        edition coordinate is a refusal, not a new row or implicit fetch.
+        Recheck the cache entry and session generation AFTER parsing.
+        """
+        if type(record_id) is not str or not record_id:
+            raise ProviderCapabilityError("Numilog public : replay_scope_forbidden")
+        epoch = self._navigation_epoch_snapshot()
+        raw, _ttl = self._read_retained_public_input(token)
+        if raw is None:
+            return None
+        entry, _ = self._public_cache._peek_retained_input(token)
+        if entry is None:
+            return None
+        previous = [row for row in entry.page.items if row.record_id == record_id]
+        if len(previous) != 1:
+            return None
+        page = _parse_retained_search_input(raw)
+        matches = [row for row in page.items if row.record_id == record_id]
+        if (len(matches) != 1 or matches[0].docbase != previous[0].docbase
+                or matches[0].type != previous[0].type):
+            raise ProviderError("Numilog : public_catalog_replay_coordinate_changed")
+        latest, _ttl = self._read_retained_public_input(token)
+        self._assert_public_generation(epoch)
+        if latest != raw:
+            return None
+        return self._public_rows(matches)[0]
 
     def _public_rows(self, rows):
         # A public result can never be passed into an owned download session.
