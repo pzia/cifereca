@@ -352,9 +352,7 @@ def test_origin_reconciliation_survives_large_unrelated_source_inventory(tmp_pat
 
 def test_public_group_atomic_rollback_new_existing_and_retry(tmp_path):
     from cifereca.core.notice_c_cover_index import persist_attested_public_cover_group
-    from tests.test_core_p0_6366_public_c_sqlite_source_search import (
-        persist, verified_public,
-    )
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import persist
 
     path = tmp_path / "atomic-public-group.sqlite"
     db = Storage(path)
@@ -362,10 +360,10 @@ def test_public_group_atomic_rollback_new_existing_and_retry(tmp_path):
     proof = "strong:fixture:atomic-group"
     document = canonical_cover_document_ref(target)
     def store(provider, record, url, at):
-        return persist(db, verified_public(
+        return persist(db, witnessed(public_row(
             source_provider=provider, record_id=record,
             title="L'ouvrage commun", thumbnail_url=url,
-        ), at=at)
+        )), at=at)
     def commit(*sources):
         return persist_attested_public_cover_group(
             db, canonical_edition_id=target, sources=sources,
