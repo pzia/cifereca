@@ -44,7 +44,7 @@ def test_voluntary_return_is_absent_but_physical_renewal_and_read_side_survive()
     main = (GUI / "main_window.py").read_text(encoding="utf-8")
     detail = (GUI / "detail_panel.py").read_text(encoding="utf-8")
     assert "def confirm_renew(" in controller
-    assert "lambda: service.renew(loan, confirmed=True, **options)" in controller
+    assert "lambda: service.renew(loan, confirmed=True)" in controller
     assert "def confirm_renew(" in main
     assert "if physical_loan_renewal_visible(loan):" in detail
     assert "def refresh_loans(" in main

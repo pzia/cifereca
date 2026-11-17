@@ -127,6 +127,7 @@ def test_renewal_captures_real_core_admission_before_queue():
     host, service, renew, loan, jobs, visible = _host()
     admission = object()
     service.capture_admitted_loan_renewal = Mock(return_value=admission)
+    service.renew_admitted_loan = renew
     _renew_fn()(host, loan, None)
     service.capture_admitted_loan_renewal.assert_called_once_with(loan)
     assert len(jobs) == 1

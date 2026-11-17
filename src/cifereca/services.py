@@ -2445,7 +2445,21 @@ class LibraryService:
         from .core.provider_loan_renewal import capture_admitted_loan_renewal
         return capture_admitted_loan_renewal(self, loan)
 
-    def renew(self, loan: Loan, *, confirmed: bool = False, admission=None) -> dict[str, Any]:
+    def renew(self, loan: Loan, *, confirmed: bool = False) -> dict[str, Any]:
+        """Historical synchronous facade; no inferred deferred admission."""
+        return self._renew_with_admission(loan, confirmed=confirmed)
+
+    def renew_admitted_loan(self, loan: Loan, *, confirmed: bool = False, admission) -> dict[str, Any]:
+        from .core.provider_loan_renewal import RenewalAdmission
+        if type(admission) is not RenewalAdmission:
+            return {
+                "status": "blocked", "code": "loan_scope_unverified",
+                "provider_request_accepted": False, "provider_verified": False,
+                "retry": "explicit_only",
+            }
+        return self._renew_with_admission(loan, confirmed=confirmed, admission=admission)
+
+    def _renew_with_admission(self, loan: Loan, *, confirmed: bool = False, admission=None) -> dict[str, Any]:
         """Manually renew a physical loan when its source declares support.
 
         A GUI button, a cached CanRenew flag or a truthy confirmation is not

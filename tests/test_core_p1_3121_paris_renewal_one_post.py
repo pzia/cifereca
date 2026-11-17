@@ -340,7 +340,7 @@ def test_gui_renewal_never_proclaims_success_from_unverified_post():
     # The worker now captures the original Core service before scheduling;
     # it must NOT reread self.service after a view/account rebind (P0 #5833).
     assert "service = self.service" in block
-    assert "lambda: service.renew(loan, confirmed=True, **options)" in block
+    assert "lambda: service.renew(loan, confirmed=True)" in block
     assert "success_toast=" not in block
     assert "Prêt prolongé" not in block
 
@@ -477,11 +477,11 @@ def test_admitted_renewal_keeps_exact_borrower_during_navigation(tmp_path, momen
             session.during_read = switch
         else:
             session.during_post = switch
-        result = service.renew(ui, confirmed=True, admission=admitted)
+        result = service.renew_admitted_loan(ui, confirmed=True, admission=admitted)
         assert result["status"] == "submitted"
         assert session.reads == ["reader"]
         assert len(session.posts) == 1 and session.posts[0][2] == "reader"
-        assert service.renew(ui, confirmed=True, admission=admitted)["status"] == "submitted"
+        assert service.renew_admitted_loan(ui, confirmed=True, admission=admitted)["status"] == "submitted"
         assert len(session.posts) == 1
     finally:
         service.close()
@@ -500,7 +500,7 @@ def test_admitted_renewal_rejects_revocation_before_inventory_or_claim(tmp_path,
             ui.provider = "other-branch"
         else:
             ui = replace(ui)
-        assert service.renew(ui, confirmed=True, admission=admitted)["status"] == "blocked"
+        assert service.renew_admitted_loan(ui, confirmed=True, admission=admitted)["status"] == "blocked"
         assert session.reads == session.posts == []
         assert service.storage.loan_renewal_state(key) is None
     finally:
@@ -519,7 +519,7 @@ def test_admitted_renewal_source_revoked_after_claim_never_posts(tmp_path, monke
                 service._source_context_epoch += 1
             return claimed, row
         monkeypatch.setattr(service.storage, "loan_renewal_claim_once", revoke)
-        result = service.renew(ui, confirmed=True, admission=admitted)
+        result = service.renew_admitted_loan(ui, confirmed=True, admission=admitted)
         assert result["status"] == "blocked"
         assert session.posts == []
         assert service.storage.loan_renewal_state(_source_key(ui))["status"] == "blocked"
@@ -541,7 +541,7 @@ def test_admitted_renewal_never_uses_navigation_scoped_session_resolver(tmp_path
             pytest.fail("admitted renewal must not use the navigation-scoped resolver")
         monkeypatch.setattr(service, "_provider_enabled_for_identity", policy)
         monkeypatch.setattr(service, "_session_for_source", legacy_resolver)
-        result = service.renew(ui, confirmed=True, admission=admission)
+        result = service.renew_admitted_loan(ui, confirmed=True, admission=admission)
         assert result["status"] == "submitted"
         assert len(session.posts) == 1
         assert calls and all(value == ("paris", "default") for value in calls)
@@ -560,7 +560,7 @@ def test_admitted_renewal_disabled_connection_refuses_before_inventory(tmp_path)
             "enabled": False, "metadata": {},
         })
         assert service.storage.provider_connection_enabled(a.provider_id, a.credential_id) is False
-        assert service.renew(ui, confirmed=True, admission=admission)["status"] == "blocked"
+        assert service.renew_admitted_loan(ui, confirmed=True, admission=admission)["status"] == "blocked"
         assert session.reads == session.posts == []
         assert service.storage.loan_renewal_state(_source_key(ui)) is None
     finally:

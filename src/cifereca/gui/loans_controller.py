@@ -577,7 +577,7 @@ def _renew(self, loan: Loan, control: Gtk.Widget) -> None:
     if not view_current():
         return
     capture = getattr(service, "capture_admitted_loan_renewal", None)
-    options = {}
+    work = lambda: service.renew(loan, confirmed=True)
     if callable(capture):
         try:
             admission = capture(loan)
@@ -589,7 +589,10 @@ def _renew(self, loan: Loan, control: Gtk.Widget) -> None:
                     "status": "blocked", "code": "loan_scope_unverified",
                 })
             return
-        options["admission"] = admission
+        renew_admitted = getattr(service, "renew_admitted_loan", None)
+        if not callable(renew_admitted):
+            return
+        work = lambda: renew_admitted(loan, confirmed=True, admission=admission)
 
     def completed(result: Any) -> None:
         # Only the original loans view can show the renewal receipt or
@@ -600,7 +603,7 @@ def _renew(self, loan: Loan, control: Gtk.Widget) -> None:
 
     self.runner.submit(
         "Demande de prolongation…",
-        lambda: service.renew(loan, confirmed=True, **options),
+        work,
         completed,
         control=control, priority=TaskPriority.USER_ACTION, kind="loan-renew",
     )
