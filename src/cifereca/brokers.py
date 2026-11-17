@@ -100,6 +100,10 @@ class ScopedCatalogSearch:
         )
         return [] if summary.cancelled else rows
 
+    def holdings(self, item: Any, **options):
+        """Descriptive availability under this reader's admitted Core scope."""
+        return self.service.holdings_for_scope(self.request_scope, item, **options)
+
     def known_public_notices(self, query: str, **options):
         # Public C is independent of the reader but a revoked computation
         # may not continue with new queries after its source scope is gone.
