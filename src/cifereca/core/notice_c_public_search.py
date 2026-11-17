@@ -24,6 +24,7 @@ from .notice_cover_repository import _PREFIX, _decode
 from .notice_search_cover_producer import _coordinate_digest
 from .notice_source_observation import NoticeSourceKey
 from .public_search_projection import _public_bibliographic_text
+from .search import local_search_evidence
 
 _MAX_SCAN = 10000
 _MAX_MATCHES = 50
@@ -173,6 +174,29 @@ def _public_observation(
         return None
 
 
+def _public_text_score(query, field, title, author, publisher, description):
+    """Same local relevance for the four C fields, without cross-source joins."""
+    texts = (title, author, publisher, description)
+    # SQLite prefilter may see corrupt unadmitted JSON. Bound text before
+    # scoring and never stringify non-text payloads.
+    if any(value is not None and (type(value) is not str or len(value) > limit)
+           for value, limit in zip(texts, (512, 512, 512, 4000))):
+        return 0
+    if field == "all":
+        score, _ = local_search_evidence({
+            "title": title, "author": author, "publisher": publisher,
+            "description": description,
+        }, query)
+        return score
+    selected = {"title": title, "author": author, "publisher": publisher}[field]
+    return int(bool(selected) and _fold(query) in _fold(selected))
+
+
+def _hit_score(record, *, field, query):
+    return _public_text_score(query, field, record.title, record.author,
+                              record.publisher, record.description)
+
+
 def _matches_public_c(
     record: PublicNoticeCHit, *, wanted: set[str],
     scope: str, field: str, needle: str,
@@ -181,36 +205,22 @@ def _matches_public_c(
         return False
     if scope != "all" and record.medium != scope:
         return False
-    texts = (
-        (record.title,) if field == "title" else
-        (record.author or "",) if field == "author" else
-        (record.publisher or "",) if field == "publisher" else
-        (record.title, record.author or "", record.publisher or "",
-         record.description or "")
-    )
-    return any(needle in _fold(text) for text in texts)
+    return _hit_score(record, field=field, query=needle) > 0
 
 
 def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit):
-    """Query durable bibliographies without spending the source scan budget.
+    """Prefilter with the very same matcher as the admitted source cursor.
 
-    SQL is only a text/coordinate prefilter. The strict decoder below still
-    admits every fact and scans ALL claims for each selected exact source.
-    This is not a physical full-text index or a supplier completeness proof.
+    It is not a physical full-text index. All competing source claims still
+    need strict decoding and an exact-current observation check.
     """
-    columns = {
-        "title": ("title",), "author": ("author",),
-        "publisher": ("publisher",),
-        "all": ("title", "author", "publisher", "description"),
-    }[field]
     raw = "CASE WHEN src.type='object' THEN src.value ELSE '{}' END"
-    texts = " OR ".join(
-        f"instr(cifereca_c_search_fold(json_extract({raw}, "
-        f"'$.public_bibliography.{column}')), ?) > 0"
-        for column in columns
+    columns = ", ".join(
+        f"json_extract({raw}, '$.public_bibliography.{name}')"
+        for name in ("title", "author", "publisher", "description")
     )
-    db.create_function("cifereca_c_search_fold", 1,
-                       lambda value: _fold(value) if type(value) is str else "",
+    db.create_function("cifereca_c_search_match", 4,
+                       lambda *values: _public_text_score(needle, field, *values),
                        deterministic=True)
     try:
         rows = db.execute(
@@ -222,15 +232,14 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
             f"AND (?='all' OR json_extract({raw}, '$.public_bibliography.medium')=?) "
             f"AND (?=0 OR json_extract({raw}, '$.provider') "
             "IN (SELECT value FROM json_each(?))) "
-            f"AND ({texts}) ORDER BY src.key LIMIT ?",
+            f"AND cifereca_c_search_match({columns}) > 0 "
+            "ORDER BY src.key LIMIT ?",
             (prefix, prefix + "\uffff", scope, scope, len(wanted),
-             json.dumps(sorted(wanted)), *([needle] * len(columns)), limit + 1),
+             json.dumps(sorted(wanted)), limit + 1),
         ).fetchall()
     finally:
-        # Storage reuses its worker connection; do not retain query closures.
-        db.create_function("cifereca_c_search_fold", 1, None)
+        db.create_function("cifereca_c_search_match", 4, None)
     return {row[0] for row in rows[:limit]}, len(rows) > limit
-
 
 
 def search_public_notice_c(
@@ -260,7 +269,7 @@ def search_public_notice_c(
             or (now is not None and (type(now) is not int or now < 1))):
         raise ValueError("invalid_notice_c_search_request")
     now = int(time.time()) if now is None else now
-    needle = _fold(query.strip())
+    needle = query.strip()
     wanted = set(provider_ids)
     matches: list[PublicNoticeCHit] = []
     seen_source_refs: set[str] = set()
@@ -447,6 +456,7 @@ def search_public_notice_c(
 
     # Pagination is over *known* source facts, not a confirmed total.
     matches.sort(key=lambda item: (
+        -_hit_score(item, field=field, query=needle),
         _fold(item.title), item.provider_id, item.document.source_key,
     ))
     offset = page * page_size
@@ -486,6 +496,7 @@ def search_public_notice_c(
         # Use a stable ordering of matching source facts, including edition
         # coordinates as the tie-breaker independent of source TTL and N2.
         selected.sort(key=lambda hit: (
+            -_hit_score(hit, field=field, query=needle),
             _fold(hit.title), hit.provider_id, hit.edition_id,
             hit.record_id, hit.docbase, hit.medium, hit.source_revision or "",
             hit.document.source_key,
