@@ -84,6 +84,7 @@ class LoanActionScopeLease:
     _descriptor: ProviderDescriptor | None = field(default=None, repr=False)
     _admitted_service: object | None = field(default=None, repr=False)
     _source_epoch: int | None = field(default=None, repr=False)
+    _reader_scope: object | None = field(default=None, repr=False)
 
     def admitted_for(self, service: object, loan: Loan, identity_id: str) -> bool:
         """Only the exact loan and Core that admitted explicit consent."""
@@ -117,6 +118,13 @@ class LoanActionScopeLease:
             elif (self._admitted_service is not service
                   or source_context_epoch(service) != self._source_epoch):
                 return False
+            if self._reader_scope is not None:
+                from .search_orchestration import SearchReadScope
+                if (type(self._reader_scope) is not SearchReadScope
+                        or self._reader_scope.identity_id != self._expected_identity_id
+                        or self._reader_scope.source_epoch != self._source_epoch
+                        or not self._reader_scope.current(service)):
+                    return False
             exact = (
                 account.identity_id, account.provider_id,
                 account.credential_id, account.unique_id,
@@ -181,6 +189,7 @@ class LoanActionScopeLease:
                 and service._provider_enabled_for_identity(provider, identity_id)
                 and service._session_for_account(account) is session
                 and source_context_epoch(service) == self._source_epoch
+                and (self._reader_scope is None or self._reader_scope.current(service))
             )
         except Exception:
             return False
@@ -189,6 +198,7 @@ class LoanActionScopeLease:
 def capture_loan_action_scope(
     service: object, loan: Loan, account: Account, session: object, *,
     expected_identity_id: str, admitted_source_epoch: int | None = None,
+    reader_scope=None,
 ) -> LoanActionScopeLease | None:
     """Create an exact action lease only for the still-live selected borrower.
 
@@ -199,9 +209,18 @@ def capture_loan_action_scope(
     if (type(loan) is not Loan or type(account) is not Account
             or type(expected_identity_id) is not str or not expected_identity_id):
         return None
-    epoch = getattr(service, "_account_context_epoch", None)
-    if type(epoch) is not int:
-        return None
+    if reader_scope is not None:
+        from .search_orchestration import SearchReadScope
+        if (type(reader_scope) is not SearchReadScope
+                or reader_scope.identity_id != expected_identity_id
+                or reader_scope.source_epoch != admitted_source_epoch
+                or not reader_scope.current(service)):
+            return None
+        epoch = 0  # not a navigation lease
+    else:
+        epoch = getattr(service, "_account_context_epoch", None)
+        if type(epoch) is not int:
+            return None
     if admitted_source_epoch is not None and (
             type(admitted_source_epoch) is not int
             or admitted_source_epoch < 0):
@@ -224,6 +243,7 @@ def capture_loan_action_scope(
         _descriptor=descriptor,
         _admitted_service=service if admitted_source_epoch is not None else None,
         _source_epoch=admitted_source_epoch,
+        _reader_scope=reader_scope,
     )
     return lease if lease.current(service) else None
 
