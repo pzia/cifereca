@@ -2221,6 +2221,17 @@ class UxRecommendationsView:
             )
             return False
 
+        # Bind the catalogue to this page's own reader before TaskBroker
+        # queues its work. Legacy broker doubles without the additive facet
+        # retain their historical contract.
+        bind_catalog = getattr(type(catalog_broker), "for_identity", None)
+        if callable(bind_catalog):
+            try:
+                catalog_broker = bind_catalog(catalog_broker, identity_id)
+            except Exception:
+                self._show_calculation_unavailable("Le catalogue du profil n'est plus disponible.")
+                return False
+
         generation = self._generation
         self._refresh_started_at = time.perf_counter()
         self._busy = True
@@ -2275,6 +2286,7 @@ class UxRecommendationsView:
                 return compute_reference_recommendations(
                     catalog_broker,
                     reference,
+                    identity_id=identity_id,
                     scope=self._config_str("scope", "digital"),
                     max_queries=self._config_int("max_queries", 8),
                     per_query=self._config_int("per_query", 50),

@@ -2038,6 +2038,13 @@ class LibraryService:
         """
         return search_orchestration.search_progressive(self, query, scope, force, provider_id=provider_id, provider_ids=provider_ids, field=field, content_types=content_types, on_batch=on_batch, control=control, on_event=on_event, include_redundant_merged=include_redundant_merged, executor=_SEARCH_EXECUTOR, logger=_TRACE_LOG)
 
+    def search_progressive_for_scope(self, request_scope, query: str, **options):
+        """Independent catalogue reader; never publishes GTK last_search."""
+        return search_orchestration.search_progressive(
+            self, query, request_scope=request_scope,
+            executor=_SEARCH_EXECUTOR, logger=_TRACE_LOG, **options,
+        )
+
     def search_local_library(
         self, query: str, scope: str = "all", *, field: str = "all", identity_id: str | None = None,
     ) -> list[dict[str, Any]]:
