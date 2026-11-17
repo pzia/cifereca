@@ -364,3 +364,62 @@ def _complete_job_txn(db, lease, *, now):
         raise ValueError("notice_work_transaction_required")
     job = _held(db, lease, now)
     _save(db, replace(job, state="current", lease_until=0, reason="none"))
+
+
+_MAX_SCAN = 32
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ReadyPage:
+    """Snapshot hints, not reservations or authority to execute."""
+    refs: tuple[JobRef, ...]
+    next_after: str | None
+    examined: int
+    corrupt: int
+
+
+def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN):
+    """Bounded, read-only keyset scan of the existing durable public journal.
+
+    Keep next_after across ticks, restarting at None at the end of a sweep.
+    Empty pages may have a continuation (leases, backoff, dependencies).
+    New keys behind the cursor are seen on the next sweep, not lost.
+    The caller MUST claim each exact ref and obtain broker admission before
+    any execution; a concurrent replacement can invalidate any hint.
+    Expired final attempts are included so claim_job can terminalize them.
+    No worker, timer, reservation, transport or source access here.
+    """
+    if (not _integer(now) or type(limit) is not int
+            or not 1 <= limit <= _MAX_SCAN
+            or (after is not None and not _digest(after))):
+        raise ValueError("notice_work_invalid_scan")
+    lower = _PREFIX + after if after is not None else _PREFIX
+    refs = []
+    corrupt = 0
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN")
+        # Only actual opaque logical keys can be returned as cursor tokens.
+        # A malformed metadata key cannot become a source/account identifier.
+        keys = db.execute(
+            "SELECT key FROM metadata WHERE key>? AND key<? "
+            "AND length(key)=? AND substr(key,?) NOT GLOB '*[^0-9a-f]*' "
+            "ORDER BY key LIMIT ?",
+            (lower, _END, len(_PREFIX) + 64, len(_PREFIX) + 1, limit),
+        ).fetchall()
+        memo = {}
+        for row in keys:
+            key = row[0][len(_PREFIX):]
+            try:
+                job = _load(db, key)
+                if job is None:
+                    continue
+                if (job.state == "pending" and job.due <= now
+                        and job.lease_until <= now
+                        and _dependency_status(db, job.spec, memo=memo) == "ready"):
+                    refs.append(job.ref)
+            except ValueError:
+                # Never expose the invalid payload or make it executable.
+                # A damaged entry/dependency must not block unrelated jobs.
+                corrupt += 1
+    next_after = keys[-1][0][len(_PREFIX):] if len(keys) == limit else None
+    return ReadyPage(tuple(refs), next_after, len(keys), corrupt)
