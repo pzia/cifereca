@@ -131,3 +131,57 @@ def test_exact_connected_paris_borrower_key_is_preserved(borrower, account_uid, 
     assert owner is account and session.connected is True
     assert hashed == return_key("paris", "credential-123", expected, "loan-123")
     assert reads == ["resolve", "source_key", "session"]
+
+
+@pytest.mark.parametrize("callback", ["resolve_account", "session_key", "lookup_session"])
+@pytest.mark.parametrize("field", ["id", "source_provider", "source_credential", "source_account_id"])
+def test_return_preflight_refuses_callback_source_drift(callback, field):
+    loan = _loan()
+    kwargs, reads = _admission(loan)
+    original = kwargs[callback]
+
+    def mutate(*args):
+        result = original(*args)
+        setattr(loan, field, "foreign")
+        return result
+
+    kwargs[callback] = mutate
+    with pytest.raises(AttentionRequired) as caught:
+        return_loan_identity(loan, **kwargs)
+    assert caught.value.code == "loan_return_borrower_mismatch"
+    assert reads == {
+        "resolve_account": ["resolve"],
+        "session_key": ["resolve", "source_key"],
+        "lookup_session": ["resolve", "source_key", "session"],
+    }[callback]
+
+
+def test_return_preflight_refuses_hostile_post_callback_coordinate():
+    loan = _loan()
+    kwargs, reads = _admission(loan)
+    original = kwargs["resolve_account"]
+
+    def mutate(*args):
+        result = original(*args)
+        loan.source_account_id = Hostile()
+        return result
+
+    kwargs["resolve_account"] = mutate
+    with pytest.raises(AttentionRequired) as caught:
+        return_loan_identity(loan, **kwargs)
+    assert caught.value.code == "loan_return_borrower_mismatch"
+    assert reads == ["resolve"]
+
+
+def test_return_preflight_refuses_unreadable_initial_loan():
+    class BrokenLoan:
+        @property
+        def id(self):
+            raise RuntimeError(PRIVATE)
+
+    kwargs, reads = _admission(_loan())
+    with pytest.raises(AttentionRequired) as caught:
+        return_loan_identity(BrokenLoan(), **kwargs)
+    assert caught.value.code == "loan_return_borrower_unproven"
+    assert "PRIVATE_BORROWER_TOKEN" not in str(caught.value)
+    assert reads == []
