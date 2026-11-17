@@ -1,8 +1,9 @@
 """#4982: explicit Core-only pump for known public aggregate implementations.
 
 No timer, thread, extra queue, automatic caller or production activation.
-An existing Core maintenance coordinator may drive tick outside GTK and
-outside the broker's worker pool. The existing broker owns all actual work.
+An existing Core maintenance coordinator may drive tick outside GTK,
+including on an admitted maintenance worker that never waits for submitted
+work. The existing broker owns all actual work.
 """
 from __future__ import annotations
 
