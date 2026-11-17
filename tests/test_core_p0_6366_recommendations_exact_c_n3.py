@@ -39,6 +39,7 @@ def _setup():
                   _cover_plugin_c_source=source)
     panel = NS(
         _next_local_public_c_check=None,
+        empty=Mock(),
         show_public_c_search_document=Mock(),
         show_item_detail=Mock(), show_search=Mock(),
     )
@@ -148,16 +149,17 @@ def test_revoked_exact_search_detail_has_no_c_or_supplier_image(method, revoke):
     search = _search_item()
     if method.endswith("unavailable"):
         fn(view, search, public_c_document=doc)
-        panel.show_search.assert_called_once()
-        rendered = panel.show_search.call_args.args[0]
     else:
         fn(view, search, _detail(), public_c_document=doc)
-        panel.show_item_detail.assert_called_once()
-        rendered = panel.show_item_detail.call_args.args[0]
-        assert panel.show_item_detail.call_args.args[1].thumbnail_url is None
-    assert rendered.thumbnail_url is None
-    assert rendered is not search
+    # Revocation invalidates the old detail's actions as well as its image:
+    # no stale account affordance should be published to the next selection.
+    panel.empty.assert_called_once_with(
+        "Notice indisponible", "La sélection ou sa source a changé.",
+    )
+    panel.show_search.assert_not_called()
+    panel.show_item_detail.assert_not_called()
     panel.show_public_c_search_document.assert_not_called()
+    view._window._add_local_book_actions.assert_not_called()
     assert panel._next_local_public_c_check is None
 
 
