@@ -124,6 +124,38 @@ def select_source_offer_target(
         return None
 
 
+def admit_library_source_offer(
+    service, target: SourceOfferTarget, *, identity_id: str,
+    account_epoch: int, source_epoch: int,
+) -> SourceOfferTarget:
+    """Promote a still-current passive Library selection at explicit click.
+
+    No offer GET here: the canonical executor will qualify current delivery
+    after dequeue. Navigation is required only through admission, not the
+    subsequently admitted source lease.
+    """
+    from dataclasses import replace
+    from .source_context import source_context_epoch
+
+    if (type(target) is not SourceOfferTarget
+            or type(identity_id) is not str or not identity_id
+            or target.identity_id != identity_id
+            or type(account_epoch) is not int or account_epoch < 0
+            or type(source_epoch) is not int or source_epoch < 0
+            or target.source_epoch is not None
+            or target.selection_epoch != account_epoch
+            or service._account_context_epoch != account_epoch
+            or source_context_epoch(service) != source_epoch):
+        raise ValueError("selected_library_source_revoked")
+    _resolve(service, target)
+    admitted = replace(target, selection_epoch=None, source_epoch=source_epoch)
+    _resolve(service, admitted)
+    if (service._account_context_epoch != account_epoch
+            or source_context_epoch(service) != source_epoch):
+        raise ValueError("selected_library_source_revoked")
+    return admitted
+
+
 def obtain_source_offer(service, target: SourceOfferTarget):
     """Core's existing global-lock, single-offer A→B path, without entitlements."""
     def resolve(_service, entitlement_id, identity_id, item_id):
