@@ -202,6 +202,10 @@ def prepare_confirmed_manual_borrow(
                 or item.metadata.get("catalogue_access") == "shared_read_only"
                 or item.metadata.get("search_provenance") == "known_catalog_stale"):
             return None
+        observed_borrower = item.source_account_id
+        if observed_borrower is not None and (
+                type(observed_borrower) is not str or observed_borrower != account_id):
+            return None
         scope = capture_search_read_scope(service, identity_id)
         policy = resolved_manual_borrow_policy(service, item, reader_scope=scope)
         if policy is None or not _selected_primary_source_current(service, item, identity_id, policy):
@@ -228,6 +232,8 @@ def prepare_confirmed_manual_borrow(
         def current():
             try:
                 return (lease.current(service)
+                        and item.source_account_id == observed_borrower
+                        and type(item.source_account_id) is type(observed_borrower)
                         and type(item.metadata) is dict
                         and item.metadata.get("catalogue_access") != "shared_read_only"
                         and item.metadata.get("search_provenance") != "known_catalog_stale"
