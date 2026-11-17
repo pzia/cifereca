@@ -205,7 +205,11 @@ def main() -> int:
         return summary, results
 
     core.library.search_progressive_result_for_scope = search_progressive
-    core.library.holdings = lambda item, _query="", *, force=False: session.holdings(item)
+    def holdings_for_scope(scope, item, _query="", *, force=False):
+        assert scope.current(core.library)
+        return session.holdings(item)
+
+    core.library.holdings_for_scope = holdings_for_scope
     report = {
         "scenario": "bnf-covers-1366", "status": "RUNNING",
         "backend": "GTK4/X11, BnF HTML parser + provider adapter, HTTPX MockTransport",
