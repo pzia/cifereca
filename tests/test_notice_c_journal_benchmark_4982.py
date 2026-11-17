@@ -24,6 +24,10 @@ def test_small_scratch_journal_benchmark():
     if report["counts"]["scan_port_available"]:
         assert report["latency"]["ready_page32"]["count"] == 2
         assert report["counts"]["rotation_examined"] <= 64
+    if report["counts"]["filtered_scan_port_available"]:
+        assert report["latency"]["four_filtered_pages8"]["count"] == 2
+    else:
+        assert "four_filtered_pages8" not in report["latency"]
     if report["counts"]["retention_port_available"]:
         assert 0 <= report["counts"]["recycled"] <= 8
     assert "sqlite" not in str(report["latency"])
