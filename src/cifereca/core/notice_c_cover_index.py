@@ -582,6 +582,26 @@ def persist_exact_public_search_cover(
     admitted by a separate strong-link producer, never by this function.
     Revalidate current SQLite evidence transactionally in the index writer.
     """
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        return _persist_exact_public_search_cover_txn(db, source)
+
+
+def _persist_exact_public_search_cover_txn(
+    db: Any, source: PersistedNoticeCover, *, expected_epoch: int | None = None,
+) -> ConsolidatedNoticeCover:
+    """Same exact-source authority inside an existing writer transaction."""
+    if not db.in_transaction:
+        raise ValueError("canonical_cover_transaction_required")
+    edition_id, proof_id = _exact_public_search_evidence(source)
+    return _persist_consolidated_cover_source_txn(
+        db, canonical_edition_id=edition_id, source=source,
+        relation_proof_id=proof_id, expected_epoch=expected_epoch,
+    )
+
+
+def _exact_public_search_evidence(source: PersistedNoticeCover) -> tuple[str, str]:
+    """Derive only immutable self-identity evidence from the admitted source."""
     if (type(source) is not PersistedNoticeCover
             or source.observation.key.visibility != "public"
             or source.observation.key.branch_id != "search.public.catalogue"
@@ -626,10 +646,7 @@ def persist_exact_public_search_cover(
          source.document.source_key, key.edition_id],
         ensure_ascii=True, separators=(",", ":"),
     ).encode("ascii")).hexdigest()
-    return persist_consolidated_cover_source(
-        storage, canonical_edition_id=key.edition_id, source=source,
-        relation_proof_id="core.exact.search.v1:" + digest,
-    )
+    return key.edition_id, "core.exact.search.v1:" + digest
 
 
 __all__ = [
