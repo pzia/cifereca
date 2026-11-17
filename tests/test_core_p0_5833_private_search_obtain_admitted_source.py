@@ -284,3 +284,20 @@ def test_headless_mandate_revalidates_reader_and_source(rig, revoked):
         service = Host()
     with pytest.raises(ValueError, match="selected_source_binding_changed"):
         selected._resolve(service, target)
+
+
+def test_library_service_explicit_private_facade_needs_no_navigation(rig):
+    _explicit_reader(rig)
+    target = LibraryService.capture_confirmed_private_search_offer(
+        rig, _item(), identity_id="reader", account_id="borrower", confirmed=True,
+    )
+    assert target.reader_scope.current(rig)
+    assert target.identity_id == "reader" and target.account_id == "borrower"
+    for identity, account, confirmed in (
+        ("reader", "borrower", False), ("reader", "borrower", 1),
+        ("other", "borrower", True), ("reader", "another", True),
+    ):
+        with pytest.raises(ProviderConfigurationError):
+            LibraryService.capture_confirmed_private_search_offer(
+                rig, _item(), identity_id=identity, account_id=account, confirmed=confirmed,
+            )
