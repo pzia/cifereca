@@ -145,7 +145,7 @@ def test_window_keeps_unique_identity_ids_exact_bindings_and_callback_ownership(
     body = ast.unparse(ast.parse(settings_source_text()))
     assert "while identity_id in existing_ids:" in body
     assert "self.service.storage.adept_profile_binding_get(" in body
-    assert "_saved_adept_status(self.service, identity_id, data)" in body
+    assert "_saved_adept_status(self.service, identity_id, data, descriptors)" in body
     assert "self.service.normal_paris_adept_status(identity_id)" not in body
     assert "build_identity_settings_editor(" in body
     assert "self._choose_identity_directory(" in body
