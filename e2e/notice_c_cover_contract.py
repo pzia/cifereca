@@ -237,7 +237,7 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             report["checks"]["P0_6366_real_c_n2_n3_n4_restart_offline"] = True
             cleanup()
             window.present()
-            later(450, complete)
+            complete()
 
         later(40, guard(verify))
 
