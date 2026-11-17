@@ -57,7 +57,13 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         and type(owner) is str and bool(owner) and owner == active
     )
     foreign = (
-        (type(owner) is str and bool(owner) and not owner_is_active)
+        # An explicitly supplied owner must be native and match the active
+        # identity. In particular None/empty/non-native is not an owner,
+        # even when the global-view presentation marker is absent.
+        # Preserve the older unqualified display-row contract only when
+        # the owner field itself is absent; downstream local/provider
+        # admission remains independent of this presentation guard.
+        ("identity_id" in item and not owner_is_active)
         or (view_owner is not None and (
             type(view_owner) is not str or not view_owner
             or not owner_is_active or view_owner != owner
