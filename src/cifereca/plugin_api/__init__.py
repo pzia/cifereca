@@ -6,6 +6,9 @@ External plugins should import from this package only.  Internal modules such as
 
 from cifereca.http_trace import HTTPX_TRANSPORT, TraceHTTPTransport, TraceAsyncHTTPTransport, TraceHTTPClient, TraceAsyncHTTPClient
 from .context import PluginContext
+from .catalogue_json import (
+    CatalogueJSONError, parse_bounded_catalogue_json, validate_catalogue_json,
+)
 from .digital_loan_availability import DigitalLoanAvailability, digital_loan_availability_lines
 from .usb_storage import USB_STAGE_CAPABILITY, UsbStorageStageWriter
 from cifereca.document_classification import (
@@ -101,11 +104,17 @@ from .book_references import book_ref_from_row, BookAccessFact, book_access_fact
 from .book_detail_cache import CachedBookDetailContribution, collect_cached_book_details, subscribe_cached_book_detail_changes
 from .llm import LLMRequest, LLMResult, LLMService
 from .document_links import document_links
+from .catalogue_xml import (
+    CatalogueXMLParseError, parse_bounded_catalogue_xml,
+    MAX_XML_BYTES, MAX_XML_DEPTH, MAX_XML_ELEMENTS,
+)
 
 __all__ = [
     "HTTPX_TRANSPORT", "TraceHTTPTransport", "TraceAsyncHTTPTransport", "TraceHTTPClient", "TraceAsyncHTTPClient",
     "DiagnosticsPseudonyms", "DISPLAY_PSEUDONYMS",
+    "CatalogueXMLParseError", "parse_bounded_catalogue_xml", "MAX_XML_BYTES", "MAX_XML_DEPTH", "MAX_XML_ELEMENTS",
     "LLMRequest", "LLMResult", "LLMService",
+    "CatalogueJSONError", "parse_bounded_catalogue_json", "validate_catalogue_json",
     "ProviderCollection", "ProviderCollectionSnapshot", "VirtualProviderEntry", "ProviderCollectionValidationError", "validate_provider_collection_snapshot",
     "INVENTORY_CONTRACT", "LoanInventoryScope", "LoanBranchCoverage", "LoanInventorySnapshot", "legacy_loan_inventory", "read_loan_inventory",
     "BorrowerEligibilityStatus", "BorrowerOperationEvidence",

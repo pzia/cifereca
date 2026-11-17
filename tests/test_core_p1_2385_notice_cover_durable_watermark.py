@@ -341,3 +341,80 @@ def test_eviction_rollback_and_corrupt_fence_refuse_without_source_loss(tmp_path
         assert read_notice_cover(db, original.document) is None
     finally:
         db.close()
+
+
+
+@pytest.mark.parametrize("qualified", [False, True])
+def test_changed_partial_after_eviction_does_not_shadow_last_complete_c(tmp_path, qualified):
+    from cifereca.core.notice_cover_repository import (
+        _opaque_key, _fence_key, evict_notice_cover, read_notice_cover_write_epoch,
+        persist_notice_cover_many,
+    )
+    from cifereca.core.notice_c_cover_index import (
+        persist_consolidated_cover_source, read_consolidated_notice_cover,
+    )
+    path = tmp_path / "partial-after-eviction.sqlite"
+    db = Storage(path)
+    try:
+        a = publish(db, A, 10)
+        c = persist_consolidated_cover_source(
+            db, canonical_edition_id="edition:retain-partial", source=a,
+            relation_proof_id="strong:fixture:retain-partial",
+        )
+        key = _opaque_key(a.document)
+        if qualified:
+            assert evict_notice_cover(db, a.document, expected_epoch=a.epoch)
+            expected = read_notice_cover_write_epoch(db, a.document)
+        else:
+            with db._lock, db._connect() as conn:
+                conn.execute("DELETE FROM metadata WHERE key=?", (key,))
+            expected = None
+        assert publish(db, B, 20, status="partial", epoch=expected) is None
+        assert read_notice_cover(db, a.document) is None
+        assert read_consolidated_notice_cover(db, c.document) == c
+        with db._lock, db._connect() as conn:
+            marker = json.loads(conn.execute(
+                "SELECT value FROM metadata WHERE key=?", (_fence_key(key),),
+            ).fetchone()[0])
+        assert marker["last_seen_at"] == 20
+        assert marker["epoch"] == (2 if qualified else 1)
+        assert marker.get("evicted", False) is qualified
+    finally:
+        db.close()
+
+    db = Storage(path)
+    try:
+        with pytest.raises(ValueError, match="stale_source"):
+            publish(db, B, 19, epoch=expected)
+        pending = admit_source_notice(
+            key=KEY, parser_id="bnf-parser", parser_version="1",
+            observed_at=21, status="partial", raw_fields={"media": {"cover": B}},
+        )
+        assert persist_notice_cover_many(
+            db, [pending], field_path=("media", "cover"),
+            cover_inventory_complete=True,
+        ) == [None]
+        assert read_notice_cover(db, a.document) is None
+        assert read_consolidated_notice_cover(db, c.document) == c
+        with pytest.raises(ValueError, match="stale_source"):
+            publish(db, B, 20, epoch=expected)
+        b = publish(db, B, 22, epoch=expected)
+        assert b.epoch == (3 if qualified else 2)
+        assert b.attribute.candidates[0].url == B
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+def test_exact_original_pending_proof_can_rehydrate(tmp_path):
+    from cifereca.core.notice_cover_repository import _opaque_key
+    db = Storage(tmp_path / "pending-replay.sqlite")
+    try:
+        a = publish(db, None, 10, status="partial")
+        assert a.attribute.state == "pending"
+        with db._lock, db._connect() as conn:
+            conn.execute("DELETE FROM metadata WHERE key=?", (_opaque_key(a.document),))
+        b = publish(db, None, 10, status="partial")
+        assert b.epoch == 2 and b.attribute.state == "pending"
+    finally:
+        db.close()
