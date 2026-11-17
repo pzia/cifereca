@@ -87,6 +87,7 @@ ne jamais choisir arbitrairement un compte dans une identité tierce.
 | `python3 scripts/recette-doctor.py [--require-apparmor] [--kernel-audit] [--profile FICHIER]` | Capacités Linux/Bubblewrap, profil AppArmor facultatif | **T** ; JSON de prérequis avec sondes confinées temporaires, aucune inspection de la bibliothèque. `--kernel-audit` lit les événements du noyau accessibles. |
 | `python3 scripts/benchmark_diagnostics.py [--blocks N] [--iterations N]` | Données synthétiques | **T** ; mesures de microbenchmark, **pas** latence de l'IHM réelle. |
 | `python3 scripts/benchmark_task_admission.py [--rounds N] [--jobs-per-pool N] [--io-ms N]` | Attentes synthétiques | **T** ; mesure concurrence de pools, pas diagnostic terrain des syncs. |
+| `PYTHONPATH=src python3 scripts/benchmark_notice_c_journal.py [--chains N] [--samples N]` | SQLite temporaire synthétique, 512 chaînes / 128 échantillons maximum | **T** ; journal seul, aucune base utilisateur ni réseau ; scan filtré mesuré uniquement si contrat installé, aucune SLA ni preuve des producteurs. |
 | `cifereca-plugin-test PACKAGE [--tests CHEMIN]` | Manifest + scan imports privés ; éventuellement exécute pytest dans XDG temporaire | **T** ; résultat JSON de contrat plugin/test, pas acquisition réelle. |
 
 **Validation privée autonome de `--capture` (P1 #4093) :**
