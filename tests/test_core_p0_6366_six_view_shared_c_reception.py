@@ -102,6 +102,17 @@ class Reception:
         assert not handle.still_current
         assert self.reads == [self.ref]
 
+    def assert_n2_reads(self, bindings):
+        # warm_index misses the source; the first binding then resolves N1
+        # from that snapshot (a distinct N2 decision miss). Every subsequent
+        # binding must hit that very same decision, without another SQL read.
+        stats = self.service.stats()
+        assert stats["n2_source_unknown"] == 1
+        assert stats["n2_resolution_miss"] == 1
+        assert stats["n2_miss"] == 2
+        assert stats["n2_hit"] == bindings - 1
+        assert stats["n2_hit"] + stats["n2_miss"] == bindings + 1
+
     def close(self):
         for request in self.handles:
             request.cancel()
@@ -348,7 +359,7 @@ def test_same_public_c_six_list_detail_paths_and_reopened_offline_cache(tmp_path
             }
             assert gets == [URL]
             assert reception.reads == [ref]
-            assert reception.service.stats()["n2_hit"] >= 12
+            reception.assert_n2_reads(12)
             assert reception.loader.stats()["download_ok"] == 1
         finally:
             reception.close()
@@ -379,6 +390,7 @@ def test_same_public_c_six_list_detail_paths_and_reopened_offline_cache(tmp_path
         _local(restored, reception, artifact, placement, path)
         _borrowers(restored, reception)
         assert len(reception.bindings) == 10
+        reception.assert_n2_reads(10)
         assert reception.reads == [ref]
         assert gets == [URL]
         assert restored.entitlements() == [] and restored.acquisitions() == []
