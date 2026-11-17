@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from ..models import SearchResult
 from ..providers import ProviderConfigurationError
+from .private_inventory_row_scope import private_row_account_matches
 
 
 def obtain_selected_owned(
@@ -43,7 +44,9 @@ def obtain_selected_owned(
             credential_id=item.source_credential, item_id=item.record_id,
             identity_id=identity_id, **pinned,
         )
-        if target is None:
+        if (target is None or not private_row_account_matches(
+                item, getattr(target, "account_id", None),
+            )):
             raise ValueError("explicit_source_not_bound")
         return obtain_source_offer(service, target)
     except Exception as exc:
