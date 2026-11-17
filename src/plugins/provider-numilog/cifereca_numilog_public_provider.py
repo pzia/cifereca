@@ -58,6 +58,7 @@ DESCRIPTOR = ProviderDescriptor(
 class _ReservedPublicRefresh:
     execute: object
     release: object
+    hold_publication: object
 
 
 class NumilogPublicSession(ProviderSession):
@@ -309,6 +310,7 @@ class NumilogPublicSession(ProviderSession):
         lock = threading.Lock()
         phase = "reserved"
         started = False
+        succeeded = False
 
         def release():
             nonlocal phase
@@ -341,7 +343,7 @@ class NumilogPublicSession(ProviderSession):
                     started = True
 
         def execute(control):
-            nonlocal phase
+            nonlocal phase, succeeded
             with lock:
                 if phase != "reserved":
                     raise ProviderError("Numilog : public_catalog_refresh_consumed")
@@ -371,13 +373,34 @@ class NumilogPublicSession(ProviderSession):
                 response = ProviderSearchResponse(
                     results=[row], public_notices=(PublicSearchNotice(row),),
                 )
-                return response, int(time.time())
+                observed_at = int(time.time())
+                with lock:
+                    succeeded = True
+                return response, observed_at
             finally:
                 cache._release_reserved(slot)
                 with lock:
                     phase = "done"
 
-        return _ReservedPublicRefresh(execute, release)
+        @contextmanager
+        def hold_publication():
+            # Pin the exact anonymous session through the Core transaction.
+            # No storage/transport calls here. The caller already pins the
+            # Core policy and grant, keeping order policy -> session -> DB.
+            with lock:
+                ready = succeeded and phase == "done"
+            if not ready or not self._navigation_lock.acquire(blocking=False):
+                raise ProviderError("Numilog : public_catalog_refresh_revoked")
+            try:
+                if (not self.connected or self._navigation_epoch != generation
+                        or self.credential_id != "__public__"
+                        or self.credentials or self._accounts):
+                    raise ProviderError("Numilog : public_catalog_refresh_revoked")
+                yield
+            finally:
+                self._navigation_lock.release()
+
+        return _ReservedPublicRefresh(execute, release, hold_publication)
 
     def _reparse_retained_public_row(self, token, record_id):
         """Run the existing offline parser on the exact retained input.
