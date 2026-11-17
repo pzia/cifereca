@@ -69,8 +69,10 @@ def discover_possible_borrow_lenders(
             or any(type(item) is not SearchResult for item in notices)):
         return ()
     try:
-        selected = service.current_identity
-        if selected is None or selected.identity_id != requesting_identity_id:
+        # The caller supplies the requester. Resolve the exact registered
+        # profile, never the navigation selector (which may be absent).
+        requester = service.identity_by_id(requesting_identity_id)
+        if requester is None or requester.identity_id != requesting_identity_id:
             return ()
         context_epoch = service._account_context_epoch
         source_epoch = service._source_context_epoch
@@ -187,7 +189,7 @@ def discover_possible_borrow_lenders(
                         borrow_claim_key(account, item),
                     ) is not None):
                 continue
-            if (service.current_identity is not selected
+            if (service.identity_by_id(requesting_identity_id) is not requester
                     or service._account_context_epoch != context_epoch
                     or service._source_context_epoch != source_epoch
                     or service._sessions.get(
@@ -204,7 +206,7 @@ def discover_possible_borrow_lenders(
             # One malformed/offline provider cannot suppress unrelated lenders.
             continue
     try:
-        if (service.current_identity is not selected
+        if (service.identity_by_id(requesting_identity_id) is not requester
                 or service._account_context_epoch != context_epoch
                 or service._source_context_epoch != source_epoch):
             return ()
