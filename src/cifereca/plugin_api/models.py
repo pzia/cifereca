@@ -1095,6 +1095,20 @@ class UiPublicNoticeCoverHost(UiPageHost, Protocol):
 
 
 @runtime_checkable
+class UiPublicNoticeCoverBindingHost(UiPublicNoticeCoverHost, Protocol):
+    """Optional revision-aware extension of the legacy exact-C reference port.
+
+    Returns (DocumentRef, opaque Core receipt) or None. Forward the receipt
+    unchanged in UiBookListEntry.cover_document_receipt; never reconstruct,
+    serialize or interpret it. The standard CoreUI adapter validates it.
+    """
+
+    def public_notice_cover_binding(
+        self, item: object, *, identity_id: str,
+    ) -> tuple[object, object] | None: ...
+
+
+@runtime_checkable
 class UiLoadedSearchNoticeHost(UiPageHost, Protocol):
     """Optional exact-match navigation to a notice ALREADY loaded by Search.
 
