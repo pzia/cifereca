@@ -4,6 +4,7 @@ No account, cookies, owned rows, files or background retries. Closing or
 reconnecting invalidates entries without waiting for an in-flight HTTP call.
 """
 from collections import OrderedDict
+from contextlib import contextmanager
 from copy import deepcopy
 import math
 import threading
@@ -36,6 +37,50 @@ class PublicCatalogueCache:
             self._entries.clear()
             # Budget/cooldown survive reconnect: reconnect is not a rate-limit
             # workaround. Keep the in-flight reservation until its own return.
+
+    def _peek_retained_input(self, token):
+        """Bounded cache-only lookup, no load callback, token or LRU renewal.
+
+        The session owns the cache and must fence its own generation before
+        and after replay. A retained input shares the existing entry's TTL,
+        eviction and reconnect invalidation. Do not export raw query/body
+        through the normal SearchResult or plugin UI surfaces.
+        """
+        with self._lock:
+            return self._peek_retained_input_locked(token)
+
+    def _peek_retained_input_locked(self, token):
+        from cifereca_numilog_public_client import _RetainedSearchPage
+
+        now = self._clock()
+        for key, (until, _value) in tuple(self._entries.items()):
+            if until <= now:
+                self._entries.pop(key, None)
+        matches = [(until, value) for until, value in self._entries.values()
+                   if (type(value) is _RetainedSearchPage
+                       and value.raw_input is not None
+                       and value.raw_input.token == token)]
+        if len(matches) != 1:
+            return None, 0
+        until, value = matches[0]
+        return value, max(0, math.floor(until - now))
+
+    @contextmanager
+    def _hold_retained_input(self, token):
+        """Publication guard; caller already owns its session generation lock.
+
+        Nonblocking admission: no waiting for an ongoing cache operation.
+        A successful guard pins the exact immutable input until exit; clear,
+        eviction and replacement serialize behind it. No parsing/HTTP,
+        SQLite access or TTL extension in this provider cache.
+        """
+        if not self._lock.acquire(blocking=False):
+            raise ProviderError("Numilog : public_catalog_replay_busy")
+        try:
+            entry, ttl = self._peek_retained_input_locked(token)
+            yield entry.raw_input if entry is not None and ttl >= 1 else None
+        finally:
+            self._lock.release()
 
     def get(self, key, load):
         with self._lock:
