@@ -456,6 +456,30 @@ class LibraryService:
             requesting_identity_id=requesting_id, scope_current=scope_current,
         )
 
+    def preview_borrow_for_identity_scope(
+        self, *, identity_id: str, expected_edition_id: str,
+        observations: object, now: int | None = None,
+    ):
+        """Reader-bound advisory preview; non-executable, no supplier I/O."""
+        from .core.borrow_for_identity_live import preview_borrow_for_scope
+        scope = search_orchestration.capture_search_read_scope(self, identity_id)
+        return preview_borrow_for_scope(
+            self, reader_scope=scope, expected_edition_id=expected_edition_id,
+            observations=observations, now=now,
+        )
+
+    def revalidate_scoped_borrow_lender_choice(
+        self, *, captured, selected_option_id: str,
+        expected_edition_id: str, observations: object, now: int | None = None,
+    ):
+        """Revalidate an original reader-bound choice; no mutation authority."""
+        from .core.borrow_for_identity_live import revalidate_borrow_for_scope
+        return revalidate_borrow_for_scope(
+            self, captured=captured, selected_option_id=selected_option_id,
+            expected_edition_id=expected_edition_id, observations=observations,
+            now=now,
+        )
+
     def revalidate_borrow_lender_choice(
         self, *, captured_preview, selected_option_id: str,
         expected_edition_id: str, observations: object,
@@ -2463,6 +2487,16 @@ class LibraryService:
     def renew(self, loan: Loan, *, confirmed: bool = False) -> dict[str, Any]:
         """Historical synchronous facade; no inferred deferred admission."""
         return self._renew_with_admission(loan, confirmed=confirmed)
+
+    def capture_confirmed_loan_renewal(
+        self, loan: Loan, *, identity_id: str, account_id: str, confirmed: bool,
+    ):
+        """Passive admission for an exact reader/borrower, independent of GTK."""
+        from .core.provider_loan_renewal import capture_confirmed_loan_renewal
+        return capture_confirmed_loan_renewal(
+            self, loan, identity_id=identity_id, account_id=account_id,
+            confirmed=confirmed,
+        )
 
     def renew_admitted_loan(self, loan: Loan, *, confirmed: bool = False, admission) -> dict[str, Any]:
         from .core.provider_loan_renewal import RenewalAdmission
