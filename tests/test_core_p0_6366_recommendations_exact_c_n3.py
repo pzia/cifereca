@@ -171,3 +171,78 @@ def test_canonical_exact_scope_refuses_other_recommendation_even_same_title():
         view._page.selection.get_selected_item = lambda: NS(key=source.key)
         assert not check()
     assert panel._next_local_public_c_check is None
+
+
+@pytest.mark.parametrize("method", [
+    "show_existing_search_detail", "show_existing_search_unavailable",
+])
+def test_original_plugin_click_revoke_denies_same_c_under_new_recommendation(
+    method,
+):
+    view, panel, original, selected, doc = _setup()
+    current = [True]
+    captured = []
+
+    def record_render(*_args, **_kwargs):
+        captured.append(panel._next_local_public_c_check)
+    panel.show_public_c_search_document.side_effect = record_render
+    fn = _method(method)
+    search = _search_item()
+    kwargs = dict(
+        public_c_document=doc,
+        c_selection_is_current=lambda: current[0],
+    )
+    if method.endswith("unavailable"):
+        fn(view, search, **kwargs)
+    else:
+        fn(view, search, _detail(), **kwargs)
+    assert len(captured) == 1 and captured[0]()
+    assert panel._next_local_public_c_check is None
+
+    # A different recommendation can share the same public edition/C.
+    # Even a new valid visible receipt may not revive the OLD worker.
+    current[0] = False
+    replacement = UiBookListEntry(
+        key=original.key, title="Une autre recommandation",
+        cover_document_ref=doc,
+    )
+    view._rows[original.key] = replacement
+    view._public_c_page_generation += 1
+    new_selection = NS(
+        key=replacement.key, _cover_document_ref=doc,
+        _cover_plugin_c_source=replacement,
+    )
+    from cifereca.gui.plugin_public_c_guard import pin_plugin_public_c
+    new_selection._cover_plugin_c_receipt = pin_plugin_public_c(
+        view, replacement, key=replacement.key,
+    )
+    assert new_selection._cover_plugin_c_receipt is not None
+    view._page.selection.get_selected_item = lambda: new_selection
+    assert not captured[0]()
+    assert panel._next_local_public_c_check is None
+
+    # The old worker returning after the new selection is a no-op, not an
+    # empty panel or another presenter's stale local/owned action.
+    panel.show_public_c_search_document.reset_mock()
+    panel.empty.reset_mock()
+    if method.endswith("unavailable"):
+        fn(view, search, **kwargs)
+    else:
+        fn(view, search, _detail(), **kwargs)
+    panel.show_public_c_search_document.assert_not_called()
+    panel.empty.assert_not_called()
+    view._window._add_local_book_actions.assert_called_once()
+
+
+def test_denied_original_plugin_click_never_starts_N3_or_actions():
+    view, panel, _source, _selected, doc = _setup()
+    fn = _method("show_existing_search_detail")
+    fn(
+        view, _search_item(), _detail(),
+        public_c_document=doc,
+        c_selection_is_current=lambda: False,
+    )
+    panel.show_public_c_search_document.assert_not_called()
+    panel.show_item_detail.assert_not_called()
+    panel.empty.assert_not_called()
+    view._window._add_local_book_actions.assert_not_called()
