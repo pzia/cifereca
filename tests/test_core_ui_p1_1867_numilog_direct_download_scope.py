@@ -71,7 +71,8 @@ class NumilogOfferFixture:
             ),
         )
         self.accounts = (
-            [NS(identity_id="alice", provider_id="numilog", credential_id=CREDENTIAL)]
+            [NS(identity_id="alice", provider_id="numilog", credential_id=CREDENTIAL,
+                unique_id=private_purchase().source_account_id)]
             if accounts is None else accounts
         )
         self.session = NS(

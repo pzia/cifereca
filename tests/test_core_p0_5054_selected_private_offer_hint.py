@@ -136,3 +136,16 @@ def test_headless_private_offer_requires_explicit_identity_without_navigation_re
     assert selected_private_offer_hint(worker, _row(), identity_id="bob") is False
     assert selected_private_offer_hint(worker, _row(), identity_id="alice") is True
     assert service.source_calls == []
+
+
+@pytest.mark.parametrize("observed,expected", [
+    ("buyer-A", True), (None, True), ("buyer-B", False),
+    ("", False), (False, False), ("buyer-A\n", False),
+])
+def test_private_hint_never_substitutes_a_different_observed_account(observed, expected):
+    service = _fixture()
+    service.accounts[0].unique_id = "buyer-A"
+    assert selected_private_offer_hint(
+        service, _row(source_account_id=observed), identity_id="alice",
+    ) is expected
+    assert service.source_calls == []

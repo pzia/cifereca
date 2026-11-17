@@ -10,6 +10,7 @@ from dataclasses import replace
 
 from ..models import SearchResult
 from .source_context import source_context_epoch
+from .private_inventory_row_scope import private_row_account_matches
 from .selected_source_offer import (
     SourceOfferTarget, _resolve, select_source_offer_target,
 )
@@ -45,7 +46,8 @@ def capture_admitted_selected_search_offer(
         item_id=item.record_id, identity_id=identity_id,
         expected_epoch=account_epoch,
     )
-    if type(target) is not SourceOfferTarget:
+    if (type(target) is not SourceOfferTarget
+            or not private_row_account_matches(item, target.account_id)):
         raise ValueError("selected_search_source_unavailable")
     # The navigation epoch is checked on the GTK click, never inside a
     # deferred provider worker. Source generation and exact binding persist.

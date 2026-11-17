@@ -196,3 +196,18 @@ def test_gtk_failed_private_admission_never_enqueues_worker(monkeypatch):
     assert not window.tasks
     source.obtain_search_item.assert_not_called()
     assert "PRIVATE" not in repr(window.show_error.call_args)
+
+
+@pytest.mark.parametrize("observed", ["old-borrower", "", False, "borrower\n"])
+def test_click_cannot_rebind_explicit_observed_account(rig, observed):
+    with pytest.raises(ProviderConfigurationError, match="selected_search_source_unavailable"):
+        LibraryService.capture_admitted_private_search_offer(
+            rig, replace(_item(), source_account_id=observed),
+        )
+
+
+def test_click_preserves_matching_explicit_account(rig):
+    target = LibraryService.capture_admitted_private_search_offer(
+        rig, replace(_item(), source_account_id="borrower"),
+    )
+    assert target.account_id == "borrower" and target.source_epoch == 11
