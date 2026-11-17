@@ -38,22 +38,26 @@ Le stockage Core exact, la relance après redémarrage, l'index par source et la
 Les tests doivent maintenir : public A→B→A, comptes privés distincts, deux éditions avec URL commune, partielles et fausses négatives, provenance ancienne/révision CAS, lecture après redémarrage, callbacks périmés, EPUB prioritaire et absence de nouvelles permissions d'action.
 
 
-## Éviction exacte et fencing (#4982)
+## Éviction et générations d’écriture (#4982)
 
-Le port Core `evict_notice_cover(..., expected_epoch=...)` écrit atomiquement
-un watermark d'éviction (epoch+1, last_seen_at) dans le même index metadata
-puis retire seulement la ligne source. Le port `read_notice_cover_write_epoch`
-retourne l'epoch d'écriture, y compris sur source absente ; ce n'est pas un
-snapshot d'image. L'epoch 0 est réservé aux clés jamais initialisées selon ce
-port. Le prochain writer CAS doit porter la nouvelle génération ; les vieux
-jobs et observations antérieures au watermark sont refusés. Le renouvellement
-sans CAS à la même seconde est refusé après éviction. La C durable, N3 et les
-fichiers ne sont pas modifiés. Les fences ne contiennent aucun corps de notice,
-ni URL ni compte, et sont conservés pour empêcher le recyclage d'epoch.
+Le writer conserve une unique fence `notice.c.source-fence.v1:` dans les
+metadata SQLite : epoch, watermark et digest de la preuve, aucun corps de
+notice ni URL. Le port `evict_notice_cover(..., expected_epoch=...)` avance
+atomiquement cet epoch et inscrit `evicted: true`, puis retire uniquement
+l'observation. `read_notice_cover_write_epoch` retourne l'epoch d'écriture
+(live ou éviction qualifiée), distinct d'une preuve documentaire et jamais
+utilisable comme révision d'image. Les anciens CAS sont refusés même après
+restart ; seule une observation autorisée utilisant la nouvelle génération
+peut renouveler à la même seconde. Les batchs non-CAS restent soumis au
+watermark, et un échec SQL annule ensemble retrait et fence.
 
-Aucun ordonnanceur/TTL automatique n'est branché dans cette tranche. Les
-purges SQL directes héritées contournent le port et ne bénéficient pas de la
-garantie ; avant activation, les remplacer par l'éviction qualifiée. Une
-source déjà supprimée avant cette évolution ne peut retrouver un historique
-absent. Le coût est une lookup indexée supplémentaire par écriture et au plus
-un petit watermark par source évincée. À mesurer sur le catalogue réel.
+Une suppression SQL directe post-déploiement est protégée par la dernière
+fence active : aucun CAS de réhydratation n'est exposé ; seule une observation
+indépendamment admise sans CAS conforme au watermark peut recréer la source
+avec un epoch supérieur. Les sources supprimées avant déploiement, sans
+marqueur ni observation, ne permettent pas de reconstruire un historique
+perdu. Les fences ne sont pas des caches, leur rétention est durable.
+La C consolidée, N3, les droits et les fichiers restent inchangés.
+Pas de TTL automatique, de scheduler ou de nouveau GET. Coût metadata
+supplémentaire par source à mesurer. La protection du dernier état complet
+après éviction reste une tranche distincte.

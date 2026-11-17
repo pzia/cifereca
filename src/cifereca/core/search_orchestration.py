@@ -14,7 +14,7 @@ import logging
 import re
 import unicodedata
 from concurrent.futures import FIRST_COMPLETED, wait
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, field, replace
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from queue import Queue, Empty, Full
@@ -26,6 +26,44 @@ from ..plugin_api import (
     ProviderSearchResponse, ProviderSearchStream, ProviderSearchWithFacets,
 )
 from ..core.provider_stream import consume_provider_stream, SearchStreamFailure, SearchStreamCancelled
+from .source_context import source_context_epoch
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class SearchReadScope:
+    """Core-local reader authority, distinct from the GTK search projection."""
+    service: Any = field(repr=False)
+    identity: Any = field(repr=False)
+    identity_id: str
+    source_epoch: int
+
+    def current(self, service) -> bool:
+        try:
+            return (self.service is service
+                    and service.identity_by_id(self.identity_id) is self.identity
+                    and source_context_epoch(service) == self.source_epoch)
+        except Exception:
+            return False
+
+
+def capture_search_read_scope(service, identity_id: str) -> SearchReadScope:
+    if (type(identity_id) is not str or not identity_id
+            or len(identity_id) > 1024 or any(ch in identity_id for ch in "\x00\r\n")):
+        raise ValueError("search_identity_required")
+    epoch = source_context_epoch(service)
+    identity = service.identity_by_id(identity_id)
+    if identity is None or identity.identity_id != identity_id:
+        raise ValueError("search_identity_unknown")
+    scope = SearchReadScope(service, identity, identity_id, epoch)
+    if not scope.current(service):
+        raise ValueError("search_source_changed")
+    return scope
+
+
+def _search_policy_enabled(service, provider_id, request_scope=None):
+    if request_scope is not None:
+        return service._provider_enabled_for_identity(provider_id, request_scope.identity_id)
+    return service._provider_enabled_for_identity(provider_id)
 
 
 def _log_observed_stream_failure(provider_id: str, phase: str, error: Exception) -> None:
@@ -206,14 +244,16 @@ def availability_display_label(self, item: SearchResult, detail: ItemDetail) -> 
     return label or "—"
 
 
-def searchable_providers(self) -> list[tuple[str, str]]:
-    """Connected provider ids/display names usable by the global search UI."""
+def searchable_providers(self, *, request_scope=None) -> list[tuple[str, str]]:
+    """Connected providers for this reader, or the legacy global search UI."""
+    if request_scope is not None and not request_scope.current(self):
+        return []
     seen: set[str] = set()
     out: list[tuple[str, str]] = []
     for session in self._sessions.values():
         if not session.connected or not session.capabilities.search or session.provider_id in seen:
             continue
-        if (not self._provider_enabled_for_identity(session.provider_id)
+        if (not _search_policy_enabled(self, session.provider_id, request_scope)
                 or not _search_credential_enabled(self, session)):
             continue
         seen.add(session.provider_id)
@@ -645,6 +685,7 @@ def _source_in_retry_after(self, session: ProviderSession, identity: object) -> 
 
 def _record_source_retry_after(
     self, session: ProviderSession, identity: object, credential: object, error: BaseException,
+    *, request_scope=None,
 ) -> None:
     """Remember a native HTTP 429 once; never sleep/retry in a worker."""
     from ..search_failures import search_retry_after_seconds
@@ -654,7 +695,8 @@ def _record_source_retry_after(
     with self._search_generation_lock:
         # A completed request from an old identity/account/session must not
         # throttle a newly selected source or otherwise mutate its state.
-        if (self.current_identity is not identity
+        if ((not request_scope.current(self) if request_scope is not None
+                else self.current_identity is not identity)
                 or getattr(session, "credential_id", None) != credential):
             return
         entries = getattr(self, "_search_retry_after", None)
@@ -1195,7 +1237,7 @@ def _search_provider_session(
     self, session: ProviderSession, query: str, scope: str, *, field: str = "all",
     content_types: tuple[str, ...] = (), facade_type,
     response_facets: list[CatalogSearchFacet] | None = None,
-    public_only: bool = False,
+    public_only: bool = False, request_scope=None, request_cancelled=None,
 ) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
 
@@ -1218,8 +1260,10 @@ def _search_provider_session(
         # A legacy search() result cannot attest foreign public provenance.
         provider_scope = "catalog"
         response_facets = None
-    identity = getattr(self, "current_identity", None)
+    identity = request_scope.identity if request_scope is not None else getattr(self, "current_identity", None)
     credential = getattr(session, "credential_id", None)
+    if request_cancelled is not None and request_cancelled():
+        return [], [], "StreamCancelled", "search cancelled"
     if _source_in_retry_after(self, session, identity):
         code = "SearchTemporarilyUnavailable"
         return [], [f"{session.descriptor.display_name}: {_search_problem_label(code)}"], code, _search_problem_label(code)
@@ -1227,6 +1271,8 @@ def _search_provider_session(
     primary_ok = False
     terminal_error_code = terminal_error_message = ""
     for attempt, variant in enumerate(variants):
+        if request_cancelled is not None and request_cancelled():
+            return [], [], "StreamCancelled", "search cancelled"
         if attempt > 0 and primary_ok:
             break
         try:
@@ -1293,7 +1339,7 @@ def _search_provider_session(
             # may carry their raw message.
             failure_code = search_failure_code(exc) or "ProviderSearchFailed"
             if failure_code == "SearchTemporarilyUnavailable":
-                _record_source_retry_after(self, session, identity, credential, exc)
+                _record_source_retry_after(self, session, identity, credential, exc, request_scope=request_scope)
             # An earlier variant returning a legitimate empty 200 does not
             # make a later transport/protocol failure disappear. Record the
             # terminal outage for the source, even when it is variant N>1,
@@ -1320,9 +1366,11 @@ def _search_provider_session(
     return provider_rows, list(dict.fromkeys(warnings)), terminal_error_code, terminal_error_message
 
 
-def _search_virtual_stream_session(self, session: ProviderSession, query: str, scope: str, *, field: str, content_types: tuple[str, ...], generation: int, publish: Callable[[ProviderSearchEvent], None], cancelled: Callable[[], bool], control: Any) -> tuple[list[SearchResult], list[str], str, str]:
+def _search_virtual_stream_session(self, session: ProviderSession, query: str, scope: str, *, field: str, content_types: tuple[str, ...], generation: int, publish: Callable[[ProviderSearchEvent], None], cancelled: Callable[[], bool], control: Any, request_scope=None) -> tuple[list[SearchResult], list[str], str, str]:
     """Worker-only optional stream. Gaps/errors do not poison the cache."""
-    identity = getattr(self, "current_identity", None)
+    if request_scope is not None and cancelled():
+        return [], [], "StreamCancelled", "search cancelled"
+    identity = request_scope.identity if request_scope is not None else getattr(self, "current_identity", None)
     credential = getattr(session, "credential_id", None)
     if _source_in_retry_after(self, session, identity):
         code = "SearchTemporarilyUnavailable"
@@ -1356,6 +1404,11 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         ))
         # Rebuild from a complete catalogue query; do not reuse partial
         # stream results after a dropped message.
+        if request_scope is not None:
+            return _search_provider_session(
+                self, session, query, scope, field=field, content_types=content_types,
+                facade_type=type(self), request_scope=request_scope, request_cancelled=cancelled,
+            )
         return self._search_provider_session(
             session, query, scope, field=field, content_types=content_types,
         )
@@ -1370,14 +1423,14 @@ def _search_virtual_stream_session(self, session: ProviderSession, query: str, s
         code = search_failure_code(exc)
         if code is not None:
             if code == "SearchTemporarilyUnavailable":
-                _record_source_retry_after(self, session, identity, credential, exc)
+                _record_source_retry_after(self, session, identity, credential, exc, request_scope=request_scope)
             message = _search_problem_label(code)
             return [], [message], code, message
         # Unknown stream failures retain their existing business result.
         return [], ["Recherche en flux indisponible"], "StreamProviderFailed", "Recherche en flux indisponible"
 
 
-def search_progressive(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', provider_ids: tuple[str, ...] | list[str] | None=None, field: str='all', content_types: tuple[str, ...] | list[str] | None=None, on_batch: Callable[[Any], None] | None=None, control: Any=None, on_event: Callable[[ProviderSearchEvent], None] | None=None, include_redundant_merged: bool=False, executor, logger):
+def search_progressive(self, query: str, scope: str='all', force: bool=False, *, provider_id: str='all', provider_ids: tuple[str, ...] | list[str] | None=None, field: str='all', content_types: tuple[str, ...] | list[str] | None=None, on_batch: Callable[[Any], None] | None=None, control: Any=None, on_event: Callable[[ProviderSearchEvent], None] | None=None, include_redundant_merged: bool=False, executor, logger, request_scope=None):
     """Parallel federated search with provider-scoped progressive batches.
 
     Providers keep their simple synchronous ``search`` contract.  Core owns
@@ -1394,17 +1447,26 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
 
     started_dt = datetime.now(timezone.utc)
     started_mono = time.monotonic()
+    scoped = request_scope is not None
     with self._search_generation_lock:
-        self._search_generation += 1
-        search_generation = self._search_generation
-        identity = self.current_identity
+        if scoped:
+            if type(request_scope) is not SearchReadScope or not request_scope.current(self):
+                raise ValueError("search_source_changed")
+            identity = request_scope.identity
+            # Independent reader requests do not supersede GTK Search or
+            # another reader. Their own source epoch and control own revocation.
+            search_generation = None
+        else:
+            self._search_generation += 1
+            search_generation = self._search_generation
+            identity = self.current_identity
     requested = {str(x).strip().lower() for x in (provider_ids or ()) if str(x).strip() and str(x).strip().lower() != "local"}
     single = str(provider_id or "all").strip().lower()
     if single != "all": requested.add(single)
     available = [
         session for session in self._sessions.values()
         if session.connected and session.capabilities.search
-        and self._provider_enabled_for_identity(session.provider_id)
+        and _search_policy_enabled(self, session.provider_id, request_scope)
         and _search_credential_enabled(self, session)
         and (not requested or session.provider_id in requested)
     ]
@@ -1454,7 +1516,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
     def request_current_locked() -> bool:
-        if (search_generation != self._search_generation
+        if scoped:
+            if not request_scope.current(self):
+                return False
+        elif (search_generation != self._search_generation
                 or self.current_identity is not identity):
             return False
         # A reconnect or a changed Paris primary revokes old results.
@@ -1470,7 +1535,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             if (expected is None or expected[2] is not True
                     or not any(item is session for item in registered)
                     or _inert_search_source_state(session) != expected
-                    or not self._provider_enabled_for_identity(expected[0])
+                    or not _search_policy_enabled(self, expected[0], request_scope)
                     or not _search_credential_enabled(self, session)):
                 return False
         if any(_private_search_owner(self, session) != owner
@@ -1543,7 +1608,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 if not cancelled:
                     with self._search_generation_lock:
                         if request_current_locked():
-                            self.last_search = rows; self.last_search_warnings = []
+                            if not scoped:
+                                self.last_search = rows; self.last_search_warnings = []
                         else:
                             cancelled = True
                 completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1598,7 +1664,32 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 break
             entry = self.registry.virtual_entry(session.provider_id)
             response_facets: list[CatalogSearchFacet] = []
-            if id(session) in foreign_owner_sessions:
+            if scoped:
+                # Pass the exact reader and cancellation fence into the
+                # worker. Never recover it from global navigation.
+                foreign = id(session) in foreign_owner_sessions
+                if (not foreign and entry is not None
+                        and "catalog.search.stream" in entry.capabilities
+                        and isinstance(session, ProviderSearchStream)
+                        and self._session_search_capabilities(session).supports_field(field)):
+                    streamed[session.provider_id] = entry.catalog_generation
+                    future = executor.submit(
+                        _search_virtual_stream_session, self, session, query, scope,
+                        field=field, content_types=tuple(content_types or ()),
+                        generation=entry.catalog_generation,
+                        publish=publish_from_provider, cancelled=request_cancelled,
+                        control=control, request_scope=request_scope,
+                    )
+                else:
+                    future = executor.submit(
+                        _search_provider_session, self, session, query, scope,
+                        field=field, content_types=tuple(content_types or ()),
+                        facade_type=type(self), public_only=foreign,
+                        response_facets=(response_facets if not foreign and on_batch is not None
+                                         and isinstance(session, ProviderSearchWithFacets) else None),
+                        request_scope=request_scope, request_cancelled=request_cancelled,
+                    )
+            elif id(session) in foreign_owner_sessions:
                 # Foreign streams have no per-upsert public response provenance.
                 # Force one response-bound worker and suppress stream events.
                 future = executor.submit(
@@ -1760,7 +1851,16 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     for row in aggregate: unique[_search_result_scope_key(row)] = row
     rows = list(unique.values())
     variants = self._search_query_variants(query)
-    preference_scores = {id(row): self._search_preference_score(row) for row in rows}
+    if scoped:
+        prefs = identity.preferences
+        preference_scores = {
+            id(row): _search_preference_score(
+                row, reading_languages=tuple(prefs.reading_languages),
+                prefer_original_language=prefs.prefer_original_language is True,
+            ) for row in rows
+        }
+    else:
+        preference_scores = {id(row): self._search_preference_score(row) for row in rows}
     if len(variants) > 1 or any(preference_scores.values()):
         rows.sort(key=lambda row: (self._search_relevance(query, row) if len(variants) > 1 else 0, preference_scores.get(id(row), 0)), reverse=True)
     warnings = list(dict.fromkeys(warnings))
@@ -1793,7 +1893,8 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
     if not cancelled:
         with self._search_generation_lock:
             if request_current_locked():
-                self.last_search = rows; self.last_search_warnings = warnings
+                if not scoped:
+                    self.last_search = rows; self.last_search_warnings = warnings
             else:
                 cancelled = True
     self.diagnostics.add("SEARCH", "progressive federated", detail={"providers": provider_key, "field": field, "results": len(rows), "completed": completed_count, "failed": failed, "cancelled": cancelled, "dt_ms": int((time.monotonic()-started_mono)*1000)}, level="detailed")

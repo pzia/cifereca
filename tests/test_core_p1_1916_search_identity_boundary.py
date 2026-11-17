@@ -149,3 +149,61 @@ def test_already_cancelled_request_never_starts_provider_io(tmp_path):
         assert service.last_search == []
     finally:
         service.close()
+
+
+def test_scoped_catalog_two_readers_do_not_publish_global_navigation(tmp_path, monkeypatch):
+    from cifereca.brokers import CatalogBrokerImpl
+    service = setup(tmp_path)
+    alice, bob = _FakeSession("good"), _FakeSession("good")
+    alice.credential_id = "alice-card"
+    bob.credential_id = "bob-card"
+    service._sessions = {"alice": alice, "bob": bob}
+    monkeypatch.setattr(service.storage, "identity_for_connection",
+                        lambda provider, credential: {"alice-card": "alice", "bob-card": "bob"}.get(credential))
+    policy = []
+    monkeypatch.setattr(service, "_provider_enabled_for_identity",
+                        lambda provider, identity_id=None: policy.append(identity_id) or identity_id in {"alice", "bob"})
+    barrier = threading.Barrier(2)
+    for session in (alice, bob):
+        original = session.search
+        def run(*args, original=original, **kwargs):
+            barrier.wait(timeout=5)
+            return original(*args, **kwargs)
+        session.search = run
+    broker = CatalogBrokerImpl(service)
+    a = broker.for_identity("alice")
+    b = broker.for_identity("bob")
+    service.select_identity("bob")
+    sentinel = _FakeSession("sentinel").search("old", "all")
+    service.last_search = sentinel
+    seen = {"alice": [], "bob": []}
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [
+                pool.submit(reader.search_progressive, "Progressive Book", force=True,
+                            on_batch=seen[owner].append)
+                for owner, reader in (("alice", a), ("bob", b))
+            ]
+            assert all(not f.result(timeout=10).cancelled for f in futures)
+        assert {r.source_credential for batch in seen["alice"] for r in batch.results} == {"alice-card"}
+        assert {r.source_credential for batch in seen["bob"] for r in batch.results} == {"bob-card"}
+        assert policy and set(policy) == {"alice", "bob"}
+        assert service.last_search is sentinel
+    finally:
+        service.close()
+
+
+def test_scoped_catalog_revoked_source_before_query_never_dispatches(tmp_path, monkeypatch):
+    from cifereca.brokers import CatalogBrokerImpl
+    service = setup(tmp_path)
+    provider = _FakeSession("good")
+    monkeypatch.setattr(provider, "search", lambda *a, **k: pytest.fail("revoked search"))
+    service._sessions = {"good": provider}
+    scoped = CatalogBrokerImpl(service).for_identity("alice")
+    service._source_context_epoch += 1
+    try:
+        assert scoped.searchable_providers() == []
+        with pytest.raises(ValueError, match="search_source_changed"):
+            scoped.search_progressive("Progressive Book", on_batch=lambda _: None)
+    finally:
+        service.close()

@@ -875,6 +875,39 @@ def main() -> int:
         capture("11-bnf-late-library-loan-list-and-detail")
         assert len(image_gets) == 2, "Late local cover must not initiate GET"
         report["checks"]["late_library_repaints_real_gtk_loan_list"] = True
+        def checkpoint(stage):
+            stages.append(stage)
+            report["last_stage"] = stage
+            save()
+
+        checkpoint("borrower_c_setup")
+        from notice_c_borrower_views_contract import verify_borrower_c_views
+        window = app_window[0]
+        loan = next(item for item in window.service.last_loans
+                    if item.record_id == RESOURCES[0])
+        # Existing CDN query-bearing URLs are valid display evidence but
+        # deliberately not admitted as durable public-C image candidates.
+        # Parse a separate public card containing a stable, queryless URL.
+        # Feedbooks requires size/t; a queryless Feedbooks URL is invalid
+        # in the native parser. The BnF origin's queryless /covers/ PNG
+        # family is accepted by both guards. Never strip a supplier URL.
+        stable_url = ORIGIN + "/covers/synthetic-c-public.png"
+        stable_record, = parse_search_page(
+            '<ul class="list-details">' +
+            card(loan.record_id, stable_url)
+            + '</ul>'
+        ).records
+        assert stable_record.resource_id == loan.record_id
+        assert stable_record.title == loan.title
+        assert stable_record.thumbnail_url == stable_url
+
+        verify_borrower_c_views(
+            window, loan, stable_record, bnf.DESCRIPTOR,
+            later=later, capture=capture, report=report, complete=complete,
+            checkpoint=checkpoint,
+        )
+
+    def complete():
         report["status"] = "PASS"
         result[0] = 0
         save()
