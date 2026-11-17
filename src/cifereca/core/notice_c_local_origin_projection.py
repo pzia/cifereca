@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+import json
 import sqlite3
 
 from .book_cover_projection import CoverDocumentScope
@@ -20,7 +21,6 @@ from .notice_c_cover_index import (
     is_canonical_cover_document,
 )
 
-_MAX_CANONICAL = 4096
 _MAX_ROWS = 10000
 
 
@@ -115,23 +115,12 @@ def project_local_origin_public_c(
     eligible_artifacts = {artifact for artifact, _placement in wanted}
     if not (eligible_artifacts & by_artifact.keys()):
         return
-    try:
-        present = {
-            (item.get("artifact_id"), item.get("placement_id"))
-            for item in storage.placements(state="present")
-            if type(item) is dict and item.get("identity_id") == identity_id
-        }
-        with storage._lock, storage._connect() as db:
-            indexed = db.execute(
-                "SELECT key,value FROM metadata WHERE key>=? AND key<? "
-                "ORDER BY key LIMIT ?",
-                (_PREFIX, _PREFIX + "\uffff", _MAX_CANONICAL + 1),
-            ).fetchall()
-    except (sqlite3.Error, AttributeError, TypeError, ValueError):
+    relevant = {
+        coord for artifact in eligible_artifacts
+        for coord in by_artifact.get(artifact, ())
+    }
+    if not relevant:
         return
-    if len(indexed) > _MAX_CANONICAL:
-        return
-
     # The completed OriginLink only attests provider + upstream record ID.
     # It cannot identify a distinct docbase/medium/revision of that record.
     # Across ALL durable public C records, require those coarse coordinates
@@ -139,33 +128,58 @@ def project_local_origin_public_c(
     # A self-C and a multi-source C for the same exact edition are compatible.
     exact_editions: dict[tuple[str, str], set[str]] = {}
     qualified: list[tuple[object, tuple[tuple[str, str], ...]]] = []
-    for key, raw in indexed:
-        try:
-            value = _json(raw)
-            document = canonical_cover_document_ref(value["edition_id"])
-            if key != _PREFIX + document.source_key.rsplit(":", 1)[-1]:
-                continue
-            c = _decode(raw, document)
-            sources = c.sources
-            if not sources or not all(
-                source.visibility == "public"
-                and source.public_bibliography is not None
-                for source in sources
-            ):
-                continue
-            coords = tuple(
-                (source.provider_id, source.public_bibliography.record_id)
-                for source in sources
+    try:
+        present = {
+            (item.get("artifact_id"), item.get("placement_id"))
+            for item in storage.placements(state="present")
+            if type(item) is dict and item.get("identity_id") == identity_id
+        }
+        with storage._lock, storage._connect() as db:
+            # Select every canonical row claiming any relevant coarse
+            # provider/record, including conflicting editions and groups.
+            # JSON is only a prefilter; the Core decoder remains authoritative.
+            cursor = db.execute(
+                "SELECT m.key,m.value FROM metadata AS m "
+                "WHERE m.key>=? AND m.key<? AND EXISTS ("
+                "SELECT 1 FROM json_each(CASE WHEN json_valid(m.value) "
+                "THEN m.value ELSE '{}' END, '$.sources') AS src WHERE "
+                "json_array(json_extract(CASE WHEN src.type='object' "
+                "THEN src.value ELSE '{}' END, '$.provider'),"
+                "json_extract(CASE WHEN src.type='object' "
+                "THEN src.value ELSE '{}' END, '$.public_bibliography.record_id')) "
+                "IN (SELECT json(value) FROM json_each(?))) ORDER BY m.key",
+                (_PREFIX, _PREFIX + "\uffff", json.dumps(sorted(relevant))),
             )
-            for coord, source in zip(coords, sources):
-                exact_editions.setdefault(coord, set()).add(
-                    source.public_bibliography.edition_id
-                )
-            if len(set(coords)) != len(coords):
-                continue
-            qualified.append((c, coords))
-        except (ValueError, KeyError, TypeError, AttributeError):
-            continue
+            for key, raw in cursor:
+                try:
+                    value = _json(raw)
+                    document = canonical_cover_document_ref(value["edition_id"])
+                    if key != _PREFIX + document.source_key.rsplit(":", 1)[-1]:
+                        continue
+                    c = _decode(raw, document)
+                    sources = c.sources
+                    if not sources or not all(
+                        source.visibility == "public"
+                        and source.public_bibliography is not None
+                        for source in sources
+                    ):
+                        continue
+                    coords = tuple(
+                        (source.provider_id, source.public_bibliography.record_id)
+                        for source in sources
+                    )
+                    for coord, source in zip(coords, sources):
+                        exact_editions.setdefault(coord, set()).add(
+                            source.public_bibliography.edition_id
+                        )
+                    if len(set(coords)) != len(coords):
+                        continue
+                    qualified.append((c, coords))
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    continue
+
+    except (sqlite3.Error, AttributeError, TypeError, ValueError):
+        return
 
     candidates: dict[str, list[tuple[object, int]]] = {}
     for c, coords in qualified:
