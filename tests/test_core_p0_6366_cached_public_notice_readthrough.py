@@ -205,3 +205,27 @@ def test_cached_public_coordinate_replay_rejects_stale_private_and_signed_rows()
         [clean], identity_id=None,
     )
     assert not hasattr(clean, "_core_notice_cover_document_ref")
+
+
+def test_exact_public_c_batch_uses_one_sqlite_connection(tmp_path, monkeypatch):
+    from cifereca.core.notice_c_exact_source_lookup import exact_public_source_c_batch
+    service = _service(tmp_path)
+    session = _Public()
+    service._sessions = {session.provider_id: session}
+    try:
+        row = service.search("Progressive Book", provider_id=session.provider_id,
+                             force=True)[0]
+        key = (row.source_provider, row.record_id, row.docbase, row.medium, row.revision_id)
+        absent = (row.source_provider, "absent", row.docbase, row.medium, row.revision_id)
+        original = service.storage._connect
+        calls = []
+        def connect():
+            calls.append(1)
+            return original()
+        monkeypatch.setattr(service.storage, "_connect", connect)
+        result = exact_public_source_c_batch(service.storage, [key, absent, key])
+        assert set(result) == {key}
+        assert result[key].document == row._core_notice_canonical_cover_document_ref
+        assert calls == [1]
+    finally:
+        service.close()
