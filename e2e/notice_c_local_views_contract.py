@@ -148,8 +148,10 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
     def cleanup_stage():
         if state.pop("attached", False):
             # Revoke the fixture bindings before restoring the normal loader.
-            window.library_page.clear_rows()
-            window.recent_page.clear_rows()
+            for page in (window.library_page, window.recent_page):
+                if page._narrow_master_detail and page._narrow_detail_visible:
+                    page.detail_back.emit("clicked")
+                page.clear_rows()
             window.library_page.detail.empty("Sélectionnez un livre", "")
             window.recent_page.detail.empty("Sélectionnez un livre", "")
             window._library_objects = {}
@@ -251,6 +253,8 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
         def show_route(route):
             window.navigate(route)
             page = getattr(window, route + "_page")
+            if page._narrow_master_detail and page._narrow_detail_visible:
+                page.detail_back.emit("clicked")
             assert page.store.get_n_items() == 1
             row = page.store.get_item(0)
             assert row._cover_document_ref == doc
@@ -292,6 +296,8 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     route, page, row, "detail", monotonic() + 8,
                 )))
                 return
+            if page._narrow_master_detail and page._narrow_detail_visible:
+                page.detail_back.emit("clicked")
             if route == "library":
                 show_route("recent")
                 return
