@@ -7,6 +7,7 @@ on the supplied transaction. It is trusted Core code, not a plugin callback.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 from threading import Lock
 from typing import Callable
@@ -25,6 +26,10 @@ _MAX_INFLIGHT = 2
 _LEASE_SECONDS = 300
 
 
+class UnavailableNoticeWork(Exception):
+    """Exact input or implementation is no longer available; no fallback GET."""
+
+
 class RetryableNoticeWork(Exception):
     """Explicitly classified transient failure, never a persisted message."""
 
@@ -36,16 +41,24 @@ class PreparedAggregate:
     publish: Callable[[sqlite3.Connection], bool]
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class PreparedSource:
+    publish: Callable[[sqlite3.Connection], bool]
+    hold_input: Callable
+
+
 class AggregateWorkBridge:
     """Bound queued + running hints, claim only AFTER broker admission.
 
     Construct once per Core owner, using its existing broker. No submission
     from GTK: caller is the Core scheduling coordinator. Local dedup/limit
     is not a cross-process budget; the durable claim fences cross-process
-    execution/publication. Only public recompute_aggregate is admitted.
+    execution/publication. Public recompute is the default; reparse is
+    admitted only with an explicitly installed Core port.
     """
 
-    def __init__(self, storage, broker, prepare, *, clock=None, on_committed=None):
+    def __init__(self, storage, broker, prepare, *, clock=None, on_committed=None,
+                 allow_reparse=False):
         if (type(broker) is not TaskBrokerImpl
                 or not isinstance(broker.shared_admission, SharedTaskAdmission)
                 or broker.shared_admission.reserve_user_slots < 1):
@@ -54,6 +67,9 @@ class AggregateWorkBridge:
             raise ValueError("notice_work_invalid_port")
         if on_committed is not None and not callable(on_committed):
             raise ValueError("notice_work_invalid_observer")
+        if type(allow_reparse) is not bool:
+            raise ValueError("notice_work_invalid_port")
+        self._allow_reparse = allow_reparse
         self._on_committed = on_committed
         self._storage = storage
         self._broker = broker
@@ -113,7 +129,8 @@ class AggregateWorkBridge:
         control.check_cancelled()
         try:
             job = journal.read_job(self._storage, ref)
-            if job.spec.kind != "recompute_aggregate":
+            if (job.spec.kind != "recompute_aggregate"
+                    and not (self._allow_reparse and job.spec.kind == "reparse_cached_input")):
                 return "unsupported"
             if job.state != "pending":
                 return "not_ready"
@@ -124,46 +141,54 @@ class AggregateWorkBridge:
             return "obsolete"
         if lease is None:
             return "not_ready"
+        committed = False
         try:
             control.check_cancelled()
             prepared = self._prepare(job.spec, control)
-            if type(prepared) is not PreparedAggregate or not callable(prepared.publish):
+            aggregate = job.spec.kind == "recompute_aggregate"
+            expected = PreparedAggregate if aggregate else PreparedSource
+            if (type(prepared) is not expected or not callable(prepared.publish)
+                    or (not aggregate and not callable(prepared.hold_input))):
                 raise TypeError("notice_work_invalid_publication")
             control.check_cancelled()
             event = None
-            with self._storage._lock, self._storage._connect() as db:
-                db.execute("BEGIN IMMEDIATE")
-                # Check before any canonical write, then again before commit.
-                journal._held(db, lease, self._clock())
-                control.check_cancelled()
-                if self._on_committed is not None:
-                    document = CoverDocumentScope(
-                        kind="public_catalogue", identity_id=None,
-                        provider_id="cifereca.c", credential_id="__public__",
-                        source_key=job.spec.target,
-                    )
-                    before = _canonical_revision(db, document)
-                if prepared.publish(db) is not True:
-                    raise RetryableNoticeWork("notice_work_input_changed")
-                control.check_cancelled()
-                journal._complete_job_txn(db, lease, now=self._clock())
-                if self._on_committed is not None:
-                    after = _canonical_revision(db, document)
-                    if after is None or (before is not None and after < before):
-                        raise ValueError("notice_work_invalid_publication")
-                    if before != after:
-                        event = (document, after)
+            with (nullcontext() if aggregate else prepared.hold_input()):
+                with self._storage._lock, self._storage._connect() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    # Check before any canonical write, then again before commit.
+                    journal._held(db, lease, self._clock())
+                    control.check_cancelled()
+                    if aggregate and self._on_committed is not None:
+                        document = CoverDocumentScope(
+                            kind="public_catalogue", identity_id=None,
+                            provider_id="cifereca.c", credential_id="__public__",
+                            source_key=job.spec.target,
+                        )
+                        before = _canonical_revision(db, document)
+                    if prepared.publish(db) is not True:
+                        raise RetryableNoticeWork("notice_work_input_changed")
+                    control.check_cancelled()
+                    journal._complete_job_txn(db, lease, now=self._clock())
+                    if aggregate and self._on_committed is not None:
+                        after = _canonical_revision(db, document)
+                        if after is None or (before is not None and after < before):
+                            raise ValueError("notice_work_invalid_publication")
+                        if before != after:
+                            event = (document, after)
+                committed = True
         except Cancelled:
             self._fail(lease, transient=True)
             raise
+        except UnavailableNoticeWork:
+            return "current" if committed else self._fail(lease, transient=False)
         except (RetryableNoticeWork, sqlite3.OperationalError):
-            return self._fail(lease, transient=True)
+            return "current" if committed else self._fail(lease, transient=True)
         except ValueError:
             # CAS/source validation refusal; no successful publication.
-            return self._fail(lease, transient=True)
+            return "current" if committed else self._fail(lease, transient=True)
         except Exception:
             # Only a closed reason crosses the durable boundary.
-            return self._fail(lease, transient=False)
+            return "current" if committed else self._fail(lease, transient=False)
         # Commit and Storage lock release have both succeeded. An observer
         # failure cannot roll back or retry an already successful job.
         if event is not None:
