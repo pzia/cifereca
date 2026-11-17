@@ -11,7 +11,7 @@ from hashlib import sha256
 
 from .book_cover_projection import CoverDocumentScope
 from .notice_c_aggregate_inputs import (
-    capture_public_aggregate_inputs, check_public_aggregate_inputs_txn,
+    _capture_txn, capture_public_aggregate_inputs, check_public_aggregate_inputs_txn,
 )
 from .notice_c_cover_index import (
     canonical_cover_document_ref, _exact_public_search_evidence,
@@ -42,14 +42,16 @@ def _exact_member(inputs):
 
 def request_exact_public_recompute(storage, document, *, now, expected_generation):
     """Explicit Core request, no automatic request or source fetch."""
-    inputs = capture_public_aggregate_inputs(storage, document)
-    _exact_member(inputs)
-    spec = journal.public_job_spec(
-        "recompute_aggregate", document, input_digest=inputs.input_digest,
-        implementation_digest=IMPLEMENTATION_DIGEST,
-    )
-    return journal.request_job(storage, spec, now=now,
-                               expected_generation=expected_generation)
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        inputs = _capture_txn(db, document)
+        _exact_member(inputs)
+        spec = journal.public_job_spec(
+            "recompute_aggregate", document, input_digest=inputs.input_digest,
+            implementation_digest=IMPLEMENTATION_DIGEST,
+        )
+        return journal._request_job_txn(db, spec, now=now,
+                                        expected_generation=expected_generation)
 
 
 def prepare_exact_public_recompute(storage, spec):
