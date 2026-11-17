@@ -177,6 +177,8 @@ class AggregateWorkBridge:
                             event = (document, after)
                 committed = True
         except Cancelled:
+            if committed:
+                return "current"
             self._fail(lease, transient=True)
             raise
         except UnavailableNoticeWork:
@@ -189,6 +191,9 @@ class AggregateWorkBridge:
         except Exception:
             # Only a closed reason crosses the durable boundary.
             return "current" if committed else self._fail(lease, transient=False)
+        if not committed:
+            # A broken guard must not silently suppress a failed transaction.
+            return self._fail(lease, transient=False)
         # Commit and Storage lock release have both succeeded. An observer
         # failure cannot roll back or retry an already successful job.
         if event is not None:
