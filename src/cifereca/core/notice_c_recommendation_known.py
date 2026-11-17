@@ -21,7 +21,10 @@ def known_public_notice_candidates(
     storage: Any, query: str, *, scope: str = "all",
     provider_ids: tuple[str, ...] = (),
 ) -> list[SearchResult]:
-    page = search_public_notice_c(storage, query, scope=scope, provider_ids=provider_ids)
+    page = search_public_notice_c(
+        storage, query, scope=scope, provider_ids=provider_ids,
+        group_by_document=True,
+    )
     rows = []
     seen = set()
     for hit in page.hits:
