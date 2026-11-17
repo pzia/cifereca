@@ -455,6 +455,16 @@ def persist_attested_public_cover_group(
     source in one transaction. Never admit an unexpected old membership or
     publish a partially updated group if a later member has changed.
     """
+    refs = _public_group_refs(sources)
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        return _persist_public_group_txn(
+            db, canonical_edition_id=canonical_edition_id, sources=sources,
+            relation_proof_id=relation_proof_id, refs=refs,
+        )
+
+
+def _public_group_refs(sources: tuple[PersistedNoticeCover, ...]) -> set[str]:
     if (type(sources) is not tuple or not 2 <= len(sources) <= _MAX_SOURCES
             or any(type(source) is not PersistedNoticeCover
                    or source.observation.key.visibility != "public"
@@ -465,30 +475,99 @@ def persist_attested_public_cover_group(
     refs = {source.document.source_key for source in sources}
     if len(refs) != len(sources):
         raise ValueError("invalid_canonical_cover_group")
+    return refs
+
+
+def _persist_public_group_txn(
+    db: Any, *, canonical_edition_id: str,
+    sources: tuple[PersistedNoticeCover, ...], relation_proof_id: str,
+    refs: set[str],
+) -> ConsolidatedNoticeCover:
     document = canonical_cover_document_ref(canonical_edition_id)
+    old = db.execute("SELECT value FROM metadata WHERE key=?",
+                     (_db_key(document),)).fetchone()
+    if old is not None:
+        previous = _decode(old[0], document)
+        if any(member.source_ref not in refs
+               or member.visibility != "public"
+               or member.relation_proof_id != relation_proof_id
+               for member in previous.sources):
+            raise ValueError("canonical_cover_group_conflict")
+    for source in sources:
+        complete = _persist_consolidated_cover_source_txn(
+            db, canonical_edition_id=canonical_edition_id, source=source,
+            relation_proof_id=relation_proof_id,
+        )
+    if ({member.source_ref for member in complete.sources} != refs
+            or any(member.visibility != "public"
+                   or member.public_bibliography is None
+                   or member.relation_proof_id != relation_proof_id
+                   for member in complete.sources)):
+        raise ValueError("canonical_cover_group_conflict")
+    return complete
+
+
+def persist_origin_linked_public_cover_group(
+    storage: Any, *, sources: tuple[PersistedNoticeCover, ...],
+) -> ConsolidatedNoticeCover:
+    """Extend ONE already attested OriginLink group without changing its ref.
+
+    The Core producer must reattest all group members before calling this
+    method. A disjoint group has a deterministic public-only initial id;
+    overlapping or shrinking groups do not create a second competing C.
+    Discovery and commit use the same SQLite transaction.
+    """
+    refs = _public_group_refs(sources)
+    digest = sha256(json.dumps(
+        ["cifereca.c.origin-linked-public-edition.v1", *sorted(refs)],
+        ensure_ascii=True, separators=(",", ":"),
+    ).encode("ascii")).hexdigest()
+    prefix = "edition:origin-linked:v1:"
+    proof_prefix = "core.origin.linked.v1:"
+    initial = prefix + digest
+    target = initial
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        old = db.execute("SELECT value FROM metadata WHERE key=?",
-                         (_db_key(document),)).fetchone()
-        if old is not None:
-            previous = _decode(old[0], document)
-            if any(member.source_ref not in refs
-                   or member.visibility != "public"
-                   or member.relation_proof_id != relation_proof_id
-                   for member in previous.sources):
+        cursor = db.execute(
+            "SELECT m.key,m.value FROM metadata AS m "
+            "WHERE m.key>=? AND m.key<? AND EXISTS ("
+            "SELECT 1 FROM json_each(CASE WHEN json_valid(m.value) "
+            "THEN m.value ELSE '{}' END, '$.sources') AS src "
+            "WHERE src.key IN (SELECT value FROM json_each(?))) ORDER BY m.key",
+            (_PREFIX, _PREFIX + "\uffff", json.dumps(sorted(refs))),
+        )
+        overlaps = set()
+        for key, raw in cursor:
+            payload = _json(raw)
+            edition = payload["edition_id"]
+            document = canonical_cover_document_ref(edition)
+            if _db_key(document) != key:
                 raise ValueError("canonical_cover_group_conflict")
-        for source in sources:
-            complete = _persist_consolidated_cover_source_txn(
-                db, canonical_edition_id=canonical_edition_id, source=source,
-                relation_proof_id=relation_proof_id,
-            )
-        if ({member.source_ref for member in complete.sources} != refs
-                or any(member.visibility != "public"
-                       or member.public_bibliography is None
-                       or member.relation_proof_id != relation_proof_id
-                       for member in complete.sources)):
-            raise ValueError("canonical_cover_group_conflict")
-        return complete
+            previous = _decode(raw, document)
+            members = previous.sources
+            if (len(members) == 1
+                    and members[0].public_bibliography is not None
+                    and edition == members[0].public_bibliography.edition_id):
+                # The independent exact self-C is not a competing relation.
+                continue
+            suffix = edition[len(prefix):] if edition.startswith(prefix) else ""
+            if (_HASH.fullmatch(suffix) is None
+                    or (len(members) == 1 and edition != initial)
+                    or any(member.source_ref not in refs
+                           or member.visibility != "public"
+                           or member.public_bibliography is None
+                           or member.relation_proof_id != proof_prefix + suffix
+                           for member in members)):
+                raise ValueError("canonical_cover_group_conflict")
+            overlaps.add(edition)
+            if len(overlaps) > 1:
+                raise ValueError("canonical_cover_group_conflict")
+        if overlaps:
+            target = next(iter(overlaps))
+        return _persist_public_group_txn(
+            db, canonical_edition_id=target, sources=sources, refs=refs,
+            relation_proof_id=proof_prefix + target[len(prefix):],
+        )
 
 
 def persist_exact_public_search_cover(
@@ -558,4 +637,5 @@ __all__ = [
     "canonical_cover_document_ref", "is_canonical_cover_document",
     "read_consolidated_notice_cover", "persist_consolidated_cover_source",
     "persist_exact_public_search_cover", "persist_attested_public_cover_group",
+    "persist_origin_linked_public_cover_group",
 ]

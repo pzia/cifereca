@@ -2,10 +2,10 @@
 
 A title, ISBN, image URL, content SHA, catalogue metadata or a claim from a
 provider are never sufficient to create a shared Notice C. The independent
-Core v14 publication graph has two *completed provider* OriginLinks, each
+Core v14 publication graph has multiple *completed provider* OriginLinks, each
 joined to its own positive provider-response SourceReference and to the SAME
 present Artifact Placement under the SAME identity. Only that exact
-two-provider, one-artifact proof can attach two independently witnessed
+multi-provider, one-artifact proof can attach independently witnessed
 anonymous public Search source editions to a shared cover C.
 
 This worker-only producer performs no provider dispatch, N3 read or account
@@ -14,11 +14,12 @@ Private account, profile, delivery receipt, file path and right never enter C.
 """
 from __future__ import annotations
 
-from hashlib import sha256
 import json
 import sqlite3
 
-from .notice_c_cover_index import persist_attested_public_cover_group
+from .notice_c_cover_index import (
+    persist_origin_linked_public_cover_group, _MAX_SOURCES,
+)
 from .notice_cover_repository import (
     PersistedNoticeCover, _PREFIX as _SOURCE_PREFIX, _decode as _decode_source,
 )
@@ -121,7 +122,7 @@ def _admitted_public_sources(
 
 # A single private Core authority token, never serialized, returned or exposed
 # to a provider. Live UI can validate this after the worker has persisted
-# BOTH exact-source contributions to one cross-provider C.
+# ALL exact-source contributions to one cross-provider C.
 _CORE_ORIGIN_LINK_C_WITNESS = object()
 
 
@@ -186,48 +187,36 @@ def reconcile_origin_linked_public_batch(
 
     outcomes: dict[str, object] = {}
     for group, coords in groups.items():
-        if (len(coords) != 2
+        if (not 2 <= len(coords) <= _MAX_SOURCES
                 or not (coords & current_by_coords.keys())
-                or len({provider for provider, _edition in coords}) != 2
+                or len({provider for provider, _edition in coords}) != len(coords)
                 or any(membership.get(coord) != {group} for coord in coords)):
             continue
-        pair = tuple(sorted(coords))
-        first, second = (public[coord] for coord in pair)
-        if first.document == second.document:
+        ordered = tuple(sorted(coords))
+        sources = tuple(public[coord] for coord in ordered)
+        refs = {source.document.source_key for source in sources}
+        if len(refs) != len(sources):
             continue
-        a = first.observation.fields_copy()["search_result"]["public_bibliography"]
-        b = second.observation.fields_copy()["search_result"]["public_bibliography"]
-        # A generic PDF/DRM placeholder can be delivered under two different
-        # rights. Shared physical bytes and two receipts are not carte
-        # blanche to merge bibliographically contradictory works. Matching
-        # titles are only a NEGATIVE veto, never a positive edition join.
-        # Different catalogue titles/identified authors remain separate C.
-        if (_fold(a["title"]) != _fold(b["title"])
-                or (a.get("author") and b.get("author")
-                    and _fold(a["author"]) != _fold(b["author"]))):
+        bibliographies = [
+            source.observation.fields_copy()["search_result"]["public_bibliography"]
+            for source in sources
+        ]
+        # Same bytes + completed receipts are not sufficient when the
+        # catalogues contradict each other. Text only vetoes a strong link;
+        # it never creates one. Check every pair, including later members.
+        if (len({_fold(bio["title"]) for bio in bibliographies}) != 1
+                or len({_fold(bio["author"]) for bio in bibliographies
+                        if bio.get("author")}) > 1):
             continue
-
-        # The stable target is derived from TWO public source edition refs,
-        # never from SHA, account, receipt, title, ISBN or thumbnail.
-        refs = tuple(sorted((
-            first.document.source_key, second.document.source_key,
-        )))
-        digest = sha256(json.dumps(
-            ["cifereca.c.origin-linked-public-edition.v1", *refs],
-            ensure_ascii=True, separators=(",", ":"),
-        ).encode("ascii")).hexdigest()
-        target = "edition:origin-linked:v1:" + digest
-        proof = "core.origin.linked.v1:" + digest
         try:
-            complete = persist_attested_public_cover_group(
-                storage, canonical_edition_id=target, sources=(first, second),
-                relation_proof_id=proof,
+            complete = persist_origin_linked_public_cover_group(
+                storage, sources=sources,
             )
-            if (len(complete.sources) != 2
-                    or {src.source_ref for src in complete.sources} != set(refs)
+            if (len(complete.sources) != len(sources)
+                    or {src.source_ref for src in complete.sources} != refs
                     or any(src.visibility != "public" for src in complete.sources)):
                 continue
-            for coord in pair:
+            for coord in ordered:
                 if coord in current_by_coords:
                     source_ref = public[coord].document.source_key
                     outcomes[source_ref] = complete

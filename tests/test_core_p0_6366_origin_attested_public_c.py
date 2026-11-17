@@ -409,3 +409,66 @@ def test_public_group_atomic_rollback_new_existing_and_retry(tmp_path):
         assert read_consolidated_notice_cover(restored, document) == updated
     finally:
         restored.close()
+
+
+def test_three_completed_origins_expand_existing_c_without_competing_ref(tmp_path):
+    from cifereca.core.notice_c_exact_source_lookup import exact_public_source_c_many
+    path = tmp_path / "three-real-origins.sqlite"
+    db = Storage(path)
+    try:
+        first, _ = _origins(db, tmp_path)
+        a, b = _source_rows()
+        assert _mirror(db, a) == 1 and _mirror(db, b) == 1
+        ref = b._core_notice_canonical_cover_document_ref
+        pair = read_consolidated_notice_cover(db, ref)
+        assert len(pair.sources) == 2
+
+        # Publish a real third completed provider origin to the SAME owner
+        # and placement. No direct canonical-relation injection.
+        c_key, c_snapshot = new_source(
+            "A", provider="seller-c", credential="card-c",
+            edition="edition-c", right="right-c",
+        )
+        register(db, "A", "seller-c", "card-c")
+        third = publish(db, tmp_path / "EBooks", target(tmp_path, "A"),
+                        c_key, c_snapshot)
+        assert third.artifact_id == first.artifact_id
+        assert third.placement_id == first.placement_id
+        third_url = "https://covers.example.org/origin-c.jpg"
+        def c_row(**changes):
+            return witnessed(public_row(**{
+                "source_provider": "seller-c", "record_id": "edition-c",
+                "title": "L'ouvrage commun", "thumbnail_url": third_url,
+                **changes,
+            }))
+        c = c_row()
+        assert _mirror(db, c) == 1
+        assert c._core_notice_canonical_cover_document_ref == ref
+        expanded = read_consolidated_notice_cover(db, ref)
+        assert expanded.epoch > pair.epoch
+        assert len(expanded.sources) == 3
+        assert {x.url for x in expanded.candidates} == {A_URL, B_URL, third_url}
+
+        a2, b2 = _source_rows()
+        assert _mirror(db, a2, b2, c_row()) == 3
+        assert a2._core_notice_canonical_cover_document_ref == ref
+        assert b2._core_notice_canonical_cover_document_ref == ref
+        keys = [(row.source_provider, row.record_id, row.docbase,
+                 row.medium, row.revision_id) for row in (a, b, c)]
+        resolved = exact_public_source_c_many(db, keys)
+        assert set(resolved) == set(keys)
+        assert {snap.document for snap in resolved.values()} == {ref}
+        assert read_consolidated_notice_cover(db, ref) == expanded
+        with db._lock, db._connect() as sql:
+            sql.execute("DELETE FROM metadata WHERE key LIKE 'notice.c.observation.v1:%'")
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+    reopened = Storage(path)
+    try:
+        assert read_consolidated_notice_cover(reopened, ref) == expanded
+        assert {snap.document for snap in
+                exact_public_source_c_many(reopened, keys).values()} == {ref}
+    finally:
+        reopened.close()
