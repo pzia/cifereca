@@ -392,6 +392,9 @@ class UiBookListEntry:
     thumbnail_url: str | None = None
     # Core-originated exact DocumentRef; no inferred proof/rights in plugins.
     cover_document_ref: object | None = None
+    # Optional opaque receipt from public_notice_cover_binding. Forward it
+    # unchanged; it is neither a provider field nor a serialized capability.
+    cover_document_receipt: object | None = None
 
 
 @dataclass(frozen=True, slots=True)
