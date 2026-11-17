@@ -110,7 +110,10 @@ def read_public_reparse_request_txn(db, spec, *, now):
     if receipt is None or receipt.producer_token is None:
         raise ValueError("notice_reparse_input_unavailable")
     source, state = raw._source_state(db, document)
-    if source is None or state != receipt.source_state_digest:
+    if (source is None or state != receipt.source_state_digest
+            or raw.admitted_source_scope_sha256(
+                source.observation.key, parser_id=source.observation.parser_id,
+            ) != receipt.source_scope_digest):
         raise ValueError("notice_reparse_source_changed")
     if _spec(source, receipt, spec.implementation_digest) != spec:
         raise ValueError("notice_reparse_inputs_changed")
