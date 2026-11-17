@@ -186,6 +186,44 @@ def capture_admitted_loan_renewal(service, loan: Loan) -> RenewalAdmission | Non
         return None
 
 
+def capture_confirmed_loan_renewal(
+    service, loan: Loan, *, identity_id: str, account_id: str, confirmed: bool,
+) -> RenewalAdmission | None:
+    """Headless exact borrower admission; no lender read, claim or POST."""
+    from .search_orchestration import capture_search_read_scope
+    try:
+        if (confirmed is not True or _source_key(loan) is None
+                or type(identity_id) is not str or identity_id != loan.identity_id
+                or type(account_id) is not str or not account_id
+                or account_id != loan.source_account_id
+                or loan.medium != "physical"
+                or type(loan.record_id) is not str or not loan.record_id
+                or (loan.state is not None and (
+                    type(loan.state) is not str or loan.state.casefold() in {
+                        "returned", "closed", "expired", "cancelled", "canceled",
+                    }))):
+            return None
+        reader = capture_search_read_scope(service, identity_id)
+        scope = _renewal_scope(loan)
+        account, session, _key = service._return_loan_identity(loan)
+        if (account.identity_id != identity_id or account.unique_id != account_id
+                or not _renew_source_ready_inert(
+                    session, loan.source_credential, loan.source_provider)):
+            return None
+        normalized = replace(loan, state=loan.state if type(loan.state) is str else "active")
+        lease = capture_loan_action_scope(
+            service, normalized, account, session,
+            expected_identity_id=identity_id,
+            admitted_source_epoch=reader.source_epoch, reader_scope=reader,
+        )
+        if lease is None or _renewal_scope(loan) != scope:
+            return None
+        admission = RenewalAdmission(loan, scope, lease)
+        return admission if admission.current(service, loan) else None
+    except Exception:
+        return None
+
+
 def renew(self, loan: Loan, *, admission: RenewalAdmission | None = None) -> dict[str, Any]:
     """Called by the Core facade after strict manual consent and its lock."""
     key = _source_key(loan)
@@ -294,6 +332,7 @@ def renew(self, loan: Loan, *, admission: RenewalAdmission | None = None) -> dic
         self, candidate, account, session,
         expected_identity_id=account.identity_id,
         admitted_source_epoch=lease._source_epoch if admission is not None else None,
+        **({"reader_scope": lease._reader_scope} if admission is not None and lease._reader_scope is not None else {}),
     )
     if verified is None or not scope_current():
         return _public("blocked", "loan_scope_changed")
@@ -370,4 +409,4 @@ def renew(self, loan: Loan, *, admission: RenewalAdmission | None = None) -> dic
     return _public(status, reason, accepted=accepted)
 
 
-__all__ = ["renew", "capture_admitted_loan_renewal"]
+__all__ = ["renew", "capture_admitted_loan_renewal", "capture_confirmed_loan_renewal"]
