@@ -270,6 +270,7 @@ class CoverView(Gtk.Overlay):
         # failed request may still be refreshed by an ordinary rebind, and
         # changing loader, URL or priority retains the normal cancellation.
         if (url and self._loader is loader and self._url == url
+                and getattr(self, "_document_check", None) is None
                 and self._priority == priority and self.spinner.get_visible()):
             self._on_texture_applied = (
                 on_texture_applied if callable(on_texture_applied) else None
