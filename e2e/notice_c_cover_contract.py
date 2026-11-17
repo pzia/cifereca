@@ -23,7 +23,9 @@ from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
 from cifereca.core.notice_c_public_search import search_public_notice_c
 from cifereca.core.notice_cover_repository import _opaque_key, is_notice_cover_document
 from cifereca.core.search_orchestration import _mirror_remote_results, _public_rows_from_response
-from cifereca.gui.book_widgets import CoverView
+from cifereca.gui.book_widgets import BookListCell, CoverView
+from cifereca.gui.query_model import QueryState
+from cifereca.core.notice_c_known_projection import merge_public_notice_c_known_rows
 from cifereca.gui.cover_loader import CoverLoader
 from cifereca.gui.document_cover_service import DocumentCoverService
 from cifereca.gui.notice_cover_cached_reader import cached_notice_cover_snapshot
@@ -47,6 +49,9 @@ def verify_notice_c_cover(window, later, capture, report, complete):
     state = {"db": None, "loader": None, "service": None, "probe": None}
     image_gets = []
     gtk_thread = get_ident()
+    original_loader = window.covers
+    original_service = window.document_covers
+    original_query = window.search_controls.state()
     pixels = (84, 118, 149)
     payload = BytesIO()
     Image.new("RGB", (400, 600), pixels).save(payload, format="PNG")
@@ -112,6 +117,16 @@ def verify_notice_c_cover(window, later, capture, report, complete):
     deadline = monotonic() + 10
 
     def close_stage():
+        if state.pop("mainwindow_stage", False):
+            # Drop the real page's C rows/selection before closing its
+            # temporary loader or restoring the desktop's original N2.
+            page = window.search_page
+            if page._narrow_master_detail and page._narrow_detail_visible:
+                page.detail_back.emit("clicked")
+            window._populate_local_search([])
+            window.covers = original_loader
+            window.document_covers = original_service
+            window.search_controls.set_state(original_query, notify=False)
         for cover in state.get("covers", ()):
             cover.reset()
         for key in ("service", "loader", "db"):
@@ -229,16 +244,121 @@ def verify_notice_c_cover(window, later, capture, report, complete):
                 "downloads": stats["download_ok"],
             }
             capture("00-notice-c-n4-" + label)
+            # Keep the exact same N2/N3 alive and demonstrate that the real
+            # Search list factory/detail controller can paint this reference,
+            # not just two manually bound CoverViews in a transient window.
+            for cover in state["covers"]:
+                cover.reset()
+            state["covers"] = ()
+            probe.destroy()
+            state["probe"] = None
+            window.present()
+            verify_mainwindow_search(offline, db, service, loader, reads)
+
+        later(40, guard(verify))
+
+
+
+    def verify_mainwindow_search(offline, db, service, loader, reads):
+        doc, epoch, url = state["document"], state["epoch"], state["url"]
+        identity = window.service.current_identity.identity_id
+        assert identity
+        # Read the durable C through the real cursor on a worker. The
+        # normal MainWindow result publication consumes its public rows.
+        def known_rows():
+            assert get_ident() != gtk_thread
+            return merge_public_notice_c_known_rows(
+                [], search_public_notice_c(db, "loup"), identity_id=identity,
+            )
+
+        job = pool.submit(known_rows)
+        until = monotonic() + 10
+
+        def walk(widget):
+            yield widget
+            child = widget.get_first_child()
+            while child is not None:
+                yield from walk(child)
+                child = child.get_next_sibling()
+
+        def show():
+            if not job.done():
+                assert monotonic() < until, "MainWindow C query timeout"
+                later(40, guard(show))
+                return
+            rows = job.result()
+            assert len(rows) == 1 and rows[0]["_cover_document_ref"] == doc
+            assert rows[0]["metadata"]["notice_c_epoch"] == epoch
+            assert rows[0]["thumbnail_url"] is None
+            state["mainwindow_stage"] = True
+            window.covers = loader
+            window.document_covers = service
+            window.search_controls.set_state(
+                QueryState(text="loup", field="all", scope="all"), notify=False,
+            )
+            window.navigate("search")
+            window._populate_local_search(rows)
+            assert window.search_page.store.get_n_items() == 1
+            row = window.search_page.store.get_item(0)
+            assert row._cover_document_ref == doc and row._cover_public_c_epoch == epoch
+            page = window.search_page
+            # At narrow widths GTK deliberately shows only one pane. Test
+            # the real list before selection, then the real detail after it.
+            if page._narrow_master_detail and page._narrow_detail_visible:
+                page.detail_back.emit("clicked")
+            later(40, guard(lambda: check(row, "list", monotonic() + 8)))
+
+        def check(row, variant, deadline):
+            page = window.search_page
+            if variant == "list":
+                covers = [cell.cover for cell in walk(page) if isinstance(cell, BookListCell)
+                          and cell.get_mapped() and cell._bound_key == row.key]
+            else:
+                covers = [cover for cover in walk(page.detail)
+                          if isinstance(cover, CoverView) and cover.get_mapped()]
+            if len(covers) != 1 or any(
+                not cover.get_mapped()
+                or not isinstance(cover.picture.get_paintable(), Gdk.Texture)
+                or cover.placeholder.get_visible() or cover.spinner.get_visible()
+                for cover in covers
+            ):
+                assert monotonic() < deadline, "MainWindow Search N4 timeout: " + variant
+                later(40, guard(lambda: check(row, variant, deadline)))
+                return
+            assert window.view_stack.get_visible_child_name() == "search"
+            cover = covers[0]
+            assert cover._loader is loader
+            assert cover._request.source_uri == url and cover._request.still_current
+            texture = cover.picture.get_paintable()
+            with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
+                assert image.convert("RGB").getpixel((0, 0)) == pixels
+            label = "offline" if offline else "cold"
+            capture("00-notice-c-mainwindow-search-" + variant + "-" + label)
+            if variant == "list":
+                page.selection.set_selected(0)
+                assert page.selection.get_selected_item() is row
+                later(40, guard(lambda: check(row, "detail", monotonic() + 8)))
+                return
+            assert reads == [doc]
+            assert image_gets == ["cold"]
+            stats = loader.stats()
+            assert stats["ui_applied"] >= 4 and stats["ui_failed"] == 0
+            label = "offline" if offline else "cold"
+            report["notice_c_mainwindow_search_" + label] = {
+                "views": 2, "sqlite_reads": len(reads),
+                "image_gets_total": len(image_gets),
+                "gtk_applied": stats["ui_applied"],
+            }
             close_stage()
             if not offline:
-                # Fresh Storage, CoverLoader and N2, same N3 directory.
                 start_stage(True)
                 return
             report["checks"]["P0_6366_real_c_n2_n3_n4_restart_offline"] = True
+            report["checks"]["P0_6366_mainwindow_search_list_detail_restart_offline"] = True
             cleanup()
             window.present()
             complete()
 
-        later(40, guard(verify))
+        later(40, guard(show))
 
     later(40, guard(after_seed))

@@ -63,7 +63,9 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
     original_library = list(window._library_entries_cache)
     original_recent = list(window._recent_entries_cache)
     original_query = window.library_controls.state()
+    original_route = window.view_stack.get_visible_child_name()
     state = {}
+    report["local_c_stage"] = "seed"
     gets = []
     url = "https://covers.example.org/local-origin-c.png"
     title = "Notice C locale témoin"
@@ -160,6 +162,9 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             window._recent_entries_cache = original_recent
             window.library_controls.set_state(original_query, notify=False)
             window.covers, window.document_covers = original_covers, original_n2
+            # A narrow detail can change sidebar visibility and pane allocation.
+            # Restore the prior route before the normal XTEST scenario resumes.
+            window.navigate(original_route)
         for name in ("n2", "loader", "db"):
             value = state.pop(name, None)
             if value is not None:
@@ -189,6 +194,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
         done(future.result())
 
     def start_stage(offline):
+        report["local_c_stage"] = "offline_project" if offline else "cold_project"
         doc, epoch, artifact, placement, book = state["facts"]
         db = state["db"] = Storage(filename)
         loader = state["loader"] = CoverLoader(max_workers=2)
@@ -251,10 +257,18 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
         label = "offline" if offline else "cold"
 
         def show_route(route):
+            report["local_c_stage"] = label + "_" + route + "_route"
             window.navigate(route)
+            # Native Gtk.Stack and Paned allocate asynchronously on a route
+            # transition. Wait for the actual visible page before selecting.
+            later(80, guard(lambda: show_list(route)))
+
+        def show_list(route):
+            report["local_c_stage"] = label + "_" + route + "_list"
             page = getattr(window, route + "_page")
             if page._narrow_master_detail and page._narrow_detail_visible:
                 page.detail_back.emit("clicked")
+            page.selection.set_selected(0xFFFFFFFF)
             assert page.store.get_n_items() == 1
             row = page.store.get_item(0)
             assert row._cover_document_ref == doc
@@ -290,9 +304,14 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             assert reads == [doc] and gets == ["GET"]
             capture("00-notice-c-" + route + "-" + variant + "-" + label)
             if variant == "list":
+                report["local_c_stage"] = label + "_" + route + "_detail"
                 page.selection.set_selected(0)
                 assert page.selection.get_selected_item() is row
-                later(40, guard(lambda: wait_texture(
+                # The actual production selection signal renders the detail.
+                # In narrow mode, require that it opens the real detail pane.
+                if page._narrow_master_detail:
+                    assert page._narrow_detail_visible
+                later(80, guard(lambda: wait_texture(
                     route, page, row, "detail", monotonic() + 8,
                 )))
                 return
@@ -313,7 +332,9 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 start_stage(True)
             else:
                 report["checks"]["P0_6366_mainwindow_library_recent_restart_offline"] = True
+                report["local_c_stage"] = "complete"
                 cleanup()
+                window.present()
                 complete()
 
         stamp_value = 1794900000
