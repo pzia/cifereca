@@ -325,3 +325,22 @@ def test_normal_lender_confirmation_uses_declared_observed_borrower_alias(
     )["status"] == expected
     assert execute(service, option, item, scope)["status"] == "blocked"
     assert session.actions == 1
+
+
+def test_direct_normal_executor_uses_explicit_requester_without_navigation(harness):
+    service, account, session, item, option, _scope = setup(harness)
+
+    class Headless:
+        def __getattr__(self, name):
+            if name == "current_identity":
+                pytest.fail("Core worker read navigation")
+            return getattr(service, name)
+
+    result = execute(Headless(), option, item, lambda: True)
+    assert result["status"] == "confirmed"
+    assert session.actions == 1
+    assert service.storage.loan_borrow_state(
+        borrow_claim_key(account, item),
+    )["status"] == "confirmed"
+    assert execute(Headless(), option, item, lambda: True)["status"] == "blocked"
+    assert session.actions == 1
