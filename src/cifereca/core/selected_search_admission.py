@@ -9,10 +9,8 @@ from __future__ import annotations
 from dataclasses import replace
 from inspect import getattr_static
 
-from ..models import Account
+from ..models import Account, SearchResult
 from .search_orchestration import SearchReadScope
-
-from ..models import SearchResult
 from .source_context import source_context_epoch
 from .private_inventory_row_scope import private_row_account_matches
 from .selected_source_offer import (
@@ -82,11 +80,14 @@ def capture_confirmed_selected_offer(
             or not reader_scope.current(service)
             or type(account_id) is not str or not account_id
             or len(account_id) > 1024
-            or any(c in account_id for c in "\\x00\\r\\n")):
+            or any(c in account_id for c in "\x00\r\n")):
         raise ValueError("selected_search_confirmation_required")
     identity_id = reader_scope.identity_id
     _validate_selected_item(item, identity_id)
-    if not private_row_account_matches(item, account_id):
+    if (not all(type(value) is str and 0 < len(value) <= 1024
+                and not any(c in value for c in "\x00\r\n")
+                for value in (item.source_provider, item.source_credential, item.record_id))
+            or not private_row_account_matches(item, account_id)):
         raise ValueError("selected_search_source_unavailable")
     matches = [
         account for account in service.accounts
