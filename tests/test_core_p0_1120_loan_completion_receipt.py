@@ -8,18 +8,26 @@ from pathlib import Path
 from cifereca.core.loan_completion_receipt import completed_receipt, completed_outcome
 
 
-def _receipt(tmp_path, *, is_acsm, force_refresh, previous):
+def _receipt(tmp_path, *, is_acsm, force_refresh, previous, repair=False, same_path=False, symlink=False):
     path = tmp_path / ("file.epub" if not is_acsm else "file.pdf")
     artifact = tmp_path / "preserved.epub"
+    if same_path:
+        artifact = path
     if previous:
-        artifact.write_bytes(b"old")
+        if symlink:
+            target = tmp_path / "unrelated.epub"
+            target.write_bytes(b"old")
+            artifact.symlink_to(target)
+        else:
+            artifact.write_bytes(b"old")
     ledger = {
         "entitlement_id": "e1", "provider_id": "paris",
         "credential_id": "c1", "account_id": "primary",
         "identity_id": "i1", "item_id": "id1", "title": "title",
     }
     scan = {"artifact_id": 44, "local": True}
-    decision = NS(as_dict=lambda: {"source": "existing"})
+    decision = NS(as_dict=lambda: {"action": "repair_legacy", "source": "ledger"}
+                  if repair else {"source": "existing"})
     binding = {"profile": "p1", "return_available": True}
     original = dict(ledger)
     result = completed_receipt(
@@ -180,3 +188,24 @@ def test_loan_success_projection_stays_after_ledger_and_adept_cleanup():
             < calls["self._diagnose_adept_binding"]
             < calls["loan_completion_receipt.completed_outcome"])
     assert "self.storage.acquisition_put" in calls
+
+
+def test_legacy_repair_records_distinct_preserved_artifact(tmp_path):
+    receipt, path, previous, *_ = _receipt(
+        tmp_path, is_acsm=True, force_refresh=False, previous=True, repair=True,
+    )
+    assert receipt["metadata"]["preserved_artifact_path"] == str(previous)
+    assert receipt["metadata"]["path"] == str(path)
+    assert previous.read_bytes() == b"old"
+
+
+def test_preserved_artifact_is_not_inferred_from_same_path_or_symlink(tmp_path):
+    same = tmp_path / "same"
+    same.mkdir()
+    alias = tmp_path / "alias"
+    alias.mkdir()
+    for root, kwargs in ((same, {"same_path": True}), (alias, {"symlink": True})):
+        receipt, *_ = _receipt(
+            root, is_acsm=True, force_refresh=True, previous=True, **kwargs,
+        )
+        assert receipt["metadata"]["preserved_artifact_path"] is None

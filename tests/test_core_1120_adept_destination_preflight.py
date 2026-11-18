@@ -107,3 +107,51 @@ def test_no_collision_does_not_consume_random_suffix(tmp_path):
     )
     assert published == staged == target
     assert repair is False
+
+
+@pytest.mark.parametrize("kind", ["file", "directory", "dangling_symlink", "symlink"])
+def test_fresh_stage_refuses_every_existing_entry(tmp_path, kind):
+    from cifereca.core.adept_acsm_plan import fresh_adept_destination
+
+    stage = tmp_path / "book.repairing.epub"
+    outside = tmp_path / "outside.epub"
+    outside.write_bytes(b"prior")
+    if kind == "file":
+        stage.write_bytes(b"staged")
+    elif kind == "directory":
+        stage.mkdir()
+    else:
+        stage.symlink_to(outside if kind == "symlink" else tmp_path / "absent")
+    before = stage.lstat()
+    assert fresh_adept_destination(stage) is False
+    assert stage.lstat() == before
+    assert outside.read_bytes() == b"prior"
+
+
+def test_fresh_stage_requires_existing_nofollow_ancestors(tmp_path):
+    from cifereca.core.adept_acsm_plan import fresh_adept_destination
+
+    actual = tmp_path / "actual"
+    actual.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(actual, target_is_directory=True)
+    assert fresh_adept_destination(actual / "book.epub") is True
+    assert fresh_adept_destination(alias / "book.epub") is False
+    assert fresh_adept_destination(tmp_path / "absent" / "book.epub") is False
+    assert fresh_adept_destination(Path("book.epub")) is False
+    assert not list(actual.iterdir())
+
+
+def test_facade_checks_stage_before_runtime_and_never_unlinks_it():
+    import ast
+
+    file = Path(__file__).parents[1] / "src/cifereca/services.py"
+    tree = ast.parse(file.read_text(encoding="utf-8"))
+    method = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+                  and node.name == "_acquire_active_loan_automatically_guarded")
+    calls = [(ast.unparse(node.func), node.lineno) for node in ast.walk(method)
+             if isinstance(node, ast.Call)]
+    assert not any(name == "adept_destination.unlink" for name, _ in calls)
+    positions = dict(calls)
+    assert positions["adept_acsm_plan.fresh_adept_destination"] < positions[
+        "loan_adept_fulfillment.fulfill"]
