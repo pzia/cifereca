@@ -718,13 +718,26 @@ class GallicaSession(ProviderSession):
         if index is None:
             raise ProviderError(f"Gallica : champ de recherche non pris en charge : {field}")
         cql = f'({index} all {_cql_literal(query)}) and (dc.type any "audio")'
+        origin = catalogue_url_origin(self.sru_url)
+        official = origin == catalogue_url_origin(EPUB_SEARCH)
+        # An official SRU response may attest an ARK only for its own
+        # configured endpoint. An HTTP redirect is not that observation.
+        # Preserve historical behavior for explicitly configured custom sources.
+        redirect_options = {"follow_redirects": False} if official else {}
         with self.client.stream("GET", self.sru_url, params={
             "operation": "searchRetrieve",
             "version": "1.2",
             "query": cql,
             "startRecord": str(max(1, page * 50 + 1)),
             "maximumRecords": "50",
-        }, headers={"Accept-Encoding": "identity"}) as response:
+        }, headers={"Accept-Encoding": "identity"}, **redirect_options) as response:
+            if official and (
+                300 <= response.status_code < 400
+                or response.history
+                or catalogue_url_origin(str(response.url)) != origin
+                or urlsplit(str(response.url)).path != urlsplit(self.sru_url).path
+            ):
+                raise _UnsafeSRU("Gallica SRU : unverified_navigation")
             response.raise_for_status()
             content = self._bounded_xml_body(
                 response, lambda: _UnsafeSRU("Gallica SRU : invalid_audio_feed"),
