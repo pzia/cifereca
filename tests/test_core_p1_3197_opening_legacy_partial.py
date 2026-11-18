@@ -1,23 +1,37 @@
-"""#3197: opening sync never attests complete v1 loan inventories.
+"""#3197: opening Sync consumes actual installed v1 adapters, positive-only.
 
-SQLite and synthetic registered provider sessions only; no network, ADEPT,
-loan returns, acquisition or file removal.
+SQLite and synthetic registered sessions only. No network, ADEPT, loan
+returns, acquisition or file removal. Do not mock the Core loan reader:
+the fixture intentionally crosses the real ABI adapter.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace as NS
+
+import pytest
 
 from cifereca.models import Loan
 from tests.test_core_p0_1346_opening_source_isolation import _accounts, _state
 from tests.test_sync_state_contract import _service
 
 
-def _legacy_session(account, *, getter_calls):
+def _legacy_session(account, *, getter_calls, calls, rows=(), loan_capable=True):
     class LegacySession:
         provider_id = account.provider_id
         credential_id = account.credential_id
         connected = True
-        capabilities = NS(loans=True, personal_library=False, digital_download=False)
+        accounts = [account]
+        capabilities = NS(
+            loans=loan_capable, personal_library=False, digital_download=False,
+            backup=False, opening_loan_auto_acquisition=False,
+        )
+
+        def loans(self, selected):
+            assert loan_capable, "no read for a source without the loan capability"
+            assert selected is account
+            calls.append(selected)
+            return list(rows)
 
         @property
         def last_loan_errors(self):
@@ -30,16 +44,22 @@ def _legacy_session(account, *, getter_calls):
     return LegacySession()
 
 
-def test_opening_legacy_empty_does_not_claim_complete_or_close_positive_right(
-    tmp_path, monkeypatch,
+def _register(service, account, **kwargs):
+    session = _legacy_session(account, **kwargs)
+    service._sessions[
+        service._session_key(account.provider_id, account.credential_id)
+    ] = session
+
+
+@pytest.mark.parametrize("positive", [False, True], ids=["empty", "positive"])
+def test_opening_legacy_does_not_claim_complete_or_close_positive_right(
+    tmp_path, positive,
 ):
     service = _service(tmp_path)
     getter_calls: list[str] = []
+    calls = []
     try:
         paris, kobo, numilog = _accounts(service)
-        service._sessions[
-            service._session_key(paris.provider_id, paris.credential_id)
-        ] = _legacy_session(paris, getter_calls=getter_calls)
         loan = Loan(
             id="loan-1", provider="DILICOM", medium="digital",
             record_id="edition-1", title="Synthetic",
@@ -49,20 +69,26 @@ def test_opening_legacy_empty_does_not_claim_complete_or_close_positive_right(
         )
         service._persist_active_loans("default", [loan])
         before = service.storage.entitlements(provider_id="paris")
-        calls = []
-        def read(account, *, force=False):
-            assert force is True
-            calls.append(account)
-            return []
-        monkeypatch.setattr(service, "_loans_for_account", read)
+        new_loan = replace(loan, id="loan-2", record_id="edition-2")
+        _register(service, paris, getter_calls=getter_calls, calls=calls,
+                  rows=[new_loan] if positive else [])
+        for account in (kobo, numilog):
+            _register(service, account, getter_calls=getter_calls,
+                      calls=calls, loan_capable=False)
         service.mirror_personal_libraries = lambda: {}
         result = service.opening_sync()
         assert _state(service, paris)["status"] == "partial"
         assert _state(service, kobo)["status"] == "success"
         assert _state(service, numilog)["status"] == "success"
-        assert len(calls) == 3 and calls == [kobo, paris, numilog]
+        assert calls == [paris]
         assert getter_calls == []
-        assert service.storage.entitlements(provider_id="paris") == before
+        after = service.storage.entitlements(provider_id="paris")
+        if positive:
+            assert {row["loan_id"]: row["state"] for row in after} == {
+                "loan-1": "active", "loan-2": "active",
+            }
+        else:
+            assert after == before
         default = next(row for row in result["identities"]
                        if row["identity_id"] == "default")
         assert default["status"] == "partial"
@@ -71,26 +97,20 @@ def test_opening_legacy_empty_does_not_claim_complete_or_close_positive_right(
         service.close()
 
 
-def test_no_loan_capability_stays_success_without_consulting_side_channel(
-    tmp_path, monkeypatch,
-):
+def test_no_loan_capability_stays_success_without_consulting_side_channel(tmp_path):
     service = _service(tmp_path)
+    calls = []
+    getter_calls = []
     try:
         paris, kobo, numilog = _accounts(service)
-        service._sessions[
-            service._session_key(paris.provider_id, paris.credential_id)
-        ] = NS(
-            provider_id=paris.provider_id, credential_id=paris.credential_id,
-            connected=True, capabilities=NS(loans=False),
-            last_loan_errors=[{"irrelevant": True}],
-            close=lambda: None,
-        )
-        monkeypatch.setattr(service, "_loans_for_account",
-                            lambda _account, force=False: [])
+        for account in (paris, kobo, numilog):
+            _register(service, account, getter_calls=getter_calls,
+                      calls=calls, loan_capable=False)
         service.mirror_personal_libraries = lambda: {}
         service.opening_sync()
         assert _state(service, paris)["status"] == "success"
         assert _state(service, kobo)["status"] == "success"
         assert _state(service, numilog)["status"] == "success"
+        assert calls == getter_calls == []
     finally:
         service.close()

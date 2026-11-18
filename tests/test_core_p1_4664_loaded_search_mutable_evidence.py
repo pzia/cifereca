@@ -39,7 +39,7 @@ def test_nested_loaded_notice_evidence_mutation_revokes_actions(
             f.calls.append((args, kwargs))
             edit_offer()
             return f.detail
-        f.service.holdings = changed_holdings
+        f.service.holdings_for_scope = changed_holdings
         success(work())
         assert len(f.calls) == 1
     else:

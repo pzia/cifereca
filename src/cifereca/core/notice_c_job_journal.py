@@ -240,8 +240,8 @@ def request_job(storage, spec, *, now, expected_generation):
 
     Same exact currently stored spec deduplicates, including retry state.
     Changed spec requires its current generation. Missing = generation zero.
-    No pruning in this tranche: a full journal rejects new logical keys
-    rather than resetting old generations or growing without bound.
+    Full journal rejects new logical keys until explicit terminal maintenance.
+    An absent key after maintenance may receive a generation greater than one.
     """
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
@@ -275,7 +275,8 @@ def _request_job_txn(db, spec, *, now, expected_generation):
         ).fetchone()[0]
         if count >= _MAX_JOBS:
             raise ValueError("notice_work_capacity")
-    ref = JobRef(key, generation + 1)
+    from .notice_c_job_retention import _allocate_generation_txn
+    ref = JobRef(key, _allocate_generation_txn(db, previous))
     _save(db, Job(ref, spec, "pending", 0, 0, now, 0, "none"))
     return ref
 

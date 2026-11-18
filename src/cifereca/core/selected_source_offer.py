@@ -8,10 +8,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from inspect import getattr_static
+from threading import Lock
 
 from ..models import Account
 from .canonical_delivery_abi import has_complete_delivery_abi
 from .private_inventory_binding import exact_private_inventory_binding_valid
+
+
+class _ConfirmedOfferUse:
+    """Internal, in-process, single attempt; failure requires new confirmation."""
+
+    def __init__(self):
+        self._lock = Lock()
+        self._used = False
+
+    def claim(self):
+        with self._lock:
+            if self._used:
+                raise ValueError("selected_source_confirmation_consumed")
+            self._used = True
 
 
 @dataclass(frozen=True, repr=False)
@@ -30,6 +45,10 @@ class SourceOfferTarget:
     # Only an explicit Core-admitted Search click may use this independent
     # source lease. Passive/legacy targets retain navigation-epoch semantics.
     source_epoch: int | None = field(default=None, compare=False)
+    # Explicit headless admission additionally pins the actual registry object
+    # and Core instance, not merely a reusable identity string.
+    reader_scope: object | None = field(default=None, compare=False, repr=False)
+    _confirmed_use: _ConfirmedOfferUse | None = field(default=None, compare=False, repr=False)
 
 
 def _resolve(service, target: SourceOfferTarget):
@@ -40,6 +59,19 @@ def _resolve(service, target: SourceOfferTarget):
     # Production LibraryService publishes a monotone epoch on every identity
     # switch; minimal synthetic facades with no epoch still need all the
     # independent account/session/ABI binding guards below.
+    if target.reader_scope is not None:
+        if type(target._confirmed_use) is not _ConfirmedOfferUse:
+            raise ValueError("selected_source_confirmation_required")
+        from .search_orchestration import SearchReadScope
+        scope = target.reader_scope
+        if (type(scope) is not SearchReadScope
+                or scope.identity_id != target.identity_id
+                or scope.source_epoch != target.source_epoch
+                or not scope.current(service)
+                or service._provider_enabled_for_identity(
+                    target.provider_id, target.identity_id,
+                ) is not True):
+            raise ValueError("selected_source_binding_changed")
     if target.source_epoch is not None:
         from .source_context import source_context_epoch
         if (type(target.source_epoch) is not int
@@ -83,6 +115,8 @@ def _resolve(service, target: SourceOfferTarget):
         from .source_context import source_context_epoch
         if source_context_epoch(service) != target.source_epoch:
             raise ValueError("selected_source_binding_changed")
+    if target.reader_scope is not None and not target.reader_scope.current(service):
+        raise ValueError("selected_source_binding_changed")
     return target, account
 
 
@@ -158,6 +192,13 @@ def admit_library_source_offer(
 
 def obtain_source_offer(service, target: SourceOfferTarget):
     """Core's existing global-lock, single-offer A→B path, without entitlements."""
+    if type(target) is not SourceOfferTarget:
+        raise ValueError("selected_source_target_invalid")
+    if target.reader_scope is not None:
+        if type(target._confirmed_use) is not _ConfirmedOfferUse:
+            raise ValueError("selected_source_confirmation_required")
+        target._confirmed_use.claim()
+
     def resolve(_service, entitlement_id, identity_id, item_id):
         if (entitlement_id is not None or identity_id != target.identity_id
                 or item_id != target.item_id):

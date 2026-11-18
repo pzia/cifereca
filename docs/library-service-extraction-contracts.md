@@ -1,5 +1,57 @@
 # Contrats de LibraryService avant extraction — lot 0 (#1116)
 
+## Retrait ciblé #3199 (Core 0.9.44+dev.13, lot de développement)
+
+Inventaire candidat sur main 184373f4, revérifié avant édition : les cinq wrappers
+de l'issue n'ont pas de consommateur de production identifié par recherche de
+symboles dans le dépôt. Cela ne constitue pas un inventaire des extensions
+externes non disponibles. Trois sont déjà retirés : `_acquire_personal_library_item`,
+`_execute_kobo_acquisition`, `sync_kobo_backup` ; les références historiques et
+tests de non-réactivation restent utiles.
+
+Les deux derniers sont des wrappers de façade interne (pas d'ABI Plugin API
+versionnée ni de commande CLI dédiée identifiée), non des opérations métier :
+
+| Ancienne signature | Remplacement explicite |
+|---|---|
+| `prepare_direct_download(item) -> (Path, str)` | `acquire_direct_item(item) -> Acquisition` ; consulter `path`, `target_dir`, `url` |
+| `prepare_digital_download(loan, force_refresh=False) -> (Path, str)` | `acquire_digital_loan(loan, force_refresh=...)` ; refuser un résultat sans fichier avant usage |
+
+La suppression est intentionnelle dans le présent lot, avec mise à jour des
+deux entrées du fixture gelé. Le seul test appelant le second wrapper
+(`test_core_0913.py`) vérifie désormais directement le parcours canonique, y
+compris force_refresh, cache/hook et présence du chemin ; les autres tests de
+DRM et d'acquisition sont conservés. Toute extension externe qui importait
+ces méthodes internes doit migrer avant d'utiliser cette version. Aucun
+changement de version majeure de Plugin API ni de comportement des commandes
+ou brokers supportés n'est induit. La matrice historique ci-dessous est
+conservée comme baseline, non inventaire des méthodes actuelles.
+
+### Dernière revue des shims adjacents (Core 0.9.44+dev.13)
+
+Sur main b4e14504, la recherche du symbole `_kobo_adapter` dans src/
+ne trouve que sa définition et deux tests du plugin runtime-kobo-adept.
+Le shim privé qui levait systématiquement une exception est supprimé ;
+les tests de refus peuvent toujours injecter un attribut poison local
+(`raising=False`), sans réintroduire une API productrice. Les injections
+de neutralisation inutiles sont retirées. Les opérations runtime
+continuent de passer par les contrats installés/vérifiés.
+
+Contrats distincts conservés, non réactivation de capacités :
+
+| Compatibilité | Consommateur/justification | Échéance |
+|---|---|---|
+| `refresh_bookings` | ABI v1 historique #4147, décodage/effacement sans réseau ; tests 636 et account-scoped | retrait lors de la fin annoncée de l'ABI v1, pas avant |
+| `return_digital`, `return_adept_acquisition` | garde de refus explicite des anciennes commandes de restitution #4048 ; tests d'absence de mutation | prochaine migration incompatible des clients legacy, après annonce ; pas de retour réactivé |
+| `bind_paris_borrower_adept` | refus explicite de l'écriture historique v15 ; lecteurs/migration v16 restent nécessaires | retrait après fin de la compatibilité v15 et migration attestée ; jamais de nouvelle écriture v15 |
+
+Les échéances sont des événements de migration (aucune date de release
+décidée). Les signatures publiques historiques d'orchestration qui
+délèguent effectivement une opération ne sont pas des shims morts.
+Les extensions externes doivent importer `cifereca.plugin_api`, non
+`cifereca.services` ; aucune preuve de leur inventaire privé n'est disponible.
+
+
 > **Retrait fonctionnel #4147 (02/11/2026) :** `Booking`, `ProviderCapabilities.bookings` et `LibraryService.refresh_bookings` ne représentent plus une capacité produit. Ils restent strictement **inertes en ABI v1** pour décoder/effacer sans risque d'anciennes données et tolérer les plugins déjà installés : `refresh_bookings` vide son snapshot et retourne `[]` sans stockage, session ni réseau. Aucun `ListBookings`/`CancelBookings`, vue, action ou badge ne doit être réactivé. Les méthodes et callsites de `library-service-inventory.json` sont une **baseline historique** ; leur présence dans ce document n'autorise pas leur réintroduction. Les prêts, l'historique, les profils ADEPT et les renouvellements Paris physiques restent indépendants.
 
 La façade `from cifereca.services import LibraryService` reste le point d'entrée.

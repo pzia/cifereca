@@ -10,7 +10,11 @@ from urllib.parse import quote_plus, urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 
 import httpx
-from cifereca.plugin_api import HTTPX_TRANSPORT
+from cifereca.plugin_api import (
+    HTTPX_TRANSPORT, MAX_XML_BYTES, CatalogueXMLParseError,
+    parse_atom_catalogue, parse_bounded_catalogue_xml,
+    catalogue_url_origin, resolve_catalogue_link,
+)
 
 from cifereca.plugin_api import (
     Account, ItemDetail, SearchResult, AcquisitionOffer,
@@ -104,6 +108,10 @@ def _gallica_audio_recipe(item: SearchResult) -> BundleAcquisitionRecipe | None:
         tracks=(),
         metadata={"provider_id": "gallica", "ark": ark},
     ).validate()
+
+
+class _UnsafeOPDS(ProviderError):
+    """Rejected payload or navigation: never authorize a fallback GET."""
 
 
 class GallicaSession(ProviderSession):
@@ -219,17 +227,23 @@ class GallicaSession(ProviderSession):
             return "ebook", "EPUB"
         return "ebook", mime or "Numérique"
 
-    def _parse_feed(self, content: bytes, base_url: str) -> list[SearchResult]:
+    @staticmethod
+    def _opds_atom(content):
+        failure = None
         try:
-            root = ET.fromstring(content)
-        except ET.ParseError as exc:
-            raise ProviderError(f"Gallica OPDS : XML invalide ({exc})") from exc
+            return parse_atom_catalogue(content)
+        except CatalogueXMLParseError as exc:
+            failure = exc.code
+        if failure == "malformed":
+            raise ProviderError("Gallica OPDS : XML invalide")
+        if failure == "unexpected_root":
+            raise _UnsafeOPDS("Gallica OPDS : flux Atom attendu")
+        raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
 
-        if root.tag != f"{{{ATOM}}}feed":
-            raise ProviderError("Gallica OPDS : flux Atom attendu")
-
+    def _parse_feed(self, content: bytes, base_url: str) -> list[SearchResult]:
+        feed = self._opds_atom(content)
         rows: list[SearchResult] = []
-        for entry in root.findall(f"{{{ATOM}}}entry"):
+        for entry in feed.entries:
             title = self._text(entry.find(f"{{{ATOM}}}title")) or "Sans titre"
             author_names = [self._text(author.find(f"{{{ATOM}}}name")) for author in entry.findall(f"{{{ATOM}}}author")]
             author = ", ".join(x for x in author_names if x) or None
@@ -308,33 +322,89 @@ class GallicaSession(ProviderSession):
             )
         return rows
 
+    @staticmethod
+    def _opds_resolve(base, raw):
+        origin = catalogue_url_origin(base)
+        if origin is None:
+            raise _UnsafeOPDS("Gallica OPDS : unverified_navigation")
+        target = resolve_catalogue_link(
+            base, html.unescape(raw.strip()),
+            accept=lambda candidate: catalogue_url_origin(candidate) == origin,
+        )
+        if target is None:
+            raise _UnsafeOPDS("Gallica OPDS : unverified_navigation")
+        return target
+
+    def _opds_get(self, url, *, params=None):
+        # Only the two configured OPDS roots authorize origins. A supplied
+        # feed/descriptor/redirect cannot extend them. Retain the configured
+        # local HTTP simulation origin, but do not allow downgrade redirects.
+        origin = catalogue_url_origin(url)
+        if origin is None or origin not in {
+            catalogue_url_origin(self.opds_url),
+            catalogue_url_origin(self.epub_search_url),
+        } or "{" in url or "}" in url:
+            raise _UnsafeOPDS("Gallica OPDS : unverified_navigation")
+        for _ in range(4):
+            with self.client.stream(
+                "GET", url, params=params, follow_redirects=False,
+                headers={"Accept-Encoding": "identity"},
+            ) as response:
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    url = self._opds_resolve(str(response.url), response.headers.get("location", ""))
+                    params = None
+                    continue
+                response.raise_for_status()
+                if response.headers.get("content-encoding", "").strip().casefold() not in {"", "identity"}:
+                    raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
+                length = response.headers.get("content-length", "")
+                if length.isascii() and length.isdecimal() and (
+                    len(length) > 9 or int(length) > MAX_XML_BYTES
+                ):
+                    raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
+                if response.is_stream_consumed:
+                    if not response.is_closed or len(response.content) > MAX_XML_BYTES:
+                        raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
+                    return response.content, str(response.url)
+                chunks = []
+                size = 0
+                for chunk in response.iter_raw(chunk_size=65536):
+                    size += len(chunk)
+                    if size > MAX_XML_BYTES:
+                        raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
+                    chunks.append(chunk)
+                return b"".join(chunks), str(response.url)
+        raise _UnsafeOPDS("Gallica OPDS : unverified_navigation")
+
     def _discover_search_template(self) -> str:
         if self._search_template:
             return self._search_template
-        response = self.client.get(self.opds_url)
-        response.raise_for_status()
-        try:
-            root = ET.fromstring(response.content)
-        except ET.ParseError as exc:
-            raise ProviderError(f"Gallica OPDS : racine XML invalide ({exc})") from exc
-        search_link = next((link for link in root.findall(f"{{{ATOM}}}link") if str(link.attrib.get("rel") or "") == "search"), None)
-        if search_link is None:
+        body, base = self._opds_get(self.opds_url)
+        feed = self._opds_atom(body)
+        matches = [link for link in feed.links if link.rel == "search"]
+        if not matches:
             self._search_template = self._fallback_search_template()
             return self._search_template
-        href = self._attr_href(search_link, str(response.url))
-        if not href:
-            self._search_template = self._fallback_search_template()
-            return self._search_template
-        typ = str(search_link.attrib.get("type") or "")
+        # A declared but conflicting discovery target is not a missing link.
+        targets = {(self._opds_resolve(base, link.href), link.media_type) for link in matches}
+        if len(targets) != 1:
+            raise _UnsafeOPDS("Gallica OPDS : unverified_navigation")
+        href, typ = next(iter(targets))
         if "opensearchdescription" not in typ:
             self._search_template = href if "{searchTerms" in href else self._fallback_search_template()
             return self._search_template
-        descriptor = self.client.get(href)
-        descriptor.raise_for_status()
+        descriptor, descriptor_url = self._opds_get(href)
+        failure = None
         try:
-            os_root = ET.fromstring(descriptor.content)
-        except ET.ParseError as exc:
-            raise ProviderError(f"Gallica OpenSearch : XML invalide ({exc})") from exc
+            os_root = parse_bounded_catalogue_xml(descriptor)
+        except CatalogueXMLParseError as exc:
+            failure = exc.code
+        if failure is not None:
+            if failure == "malformed":
+                raise ProviderError("Gallica OpenSearch : XML invalide")
+            raise _UnsafeOPDS("Gallica OpenSearch : invalid_opds_feed")
+        if os_root.tag not in {"OpenSearchDescription", f"{{{OPENSEARCH}}}OpenSearchDescription"}:
+            raise _UnsafeOPDS("Gallica OpenSearch : invalid_opds_feed")
         candidates = list(os_root.findall(f"{{{OPENSEARCH}}}Url")) or list(os_root.findall("Url"))
         chosen: str | None = None
         for node in candidates:
@@ -348,7 +418,8 @@ class GallicaSession(ProviderSession):
             chosen = chosen or template
         if not chosen:
             raise ProviderError("Gallica OpenSearch : aucun template de recherche utilisable")
-        self._search_template = urljoin(str(descriptor.url), chosen) if "{searchTerms" in chosen else self._fallback_search_template()
+        self._search_template = (self._opds_resolve(descriptor_url, chosen)
+                                 if "{searchTerms" in chosen else self._fallback_search_template())
         return self._search_template
 
     def _fallback_search_template(self) -> str:
@@ -362,23 +433,24 @@ class GallicaSession(ProviderSession):
         if field == "all":
             try:
                 template = self._discover_search_template()
+            except _UnsafeOPDS:
+                raise
             except (httpx.HTTPError, ProviderError):
                 template = self._fallback_search_template()
                 self._search_template = template
             # Escape CQL quotes before percent encoding in a SRU template.
             rendered_query = query.replace('\\', '\\\\').replace('"', '\\"') if "query=" in template else query
-            response = self.client.get(self._render_search_url(template, rendered_query, page))
+            body, response_url = self._opds_get(self._render_search_url(template, rendered_query, page))
         else:
             index = {"title": "dc.title", "author": "dc.creator", "subject": "dc.subject", "isbn": "dc.identifier"}.get(field)
             if index is None:
                 raise ProviderError(f"Gallica : champ de recherche non pris en charge : {field}")
-            response = self.client.get(self.epub_search_url, params={
+            body, response_url = self._opds_get(self.epub_search_url, params={
                 "operation": "searchRetrieve", "version": "1.2",
                 "query": f'({index} all {_cql_literal(query)}) and {EBOOK_FORMAT_CQL}',
                 "startRecord": str(max(0, page) * 50 + 1), "maximumRecords": "50",
             })
-        response.raise_for_status()
-        return self._parse_feed(response.content, str(response.url))
+        return self._parse_feed(body, response_url)
 
     @staticmethod
     def _render_search_url(template: str, query: str, page: int) -> str:

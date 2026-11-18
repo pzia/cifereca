@@ -69,7 +69,6 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
         getattr(self, "_online_source_context", None) == context
         else None
     )
-    self.service.last_search = rows
     self.search_objects = dict(zip(_remote_result_row_keys(rows), rows))
     shown = self._render_search_results()
     self._sync_search_detail_after_results()
@@ -78,7 +77,7 @@ def _populate_search(self, rows: list[SearchResult], *, announce: bool = True) -
     # Providers may include arbitrary exception strings (signed URLs, tokens,
     # account IDs or local paths) in search warnings. Never echo their text
     # into GTK. The presence of a partial failure is sufficient for UX.
-    if getattr(self.service, "last_search_warnings", None):
+    if getattr(self, "_online_search_warnings", ()):
         # Read-only fallback rows are not a fresh remote response. Make the
         # degraded provenance explicit without ever echoing provider errors.
         if any(

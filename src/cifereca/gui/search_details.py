@@ -224,10 +224,17 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
     # The four-field selection lease predates Core's independent account
     # and source epochs. A disconnect/rebind can replace the credential
     # session *without changing the selected book ID or GTK generation*.
-    # Gate worker entry AND delivery under that same exact active session
-    # activation; old callbacks must not republish a foreign thumbnail.
+    # Capture Core authority at admission; the account-navigation epoch
+    # gates only publication. Actual source revocation still stops work.
     holdings_core = self.service
     holdings_query = self._last_search_query
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    try:
+        request_scope = capture_search_read_scope(holdings_core, context[3])
+    except (AttributeError, ValueError):
+        self._search_detail_error(self._selected_search_id, item,
+                                  ValueError("holdings_identity_unavailable"), context=context)
+        return
     source_epochs = (
         getattr(self.service, "_account_context_epoch", None),
         getattr(self.service, "_source_context_epoch", None),
@@ -236,6 +243,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
     def epochs_current() -> bool:
         return (not getattr(self, "_closed", False)
                 and self.service is holdings_core
+                and request_scope.current(holdings_core)
                 and source_epochs == (
             getattr(self.service, "_account_context_epoch", None),
             getattr(self.service, "_source_context_epoch", None),
@@ -243,8 +251,9 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
 
     self.runner.submit(
         "Chargement des disponibilités…",
-        lambda: holdings_core.holdings(item, holdings_query, force=False)
-        if epochs_current() else None,
+        lambda: holdings_core.holdings_for_scope(request_scope, item, holdings_query, force=False)
+        if (not getattr(self, "_closed", False) and self.service is holdings_core
+            and request_scope.current(holdings_core)) else None,
         lambda detail: self._apply_search_detail(selected_id, item, detail, context=context)
         if epochs_current() else None,
         lambda exc: self._search_detail_error(selected_id, item, exc, context=context)
@@ -461,6 +470,13 @@ def _load_known_detail(self: SearchDetailHost, item):
     context = self._search_detail_request_context()
     holdings_core = self.service
     holdings_query = self._last_search_query
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    try:
+        request_scope = capture_search_read_scope(holdings_core, context[3])
+    except (AttributeError, ValueError):
+        self._search_detail_error(self._selected_search_id, item,
+                                  ValueError("holdings_identity_unavailable"), context=context)
+        return
     source_epochs = (
         getattr(self.service, "_account_context_epoch", None),
         getattr(self.service, "_source_context_epoch", None),
@@ -469,6 +485,7 @@ def _load_known_detail(self: SearchDetailHost, item):
     def epochs_current() -> bool:
         return (not getattr(self, "_closed", False)
                 and self.service is holdings_core
+                and request_scope.current(holdings_core)
                 and source_epochs == (
             getattr(self.service, "_account_context_epoch", None),
             getattr(self.service, "_source_context_epoch", None),
@@ -476,8 +493,9 @@ def _load_known_detail(self: SearchDetailHost, item):
 
     self.runner.submit(
         "Disponibilités…",
-        lambda: holdings_core.holdings(item, holdings_query, force=False)
-        if epochs_current() else None,
+        lambda: holdings_core.holdings_for_scope(request_scope, item, holdings_query, force=False)
+        if (not getattr(self, "_closed", False) and self.service is holdings_core
+            and request_scope.current(holdings_core)) else None,
         lambda detail: self._apply_search_detail(selected, item, detail, context=context)
         if epochs_current() else None,
         priority=TaskPriority.USER_ACTION, kind="holdings", origin="user",

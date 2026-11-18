@@ -35,6 +35,7 @@ class Manager:
 class Service:
     def __init__(self):
         self.storage = Storage()
+        self.identities = []
         self.accounts = []
         self.plugin_manager = Manager()
 

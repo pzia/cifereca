@@ -400,3 +400,22 @@ def test_closed_session_property_never_executes_during_inventory_guard():
     assert result.status == "failed" and result.reason_code == "unavailable"
     assert visited == []
     assert "PRIVATE" not in repr(result)
+
+
+@pytest.mark.parametrize("kind", ["legacy", "typed"])
+def test_explicit_inventory_lease_revoked_before_and_after_provider_read(kind):
+    a = account()
+    active = True
+    def reader(arg):
+        nonlocal active
+        active = False
+        return (LoanInventorySnapshot(scope=LoanInventoryScope.for_account(arg),
+                                      loans=(loan(arg),), status="success")
+                if kind == "typed" else [loan(arg)])
+    s, calls = session(a, reader=reader if kind == "legacy" else None,
+                       hook=reader if kind == "typed" else None)
+    assert read_loan_inventory(s, a, scope_current=lambda: False).status == "failed"
+    assert calls == []
+    result = read_loan_inventory(s, a, scope_current=lambda: active)
+    assert result.status == "failed" and result.reason_code == "scope_changed"
+    assert result.loans == () and calls == [(kind, a)]

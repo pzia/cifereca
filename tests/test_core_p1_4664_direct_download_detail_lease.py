@@ -170,3 +170,68 @@ def test_exact_in_panel_action_precedes_legacy_search_redirect_at_narrow_width(m
     )
     assert priority(inline) == 9
     assert priority(redirect) > priority(inline)
+
+
+def _admitted_legacy_fixture():
+    window, control, jobs, obtained, activity = _fixture()
+    service = window.service
+    item = NS(source_provider="fixture", source_credential="card",
+              source_account_id="borrower")
+    account = NS(identity_id="alice", provider_id="fixture",
+                 credential_id="card", unique_id="borrower")
+    service.accounts_for_identity = lambda identity: [account] if identity == "alice" else []
+    captured = []
+    token = object()
+
+    def prepare(candidate, **scope):
+        captured.append((candidate, scope))
+        return token
+
+    def execute(target):
+        assert target is token
+        obtained.append(item)
+        return NS(path=None, acquisition=NS(action="command"))
+
+    service.capture_confirmed_legacy_search_offer = prepare
+    service.obtain_admitted_legacy_search_offer = execute
+    service.obtain_search_item = lambda *_: pytest.fail("legacy fallback after admission")
+    window.show_error = lambda *args: activity.append(("error", args))
+    return window, control, jobs, obtained, activity, item, captured
+
+
+def test_admitted_legacy_worker_keeps_original_click_across_navigation():
+    w, control, jobs, obtained, activity, item, captured = _admitted_legacy_fixture()
+    dispatch = _method("main_window.py", "download_direct_item", cls="MainWindow")
+    dispatch(w, item, control)
+    assert captured == [(item, dict(identity_id="alice", account_id="borrower", confirmed=True))]
+    assert len(jobs) == 1 and obtained == []
+    # The admitted Core operation, not a GTK widget, now owns its lease.
+    w.service.current_identity = NS(identity_id="bob")
+    w._identity_context_generation += 2
+    control._cifereca_action_context_revoked = True
+    result = jobs[0][0][1]()
+    assert obtained == [item]
+    jobs[0][0][2](result)
+    assert activity == []
+    dispatch(w, item, control)
+    assert len(jobs) == 1
+
+
+@pytest.mark.parametrize("reason", ["ambiguous", "foreign", "refused", "missing_executor"])
+def test_failed_legacy_admission_never_queues_fallback(reason):
+    w, control, jobs, obtained, activity, item, captured = _admitted_legacy_fixture()
+    if reason == "ambiguous":
+        rows = w.service.accounts_for_identity("alice")
+        w.service.accounts_for_identity = lambda _: rows + rows
+    elif reason == "foreign":
+        item.source_account_id = "another"
+    elif reason == "refused":
+        def refuse(*_args, **_kwargs):
+            raise ValueError("PRIVATE")
+        w.service.capture_confirmed_legacy_search_offer = refuse
+    else:
+        w.service.obtain_admitted_legacy_search_offer = None
+    dispatch = _method("main_window.py", "download_direct_item", cls="MainWindow")
+    dispatch(w, item, control)
+    assert jobs == [] and obtained == []
+    assert len(activity) == 1 and "PRIVATE" not in repr(activity)

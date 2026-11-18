@@ -52,6 +52,7 @@ class Manager:
 class Service:
     def __init__(self):
         self.storage = Storage()
+        self.identities = [SimpleNamespace(identity_id="alice")]
         self.accounts = [
             SimpleNamespace(
                 identity_id="alice",
@@ -75,7 +76,7 @@ class Service:
         return provider, credential
 
     def accounts_for_identity(self, identity_id=None):
-        return [row for row in self.accounts if identity_id is None or row.identity_id == identity_id]
+        return [row for row in self.accounts if row.identity_id == identity_id]
 
 
 def test_diagnostics_check_contract_is_structural():
@@ -101,3 +102,45 @@ def test_diagnostics_broker_aggregates_unmasked_plugin_checks():
     failed = next(row for row in rows if row.component == "diagnostics.fail")
     assert failed.status == "error"
     assert failed.detail == {"code": "diagnostic_check_failed"}
+
+
+def test_diagnostic_sources_use_all_registered_profiles_not_navigation():
+    class Headless(Service):
+        @property
+        def current_identity(self):
+            raise AssertionError("navigation is not diagnostic authority")
+
+        @property
+        def current_account(self):
+            raise AssertionError("navigation is not diagnostic authority")
+
+        def accounts_for_identity(self, identity_id=None):
+            assert identity_id in {"alice", "bob"}
+            requested.append(identity_id)
+            return super().accounts_for_identity(identity_id)
+
+    requested = []
+    service = Headless()
+    service.identities.append(SimpleNamespace(identity_id="bob"))
+    service.accounts.append(SimpleNamespace(
+        identity_id="bob", provider_id="paris", credential_id="other-card",
+        unique_id="account-2", display_name="Paris Bob", provider_label="Paris",
+    ))
+    rows = DiagnosticsBrokerImpl(service).active_checks()
+    assert requested == ["alice", "bob"]
+    sources = {row.message: row for row in rows if row.message.startswith("Source ")}
+    assert set(sources) == {"Source Paris Alice", "Source Paris Bob"}
+    assert sources["Source Paris Alice"].status == "ok"
+    assert sources["Source Paris Bob"].status == "warning"
+    assert sources["Source Paris Alice"].check_id != sources["Source Paris Bob"].check_id
+
+
+def test_diagnostic_duplicate_identity_registry_fails_closed():
+    service = Service()
+    service.identities.append(SimpleNamespace(identity_id="alice"))
+    rows = DiagnosticsBrokerImpl(service).active_checks()
+    sources = [row for row in rows if row.check_id == "core.sync.sources"]
+    assert len(sources) == 1
+    assert sources[0].status == "error"
+    assert sources[0].detail == {"code": "sync_sources_unavailable"}
+    assert not any(row.message.startswith("Source ") for row in rows)

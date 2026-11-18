@@ -100,6 +100,10 @@ class ScopedCatalogSearch:
         )
         return [] if summary.cancelled else rows
 
+    def holdings(self, item: Any, **options):
+        """Descriptive availability under this reader's admitted Core scope."""
+        return self.service.holdings_for_scope(self.request_scope, item, **options)
+
     def known_public_notices(self, query: str, **options):
         # Public C is independent of the reader but a revoked computation
         # may not continue with new queries after its source scope is gone.
@@ -1734,7 +1738,22 @@ class DiagnosticsBrokerImpl:
     def active_checks(self) -> tuple[HealthCheckResult, ...]:
         rows: list[HealthCheckResult] = []
         try:
-            sources = SynchronizationBrokerImpl(self.service).sources()
+            # Health checks describe the whole local installation, not the
+            # profile currently displayed in GTK. A missing scope is
+            # deny-empty in LibraryService.accounts_for_identity; enumerate
+            # the registered owners explicitly instead of reporting a false
+            # healthy zero-source inventory.
+            broker = SynchronizationBrokerImpl(self.service)
+            identity_ids = tuple(
+                identity.identity_id for identity in self.service.identities
+            )
+            if (any(type(key) is not str or not key.strip() for key in identity_ids)
+                    or len(set(identity_ids)) != len(identity_ids)):
+                raise ValueError("invalid_diagnostic_identity_inventory")
+            sources = tuple(
+                source for identity_id in identity_ids
+                for source in broker.sources(identity_id)
+            )
             if not sources:
                 rows.append(HealthCheckResult(
                     "core.sync.sources",

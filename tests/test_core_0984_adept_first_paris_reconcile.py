@@ -17,6 +17,9 @@ from tests.test_paris_borrower_adept_binding import service_with_linked_borrower
 
 
 class ParisSession:
+    provider_id = "paris"
+    credential_id = "alice-paris"
+    capabilities = NS(loans=True)
     connected = True
     def __init__(self, loans):
         self.inventory = list(loans)

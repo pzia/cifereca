@@ -21,6 +21,7 @@ from ..providers import ProviderConfigurationError
 from ..plugin_api import BundleError, load_bundle_manifest
 from .local_placement_open_guard import scoped_existing_placement_path
 from .local_cover_evidence import project_verified_local_cover_evidence
+from .loan_display_cache import loan_display_rows
 
 
 def _history_cache_key(account: Account) -> str:
@@ -539,6 +540,16 @@ def _openable_scoped_placement(self, placement: dict[str, Any], *,
         return False
 
 
+def _scoped_loan_display_index(service, identity_id):
+    """Navigation-independent optional metadata; never a possession proof."""
+    by_scope = {}
+    for row in loan_display_rows(service, identity_id):
+        key = (row.identity_id, row.source_provider, row.source_credential,
+               row.source_account_id, str(row.record_id or row.id))
+        by_scope.setdefault(key, []).append(row)
+    return by_scope
+
+
 def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -> list[dict[str, Any]]:
     """Return recent local materializations, newest first.
 
@@ -576,21 +587,7 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
         origin_scopes.setdefault((owner, artifact), set()).add(
             (provider, credential, account, edition, kind)
         )
-    loans_by_scope: dict[tuple[str, str, str, str, str], Loan] = {}
-    for loan in self.last_loans:
-        try:
-            loan_identity = loan.identity_id or self.identity_for_connection(
-                loan.source_provider, loan.source_credential,
-            ).identity_id
-        except Exception:
-            loan_identity = loan.identity_id
-        # None is an unknown borrower, not the empty primary-account ID.
-        if type(loan.source_account_id) is not str or not loan_identity:
-            continue
-        loans_by_scope[(
-            loan_identity, loan.source_provider, loan.source_credential,
-            loan.source_account_id, str(loan.record_id or loan.id),
-        )] = loan
+    loans_by_scope = _scoped_loan_display_index(self, identity_id)
     entitlements_by_scope: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
     for entitlement in self.storage.entitlements():
         key = (
@@ -678,7 +675,8 @@ def recent_acquisitions(self, *, identity_id: str | None=None, limit: int=100) -
             scope_key = (row_identity, source_provider, credential, borrower, edition)
             # A real provider loan cannot decorate a purchase-only OriginLink
             # (and vice versa), even within the same account and edition.
-            loan = loans_by_scope.get(scope_key) if source_kind == "loan" else None
+            matching = loans_by_scope.get(scope_key, ()) if source_kind == "loan" else ()
+            loan = matching[0] if len(matching) == 1 else None
             if loan is not None:
                 value = cover_candidate(
                     loan.thumbnail_url, tier="origin", source="loan",
@@ -1483,9 +1481,7 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
             if type(row) is dict and row.get("entitlement_type") == "loan"
         ),
     )
-    loans_by_key: dict[tuple[str, str, str | None, str], Loan] = {}
-    for loan in self.last_loans:
-        loans_by_key[(loan.source_provider, loan.source_credential, loan.source_account_id, str(loan.record_id or loan.id))] = loan
+    loans_by_key = _scoped_loan_display_index(self, identity_id)
 
     for entitlement in loan_entitlements:
         if not _entitlement_visible_in_library(entitlement):
@@ -1539,10 +1535,13 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
         meta = dict(entitlement.get("metadata") or {})
         # An active loan may share the same edition/account as an owned right;
         # its title, cover and format must not decorate a purchase possession.
-        loan = (loans_by_key.get((
-            provider_id, str(entitlement.get("credential_id") or ""),
-            entitlement.get("account_id"), item_id,
-        )) if entitlement_type == "loan" else None)
+        matching = (loans_by_key.get(exact_scope, ())
+                    if entitlement_type == "loan"
+                    and type(entitlement.get("account_id")) is str else ())
+        expected_loan = entitlement.get("loan_id")
+        if expected_loan:
+            matching = tuple(row for row in matching if row.id == expected_loan)
+        loan = matching[0] if len(matching) == 1 else None
         loan_extra = dict((loan.raw or {}).get("_cifereca") or {}) if loan is not None and isinstance((loan.raw or {}).get("_cifereca"), dict) else {}
         title = str(meta.get("title") or (loan.title if loan else "") or existing.get("title") or item_id)
         author = meta.get("author") or (loan.author if loan else None) or loan_extra.get("author") or existing.get("author")

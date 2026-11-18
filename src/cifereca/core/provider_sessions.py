@@ -1509,7 +1509,9 @@ def _session_for_account(self, account: Account) -> ProviderSession:
     return session
 
 
-def _session_for_source(self, provider_id: str, credential_id: str) -> ProviderSession:
+def _session_for_source(
+    self, provider_id: str, credential_id: str, *, identity_id: str | None = None,
+) -> ProviderSession:
     """Resolve the exact installed source, never enumerate provider-wide accounts.
 
     A credential omitted by a worker is not authority even when a provider
@@ -1519,7 +1521,14 @@ def _session_for_source(self, provider_id: str, credential_id: str) -> ProviderS
     if (type(provider_id) is not str or not provider_id
             or type(credential_id) is not str):
         raise ProviderConfigurationError("source_session_scope_invalid")
-    if not self._provider_enabled_for_identity(provider_id):
+    # The legacy facade may infer a synchronous selection. An admitted
+    # reader always resolves the exact policy without reading navigation.
+    enabled = (
+        self._provider_enabled_for_identity(provider_id)
+        if identity_id is None
+        else self._provider_enabled_for_identity(provider_id, identity_id)
+    )
+    if not enabled:
         raise ProviderConfigurationError(
             f"Provider désactivé ou indisponible: {provider_id}"
         )

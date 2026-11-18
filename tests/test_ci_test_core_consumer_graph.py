@@ -321,3 +321,45 @@ def test_constellations_and_library_audit_fixtures_are_not_test_module_exports()
         for symbol in exports:
             assert "def " + symbol + "(" in helper or "class " + symbol + ":" in helper
         assert all(path.name != helper_name + ".py" for path in tests.glob("test_*.py"))
+
+
+def test_keyword_loaders_are_proven_edges_and_select_transitive_consumers(tmp_path):
+    _write(tmp_path, "tests/test_a.py",
+           'importlib.import_module(name="tests.test_b")')
+    _write(tmp_path, "tests/test_b.py", "VALUE = 1")
+    _write(tmp_path, "src/plugins/a/tests/test_client.py",
+           'pytest.importorskip(modname="tests.test_a")')
+    _write(tmp_path, "src/plugins/b/tests/test_client.py",
+           'runpy.run_path(path_name="tests/test_b.py")')
+    graph = inventory(tmp_path)
+    assert graph["unresolved_dynamic_or_pytest_plugins"] == []
+    assert len(graph["plugin_to_root_direct"]) == 2
+    assert graph["plugin_to_root_transitive"] == [
+        {"consumer": "src/plugins/a/tests/test_client.py", "target": "tests/test_b.py"}
+    ]
+    assert plugin_replay_required(["tests/test_b.py"], tmp_path)
+    assert not plugin_replay_required(["tests/test_unrelated.py"], tmp_path)
+
+
+def test_deleted_transitive_root_fixture_still_requires_plugin_replay(tmp_path):
+    _write(tmp_path, "tests/test_a.py", "from tests.test_b import VALUE\n")
+    _write(tmp_path, "tests/test_b.py", "from tests.test_c import VALUE\n")
+    _write(tmp_path, "tests/test_c.py", "VALUE = 1\n")
+    _write(tmp_path, "src/plugins/p/tests/test_p.py", "from tests.test_a import VALUE\n")
+    assert plugin_replay_required(["tests/test_c.py"], tmp_path)
+    (tmp_path / "tests/test_c.py").unlink()
+    graph = inventory(tmp_path)
+    assert any(edge["consumer"] == "tests/test_b.py"
+               and edge["target_module"] == "tests.test_c"
+               and not edge["resolved"]
+               for edge in graph["root_to_root_direct"])
+    assert plugin_replay_required(["tests/test_c.py"], tmp_path)
+    assert not plugin_replay_required(["tests/test_unrelated.py"], tmp_path)
+
+
+def test_deleted_root_fixture_via_plugin_helper_requires_replay(tmp_path):
+    _write(tmp_path, "tests/test_a.py", "from tests.test_removed import VALUE\n")
+    _write(tmp_path, "src/plugins/p/tests/helpers.py", "from tests.test_a import VALUE\n")
+    _write(tmp_path, "src/plugins/p/tests/test_p.py", "from .helpers import VALUE\n")
+    assert plugin_replay_required(["tests/test_removed.py"], tmp_path)
+    assert not plugin_replay_required(["tests/test_unrelated.py"], tmp_path)

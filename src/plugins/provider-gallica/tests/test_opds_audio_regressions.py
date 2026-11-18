@@ -140,7 +140,7 @@ def test_search_success_is_not_failed_by_diagnostics_sink(tmp_path, monkeypatch)
         lambda request: httpx.Response(404),
         diagnostics=FailingDiagnostics(),
     )
-    item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
+    item = session._parse_feed(RESULTS.encode("utf-8"), "https://gallica.bnf.fr/opds/search")[0]
     monkeypatch.setattr(session, "_search_ebooks", lambda query, page, field: [item])
 
     try:
@@ -159,7 +159,7 @@ def test_partial_search_keeps_valid_branch_when_diagnostics_sink_fails(tmp_path,
         include_audio=True,
         diagnostics=FailingDiagnostics(),
     )
-    item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
+    item = session._parse_feed(RESULTS.encode("utf-8"), "https://gallica.bnf.fr/opds/search")[0]
     monkeypatch.setattr(session, "_search_ebooks", lambda query, page, field: [item])
 
     def fail_audio(query, page, field):
@@ -186,7 +186,7 @@ def test_successful_ebook_download_is_not_failed_by_diagnostics_sink(tmp_path):
         transport=transport,
         diagnostics=FailingDiagnostics(),
     )
-    item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
+    item = session._parse_feed(RESULTS.encode("utf-8"), "https://gallica.bnf.fr/opds/search")[0]
 
     try:
         path, url = session.download_direct(item, tmp_path / "downloads")
@@ -206,7 +206,7 @@ def test_physical_scope_is_explicitly_unsupported_and_epub_download_uses_validat
     try:
         with pytest.raises(ProviderCapabilityError, match="unsupported_scope"):
             session.search("anything", "physical")
-        item = session._parse_feed(RESULTS, "https://gallica.bnf.fr/opds/search")[0]
+        item = session._parse_feed(RESULTS.encode("utf-8"), "https://gallica.bnf.fr/opds/search")[0]
         path, url = session.download_direct(item, tmp_path / "downloads")
         assert path.suffix == ".epub"
         assert path.read_bytes() == epub
@@ -370,5 +370,61 @@ def test_audio_download_success_is_not_failed_by_diagnostics_sink(tmp_path):
         assert playlist.suffix == ".m3u8"
         assert source_url.endswith("bpt6k1279113")
         assert len(list(playlist.parent.glob("*.mp3"))) == 2
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("kind", ("foreign_link", "downgrade_link", "foreign_redirect",
+                                    "foreign_template", "doctype", "html", "oversize"))
+def test_opds_discovery_refusal_never_starts_unverified_or_fallback_get(tmp_path, kind):
+    calls = []
+    def handler(request):
+        calls.append(str(request.url))
+        if kind == "foreign_redirect":
+            return httpx.Response(302, headers={"location": "https://outside.invalid/feed"})
+        if request.url.path == "/opds":
+            body = ROOT_FEED
+            if kind == "foreign_link":
+                body = body.replace(b'/opds-search.xml', b'https://outside.invalid/feed')
+            elif kind == "downgrade_link":
+                body = body.replace(b'/opds-search.xml', b'http://gallica.bnf.fr/feed')
+            elif kind == "doctype":
+                body = ('<!DOCTYPE feed [<!ENTITY hidden "PRIVATE">]>'
+                        '<feed xmlns="http://www.w3.org/2005/Atom"><title>&hidden;</title></feed>').encode("utf-16")
+            elif kind == "html":
+                body = b'<html><body>Sign in</body></html>'
+            elif kind == "oversize":
+                body = b' ' * (2 * 1024 * 1024 + 1)
+            return httpx.Response(200, content=body)
+        if kind == "foreign_template" and request.url.path == "/opds-search.xml":
+            return httpx.Response(200, content=OPEN_SEARCH.replace(
+                b'https://gallica.bnf.fr/opds/search', b'https://outside.invalid/search'))
+        pytest.fail("unverified or fallback GET")
+    session = _session(tmp_path, handler)
+    try:
+        with pytest.raises(ProviderError, match="invalid_opds_feed|unverified_navigation"):
+            session._search_ebooks("bruyere", 0, "all")
+        assert len(calls) == (2 if kind == "foreign_template" else 1)
+        assert all(url.startswith("https://gallica.bnf.fr/") for url in calls)
+    finally:
+        session.close()
+
+
+def test_opds_same_origin_redirect_and_configured_fallback(tmp_path):
+    calls = []
+    def handler(request):
+        calls.append(request.url.path)
+        if request.url.path == "/opds":
+            return httpx.Response(302, headers={"location": "/opds-root"})
+        if request.url.path == "/opds-root":
+            return httpx.Response(200, content=b'<feed xmlns="http://www.w3.org/2005/Atom"/>')
+        if request.url.path == "/services/engine/search/opds":
+            return httpx.Response(200, content=RESULTS.encode("utf-8"))
+        pytest.fail("unexpected GET")
+    session = _session(tmp_path, handler)
+    try:
+        rows = session._search_ebooks("bruyere", 0, "all")
+        assert len(rows) == 1
+        assert calls == ["/opds", "/opds-root", "/services/engine/search/opds"]
     finally:
         session.close()

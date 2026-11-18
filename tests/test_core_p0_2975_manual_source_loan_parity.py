@@ -16,6 +16,7 @@ from cifereca.core.diagnostic_source_sync import public_log_fields, log_message
 from cifereca.models import Account, Loan
 from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
 from cifereca.providers import ProviderConfigurationError
+from cifereca.services import _loan_cache_key
 from tests.test_sync_state_contract import _service
 
 
@@ -81,8 +82,14 @@ def test_explicit_source_persists_exact_positive_loan_without_acquisition(
         other_loan = _loan(credential="other-cred", borrower="foreign", identity="alex",
                            item="other-edition")
         service._persist_active_loans("alex", [other_loan])
+        calls = []
+        original = session.loans
+        session.loans = lambda selected: calls.append(selected) or original(selected)
+        monkeypatch.setattr(service, "_loans_for_account",
+                            lambda *_a, **_kw: pytest.fail("legacy Core read"))
         result = service.synchronize_account_source(primary)
         assert result["loans"] == 1 and result["status"] == "partial"
+        assert service.storage.cache_get("account", _loan_cache_key(primary)) is not None
         row = _right(service, "primary", "edition")
         assert row["entitlement_type"] == "loan"
         assert row["loan_id"] == "loan-edition" and row["state"] == "active"
@@ -99,6 +106,7 @@ def test_explicit_source_persists_exact_positive_loan_without_acquisition(
         assert service.synchronize_account_source(primary)["loans"] == 0
         assert _right(service, "primary", "edition")["state"] == "active"
         assert _right(service, "foreign", "other-edition")["state"] == "active"
+        assert calls == [primary, primary, primary]
         assert PRIVATE not in service.diagnostics.text("test")
     finally:
         service.close()
@@ -169,6 +177,7 @@ def test_manual_source_rejects_mixed_or_stale_account_before_rights_write(
         with pytest.raises(ProviderConfigurationError):
             service.synchronize_account_source(primary)
         assert not service.storage.entitlements(provider_id="paris")
+        assert service.storage.cache_get("account", _loan_cache_key(primary)) is None
         assert not service.storage.acquisitions()
         assert not service.storage.placements()
     finally:

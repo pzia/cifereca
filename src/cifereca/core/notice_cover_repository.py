@@ -313,7 +313,7 @@ def _persist_notice_cover_txn(
     field_path: tuple[str, ...],
     cover_inventory_complete: bool,
     expected_epoch: int | None,
-) -> PersistedNoticeCover:
+) -> PersistedNoticeCover | None:
     """One exact source update inside the caller's locked SQLite transaction.
 
     Shared by the one-source CAS writer and the bounded batched Core search
@@ -338,6 +338,20 @@ def _persist_notice_cover_txn(
                     and expected_epoch is None
                     and (qualified or proof != fence["proof"]))):
             raise ValueError("notice_c_persisted_stale_source")
+        # A newer changed incomplete observation cannot reconstruct the
+        # evicted proof. In particular it would shadow the retained complete
+        # C in exact-source lookup and search merely because a parser omitted
+        # an image. Keep the row absent (unknown) and advance ONLY freshness.
+        # The digest also recognizes an exact replay of an originally pending
+        # proof without adding a second source body or a schema field.
+        if not attribute.snapshot_complete and proof != fence["proof"]:
+            if observation.observed_at > fence["last_seen_at"]:
+                _write_source_fence(
+                    db, key, epoch=previous_epoch,
+                    seen_at=observation.observed_at, proof=fence["proof"],
+                    evicted=qualified,
+                )
+            return None
     elif expected_epoch is not None and expected_epoch != previous_epoch:
         raise ValueError("notice_c_persisted_epoch_changed")
     if previous is not None:
@@ -422,7 +436,7 @@ def persist_notice_cover(
     field_path: tuple[str, ...],
     cover_inventory_complete: bool,
     expected_epoch: int | None = None,
-) -> PersistedNoticeCover:
+) -> PersistedNoticeCover | None:
     """Persist one *already parsed and admitted* exact Notice C source.
 
     The caller is an authorized Core producer, not GTK or a cache HIT.
@@ -432,6 +446,9 @@ def persist_notice_cover(
     is idempotent on a live row. The compact fence survives source eviction:
     a fresh admitted no-CAS publication starts a strictly newer generation;
     an old CAS or changed same-second proof cannot recreate the row.
+    A changed partial proof after eviction returns None: the watermark
+    advances, no observation is recreated and the retained C stays readable.
+    A complete admitted observation can subsequently rehydrate the source.
     """
     attribute = project_notice_cover_attribute(
         observation, field_path=field_path,

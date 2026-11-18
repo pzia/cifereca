@@ -51,8 +51,10 @@ def _fixture(monkeypatch):
     service = NS(
         current_identity=NS(identity_id="alice"), storage=storage,
         _session_for_source=lambda *args: session,
-        holdings=lambda *args, **kw: calls.append((args, kw)) or detail,
+        holdings_for_scope=lambda scope, *args, **kw: calls.append((args, kw)) or detail,
     )
+    registered = service.current_identity
+    service.identity_by_id = lambda key: registered if key == "alice" else None
     def submit(*args, **kwargs):
         scheduled.append((args, kwargs))
     window = NS(
@@ -516,3 +518,23 @@ def test_plugin_panel_redraw_revokes_unstarted_exact_holdings_without_get(
     failure(RuntimeError("old provider response"))
     assert f.calls == [] and f.outputs == []
     assert events
+
+
+def test_dispatch_passes_original_reader_scope_and_rejects_replaced_core(monkeypatch):
+    f = _fixture(monkeypatch)
+    work, success, failure = _start(f)
+    received = []
+    def scoped(scope, item, query, **options):
+        assert scope.current(f.service)
+        assert scope.identity_id == "alice"
+        received.append((item, query, options))
+        return f.detail
+    f.service.holdings_for_scope = scoped
+    assert work() is f.detail
+    assert received == [(f.item, "Titre exact", {"force": False})]
+    f.window.service = NS(**vars(f.service))
+    success(f.detail)
+    failure(RuntimeError("late"))
+    assert f.outputs == []
+    with pytest.raises(Cancelled):
+        work()

@@ -347,7 +347,7 @@ def test_ui_click_queues_once_and_confirms_through_real_core_and_adapter(tmp_pat
 
 
 @pytest.mark.parametrize("change", ["selection", "identity", "notice", "epoch"])
-def test_ui_change_before_queued_work_creates_no_claim(tmp_path, change):
+def test_ui_navigation_preserves_admitted_work_but_notice_mutation_revokes(tmp_path, change):
     service, session, account, item, state = setup(tmp_path)
     try:
         window, errors, messages, refreshes = view(service, session, account, item)
@@ -362,9 +362,15 @@ def test_ui_change_before_queued_work_creates_no_claim(tmp_path, change):
             item.title = "Other title"
         else:
             service._account_context_epoch += 2
-        assert window.runner.complete_one()["status"] == "blocked"
-        assert state["calls"] == []
-        assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
+        outcome = window.runner.complete_one()
+        if change == "notice":
+            assert outcome["status"] == "blocked"
+            assert state["calls"] == []
+            assert service.storage.metadata_get(borrow_claim_key(account, item)) is None
+        else:
+            assert outcome["status"] == "confirmed"
+            assert state["mutations"] == 1
+            assert service.storage.loan_borrow_state(borrow_claim_key(account, item))["status"] == "confirmed"
         assert messages == refreshes == []
     finally:
         service.close()
@@ -606,5 +612,69 @@ def test_paris_post_confirmation_distinguishes_initial_acsm_from_inventory(
             assert state["mutations"] == 1
         else:
             assert outcome["status"] == "confirmed" and outcome["provider_verified"] is True
+    finally:
+        service.close()
+
+
+def test_confirmed_manual_borrow_for_explicit_reader_ignores_navigation(tmp_path):
+    from cifereca.core.manual_borrow_contract import prepare_confirmed_manual_borrow
+    service, session, account, item, state = setup(tmp_path, result="no-acsm")
+    try:
+        service.select_identity("alex")
+        work = prepare_confirmed_manual_borrow(
+            service, item, identity_id="default", account_id="", confirmed=True,
+        )
+        assert callable(work)
+        assert not state["calls"] and not state["mutations"]
+        service._account_context_epoch += 2
+        assert work()["status"] == "confirmed"
+        assert work()["reason_code"] == "borrow_confirmation_consumed"
+        assert state["mutations"] == 1
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("change", ["source", "account", "reader", "metadata", "edition"])
+def test_confirmed_manual_borrow_scope_revoked_before_claim(tmp_path, change):
+    from cifereca.core.manual_borrow_contract import prepare_confirmed_manual_borrow
+    service, session, account, item, state = setup(tmp_path, result="no-acsm")
+    key = borrow_claim_key(account, item)
+    try:
+        work = prepare_confirmed_manual_borrow(
+            service, item, identity_id="default", account_id="", confirmed=True,
+        )
+        assert callable(work)
+        if change == "source":
+            service._source_context_epoch += 1
+        elif change == "account":
+            service.accounts = [replace(account)]
+        elif change == "reader":
+            original = service.identity_by_id("default")
+            service.identities = [replace(i) if i is original else i for i in service.identities]
+        elif change == "metadata":
+            item.metadata["catalogue_access"] = "shared_read_only"
+        else:
+            item.record_id = "foreign"
+        assert work()["status"] == "blocked"
+        assert not state["calls"] and not state["mutations"]
+        assert service.storage.loan_borrow_state(key) is None
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("identity,account_id,confirmed", [
+    ("alex", "", True), ("default", "foreign", True),
+    ("default", "", False), ("default", "", 1),
+])
+def test_manual_borrow_explicit_scope_rejects_wrong_owner_or_unconfirmed(
+    tmp_path, identity, account_id, confirmed,
+):
+    from cifereca.core.manual_borrow_contract import prepare_confirmed_manual_borrow
+    service, session, account, item, state = setup(tmp_path)
+    try:
+        assert prepare_confirmed_manual_borrow(
+            service, item, identity_id=identity, account_id=account_id, confirmed=confirmed,
+        ) is None
+        assert not state["calls"] and not state["mutations"]
     finally:
         service.close()

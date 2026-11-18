@@ -178,6 +178,16 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
         self._search_generation,
     ):
         return
+    request_scope = None
+    if force:
+        from ..core.search_orchestration import capture_search_read_scope
+        try:
+            request_scope = capture_search_read_scope(request_core, request_identity)
+        except ValueError:
+            self.toast("Contexte lecteur indisponible")
+            return
+    identity_generation = getattr(self, "_identity_context_generation", None)
+    account_generation = getattr(self, "_account_context_generation", None)
     self._search_generation += 1
     # A previous Search result must not remain navigable from a plugin while
     # the next request is pending, even if both use the same query text.
@@ -186,6 +196,7 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     identity_id = request_identity
     # Never reuse source verdicts across requests, accounts or generations.
     self._online_source_statuses = {}
+    self._online_search_warnings = ()
     self._online_source_context = (
         (state.text, state.field, state.scope, identity_id) if force else None
     )
@@ -195,8 +206,7 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     if response_facets is not None:
         response_facets.begin(self._online_source_context)
     def admitted_core_current():
-        # Core-owned, thread-safe cancellation lease; no GTK/widget reads.
-        # Source account rebind and A→B→A revoke remote supplier I/O.
+        # Navigation only controls GTK delivery, never the admitted worker.
         return (
             getattr(request_core, "current_identity", None) is admitted_identity
             and getattr(request_core, "_account_context_epoch", None) == admitted_account_epoch
@@ -205,7 +215,10 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     def current():
         if (getattr(self, "_closed", False)
                 or self.service is not request_core
-                or not admitted_core_current()):
+                or not admitted_core_current()
+                or getattr(self, "_identity_context_generation", None) != identity_generation
+                or getattr(self, "_account_context_generation", None) != account_generation
+                or (request_scope is not None and not request_scope.current(request_core))):
             return False
         identity = getattr(getattr(request_core, "current_identity", None), "identity_id", None)
         live_state = self.search_controls.state()
@@ -321,23 +334,24 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
         return False
     def on_batch(batch):
         GLib.idle_add(deliver_batch, batch)
-    def done(summary):
+    def done(result):
         clear_pending()
         if not current(): return
-        request_core.last_search_warnings = list(summary.warnings)
-        # Batch delivery is progressive; the final render only reconciles
-        # ranking/deduplication with the authoritative aggregate.
-        self._remote_search_results = merge_results(self._remote_search_results, list(request_core.last_search))
+        summary, rows = result
+        if summary.cancelled:
+            return
+        self._online_search_warnings = tuple(summary.warnings)
+        # Final ranking and exact deduplication belong to this request only.
+        self._remote_search_results = list(rows)
         self._populate_search(self._remote_search_results, announce=True)
     class AdmittedSearchControl:
         def cancelled(self):
-            return not admitted_core_current()
+            return not request_scope.current(request_core)
 
     def online_work():
-        # search_progressive captures current_identity when it starts, not
-        # when this GUI task is enqueued. Refuse a moved account before it can
-        # issue a private GET; Core rechecks this lease before each provider.
-        if not admitted_core_current():
+        # The registered reader/source epoch was captured before enqueue.
+        # A real revocation stops I/O; GTK A→B→A only drops publication.
+        if not request_scope.current(request_core):
             from ..plugin_api import Cancelled
             raise Cancelled("Recherche en ligne périmée")
         # #6366: C-first online extension without a second search engine.
@@ -366,13 +380,14 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
                 # The ordinary remote extension remains available when the
                 # bounded C cursor cannot be read. Never print raw DB data.
                 page = None
-            if page is not None and admitted_core_current():
+            if page is not None and request_scope.current(request_core):
                 GLib.idle_add(deliver_known_c, page)
-        if not admitted_core_current():
+        if not request_scope.current(request_core):
             from ..plugin_api import Cancelled
             raise Cancelled("Recherche en ligne périmée")
         return progressive_online_search(
             request_core, state, on_batch, control=AdmittedSearchControl(),
+            request_scope=request_scope,
         )
 
     self.runner.submit("Recherche en ligne…", online_work, done, failed,

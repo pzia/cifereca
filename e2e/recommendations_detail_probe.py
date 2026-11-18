@@ -1282,7 +1282,9 @@ def main():
         service.availability_display_label = (
             lambda _item, _detail: "Disponible"
         )
-        service.identities = [NS(identity_id="alice", label="Alice")]
+        service.identities = [service.current_identity]
+        service.current_identity.label = "Alice"
+        service.identity_by_id = lambda key: service.identities[0] if key == "alice" else None
         service.local_placement_for_source = lambda **_kw: None
         window._add_catalogue_action = lambda *_a: None
         window._identity_context_generation = 8
@@ -1300,9 +1302,28 @@ def main():
             MainWindow.download_direct_item.__get__(window)
         )
         window._activity_result = state["in_place_activity"].append
-        service.obtain_search_item = lambda item: (
-            state["in_place_obtain"].append(item) or
-            NS(path=None, acquisition=NS(action="command"))
+        legacy_account = NS(identity_id="alice", provider_id="fixture",
+                            credential_id="fixture-public", unique_id="fixture-account")
+        service.accounts_for_identity = lambda identity: (
+            [legacy_account] if identity == "alice" else []
+        )
+        admitted_items = {}
+        def capture_legacy(item, *, identity_id, account_id, confirmed):
+            assert (identity_id, account_id, confirmed) == ("alice", "fixture-account", True)
+            assert item is state["in_place_item"]
+            assert not state["in_place_obtain"]
+            mandate = object()
+            admitted_items[mandate] = item
+            return mandate
+
+        def execute_legacy(mandate):
+            state["in_place_obtain"].append(admitted_items.pop(mandate))
+            return NS(path=None, acquisition=NS(action="command"))
+
+        service.capture_confirmed_legacy_search_offer = capture_legacy
+        service.obtain_admitted_legacy_search_offer = execute_legacy
+        service.obtain_search_item = lambda *_: (_ for _ in ()).throw(
+            AssertionError("old acquisition fallback reached")
         )
         window.runner = NS(submit=lambda *a, **kw:
                            state["in_place_jobs"].append((a, kw)))
@@ -1327,9 +1348,11 @@ def main():
         state["in_place_item"] = item
         state["in_place_detail"] = detail
         service.can_direct_download = lambda candidate: candidate is item
-        service.holdings = lambda candidate, _query, *, force=False: (
-            state["in_place_holdings"].append(candidate) or detail
-        )
+        def holdings_for_scope(scope, candidate, _query, *, force=False):
+            assert scope.current(service) and scope.identity_id == "alice"
+            return state["in_place_holdings"].append(candidate) or detail
+
+        service.holdings_for_scope = holdings_for_scope
         window._loaded_search_context = (
             "édition", "title", "all", "alice",
         )

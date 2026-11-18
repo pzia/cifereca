@@ -11,7 +11,9 @@ from pathlib import Path
 from inspect import getattr_static, isfunction
 from ..models import Loan
 from ..plugin_api import ProviderConfigurationError
-from .loan_action_scope import LoanActionScopeLease, capture_loan_action_scope
+from .loan_action_scope import (
+    LoanActionScopeLease, _ConfirmedStageAttempt, capture_loan_action_scope,
+)
 from .selected_offer_scope import selected_offer_scope_matches
 from .loan_acsm_token_validation import (
     MAX_LOAN_TOKEN_BYTES as _MAX_BYTES,
@@ -57,6 +59,13 @@ def stage_explicit_loan_acsm(
     observe_phase('source_scope')
     if not active_identity():
         _refuse(error_codes["scope"])
+    # Scoped read authority is not staging consent. Consume the separate
+    # confirmed attempt before the lock: even a failed attempt requires a
+    # new confirmation. Historic GTK leases retain their existing behavior.
+    if (admitted_lease is not None and admitted_lease._reader_scope is not None
+            and (type(admitted_lease._stage_attempt) is not _ConfirmedStageAttempt
+                 or not admitted_lease._stage_attempt.claim())):
+        _refuse(error_codes["confirmation"])
     try:
         with interprocess_lock(lock_path()):
             if not active_identity():
