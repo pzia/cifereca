@@ -16,6 +16,7 @@ from threading import Lock
 
 from ..core.book_cover_projection import CoverDocumentScope
 from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
+from ..core.notice_c_local_origin_projection import VerifiedLocalPublicCLink
 from .document_cover_service import CoverSourceSnapshot, DocumentCoverService
 
 
@@ -35,6 +36,7 @@ class LocalCoverEvidenceAdapter:
         self._lock = Lock()
         self._issued = 0
         self._closed = False
+        self._audit_binding = None
         self._known: OrderedDict[
             CoverDocumentScope, tuple[VerifiedLocalCoverEvidence, int]
         ] = OrderedDict()
@@ -89,6 +91,43 @@ class LocalCoverEvidenceAdapter:
                 self._known.popitem(last=False)
             return facts.scope
 
+    def bind_audit_observer(self, owner, covers: DocumentCoverService) -> None:
+        """Bind on the GUI owner thread; close detaches only this binding."""
+        with self._lock:
+            if self._closed or self._audit_binding is not None:
+                raise RuntimeError("local cover observer already bound or closed")
+            def observe(packet):
+                return self.observe_audit_packet(covers, packet)
+            self._audit_binding = (owner, observe)
+            owner._documentary_cover_observer = observe
+
+    def observe_audit_packet(self, service: DocumentCoverService, packet):
+        """Exact existing publication only; never register a new snapshot."""
+        with self._lock:
+            if self._closed:
+                return None
+        probe = getattr(service, "observe_cover_for_audit", None)
+        if not callable(probe):
+            return None
+        if type(packet) is VerifiedLocalPublicCLink:
+            # Core validated the retained C link/epoch before this call.
+            result = probe(packet.document, expected_revision=packet.epoch)
+            with self._lock:
+                if self._closed:
+                    return None
+        elif type(packet) is VerifiedLocalCoverEvidence:
+            with self._lock:
+                known = self._known.get(packet.scope)
+                if self._closed or known is None or known[0] != packet:
+                    return None
+            result = probe(packet.scope, expected_revision=known[1])
+            with self._lock:
+                if self._closed or self._known.get(packet.scope) != known:
+                    return None
+        else:
+            return None
+        return result.n2_status, result.n2_tier, result.n3_status
+
     def stats(self) -> dict[str, int]:
         with self._lock:
             return {"sources": len(self._known)}
@@ -97,6 +136,11 @@ class LocalCoverEvidenceAdapter:
         with self._lock:
             self._closed = True
             self._known.clear()
+            binding, self._audit_binding = self._audit_binding, None
+            if binding is not None:
+                owner, observer = binding
+                if getattr(owner, "_documentary_cover_observer", None) is observer:
+                    owner._documentary_cover_observer = None
 
 
 __all__ = ["LocalCoverEvidenceAdapter"]

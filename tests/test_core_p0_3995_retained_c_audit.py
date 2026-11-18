@@ -78,6 +78,32 @@ def test_retained_documentary_audit_keeps_n1_separate_from_n3(tmp_path):
         # No N2 registered document, image fetch, path or URI in this result.
         assert A_URL not in repr(result) and B_URL not in repr(result)
         assert "n2" not in result and "n3" not in result
+        calls = []
+        def observe(packet):
+            assert packet == link
+            calls.append(packet)
+            return "selected", "catalog", "signature_valid"
+        service._documentary_cover_observer = observe
+        runtime = broker.library_cover_audit(identity_id="A")
+        assert runtime["catalog"] == runtime["n2"]["catalog"] == 1
+        assert runtime["n3"]["signature_valid"] == 1 and calls == [link]
+        service._documentary_cover_observer = lambda packet: (
+            "selected", "catalog", "digest_valid"
+        )
+        runtime = broker.library_cover_audit(identity_id="A")
+        assert runtime["n2"]["catalog"] == runtime["n3"]["unknown"] == 1
+        service._documentary_cover_observer = observe
+        rows[0] = {**row, "_public_canonical_cover_link": replace(link, epoch=link.epoch + 1)}
+        runtime = broker.library_cover_audit(identity_id="A")
+        assert runtime["unknown"] == runtime["n2"]["unknown"] == runtime["n3"]["unknown"] == 1
+        assert calls == [link]
+        rows[0] = row
+        rows[:] = [row] * 130
+        runtime = broker.library_cover_audit(identity_id="A")
+        assert runtime["entries"] == 130
+        assert runtime["n2"]["catalog"] == runtime["n3"]["signature_valid"] == 128
+        assert runtime["n2"]["unknown"] == runtime["n3"]["unknown"] == 2
+        rows[:] = [row]
         rows[0] = {**row, "_public_canonical_cover_link": replace(link, identity_id="B")}
         assert audit()["unknown"] == 1
         rows[0] = {**row, "_public_canonical_cover_link": replace(link, epoch=link.epoch + 1)}

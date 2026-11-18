@@ -59,6 +59,20 @@ class KnownPublicNoticeBroker(Protocol):
 
 
 @runtime_checkable
+class LibraryCoverAuditBroker(Protocol):
+    """Optional read-only worker facet of the catalog broker (#3995).
+
+    Schema 2: status partial/unavailable, entries, N1 counters
+    embedded/origin/catalog/ambiguous/missing/unknown, independent n2
+    (same counters plus pending), and n3 (digest_valid, signature_valid,
+    not_validated, not_applicable, unknown). Each level sums to entries.
+    No population/download, no rights, no cross-identity traversal.
+    Unobserved entries (including the bounded probe limit) are unknown.
+    """
+    def library_cover_audit(self, *, identity_id: str) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
 class CatalogueSourceInventoryBroker(Protocol):
     """Optional additive read-only facet on the existing catalog broker.
 
