@@ -1151,6 +1151,11 @@ def main() -> int:
         search_paris("camille")
 
     def finish():
+        if args.matched_display and args.width == 1366 and args.appearance is None:
+            from page_lifecycle_witness import verify_page_lifecycle
+            verify_page_lifecycle(window, Gtk)
+            assert paris["camille"].borrow_calls == paris["alex"].borrow_calls == 0
+            result["checks"]["P0_4010_native_page_lifecycle"] = True
         result["status"] = "PASS"
         result["duration_seconds"] = round(monotonic() - started, 2)
         result["before"] = baseline
