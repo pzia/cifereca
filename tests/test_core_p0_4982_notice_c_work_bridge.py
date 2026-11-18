@@ -184,3 +184,59 @@ def test_expiry_during_publication_rolls_back_and_preserves_reclaim(tmp_path):
     finally:
         broker.close()
         storage.close()
+
+
+
+def test_exhausted_retry_returns_terminal_receipt_not_retryable(tmp_path):
+    from time import monotonic
+    storage = Storage(tmp_path / "exhausted.sqlite")
+    budget = SharedTaskAdmission(max_inflight=4, reserve_user_slots=1)
+    broker = TaskBrokerImpl(object(), max_workers=1, shared_admission=budget)
+    now = [1]
+    calls = []
+
+    def prepare(_spec, _control):
+        calls.append(now[0])
+        def refused(db):
+            publish(db)
+            return False
+        return PreparedAggregate(refused)
+
+    bridge = AggregateWorkBridge(storage, broker, prepare, clock=lambda: now[0])
+
+    def submit():
+        # Completion notification may precede release of broker admission
+        # and the bridge's exact-reference dedup entry.
+        deadline = monotonic() + 5
+        while monotonic() < deadline:
+            handle = bridge.submit(ref)
+            if handle is not None:
+                return handle.result(timeout=5)
+            Event().wait(.005)
+        pytest.fail("broker did not release completed job")
+
+    try:
+        ref = enqueue(storage, aggregate())
+        for attempt, due in ((1, 2), (2, 6)):
+            assert submit() == "transient_failure"
+            receipt = journal.read_job(storage, ref)
+            assert (receipt.state, receipt.attempts, receipt.due, receipt.reason) == (
+                "pending", attempt, due, "transient",
+            )
+            assert storage.metadata_get("synthetic-aggregate-publication") is None
+            assert submit() == "not_ready"
+            now[0] = due
+        assert submit() == "error"
+        exhausted = journal.read_job(storage, ref)
+        assert (exhausted.state, exhausted.attempts, exhausted.reason, exhausted.lease_until) == (
+            "error", 3, "exhausted", 0,
+        )
+        now[0] += 100
+        assert submit() == "not_ready"
+        assert journal.read_job(storage, ref) == exhausted
+        assert calls == [1, 2, 6]
+        assert storage.metadata_get("synthetic-aggregate-publication") is None
+        assert storage.entitlements() == [] and storage.acquisitions() == []
+    finally:
+        broker.close()
+        storage.close()

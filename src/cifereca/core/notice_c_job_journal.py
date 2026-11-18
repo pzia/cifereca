@@ -344,6 +344,7 @@ def release_unsubmitted_job(storage, lease, *, now):
 
 
 def fail_job(storage, lease, *, now, transient):
+    """Return the immutable failure receipt only after its durable commit."""
     if type(transient) is not bool:
         raise ValueError("notice_work_invalid_failure")
     with storage._lock, storage._connect() as db:
@@ -359,6 +360,7 @@ def fail_job(storage, lease, *, now, transient):
             updated = replace(job, state="error", lease_until=0,
                               reason="exhausted" if transient else "permanent")
         _save(db, updated)
+    return updated
 
 
 def _complete_job_txn(db, lease, *, now):

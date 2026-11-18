@@ -127,14 +127,16 @@ class AggregateWorkBridge:
 
     def _fail(self, lease, *, transient):
         try:
-            journal.fail_job(
+            receipt = journal.fail_job(
                 self._storage, lease, now=self._clock(), transient=transient,
             )
         except ValueError:
             # Replaced generation, lost lease or dependency: never mutate
             # whichever newer attempt owns the coordinate now.
             return "obsolete"
-        return "transient_failure" if transient else "error"
+        # A transient cause can exhaust the attempt budget. Use the
+        # committed receipt, not the cause or a second racy journal read.
+        return "transient_failure" if receipt.state == "pending" else "error"
 
     def _run(self, ref, control):
         control.check_cancelled()
