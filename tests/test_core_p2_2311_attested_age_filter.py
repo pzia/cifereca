@@ -145,3 +145,36 @@ def test_no_scan_or_network_and_bounded_input_inventory():
     assert attested_age_status(book("large", ages=[statement(8, 12)] * 33), 9) == "unknown"
     assert attested_age_status(book("item", ages=[statement(8, 12)]), True) == "unknown"
     assert attested_age_status(book("item", ages=[statement(8, 12)]), 18) == "unknown"
+
+
+@pytest.mark.parametrize("aliases", [
+    {"source_provider": "other"},
+    {"record_id": "foreign-edition"},
+    {"source_provider": True},
+    {"record_id": ["edition"]},
+    {"provider_id": "bnf\n", "source_provider": "bnf\n"},
+])
+def test_conflicting_or_malformed_row_coordinates_are_unknown(aliases):
+    row = book("edition", ages=[statement(8, 12)])
+    row.update(aliases)
+    assert attested_age_status(row, 9) == "unknown"
+
+
+@pytest.mark.parametrize("aliases", [
+    {"source_provider": "other"},
+    {"record_id": "foreign-edition"},
+    {"source_provider": "bnf", "record_id": False},
+])
+def test_conflicting_statement_aliases_are_not_attested(aliases):
+    row = book("edition", ages=[{**statement(8, 12), **aliases}])
+    assert attested_age_status(row, 9) == "unknown"
+
+
+def test_exact_aliases_and_legacy_absent_aliases_remain_compatible():
+    row = book("edition", ages=[{
+        **statement(8, 12), "source_provider": "bnf", "record_id": "edition",
+    }])
+    row.update(source_provider="bnf", record_id="edition")
+    assert attested_age_status(row, 9) == "match"
+    row.update(provider_id=None, item_id="")
+    assert attested_age_status(row, 9) == "match"

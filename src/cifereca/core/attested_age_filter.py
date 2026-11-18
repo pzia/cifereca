@@ -17,11 +17,19 @@ _MAX_SOURCE_RANGES = 32
 
 
 def _native_identifier(row: Mapping[str, Any], names: tuple[str, ...]) -> str:
+    # Both legacy and current names can coexist in a projected row.
+    # A contradiction or malformed nonempty alias is not exact evidence.
+    selected = ""
     for name in names:
         value = row.get(name)
-        if type(value) is str and value and len(value) <= 256:
-            return value
-    return ""
+        if value is None or (type(value) is str and not value):
+            continue
+        if (type(value) is not str or len(value) > 256
+                or not value.strip() or not value.isprintable()
+                or (selected and value != selected)):
+            return ""
+        selected = value
+    return selected
 
 
 def attested_age_ranges(row: Mapping[str, Any]) -> tuple[YouthAgeRange, ...]:
@@ -70,12 +78,15 @@ def attested_age_ranges(row: Mapping[str, Any]) -> tuple[YouthAgeRange, ...]:
             continue
         # Embedded source/edition provenance must never contradict the
         # surrounding already-identified bibliographic edition.
-        declared_provider = record.get("provider_id")
-        declared_edition = record.get("item_id")
-        if (declared_provider is not None
-            and (type(declared_provider) is not str or declared_provider != provider)
-        ) or (declared_edition is not None
-              and (type(declared_edition) is not str or declared_edition != edition)):
+        if any(
+            record.get(name) is not None
+            and (type(record[name]) is not str or record[name] != expected)
+            for names, expected in (
+                (("provider_id", "source_provider"), provider),
+                (("item_id", "record_id"), edition),
+            )
+            for name in names
+        ):
             continue
         kind = record.get("age_kind")
         low, high = record.get("age_min"), record.get("age_max")
