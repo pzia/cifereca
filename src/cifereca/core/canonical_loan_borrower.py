@@ -29,9 +29,9 @@ def pin_borrower(service, source):
     def resolve():
         if not lease.current(storage, loan):
             raise ValueError("canonical_delivery_borrower_source_changed")
-        # Historical facade name only: this is the generic v16 grant resolver.
+        # Use the neutral v16 grant boundary, not the historical facade.
         try:
-            owner, reason = service._paris_adept_identity_for_loan(
+            owner, reason = service.resolve_adept_borrower_for_loan(
                 loan, connection_identity_id=scope.identity_id,
             )
         except Exception:
