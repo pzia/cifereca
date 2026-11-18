@@ -99,3 +99,37 @@ def test_non_gallica_urls_are_not_published_as_document_links():
     )[0]
 
     assert row.metadata["document_links"] == []
+
+
+def test_bibliographic_ark_must_be_exact_and_from_catalogue_general():
+    # The parser never builds a BnF fiche from a substring of a foreign
+    # URL, a signed/qualified link, or from unrelated descriptive text.
+    ark = "ark:/12148/cb100000006f"
+    invalid = (
+        f"https://other.example.org/{ark}",
+        f"https://catalogue.bnf.fr/{ark}?token=secret",
+        f"https://catalogue.bnf.fr/{ark}/extra",
+        f"prefix {ark} suffix",
+        f"https://catalogue.bnf.fr@other.example.org/{ark}",
+        f"https://catalogue.bnf.fr/{ark}#section",
+    )
+    for value in invalid:
+        assert _parse(f"<dc:dc><dc:identifier>{value}</dc:identifier>"
+                      "<dc:title>Titre</dc:title></dc:dc>") == []
+    for value in (ark, f"http://catalogue.bnf.fr/{ark}",
+                  f"https://catalogue.bnf.fr/{ark}"):
+        row, = _parse(f"<dc:dc><dc:identifier>{value}</dc:identifier>"
+                      "<dc:title>Titre</dc:title></dc:dc>")
+        assert row.record_id == ark
+        assert row.friendly_url == f"https://catalogue.bnf.fr/{ark}"
+        assert row.download_url is None
+
+
+def test_competing_exact_record_arks_refuse_ambiguous_sru_row():
+    import pytest
+    ark = "ark:/12148/cb100000006f"
+    other = "ark:/12148/cb100000007g"
+    with pytest.raises(mod.ProviderError, match="ambiguous_record_identifier"):
+        _parse(_dc(ark=ark, identifiers=(other,)))
+    row, = _parse(_dc(ark=ark, identifiers=(ark, f"https://catalogue.bnf.fr/{ark}")))
+    assert row.record_id == ark
