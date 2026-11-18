@@ -133,3 +133,78 @@ def test_public_c_precedes_viewer_mirror_even_on_later_page(tmp_path, monkeypatc
         assert page(db).results[0].record_id == "durable"
     finally:
         db.close()
+
+
+def test_federated_outage_uses_retained_c_not_mirror(tmp_path, monkeypatch):
+    """Actual orchestration: one failed request, retained C, healthy source."""
+    import time
+    import httpx
+    from cifereca.core.notice_c_cover_index import persist_consolidated_cover_source
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import persist
+    from tests.test_core043_progress_cache_stats import _service, _FakeSession
+
+    service = _service(tmp_path)
+    try:
+        now = int(time.time())
+        source = persist(service.storage, verified_public(
+            source_provider="bad", record_id="durable-only",
+            title="Progressive Book", format="EPUB", published_at="2020",
+        ), at=now)
+        persist_consolidated_cover_source(
+            service.storage, canonical_edition_id=source.observation.key.edition_id,
+            source=source, relation_proof_id="core.exact.observed.v1:proof",
+        )
+        _drop_short_source(service.storage, source)
+        assert service.storage.catalog_entries() == []
+        bad, good = _FakeSession("bad"), _FakeSession("good")
+        attempts, mirrors, batches = [], [], []
+
+        def fail(*args, **kwargs):
+            attempts.append("one request")
+            raise httpx.ConnectTimeout("PRIVATE_DIAGNOSTIC")
+
+        bad.search = fail
+        service._sessions = {"bad": bad, "good": good}
+        monkeypatch.setattr(service, "_mirror_remote_results",
+                            lambda rows, **kwargs: mirrors.extend(rows) or len(rows))
+        summary = service.search_progressive(
+            "Progressive Book", force=True, field="title", on_batch=batches.append,
+        )
+        assert attempts == ["one request"]
+        assert summary.providers_failed == 1 and summary.result_count == 2
+        stale = next(batch for batch in batches if batch.provider_id == "bad")
+        live = next(batch for batch in batches if batch.provider_id == "good")
+        row, = stale.results
+        assert stale.result_status == "known_catalog_stale"
+        assert stale.error_code == "SearchTemporarilyUnavailable"
+        assert len(live.results) == 1 and live.error_code is None
+        assert row.record_id == "durable-only" and row.published_at == "2020"
+        assert row.metadata["search_provenance"] == "known_catalog_stale"
+        assert row.metadata["mirrored_at"] == now
+        assert not row.owned and not row.downloadable
+        assert row.download_url is row.thumbnail_url is row.friendly_url is None
+        assert {r.source_provider for r in mirrors} == {"good"}
+        assert "PRIVATE_DIAGNOSTIC" not in repr((summary.warnings, stale.warnings))
+
+        attempts.clear()
+        mirrors.clear()
+        rows = service.search("Progressive Book", force=True, field="title")
+        assert attempts == ["one request"]
+        assert {r.source_provider for r in rows} == {"good", "bad"}
+        retained = next(r for r in rows if r.source_provider == "bad")
+        assert retained.record_id == "durable-only" and not retained.owned
+        assert retained.metadata["search_provenance"] == "known_catalog_stale"
+        assert {r.source_provider for r in mirrors} == {"good"}
+
+        # A real empty response is never replaced by last known C.
+        attempts.clear()
+        def empty(*args, **kwargs):
+            attempts.append("legitimate zero")
+            return []
+        bad.search = empty
+        rows = service.search("Progressive Book", force=True, field="title")
+        assert attempts == ["legitimate zero"]
+        assert {r.source_provider for r in rows} == {"good"}
+        assert service.storage.entitlements() == [] and service.storage.acquisitions() == []
+    finally:
+        service.close()
