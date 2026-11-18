@@ -631,6 +631,13 @@ class OptimizerPage:
             identity_id=artifact.identity_id,
             placement_id=artifact.placement_id,
         )
+        admit = getattr(broker, "admit_transform", None)
+        if callable(admit):
+            operation = admit(request, transformer_plugin_id=transformer_id)
+            if not callable(operation):
+                raise RuntimeError("transformation non admise")
+            return operation
+        # Older installed cores retain their restrictive synchronous ABI.
         execute = broker.execute_transform
 
         def operation(control):
