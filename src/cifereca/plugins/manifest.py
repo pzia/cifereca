@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -167,6 +168,33 @@ class PluginPackageManifest:
         return next(item for item in self.plugins if item.id == plugin_id)
 
 
+    @property
+    def migration_warnings(self) -> tuple[str, ...]:
+        """Advisory field coordinates; do not expose arbitrary manifest values."""
+        warnings = []
+        for index, row in enumerate(self.raw["plugins"]):
+            field = f"plugins[{index}]"
+            if "requires_services" in row:
+                warnings.append(f"{field}.requires_services: use requires_brokers")
+            for req_index, requirement in enumerate(row.get("system_requires") or ()):
+                if (str(requirement.get("type") or "").strip().lower() == "python"
+                        and str(requirement.get("name") or "").strip()):
+                    warnings.append(
+                        f"{field}.system_requires[{req_index}]: use python-package"
+                    )
+            for cap_index, capability in enumerate(row.get("capabilities") or ()):
+                if not capability_name_valid(capability):
+                    warnings.append(f"{field}.capabilities[{cap_index}]: use canonical capability name")
+            for req_index, requirement in enumerate(row.get("requires_contracts") or ()):
+                for cap_index, capability in enumerate(requirement.get("capabilities") or ()):
+                    if not capability_name_valid(capability):
+                        warnings.append(
+                            f"{field}.requires_contracts[{req_index}].capabilities[{cap_index}]: "
+                            "use canonical capability name"
+                        )
+        return tuple(warnings)
+
+
 def parse_manifest(data: Mapping[str, Any]) -> PluginPackageManifest:
     if int(data.get("manifest", 0) or 0) != MANIFEST_VERSION:
         raise ManifestError(f"unsupported manifest version: {data.get('manifest')!r}")
@@ -294,7 +322,14 @@ def load_manifest(path: Path) -> PluginPackageManifest:
         raise ManifestError(f"cannot read plugin manifest {path}: {exc}") from exc
     if not isinstance(data, dict):
         raise ManifestError("plugin manifest root must be an object")
-    return parse_manifest(data)
+    manifest = parse_manifest(data)
+    warnings = manifest.migration_warnings
+    if warnings:
+        logging.getLogger(__name__).warning(
+            "Plugin API 1.x manifest migration (%s): %s",
+            manifest.package.id, "; ".join(warnings),
+        )
+    return manifest
 
 
 def _plugin_ui_usage_hint(value: object, field: str) -> str:

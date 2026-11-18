@@ -624,9 +624,25 @@ def validate_unique_plugin_ids(plugin_dirs: Sequence[Path]) -> None:
             seen[plugin_id] = (package_id, plugin_dir)
 
 
+def validate_official_manifest_syntax(manifest: dict) -> None:
+    """Publication fence for official packages, not the v1 installation parser."""
+    for index, row in enumerate(manifest["plugins"]):
+        field = f"plugins[{index}]"
+        if "requires_services" in row:
+            raise PackagingError(f"{field}.requires_services: use requires_brokers")
+        for req_index, requirement in enumerate(row.get("system_requires") or ()):
+            if (str(requirement.get("type") or "").strip().lower() == "python"
+                    and str(requirement.get("name") or "").strip()):
+                raise PackagingError(
+                    f"{field}.system_requires[{req_index}]: use python-package"
+                )
+
+
 def build_plugin_zip(plugin_dir: Path, output_dir: Path = DIST_DIR) -> Path:
     plugin_dir = plugin_dir.resolve()
     manifest = read_plugin_manifest(plugin_dir)
+    if plugin_dir.parent == PLUGINS_DIR.resolve():
+        validate_official_manifest_syntax(manifest)
     validate_plugin_entrypoints(plugin_dir, manifest)
     validate_plugin_source(plugin_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
