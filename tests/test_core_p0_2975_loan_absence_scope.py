@@ -5,6 +5,8 @@ network, DRM operation or file mutation is initiated.
 """
 from __future__ import annotations
 
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
+
 import json
 from types import SimpleNamespace
 
@@ -120,7 +122,7 @@ def test_opening_partial_paris_does_not_close_existing_right(tmp_path, monkeypat
             capabilities=SimpleNamespace(loans=True),
             last_loan_errors=[error],
         )
-        monkeypatch.setattr(service, "_loans_for_account", lambda account, force=False: [])
+        attach_opening_loan_reader(service, lambda account, force=False: [], typed=False)
         summary = service.opening_sync()
         current = next(row for row in summary["identities"] if row["identity_id"] == "default")
         assert current["status"] == "partial"
@@ -146,7 +148,7 @@ def test_opening_fully_empty_paris_still_requires_explicit_negative_proof(tmp_pa
             capabilities=SimpleNamespace(loans=True),
             last_loan_errors=[],
         )
-        monkeypatch.setattr(service, "_loans_for_account", lambda account, force=False: [])
+        attach_opening_loan_reader(service, lambda account, force=False: [], typed=False)
         summary = service.opening_sync()
         assert next(row for row in summary["identities"] if row["identity_id"] == "default")["realized"] == 0
         assert _rights(service)[loan.id]["state"] == "active"
@@ -165,9 +167,13 @@ def test_mixed_borrower_rows_rejected_before_any_entitlement_write(tmp_path, mon
         existing = _loan("existing")
         service._persist_active_loans("default", [existing])
         wrong = _loan("spoof", account="different-reader")
-        monkeypatch.setattr(service, "_loans_for_account", lambda account, force=False: [wrong])
+        calls = []
+        attach_opening_loan_reader(
+            service, lambda selected, force=False: calls.append(selected) or [wrong],
+        )
         summary = service.opening_sync()
         assert next(row for row in summary["identities"] if row["identity_id"] == "default")["status"] == "failed"
+        assert calls == [account]
         assert set(_rights(service)) == {existing.id}
         assert _rights(service)[existing.id]["state"] == "active"
     finally:
@@ -231,7 +237,7 @@ def test_a_failed_account_and_a_healthy_empty_account_never_realize_each_other(t
                 raise RuntimeError("PRIVATE_SIGNED_ACSM_URL")
             return []
 
-        monkeypatch.setattr(service, "_loans_for_account", load)
+        attach_opening_loan_reader(service, load)
         result = service.opening_sync()
         state = next(x for x in result["identities"] if x["identity_id"] == "default")
         assert state["status"] == "partial"
