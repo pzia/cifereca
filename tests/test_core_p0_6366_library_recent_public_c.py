@@ -356,3 +356,49 @@ def test_local_origin_projection_survives_large_unrelated_catalogue(tmp_path):
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+
+def test_documentary_projection_is_independent_of_epub_cover_priority(tmp_path):
+    db = Storage(tmp_path / "documentary-priority.sqlite")
+    try:
+        a, _, path = _real_origins(db, tmp_path)
+        public = verified_public(
+            source_provider="seller-a", record_id="edition-a",
+            title="Un ouvrage commun", thumbnail_url=A_URL,
+        )
+        public.metadata = {
+            "languages": ["fr"],
+            "bibliography_evidence": {"languages": {
+                "raw_tags": ["fra"], "source": "seller-a.fixture",
+                "source_field": "dc.language", "scope": public.scenario,
+                "confidence": "explicit_record_field", "freshness": "search_response",
+            }},
+        }
+        saved = persist(db, public, at=100)
+        c = persist_exact_public_search_cover(db, saved)
+        assert c.sources[0].public_bibliography.language_observation.languages == ("fr",)
+        assert c.sources[0].public_bibliography.language_observation.raw_tags == ("fra",)
+        from cifereca.core.notice_cover_repository import evict_notice_cover
+        assert evict_notice_cover(db, saved.document, expected_epoch=saved.epoch)
+        row, _ = _views(db, a.artifact_id, a.placement_id, path)
+        embedded = object()
+        row["_exact_local_cover_evidence"] = embedded
+        project_local_origin_public_c(db, [row], identity_id="A")
+        assert "_public_canonical_cover_link" not in row
+        project_local_origin_public_c(db, [row], identity_id="A", documentary_only=True)
+        receipt = row["_public_canonical_document_link"]
+        assert receipt.document == c.document and receipt.epoch == c.epoch
+        assert receipt.source_refs == tuple(source.source_ref for source in c.sources)
+        assert row["_exact_local_cover_evidence"] is embedded
+        assert "_public_canonical_cover_link" not in row
+        assert not hasattr(library_view(row), "_cover_public_c_link")
+        # A recomputation after owner mismatch revokes only the documentary
+        # receipt; it cannot downgrade or copy the private EPUB evidence.
+        row["_library_view_owner"] = "B"
+        project_local_origin_public_c(db, [row], identity_id="A", documentary_only=True)
+        assert "_public_canonical_document_link" not in row
+        assert row["_exact_local_cover_evidence"] is embedded
+        assert "_public_canonical_cover_link" not in row
+    finally:
+        db.close()

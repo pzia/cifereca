@@ -201,10 +201,24 @@ def test_retained_language_audit_recipes(tmp_path, raw_a, raw_b, verdict):
         assert result["provenance"][verdict] == 1
         assert sum(result["provenance"].values()) == 1
         assert A_URL not in repr(result) and str(path) not in repr(result)
+        # A real audit reattests the documentary relation instead of
+        # consuming a receipt offered by the visual projection.
+        from cifereca.core.library_documentary_audit import _language_provenance
         for wrong in (replace(link, identity_id="B"), replace(link, epoch=link.epoch + 1),
                       replace(link, source_refs=link.source_refs[:1])):
-            rows[0] = {**row, "_public_canonical_cover_link": wrong}
-            assert audit()["provenance"]["unknown"] == 1
+            rows[0] = {**row, "_public_canonical_document_link": wrong}
+            assert _language_provenance(db, rows[0], "A") == "unknown"
+            assert audit() == result
+            assert rows[0]["_public_canonical_document_link"] is wrong
+        embedded = object()
+        rows[0] = {**row, "_exact_local_cover_evidence": embedded}
+        rows[0].pop("_public_canonical_cover_link")
+        assert audit() == result
+        assert rows[0]["_exact_local_cover_evidence"] is embedded
+        assert "_public_canonical_document_link" not in rows[0]
+        assert "_public_canonical_cover_link" not in rows[0]
+        rows[0]["_library_view_owner"] = "B"
+        assert audit()["provenance"]["unknown"] == 1
         rows[0] = row
         assert audit() == result
         assert broker.library_language_audit(identity_id="B")["status"] == "unavailable"
