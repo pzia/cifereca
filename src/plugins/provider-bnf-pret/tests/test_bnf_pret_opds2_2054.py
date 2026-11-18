@@ -250,3 +250,31 @@ def test_unsafe_raw_navigation_never_becomes_valid_next(href):
         assert result.next_status == "invalid"
         assert result.next_url is None and result.navigation == ()
         assert result.publications[0].borrowable is False
+
+
+def test_wire_parser_once_and_mapping_validation_without_redecode(monkeypatch):
+    import json
+
+    raw = feed()
+    wire = json.dumps(raw, ensure_ascii=False).encode("utf-8")
+    parsed, validated = [], []
+    real_parse = opds.parse_bounded_catalogue_json
+    real_validate = opds.validate_catalogue_json
+
+    def counted_parse(value):
+        parsed.append(value)
+        return real_parse(value)
+
+    def counted_validate(value):
+        validated.append(value)
+        return real_validate(value)
+
+    monkeypatch.setattr(opds, "parse_bounded_catalogue_json", counted_parse)
+    monkeypatch.setattr(opds, "validate_catalogue_json", counted_validate)
+    from_wire = opds.parse_catalog(wire)
+    assert parsed == [wire] and validated == []
+    from_mapping = opds.parse_catalog(raw)
+    assert parsed == [wire] and validated == [raw]
+    assert from_wire == from_mapping
+    assert not from_wire.publications[0].owned
+    assert not from_wire.publications[0].borrowable

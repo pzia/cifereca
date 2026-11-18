@@ -363,3 +363,29 @@ def test_multiword_opensearch_preserves_encoded_spaces():
 @pytest.mark.parametrize("encoded", ["%0A", "%0D", "%09", "%00", "%E2%80%AE"])
 def test_opds_query_encoded_control_characters_rejected(encoded):
     assert _safe_opds_link(FEED, "/index.php/feed/search?q=x"+encoded+"y", "feed") is None
+
+
+def test_shared_parser_once_per_response_across_opensearch_and_pagination(monkeypatch):
+    import cifereca_ebooksgratuits as adapter
+
+    parsed, served = [], []
+    real = adapter.parse_bounded_catalogue_xml
+
+    def counted(body, **limits):
+        parsed.append(body)
+        return real(body, **limits)
+
+    def handler(req):
+        reply = route(req, next_page=True)
+        served.append(reply.content)
+        return reply
+
+    monkeypatch.setattr(adapter, "parse_bounded_catalogue_xml", counted)
+    session = make_session(handler)
+    try:
+        rows = session.search("livre", page=1)
+        assert [row.title for row in rows] == ["Notice sans EPUB"]
+        assert len(served) == 4
+        assert parsed == served
+    finally:
+        session.close()
