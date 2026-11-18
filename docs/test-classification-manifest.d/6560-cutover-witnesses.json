@@ -1,0 +1,47 @@
+{
+  "schema": "cifereca.test-classification/1",
+  "files": [
+    {
+      "path": "tests/test_core_p0_3197_biblioaccess_convergence.py",
+      "owner_architecture": "core",
+      "business_object": "synchronization",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_core_p1_3197_opening_legacy_partial.py",
+      "owner_architecture": "core",
+      "business_object": "loans",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_core_p0_2847_operator_session.py",
+      "owner_architecture": "core",
+      "business_object": "storage_library",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_core_p0_2847_relocation_transaction.py",
+      "owner_architecture": "core",
+      "business_object": "storage_library",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_core_p0_3171_atomic_publication_v14.py",
+      "owner_architecture": "core",
+      "business_object": "acquisition",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_core_p0_3719_consent_legacy_dispatch.py",
+      "owner_architecture": "core",
+      "business_object": "synchronization",
+      "test_level": "integration"
+    },
+    {
+      "path": "src/plugins/provider-paris/tests/test_p0_3723_downloadable_v2.py",
+      "owner_architecture": "plugin:provider-paris",
+      "business_object": "acquisition",
+      "test_level": "contract"
+    }
+  ]
+}
