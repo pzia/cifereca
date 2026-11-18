@@ -8,7 +8,8 @@ from __future__ import annotations
 from typing import Any
 from pathlib import Path
 from secrets import token_hex
-from datetime import datetime
+from datetime import datetime, timezone
+from hashlib import sha256
 from zoneinfo import ZoneInfo
 import json
 import logging
@@ -20,6 +21,8 @@ from cifereca.plugin_api import (
     ProviderDescriptor, ProviderPlugin, ProviderSession, CredentialField,
     AccountOptionField, Account, Loan,
     LoanInventoryScope, LoanInventorySnapshot, LoanBranchCoverage,
+    ProviderRightsScope, SourceReference, DownloadCapability,
+    ResourceObservation, ResourceSnapshot, DeliveryCandidate,
 )
 
 PROVIDER_ID = "biblioaccess.la-rochelle"
@@ -625,8 +628,143 @@ class LaRochelleSession(ProviderSession):
                 raise ProviderCapabilityError(
                     "biblioaccess_loan_inventory_unavailable") from None
 
+    def _resource_scope(self, account):
+        self._validate_local_account(account)
+        return ProviderRightsScope(
+            account.identity_id, account.provider_id,
+            account.credential_id, account.unique_id,
+        )
+
+    @staticmethod
+    def _source_reference(scope, edition_id, resource_id, kind, branch):
+        # Both identifiers are actual MyLoans identifiers, not title-derived.
+        prefix = "biblioaccess:1409:"
+        if (kind != "loan" or branch != "biblioaccess"
+                or type(edition_id) is not str or not edition_id.isascii()
+                or not edition_id.isdigit() or len(edition_id) > 128
+                or type(resource_id) is not str or not resource_id.startswith(prefix)
+                or not resource_id[len(prefix):].isascii()
+                or not resource_id[len(prefix):].isdigit()
+                or len(resource_id) > 256):
+            raise ProviderCapabilityError("biblioaccess_selected_source_invalid")
+        return SourceReference(scope, branch, edition_id, resource_id, kind)
+
+    @staticmethod
+    def _offer_id(source):
+        # Stable opaque reference to the selected action, never the signed URL.
+        scope = source.scope
+        data = json.dumps(
+            [scope.identity_id, scope.provider_id, scope.credential_id,
+             scope.account_id, source.branch, source.edition_id,
+             source.resource_id, source.kind],
+            ensure_ascii=True, separators=(",", ":"),
+        )
+        return "biblioaccess:offer:" + sha256(data.encode("ascii")).hexdigest()
+
+    def downloadable_resource_snapshot(self, account):
+        """Attest positive exact MyLoans resources, without any signed GET."""
+        with self._lock:
+            scope = self._resource_scope(account)
+            inventory = self.loan_inventory_snapshot(account)
+            if self._resource_scope(account) != scope:
+                raise ProviderCapabilityError("biblioaccess_loan_account_unbound")
+            observed = datetime.now(timezone.utc).isoformat()
+            resources = {}
+            ambiguous = set()
+            for loan in inventory.loans:
+                try:
+                    source = self._source_reference(
+                        scope, loan.record_id, loan.id, "loan", "biblioaccess",
+                    )
+                except (ValueError, ProviderCapabilityError):
+                    continue
+                # A duplicated product reference may not name a unique action.
+                if loan.id in resources or loan.id in ambiguous:
+                    resources.pop(loan.id, None)
+                    ambiguous.add(loan.id)
+                    continue
+                available = loan.raw.get("acsm_offer_present") is True
+                resources[loan.id] = ResourceObservation(
+                    source=source,
+                    capability=DownloadCapability(
+                        "available" if available else "unknown",
+                        self._offer_id(source) if available else "",
+                    ),
+                    evidence_ref="biblioaccess.myloans.authenticated",
+                    observed_at=observed,
+                )
+            # Do not extend MyLoans screen completeness to resource absence.
+            return ResourceSnapshot(
+                scope=scope, branch="biblioaccess",
+                resources=tuple(resources.values()), status="partial",
+                coverage="partial", observed_at=observed,
+            )
+
+    def downloadable_selected_offer_snapshot(
+        self, account, *, edition_id, resource_id, kind, branch,
+        explicit_user_action=False,
+    ):
+        if explicit_user_action is not True:
+            raise ProviderCapabilityError("biblioaccess_selected_offer_not_admitted")
+        with self._lock:
+            source = self._source_reference(
+                self._resource_scope(account), edition_id, resource_id, kind, branch,
+            )
+            snapshot = self.downloadable_resource_snapshot(account)
+            exact = tuple(row for row in snapshot.resources if row.source == source
+                          and row.capability.downloadable)
+            if len(exact) != 1:
+                raise ProviderCapabilityError("biblioaccess_acsm_offer_unavailable")
+            return ResourceSnapshot(
+                scope=snapshot.scope, branch=branch, resources=exact,
+                status="partial", coverage="partial",
+                observed_at=snapshot.observed_at,
+            )
+
+    def downloadable_selected_delivery_candidate_guarded(
+        self, account, *, edition_id, resource_id, kind, branch,
+        selected_offer_id, target_dir, explicit_user_action=False,
+        admission_current,
+    ):
+        """Only a live Core lease admits a fresh exact signed ACSM GET."""
+        if explicit_user_action is not True or not callable(admission_current):
+            raise ProviderCapabilityError("biblioaccess_acsm_admission_revoked")
+        with self._lock:
+            scope = self._resource_scope(account)
+            source = self._source_reference(scope, edition_id, resource_id, kind, branch)
+            if selected_offer_id != self._offer_id(source):
+                raise ProviderCapabilityError("biblioaccess_selected_offer_mismatch")
+            client = self._http
+
+            def current():
+                try:
+                    return (admission_current() is True
+                            and self._http is client
+                            and self._resource_scope(account) == scope)
+                except Exception:
+                    return False
+
+            if not current():
+                raise ProviderCapabilityError("biblioaccess_acsm_admission_revoked")
+            loan = Loan(
+                id=resource_id, provider="BIBLIOACCESS", medium="digital",
+                record_id=edition_id, title="", source_provider=scope.provider_id,
+                source_credential=scope.credential_id,
+                source_account_id=scope.account_id, identity_id=scope.identity_id,
+            )
+            path, _ = self._download_digital(
+                loan, account, target_dir, admission_current=current,
+            )
+            return DeliveryCandidate(source=source, selected_offer_id=selected_offer_id,
+                                     path=path)
+
     def download_digital(self, loan: Loan, account: Account,
                          target_dir: Path) -> tuple[Path, str]:
+        """Compatibility explicit/legacy acquisition ABI."""
+        return self._download_digital(loan, account, target_dir)
+
+    def _download_digital(self, loan: Loan, account: Account,
+                          target_dir: Path, *, admission_current=None) -> tuple[Path, str]:
         """Download a fresh signed ACSM offer for this exact live loan.
 
         Source URLs never leave the plugin: the second return value is empty.
@@ -646,6 +784,11 @@ class LaRochelleSession(ProviderSession):
             product_ref = loan.id[len("biblioaccess:1409:"):]
             if not product_ref.isascii() or not product_ref.isdigit():
                 raise ProviderCapabilityError("biblioaccess_loan_account_unbound")
+            def require_admission():
+                if admission_current is not None and admission_current() is not True:
+                    raise ProviderCapabilityError("biblioaccess_acsm_admission_revoked")
+
+            require_admission()
             # Fresh MyLoans GET each time. No reuse prevention: request a
             # new signed link when redownloading the same active loan.
             try:
@@ -671,6 +814,15 @@ class LaRochelleSession(ProviderSession):
                         pass
                 raise ProviderCapabilityError(
                     "biblioaccess_acsm_session_unavailable") from None
+            require_admission()
+            self._validate_local_account(account)
+            if (observation.logout_form_observed is not True
+                    or loan.identity_id != account.identity_id):
+                raise ProviderCapabilityError("biblioaccess_loan_account_unbound")
+            # A product reference duplicated with another book is also
+            # ambiguous, even when just one row names the selected edition.
+            if sum(row.product_ref == product_ref for row in observation._loan_rows) != 1:
+                raise ProviderCapabilityError("biblioaccess_acsm_offer_unavailable")
             matches = [
                 row for row in observation._loan_rows
                 if row.product_ref == product_ref
@@ -704,9 +856,21 @@ class LaRochelleSession(ProviderSession):
                 download_link_observed=True, session_revoked=False,
             )
             try:
-                path = stage_loan_acsm(matches[0].acsm_url, target_dir)
+                require_admission()
+                path = stage_loan_acsm(
+                    matches[0].acsm_url, target_dir,
+                    **({"admission_current": admission_current}
+                       if admission_current is not None else {}),
+                )
+                try:
+                    require_admission()
+                except ProviderCapabilityError:
+                    if path.parent == target_dir and path.is_file() and not path.is_symlink():
+                        path.unlink(missing_ok=True)
+                    raise
             except Exception as exc:
                 allowed = frozenset({
+                    "biblioaccess_acsm_admission_revoked",
                     "biblioaccess_acsm_url_invalid",
                     "biblioaccess_acsm_destination_invalid",
                     "biblioaccess_acsm_unavailable",
@@ -725,7 +889,10 @@ class LaRochelleSession(ProviderSession):
                     "biblioaccess_acsm_stage_unavailable",
                 })
                 code = (
-                    exc.args[0] if type(exc) is ACSMDeliveryError
+                    "biblioaccess_acsm_admission_revoked"
+                    if type(exc) is ProviderCapabilityError
+                    and str(exc) == "biblioaccess_acsm_admission_revoked"
+                    else exc.args[0] if type(exc) is ACSMDeliveryError
                     and len(exc.args) == 1 and type(exc.args[0]) is str
                     and exc.args[0] in allowed
                     else "biblioaccess_acsm_stage_unavailable"
@@ -741,7 +908,7 @@ class LaRochelleSession(ProviderSession):
                 # publish precise *allowlisted* failures for PNB /do, so the
                 # Core can distinguish expired/denied/redirect/invalid XML.
                 raise ProviderCapabilityError(
-                    code if kind == "pnb_do"
+                    code if kind == "pnb_do" or code == "biblioaccess_acsm_admission_revoked"
                     else "biblioaccess_acsm_stage_unavailable"
                 ) from None
             self._last_probe_phase = "acsm_staged"
