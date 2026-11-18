@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from contextlib import ExitStack
 from copy import deepcopy
 from threading import Lock
@@ -463,6 +463,9 @@ class _OutputLease:
 @dataclass(slots=True)
 class ArtifactExecutionBrokerImpl:
     service: Any
+    # Private Core integration seam. Keep disabled until supervised recovery,
+    # quota/retention and the actual operator path are accepted (#4520).
+    _durable_variant_publication: bool = field(default=False, init=False, repr=False)
 
     def _source_placement(
         self, artifact: ArtifactRef, *, identity_id: str | None = None,
@@ -766,6 +769,9 @@ class ArtifactExecutionBrokerImpl:
     def _commit_variant(self, *, source, destination, result, transformer_plugin_id,
                         profile_plugin_id=None, options_fingerprint="", admission=None):
         owner, current, transaction_current = admission or (None, lambda: None, None)
+        if self._durable_variant_publication and admission is None:
+            raise _VariantConflict("Confirmation de transformation requise",
+                                   code="artifact_transform_scope_unverified")
         current()
         lease = self._assert_output_lease(destination)
         if lease.source.artifact_id != source.artifact_id:
@@ -845,65 +851,153 @@ class ArtifactExecutionBrokerImpl:
             str(row.get("path") or "") for row in self.service.storage.placements()
         )
         current()
-        final = _publish_variant_exclusive(
-            path, source_path.parent, basename=stem + suffix,
-            sha256=actual_sha, directory_stamp=lease.source_directory_stamp,
-            staging_directory_stamp=lease.staging_directory_stamp,
-            staging_root_stamp=lease.staging_root_stamp,
-            claimed_paths=claimed_paths,
-        )
-        lease.active = False
-        # Revalidate the physical target is still our just-published inode;
-        # never report a variant if an unrelated writer substituted the path.
-        if (not final.is_file() or sha256_file(final) != actual_sha
-                or _variant_directory_stamp(final.parent) != lease.source_directory_stamp):
-            raise _VariantConflict("Variante publiée déplacée", code="artifact_variant_publish_race")
-        # A source or another profile may have claimed the filename while
-        # the exact physical hardlink was being installed. Stop before any
-        # SQL writer can rebind that existing Placement.
-        if any(str(row.get("path") or "") == str(final)
-               for row in self.service.storage.placements()):
-            raise _VariantConflict("Chemin de variante déjà réservé",
-                           code="artifact_variant_filename_conflict")
-        now = int(time.time())
-        artifact_id = f"sha256:{actual_sha}"
-        # The filesystem hardlink is already verified. Commit all SQLite
-        # authorities together so an injected failure never exposes a partial
-        # local derivative or falsely inherited supplier provenance (#4520).
-        from .core.derived_variant_publication import (
-            DerivedPublicationConflict, publish_derived_variant,
-        )
-        current()
-        try:
-            publish_derived_variant(
-                self.service.storage,
-                parent_artifact_id=source.artifact_id,
-                parent_sha256=source.sha256,
-                parent_placement_id=lease.source_placement_id,
-                parent_path=source_path,
-                identity_id=lease.source_identity_id,
-                published_path=final,
-                output_sha256=actual_sha,
-                output_size=actual_size,
-                media_format=result.output_format.format
-                or lease.output_format.format or suffix.lstrip("."),
-                mime_type=result.output_format.media_type
-                or lease.output_format.media_type,
-                variant_kind=lease.variant_kind or "derived",
-                transformer_id=transformer_plugin_id,
-                transformer_version=self._version_for_plugin(transformer_plugin_id),
-                profile_id=profile_plugin_id,
-                profile_version=self._version_for_plugin(profile_plugin_id),
-                options_fingerprint=options_fingerprint,
-                book_id=source.book_id,
-                warnings=result.warnings,
-                facts=dict(result.facts),
-                **({"scope_current": transaction_current} if admission is not None else {}),
+        with ExitStack() as publication_scope:
+            reservation = None
+            media_format = result.output_format.format or lease.output_format.format or suffix.lstrip(".")
+            transformer_version = self._version_for_plugin(transformer_plugin_id)
+            profile_version = self._version_for_plugin(profile_plugin_id)
+            if self._durable_variant_publication:
+                from .locking import InterProcessLock, LockBusyError
+                from .paths import acquisition_lock_file
+                from .core.derived_variant_journal import (
+                    DerivedIntent, DerivedJournalConflict, reserve_derived_publication,
+                )
+                from .core.derived_variant_link import link_reserved_variant
+                try:
+                    publication_scope.enter_context(InterProcessLock(acquisition_lock_file(), reentrant=True))
+                except LockBusyError:
+                    raise _VariantConflict("Publication locale déjà en cours",
+                                           code="artifact_variant_publication_busy") from None
+                current()
+                # Choose one target BEFORE reservation. Never silently change
+                # the target of a durable receipt after a racing collision.
+                from .core.library_inventory import _open_root
+                try:
+                    fd = _open_root(source_path.parent)
+                    try:
+                        final = None
+                        info = os.fstat(fd)
+                        if (info.st_dev, info.st_ino) != lease.source_directory_stamp:
+                            raise _VariantConflict("Répertoire de variante modifié",
+                                                   code="artifact_variant_directory_changed")
+                        for name in (stem + suffix, f"{stem}-{actual_sha[:8]}{suffix}"):
+                            candidate = source_path.parent / name
+                            if str(candidate) in claimed_paths:
+                                continue
+                            try:
+                                os.stat(name, dir_fd=fd, follow_symlinks=False)
+                            except FileNotFoundError:
+                                final = candidate
+                                break
+                        if final is None:
+                            raise _VariantConflict("Nom de variante déjà occupé",
+                                                   code="artifact_variant_filename_conflict")
+                    finally:
+                        os.close(fd)
+                except OSError:
+                    raise _VariantConflict("Répertoire de variante inaccessible",
+                                           code="artifact_variant_directory_changed") from None
+
+                intent = DerivedIntent(
+                    identity_id=lease.source_identity_id, parent_placement_id=lease.source_placement_id,
+                    parent_sha256=source.sha256, parent_path=str(source_path),
+                    staged_path=str(path), candidate_path=str(final),
+                    output_sha256=actual_sha, output_size=actual_size,
+                    parent_stamp=lease.source_stamp, output_stamp=stage_stamp[:4],
+                    transformer_id=transformer_plugin_id, transformer_version=transformer_version,
+                    profile_id=profile_plugin_id or "", profile_version=profile_version,
+                    options_fingerprint=options_fingerprint, variant_kind=lease.variant_kind or "derived",
+                    media_format=media_format,
+                )
+
+                def reserve(value):
+                    # Once the outcome of reservation may be durable, transfer
+                    # the lease to the journal. An ambiguous SQLite/I/O failure
+                    # must not send cleanup through the generic abort path.
+                    lease.active = False
+                    try:
+                        return reserve_derived_publication(self.service.storage, value)
+                    except DerivedJournalConflict:
+                        # Known refusal, no inserted receipt.
+                        lease.active = True
+                        raise
+
+                def live():
+                    current()
+                    return True
+
+                try:
+                    reservation = link_reserved_variant(
+                        intent, source_directory_stamp=lease.source_directory_stamp,
+                        staging_directory_stamp=lease.staging_directory_stamp,
+                        staging_root_stamp=lease.staging_root_stamp,
+                        reserve=reserve, scope_current=live,
+                    )
+                except DerivedJournalConflict as exc:
+                    code = str(exc)
+                    if code == "derived_link_filename_conflict":
+                        code = "artifact_variant_filename_conflict"
+                    raise _VariantConflict("Publication durable de variante refusée", code=code) from None
+            else:
+                final = _publish_variant_exclusive(
+                    path, source_path.parent, basename=stem + suffix,
+                    sha256=actual_sha, directory_stamp=lease.source_directory_stamp,
+                    staging_directory_stamp=lease.staging_directory_stamp,
+                    staging_root_stamp=lease.staging_root_stamp,
+                    claimed_paths=claimed_paths,
+                )
+            lease.active = False
+            # Revalidate the physical target is still our just-published inode;
+            # never report a variant if an unrelated writer substituted the path.
+            if (not final.is_file() or sha256_file(final) != actual_sha
+                    or _variant_directory_stamp(final.parent) != lease.source_directory_stamp):
+                raise _VariantConflict("Variante publiée déplacée", code="artifact_variant_publish_race")
+            # A source or another profile may have claimed the filename while
+            # the exact physical hardlink was being installed. Stop before any
+            # SQL writer can rebind that existing Placement.
+            if any(str(row.get("path") or "") == str(final)
+                   for row in self.service.storage.placements()):
+                raise _VariantConflict("Chemin de variante déjà réservé",
+                               code="artifact_variant_filename_conflict")
+            now = int(time.time())
+            artifact_id = f"sha256:{actual_sha}"
+            # The filesystem hardlink is already verified. Commit all SQLite
+            # authorities together so an injected failure never exposes a partial
+            # local derivative or falsely inherited supplier provenance (#4520).
+            from .core.derived_variant_publication import (
+                DerivedPublicationConflict, publish_derived_variant,
             )
-        except DerivedPublicationConflict as exc:
-            raise _VariantConflict(
-                "Publication canonique de variante refusée", code=str(exc),
-            ) from None
+            current()
+            try:
+                publish_derived_variant(
+                    self.service.storage,
+                    parent_artifact_id=source.artifact_id,
+                    parent_sha256=source.sha256,
+                    parent_placement_id=lease.source_placement_id,
+                    parent_path=source_path,
+                    identity_id=lease.source_identity_id,
+                    published_path=final,
+                    output_sha256=actual_sha,
+                    output_size=actual_size,
+                    media_format=media_format,
+                    mime_type=result.output_format.media_type
+                    or lease.output_format.media_type,
+                    variant_kind=lease.variant_kind or "derived",
+                    transformer_id=transformer_plugin_id,
+                    transformer_version=transformer_version,
+                    profile_id=profile_plugin_id,
+                    profile_version=profile_version,
+                    options_fingerprint=options_fingerprint,
+                    book_id=source.book_id,
+                    warnings=result.warnings,
+                    facts=dict(result.facts),
+                    **({"scope_current": transaction_current} if admission is not None else {}),
+                    **({"journal_reservation": reservation} if reservation is not None else {}),
+                )
+            except DerivedPublicationConflict as exc:
+                raise _VariantConflict(
+                    "Publication canonique de variante refusée", code=str(exc),
+                ) from None
         ref = _artifact_ref(
             self.service.storage, artifact_id, book_id=source.book_id,
             identity_id=lease.source_identity_id,
