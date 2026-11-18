@@ -260,18 +260,46 @@ _DOCUMENTARY_COUNTS = {
 }
 
 
+_N2_NOTICES = ("embedded", "origin", "catalog", "pending", "ambiguous", "missing", "unknown")
+_N3_NOTICES = ("digest_valid", "signature_valid", "not_validated", "not_applicable", "unknown")
+
+
+def _valid_audit_counts(counts, keys, entries):
+    return (type(counts) is dict and set(counts) == set(keys)
+            and all(type(counts[key]) is int and 0 <= counts[key] <= 10000
+                    for key in keys)
+            and sum(counts.values()) == entries)
+
+
 def _documentary_preview(kind, facts):
     """Validate the optional Core aggregate; never render arbitrary payloads."""
     keys = _DOCUMENTARY_COUNTS[kind]
+    v2 = (kind == "covers" and type(facts) is dict
+          and type(facts.get("schema")) is int and facts["schema"] == 2)
+    expected = {"schema", "status", "entries", *keys}
+    if v2:
+        expected.update(("n2", "n3"))
     if (type(facts) is not dict
-            or set(facts) != {"schema", "status", "entries", *keys}
-            or type(facts["schema"]) is not int or facts["schema"] != 1
+            or set(facts) != expected
+            or type(facts["schema"]) is not int or (facts["schema"] != 1 and not v2)
             or facts["status"] not in ("partial", "unavailable")
             or any(type(facts[key]) is not int or not 0 <= facts[key] <= 10000
                    for key in ("entries", *keys))
             or sum(facts[key] for key in keys) != facts["entries"]
             or (facts["status"] == "unavailable" and facts["entries"] != 0)):
         raise ValueError("invalid_documentary_audit")
+    if v2:
+        n2, n3 = facts["n2"], facts["n3"]
+        if (not _valid_audit_counts(n2, _N2_NOTICES, facts["entries"])
+                or not _valid_audit_counts(n3, _N3_NOTICES, facts["entries"])):
+            raise ValueError("invalid_documentary_audit")
+        selected = n2["embedded"] + n2["origin"] + n2["catalog"]
+        if (n3["digest_valid"] > n2["embedded"]
+                or n3["signature_valid"] > n2["origin"] + n2["catalog"]
+                or n3["digest_valid"] + n3["signature_valid"]
+                   + n3["not_validated"] > selected
+                or n3["not_applicable"] != n2["missing"]):
+            raise ValueError("invalid_documentary_audit")
     if facts["status"] == "unavailable":
         return "Audit documentaire indisponible.", ("Aucune conclusion sur les notices.",)
     if kind == "covers":
@@ -285,6 +313,24 @@ def _documentary_preview(kind, facts):
             "Audit partiel : liaison N2 runtime et présence/intégrité N3 non observées.",
             "Une URL ou une image en cache ne prouve pas une liaison documentaire.",
         )
+        if v2:
+            summary += (
+                f' N2 : {n2["embedded"]} EPUB, {n2["origin"]} origine, '
+                f'{n2["catalog"]} catalogue, {n2["pending"]} en attente, '
+                f'{n2["ambiguous"]} ambigu(s), {n2["missing"]} absent(s) attesté(s), '
+                f'{n2["unknown"]} inconnu(s).'
+                f' N3 : {n3["digest_valid"]} SHA vérifié(s), '
+                f'{n3["signature_valid"]} signature(s) valide(s), '
+                f'{n3["not_validated"]} non validé(s), '
+                f'{n3["not_applicable"]} non applicable(s), '
+                f'{n3["unknown"]} inconnu(s).'
+            )
+            warnings = (
+                "Audit partiel : seules les liaisons runtime déjà enregistrées sont observées, "
+                "dans les limites du budget de lecture.",
+                "N3 non validé : absent, invalide ou illisible ; ne prouve pas une absence N1/N2.",
+                "La signature N3 ne prouve pas un décodage complet (N4).",
+            )
     else:
         summary = (
             f'{facts["entries"]} livre(s) ; langues déclarées : '
@@ -297,11 +343,23 @@ def _documentary_preview(kind, facts):
 
 def _documentary_plan(tool, context, control, kind):
     broker = tool._broker("catalog")
-    method = getattr(broker, "library_documentary_audit", None)
-    if not callable(method):
-        return None  # historical ABI: existing reference/tag-only audit
+    absent = object()
     try:
-        facts = method(identity_id=context.identity_id, kind=kind)
+        runtime = getattr(broker, "library_cover_audit", absent) if kind == "covers" else absent
+        if runtime is not absent:
+            # A declared but broken v2 port is not a legacy broker.
+            if not callable(runtime):
+                raise ValueError("invalid_runtime_documentary_audit")
+            facts = runtime(identity_id=context.identity_id)
+            if type(facts) is not dict or facts.get("schema") != 2:
+                raise ValueError("invalid_runtime_documentary_audit")
+        else:
+            method = getattr(broker, "library_documentary_audit", absent)
+            if method is absent:
+                return None  # historical ABI: existing reference/tag-only audit
+            if not callable(method):
+                raise ValueError("invalid_documentary_audit")
+            facts = method(identity_id=context.identity_id, kind=kind)
         summary, warnings = _documentary_preview(kind, facts)
     except Exception:
         facts = {"schema": 1, "status": "unavailable", "entries": 0,
