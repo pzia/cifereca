@@ -64,7 +64,10 @@ def test_well_formed_bytes_are_still_non_authorizing(fmt, observed, reason):
     values = case(fmt)
     before = deepcopy(values["artifact"])
     result = review_usb_content(**values)
-    assert result == UsbContentReview("review", reason, observed, False)
+    assert result == UsbContentReview(
+        "review", reason, observed, False,
+        declared_layout=None if fmt == "pdf" else "unknown",
+    )
     assert values["artifact"] == before
     assert result.executable is False
 
@@ -249,3 +252,45 @@ def test_safely_compressed_epub_within_budget_is_still_non_authorizing():
     report = review_usb_content(**values)
     assert report.status == "review"
     assert report.executable is False
+
+
+def _declared_epub(layout):
+    sink = BytesIO()
+    with ZipFile(sink, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr("META-INF/container.xml",
+                         '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                         '<rootfiles><rootfile full-path="OPS/content.opf"/></rootfiles></container>')
+        declaration = ('<meta property="rendition:layout">' + layout + '</meta>'
+                       if layout is not None else '')
+        archive.writestr("OPS/content.opf",
+                         '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+                         '<metadata>' + declaration + '</metadata>'
+                         '<manifest><item id="p" href="page.xhtml" media-type="application/xhtml+xml"/></manifest>'
+                         '<spine><itemref idref="p"/></spine></package>')
+        archive.writestr("OPS/page.xhtml", "<html/>")
+    return sink.getvalue()
+
+
+@pytest.mark.parametrize("fmt", ["epub", "kepub", "fxl.kepub"])
+@pytest.mark.parametrize("declaration,layout", [
+    ("pre-paginated", "fixed"), ("reflowable", "reflowable"), (None, "unknown"),
+])
+def test_epub_layout_is_independent_of_selected_variant(fmt, declaration, layout):
+    values = case(fmt, data=_declared_epub(declaration))
+    before = deepcopy(values["artifact"])
+    result = review_usb_content(**values)
+    assert result.status == "review"
+    assert result.observed_format == "epub"
+    assert result.declared_layout == layout
+    assert result.executable is False
+    assert "rights_unverified" in result.reason
+    assert values["selected_format"] == fmt
+    assert values["artifact"] == before
+
+
+def test_layout_is_not_observed_for_unverified_or_protected_bytes():
+    broken = case("epub", data=_declared_epub("pre-paginated"))
+    broken["local"] = UsbLocalArtifact("bob", broken["local"].sha256, True)
+    assert review_usb_content(**broken).declared_layout is None
+    assert review_usb_content(**case("epub", data=epub_bytes(encrypted=True))).declared_layout is None
