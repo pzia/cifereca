@@ -1,5 +1,7 @@
 name: P0 Test Closure Mutations
 
+# TEMPORARY receipt-only PR — DO NOT MERGE. Exact main snapshot: 901cec22d196b99152f3f41d23754a8ab09f68f8
+
 on:
   pull_request:
     paths:
@@ -23,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: 901cec22d196b99152f3f41d23754a8ab09f68f8
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
@@ -34,7 +36,7 @@ jobs:
         shell: bash
         env:
           PYTHONPATH: ${{ github.workspace }}/src
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_SHA: 901cec22d196b99152f3f41d23754a8ab09f68f8
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
@@ -44,7 +46,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: closure-mutations-${{ github.event.pull_request.head.sha || github.sha }}
+          name: closure-mutations-901cec22d196b99152f3f41d23754a8ab09f68f8
           path: ${{ runner.temp }}/closure-mutations.json
           if-no-files-found: error
           retention-days: 2
