@@ -180,6 +180,7 @@ def prepare_missing_placement_retirement(
 def retire_missing_placement(
     storage, *, placement_id: str, identity_id: str, library_root: Path,
     plan_token: str, confirmed: bool = False,
+    admitted_scope=None,
 ) -> dict[str, object]:
     """Retire only an *orphaned*, physically absent SQLite Placement.
 
@@ -205,6 +206,9 @@ def retire_missing_placement(
                 # durable, independently of the ordinary WAL read settings.
                 db.execute("PRAGMA synchronous=FULL")
                 db.execute("BEGIN IMMEDIATE")
+                if admitted_scope is not None and admitted_scope(db, initial=True) is not True:
+                    db.rollback()
+                    return _blocked("scope_changed")
                 result, evidence = _evidence(
                     db, root=root, root_stat=stat,
                     placement_id=placement_id, identity_id=identity_id,
@@ -253,6 +257,9 @@ def retire_missing_placement(
                 if cur.rowcount != 1:
                     db.rollback()
                     return _blocked("stale_plan")
+                if admitted_scope is not None and admitted_scope(db, initial=False) is not True:
+                    db.rollback()
+                    return _blocked("scope_changed")
                 db.commit()
                 return {"status": "retired", "reason": "orphan_missing"}
             except Exception:
