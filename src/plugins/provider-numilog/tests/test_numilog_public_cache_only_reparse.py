@@ -223,7 +223,8 @@ def test_paginated_public_envelopes_retain_partial_without_second_get(monkeypatc
         response = s.search_with_response_facets("jefferson", scope="catalog")
         retained, token = s._search_response_with_retained_input("jefferson", "catalog")
         assert token is not None
-        assert response.partial is True and retained.partial is True
+        assert response.partial is False and retained.partial is False
+        assert response.catalogue_complete is False and retained.catalogue_complete is False
         assert len(response.results) == 20
         assert retained.results == response.results == s.search("jefferson")
         assert len(response.public_notices) == len(response.results)
@@ -250,6 +251,7 @@ def test_complete_public_page_does_not_claim_partial(monkeypatch):
         result = s.search_with_response_facets("jefferson", scope="catalog")
         retained, token = s._search_response_with_retained_input("jefferson", "catalog")
         assert result.partial is False and retained.partial is False
+        assert result.catalogue_complete is True and retained.catalogue_complete is True
         assert retained.results == result.results and token is not None
         assert len(requests) == 1
     finally:
