@@ -144,8 +144,7 @@ def test_valid_acquisition_with_navigation_same_feed_not_a_second_http_scan():
     try:
         rows = s.search("")
         assert [r.title for r in rows] == ["Livre vraiment public"]
-        assert len(visited) == 2  # Root + same root acquisition reread (legacy).
-        assert all(u == ROOT_URL for u in visited)
+        assert visited == [ROOT_URL]  # The already parsed root is the page.
         assert any("partial_results" in w for w in s.last_search_warnings)
     finally:
         s.close()

@@ -56,7 +56,7 @@ def test_root_alternate_epub_books_are_not_mistaken_for_navigation():
         assert rows[0].downloadable is True
         assert rows[0].owned is False
         assert rows[0].download_url == HOST + "/index.php/fetch/epub.epub"
-        assert visited == ["/index.php/feed", "/index.php/feed"]
+        assert visited == ["/index.php/feed"]
     finally:
         obj.close()
 
@@ -73,7 +73,7 @@ def test_root_pdf_only_acquisition_is_a_real_non_downloadable_notice():
         assert [x.title for x in rows] == ["Book pdf"]
         assert rows[0].downloadable is False
         assert rows[0].download_url is None
-        assert visited == ["/index.php/feed", "/index.php/feed"]
+        assert visited == ["/index.php/feed"]
     finally:
         obj.close()
 
@@ -123,3 +123,51 @@ def test_book_offer_must_use_an_attested_fetch_route(href):
 ])
 def test_documented_fetch_routes_remain_available(href):
     assert _safe_opds_link(HOST + "/index.php/feed", href, "download") == HOST + href
+
+
+def test_root_browse_reuses_one_parse_without_cache_across_searches(monkeypatch):
+    import cifereca_ebooksgratuits as adapter
+
+    parsed = []
+    real = adapter.parse_bounded_catalogue_xml
+
+    def counted(body, **limits):
+        parsed.append(body)
+        return real(body, **limits)
+
+    monkeypatch.setattr(adapter, "parse_bounded_catalogue_xml", counted)
+    body = feed(entry("epub", href="/index.php/fetch/epub.epub"))
+    obj, visited = session_with_root(body)
+    try:
+        for _ in range(2):
+            rows = obj.search("")
+            assert [x.title for x in rows] == ["Book epub"]
+            assert not rows[0].owned
+        assert visited == ["/index.php/feed", "/index.php/feed"]
+        assert parsed == [body.encode(), body.encode()]
+    finally:
+        obj.close()
+
+
+def test_root_browse_next_page_is_read_once_without_rereading_root(monkeypatch):
+    import cifereca_ebooksgratuits as adapter
+
+    parsed = []
+    real = adapter.parse_bounded_catalogue_xml
+
+    def counted(body, **limits):
+        parsed.append(body)
+        return real(body, **limits)
+
+    monkeypatch.setattr(adapter, "parse_bounded_catalogue_xml", counted)
+    first = feed(entry("one", href="/index.php/fetch/one.epub"),
+                 '<link rel="next" href="/index.php/feed/page2"/>')
+    second = feed(entry("two", href="/index.php/fetch/two.epub"))
+    obj, visited = session_with_root(first, children={"/index.php/feed/page2": second})
+    try:
+        rows = obj.search("", page=1)
+        assert [x.title for x in rows] == ["Book two"]
+        assert visited == ["/index.php/feed", "/index.php/feed/page2"]
+        assert parsed == [first.encode(), second.encode()]
+    finally:
+        obj.close()
