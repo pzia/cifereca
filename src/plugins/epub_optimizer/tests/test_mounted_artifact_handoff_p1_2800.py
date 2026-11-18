@@ -115,6 +115,8 @@ def _page():
     page = OptimizerPage.__new__(OptimizerPage)
     page._closed = False
     page._task_handle = None
+    page._run_token = None
+    page._set_busy = lambda _busy: None
     page.artifact = None
     page.action_host = None
     page._invalidated = 0
@@ -197,3 +199,103 @@ def test_context_rejects_stale_or_protected_refs_without_changing_source():
     for invalid in (None, _artifact("B", drm="lcp"), _artifact("C", fmt="mobi")):
         assert not page.open_artifact(invalid)
         assert page.artifact is a
+
+
+def test_deferred_optimization_captures_request_and_drops_stale_completion(monkeypatch):
+    """Real start/open callbacks, pending and idle queues independently driven."""
+    import sys
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+
+    idle, jobs, seen, foreign, refreshes = [], [], [], [], []
+    glib = NS(idle_add=lambda callback, *args: idle.append((callback, args)))
+    monkeypatch.setitem(sys.modules, "gi", NS(repository=NS(GLib=glib)))
+    monkeypatch.setitem(sys.modules, "gi.repository", NS(GLib=glib))
+
+    class Handle:
+        def __init__(self, operation, progress):
+            self.operation, self.progress = operation, progress
+            self.finished = False
+            self.control = NS(cancelled=lambda: False)
+        def done(self):
+            return self.finished
+        def result(self):
+            assert self.finished
+            return self.value
+        def add_done_callback(self, callback):
+            self.callback = callback
+        def run(self, pool):
+            self.progress(50, 100, "old progress")
+            self.value = pool.submit(self.operation, self.control).result()
+            self.finished = True
+            self.callback(self)
+
+    def submit(operation, *, on_progress, **kwargs):
+        handle = Handle(operation, on_progress)
+        jobs.append(handle)
+        return handle
+
+    class Broker:
+        def __init__(self, calls):
+            self.calls = calls
+        def execute_transform(self, request, *, transformer_plugin_id, control):
+            self.calls.append((request, transformer_plugin_id))
+            return replace(request.source, filename="variant.epub")
+
+    page = _page()
+    page.host = Host(None)
+    page._tasks = NS(submit=submit)
+    page.profiles = {"profile": object()}
+    page.profile_combo = NS(get_active_id=lambda: "profile")
+    page._source_suffix = lambda: "." + page.artifact.format.format
+    page.max_uncompressed_mb = 300
+    page.max_pdf_pages = 400
+    page.max_image_pixels = 5000
+    page.max_image_mb = 12
+    logger = NS(error=lambda *_: None)
+    original = Broker(seen)
+    page.context = NS(broker=lambda _: original, logger=logger)
+    page._progress_ui = lambda *args: refreshes.append(("progress", args))
+
+    def success(result):
+        page._task_handle = None
+        refreshes.append((page.action_host, result.identity_id))
+
+    page._artifact_success_ui = success
+    a = replace(_artifact("A"), identity_id="alice", placement_id="copy-a")
+    b = replace(_artifact("B"), identity_id="bob", placement_id="copy-b")
+    host_a, host_b = Host(a), Host(b)
+    assert page.open_artifact(a, action_host=host_a)
+    page._start(None)
+    first, = jobs
+    assert not page.open_artifact(b, action_host=host_b)
+
+    # The task must use the admitted request and bound broker, not page
+    # attributes. A normal open_artifact cannot change them mid-flight.
+    page.max_image_pixels = 999
+    replacement = Broker(foreign)
+    page.context = NS(broker=lambda _: replacement, logger=logger)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first.run(pool)
+        assert first.done()
+        request, transformer = seen[0]
+        assert request.source is a
+        assert (request.identity_id, request.placement_id) == ("alice", "copy-a")
+        assert request.options["max_image_pixels"] == 5000
+        assert transformer == "document.transformer.epub-optimizer"
+        assert foreign == []
+        assert page.open_artifact(b, action_host=host_b)
+        page._start(None)
+        second = jobs[-1]
+        assert second is not first
+        old, idle[:] = idle[:], []
+        for callback, args in old:
+            callback(*args)
+        assert refreshes == []
+        assert page._task_handle is second
+        second.run(pool)
+        assert foreign[0][0].source is b
+        for callback, args in idle:
+            callback(*args)
+        assert refreshes[-1] == (host_b, "bob")
+        assert page._task_handle is None
