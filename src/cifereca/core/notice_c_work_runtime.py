@@ -44,6 +44,7 @@ class NoticeWorkRuntime:
         self._lock = RLock()
         self._closed = False
         self._scan = None
+        self._hint_pending = False
         self._observer = None
         self._pump = PublicNoticeWorkPump(
             storage, broker, clock=clock, on_committed=self._notify,
@@ -99,13 +100,18 @@ class NoticeWorkRuntime:
         """Nonblocking heartbeat hint; no SQLite on the submitting thread.
 
         Calls may be made by an existing lifecycle coordinator. No new
-        periodic mechanism is installed here. Saturation/duplicate/closed
-        return None, leaving the durable journal untouched by this hint.
+        periodic mechanism is installed here. A hint arriving during an
+        in-flight scan coalesces into one follow-up submission; admission
+        refusal preserves the hint for the next external wake, never spins.
         """
         with self._lock:
-            if self._closed or self._scan is not None:
+            if self._closed:
+                return None
+            self._hint_pending = True
+            if self._scan is not None:
                 return None
             self._dispatch_requested = True
+            self._hint_pending = False
             try:
                 handle = self._broker.submit(
                     self._scan_once, priority=TaskPriority.MAINTENANCE,
@@ -116,6 +122,7 @@ class NoticeWorkRuntime:
                     "executor pending queue full", "shared task admission full",
                     "task broker already closed", "executor already closed",
                 }:
+                    self._hint_pending = True
                     return None
                 raise
             self._scan = handle
@@ -131,8 +138,13 @@ class NoticeWorkRuntime:
 
     def _scan_finished(self, handle):
         with self._lock:
-            if self._scan is handle:
-                self._scan = None
+            if self._scan is not handle:
+                return
+            self._scan = None
+            # The old scan may still hold its admission until its worker
+            # exits. A refusal is nonblocking and does not consume a job.
+            if self._hint_pending and not self._closed:
+                self.request_tick()
 
     def close(self):
         """Stop new scans/notifications. The Core closes its broker next."""
@@ -142,6 +154,7 @@ class NoticeWorkRuntime:
             self._closed = True
             handle = self._scan
             self._scan = None
+            self._hint_pending = False
             self._observer = None
             authority = self._fetch_authority
             self._fetch_authority = None

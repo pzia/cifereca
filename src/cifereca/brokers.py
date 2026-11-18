@@ -135,6 +135,11 @@ class CatalogBrokerImpl:
         from .core.library_documentary_audit import library_documentary_audit
         return library_documentary_audit(self.service, identity_id=identity_id,
                                          kind="covers", runtime=True)
+    def library_language_audit(self, *, identity_id: str):
+        """Optional v2 aggregate: syntax and exact retained C provenance."""
+        from .core.library_documentary_audit import library_documentary_audit
+        return library_documentary_audit(self.service, identity_id=identity_id,
+                                         kind="languages", language_provenance=True)
     def known_public_notices(self, query: str, *, scope: str = "all", provider_ids: tuple[str, ...] = ()):
         """Worker-only descriptive C search; no supplier dispatch or rights."""
         from .core.notice_c_recommendation_known import known_public_notice_candidates
