@@ -37,7 +37,7 @@ def known_public_notice_candidates(
             id="known-c:" + sha256(hit.document.source_key.encode()).hexdigest(),
             record_id=hit.record_id, docbase=hit.docbase, medium=hit.medium,
             title=hit.title, author=hit.author, type="book",
-            format=hit.media_format, publisher=hit.publisher, published_at=None,
+            format=hit.media_format, publisher=hit.publisher, published_at=hit.published_at,
             description=hit.description, thumbnail_url=None, friendly_url=None,
             scenario="notice_c_public", source_provider=hit.provider_id,
             source_credential="", source_collection="notice_c_public",

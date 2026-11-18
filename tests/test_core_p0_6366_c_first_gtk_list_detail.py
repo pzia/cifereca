@@ -41,6 +41,7 @@ def test_public_c_source_binds_same_document_to_list_and_detail_without_actions(
     try:
         hit = persist(db, verified_public(
             title="La forêt connue", author="Auteur source",
+            format="EPUB", publisher="Éditions témoin", published_at="2025",
         ))
         page = search_public_notice_c(db, "forêt")
         rows = merge_public_notice_c_known_rows(
@@ -94,6 +95,12 @@ def test_public_c_source_binds_same_document_to_list_and_detail_without_actions(
         assert presentation.cover_document_ref == list_row._cover_document_ref
         assert presentation.thumbnail_url is None
         assert presentation.title == "La forêt connue"
+        facts = {field.label: field.value for section in presentation.sections
+                 for field in section.fields}
+        assert facts["Publication"] == "2025"
+        assert facts["Éditeur"] == "Éditions témoin"
+        assert facts["Format"] == "EPUB"
+        assert facts["Disponibilité"] == "Non vérifiée"
         assert presentation.actions == ()
         assert presentation.links == ()
         no_actions.assert_not_called()

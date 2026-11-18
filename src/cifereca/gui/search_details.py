@@ -62,6 +62,16 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
             metadata = item.get("metadata")
             metadata = metadata if type(metadata) is dict else {}
             stale = metadata.get("notice_c_stale") is True
+            # Same bounded source facts as the C cursor used by Recommendations.
+            # No dates inferred from cache freshness, loan or acquisition.
+            from cifereca.core.public_search_projection import _public_bibliographic_text
+
+            def public_text(value):
+                return value if (
+                    type(value) is str and _public_bibliographic_text(value, limit=512)
+                    and not value.lstrip().casefold().startswith(("/", "\\", "~/", "file:"))
+                ) else None
+
             presentation = book_detail_presentation(
                 title=str(item.get("title") or "Sans titre"),
                 subtitle=str(item.get("author") or ""),
@@ -70,6 +80,9 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                         else "Notice publique connue",),
                 section_rows=(("Catalogue", (
                     ("Fournisseur", item.get("provider_id") or "—"),
+                    ("Format", public_text(item.get("media_format"))),
+                    ("Éditeur", public_text(metadata.get("publisher"))),
+                    ("Publication", public_text(item.get("published_at"))),
                     ("Disponibilité", "Non vérifiée"),
                     ("Couverture de recherche", "Partielle"),
                 )),),
