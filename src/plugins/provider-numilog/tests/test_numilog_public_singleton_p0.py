@@ -74,7 +74,7 @@ def test_public_federated_results_keep_distinct_provider_and_no_entitlements(mon
 
     def fake_fetch(query, *, page, field):
         calls.append((query, page, field))
-        return SimpleNamespace(items=page_result.items)
+        return page_result
 
     page_result = page
     monkeypatch.setattr(public, "fetch_public_search", fake_fetch)
