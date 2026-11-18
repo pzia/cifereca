@@ -25,6 +25,7 @@ def publish_derived_variant(
     profile_id: str | None, profile_version: str,
     options_fingerprint: str, book_id: str | None,
     warnings: tuple[str, ...] | list[str], facts: dict[str, Any],
+    scope_current=None,
 ) -> str:
     """Commit Artifact B, Placement B, OriginLink(derived), recipe and notice.
 
@@ -75,6 +76,8 @@ def publish_derived_variant(
 
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
+        if scope_current is not None and not scope_current(db):
+            raise DerivedPublicationConflict("artifact_transform_scope_changed")
         parent = db.execute(
             "SELECT artifact_id,identity_id,path,state FROM placements "
             "WHERE placement_id=?", (parent_placement_id,),
@@ -208,4 +211,6 @@ def publish_derived_variant(
                  author, media_format, identity_id, "cifereca", source_id,
                  "local", dumped(meta), now, now),
             )
+        if scope_current is not None and not scope_current(db):
+            raise DerivedPublicationConflict("artifact_transform_scope_changed")
     return placement_id

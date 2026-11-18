@@ -299,3 +299,29 @@ def test_deferred_optimization_captures_request_and_drops_stale_completion(monke
             callback(*args)
         assert refreshes[-1] == (host_b, "bob")
         assert page._task_handle is None
+
+
+def test_optimizer_prefers_admission_over_deferred_legacy_execution():
+    from dataclasses import replace
+    page = _page()
+    page.max_image_pixels = 4000
+    page.max_image_mb = 12
+    page.max_uncompressed_mb = 300
+    artifact = replace(_artifact("A"), identity_id="alice", placement_id="copy-a")
+    calls = []
+
+    class Broker:
+        def admit_transform(self, request, *, transformer_plugin_id):
+            calls.append(("admit", request, transformer_plugin_id))
+            return lambda control: calls.append(("execute", control)) or "result"
+        def execute_transform(self, *args, **kwargs):
+            raise AssertionError("must not defer admission")
+
+    page.context = NS(broker=lambda _: Broker())
+    action = page._prepare_artifact_operation(artifact, "profile")
+    assert len(calls) == 1 and calls[0][0] == "admit"
+    assert calls[0][1].identity_id == "alice"
+    assert calls[0][1].placement_id == "copy-a"
+    control = object()
+    assert action(control) == "result"
+    assert calls[-1] == ("execute", control)

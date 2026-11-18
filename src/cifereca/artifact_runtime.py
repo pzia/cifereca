@@ -566,8 +566,17 @@ class ArtifactExecutionBrokerImpl:
                      proposed_filename: str = "", variant_kind: str = "",
                      identity_id: str | None = None,
                      placement_id: str | None = None) -> _OutputLease:
+        return self._output_lease(
+            source, output_format=output_format, proposed_filename=proposed_filename,
+            variant_kind=variant_kind, identity_id=identity_id, placement_id=placement_id,
+        )
+
+    def _output_lease(self, source, *, output_format, proposed_filename="",
+                      variant_kind="", identity_id=None, placement_id=None,
+                      admitted_owner=None):
         row = self._source_placement(
             source, identity_id=identity_id, placement_id=placement_id,
+            admitted_owner=admitted_owner,
         )
         source_path = Path(str(row["path"]))
         stamp = _variant_file_stamp(source_path)
@@ -663,7 +672,7 @@ class ArtifactExecutionBrokerImpl:
     def _scoped_derived_cache(
         self, *, source: ArtifactRef, source_lease: _InputLease,
         recipe: dict[str, Any], transformer_id: str,
-        profile_id: str | None, options_fingerprint: str,
+        profile_id: str | None, options_fingerprint: str, admitted_owner=None,
     ) -> ArtifactRef | None:
         """Require an exact SAME-identity physical child and derived origin.
 
@@ -731,12 +740,26 @@ class ArtifactExecutionBrokerImpl:
             )
             if cached is None:
                 return None
-            self.input_lease(cached, identity_id=owner, placement_id=pid)
+            if admitted_owner is None:
+                self.input_lease(cached, identity_id=owner, placement_id=pid)
+            else:
+                self._input_lease(cached, identity_id=owner, placement_id=pid,
+                                  admitted_owner=admitted_owner)
             return cached
         except (OSError, RuntimeError, TypeError, ValueError, Conflict, NotFound, json.JSONDecodeError):
             return None
 
     def commit_variant(self, *, source: ArtifactRef, destination: Any, result: TransformResult, transformer_plugin_id: str, profile_plugin_id: str | None = None, options_fingerprint: str = "") -> ArtifactRef:
+        return self._commit_variant(
+            source=source, destination=destination, result=result,
+            transformer_plugin_id=transformer_plugin_id,
+            profile_plugin_id=profile_plugin_id, options_fingerprint=options_fingerprint,
+        )
+
+    def _commit_variant(self, *, source, destination, result, transformer_plugin_id,
+                        profile_plugin_id=None, options_fingerprint="", admission=None):
+        owner, current, transaction_current = admission or (None, lambda: None, None)
+        current()
         lease = self._assert_output_lease(destination)
         if lease.source.artifact_id != source.artifact_id:
             raise _VariantConflict("Le lease de sortie ne correspond pas à la source", code="artifact_lease_source_mismatch")
@@ -756,7 +779,7 @@ class ArtifactExecutionBrokerImpl:
             raise _VariantConflict("Staging de variante modifié", code="artifact_variant_output_changed")
         source_placement = self._source_placement(
             source, identity_id=lease.source_identity_id,
-            placement_id=lease.source_placement_id,
+            placement_id=lease.source_placement_id, admitted_owner=owner,
         )
         source_path = Path(str(source_placement["path"]))
         if (lease.source_path != source_path
@@ -776,6 +799,7 @@ class ArtifactExecutionBrokerImpl:
         # select and physically unlink the ORIGINAL book placements. The
         # produced staging file is disposable; preserve the existing source
         # artifact and do not create a false independent derivative.
+        current()
         if actual_sha == source.sha256:
             self.abort_output(lease)
             return source
@@ -793,9 +817,10 @@ class ArtifactExecutionBrokerImpl:
                 ),
                 recipe=existing, transformer_id=transformer_plugin_id,
                 profile_id=profile_plugin_id,
-                options_fingerprint=options_fingerprint,
+                options_fingerprint=options_fingerprint, admitted_owner=owner,
             )
             if cached is not None:
+                current()
                 self.abort_output(lease)
                 return cached
         proposed = Path(str(result.proposed_filename or lease.proposed_filename or "")).name
@@ -812,6 +837,7 @@ class ArtifactExecutionBrokerImpl:
         claimed_paths = frozenset(
             str(row.get("path") or "") for row in self.service.storage.placements()
         )
+        current()
         final = _publish_variant_exclusive(
             path, source_path.parent, basename=stem + suffix,
             sha256=actual_sha, directory_stamp=lease.source_directory_stamp,
@@ -840,6 +866,7 @@ class ArtifactExecutionBrokerImpl:
         from .core.derived_variant_publication import (
             DerivedPublicationConflict, publish_derived_variant,
         )
+        current()
         try:
             publish_derived_variant(
                 self.service.storage,
@@ -864,6 +891,7 @@ class ArtifactExecutionBrokerImpl:
                 book_id=source.book_id,
                 warnings=result.warnings,
                 facts=dict(result.facts),
+                **({"scope_current": transaction_current} if admission is not None else {}),
             )
         except DerivedPublicationConflict as exc:
             raise _VariantConflict(
@@ -954,17 +982,118 @@ class ArtifactExecutionBrokerImpl:
             return row.plugin_id, row.service
         raise _VariantNotFound("Aucun transformer compatible", code="artifact_transformer_unavailable")
 
+    def admit_transform(self, request: TransformRequest, *, transformer_plugin_id: str):
+        """Optional exact, one-use operation; no hashing or plugin I/O at admission."""
+        from .core.source_context import source_context_epoch
+
+        if (type(request) is not TransformRequest or type(request.source) is not ArtifactRef
+                or type(request.identity_id) is not str or not request.identity_id
+                or type(request.placement_id) is not str or not request.placement_id
+                or request.source.identity_id != request.identity_id
+                or request.source.placement_id != request.placement_id
+                or type(transformer_plugin_id) is not str or not transformer_plugin_id
+                or getattr(getattr(self.service, "current_identity", None),
+                           "identity_id", None) != request.identity_id):
+            raise _VariantConflict("Source de transformation non admise",
+                                   code="artifact_transform_scope_unverified")
+        request = deepcopy(request)
+        service = self.service
+        storage, manager, config = service.storage, service.plugin_manager, service.config
+        epoch = source_context_epoch(service)
+        data = getattr(config, "data", None)
+        root = config.get("library.directory", None)
+        owner, pid = request.identity_id, request.placement_id
+        row = storage.placement_get(pid)
+        profile = storage.identity_get(owner)
+        if (type(row) is not dict or row.get("identity_id") != owner
+                or row.get("artifact_id") != request.source.artifact_id
+                or row.get("state") != "present" or type(profile) is not dict
+                or manager is None or type(root) is not str or not root):
+            raise _VariantConflict("Placement source non vérifié",
+                                   code="artifact_transform_scope_unverified")
+        path, directory = row.get("path"), profile.get("directory_name")
+
+        def matching():
+            return [r for r in manager.services("document.transformer")
+                    if r.plugin_id == transformer_plugin_id]
+
+        rows = matching()
+        if len(rows) != 1:
+            raise _VariantConflict("Transformer non vérifié",
+                                   code="artifact_transform_scope_unverified")
+        selected = rows[0]
+
+        def memory_current():
+            return (self.service is service and service.storage is storage
+                    and service.plugin_manager is manager and service.config is config
+                    and getattr(config, "data", None) is data
+                    and config.get("library.directory", None) == root
+                    and source_context_epoch(service) == epoch)
+
+        def current():
+            if not memory_current():
+                raise _VariantConflict("Source de transformation modifiée",
+                                       code="artifact_transform_scope_changed")
+            live, identity = storage.placement_get(pid), storage.identity_get(owner)
+            candidates = matching()
+            if (not memory_current() or type(live) is not dict
+                    or live.get("identity_id") != owner or live.get("path") != path
+                    or live.get("artifact_id") != request.source.artifact_id
+                    or live.get("state") != "present" or type(identity) is not dict
+                    or identity.get("directory_name") != directory
+                    or len(candidates) != 1 or candidates[0].service is not selected.service
+                    or candidates[0].registry_generation != selected.registry_generation):
+                raise _VariantConflict("Source de transformation modifiée",
+                                       code="artifact_transform_scope_changed")
+
+        def transaction_current(db):
+            # Do not open another SQLite connection under the writer lock.
+            return (memory_current() and db.execute(
+                "SELECT directory_name FROM identities WHERE identity_id=?", (owner,),
+            ).fetchone() == (directory,))
+
+        current()
+        if getattr(getattr(service, "current_identity", None), "identity_id", None) != owner:
+            raise _VariantConflict("Source de transformation non admise",
+                                   code="artifact_transform_scope_unverified")
+        lock, used = Lock(), False
+
+        def operation(control=None):
+            nonlocal used
+            with lock:
+                if used:
+                    raise _VariantConflict("Confirmation déjà consommée",
+                                           code="artifact_transform_scope_consumed")
+                used = True
+            current()
+            return self._execute_transform(
+                request, transformer_plugin_id=transformer_plugin_id, control=control,
+                admission=(owner, current, transaction_current),
+            )
+
+        return operation
+
     def execute_transform(self, request: TransformRequest, *, transformer_plugin_id: str = "", control: TaskControl | None = None) -> ArtifactRef:
+        return self._execute_transform(request, transformer_plugin_id=transformer_plugin_id,
+                                       control=control)
+
+    def _execute_transform(self, request, *, transformer_plugin_id="", control=None, admission=None):
+        owner, current, _transaction_current = admission or (None, lambda: None, None)
         if control is None:
             control = _NullTaskControl()
         control.check_cancelled()
+        current()
         plugin_id, transformer = self._select_transformer(request, transformer_plugin_id)
+        current()
         # Validate the current source bytes before considering an existing
         # derivative. A stale local source must never reuse an older variant.
-        source_lease = self.input_lease(
+        input_lease = self.input_lease if admission is None else self._input_lease
+        scope = {} if admission is None else {"admitted_owner": owner}
+        source_lease = input_lease(
             request.source, identity_id=request.identity_id,
-            placement_id=request.placement_id,
+            placement_id=request.placement_id, **scope,
         )
+        current()
         fingerprint = hashlib.sha256(
             json.dumps(dict(request.options), ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()
@@ -981,9 +1110,10 @@ class ArtifactExecutionBrokerImpl:
                 source=request.source, source_lease=source_lease,
                 recipe=existing, transformer_id=plugin_id,
                 profile_id=request.profile_plugin_id,
-                options_fingerprint=fingerprint,
+                options_fingerprint=fingerprint, admitted_owner=owner,
             )
             if cached is not None:
+                current()
                 control.check_cancelled()
                 control.report(current=1, total=1, message="Variante existante réutilisée")
                 recorder = getattr(self.service, "_record_action", None)
@@ -999,16 +1129,20 @@ class ArtifactExecutionBrokerImpl:
                     )
                 return cached
 
+        current()
         plan = transformer.plan(request, source_lease, control)
-        destination = self.output_lease(
+        current()
+        output_lease = self.output_lease if admission is None else self._output_lease
+        destination = output_lease(
             request.source,
             output_format=plan.output_format,
             proposed_filename=plan.proposed_filename,
             variant_kind=request.capability_id or "derived",
             identity_id=source_lease.source_identity_id,
-            placement_id=source_lease.source_placement_id,
+            placement_id=source_lease.source_placement_id, **scope,
         )
         try:
+            current()
             # The transformer may move or swap the original after plan.
             # The lease pins both path and current physical inode.
             if (destination.source_placement_id != source_lease.source_placement_id
@@ -1019,13 +1153,16 @@ class ArtifactExecutionBrokerImpl:
                 raise _VariantConflict("Source changée pendant le plan", code="artifact_source_changed")
             result = transformer.transform(request, source_lease, destination, control)
             control.check_cancelled()
-            committed = self.commit_variant(
+            current()
+            commit = self.commit_variant if admission is None else self._commit_variant
+            commit_scope = {} if admission is None else {"admission": admission}
+            committed = commit(
                 source=request.source,
                 destination=destination,
                 result=result,
                 transformer_plugin_id=plugin_id,
                 profile_plugin_id=request.profile_plugin_id,
-                options_fingerprint=fingerprint,
+                options_fingerprint=fingerprint, **commit_scope,
             )
             recorder = getattr(self.service, "_record_action", None)
             if callable(recorder):
