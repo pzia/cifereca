@@ -428,3 +428,30 @@ def test_opds_same_origin_redirect_and_configured_fallback(tmp_path):
         assert calls == ["/opds", "/opds-root", "/services/engine/search/opds"]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("kind", ("foreign_navigation", "doctype", "html"))
+def test_public_search_opds_refusal_never_authorizes_core_fallback(tmp_path, kind):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        assert request.url.path == "/opds"
+        if kind == "foreign_navigation":
+            body = ROOT_FEED.replace(b'/opds-search.xml', b'https://outside.invalid/feed')
+        elif kind == "doctype":
+            body = ('<!DOCTYPE feed [<!ENTITY hidden "PRIVATE">]>'
+                    '<feed xmlns="http://www.w3.org/2005/Atom"><title>&hidden;</title></feed>').encode("utf-16")
+        else:
+            body = b"<html><body>PRIVATE_LOGIN</body></html>"
+        return httpx.Response(200, content=body)
+    session = _session(tmp_path, handler)
+    try:
+        with pytest.raises(ProviderError) as caught:
+            session.search("bruyere", "digital")
+        assert getattr(caught.value, "code", None) is None
+        assert caught.value.retryable is False
+        assert caught.value.__cause__ is None
+        assert "PRIVATE" not in str(caught.value)
+        assert len(calls) == 1
+    finally:
+        session.close()
