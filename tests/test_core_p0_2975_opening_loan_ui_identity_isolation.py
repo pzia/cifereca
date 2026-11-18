@@ -12,6 +12,7 @@ import pytest
 
 from cifereca.models import Account, Loan
 from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from tests.test_sync_state_contract import _service
 
 
@@ -47,7 +48,7 @@ def _setup(service, monkeypatch):
     def read(account, *, force=False):
         calls.append((account.identity_id, account.credential_id))
         return list(observations[account.credential_id])
-    monkeypatch.setattr(service, "_loans_for_account", read)
+    attach_opening_loan_reader(service, read, typed=False)
     monkeypatch.setattr(service, "mirror_personal_libraries", lambda: {})
     service.config.set("kobo_backup.enabled", False)
     return first, second, observations, calls
