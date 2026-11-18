@@ -550,3 +550,49 @@ def test_sru_audio_transport_preserves_observed_projection(tmp_path):
         assert session.last_search_warnings == []
     finally:
         session.close()
+
+
+def test_legacy_atom_facade_preserves_dictionary_projection():
+    from cifereca_gallica import GallicaPlugin
+
+    rows = GallicaPlugin.parse_feed(
+        RESULTS.encode("utf-8"), "https://gallica.bnf.fr/opds/search",
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["id"] == "https://gallica.bnf.fr/ark:/12148/bpt6k5493831p"
+    assert row["format"] == "EPUB"
+    assert row["download_url"] == row["id"] + ".epub"
+    assert row["thumbnail_url"] == row["id"] + ".thumbnail"
+    assert row["friendly_url"] == row["id"]
+    assert row["provider_id"] == "gallica"
+    assert row["source_kind"] == "http"
+    assert row["drm"] == "none"
+    assert GallicaPlugin.parse_feed(
+        ROOT_FEED, "https://gallica.bnf.fr/opds",
+    ) == []
+
+
+@pytest.mark.parametrize("payload", [
+    b'<other xmlns="http://www.w3.org/2005/Atom"><entry/></other>',
+    b'<html><body>Unavailable</body></html>',
+    ('<!DOCTYPE feed [<!ENTITY title "fake">]>'
+     '<feed xmlns="http://www.w3.org/2005/Atom">&title;</feed>').encode("utf-16"),
+    b'<feed xmlns="http://www.w3.org/2005/Atom">' + b' ' * (2 * 1024 * 1024) + b'</feed>',
+    b'<feed xmlns="http://www.w3.org/2005/Atom">' + b'<x>' * 100 + b'</x>' * 100 + b'</feed>',
+])
+def test_legacy_atom_facade_refuses_unsafe_or_foreign_payload(payload):
+    from cifereca_gallica import GallicaPlugin, _UnsafeOPDS
+
+    with pytest.raises(_UnsafeOPDS):
+        GallicaPlugin.parse_feed(payload, "https://gallica.bnf.fr/opds")
+
+
+def test_legacy_atom_facade_malformed_xml_not_empty_catalogue():
+    from cifereca_gallica import GallicaPlugin
+
+    with pytest.raises(ProviderError, match="XML invalide"):
+        GallicaPlugin.parse_feed(
+            b'<feed xmlns="http://www.w3.org/2005/Atom">',
+            "https://gallica.bnf.fr/opds",
+        )
