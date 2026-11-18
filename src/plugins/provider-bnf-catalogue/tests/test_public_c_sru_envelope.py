@@ -115,3 +115,118 @@ def test_bnf_canonical_sru_redirect_never_parses_or_follows(tmp_path, monkeypatc
         assert requests[0].url.path == "/api/SRU"
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("total,count,next_position,scope,field,partial,complete", [
+    (0, 0, None, "all", "title", False, True),
+    (1, 1, None, "all", "title", False, True),
+    (3, 2, None, "all", "title", False, False),
+    (3, 1, 2, "all", "title", False, False),
+    (3, 1, None, "all", "title", True, False),
+    (3, 0, None, "all", "title", True, False),
+    (0, 1, None, "all", "title", True, False),
+    (1, 1, 2, "all", "title", True, False),
+    (3, 1, 3, "all", "title", True, False),
+    (1, 1, None, "digital", "title", False, False),
+    (1, 1, None, "all", "series", False, False),
+])
+def test_sru_coverage_same_page_not_execution_failure(
+    monkeypatch, total, count, next_position, scope, field, partial, complete,
+):
+    from xml.etree import ElementTree as ET
+    root = ET.fromstring(BODY)
+    ns = "{http://www.loc.gov/zing/srw/}"
+    dc = "{http://purl.org/dc/elements/1.1/}"
+    root.find(ns + "numberOfRecords").text = str(total)
+    records = root.find(ns + "records")
+    template = records[0]
+    records.remove(template)
+    for index in range(count):
+        record = ET.fromstring(ET.tostring(template))
+        record.find(".//" + dc + "identifier").text = (
+            "https://catalogue.bnf.fr/ark:/12148/cb10000000" + str(index + 1) + "d"
+        )
+        records.append(record)
+    if next_position is not None:
+        ET.SubElement(root, ns + "nextRecordPosition").text = str(next_position)
+    body = ET.tostring(root)
+    calls = []
+    def serve(request):
+        calls.append(request)
+        return httpx.Response(200, content=body, request=request)
+    monkeypatch.setattr(provider.HTTPX_TRANSPORT, "client",
+        lambda **kw: httpx.Client(transport=httpx.MockTransport(serve), trust_env=False))
+    session = provider.BnfCatalogueSession(
+        credential_id="__public__", label="BnF", credentials={},
+        options={"page_size": 2}, diagnostics=None,
+    )
+    session.connect()
+    try:
+        response = session.search_with_response_facets("Les loups", scope, field=field)
+        assert response.partial is partial
+        assert response.catalogue_complete is complete
+        expected = 0 if scope == "digital" or field == "series" else count
+        assert len(response.results) == expected
+        assert len(response.public_notices) == expected
+        assert len(calls) == 1
+        assert bool(session.last_search_warnings) is partial
+        assert all(not row.owned and not row.downloadable for row in response.results)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("defect", ["duplicate", "unattested", "missing_data", "nested"])
+def test_sru_record_loss_is_not_a_clean_catalogue_window(monkeypatch, defect):
+    from xml.etree import ElementTree as ET
+    root = ET.fromstring(BODY)
+    ns = "{http://www.loc.gov/zing/srw/}"
+    dc = "{http://purl.org/dc/elements/1.1/}"
+    root.find(ns + "numberOfRecords").text = "2"
+    records = root.find(ns + "records")
+    other = ET.fromstring(ET.tostring(records[0]))
+    if defect == "unattested":
+        other.find(".//" + dc + "identifier").text = "https://example.org/record"
+    elif defect == "missing_data":
+        other.remove(other.find(ns + "recordData"))
+    elif defect == "nested":
+        data = other.find(ns + "recordData")
+        other.remove(data)
+        ET.SubElement(other, ns + "extra").append(data)
+    records.append(other)
+    calls = []
+    def serve(request):
+        calls.append(request)
+        return httpx.Response(200, content=ET.tostring(root), request=request)
+    monkeypatch.setattr(provider.HTTPX_TRANSPORT, "client",
+        lambda **kw: httpx.Client(transport=httpx.MockTransport(serve), trust_env=False))
+    session = provider.BnfCatalogueSession(
+        credential_id="__public__", label="BnF", credentials={},
+        options={}, diagnostics=None,
+    )
+    session.connect()
+    try:
+        page = session.search_with_response_facets("Les loups")
+        assert page.partial is True and page.catalogue_complete is False
+        assert len(page.results) == len(page.public_notices) == 1
+        assert len(calls) == 1
+    finally:
+        session.close()
+
+
+def test_sru_skipped_query_does_not_mint_coverage(monkeypatch):
+    def fail(request):
+        raise AssertionError("short query must not perform GET")
+    monkeypatch.setattr(provider.HTTPX_TRANSPORT, "client",
+        lambda **kw: httpx.Client(transport=httpx.MockTransport(fail), trust_env=False))
+    session = provider.BnfCatalogueSession(
+        credential_id="__public__", label="BnF", credentials={},
+        options={}, diagnostics=None,
+    )
+    session.connect()
+    try:
+        short = session.search_with_response_facets("x")
+        assert short.partial is True and short.catalogue_complete is None
+        clear = session.search_with_response_facets("")
+        assert clear.partial is False and clear.catalogue_complete is None
+    finally:
+        session.close()
