@@ -253,6 +253,88 @@ class _ReadOnlyTool:
         return broker
 
 
+
+_DOCUMENTARY_COUNTS = {
+    "covers": ("embedded", "origin", "catalog", "ambiguous", "missing", "unknown"),
+    "languages": ("canonical", "noncanonical", "invalid", "unknown"),
+}
+
+
+def _documentary_preview(kind, facts):
+    """Validate the optional Core aggregate; never render arbitrary payloads."""
+    keys = _DOCUMENTARY_COUNTS[kind]
+    if (type(facts) is not dict
+            or set(facts) != {"schema", "status", "entries", *keys}
+            or type(facts["schema"]) is not int or facts["schema"] != 1
+            or facts["status"] not in ("partial", "unavailable")
+            or any(type(facts[key]) is not int or not 0 <= facts[key] <= 10000
+                   for key in ("entries", *keys))
+            or sum(facts[key] for key in keys) != facts["entries"]
+            or (facts["status"] == "unavailable" and facts["entries"] != 0)):
+        raise ValueError("invalid_documentary_audit")
+    if facts["status"] == "unavailable":
+        return "Audit documentaire indisponible.", ("Aucune conclusion sur les notices.",)
+    if kind == "covers":
+        summary = (
+            f'{facts["entries"]} livre(s) ; N1 attesté : '
+            f'{facts["embedded"]} EPUB, {facts["origin"]} origine, {facts["catalog"]} catalogue ; '
+            f'{facts["ambiguous"]} ambigu(s), {facts["missing"]} absent(s) attesté(s), '
+            f'{facts["unknown"]} inconnu(s).'
+        )
+        warnings = (
+            "Audit partiel : liaison N2 runtime et présence/intégrité N3 non observées.",
+            "Une URL ou une image en cache ne prouve pas une liaison documentaire.",
+        )
+    else:
+        summary = (
+            f'{facts["entries"]} livre(s) ; langues déclarées : '
+            f'{facts["canonical"]} canoniques, {facts["noncanonical"]} non canoniques, '
+            f'{facts["invalid"]} invalides, {facts["unknown"]} inconnues.'
+        )
+        warnings = ("Audit partiel : syntaxe déclarée, provenance de langue non attestée.",)
+    return summary, warnings
+
+
+def _documentary_plan(tool, context, control, kind):
+    broker = tool._broker("catalog")
+    method = getattr(broker, "library_documentary_audit", None)
+    if not callable(method):
+        return None  # historical ABI: existing reference/tag-only audit
+    try:
+        facts = method(identity_id=context.identity_id, kind=kind)
+        summary, warnings = _documentary_preview(kind, facts)
+    except Exception:
+        facts = {"schema": 1, "status": "unavailable", "entries": 0,
+                 **dict.fromkeys(_DOCUMENTARY_COUNTS[kind], 0)}
+        summary, warnings = _documentary_preview(kind, facts)
+    if control is not None:
+        control.check_cancelled()
+    return MaintenancePlan(tool_id=tool.info.id, summary=summary, warnings=warnings,
+                           facts=facts)
+
+
+def _documentary_run(tool, plan, control, kind):
+    facts = plan.facts
+    if type(facts) is not dict or "schema" not in facts:
+        return None
+    control.check_cancelled()
+    try:
+        summary, warnings = _documentary_preview(kind, facts)
+        if (plan.tool_id != tool.info.id or plan.summary != summary
+                or type(plan.warnings) not in (list, tuple)
+                or tuple(plan.warnings) != warnings):
+            raise ValueError("invalid_documentary_plan")
+    except Exception:
+        control.report(message="Audit documentaire indisponible : plan invalide.")
+        control.check_cancelled()
+        return MaintenanceResult(ok=False, changed=0, summary="Audit documentaire indisponible : plan invalide.",
+                                 facts={"invalid_plan": 1})
+    control.report(message=summary)
+    control.check_cancelled()
+    return MaintenanceResult(ok=facts["status"] == "partial", changed=0,
+                             summary=summary, warnings=warnings, facts=dict(facts))
+
+
 class CoverAuditTool(_ReadOnlyTool):
     info = MaintenanceToolInfo(
         id="covers.audit",
@@ -275,6 +357,9 @@ class CoverAuditTool(_ReadOnlyTool):
         if control is not None:
             control.check_cancelled()
             control.report(message="Couvertures : examen des notices : chargement")
+        documentary = _documentary_plan(self, context, control, "covers")
+        if documentary is not None:
+            return documentary
         entries = _rows(self._broker("catalog").catalog_entries(identity_id=context.identity_id))
         missing = 0
         invalid = 0
@@ -374,6 +459,9 @@ class CoverAuditTool(_ReadOnlyTool):
         warnings are not authority to render provider-controlled text in the
         tool's live progress line or in exported diagnostics.
         """
+        documentary = _documentary_run(self, plan, control, "covers")
+        if documentary is not None:
+            return documentary
         facts = plan.facts
         valid = (
             plan.tool_id == self.info.id
@@ -483,6 +571,9 @@ class LanguageAuditTool(_ReadOnlyTool):
         if control is not None:
             control.check_cancelled()
             control.report(message="Langues : examen des notices : chargement")
+        documentary = _documentary_plan(self, context, control, "languages")
+        if documentary is not None:
+            return documentary
         entries = _rows(self._broker("catalog").catalog_entries(identity_id=context.identity_id))
         seen = 0
         invalid = 0
@@ -557,6 +648,9 @@ class LanguageAuditTool(_ReadOnlyTool):
 
         A restored plan is an untrusted input, not a safe UI string source.
         """
+        documentary = _documentary_run(self, plan, control, "languages")
+        if documentary is not None:
+            return documentary
         facts = plan.facts
         keys = {
             "language_values", "invalid", "noncanonical",

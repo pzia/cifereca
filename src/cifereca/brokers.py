@@ -126,6 +126,10 @@ class CatalogBrokerImpl:
     def holdings(self, item: Any, **options: Any): return self.service.holdings(item, **options)
     def searchable_providers(self): return self.service.searchable_providers()
     def catalog_entries(self, **options: Any): return self.service.catalog_entries(**options)
+    def library_documentary_audit(self, *, identity_id: str, kind: str):
+        """Optional aggregate scoped audit, not a global catalogue export."""
+        from .core.library_documentary_audit import library_documentary_audit
+        return library_documentary_audit(self.service, identity_id=identity_id, kind=kind)
     def known_public_notices(self, query: str, *, scope: str = "all", provider_ids: tuple[str, ...] = ()):
         """Worker-only descriptive C search; no supplier dispatch or rights."""
         from .core.notice_c_recommendation_known import known_public_notice_candidates
