@@ -138,6 +138,7 @@ def complete_selected_delivery(
         raise ValueError("canonical_delivery_candidate_contract_unavailable")
 
     epoch = source_context_epoch(service)
+    primary = account.is_primary
     accounts, sessions, storage = service.accounts, service._sessions, service.storage
 
     def bound() -> bool:
@@ -148,6 +149,7 @@ def complete_selected_delivery(
                         type(x) is Account
                         and (x.identity_id, x.provider_id,
                              x.credential_id, x.unique_id) == coords
+                        and x.is_primary is primary
                         for x in session_accounts
                     ) != 1):
                 return False
@@ -157,6 +159,7 @@ def complete_selected_delivery(
                 and source_context_epoch(service) == epoch
                 and (account.identity_id, account.provider_id,
                      account.credential_id, account.unique_id) == coords
+                and type(primary) is bool and account.is_primary is primary
                 and sum(type(x) is Account and x is account for x in accounts) == 1
                 and sum(type(x) is Account and
                         (x.identity_id, x.provider_id,
@@ -324,7 +327,11 @@ def complete_selected_delivery(
         expected_adept = None
         if source.kind == "loan" and request["source"].get("type") == "acsm":
             expected_adept = acsm_profile()
-            if request.get("profile") != expected_adept[0]:
+            if (type(request.get("profile")) is not str
+                    or request["profile"] != expected_adept[0]
+                    or request["source"].get("provider") != scope.provider_id
+                    or type(request.get("metadata")) is not dict
+                    or request["metadata"].get("identity_id") != borrower_identity):
                 raise ValueError("adept_borrower_profile_changed")
             require_adept_profile(*expected_adept)
         require_borrower()
