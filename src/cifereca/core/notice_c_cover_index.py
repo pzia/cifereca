@@ -16,6 +16,7 @@ from typing import Any
 
 from .book_cover_projection import CoverDocumentScope
 from .covers import CoverCandidate, candidate
+from .notice_c_web_references import CatalogueWebReference, FIELD as _WEB_FIELD, decode_public_web_references
 from .notice_cover_repository import (
     PersistedNoticeCover, _decode as _decode_source,
     _opaque_key as _source_db_key,
@@ -60,6 +61,7 @@ class ConsolidatedCoverSource:
     urls: tuple[str, ...]
     visibility: str
     public_bibliography: ConsolidatedPublicBibliography | None = None
+    public_web_references: tuple[CatalogueWebReference, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +71,11 @@ class ConsolidatedNoticeCover:
     sources: tuple[ConsolidatedCoverSource, ...]
     candidates: tuple[CoverCandidate, ...]
     snapshot_complete: bool
+
+    @property
+    def catalogue_web_references(self) -> tuple[CatalogueWebReference, ...]:
+        # Source order is stable; do not merge identical URLs across providers.
+        return tuple(ref for source in self.sources for ref in source.public_web_references)
 
     @property
     def attested_book_identity(self) -> str:
@@ -227,6 +234,9 @@ def _decode(raw: object, document: CoverDocumentScope) -> ConsolidatedNoticeCove
                     {"provider", "source_revision", "observed_at",
                      "source_epoch", "proof", "state", "urls", "visibility",
                      "public_bibliography"},
+                    {"provider", "source_revision", "observed_at",
+                     "source_epoch", "proof", "state", "urls", "visibility",
+                     "public_bibliography", _WEB_FIELD},
                 )):
             raise ValueError("corrupt_canonical_cover")
         provider, revision, proof = (
@@ -269,13 +279,25 @@ def _decode(raw: object, document: CoverDocumentScope) -> ConsolidatedNoticeCove
                 item["public_bibliography"], provider=provider,
                 source_ref=ref, observed_at=item["observed_at"],
             )
+        web_refs = ()
+        if _WEB_FIELD in item:
+            if biblio is None or item["visibility"] != "public":
+                raise ValueError("corrupt_canonical_cover")
+            try:
+                web_refs = decode_public_web_references(
+                    item[_WEB_FIELD], provider_id=provider, source_ref=ref,
+                    record_id=biblio.record_id, edition_id=biblio.edition_id,
+                    source_revision=revision, observed_at=item["observed_at"],
+                )
+            except ValueError:
+                raise ValueError("corrupt_canonical_cover") from None
         sources.append(ConsolidatedCoverSource(
             source_ref=ref, provider_id=provider,
             source_revision=revision, observed_at=item["observed_at"],
             source_epoch=item["source_epoch"],
             relation_proof_id=proof, state=item["state"],
             urls=tuple(urls), visibility=item["visibility"],
-            public_bibliography=biblio,
+            public_bibliography=biblio, public_web_references=web_refs,
         ))
     # Any admitted positive public cover can be displayed, while a complete
     # lack of candidates is NOT 'missing' if sources remain unresolved/private.
@@ -419,6 +441,16 @@ def _persist_consolidated_cover_source_txn(
                 # make an old source look freshly re-parsed.
                 "last_seen_at": source.observation.observed_at,
             }
+    # The extension belongs to this exact validated public source, not
+    # the per-profile mirror or a different member of the canonical group.
+    source_fields = source.observation.fields_copy().get("search_result")
+    if type(source_fields) is dict and _WEB_FIELD in source_fields:
+        if ("public_bibliography" not in incoming
+                or source.observation.status != "complete"):
+            raise ValueError("invalid_public_web_references")
+        incoming[_WEB_FIELD] = source_fields[_WEB_FIELD]
+        # Final _decode below validates the closed shape and URL again
+        # before the atomic write. No URL copied from another source.
     if rows.get(source_ref) == incoming:
         return _decode(old[0], document)
     if len(rows) >= _MAX_SOURCES and source_ref not in rows:
