@@ -28,6 +28,7 @@ from ..plugin_api.downloadable_resources import (
 )
 from .convergence_verified_presence import plan_existing_verified_presence
 from .source_convergence import SourceKey
+from .canonical_loan_retry_guard import historical_adept_retry_blocked
 
 _LOG = logging.getLogger("cifereca")
 
@@ -249,6 +250,12 @@ def qualify_selected_offers(
         if not current():
             raise ValueError("canonical_offer_source_rebound")
         if not consent_current(key):
+            continue
+        # Do not repeat even the selected offer consultation for a loan
+        # held for explicit ADEPT intervention by the historical receipt.
+        if historical_adept_retry_blocked(initial_storage, account, session, key):
+            continue
+        if not current() or not consent_current(key):
             continue
         try:
             selected = getattr(session, reader_name)(
