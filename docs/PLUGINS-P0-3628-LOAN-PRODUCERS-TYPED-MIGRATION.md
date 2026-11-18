@@ -99,7 +99,16 @@ cache et sorties typées partielles. Les assertions des anciens tests de
 course ont été déplacées sur le lecteur privé commun plutôt que de
 réintroduire le couplage métier au lecteur v1.
 
-## Handoff borné à l'agent A · #3197
+## Handoff historique à l'agent A · #3197 (état au 30/10/2026)
+
+L'état ci-dessous est conservé comme historique de migration, non comme
+inventaire courant. #6616 a unifié le cache direct, #6631 le Sync explicite
+et planifié. Le dernier cutover opening supprime le choix Core de la voie v1 :
+les consommateurs passent par `read_loan_inventory`, avec le lecteur legacy
+uniquement derrière l'adaptateur public Plugin API 1.x. Un compte sans
+capacité prêts ne déclenche aucun GET. Le retrait de l'ABI publique reste
+conditionné à la major 2.0. La recette de fin de lot doit attester le HEAD
+fusionné avant fermeture de #3197.
 
 **Rester à enlever chez Core seulement après vérification de la
 compatibilité des extensions installées et migration/major Plugin API :**
