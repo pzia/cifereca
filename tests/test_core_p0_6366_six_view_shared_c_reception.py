@@ -298,6 +298,44 @@ def _borrowers(db, reception):
                for item in items)
 
 
+def _audit_real_cover(db, reception, artifact, placement, path, *, physical):
+    """Retained C -> genuine observer -> N2/N3 -> scoped broker, no image load."""
+    from cifereca.brokers import CatalogBrokerImpl
+    from cifereca.gui.local_cover_adapter import LocalCoverEvidenceAdapter
+
+    row, _ = _views(db, artifact, placement, path)
+    row.update(title=TITLE, author="Autrice")
+    project_local_origin_public_c(db, [row], identity_id=OWNER)
+    link = row["_public_canonical_cover_link"]
+    assert link.document == reception.ref and link.epoch == reception.epoch
+
+    def library_entries(*, identity_id, scan):
+        assert identity_id == OWNER and scan is False
+        return [row]
+
+    host = NS(storage=db, identity_by_id=lambda owner: object() if owner == OWNER else None,
+              _account_context_epoch=7, _source_context_epoch=9,
+              library_entries=library_entries)
+    broker = CatalogBrokerImpl(host)
+    before = reception.service.stats()
+    with_observer = LocalCoverEvidenceAdapter()
+    try:
+        with_observer.bind_audit_observer(host, reception.service)
+        facts = broker.library_cover_audit(identity_id=OWNER)
+        assert facts["status"] == "partial" and facts["entries"] == 1
+        assert facts["catalog"] == facts["n2"]["catalog"] == 1
+        assert facts["n3"][physical] == 1
+        assert sum(facts["n3"].values()) == 1
+        assert URL not in repr(facts) and str(path) not in repr(facts)
+        assert broker.library_cover_audit(identity_id="B")["status"] == "unavailable"
+    finally:
+        with_observer.close()
+    assert host._documentary_cover_observer is None
+    detached = broker.library_cover_audit(identity_id=OWNER)
+    assert detached["catalog"] == detached["n2"]["unknown"] == detached["n3"]["unknown"] == 1
+    assert reception.service.stats() == before
+
+
 def test_same_public_c_six_list_detail_paths_and_reopened_offline_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     filename = tmp_path / "reception.sqlite"
@@ -362,12 +400,16 @@ def test_same_public_c_six_list_detail_paths_and_reopened_offline_cache(tmp_path
             assert reception.reads == [ref]
             reception.assert_n2_reads(12)
             assert reception.loader.stats()["download_ok"] == 1
+            _audit_real_cover(db, reception, artifact, placement, path, physical="signature_valid")
+            assert gets == [URL]
 
             # N2 remains warm while only the physical source disappears.
             # The detail variant deliberately bypasses the preview cache.
             image = reception.loader._path(URL)
             assert image.read_bytes() == png
             image.unlink()
+            _audit_real_cover(db, reception, artifact, placement, path, physical="not_validated")
+            assert not image.exists() and gets == [URL]
             done, paths = Event(), []
             handle = reception.service.get_cover(
                 ref, "detail", lambda p: (paths.append(p), done.set()),
@@ -420,6 +462,7 @@ def test_same_public_c_six_list_detail_paths_and_reopened_offline_cache(tmp_path
         _borrowers(restored, reception)
         assert len(reception.bindings) == 14
         reception.assert_n2_reads(14)
+        _audit_real_cover(restored, reception, artifact, placement, path, physical="signature_valid")
         assert reception.reads == [ref]
         assert gets == [URL, URL]
 
