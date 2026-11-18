@@ -362,6 +362,25 @@ def test_same_public_c_six_list_detail_paths_and_reopened_offline_cache(tmp_path
             assert reception.reads == [ref]
             reception.assert_n2_reads(12)
             assert reception.loader.stats()["download_ok"] == 1
+
+            # N2 remains warm while only the physical source disappears.
+            # The detail variant deliberately bypasses the preview cache.
+            image = reception.loader._path(URL)
+            assert image.read_bytes() == png
+            image.unlink()
+            done, paths = Event(), []
+            handle = reception.service.get_cover(
+                ref, "detail", lambda p: (paths.append(p), done.set()),
+                minimum_revision=snapshot.epoch,
+            )
+            reception.handles.append(handle)
+            assert done.wait(10)
+            assert handle.still_current and handle.source_uri == URL
+            assert paths == [image] and image.read_bytes() == png
+            assert gets == [URL, URL]
+            assert reception.reads == [ref]
+            reception.assert_n2_reads(13)
+            assert reception.loader.stats()["download_ok"] == 2
         finally:
             reception.close()
         assert db.entitlements() == [] and db.acquisitions() == []
@@ -402,7 +421,33 @@ def test_same_public_c_six_list_detail_paths_and_reopened_offline_cache(tmp_path
         assert len(reception.bindings) == 14
         reception.assert_n2_reads(14)
         assert reception.reads == [ref]
-        assert gets == [URL]
+        assert gets == [URL, URL]
+
+        # The homonym has exactly the same physical URL but a different C.
+        # Its first N2 read must consult its own canonical source; N3 can
+        # reuse the image without either a third GET or a documentary merge.
+        foreign_ref = homonym._core_notice_canonical_cover_document_ref
+        foreign_snapshot = read_consolidated_notice_cover(restored, foreign_ref)
+        assert foreign_ref != ref and foreign_snapshot is not None
+        changed = Event()
+        cold = reception.service.get_cover(
+            foreign_ref, "detail", lambda _: None,
+            minimum_revision=foreign_snapshot.epoch, on_source_changed=changed.set,
+        )
+        reception.handles.append(cold)
+        assert cold.source_uri is None and changed.wait(10)
+        assert not cold.still_current
+        seen, ready = [], Event()
+        warm = reception.service.get_cover(
+            foreign_ref, "detail", lambda p: (seen.append(p), ready.set()),
+            minimum_revision=foreign_snapshot.epoch,
+        )
+        reception.handles.append(warm)
+        assert ready.wait(10) and warm.still_current
+        assert warm.source_uri == URL and seen[0].read_bytes() == png
+        assert reception.reads == [ref, foreign_ref]
+        assert gets == [URL, URL]
+        assert reception.loader.stats()["download_ok"] == 0
         assert restored.entitlements() == [] and restored.acquisitions() == []
     finally:
         reception.close()
