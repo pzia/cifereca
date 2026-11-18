@@ -11,6 +11,7 @@ import uuid
 
 from cifereca.plugin_api import BUNDLE_MANIFEST_NAME
 from cifereca.library_files import safe_library_component, sha256_file
+from cifereca.filename_suffixes import split_filename_suffix
 
 JOURNAL_KEY = 'identity-directory-migration-v1'
 
@@ -145,8 +146,7 @@ class DirectoryMigration:
                 serial += 1
                 token = digest.split(':', 1)[1][:10]
                 suffix = '' if serial == 1 else f'-{serial}'
-                extension = '.kepub.epub' if initial.name.lower().endswith('.kepub.epub') else initial.suffix
-                stem = initial.name[:-len(extension)] if extension else initial.name
+                stem, extension = split_filename_suffix(initial)
                 target = initial.with_name(f'{stem}-migration-{token}{suffix}{extension}')
             if target != initial:
                 plan['collisions'] += 1
