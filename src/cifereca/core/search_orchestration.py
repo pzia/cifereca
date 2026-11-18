@@ -919,13 +919,15 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     )
     virtual_cache_tag = f"\0{virtual_versions}" if virtual_versions else ""
     cache_key = hashlib.sha256(
-        f"search-v13\0{_search_session_cache_scope(searchable)!r}\0{_search_owner_cache_scope(owner_leases)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
+        f"search-v14\0{_search_session_cache_scope(searchable)!r}\0{_search_owner_cache_scope(owner_leases)!r}\0{provider_key}\0{scope}\0{field}\0{tuple(sorted(content_types or ()))!r}\0{pref_key}\0{query.casefold()}{virtual_cache_tag}".encode()
     ).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
     if not force:
         cached = self.storage.cache_get("search", cache_key)
-        if isinstance(cached, list):
-            rows = [_provider_search_row(SearchResult(**x)) for x in cached]
+        cached_contents = _search_cache_contents(cached, searchable)
+        if cached_contents is not None:
+            cached_rows, window_sources = cached_contents
+            rows = [_provider_search_row(SearchResult(**x)) for x in cached_rows]
             _stamp_cached_public_notice_refs(
                 rows, identity_id=identity.identity_id if identity else None,
                 storage=self.storage,
@@ -937,12 +939,16 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                     return []
                 self.last_search = rows
                 # Never leak a warning from a previous, unrelated search.
-                self.last_search_warnings = []
+                self.last_search_warnings = [
+                    _catalogue_window_warning(session) for session in searchable
+                    if session.provider_id in window_sources
+                ]
             self.diagnostics.add("CACHE", "search", detail={"hit": True, "results": len(rows), "q_len": len(query), "providers": provider_key})
             return rows
 
     rows: list[SearchResult] = []
     warnings: list[str] = []
+    window_sources: set[str] = set()
     variants = self._search_query_variants(query)
     for session in searchable:
         if not request_current():
@@ -989,6 +995,8 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
                         )
                         session_rows = _public_rows_from_response(response, session)
                         response_partial = response.partial is True
+                        if response.catalogue_complete is False:
+                            window_sources.add(session.provider_id)
                 else:
                     try:
                         import inspect
@@ -1122,7 +1130,9 @@ def search(self, query: str, scope: str='all', force: bool=False, *, provider_id
     if not request_current():
         return []
     if not warnings:
-        self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
+        self.storage.cache_put("search", cache_key, _search_cache_payload(rows, window_sources), ttl)
+    warnings.extend(_catalogue_window_warning(session) for session in searchable
+                    if session.provider_id in window_sources)
     with self._search_generation_lock:
         if (self._search_generation != search_generation
                 or self.current_identity is not identity
@@ -1190,6 +1200,39 @@ def _stale_public_fallback_warning(status: str) -> str:
         return ("recherche en ligne indisponible "
                 "(inventaire local de secours indisponible)")
     return "recherche en ligne indisponible (aucun résultat connu)"
+
+
+_CATALOGUE_WINDOW_MESSAGE = "fenêtre du catalogue non exhaustive (pagination)"
+
+
+def _catalogue_window_warning(session) -> str:
+    return f"{session.descriptor.display_name}: {_CATALOGUE_WINDOW_MESSAGE}"
+
+
+def _search_cache_payload(rows, window_sources):
+    serialized = [asdict(row) for row in rows]
+    if not window_sources:
+        return serialized
+    return {"rows": serialized, "window_sources": sorted(window_sources)}
+
+
+def _search_cache_contents(value, sessions):
+    """The window verdict belongs to the cached query, never a book."""
+    if isinstance(value, list):
+        return value, set()
+    if type(value) is not dict or set(value) != {"rows", "window_sources"}:
+        return None
+    rows, source_ids = value["rows"], value["window_sources"]
+    if type(rows) is not list or type(source_ids) is not list:
+        return None
+    if not source_ids or any(type(source_id) is not str for source_id in source_ids):
+        return None
+    sources = set(source_ids)
+    if len(sources) != len(source_ids) or not sources.issubset(
+        {session.provider_id for session in sessions}
+    ):
+        return None
+    return rows, sources
 
 
 def _search_batch_status(
@@ -1280,6 +1323,7 @@ def _search_provider_session(
     self, session: ProviderSession, query: str, scope: str, *, field: str = "all",
     content_types: tuple[str, ...] = (), facade_type,
     response_facets: list[CatalogSearchFacet] | None = None,
+    response_windows: list[bool] | None = None,
     public_only: bool = False, request_scope=None, request_cancelled=None,
 ) -> tuple[list[SearchResult], list[str], str, str]:
     """Search one provider without mutating shared result state.
@@ -1332,6 +1376,8 @@ def _search_provider_session(
                         raise TypeError("Invalid provider search response")
                     session_rows = _public_rows_from_response(response, session)
                     partial_failure = response.partial is True
+                    if response_windows is not None and response.catalogue_complete is False:
+                        response_windows.append(True)
             elif attempt == 0 and response_facets is not None:
                 response = session.search_with_response_facets(
                     variant, provider_scope, field=effective_field,
@@ -1341,6 +1387,8 @@ def _search_provider_session(
                     raise TypeError("Invalid provider search response")
                 session_rows = response.results
                 partial_failure = response.partial is True
+                if response_windows is not None and response.catalogue_complete is False:
+                    response_windows.append(True)
                 response_facets.extend(_validated_response_facets(response.facets))
             else:
                 try:
@@ -1557,7 +1605,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
         for session in searchable
         if (entry := self.registry.virtual_entry(session.provider_id)) is not None
     )
-    cache_key = hashlib.sha256(f"search-v13-progressive\0{_search_session_cache_scope(searchable)!r}\0{_search_owner_cache_scope(owner_leases)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
+    cache_key = hashlib.sha256(f"search-v14-progressive\0{_search_session_cache_scope(searchable)!r}\0{_search_owner_cache_scope(owner_leases)!r}\0{provider_key}\0{scope}\0{field}\0{types!r}\0{pref_key}\0{query.casefold()}\0{virtual_versions}".encode()).hexdigest()
     ttl = int(self.config.get("cache.search_seconds", 21600))
 
     def request_current_locked() -> bool:
@@ -1607,8 +1655,10 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
 
     if not force:
         cached = self.storage.cache_get("search", cache_key)
-        if isinstance(cached, list):
-            rows = [_provider_search_row(SearchResult(**x)) for x in cached]
+        cached_contents = _search_cache_contents(cached, searchable)
+        if cached_contents is not None:
+            cached_rows, window_sources = cached_contents
+            rows = [_provider_search_row(SearchResult(**x)) for x in cached_rows]
             groups: dict[str, list[SearchResult]] = {}
             selected = {session.provider_id for session in searchable}
             ambiguous = False
@@ -1638,14 +1688,21 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 # An empty 200 also earns a cached verdict; session ownership
                 # remains observable for the same selected provider set.
                 delivered = 0
+                cached_warnings = []
                 for session in searchable:
                     if request_cancelled():
                         break
+                    batch_warnings = (
+                        (_catalogue_window_warning(session),)
+                        if session.provider_id in window_sources else ()
+                    )
+                    cached_warnings.extend(batch_warnings)
                     emit(CatalogSearchBatch(
                         session.provider_id, session.descriptor.display_name,
                         tuple(groups.get(session.provider_id, ())),
+                        warnings=batch_warnings,
                         cached=True, result_status=_search_batch_status(
-                            groups.get(session.provider_id, ()), (), "", cached=True
+                            groups.get(session.provider_id, ()), batch_warnings, "", cached=True
                         ),
                     ))
                     delivered += 1
@@ -1654,17 +1711,18 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     with self._search_generation_lock:
                         if request_current_locked():
                             if not scoped:
-                                self.last_search = rows; self.last_search_warnings = []
+                                self.last_search = rows; self.last_search_warnings = cached_warnings
                         else:
                             cancelled = True
                 completed = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                summary = CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, (), started_dt.isoformat(timespec="seconds"), completed)
+                summary = CatalogSearchSummary(query, len(rows), len(searchable), delivered, 0, cancelled, tuple(cached_warnings), started_dt.isoformat(timespec="seconds"), completed)
                 return (summary, () if cancelled else tuple(rows)) if return_rows else summary
 
     aggregate: list[SearchResult] = []
     progressive_c_pairs = []
     early_c = on_batch is not None
     warnings: list[str] = []
+    window_sources: set[str] = set()
     failed = completed_count = 0
     cancelled = False
     futures = {}
@@ -1710,6 +1768,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 break
             entry = self.registry.virtual_entry(session.provider_id)
             response_facets: list[CatalogSearchFacet] = []
+            response_windows: list[bool] = []
             if scoped:
                 # Pass the exact reader and cancellation fence into the
                 # worker. Never recover it from global navigation.
@@ -1733,6 +1792,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                         facade_type=type(self), public_only=foreign,
                         response_facets=(response_facets if not foreign and on_batch is not None
                                          and isinstance(session, ProviderSearchWithFacets) else None),
+                        response_windows=response_windows,
                         request_scope=request_scope, request_cancelled=request_cancelled,
                     )
             elif id(session) in foreign_owner_sessions:
@@ -1741,7 +1801,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 future = executor.submit(
                     _search_provider_session, self, session, query, scope,
                     field=field, content_types=tuple(content_types or ()),
-                    facade_type=type(self), public_only=True,
+                    facade_type=type(self), public_only=True, response_windows=response_windows,
                 )
             elif (
                 entry is not None
@@ -1761,14 +1821,14 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                 future = executor.submit(
                     _search_provider_session, self, session, query, scope,
                     field=field, content_types=tuple(content_types or ()), facade_type=type(self),
-                    response_facets=response_facets,
+                    response_facets=response_facets, response_windows=response_windows,
                 )
             else:
                 future = executor.submit(
                     self._search_provider_session, session, query, scope,
                     field=field, content_types=tuple(content_types or ()),
                 )
-            futures[future] = (session, time.monotonic(), response_facets)
+            futures[future] = (session, time.monotonic(), response_facets, response_windows)
         pending = set(futures)
         while pending:
             if request_cancelled():
@@ -1791,7 +1851,7 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             if not done:
                 continue
             for future in done:
-                session, provider_started, response_facets = futures[future]
+                session, provider_started, response_facets, response_windows = futures[future]
                 try:
                     provider_rows, provider_warnings, error_code, error_message = future.result()
                 except Exception as exc:
@@ -1868,6 +1928,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                         break
                 aggregate.extend(provider_rows)
                 warnings.extend(provider_warnings)
+                if response_windows:
+                    window_sources.add(session.provider_id)
+                    provider_warnings = [*provider_warnings, _catalogue_window_warning(session)]
                 completed_count += 1
                 if error_code:
                     failed += 1
@@ -1935,7 +1998,9 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
                     logger.warning("TRACE notice c progressive code=late_reconciliation_failed")
     cancelled = cancelled or request_cancelled()
     if not cancelled and not warnings and failed == 0:
-        self.storage.cache_put("search", cache_key, [asdict(x) for x in rows], ttl)
+        self.storage.cache_put("search", cache_key, _search_cache_payload(rows, window_sources), ttl)
+    warnings.extend(_catalogue_window_warning(session) for session in searchable
+                    if session.provider_id in window_sources)
     if not cancelled:
         with self._search_generation_lock:
             if request_current_locked():

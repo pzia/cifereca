@@ -297,18 +297,23 @@ def test_actual_anonymous_federated_cache_shared_across_a_b_a_without_new_suppli
         assert len(a) == 1
         document = a[0]._core_notice_cover_document_ref
         assert len(calls) == len(supplier_gets) == 1
+        warning, = service.last_search_warnings
+        assert "pagination" in warning
 
         service.select_identity("bob")
         b = service.search("loup", provider_id=session.provider_id, force=False)
         assert len(b) == 1
         assert b[0]._core_notice_cover_document_ref == document
         assert len(calls) == 1  # Not just a plugin HTTP cache HIT.
+        assert service.last_search_warnings == [warning]
         assert read_notice_cover(service.storage, document).epoch == 1
 
         progressive = service.search_progressive(
             "loup", provider_id=session.provider_id, force=True,
         )
         assert not progressive.cancelled and progressive.result_count == 1
+        assert progressive.providers_failed == 0
+        assert progressive.warnings == (warning,)
         assert len(calls) == 2  # Existing sync/progressive source caches differ.
 
         service.select_identity("alice")
@@ -319,6 +324,10 @@ def test_actual_anonymous_federated_cache_shared_across_a_b_a_without_new_suppli
         )
         assert not result.cancelled
         assert batches and batches[0].cached is True
+        assert batches[0].warnings == (warning,) and not batches[0].error_code
+        assert batches[0].result_status == "partial"
+        assert result.warnings == (warning,) and result.providers_failed == 0
+        assert service.last_search_warnings == [warning]
         assert batches[0].results[0]._core_notice_cover_document_ref == document
         assert len(calls) == 2  # Public progressive result cache reused.
         assert len(supplier_gets) == 1
@@ -791,6 +800,40 @@ def test_numilog_web_reference_without_image_is_positive_but_cover_pending(tmp_p
             field_path=("search_result", "thumbnail_url"), cover_inventory_complete=True)
         assert retained == installed
         assert resolve() is None
+    finally:
+        service.close()
+        session.close()
+
+
+def test_real_partial_failure_is_not_cached_as_a_paginated_window(tmp_path, monkeypatch):
+    service, session, supplier_gets = build(tmp_path, monkeypatch)
+    observed = session.search_with_response_facets
+    calls = []
+
+    def degraded(*args, **kwargs):
+        calls.append(1)
+        return replace(observed(*args, **kwargs), partial=True)
+
+    monkeypatch.setattr(session, "search_with_response_facets", degraded)
+    try:
+        for force in (True, False):
+            rows = service.search("loup", provider_id=session.provider_id, force=force)
+            assert len(rows) == 1
+            assert any("résultats partiels" in w for w in service.last_search_warnings)
+            assert any("pagination" in w for w in service.last_search_warnings)
+        assert len(calls) == 2
+        for force in (True, False):
+            batches = []
+            result = service.search_progressive("loup", provider_id=session.provider_id,
+                                                force=force, on_batch=batches.append)
+            assert result.result_count == 1
+            batch, = batches
+            assert not batch.cached and batch.result_status == "partial"
+            assert any("résultats partiels" in w for w in batch.warnings)
+            assert any("pagination" in w for w in batch.warnings)
+        assert len(calls) == 4 and len(supplier_gets) == 1
+        assert not any(ns["namespace"] == "search" and ns["entries"] > 0
+                       for ns in service.storage.cache_namespace_stats())
     finally:
         service.close()
         session.close()

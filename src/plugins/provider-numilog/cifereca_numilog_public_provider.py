@@ -205,7 +205,7 @@ class NumilogPublicSession(ProviderSession):
         value = self._get_page_entry(query, page, field, url)
         return value.page if type(value) is _RetainedSearchPage else value
 
-    def _search_with_retained_input(self, query, scope="all", *, page=0, field="all"):
+    def _search_retained_page(self, query, scope="all", *, page=0, field="all"):
         """Trusted opt-in same-call rows + opaque input token (or None).
 
         This uses the ordinary anonymous search cache/admission path, not a
@@ -224,15 +224,20 @@ class NumilogPublicSession(ProviderSession):
         rows = self._public_rows(entry.page.items)
         token = entry.raw_input.token if entry.raw_input is not None else None
         self._assert_public_generation(epoch)
+        return rows, token, entry.page.complete
+
+    def _search_with_retained_input(self, query, scope="all", *, page=0, field="all"):
+        rows, token, _complete = self._search_retained_page(query, scope, page=page, field=field)
         return rows, token
 
     def _search_response_with_retained_input(self, query, scope="all", *, page=0, field="all"):
         """Experimental same-call envelope plus anonymous cache coordinate."""
         from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
 
-        rows, token = self._search_with_retained_input(query, scope, page=page, field=field)
+        rows, token, complete = self._search_retained_page(query, scope, page=page, field=field)
         return ProviderSearchResponse(
-            results=list(rows), public_notices=tuple(PublicSearchNotice(row) for row in rows),
+            results=list(rows), catalogue_complete=complete,
+            public_notices=tuple(PublicSearchNotice(row) for row in rows),
         ), token
 
     def _read_retained_public_input(self, token):
@@ -472,17 +477,22 @@ class NumilogPublicSession(ProviderSession):
             ))
         return tuple(projected)
 
-    def search(self, query, scope="all", page=0, field="all"):
+    def _search_public_page(self, query, scope="all", page=0, field="all"):
         # Capture BEFORE validation: close/reconnect during validation cannot
         # silently turn a request from the old generation into a new request.
         epoch = self._navigation_epoch_snapshot()
         url = self._validate_search(query, page, field, scope)
         self._assert_public_generation(epoch)
-        rows = list(self._public_rows(self._get_page(query, page, field, url).items))
+        parsed = self._get_page(query, page, field, url)
+        rows = list(self._public_rows(parsed.items))
         # The generic Core search path must be protected just like browse()
         # and follow_public_link() when a session changes during a cache hit,
         # conversion or transport completion. No extra HTTP request.
         self._assert_public_generation(epoch)
+        return rows, parsed.complete
+
+    def search(self, query, scope="all", page=0, field="all"):
+        rows, _complete = self._search_public_page(query, scope, page, field)
         return rows
 
     def search_with_response_facets(
@@ -503,9 +513,9 @@ class NumilogPublicSession(ProviderSession):
         # conservative "catalog" scope. This session has NO private content:
         # its only supported upstream operation is an anonymous catalogue.
         normalized_scope = "all" if scope == "catalog" else scope
-        rows = self.search(query, normalized_scope, field=field)
+        rows, complete = self._search_public_page(query, normalized_scope, field=field)
         return ProviderSearchResponse(
-            results=list(rows),
+            results=list(rows), catalogue_complete=complete,
             public_notices=tuple(PublicSearchNotice(result=row) for row in rows),
         )
 
