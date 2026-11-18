@@ -7,7 +7,9 @@ from urllib.parse import urlsplit
 from xml.etree import ElementTree as ET
 
 import httpx
-from cifereca.plugin_api import HTTPX_TRANSPORT
+from cifereca.plugin_api import (
+    HTTPX_TRANSPORT, CatalogueXMLParseError, parse_bounded_catalogue_xml,
+)
 
 from cifereca.plugin_api import (
     description_text,
@@ -208,10 +210,18 @@ class BnfCatalogueSession(ProviderSession):
         return rows
 
     def parse_records(self, content: bytes):
+        reason = None
         try:
-            root = ET.fromstring(content)
-        except ET.ParseError:
-            raise _bnf_unavailable_xml() from None
+            root = parse_bounded_catalogue_xml(content)
+        except CatalogueXMLParseError as exc:
+            reason = exc.code
+        if reason is not None:
+            # Keep the historic malformed/HTML outage classification.
+            # A forbidden declaration or exceeded safety budget is a
+            # refusal, not evidence permitting an offline fallback.
+            if reason in {"malformed", "html"}:
+                raise _bnf_unavailable_xml() from None
+            raise ProviderError("BnF : invalid_sru_response") from None
         if root.tag != f"{{{SRU}}}searchRetrieveResponse":
             raise _bnf_unavailable_xml() from None
         if any(n.tag.rsplit("}", 1)[-1] == "diagnostic" for n in root.iter()):
