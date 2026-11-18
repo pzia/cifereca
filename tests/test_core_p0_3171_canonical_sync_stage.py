@@ -74,7 +74,7 @@ class Service:
     def sync_source_enabled(self, account):
         return self.enabled
 
-    def _paris_adept_identity_for_loan(self, loan, *, connection_identity_id):
+    def resolve_adept_borrower_for_loan(self, loan, *, connection_identity_id):
         # This generic executor fixture has only synthetic primary accounts.
         # Real linked grants are exercised by the dedicated Core/SQLite suite.
         matches = [
