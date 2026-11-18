@@ -137,3 +137,117 @@ def test_core_worker_ast_contains_no_navigation_access():
             isinstance(node, ast.Attribute) and node.attr == "current_identity"
             for node in ast.walk(tree)
         )
+
+
+class AdmittedHost:
+    def __init__(self):
+        self.identity = NS(identity_id="alice")
+        self._source_context_epoch = 5
+        self._account_context_epoch = 17
+        self.storage = NS()
+        self.session = NS(provider_id="synthetic-public", credential_id="__public__",
+                          connected=True, enrich_public_detail=self.enrich)
+        self._sessions = {("synthetic-public", "__public__"): self.session}
+        self.calls = []
+        self.on_call = None
+
+    @property
+    def current_identity(self):
+        pytest.fail("admitted enrichment read the selector")
+
+    def identity_by_id(self, identity_id):
+        return self.identity if identity_id == "alice" else None
+
+    def _session_key(self, provider, credential):
+        return provider, credential
+
+    def _provider_enabled_for_identity(self, provider_id, identity_id):
+        assert identity_id == "alice"
+        return True
+
+    def enrich(self, row):
+        self.calls.append(row.record_id)
+        if self.on_call:
+            self.on_call()
+        return replace(row, publisher="Public descriptive metadata")
+
+
+def _admitted_row(**changes):
+    return replace(_public(), source_provider="synthetic-public", **changes)
+
+
+@pytest.mark.parametrize("change", ["navigation", "during_navigation", "source",
+                                     "session", "identity", "during_revoke"])
+def test_admitted_enrichment_has_exact_lifetime_not_navigation(change):
+    host = AdmittedHost()
+    row = _admitted_row()
+    work = LibraryService.admit_provider_search_enrichment(
+        host, row, identity_id="alice", user_confirmed=True,
+    )
+    assert host.calls == []
+    if change == "navigation":
+        host._account_context_epoch += 2
+    elif change == "during_navigation":
+        host.on_call = lambda: setattr(host, "_account_context_epoch", 19)
+    elif change == "source":
+        host._source_context_epoch += 1
+    elif change == "session":
+        host._sessions[("synthetic-public", "__public__")] = NS(
+            provider_id="synthetic-public", credential_id="__public__",
+            connected=True, enrich_public_detail=host.enrich,
+        )
+    elif change == "identity":
+        host.identity = NS(identity_id="alice")
+    elif change == "during_revoke":
+        host.on_call = lambda: setattr(host, "_source_context_epoch", 6)
+    if change in ("navigation", "during_navigation"):
+        assert work().publisher == "Public descriptive metadata"
+    else:
+        with pytest.raises(ProviderCapabilityError):
+            work()
+    assert len(host.calls) == (1 if change in (
+        "navigation", "during_navigation", "during_revoke") else 0)
+    with pytest.raises(ProviderCapabilityError):
+        work()
+
+
+@pytest.mark.parametrize("change", ["ok", "detach", "during_detach",
+                                     "foreign_account", "unconfirmed"])
+def test_admitted_private_enrichment_rechecks_persisted_borrower(change):
+    host = AdmittedHost()
+    account = NS(identity_id="alice", provider_id="synthetic-private",
+                 credential_id="alice-cred", unique_id="borrower")
+    host.accounts = [account]
+    host.accounts_for_identity = lambda identity_id: host.accounts if identity_id == "alice" else []
+    host.session.provider_id = account.provider_id
+    host.session.credential_id = account.credential_id
+    host.session.enrich_owned_public_detail = host.enrich
+    host._sessions = {(account.provider_id, account.credential_id): host.session}
+    binding = [True]
+    host.storage.identity_for_connection = lambda *_: "alice"
+    host.storage.provider_connections = lambda **_: [
+        {"provider_id": account.provider_id, "credential_id": account.credential_id,
+         "enabled": True}
+    ]
+    host.storage.provider_scope_account_bound = lambda **_: binding[0]
+    row = item(source_provider=account.provider_id, source_credential=account.credential_id,
+               source_account_id="foreign" if change == "foreign_account" else "borrower")
+    if change in ("foreign_account", "unconfirmed"):
+        with pytest.raises(ProviderCapabilityError):
+            LibraryService.admit_provider_search_enrichment(
+                host, row, identity_id="alice", user_confirmed=change != "unconfirmed")
+        assert host.calls == []
+        return
+    work = LibraryService.admit_provider_search_enrichment(
+        host, row, identity_id="alice", user_confirmed=True)
+    assert host.calls == []
+    if change == "detach":
+        binding[0] = False
+    elif change == "during_detach":
+        host.on_call = lambda: binding.__setitem__(0, False)
+    if change == "ok":
+        assert work().publisher == "Public descriptive metadata"
+    else:
+        with pytest.raises(ProviderCapabilityError):
+            work()
+    assert len(host.calls) == (0 if change == "detach" else 1)

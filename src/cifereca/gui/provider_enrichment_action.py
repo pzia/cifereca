@@ -59,10 +59,21 @@ def add_provider_enrichment_action(host, selected_id, item, detail, context, *,
         # Capture the exact Core callable and identity at admission. The
         # worker never consults the mutable window; Core independently
         # revalidates source/credential authorization at provider I/O.
-        enrich = render_core.enrich_provider_search_result
         expected_identity_id = context[3] or ""
-        def do_enrich():
-            return enrich(item, expected_identity_id=expected_identity_id)
+        admit = getattr(render_core, "admit_provider_search_enrichment", None)
+        if callable(admit):
+            try:
+                do_enrich = admit(item, identity_id=expected_identity_id, user_confirmed=True)
+            except Exception:
+                host.toast("Enrichissement indisponible ou non attesté.", 5)
+                return
+            if not callable(do_enrich):
+                return
+        else:
+            # Old embedded/test facades keep their synchronous read ABI.
+            enrich = render_core.enrich_provider_search_result
+            def do_enrich():
+                return enrich(item, expected_identity_id=expected_identity_id)
 
         def success(enriched):
             if (host.service is not render_core

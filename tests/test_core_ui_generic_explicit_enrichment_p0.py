@@ -227,3 +227,30 @@ def test_stale_enrichment_button_cannot_rebind_itself_to_new_core_before_click()
     )
     host.actions[0].click()
     assert host.tasks == [] and host.network_requests == 0
+
+
+def test_native_enrichment_captures_command_at_click_not_in_worker():
+    host = Host()
+    admissions = []
+    def admit(row, *, identity_id, user_confirmed):
+        admissions.append((row, identity_id, user_confirmed))
+        return lambda: replace(row, author="Admitted")
+    host.service.admit_provider_search_enrichment = admit
+    assert build(host)
+    host.actions[0].click()
+    assert admissions == [(host.search_objects["synthetic-private:book"], "id-A", True)]
+    args, _kwargs = host.tasks[0]
+    host.active = False
+    assert args[1]().author == "Admitted"
+    args[2](args[1]())
+    assert host.refresh == [] and host.network_requests == 0
+
+
+def test_native_refusal_does_not_enqueue_or_fallback():
+    host = Host()
+    def deny(*_a, **_kw):
+        raise ValueError("unavailable")
+    host.service.admit_provider_search_enrichment = deny
+    assert build(host)
+    host.actions[0].click()
+    assert host.tasks == [] and host.network_requests == 0

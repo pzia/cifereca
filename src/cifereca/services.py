@@ -2274,6 +2274,14 @@ class LibraryService:
             admitted_scope=admitted_requester_identity is not None,
         )
 
+    def admit_provider_search_enrichment(self, item: SearchResult, *,
+                                         identity_id: str, user_confirmed: bool = False):
+        """Explicit read admission for queued UI and headless Core clients."""
+        from .core.provider_explicit_enrichment import admit_provider_detail_enrichment
+        return admit_provider_detail_enrichment(
+            self, item, identity_id=identity_id, user_confirmed=user_confirmed,
+        )
+
     def enrich_provider_search_result(self, item: SearchResult, *, expected_identity_id: str) -> SearchResult:
         """User-triggered metadata-only provider enrichment; never auto-sync."""
         from .core.provider_explicit_enrichment import enrich_provider_detail_once
