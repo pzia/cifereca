@@ -18,6 +18,7 @@ from . import notice_c_origin_relink as relink
 from .notice_c_work_bridge import AggregateWorkBridge, PreparedAggregate
 from .notice_c_reparse_execution import PublicReplayRegistry, prepare_public_reparse
 from .notice_c_fetch_execution import PublicFetchExecution
+from .notice_c_dispatch_rotation import PublicDispatchRotation, RotationPage
 
 _SUPPORTED = (
     ("recompute_aggregate", exact.IMPLEMENTATION_DIGEST),
@@ -36,12 +37,12 @@ class DispatchTick:
 
 
 class PublicNoticeWorkPump:
-    """One bounded page per explicit tick, fair cyclic public logical keys.
+    """Bounded round-robin scan of enabled public work classes.
 
     Unsupported implementations never enter the broker. Backpressure preserves
     the first unsubmitted position, without retaining an in-memory job queue.
-    This is fairness among eligible opaque public keys, NOT per-account/source
-    or priority-class fairness. The journal remains the sole pending store.
+    Fairness is by enabled work class and cyclic key, not by provider/account.
+    The journal remains the sole pending store.
     One instance per Core owner; admission/fencing govern actual execution.
     """
 
@@ -70,7 +71,9 @@ class PublicNoticeWorkPump:
             prepare_fetch=(self._prepare_fetch if fetch_execution is not None
                            and fetch_execution.supported() else None),
         )
-        self._after = None
+        self._rotation = PublicDispatchRotation(tuple(dict.fromkeys(
+            kind for kind, _digest in self._supported
+        )))
         self._tick_lock = Lock()
 
     def _prepare_fetch(self, spec, lease, control):
@@ -100,7 +103,7 @@ class PublicNoticeWorkPump:
         return PreparedAggregate(publish)
 
     def tick(self, *, control=None):
-        """Scan once and submit hints without waiting for execution.
+        """Scan bounded class slices and submit hints without waiting.
 
         Reentry is rejected immediately. A refusal leaves the cursor at
         the last accepted key (or original position), so a saturated
@@ -111,21 +114,19 @@ class PublicNoticeWorkPump:
         try:
             if control is not None:
                 control.check_cancelled()
-            page = journal.read_ready_page(
-                self._storage, now=self._clock(), after=self._after,
-                supported=self._supported,
+            now = self._clock()
+
+            def read(kind, after, limit):
+                page = journal.read_ready_page(
+                    self._storage, now=now, after=after, limit=limit,
+                    supported=tuple(pair for pair in self._supported if pair[0] == kind),
+                )
+                return RotationPage(page.refs, page.next_after, page.examined, page.corrupt)
+
+            tick = self._rotation.tick(
+                read, self._bridge.offer,
+                check_cancelled=control.check_cancelled if control is not None else None,
             )
-            handles = []
-            for ref in page.refs:
-                if control is not None:
-                    control.check_cancelled()
-                handle = self._bridge.submit(ref)
-                if handle is None:
-                    return DispatchTick(tuple(handles), page.examined,
-                                        page.corrupt, True)
-                handles.append(handle)
-                self._after = ref.key
-            self._after = page.next_after
-            return DispatchTick(tuple(handles), page.examined, page.corrupt, False)
+            return DispatchTick(tick.handles, tick.examined, tick.corrupt, tick.deferred)
         finally:
             self._tick_lock.release()

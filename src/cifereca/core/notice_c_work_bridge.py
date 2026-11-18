@@ -21,6 +21,7 @@ from ..task_admission import SharedTaskAdmission
 from . import notice_c_job_journal as journal
 from .book_cover_projection import CoverDocumentScope
 from .notice_c_cover_index import _db_key, _decode
+from .notice_c_dispatch_rotation import RotationOffer
 
 _MAX_INFLIGHT = 2
 _LEASE_SECONDS = 300
@@ -89,10 +90,16 @@ class AggregateWorkBridge:
         admission refusal do not consume a durable attempt. Exact ref and
         dependencies are rechecked by the worker, not trusted from a hint.
         """
+        return self.offer(ref).handle
+
+    def offer(self, ref):
+        """Class rotation distinguishes an exact duplicate from saturation."""
         journal._check_ref(ref)
         with self._lock:
-            if ref in self._inflight or len(self._inflight) >= _MAX_INFLIGHT:
-                return None
+            if ref in self._inflight:
+                return RotationOffer("duplicate")
+            if len(self._inflight) >= _MAX_INFLIGHT:
+                return RotationOffer("blocked")
             self._inflight.add(ref)
         try:
             handle = self._broker.submit(
@@ -106,13 +113,13 @@ class AggregateWorkBridge:
                 "executor pending queue full", "shared task admission full",
                 "task broker already closed", "executor already closed",
             }:
-                return None
+                return RotationOffer("blocked")
             raise
         except BaseException:
             self._forget(ref)
             raise
         handle.add_done_callback(lambda _handle: self._forget(ref))
-        return handle
+        return RotationOffer("accepted", handle)
 
     def _forget(self, ref):
         with self._lock:
