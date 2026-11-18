@@ -186,6 +186,7 @@ def prepare_missing_catalogue_detachment(
 def retire_missing_linked_catalogue(
     storage, *, placement_id: str, identity_id: str, library_root: Path,
     plan_token: str, confirmed: bool, shared_lock,
+    admitted_scope=None,
 ) -> dict[str, object]:
     """One confirmed SQLite transaction; fail closed on ANY remaining reference.
 
@@ -210,6 +211,9 @@ def retire_missing_linked_catalogue(
             try:
                 db.execute("PRAGMA synchronous=FULL")
                 db.execute("BEGIN IMMEDIATE")
+                if admitted_scope is not None and admitted_scope(db, initial=True) is not True:
+                    db.rollback()
+                    return _blocked("scope_changed")
                 result, evidence = _evidence(
                     db, root=root, root_stat=stat,
                     placement_id=placement_id, identity_id=identity_id,
@@ -266,6 +270,9 @@ def retire_missing_linked_catalogue(
                         or _physical_absence(root / directory, old_path) != "absent"):
                     db.rollback()
                     return _blocked("filesystem_changed")
+                if admitted_scope is not None and admitted_scope(db, initial=False) is not True:
+                    db.rollback()
+                    return _blocked("scope_changed")
                 db.commit()
                 return {"status": "retired", "reason": "catalogue_detached",
                         "catalogue_rows": len(changed)}

@@ -152,6 +152,7 @@ def _validated_evidence(db, *, root: Path, identity_id: str,
 def relocate_missing_placement(
     storage, *, library_root: Path, identity_id: str, placement_id: str,
     candidate_path: Path, plan_token: str, confirmed: bool, shared_lock,
+    admitted_scope=None,
 ) -> dict[str, object]:
     """Commit a prepared, operator-confirmed A→B path fix, never a new right.
 
@@ -191,6 +192,9 @@ def relocate_missing_placement(
             try:
                 db.execute("PRAGMA synchronous=FULL")
                 db.execute("BEGIN IMMEDIATE")
+                if admitted_scope is not None and admitted_scope(db, initial=True) is not True:
+                    db.rollback()
+                    return _blocked("scope_changed")
                 checked, evidence = _validated_evidence(
                     db, root=root, identity_id=identity_id,
                     placement_id=placement_id, candidate_path=candidate_path,
@@ -302,6 +306,9 @@ def relocate_missing_placement(
                         )):
                     db.rollback()
                     return _blocked("filesystem_changed")
+                if admitted_scope is not None and admitted_scope(db, initial=False) is not True:
+                    db.rollback()
+                    return _blocked("scope_changed")
                 db.commit()
                 return {"status": "relocated", "catalogue_rows": len(updates)}
             except Exception:
