@@ -17,6 +17,7 @@ from cifereca.plugin_api import (
     Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities,
     ProviderCapabilityError, ProviderDescriptor,
     ProviderError, ProviderPlugin, ProviderSession, normalize_language_tag,
+    ProviderSearchResponse, PublicSearchNotice,
 )
 
 SRU = "http://www.loc.gov/zing/srw/"
@@ -231,6 +232,22 @@ class BnfCatalogueSession(ProviderSession):
         self._diagnostic("SRU search", "ok", detail={"results": len(rows), "page": page, "field": field})
         return rows
 
+    def search_with_response_facets(self, query, scope="all", *, field="all", content_types=()):
+        """One same-call SRU page; no claim of exhaustive or private inventory."""
+        scope = "all" if scope == "catalog" else scope
+        rows = self.search(query, scope, field=field)
+        # Only the configured canonical public SRU endpoint and genuinely
+        # anonymous session can qualify cross-profile evidence. A custom
+        # endpoint (including local simulation) is not silently relabelled.
+        public = (self.connected and self.credential_id == "__public__"
+                  and self.sru_url == ENDPOINT
+                  and type(self.credentials) is dict and not self.credentials
+                  and type(self._accounts) is list and not self._accounts)
+        return ProviderSearchResponse(
+            results=rows, partial=True,
+            public_notices=tuple(PublicSearchNotice(row) for row in rows) if public else (),
+        )
+
     def parse_records(self, content: bytes):
         reason = None
         try:
@@ -303,8 +320,10 @@ class BnfCatalogueSession(ProviderSession):
                 published_at=first("date"), description=description_text("\n".join(values.get("description", []))),
                 thumbnail_url=None, friendly_url=f"https://catalogue.bnf.fr/{ark}", scenario="SRU-DUBLINCORE",
                 source_provider=self.provider_id, source_credential=self.credential_id,
-                download_url=None, downloadable=False,
+                download_url=None, downloadable=False, owned=False,
+                source_collection="public_catalog",
                 metadata={"source": "BnF Catalogue général", "isbns": isbns,
+                          "public_url_evidence": f"{self.provider_id}.public_search_record_identifier",
                           "subjects": values.get("subject", []), "languages": languages,
                           "series": series, "collections": collections,
                           "rights": values.get("rights", []), "bibliographic_formats": formats,
