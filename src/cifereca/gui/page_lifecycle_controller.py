@@ -29,6 +29,7 @@ class PageLifecycleDispatcher:
         self._generation = 0
         self._depth = 0
         self._disposed = False
+        self._deferred = False
 
     def _valid(self):
         return not self._disposed and self._alive()
@@ -97,7 +98,9 @@ class PageLifecycleDispatcher:
         self._flush()
         return True
 
-    def context_changed(self, identity, account):
+    def context_changed(self, identity, account, *, defer=False):
+        if defer:
+            self._deferred = True
         if not self._valid() or (identity, account) == (self._identity, self._account):
             return
         self._identity, self._account = identity, account
@@ -133,28 +136,38 @@ class PageLifecycleDispatcher:
             self._route = route
         self._flush()
 
+    def resume(self):
+        self._deferred = False
+        self._flush()
+
     def _flush(self):
-        if self._depth or not self._valid():
+        if self._depth or self._deferred or not self._valid():
             return
-        route = self._route
-        page = self._pages.get(route)
-        if page is None or page.failed or not page.dirty:
-            return
-        page.dirty = False
-        self._advance(page)
-        event = self._event(route, page, "show")
-        self._depth += 1
-        try:
-            page.hooks.on_show(event)
-        except Exception:
-            if event.is_current(require_visible=False):
-                page.failed = True
-                self._report("page_show_failed")
-        finally:
-            self._depth -= 1
-        # A synchronous navigation/context transition inside the hook may
-        # have marked a different mounted generation dirty. Do not recurse
-        # through unbounded plugin redirects; the next shell event flushes it.
+        # A reentrant show may change the visible route before the outer
+        # dispatch returns. Drain only a bounded number of such transitions.
+        for _ in range(32):
+            if self._deferred or not self._valid():
+                return
+            route = self._route
+            page = self._pages.get(route)
+            if page is None or page.failed or not page.dirty:
+                return
+            page.dirty = False
+            self._advance(page)
+            event = self._event(route, page, "show")
+            self._depth += 1
+            try:
+                page.hooks.on_show(event)
+            except Exception:
+                if event.is_current(require_visible=False):
+                    page.failed = True
+                    self._report("page_show_failed")
+            finally:
+                self._depth -= 1
+        current = self._pages.get(self._route)
+        if current is not None and current.dirty:
+            current.failed = True
+            self._report("page_lifecycle_redirect_limit")
 
     def detach(self, route):
         page = self._pages.pop(route, None)
@@ -187,7 +200,8 @@ def _coordinates(window):
     identity = identity if type(identity) is str and identity else None
     account = getattr(service, "current_account", None)
     scope = tuple(getattr(account, key, None) for key in ("provider_id", "credential_id", "unique_id"))
-    if identity is None or not all(type(value) is str and value for value in scope):
+    if (identity is None or getattr(account, "identity_id", None) != identity
+            or not all(type(value) is str and value for value in scope)):
         scope = None
     return identity, scope
 
@@ -218,10 +232,16 @@ def reset(window):
     return dispatcher
 
 
-def context_changed(window):
+def context_changed(window, *, defer=False):
     dispatcher = getattr(window, "_page_lifecycle_dispatcher", None)
     if dispatcher is not None and not getattr(window, "_closed", False):
-        dispatcher.context_changed(*_coordinates(window))
+        dispatcher.context_changed(*_coordinates(window), defer=defer)
+
+
+def resume(window):
+    dispatcher = getattr(window, "_page_lifecycle_dispatcher", None)
+    if dispatcher is not None and not getattr(window, "_closed", False):
+        dispatcher.resume()
 
 
 def handles(window, route):
