@@ -30,7 +30,41 @@ class ReadOnlyInventory:
             result['loans']=len(self.loans)
             result['expired']=sum(row['expired'] for row in self.loans)
             result['returned']=sum(row['returned'] for row in self.loans)
+            result['token_present']=sum(row['token_present'] for row in self.loans)
+            result['historical_states']=_historical_states(self.loans)
+            # A runtime-local registry row never proves current provider
+            # availability, actual final bytes or the published provenance.
+            result['provider_loan_state']='not_checked'
+            result['canonical_placement_state']='not_checked'
         return result
+
+
+def _historical_states(loans):
+    """Partition validated runtime rows without inventing active rights.
+
+    The existing expired/returned counters remain independent observations:
+    both can be true. The partition gives returned precedence and treats
+    incomplete rows as unknown history, not a new loan to fulfil.
+    """
+    counts=dict.fromkeys((
+        'returned_reported','expired_reported','active_reported',
+        'historical_attempt_or_incomplete','state_unverified',
+    ),0)
+    for row in loans:
+        if row['returned']:
+            state='returned_reported'
+        elif row['expired']:
+            state='expired_reported'
+        elif row.get('validity'):
+            # Validity is validated by the runtime projection. This is a
+            # report of its flags, not a fresh clock/provider comparison.
+            state='active_reported'
+        elif not any(row.get(k) for k in ('title','local_book','token_present')):
+            state='historical_attempt_or_incomplete'
+        else:
+            state='state_unverified'
+        counts[state]+=1
+    return counts
 
 
 _REASONS=frozenset({'consent_required','profile_required','profile_unavailable','profile_ambiguous',

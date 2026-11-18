@@ -139,3 +139,50 @@ def test_control_exception_cannot_inject_a_private_reason(runtime):
     def cancelled():raise _Stopped('PRIVATE')
     result=r.loan_inventory_readonly('PRIVATE_ID',consented=True,control=NS(cancelled=cancelled))
     assert result.reason=='read_failed' and not calls(root)
+
+
+def test_historical_inventory_distinguishes_incomplete_attempts_and_reported_states(runtime):
+    r,root,reports=runtime
+    def loan(name,**extra):
+        return {'id':name,'expired':False,'returned':False,'token_present':False,**extra}
+    (root/'loans.json').write_text(json.dumps({'loans':[
+        loan('PRIVATE_RETURNED',returned=True,expired=True,token_present=True),
+        loan('PRIVATE_EXPIRED',expired=True),
+        loan('PRIVATE_REPORTED',validity='2030-05-01',token_present=True),
+        loan('PRIVATE_ATTEMPT'),
+        loan('PRIVATE_STAGE',local_book='/PRIVATE/.canonical-delivery/run-a/fulfilled.epub'),
+        loan('PRIVATE_TOKEN_ONLY',token_present=True),
+        loan('PRIVATE_BAD_DATE',validity='not-a-date'),
+    ]}))
+    before={p.name:p.read_bytes() for p in root.glob('*.json')}
+    result=r.loan_inventory_readonly('PRIVATE_ID',consented=True)
+    assert result.status=='complete'
+    summary=result.redacted()
+    assert summary['loans']==7
+    assert summary['expired']==2 and summary['returned']==1
+    assert summary['token_present']==3
+    assert summary['historical_states']=={
+        'returned_reported':1,'expired_reported':1,'active_reported':1,
+        'historical_attempt_or_incomplete':2,'state_unverified':2,
+    }
+    assert sum(summary['historical_states'].values())==summary['loans']
+    assert summary['provider_loan_state']=='not_checked'
+    assert summary['canonical_placement_state']=='not_checked'
+    assert summary['repair_authorized'] is False
+    assert summary['acquisition_authorized'] is False
+    assert 'PRIVATE' not in json.dumps(summary)
+    assert '.canonical-delivery' not in json.dumps(summary)
+    assert not reports and before=={p.name:p.read_bytes() for p in root.glob('*.json')}
+    assert calls(root)==[['profile','list','--json'],['contract','--json'],
+                         ['loans','list','--profile','PRIVATE_NAME','--json']]
+
+
+def test_empty_complete_history_is_distinct_from_unavailable(runtime):
+    r,root,_=runtime
+    (root/'loans.json').write_text(json.dumps({'loans':[]}))
+    empty=r.loan_inventory_readonly('PRIVATE_ID',consented=True).redacted()
+    assert empty['status']=='complete' and empty['loans']==0
+    assert not any(empty['historical_states'].values())
+    unavailable=r.loan_inventory_readonly('PRIVATE_ID',consented=False).redacted()
+    assert unavailable['status']=='unavailable'
+    assert 'historical_states' not in unavailable and 'token_present' not in unavailable
