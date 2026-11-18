@@ -33,7 +33,7 @@ jobs:
           python-version: "3.11"
       - name: Install test dependencies
         run: python -m pip install -e . "pytest>=8,<9" "Pillow>=10,<12" "cryptography>=42,<48"
-      - name: Collect and execute separately on exact SHA
+      - name: Prepare exact SHA and dependency inventory
         shell: bash
         run: |
           set -euo pipefail
@@ -51,11 +51,39 @@ jobs:
             path="src/plugins/$SUITE/tests"
             export PYTHONPATH="$PWD/src:$PWD/src/plugins/$SUITE"
           fi
-          python scripts/ci_test_collection_inventory.py --suite "$path" --output "$out/collection.json"
-          python scripts/ci_test_execution_inventory.py --suite "$path" --output "$out/execution.json"
+          printf 'BASELINE_PATH=%s\nPYTHONPATH=%s\n' "$path" "$PYTHONPATH" >> "$GITHUB_ENV"
+      - name: Collect pytest items on exact SHA
+        shell: bash
+        # The collector records every nodeid in JSON; avoid echoing tens
+        # of thousands of individual IDs to the Actions log.
+        env:
+          PYTEST_ADDOPTS: "-q"
+        run: |
+          set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           test -z "$(git status --porcelain --untracked-files=no)"
-          python - "$out" "$path" <<'PY'
+          out="$RUNNER_TEMP/bounded-test-baseline"
+          python scripts/ci_test_collection_inventory.py --suite "$BASELINE_PATH" --output "$out/collection.json"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Execute complete pytest suite on exact SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          out="$RUNNER_TEMP/bounded-test-baseline"
+          python scripts/ci_test_execution_inventory.py --suite "$BASELINE_PATH" --output "$out/execution.json"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Verify complete collection and execution evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          out="$RUNNER_TEMP/bounded-test-baseline"
+          python - "$out" "$BASELINE_PATH" <<'PY'
           import json
           import os
           import sys
