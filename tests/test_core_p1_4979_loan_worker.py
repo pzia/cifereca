@@ -58,7 +58,7 @@ def test_missing_cover_triggers_single_local_snapshot_after_loan_refresh():
     host, rows, events = fixture()
     refresh_method()(host, force=False)
     assert [e[0] for e in events] == ["submit", "remote", "local", "present"]
-    assert events[1][1] == {"force": False, "identity_id": "alice"}
+    assert events[1][1] == {"force": False, "identity_id": "alice", "expected_source_epoch": 0, "publication_epoch": 42}
     assert events[2][1] == {"identity_id": "alice", "scan": False}
     assert events[-1][1] is rows
     assert host._loan_cover_projection == (42, "alice", ({"identity_id": "alice"},))

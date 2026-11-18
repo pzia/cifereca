@@ -394,6 +394,10 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
     service = self.service
     identity = service.current_identity
     identity_id = identity.identity_id if identity else None
+    if type(identity_id) is not str or not identity_id.strip():
+        return
+    from cifereca.core.source_context import source_context_epoch
+    admitted_source_epoch = source_context_epoch(service)
     # An A -> B -> A round trip has the same identity ID but invalidates an
     # earlier refresh. Guard the GTK callback by the Core account epoch too.
     account_epoch = getattr(service, "_account_context_epoch", None)
@@ -402,6 +406,8 @@ def refresh_loans(self, force: bool = True, control: Gtk.Widget | None = None) -
     def work():
         rows = service.refresh_identity_loans(
             force=force, identity_id=identity_id,
+            expected_source_epoch=admitted_source_epoch,
+            publication_epoch=account_epoch,
         )
         # A separate, source-exact, PUBLIC catalogue C may supply the
         # thumbnail of an image-less loan, but never the loan right.

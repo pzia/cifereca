@@ -63,7 +63,7 @@ def test_loan_inventory_and_cover_read_are_from_one_pinned_service():
     rows, covers = work()
     assert rows == [loan]
     assert covers == ({"identity_id": "alice", "proof": "local"},)
-    inventory.assert_called_once_with(force=True, identity_id="alice")
+    inventory.assert_called_once_with(force=True, identity_id="alice", expected_source_epoch=0, publication_epoch=5)
     local.assert_called_once_with(identity_id="alice", scan=False)
     done((rows, covers))
     assert shown == [[loan]]
@@ -83,7 +83,7 @@ def test_loans_job_is_not_retargeted_to_another_core_with_same_identity():
     )
     host.service = replacement
     payload = work()
-    inventory.assert_called_once_with(force=False, identity_id="alice")
+    inventory.assert_called_once_with(force=False, identity_id="alice", expected_source_epoch=0, publication_epoch=5)
     local.assert_called_once_with(identity_id="alice", scan=False)
     replacement.refresh_identity_loans.assert_not_called()
     replacement.library_entries.assert_not_called()
@@ -100,7 +100,7 @@ def test_aba_navigation_during_queued_loan_inventory_does_not_rebind_source():
     service.current_identity = NS(identity_id="alice")
     service._account_context_epoch += 1
     payload = work()
-    inventory.assert_called_once_with(force=True, identity_id="alice")
+    inventory.assert_called_once_with(force=True, identity_id="alice", expected_source_epoch=0, publication_epoch=5)
     local.assert_called_once_with(identity_id="alice", scan=False)
     done(payload)
     assert shown == []
@@ -113,6 +113,6 @@ def test_shutdown_filters_gtk_delivery_without_restarting_owner_service():
     _, work, done = queued[0][0]
     host._closed = True
     payload = work()
-    inventory.assert_called_once_with(force=True, identity_id="alice")
+    inventory.assert_called_once_with(force=True, identity_id="alice", expected_source_epoch=0, publication_epoch=5)
     done(payload)
     assert shown == []

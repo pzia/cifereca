@@ -3146,7 +3146,7 @@ def main() -> int:
         override(w, "_render_library", measured_render)
         # Only the provider refresh is synthetic in this no-plugins fixture;
         # local SQLite reads, identity transitions and GTK rendering stay real.
-        def offline_loans(*, force=False, identity_id=None):
+        def offline_loans(*, force=False, identity_id=None, expected_source_epoch=None, publication_epoch=None):
             assert w.service.identity_by_id(identity_id) is not None
             return []
         override(w.service, "refresh_identity_loans", offline_loans)

@@ -1557,11 +1557,20 @@ class LibraryService:
         prefix = f"{account.provider_id}:{account.credential_id}:{uid}"
         return f"{prefix}:{kind}:{suffix}" if suffix else f"{prefix}:{kind}"
 
-    def _loans_for_account(self, account: Account, *, force: bool = False) -> list[Loan]:
+    def _loans_for_account(self, account: Account, *, force: bool = False, expected_source_epoch: int | None = None) -> list[Loan]:
+        def require_source():
+            if expected_source_epoch is not None and (
+                type(expected_source_epoch) is not int
+                or source_context_epoch(self) != expected_source_epoch
+            ):
+                raise ProviderConfigurationError("loan_inventory_scope_changed")
+
+        require_source()
         key = _loan_cache_key(account)
         ttl = int(self.config.get("cache.dashboard_seconds", 300))
         if not force:
             cached = self.storage.cache_get("account", key)
+            require_source()
             # A cache is never evidence of a supplier primary-account alias.
             # Inspect only the registered session's static descriptor; do not
             # reconnect, invoke plugin properties or issue a provider GET.
@@ -1574,9 +1583,13 @@ class LibraryService:
                 cached, account, descriptor=descriptor,
             )
             if rows is not None:
+                require_source()
                 self._record_loan_statistics(account, rows, from_cache=True)
+                require_source()
                 return rows
+        require_source()
         session = self._session_for_account(account)
+        require_source()
         if not session.capabilities.loans:
             return []
         # A single typed observation boundary for every installed producer.
@@ -1588,7 +1601,8 @@ class LibraryService:
             account.identity_id, account.provider_id,
             account.credential_id, account.unique_id, account.is_primary,
         )
-        request_epoch = source_context_epoch(self)
+        request_epoch = source_context_epoch(self) if expected_source_epoch is None else expected_source_epoch
+        require_source()
         session_key = self._session_key(request_scope[1], request_scope[2])
         descriptor = inspect.getattr_static(session, "descriptor", None)
         if descriptor is not None and type(descriptor) is not ProviderDescriptor:
@@ -1619,8 +1633,11 @@ class LibraryService:
         for row in rows:
             d = asdict(row); d["raw"] = {}
             serial.append(d)
+        if not still_bound():
+            raise ProviderConfigurationError("loan_inventory_scope_changed")
         self.storage.cache_put("account", key, serial, ttl)
         self._record_loan_statistics(account, rows)
+        require_source()
         return rows
 
     def refresh_loans(self, force: bool = False) -> list[Loan]:
@@ -1638,18 +1655,27 @@ class LibraryService:
             self.refresh_adept_inventory(account.identity_id)
         return rows
 
-    def refresh_identity_loans(self, force: bool = False, identity_id: str | None = None) -> list[Loan]:
+    def refresh_identity_loans(self, force: bool = False, identity_id: str | None = None, *, expected_source_epoch: int | None = None, publication_epoch: int | None = None) -> list[Loan]:
+        """Read one identity; deferred callers pass their admission epochs."""
         # Only a missing argument may resolve the legacy GTK selection.
         # No selection must never expand a scoped loan read to all accounts;
         # empty or malformed explicit identities must never become wildcards.
-        if identity_id is None:
+        if identity_id is None and expected_source_epoch is None:
             identity_id = (
                 self.current_identity.identity_id
                 if self.current_identity is not None else None
             )
         if type(identity_id) is not str or not identity_id.strip():
             raise ValueError("loan_identity_required")
-        request_epoch = self._account_context_epoch
+        def require_source():
+            if expected_source_epoch is not None and (
+                type(expected_source_epoch) is not int
+                or source_context_epoch(self) != expected_source_epoch
+            ):
+                raise ProviderConfigurationError("loan_inventory_scope_changed")
+
+        require_source()
+        request_epoch = self._account_context_epoch if publication_epoch is None else publication_epoch
         rows: list[Loan] = []
         seen: set[tuple[str, str, str, str]] = set()
         accounts = self.accounts_for_identity(identity_id)
@@ -1661,10 +1687,17 @@ class LibraryService:
             key=lambda a: (a.provider_id, a.credential_id, a.unique_id),
         )
         for account in accounts:
+            require_source()
             session = self._session_for_account(account)
+            require_source()
             if not session.capabilities.loans:
                 continue
-            for loan in self._loans_for_account(account, force=force):
+            observed = (self._loans_for_account(account, force=force)
+                        if expected_source_epoch is None else
+                        self._loans_for_account(account, force=force,
+                                                expected_source_epoch=expected_source_epoch))
+            require_source()
+            for loan in observed:
                 key = (loan.source_provider, loan.source_credential, str(loan.source_account_id or ""), loan.id)
                 if key not in seen:
                     seen.add(key); rows.append(loan)
@@ -1672,12 +1705,16 @@ class LibraryService:
         # A worker for Alice may finish after switching Alice -> Bob -> Alice.
         # Its private result is returned to the guarded caller, but must never
         # overwrite the current profile projection after an epoch transition.
+        require_source()
         with self._search_generation_lock:
+            require_source()
             if (self._account_context_epoch == request_epoch
                     and getattr(self.current_identity, "identity_id", None) == identity_id):
                 self.last_loans = rows
         if force and identity_id:
+            require_source()
             self.refresh_adept_inventory(identity_id)
+        require_source()
         return rows
 
     def public_catalogue_target(self, row):

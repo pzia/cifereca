@@ -38,7 +38,9 @@ def test_identity_context_generation_invalidates_callbacks():
     source = _method("_activate_identity")
     assert "window._identity_context_generation += 1" in source
     assert "identity_generation = window._identity_context_generation" in source
-    assert "window._identity_request_current(identity.identity_id, identity_generation)" in source
+    assert "admitted_identity_id = identity_id" in source
+    assert "window._identity_request_current(admitted_identity_id, identity_generation)" in source
+    assert "source_context_epoch(service) != admitted_source_epoch" in source
 
 
 def test_history_refresh_only_applies_to_current_identity_context():

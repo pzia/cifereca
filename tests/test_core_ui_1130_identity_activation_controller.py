@@ -56,7 +56,7 @@ def _window(*, widgets=True, route="library", current="alice"):
         service.current_identity = known[ident]
 
     service.select_identity = select_identity
-    service.refresh_identity_loans = lambda *, force, identity_id: (
+    service.refresh_identity_loans = lambda *, force, identity_id, expected_source_epoch, publication_epoch: (
         events.append(("work", identity_id, force)) or [f"loan-{identity_id}"]
     )
     window = NS(
