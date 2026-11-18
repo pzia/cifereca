@@ -259,3 +259,15 @@ def resume(window):
 def handles(window, route):
     dispatcher = getattr(window, "_page_lifecycle_dispatcher", None)
     return dispatcher is not None and dispatcher.handles(route)
+
+
+def dispose(window):
+    """Detach the shell owner before notifying any plugin during teardown.
+
+    Call only after the window's closed flag is set. Reentrant disposal is
+    harmless and old leases cannot become valid again.
+    """
+    dispatcher = getattr(window, "_page_lifecycle_dispatcher", None)
+    window._page_lifecycle_dispatcher = None
+    if dispatcher is not None:
+        dispatcher.dispose()
