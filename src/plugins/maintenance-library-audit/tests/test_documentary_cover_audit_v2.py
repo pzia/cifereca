@@ -6,7 +6,15 @@ import pytest
 
 from cifereca.plugin_api import MaintenanceContext
 from cifereca_library_audits import CoverAuditTool
-from tests.test_cover_audit_cached_plan_boundary_p1 import Control
+
+
+
+class Control:
+    def check_cancelled(self):
+        pass
+
+    def report(self, **data):
+        pass
 
 
 def facts():
