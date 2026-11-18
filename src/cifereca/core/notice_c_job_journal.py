@@ -379,7 +379,8 @@ class ReadyPage:
     corrupt: int
 
 
-def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN):
+def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
+                    supported=None):
     """Bounded, read-only keyset scan of the existing durable public journal.
 
     Keep next_after across ticks, restarting at None at the end of a sweep.
@@ -388,12 +389,22 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN):
     The caller MUST claim each exact ref and obtain broker admission before
     any execution; a concurrent replacement can invalidate any hint.
     Expired final attempts are included so claim_job can terminalize them.
+    Optional supported is a tuple of (closed kind, implementation digest)
+    pairs; unsupported work never occupies a worker or consumes an attempt.
+    Filtering does not change the scanned-key cursor or scan limit.
     No worker, timer, reservation, transport or source access here.
     """
     if (not _integer(now) or type(limit) is not int
             or not 1 <= limit <= _MAX_SCAN
             or (after is not None and not _digest(after))):
         raise ValueError("notice_work_invalid_scan")
+    if supported is not None:
+        if (type(supported) is not tuple or not 1 <= len(supported) <= 16
+                or any(type(pair) is not tuple or len(pair) != 2
+                       or type(pair[0]) is not str or pair[0] not in _KINDS
+                       or not _digest(pair[1]) for pair in supported)
+                or len(set(supported)) != len(supported)):
+            raise ValueError("notice_work_invalid_scan_filter")
     lower = _PREFIX + after if after is not None else _PREFIX
     refs = []
     corrupt = 0
@@ -413,6 +424,9 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN):
             try:
                 job = _load(db, key)
                 if job is None:
+                    continue
+                if (supported is not None and
+                        (job.spec.kind, job.spec.implementation_digest) not in supported):
                     continue
                 if (job.state == "pending" and job.due <= now
                         and job.lease_until <= now
