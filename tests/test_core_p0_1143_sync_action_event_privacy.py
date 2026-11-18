@@ -11,6 +11,7 @@ from contextlib import nullcontext
 import pytest
 
 from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from cifereca.core import sync_coordination
 from cifereca.models import Account, Loan
 from tests.test_sync_state_contract import _service
@@ -95,7 +96,8 @@ def test_opening_sync_statistics_are_counts_without_raw_borrower_id(
         due_at="2099-01-01T00:00:00Z",
     )
     service.accounts = [account]
-    monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [loan])
+    enable_synthetic_paris_opening(service)
+    attach_opening_loan_reader(service, lambda *_a, **_kw: [loan], typed=False)
     monkeypatch.setattr(service, "_acquire_active_loan_automatically",
                         lambda _loan: {"status": status, "loan_id": PRIVATE})
     service.config.set("kobo_backup.enabled", False)
