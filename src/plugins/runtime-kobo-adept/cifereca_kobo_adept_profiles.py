@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from cifereca.plugin_api import UiPageContribution
+from functools import partial
+from threading import Event
+
+from cifereca.plugin_api import Cancelled, UiPageContribution
 
 
 # The ADEPT profile broker/runtime can fail with exceptions that include
@@ -66,8 +69,12 @@ class AdeptProfilesPagePlugin:
         self.profiles_broker=None
         self.tasks=None
         self._task_handles=[]
+        self._activation=None
 
     def activate(self,context):
+        if self._activation is not None:
+            self._activation.set()
+        self._activation=Event()
         self.context=context
         self.runtime=context.service("runtime.kobo-adept")
         self.profiles_broker=context.broker("adept.profiles")
@@ -89,6 +96,16 @@ class AdeptProfilesPagePlugin:
 
     def _build(self,host):
         from gi.repository import GLib, Gtk
+
+        # The page belongs to one activation; delayed actions may neither
+        # read a newer runtime/broker nor publish into a replaced activation.
+        activation=self._activation
+        profiles_broker=self.profiles_broker
+        runtime=self.runtime
+        tasks=self.tasks
+
+        def current():
+            return activation is not None and self._activation is activation and not activation.is_set()
 
         scroll=Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER,Gtk.PolicyType.AUTOMATIC)
@@ -150,10 +167,23 @@ class AdeptProfilesPagePlugin:
                 profiles.append(button)
 
         def async_call(fn,success_message=None,*,reload_profiles=False):
+            if not current():
+                return
             set_busy(True)
-            handle=self.tasks.submit(
-                lambda _control:_run_profile_task(self.profiles_broker,fn,reload_profiles=reload_profiles),
-                label="Gestion profil ADEPT",kind="adept-profile")
+
+            def work(control):
+                control.check_cancelled()
+                if activation.is_set():
+                    raise Cancelled("task cancelled")
+                return _run_profile_task(profiles_broker,fn,reload_profiles=reload_profiles)
+
+            try:
+                handle=tasks.submit(work,label="Gestion profil ADEPT",kind="adept-profile")
+            except Exception as error:
+                if current():
+                    set_busy(False)
+                    host.toast(_safe_profile_error_toast(error))
+                return
             self._task_handles.append(handle)
 
             def finished(done_handle):
@@ -165,7 +195,7 @@ class AdeptProfilesPagePlugin:
                 def done():
                     if done_handle in self._task_handles:
                         self._task_handles.remove(done_handle)
-                    if self.context is None:
+                    if not current():
                         return False
                     set_busy(False)
                     if error is not None:
@@ -178,24 +208,35 @@ class AdeptProfilesPagePlugin:
 
             handle.add_done_callback(finished)
 
-        refresh.connect("clicked",lambda _b:async_call(self.profiles_broker.profiles))
-        create.connect("clicked",lambda _b:async_call(
-            lambda:self.profiles_broker.provision(name.get_text(),email.get_text()),
-            "Profil ADEPT prêt",reload_profiles=True))
-        associate.connect("clicked",lambda _b:async_call(
-            lambda:self.runtime.associate_profile(name.get_text(),mount.get_text()),
-            "Liseuse associée",reload_profiles=True))
+        refresh.connect("clicked",lambda _b:async_call(profiles_broker.profiles))
+
+        def do_create(_b):
+            if not current(): return
+            operation=partial(profiles_broker.provision,name.get_text(),email.get_text())
+            async_call(operation,"Profil ADEPT prêt",reload_profiles=True)
+
+        def do_associate(_b):
+            if not current(): return
+            operation=partial(runtime.associate_profile,name.get_text(),mount.get_text())
+            async_call(operation,"Liseuse associée",reload_profiles=True)
+
         def do_remove(_b):
-            if not confirm.get_active(): return
-            async_call(lambda:self.runtime.remove_profile(name.get_text()),
-                       "Profil supprimé",reload_profiles=True)
+            if not current() or not confirm.get_active(): return
+            operation=partial(runtime.remove_profile,name.get_text())
             confirm.set_active(False)
+            async_call(operation,"Profil supprimé",reload_profiles=True)
+
+        create.connect("clicked",do_create)
+        associate.connect("clicked",do_associate)
         remove.connect("clicked",do_remove)
 
-        _run_once_on_first_map(scroll, lambda: async_call(self.profiles_broker.profiles))
+        _run_once_on_first_map(scroll, lambda: async_call(profiles_broker.profiles))
         return scroll
 
     def deactivate(self):
+        if self._activation is not None:
+            self._activation.set()
+        self._activation=None
         for handle in tuple(self._task_handles):
             try: handle.cancel()
             except Exception: pass
