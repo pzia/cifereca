@@ -33,13 +33,17 @@ GTK = NS(Button=Widget, MenuButton=Widget, Popover=Widget, Box=Widget,
          ScrolledWindow=Widget, Orientation=NS(VERTICAL=1))
 
 
-def request(db, c):
+def request(db, c, *, context=None):
     pending, actions, launches, toasts = [], [], [], []
     generation = [0]
     runner = NS(submit=lambda label, work, done, fail, **kw:
                 pending.append((work, done, fail)))
     host = NS(service=NS(storage=db), runner=runner, _closed=False, toast=toasts.append)
     panel = NS(add_actions=actions.extend)
+    if context is not None:
+        host._route_display_token = object()
+        context.host = host
+        panel.get_mapped = lambda: context.mapped
     gio = NS(AppInfo=NS(launch_default_for_uri=lambda uri, _: launches.append(uri)))
     assert request_public_web_actions(
         host, panel, c.document, expected_epoch=c.epoch,
@@ -109,3 +113,52 @@ def test_late_menu_delivery_and_empty_links_do_not_create_action(tmp_path):
         pending, actions, _, _, _ = request(db, c)
         deliver(pending)
         assert not actions
+
+
+def test_route_aba_revokes_in_flight_menu_and_browser_launch(tmp_path):
+    with closing(Storage(tmp_path / "route.sqlite")) as db:
+        a = source(db, "seller-a", "a", [link("seller-a", URL)])
+        c = publish(db, a.observation.key.edition_id, a)
+        context = NS(mapped=True)
+        pending, actions, launches, _, toasts = request(db, c, context=context)
+        context.host._route_display_token = object()
+        context.host._route_display_token = object()
+        deliver(pending)
+        assert not actions
+
+        pending, actions, launches, _, toasts = request(db, c, context=context)
+        deliver(pending)
+        button, = actions
+        context.mapped = False
+        button.callback(button)
+        assert not pending
+        context.mapped = True
+        button.callback(button)
+        assert len(pending) == 1
+        context.host._route_display_token = object()
+        context.host._route_display_token = object()
+        deliver(pending)
+        assert not launches and not toasts
+        # Returning to the same rendered detail is not a permanent veto;
+        # the new deliberate click receives a fresh exact C validation.
+        button.callback(button)
+        deliver(pending)
+        assert launches == [URL]
+        button.callback(button)
+        context.mapped = False
+        deliver(pending)
+        assert launches == [URL]
+        assert db.entitlements() == [] and db.acquisitions() == []
+
+
+def test_search_detail_port_exposes_route_generation_read_only():
+    import pytest
+    from cifereca.gui.search_host_port import SearchDetailPort
+    host = NS(_route_display_token=object())
+    port = SearchDetailPort(host)
+    original = port._route_display_token
+    assert original is host._route_display_token
+    with pytest.raises(AttributeError):
+        port._route_display_token = object()
+    host._route_display_token = object()
+    assert port._route_display_token is not original
