@@ -20,7 +20,7 @@ from .categories import CategoryRegistry
 from .configuration import PluginConfigError, PluginConfigStore, defaults_for_schema, schema_scope
 from .dependency import DependencyIssue, topological_order, validate_dependencies
 from .errors import DependencyError, ManifestError
-from .loader import load_entrypoint
+from .loader import load_entrypoint, package_namespace_conflicts
 from .packages import InstalledPackage, PackageInstaller, PackageStore
 
 # Permanently retired providers. Do not reactivate stale user-installed
@@ -206,6 +206,23 @@ class PluginManager:
                     reason_detail={"issue": safety_issue} if safety_issue else None,
                 )
 
+        # Check ownership before reusing or importing any instance. Multiple
+        # entries of a package share its namespace; different enabled
+        # packages claiming one name are both blocked.
+        roots = {
+            record.descriptor.package_id: record.package.root
+            for record in self._records.values()
+            if record.enabled and record.descriptor.entrypoint
+        }
+        import_conflicts = package_namespace_conflicts(roots)
+        for record in self._records.values():
+            names = import_conflicts.get(record.descriptor.package_id)
+            if record.enabled and names:
+                record.state = "blocked"
+                record.reason = "import_namespace_conflict"
+                record.reason_detail = {"names": names}
+                record.error = "plugin package import namespace conflict"
+
         # Work out which live instances can safely survive this refresh.  A
         # dependent is reusable only when all of its previously-known required
         # plugins are themselves unchanged; upgrades therefore reactivate the
@@ -217,6 +234,7 @@ class PluginManager:
                 old is not None
                 and old.instance is not None
                 and old.enabled == record.enabled
+                and record.state in {"ready", "degraded"}
                 and old.descriptor == record.descriptor
                 and old.package.root == record.package.root
                 and old.package.sha256 == record.package.sha256
@@ -253,7 +271,7 @@ class PluginManager:
                     record.error = cycle_text
 
         for plugin_id, record in self._records.items():
-            if not record.enabled:
+            if not record.enabled or record.state == "blocked":
                 continue
             plugin_issues = issues_by_plugin.get(plugin_id, [])
             blocking = [issue for issue in plugin_issues if issue.code in {"dependency_missing", "dependency_version", "conflict"}]
@@ -378,7 +396,8 @@ class PluginManager:
         required_caps = set(requirement.capabilities)
         matches = []
         for plugin_id, candidate in self._records.items():
-            if not candidate.enabled or candidate.descriptor.type != requirement.category:
+            if (not candidate.enabled or candidate.descriptor.type != requirement.category
+                    or candidate.reason == "import_namespace_conflict"):
                 continue
             if required_caps.issubset(set(candidate.descriptor.capabilities)):
                 matches.append(plugin_id)
