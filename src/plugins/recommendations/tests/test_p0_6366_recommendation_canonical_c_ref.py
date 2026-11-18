@@ -43,11 +43,11 @@ def _ranked(item, variants=None):
     )
 
 
-def _verified(db):
+def _verified(db, *, published_at=None):
     raw = SearchResult(
         id="public-row", record_id="source-record-1", docbase="digital-books",
         medium="digital", title="Même titre", author="Même auteur",
-        type="book", format="EPUB", publisher=None, published_at=None,
+        type="book", format="EPUB", publisher=None, published_at=published_at,
         description=None,
         thumbnail_url="https://covers.example.org/exact.jpg",
         friendly_url=None, scenario="search",
@@ -263,7 +263,7 @@ def test_real_reopened_c_candidates_rank_and_render_without_supplier(tmp_path, m
     filename = tmp_path / "offline-rank.sqlite"
     db = Storage(filename)
     try:
-        live = _verified(db)
+        live = _verified(db, published_at="2025")
         ref = live._core_notice_canonical_cover_document_ref
         epoch = live._core_notice_canonical_cover_document_epoch
         with db._lock, db._connect() as sql:
@@ -300,6 +300,7 @@ def test_real_reopened_c_candidates_rank_and_render_without_supplier(tmp_path, m
         assert result.network_batches == result.cache_batches == 0
         assert result.catalogue_observations == ()
         assert known_public_c_binding_facts(ranked.item) == (ref, epoch)
+        assert ranked.item.published_at == "2025"
         view, _, _, _, _ = _view(ranked.notices)
         opaque = object()
         view.host.public_notice_cover_ref = lambda item, **kw: (
@@ -323,7 +324,11 @@ def test_real_reopened_c_candidates_rank_and_render_without_supplier(tmp_path, m
         assert row.thumbnail_url is None
         view._selected_row(row)
         assert details[-1].cover_document_ref == ref
+        assert any(field.label == "Publication" and field.value == "2025"
+                   for section in details[-1].sections for field in section.fields)
         assert not ranked.notices[0].has_source_coordinates
+        ranked.item.published_at = "2024"
+        assert known_public_c_binding_facts(ranked.item) is None
         assert restored.entitlements() == []
     finally:
         restored.close()
