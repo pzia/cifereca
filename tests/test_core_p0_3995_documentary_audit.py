@@ -75,7 +75,7 @@ def test_cover_audit_v2_headless_preserves_v1_and_explicit_unknown(tmp_path):
         service.close()
 
 
-def test_real_plugin_plan_preview_run_on_scoped_core_broker(tmp_path):
+def test_real_plugin_plan_preview_run_on_scoped_core_broker(tmp_path, monkeypatch):
     """No mock aggregate: actual suspended plugin consumes the real broker."""
     import importlib.util
     from pathlib import Path
@@ -102,7 +102,8 @@ def test_real_plugin_plan_preview_run_on_scoped_core_broker(tmp_path):
     try:
         broker = CatalogBrokerImpl(service)
         service.catalog_scan = Mock(side_effect=AssertionError("unexpected scan"))
-        broker.catalog_entries = Mock(side_effect=AssertionError("legacy or global catalogue"))
+        legacy = Mock(side_effect=AssertionError("legacy or global catalogue"))
+        monkeypatch.setattr(CatalogBrokerImpl, "catalog_entries", legacy)
 
         def resolve(name):
             assert name == "catalog"
@@ -152,7 +153,7 @@ def test_real_plugin_plan_preview_run_on_scoped_core_broker(tmp_path):
             assert not tool.run(unavailable, Control()).ok
 
         service.catalog_scan.assert_not_called()
-        broker.catalog_entries.assert_not_called()
+        legacy.assert_not_called()
         assert service.storage.entitlements() == [] and service.storage.acquisitions() == []
     finally:
         service.close()
