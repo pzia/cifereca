@@ -17,6 +17,7 @@ from . import notice_c_origin_recompute as origin
 from . import notice_c_origin_relink as relink
 from .notice_c_work_bridge import AggregateWorkBridge, PreparedAggregate
 from .notice_c_reparse_execution import PublicReplayRegistry, prepare_public_reparse
+from .notice_c_fetch_execution import PublicFetchExecution
 
 _SUPPORTED = (
     ("recompute_aggregate", exact.IMPLEMENTATION_DIGEST),
@@ -45,24 +46,37 @@ class PublicNoticeWorkPump:
     """
 
     def __init__(self, storage, broker, *, clock=None, on_committed=None,
-                 replay_registry=None):
+                 replay_registry=None, fetch_execution=None):
         if clock is not None and not callable(clock):
             raise ValueError("notice_work_invalid_clock")
         if replay_registry is None:
             replay_registry = PublicReplayRegistry()
         if type(replay_registry) is not PublicReplayRegistry:
             raise ValueError("notice_reparse_invalid_registry")
+        if fetch_execution is not None and (
+                type(fetch_execution) is not PublicFetchExecution
+                or fetch_execution._authority._storage is not storage):
+            raise ValueError("notice_fetch_invalid_registry")
+        self._fetch_execution = fetch_execution
         self._replay_registry = replay_registry
-        self._supported = _SUPPORTED + replay_registry.supported()
+        self._supported = (_SUPPORTED + replay_registry.supported()
+                           + (() if fetch_execution is None else fetch_execution.supported()))
         self._storage = storage
         self._clock = clock if clock is not None else lambda: int(time.time())
         self._bridge = AggregateWorkBridge(
             storage, broker, self._prepare, clock=self._clock,
             on_committed=on_committed, allow_reparse=bool(replay_registry.supported()),
             allow_relink=True,
+            prepare_fetch=(self._prepare_fetch if fetch_execution is not None
+                           and fetch_execution.supported() else None),
         )
         self._after = None
         self._tick_lock = Lock()
+
+    def _prepare_fetch(self, spec, lease, control):
+        return self._fetch_execution.prepare(
+            self._storage, spec, lease, control, clock=self._clock,
+        )
 
     def _prepare(self, spec, control):
         control.check_cancelled()
