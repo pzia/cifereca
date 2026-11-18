@@ -15,6 +15,7 @@ import httpx
 from cifereca.plugin_api import (
     HTTPX_TRANSPORT, CatalogueXMLParseError, parse_atom_catalogue,
     catalogue_next, catalogue_url_origin, resolve_catalogue_link,
+    parse_bounded_catalogue_xml,
 )
 
 from cifereca.plugin_api import (
@@ -122,6 +123,44 @@ def _unavailable_opds_xml():
 def _unverified_html_opds():
     """HTML 200 may be SSO/login, not proof of public catalogue downtime."""
     return ProviderError("Project Gutenberg OPDS : XML invalide (invalid_opds_feed)")
+
+
+def _invalid_detail_opds():
+    return ProviderError("Project Gutenberg OPDS détail : XML invalide (invalid_opds_feed)")
+
+
+def _bounded_opds_body(response, failure):
+    # No decompression of an unbounded response, even on the detail path.
+    encoding = response.headers.get("content-encoding", "").strip().casefold()
+    if encoding not in {"", "identity"}:
+        raise failure() from None
+    declared = response.headers.get("content-length", "")
+    if (len(declared) <= 9 and declared.isascii() and declared.isdecimal()
+            and int(declared) > MAX_SEARCH_OPDS_BYTES):
+        raise failure() from None
+    if response.is_stream_consumed:
+        # Fully buffered offline fixtures must satisfy the same byte limit.
+        if not response.is_closed:
+            raise failure() from None
+        content = response.content
+        if len(content) > MAX_SEARCH_OPDS_BYTES:
+            raise failure() from None
+        return content
+    chunks = []
+    total = 0
+    for chunk in response.iter_raw(chunk_size=65536):
+        total += len(chunk)
+        if total > MAX_SEARCH_OPDS_BYTES:
+            raise failure() from None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _detail_atom_root(content: bytes):
+    root = parse_bounded_catalogue_xml(content)
+    if root.tag not in {"{" + ATOM + "}feed", "{" + ATOM + "}entry"}:
+        raise CatalogueXMLParseError("unexpected_root")
+    return root
 
 
 def _html_response_prefix(content: bytes) -> bool:
@@ -622,15 +661,17 @@ class GutenbergSession(ProviderSession):
         cached=self._detail_feed_cache.get(url)
         if cached is not None:
             self._detail_feed_cache.move_to_end(url); return cached
-        response=self.client.get(url); response.raise_for_status(); value=(response.content,str(response.url))
+        with self.client.stream("GET", url, headers={"Accept-Encoding": "identity"}) as response:
+            response.raise_for_status()
+            value = (_bounded_opds_body(response, _invalid_detail_opds), str(response.url))
         self._detail_feed_cache[url]=value
         while len(self._detail_feed_cache)>self._detail_cache_entries: self._detail_feed_cache.popitem(last=False)
         return value
 
     @staticmethod
     def _detail_cover(content: bytes, base_url: str) -> str | None:
-        try: root=ET.fromstring(content)
-        except ET.ParseError: return None
+        try: root=_detail_atom_root(content)
+        except CatalogueXMLParseError: return None
         image=None
         for link in root.iter():
             if str(link.tag).split('}')[-1] != 'link': continue
@@ -689,32 +730,7 @@ class GutenbergSession(ProviderSession):
                     headers={"Accept-Encoding": "identity"},
                 ) as response:
                     response.raise_for_status()
-                    encoding = response.headers.get("content-encoding", "").strip().casefold()
-                    if encoding not in {"", "identity"}:
-                        raise _unavailable_opds_xml() from None
-                    declared = response.headers.get("content-length", "")
-                    if (len(declared) <= 9 and declared.isascii() and declared.isdecimal()
-                            and int(declared) > MAX_SEARCH_OPDS_BYTES):
-                        raise _unavailable_opds_xml() from None
-                    if response.is_stream_consumed:
-                        # MockTransport may return a fully buffered Response
-                        # for offline fixtures. It is already closed and has
-                        # no raw stream left; recheck its bytes before XML.
-                        # Actual socket responses use the bounded raw loop.
-                        if not response.is_closed:
-                            raise _unavailable_opds_xml() from None
-                        content = response.content
-                        if len(content) > MAX_SEARCH_OPDS_BYTES:
-                            raise _unavailable_opds_xml() from None
-                    else:
-                        chunks = []
-                        total = 0
-                        for chunk in response.iter_raw(chunk_size=65536):
-                            total += len(chunk)
-                            if total > MAX_SEARCH_OPDS_BYTES:
-                                raise _unavailable_opds_xml() from None
-                            chunks.append(chunk)
-                        content = b"".join(chunks)
+                    content = _bounded_opds_body(response, _unavailable_opds_xml)
                     response_url = str(response.url)
             except httpx.HTTPError as exc:
                 elapsed_ms = int((time.perf_counter() - started) * 1000); status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -782,10 +798,13 @@ class GutenbergSession(ProviderSession):
         return rows
 
     def _epub_candidates(self, content: bytes, base_url: str) -> list[tuple[str, str]]:
+        failed = False
         try:
-            root = ET.fromstring(content)
-        except ET.ParseError:
-            raise ProviderError("Project Gutenberg OPDS détail : XML invalide (invalid_opds_feed)") from None
+            root = _detail_atom_root(content)
+        except CatalogueXMLParseError:
+            failed = True
+        if failed:
+            raise _invalid_detail_opds()
         rows: list[tuple[str, str]] = []
         for link in root.iter():
             if str(link.tag).split("}")[-1] != "link":
@@ -869,7 +888,7 @@ class GutenbergSession(ProviderSession):
             try:
                 content,base_url=self._detail_feed(detail_url); thumbnail=self._detail_cover(content,base_url)
                 if thumbnail: item.thumbnail_url=thumbnail
-            except httpx.HTTPError:
+            except (httpx.HTTPError, ProviderError):
                 pass
         return ItemDetail(
             record_id=item.record_id,
