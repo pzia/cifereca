@@ -167,7 +167,18 @@ class BnfCatalogueSession(ProviderSession):
                 "query": f"{FIELDS[field]} {relation} {literal(query)}",
                 "startRecord": str(page * self.page_size + 1),
                 "maximumRecords": str(self.page_size),
-            }, headers={"Accept-Encoding": "identity"}) as response:
+            }, headers={"Accept-Encoding": "identity"},
+                follow_redirects=self.sru_url != ENDPOINT) as response:
+                if self.sru_url == ENDPOINT:
+                    # A configured public endpoint is not proof of the final
+                    # response's origin. Until a redirect route is explicitly
+                    # attested, refuse before following it or parsing its body.
+                    target = urlsplit(str(response.url))
+                    if (300 <= response.status_code < 400 or response.history
+                            or (target.scheme, target.netloc, target.path)
+                            != ("https", "catalogue.bnf.fr", "/api/SRU")
+                            or target.fragment):
+                        raise ProviderError("BnF : unverified_sru_navigation")
                 response.raise_for_status()
                 encoding = response.headers.get("content-encoding", "").strip().casefold()
                 declared = response.headers.get("content-length", "")
