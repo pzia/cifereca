@@ -27,6 +27,7 @@ from cifereca.core.runtime import CiferecaCore
 from cifereca.core.notice_cover_repository import persist_notice_cover, read_notice_cover
 from cifereca.core.notice_search_cover_producer import admit_public_search_catalogue
 from cifereca.core.notice_c_public_search import search_public_notice_c
+from cifereca.core.notice_c_web_choices import read_public_web_choices, resolve_public_web_choice
 from cifereca.task_admission import SharedTaskAdmission
 
 PLUGIN = Path(__file__).resolve().parents[1] / "src/plugins/provider-numilog"
@@ -49,8 +50,11 @@ def test_explicit_exact_numilog_fetch_via_one_core_worker(tmp_path, monkeypatch,
     body = HTML.read_bytes()
     fresh = body
     if mode in ("changed", "rebound_commit"):
-        fresh = body.replace(ORIGINAL.encode(), UPDATED.encode())
-        assert fresh != body
+        fresh = body.replace(ORIGINAL.encode(), UPDATED.encode()).replace(
+            b"1947941/les-enfants-du-pas-du-loup.ebook",
+            b"1947941/les-enfants-du-pas-du-loup-corrige.ebook",
+        )
+        assert fresh != body and b"du-loup-corrige.ebook" in fresh
     elif mode == "foreign":
         fresh = body.replace(b"1947941/", b"1947942/")
         assert fresh != body
@@ -122,6 +126,14 @@ def test_explicit_exact_numilog_fetch_via_one_core_worker(tmp_path, monkeypatch,
             cover_inventory_complete=True,
         )
         canonical = persist_exact_public_search_cover(db, source)
+        menu = read_public_web_choices(db, canonical.document)
+        old_choice, = menu.choices
+        def resolve(choices, option):
+            return resolve_public_web_choice(
+                db, choices.document, expected_epoch=choices.epoch,
+                choice_id=option.choice_id,
+            )
+        assert resolve(menu, old_choice) == row.friendly_url
         assert public_replay_same_call_observation(response, session, source) == observation
         raw, ttl = session._read_retained_public_input(token)
         with session._hold_retained_public_input(token) as held:
@@ -180,6 +192,12 @@ def test_explicit_exact_numilog_fetch_via_one_core_worker(tmp_path, monkeypatch,
             latest_source = read_notice_cover(db, source.document)
             assert latest_source.epoch == source.epoch + 1
             assert latest_source.observation.observed_at == now[0]
+            # The transport really changed the admitted product-card locator
+            # for the SAME exact edition. The prior menu is already obsolete
+            # even though durable C has not yet run its aggregate job.
+            assert read_consolidated_notice_cover(db, canonical.document) == canonical
+            assert resolve(menu, old_choice) is None
+            assert read_public_web_choices(db, canonical.document).choices == ()
             until = monotonic() + 10
             while monotonic() < until:
                 for pending in tick().handles:
@@ -191,10 +209,20 @@ def test_explicit_exact_numilog_fetch_via_one_core_worker(tmp_path, monkeypatch,
             assert latest.document == canonical.document
             assert latest.epoch == canonical.epoch + 1
             assert latest.sources[0].public_bibliography.title == UPDATED
+            new_menu = read_public_web_choices(db, latest.document)
+            corrected, = new_menu.choices
+            assert corrected.choice_id != old_choice.choice_id
+            assert resolve(new_menu, corrected) == row.friendly_url.replace(
+                "du-loup.ebook", "du-loup-corrige.ebook",
+            )
+            assert resolve(menu, old_choice) is None
             assert events == [(latest.document, latest.epoch)]
         else:
             assert read_notice_cover(db, source.document) == source
             assert read_consolidated_notice_cover(db, canonical.document) == canonical
+            # A refused or unchanged fetch changes neither link nor choice.
+            assert read_public_web_choices(db, canonical.document) == menu
+            assert resolve(menu, old_choice) == row.friendly_url
             assert events == []
             hit, = search_public_notice_c(db, ORIGINAL, now=now[0]).hits
             assert hit.last_seen_at == (now[0] if success else observation.observed_at)
