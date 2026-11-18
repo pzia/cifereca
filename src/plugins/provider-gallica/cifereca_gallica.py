@@ -350,6 +350,8 @@ class GallicaSession(ProviderSession):
                     and str(link.attrib.get("type") or "") in {"text/html", "application/xhtml+xml", ""}
                 ]
                 ark = self._document_ark(*exact_ids, *exact_links)
+                if ark:
+                    friendly = f"https://gallica.bnf.fr/{ark}"
             else:
                 ark = self._extract_ark(entry_id, friendly, acquisition, fallback_link)
             if not ark or not acquisition:
