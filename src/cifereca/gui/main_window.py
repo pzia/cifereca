@@ -427,12 +427,10 @@ class MainWindow(Adw.ApplicationWindow):
     def activate_startup_plugins(self) -> bool:
         if getattr(self, "_closed", False):
             return False
-        try:
-            return startup_coordinator.activate_startup_plugins(self, idle_add=GLib.idle_add)
-        finally:
-            tick = getattr(self, "_notice_work_tick", None)
-            if callable(tick) and not self._closed:
-                tick()
+        tick = getattr(self, "_notice_work_tick", None)
+        if callable(tick):
+            tick()
+        return startup_coordinator.activate_startup_plugins(self, idle_add=GLib.idle_add)
 
     # ---------- compatibility / source configuration ----------
     def logout(self) -> None:
