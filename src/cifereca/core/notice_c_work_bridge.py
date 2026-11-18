@@ -58,7 +58,7 @@ class AggregateWorkBridge:
     """
 
     def __init__(self, storage, broker, prepare, *, clock=None, on_committed=None,
-                 allow_reparse=False, allow_relink=False):
+                 allow_reparse=False, allow_relink=False, prepare_fetch=None):
         if (type(broker) is not TaskBrokerImpl
                 or not isinstance(broker.shared_admission, SharedTaskAdmission)
                 or broker.shared_admission.reserve_user_slots < 1):
@@ -69,6 +69,9 @@ class AggregateWorkBridge:
             raise ValueError("notice_work_invalid_observer")
         if type(allow_reparse) is not bool or type(allow_relink) is not bool:
             raise ValueError("notice_work_invalid_port")
+        if prepare_fetch is not None and not callable(prepare_fetch):
+            raise ValueError("notice_work_invalid_port")
+        self._prepare_fetch = prepare_fetch
         self._allow_reparse = allow_reparse
         self._allow_relink = allow_relink
         self._on_committed = on_committed
@@ -132,7 +135,9 @@ class AggregateWorkBridge:
             job = journal.read_job(self._storage, ref)
             if (job.spec.kind != "recompute_aggregate"
                     and not (self._allow_reparse and job.spec.kind == "reparse_cached_input")
-                    and not (self._allow_relink and job.spec.kind == "relink_notices")):
+                    and not (self._allow_relink and job.spec.kind == "relink_notices")
+                    and not (self._prepare_fetch is not None
+                             and job.spec.kind == "fetch_source_notice")):
                 return "unsupported"
             if job.state != "pending":
                 return "not_ready"
@@ -144,9 +149,11 @@ class AggregateWorkBridge:
         if lease is None:
             return "not_ready"
         committed = False
+        fetch = job.spec.kind == "fetch_source_notice"
         try:
             control.check_cancelled()
-            prepared = self._prepare(job.spec, control)
+            prepared = (self._prepare_fetch(job.spec, lease, control) if fetch
+                        else self._prepare(job.spec, control))
             aggregate = job.spec.kind in ("recompute_aggregate", "relink_notices")
             expected = PreparedAggregate if aggregate else PreparedSource
             if (type(prepared) is not expected or not callable(prepared.publish)
@@ -181,15 +188,15 @@ class AggregateWorkBridge:
         except Cancelled:
             if committed:
                 return "current"
-            self._fail(lease, transient=True)
+            self._fail(lease, transient=not fetch)
             raise
         except UnavailableNoticeWork:
             return "current" if committed else self._fail(lease, transient=False)
         except (RetryableNoticeWork, sqlite3.OperationalError):
-            return "current" if committed else self._fail(lease, transient=True)
+            return "current" if committed else self._fail(lease, transient=not fetch)
         except ValueError:
             # CAS/source validation refusal; no successful publication.
-            return "current" if committed else self._fail(lease, transient=True)
+            return "current" if committed else self._fail(lease, transient=not fetch)
         except Exception:
             # Only a closed reason crosses the durable boundary.
             return "current" if committed else self._fail(lease, transient=False)
