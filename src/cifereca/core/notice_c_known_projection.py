@@ -105,6 +105,7 @@ def merge_public_notice_c_known_rows(
                 "author": hit.author,
                 "publisher": hit.publisher,
                 "description": hit.description,
+                **({"published_at": hit.published_at} if hit.published_at is not None else {}),
             })
             continue
         rows.append({
@@ -115,6 +116,7 @@ def merge_public_notice_c_known_rows(
             "item_id": hit.record_id,
             "title": hit.title,
             "author": hit.author,
+            "published_at": hit.published_at,
             "media_format": hit.media_format,
             "medium": hit.medium,
             "state": "remote_catalog",

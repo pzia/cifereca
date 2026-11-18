@@ -203,3 +203,55 @@ def test_legacy_replay_cannot_downgrade_same_call_c_bibliography(tmp_path):
         assert c.hits[0].title == live.title
     finally:
         db.close()
+
+
+def test_publication_date_retained_after_source_eviction_and_reopen(tmp_path):
+    from cifereca.core.notice_c_cover_index import (
+        persist_exact_public_search_cover, read_consolidated_notice_cover, _db_key,
+    )
+    from cifereca.core.notice_cover_repository import evict_notice_cover
+    from cifereca.core.notice_c_known_projection import merge_public_notice_c_known_rows
+    import json
+
+    path = tmp_path / "dates.sqlite"
+    db = Storage(path)
+    try:
+        dated = persist(db, verified_public(record_id="dated", title="Les loups",
+                                            published_at="2026-10-07"), at=100)
+        undated = persist(db, verified_public(record_id="unknown-date", title="Les loups",
+                                              published_at=None), at=100)
+        c = persist_exact_public_search_cover(db, dated)
+        old = persist_exact_public_search_cover(db, undated)
+        assert c.sources[0].public_bibliography.published_at == "2026-10-07"
+        assert old.sources[0].public_bibliography.published_at is None
+        assert persist_exact_public_search_cover(db, undated) == old
+        with db._lock, db._connect() as sql:
+            raw = json.loads(sql.execute("SELECT value FROM metadata WHERE key=?",
+                                          (_db_key(old.document),)).fetchone()[0])
+            assert "published_at" not in next(iter(raw["sources"].values()))["public_bibliography"]
+        assert evict_notice_cover(db, dated.document, expected_epoch=dated.epoch)
+        assert evict_notice_cover(db, undated.document, expected_epoch=undated.epoch)
+    finally:
+        db.close()
+    db = Storage(path)
+    try:
+        page = search_public_notice_c(db, "loups", now=101, group_by_document=True)
+        assert {hit.record_id: hit.published_at for hit in page.hits} == {
+            "dated": "2026-10-07", "unknown-date": None,
+        }
+        rows = merge_public_notice_c_known_rows([], page, identity_id="bob")
+        assert {row["item_id"]: row["published_at"] for row in rows} == {
+            "dated": "2026-10-07", "unknown-date": None,
+        }
+        assert db.entitlements() == [] and db.acquisitions() == []
+        # Corrupt/unsafe descriptive values are refused by the same strict
+        # canonical decoder, not reflected into the public Search DTO.
+        with db._lock, db._connect() as sql:
+            key = _db_key(c.document)
+            raw = json.loads(sql.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0])
+            next(iter(raw["sources"].values()))["public_bibliography"]["published_at"] = "https://private.example.org/?token=secret"
+            sql.execute("UPDATE metadata SET value=? WHERE key=?", (json.dumps(raw), key))
+        with pytest.raises(ValueError, match="corrupt_canonical_cover"):
+            read_consolidated_notice_cover(db, c.document)
+    finally:
+        db.close()
