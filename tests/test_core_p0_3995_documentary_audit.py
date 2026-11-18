@@ -129,7 +129,7 @@ def test_real_plugin_plan_preview_run_on_scoped_core_broker(tmp_path, monkeypatc
             )
             expected = (broker.library_cover_audit(identity_id="alice")
                         if kind == "covers" else
-                        broker.library_documentary_audit(identity_id="alice", kind=kind))
+                        broker.library_language_audit(identity_id="alice"))
             assert prepared.facts == expected
             assert prepared.facts["entries"] == 1
             assert prepared.facts["status"] == "partial"
@@ -140,6 +140,8 @@ def test_real_plugin_plan_preview_run_on_scoped_core_broker(tmp_path, monkeypatc
                 assert "N2 :" in prepared.summary and "N3 :" in prepared.summary
             else:
                 assert expected["noncanonical"] == 1 and expected["invalid"] == 0
+                assert expected["provenance"]["unknown"] == 1
+                assert "Provenance C" in prepared.summary
                 assert any("provenance" in warning for warning in prepared.warnings)
             result = tool.run(prepared, control)
             assert result.ok and result.changed == 0
@@ -155,5 +157,30 @@ def test_real_plugin_plan_preview_run_on_scoped_core_broker(tmp_path, monkeypatc
         service.catalog_scan.assert_not_called()
         legacy.assert_not_called()
         assert service.storage.entitlements() == [] and service.storage.acquisitions() == []
+    finally:
+        service.close()
+
+
+def test_language_source_classification_does_not_infer_from_syntax():
+    from cifereca.core.library_documentary_audit import _classify_language_sources as classify
+
+    assert classify([]) == classify([None, None]) == "unknown"
+    assert classify([("fr",), None]) == "partial"
+    assert classify([("fr", "en"), ("en", "fr")]) == "concordant"
+    assert classify([("fr",), ("en",), None]) == "divergent"
+
+
+def test_language_audit_v2_preserves_v1_empty_and_unknown_owner(tmp_path):
+    service = _service(tmp_path)
+    try:
+        broker = CatalogBrokerImpl(service)
+        v1 = broker.library_documentary_audit(identity_id="alice", kind="languages")
+        v2 = broker.library_language_audit(identity_id="alice")
+        assert v2["schema"] == 2 and v2["entries"] == 0
+        assert v2["provenance"] == dict.fromkeys(
+            ("concordant", "divergent", "partial", "unknown"), 0)
+        assert {k: v for k, v in v2.items() if k not in ("schema", "provenance")} == {
+            k: v for k, v in v1.items() if k != "schema"}
+        assert broker.library_language_audit(identity_id="bob")["status"] == "unavailable"
     finally:
         service.close()

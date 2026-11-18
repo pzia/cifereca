@@ -274,11 +274,15 @@ def _valid_audit_counts(counts, keys, entries):
 def _documentary_preview(kind, facts):
     """Validate the optional Core aggregate; never render arbitrary payloads."""
     keys = _DOCUMENTARY_COUNTS[kind]
-    v2 = (kind == "covers" and type(facts) is dict
-          and type(facts.get("schema")) is int and facts["schema"] == 2)
+    v2 = (type(facts) is dict and type(facts.get("schema")) is int
+          and facts["schema"] == 2)
+    cover_v2 = v2 and kind == "covers"
+    language_v2 = v2 and kind == "languages"
     expected = {"schema", "status", "entries", *keys}
-    if v2:
+    if cover_v2:
         expected.update(("n2", "n3"))
+    if language_v2:
+        expected.add("provenance")
     if (type(facts) is not dict
             or set(facts) != expected
             or type(facts["schema"]) is not int or (facts["schema"] != 1 and not v2)
@@ -288,7 +292,12 @@ def _documentary_preview(kind, facts):
             or sum(facts[key] for key in keys) != facts["entries"]
             or (facts["status"] == "unavailable" and facts["entries"] != 0)):
         raise ValueError("invalid_documentary_audit")
-    if v2:
+    if language_v2 and not _valid_audit_counts(
+        facts["provenance"], ("concordant", "divergent", "partial", "unknown"),
+        facts["entries"],
+    ):
+        raise ValueError("invalid_documentary_audit")
+    if cover_v2:
         n2, n3 = facts["n2"], facts["n3"]
         if (not _valid_audit_counts(n2, _N2_NOTICES, facts["entries"])
                 or not _valid_audit_counts(n3, _N3_NOTICES, facts["entries"])):
@@ -313,7 +322,7 @@ def _documentary_preview(kind, facts):
             "Audit partiel : liaison N2 runtime et présence/intégrité N3 non observées.",
             "Une URL ou une image en cache ne prouve pas une liaison documentaire.",
         )
-        if v2:
+        if cover_v2:
             summary += (
                 f' N2 : {n2["embedded"]} EPUB, {n2["origin"]} origine, '
                 f'{n2["catalog"]} catalogue, {n2["pending"]} en attente, '
@@ -338,6 +347,13 @@ def _documentary_preview(kind, facts):
             f'{facts["invalid"]} invalides, {facts["unknown"]} inconnues.'
         )
         warnings = ("Audit partiel : syntaxe déclarée, provenance de langue non attestée.",)
+        if language_v2:
+            proof = facts["provenance"]
+            summary += (f' Provenance C : {proof["concordant"]} concordante(s), '
+                        f'{proof["divergent"]} divergente(s), {proof["partial"]} partielle(s), '
+                        f'{proof["unknown"]} inconnue(s).')
+            warnings = ("Audit partiel : provenance par source C, sans attribution de langue "
+                        "consolidée ni validation du fichier.",)
     return summary, warnings
 
 
@@ -345,7 +361,8 @@ def _documentary_plan(tool, context, control, kind):
     broker = tool._broker("catalog")
     absent = object()
     try:
-        runtime = getattr(broker, "library_cover_audit", absent) if kind == "covers" else absent
+        port = "library_cover_audit" if kind == "covers" else "library_language_audit"
+        runtime = getattr(broker, port, absent)
         if runtime is not absent:
             # A declared but broken v2 port is not a legacy broker.
             if not callable(runtime):

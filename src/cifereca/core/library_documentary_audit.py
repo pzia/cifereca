@@ -114,19 +114,58 @@ def _language_state(row):
     return "canonical" if tags == canonical else "noncanonical"
 
 
-def library_documentary_audit(service, *, identity_id, kind, runtime=False):
+_LANGUAGE_PROVENANCE = ("concordant", "divergent", "partial", "unknown")
+
+
+def _classify_language_sources(values):
+    # Compare decoded exact-source declarations as sets, never choose a majority.
+    sets = {frozenset(value) for value in values if value}
+    if len(sets) > 1:
+        return "divergent"
+    if not sets:
+        return "unknown"
+    return "partial" if any(not value for value in values) else "concordant"
+
+
+def _language_provenance(storage, row, owner):
+    link = row.get("_public_canonical_cover_link")
+    if not valid_local_public_c_link(
+        link, identity_id=owner, artifact_id=row.get("artifact_id"),
+        placement_id=row.get("placement_id"),
+    ):
+        return "unknown"
+    retained = read_consolidated_notice_cover(storage, link.document)
+    if (retained is None or retained.epoch != link.epoch
+            or tuple(source.source_ref for source in retained.sources) != link.source_refs):
+        return "unknown"
+    values = []
+    for source in retained.sources:
+        # The retained decoder validates the exact-source declaration.
+        bio = source.public_bibliography if source.visibility == "public" else None
+        observation = getattr(bio, "language_observation", None)
+        values.append(None if observation is None else observation.languages)
+    # Cover completeness is not evidence of language completeness.
+    return _classify_language_sources(values)
+
+
+def library_documentary_audit(service, *, identity_id, kind, runtime=False,
+                              language_provenance=False):
     if type(kind) is not str or kind not in _KEYS:
         raise ValueError("invalid_audit_kind")
     keys = _KEYS[kind]
-    if runtime and kind != "covers":
+    if (runtime and kind != "covers"
+            or language_provenance and kind != "languages"):
         raise ValueError("invalid_runtime_audit_kind")
 
-    def report(status, entries, counts, n2=None, n3=None):
-        result = {"schema": 2 if runtime else 1, "status": status,
+    def report(status, entries, counts, n2=None, n3=None, provenance=None):
+        result = {"schema": 2 if runtime or language_provenance else 1, "status": status,
                   "entries": entries, **counts}
         if runtime:
             result.update(n2=n2 if n2 is not None else dict.fromkeys(_N2_KEYS, 0),
                           n3=n3 if n3 is not None else dict.fromkeys(_N3_KEYS, 0))
+        if language_provenance:
+            result["provenance"] = (provenance if provenance is not None
+                                    else dict.fromkeys(_LANGUAGE_PROVENANCE, 0))
         return result
 
     def empty():
@@ -146,6 +185,7 @@ def library_documentary_audit(service, *, identity_id, kind, runtime=False):
         counts = dict.fromkeys(keys, 0)
         n2, n3 = dict.fromkeys(_N2_KEYS, 0), dict.fromkeys(_N3_KEYS, 0)
         observer = getattr(service, "_documentary_cover_observer", None) if runtime else None
+        provenance = dict.fromkeys(_LANGUAGE_PROVENANCE, 0)
         probes = 0
         for row in rows:
             packet = None
@@ -157,6 +197,12 @@ def library_documentary_audit(service, *, identity_id, kind, runtime=False):
             except (ValueError, TypeError, OSError, RuntimeError, AttributeError):
                 status = "unknown"
             counts[status if status in counts else "unknown"] += 1
+            if language_provenance:
+                try:
+                    proof = _language_provenance(service.storage, row, identity_id)
+                except Exception:
+                    proof = "unknown"
+                provenance[proof] += 1
             if runtime:
                 linked, media = "unknown", "unknown"
                 if packet is not None and callable(observer) and probes < _MAX_RUNTIME_PROBES:
@@ -177,4 +223,4 @@ def library_documentary_audit(service, *, identity_id, kind, runtime=False):
             return empty()
     except Exception:
         return empty()
-    return report("partial", len(rows), counts, n2, n3)
+    return report("partial", len(rows), counts, n2, n3, provenance)
