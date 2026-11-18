@@ -347,7 +347,7 @@ class CoverLoader:
                 kind = "embedded"
                 parsed = urlsplit(url)
                 local = Path(unquote(parsed.path))
-                root = cover_cache_dir().resolve()
+                root = cover_cache_dir(create=False).resolve()
                 if (not parsed.netloc and not parsed.query
                         and not parsed.fragment and not local.is_symlink()
                         and local.resolve().parent == root

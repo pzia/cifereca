@@ -35,14 +35,14 @@ def data_dir(*, create: bool = True) -> Path:
     return _ensure(base / APP_NAME) if create else base / APP_NAME
 
 
-def cache_dir() -> Path:
+def cache_dir(*, create: bool = True) -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", _home() / "AppData" / "Local")) / "Cache"
     elif sys.platform == "darwin":
         base = _home() / "Library" / "Caches"
     else:
         base = Path(os.environ.get("XDG_CACHE_HOME", _home() / ".cache"))
-    return _ensure(base / APP_NAME)
+    return _ensure(base / APP_NAME) if create else base / APP_NAME
 
 
 def state_dir(*, create: bool = True) -> Path:

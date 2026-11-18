@@ -352,3 +352,97 @@ def test_trace_subscriptions_follow_snapshot_eviction_and_close(prepared):
     finally:
         service.close()
     assert service.decisions.stats()["subscribers"] == 0
+
+
+def test_audit_current_n2_and_n3_are_independent(prepared, monkeypatch):
+    b = prepared
+    service, loader, decisions = b["service"], b["loader"], b["decisions"]
+    snapshot = _register(b)
+    observe = service.observe_cover_for_audit
+    assert observe(b["scope"]).n2_status == "unknown"
+    loader._path(ORIGIN).write_bytes(PNG)
+    token = decisions.begin(b["scope"], revision=7)
+    assert decisions.resolve_and_publish(
+        token, snapshot.candidates + (snapshot.embedded.candidate,),
+        snapshot_complete=True,
+    )
+    def forbidden(*args, **kwargs):
+        raise AssertionError("audit must never resolve or populate covers")
+    monkeypatch.setattr(loader, "load", forbidden)
+    monkeypatch.setattr(loader, "load_exact_epub", forbidden)
+    monkeypatch.setattr(decisions, "resolve_and_publish", forbidden)
+    before = service.stats()
+    assert observe(b["scope"], expected_revision=8).n2_status == "unknown"
+    valid = observe(b["scope"], expected_revision=7)
+    assert (valid.n2_status, valid.n2_tier, valid.n3_status) == (
+        "selected", "embedded", "digest_valid",
+    )
+    b["physical"].write_bytes(b["physical"].read_bytes() + b"wrong digest")
+    assert observe(b["scope"]).n3_status == "not_validated"
+    b["physical"].unlink()
+    absent = observe(b["scope"])
+    assert (absent.n2_status, absent.n2_tier, absent.n3_status) == (
+        "selected", "embedded", "not_validated",
+    )
+    assert observe(replace(b["scope"], identity_id="bob")).n2_status == "unknown"
+    assert not b["physical"].exists()
+    # Neither a different hot URL nor old N0 observation can stand in for N3.
+    assert decisions.observe(b["scope"], revision=7)[0] == token
+    assert service.stats() == before
+
+
+@pytest.mark.parametrize("complete,status,physical", [
+    (True, "missing", "not_applicable"),
+    (False, "pending", "unknown"),
+])
+def test_audit_no_selection_never_probes_media(
+    prepared, monkeypatch, complete, status, physical,
+):
+    b = prepared
+    _register(b, embedded=False, candidates=(), complete=complete)
+    token = b["decisions"].begin(b["scope"], revision=7)
+    assert b["decisions"].resolve_and_publish(token, (), snapshot_complete=complete)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("no selected URI to probe")
+    monkeypatch.setattr(b["loader"], "probe_media", forbidden)
+    observed = b["service"].observe_cover_for_audit(b["scope"])
+    assert (observed.n2_status, observed.n3_status) == (status, physical)
+
+
+def test_audit_rejects_generation_change_during_physical_probe(prepared, monkeypatch):
+    b = prepared
+    _register(b, embedded=False, candidates=(b["catalog"],))
+    b["loader"]._path(CATALOG).write_bytes(PNG)
+    token = b["decisions"].begin(b["scope"], revision=7)
+    assert b["decisions"].resolve_and_publish(
+        token, (b["catalog"],), snapshot_complete=True,
+    )
+    assert b["service"].observe_cover_for_audit(b["scope"]).n3_status == "signature_valid"
+    probe = b["loader"].probe_media
+    def invalidated(uri):
+        result = probe(uri)
+        b["decisions"].invalidate(b["scope"], cause="evidence_changed")
+        return result
+    monkeypatch.setattr(b["loader"], "probe_media", invalidated)
+    result = b["service"].observe_cover_for_audit(b["scope"])
+    assert (result.n2_status, result.n3_status) == ("unknown", "unknown")
+
+
+def test_audit_n2_observation_does_not_refresh_lru_or_mutate_expired_slot(prepared):
+    b = prepared
+    now = [0.0]
+    cache = CoverDecisionCache(max_scopes=2, selected_ttl=1, clock=lambda: now[0])
+    first = b["scope"]
+    second = replace(first, placement_id="second")
+    third = replace(first, placement_id="third")
+    for scope in (first, second):
+        token = cache.begin(scope, revision=7)
+        assert cache.resolve_and_publish(token, (b["catalog"],), snapshot_complete=True)
+    assert cache.observe(first, revision=7) is not None
+    assert cache.observe(first, revision=8) is None
+    cache.begin(third, revision=7)
+    assert cache.observe(first, revision=7) is None
+    before = cache._slots[second].decision
+    now[0] = 2
+    assert cache.observe(second, revision=7) is None
+    assert cache._slots[second].decision is before

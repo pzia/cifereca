@@ -172,3 +172,12 @@ def test_embedded_image_with_same_signature_but_wrong_digest_is_n3_miss(loader):
     assert loader.stats()["download_ok"] == 0
     assert loader.stats()["download_failed"] == 0
     # N3 physical invalidation never invents or revokes a documentary N2 proof.
+
+
+def test_embedded_probe_does_not_recreate_absent_cache_directory(loader):
+    root = cover_cache_dir(create=False)
+    if root.exists():
+        root.rmdir()
+    source = root / (hashlib.sha256(EMBEDDED_PNG).hexdigest() + ".png")
+    assert not loader.probe_media(source.as_uri()).source_cached
+    assert not root.exists()
