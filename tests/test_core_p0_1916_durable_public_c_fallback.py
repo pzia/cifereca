@@ -100,3 +100,36 @@ def test_read_error_distinguished_from_missing_public_facts(tmp_path, monkeypatc
         assert "PRIVATE_DIAGNOSTIC" not in repr(result)
     finally:
         db.close()
+
+
+def test_public_c_precedes_viewer_mirror_even_on_later_page(tmp_path, monkeypatch):
+    db = Storage(tmp_path / "c-first.sqlite")
+    try:
+        source, _ = _make_c(db, verified_public(
+            record_id="durable", title="Voyage maritime", format="EPUB",
+            published_at="2020",
+        ))
+        _drop_short_source(db, source)
+        db.catalog_entry_put({
+            "catalog_entry_id": "legacy", "identity_id": "viewer-a",
+            "provider_id": "bnf", "item_id": "legacy-record",
+            "title": "Voyage maritime ancien", "media_format": "EPUB",
+            "local_state": "remote_catalog",
+            "metadata": {"source_collection": "catalog", "mirrored_at": 100,
+                         "medium": "digital"},
+        })
+        for viewer in ("viewer-a", "viewer-b"):
+            result = page(db, identity=viewer, page_size=1)
+            assert result.matched_count == 1 and not result.has_more
+            row, = result.results
+            assert row.record_id == "durable"
+            assert row.published_at == "2020"
+            assert page(db, identity=viewer, page_size=1, page=1).status == "page_out_of_range"
+        # Independent C is still available if the old per-profile mirror
+        # cannot be read; there is no reason to query it on a C hit.
+        def forbidden(*args, **kwargs):
+            raise AssertionError("legacy mirror should not be consulted")
+        monkeypatch.setattr(db, "catalog_entries", forbidden)
+        assert page(db).results[0].record_id == "durable"
+    finally:
+        db.close()

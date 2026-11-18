@@ -1,7 +1,7 @@
 """Conservative offline fallback for a failed *public* provider search (#1916).
 
-Use the active identity's historical mirror, or independently admitted public C
-when that mirror has no matching facts. No foreign legacy mirror authority.
+Prefer independently admitted installation-wide public C; use the active
+identity's historical mirror only as a secondary, separate cohort. No foreign legacy mirror authority.
 This is not a purchase, loan, holding, download or fresh provider result.
 """
 from __future__ import annotations
@@ -135,7 +135,7 @@ def _durable_public_c_fallback(
             id=candidate["key"], record_id=hit.record_id, docbase=hit.docbase,
             medium=hit.medium, title=hit.title, author=hit.author, type=None,
             format=hit.media_format, publisher=hit.publisher,
-            published_at=None, description=hit.description,
+            published_at=hit.published_at, description=hit.description,
             scenario="KNOWN_CATALOG_STALE", source_provider=provider_id,
             source_credential="known-public", source_collection="catalog",
             revision_id=hit.source_revision,
@@ -183,6 +183,16 @@ def known_public_fallback_page(
             or type(query) is not str or len(query.strip()) < 2):
         return empty("unavailable")
     current = int(time.time()) if now is None else int(now)
+    durable = _durable_public_c_fallback(
+        storage, provider_id=provider_id, query=query, scope=scope,
+        field=field, content_types=content_types, current=current,
+        page=page, page_size=page_size, empty=empty,
+    )
+    # Do not switch inventories on later pages: C's out-of-range verdict
+    # belongs to that same cohort. A legacy mirror cannot overwrite C's
+    # exact edition, nor can we add the two counts without exact deduplication.
+    if durable.status in {"known_catalog_stale", "page_out_of_range"}:
+        return durable
     try:
         # Apply exact identity/provider scope in SQLite before the read budget.
         # Other users' catalogues cannot starve a small source's local fallback.
@@ -266,11 +276,7 @@ def known_public_fallback_page(
     )
     matched_count = len(matched)
     if not matched_count:
-        return _durable_public_c_fallback(
-            storage, provider_id=provider_id, query=query, scope=scope,
-            field=field, content_types=content_types, current=current,
-            page=page, page_size=page_size, empty=empty,
-        )
+        return durable
     first = page * page_size
     if first >= matched_count:
         return KnownPublicFallbackPage((), "page_out_of_range", page, page_size, matched_count, False)
