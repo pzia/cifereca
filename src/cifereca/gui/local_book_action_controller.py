@@ -433,18 +433,24 @@ def add_local_book_actions(window, detail, item, *, Gtk, Gio, ArtifactRouteReque
             for target in route_targets:
                 target_button = Gtk.Button(label=str(target.target.label or target.target.target_id))
                 target_button.add_css_class('flat')
-                def route(_button, target_id=target.target.target_id):
+                def route(_button, selected=target):
                     if (not action_current(menu, gtk=True)
                             or not action_current(_button, gtk=True)):
                         return
-                    request = ArtifactRouteRequest(context.artifact, target_id=target_id, identity_id=identity_id or None)
-                    def work():
-                        if not action_current(menu) or not action_current(_button):
-                            raise Cancelled('Contexte du transfert périmé.')
-                        plan = routing.plan(request)
-                        if not action_current(menu) or not action_current(_button):
-                            raise Cancelled('Contexte du transfert périmé.')
-                        return routing.transfer(plan)
+                    request = ArtifactRouteRequest(
+                        context.artifact, target_id=selected.target.target_id,
+                        identity_id=identity_id,
+                    )
+                    try:
+                        # The Core owns the admitted worker, pinned to this
+                        # placement and storage target, not the GTK selection.
+                        work = routing.admit_transfer(request, selected)
+                        if not callable(work) or not action_current(_button, gtk=True):
+                            return
+                    except Exception:
+                        if action_current(_button):
+                            window.show_error('Envoi vers le stockage indisponible', 'Envoi impossible')
+                        return
                     def failed(exc):
                         if not action_current(menu) or not action_current(_button):
                             return
