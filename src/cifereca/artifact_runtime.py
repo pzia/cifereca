@@ -1650,7 +1650,7 @@ class LibraryMaintenanceBrokerImpl:
             # A historical preview may snapshot its selected owner but
             # must return exact coordinates. The preview is not consent.
             request = replace(request, target_identity_id=owner,
-                              placement_id=child_placement_id)
+                              placement_id=child_placement_id, purpose=purpose)
             return LibraryMutationPlan(
                 op, f"Définir la variante préférée pour {purpose}",
                 request, changes=(request.artifact_id, purpose),
@@ -2189,6 +2189,7 @@ class LibraryMaintenanceBrokerImpl:
             # admission rule. Execution below never consults navigation again.
             owner = request.target_identity_id
             if (type(owner) is not str or not owner
+                    or not isinstance(plan.facts, Mapping)
                     or getattr(getattr(self.service, "current_identity", None),
                                "identity_id", None) != owner):
                 raise _VariantScopeConflict("Portée de préférence modifiée")
