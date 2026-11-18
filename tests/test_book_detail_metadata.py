@@ -270,3 +270,53 @@ def test_sensitive_assignments_and_addresses_never_reach_detail_actions():
         assert safe_detail_value(value) == ''
         assert detail_metadata_items({'keywords': [value], 'awards': [value]}) == ()
     assert safe_detail_value('Le Secret de la maison') == 'Le Secret de la maison'
+
+
+def test_structured_facts_do_not_stringify_nested_provider_objects():
+    class Private:
+        def __str__(self):
+            raise AssertionError("no coercion")
+    rows = detail_metadata_items({
+        "contributors": [{"name": Private(), "role": "author"},
+                         {"name": "Alice", "role": {"internal": "PRIVATE"}}],
+        "series": [{"name": {"private": "PRIVATE"}, "index": 3},
+                   {"name": "Public", "index": Private()}],
+        "pages": float("nan"),
+    })
+    assert rows == (("Contributeur", "Alice", "author"), ("Série", "Public", "series"))
+
+
+def test_malformed_nested_lists_are_bounded_without_hiding_other_fields():
+    cycle = []
+    cycle.append(cycle)
+    rows = detail_metadata_items({"subjects": [cycle, "Public"], "language": "fr"})
+    assert ("Sujet", "Public", "subject") in rows
+    assert ("Langue", "fr", "language") in rows
+    assert any("valeurs supplémentaires" in value for _, value, _ in rows)
+    deep = "not visited"
+    for _ in range(100):
+        deep = [deep]
+    rows = detail_metadata_items({"subjects": [deep, "Visible"]})
+    assert ("Sujet", "Visible", "subject") in rows
+    assert "not visited" not in repr(rows)
+
+
+def test_default_public_youth_age_kind_is_visible_in_common_detail():
+    from cifereca.plugin_api import youth_age_from_label
+    from cifereca.core.attested_age_filter import attested_age_status
+
+    proof = youth_age_from_label("À partir de 8 ans")
+    assert proof.age_kind == "recommended"
+    metadata = {"youth_age_ranges": [{
+        "age_kind": proof.age_kind, "age_min": proof.age_min,
+        "age_max": proof.age_max, "source_label": proof.source_label,
+    }]}
+    row = {"provider_id": "catalogue-fixture", "item_id": "edition-1",
+           "metadata": metadata}
+    assert attested_age_status(row, 9) == "match"
+    assert detail_metadata_items(metadata) == (
+        ("Âge recommandé", "À partir de 8 ans", "copy"),
+    )
+    assert detail_metadata_items({"catalogue_metadata": metadata}) == (
+        ("Catalogue · Âge recommandé", "À partir de 8 ans", "copy"),
+    )
