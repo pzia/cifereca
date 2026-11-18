@@ -77,6 +77,10 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
     window.view_stack.set_visible_child_name(route)
     if not is_current():
         return
+    from .page_lifecycle import notify_visible, manages_route
+    notify_visible(window, route)
+    if not is_current():
+        return
     page = window._pages.get(route)
     window.header_subtitle.set_label(page.title if page else "")
     if not is_current():
@@ -130,7 +134,7 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
     elif route == "history" and not window.service.last_history:
         if is_current():
             window.refresh_history(False)
-    elif route == "sync":
+    elif route == "sync" and not manages_route(window, route):
         window._refresh_sync_page()
     elif route == "tools":
         window._refresh_tools_page()
