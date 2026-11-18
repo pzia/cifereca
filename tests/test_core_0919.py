@@ -63,6 +63,65 @@ class Core0919(unittest.TestCase):
   status=self.service.adept_return_status_for_loan(self.loan)
   self.assertEqual(status['adept_loan_id'],'adept-exact');self.assertFalse(status['return_available'])
   self.assertEqual(self.storage.acquisition_get(status['acquisition_id'])['metadata']['preserved_artifact_path'],str(original))
+ def test_explicit_legacy_recovery_never_releases_canonical_adept_attempt(self):
+  # #3197: use the actual explicit Core recovery path, not an injected
+  # complete ledger row. Only the provider and Adobe runtime are mocked
+  # by setUp; the original artifact, receipt, SQLite and indexer are real.
+  from cifereca.core.canonical_adept_attempt import (
+   _key, begin_loan_adept_attempt, pending_loan_adept_attempt,
+  )
+  from cifereca.core.canonical_loan_retry_guard import historical_adept_retry_blocked
+  from cifereca.core.source_convergence import SourceKey
+  from cifereca.core.loan_source_epoch import inherited_explicit_source_epoch
+  from cifereca.plugin_api import ProviderRightsScope
+  from cifereca.locking import InterProcessLock
+
+  loan=self.loan
+  connection=self.storage.provider_connection_put({
+   'identity_id':loan.identity_id,'provider_id':loan.source_provider,
+   'credential_id':loan.source_credential,'label':'Synthetic',
+  })
+  self.storage.provider_account_put({
+   'connection_id':connection,'identity_id':loan.identity_id,
+   'provider_id':loan.source_provider,'credential_id':loan.source_credential,
+   'account_id':loan.source_account_id,'is_primary':True,
+  })
+  account=self.service.accounts[-1]
+  key=SourceKey(ProviderRightsScope(
+   loan.identity_id,loan.source_provider,loan.source_credential,loan.source_account_id,
+  ),loan.record_id,loan.id,'loan','dilicom')
+  lock_path=self.root/'canonical-and-explicit.lock'
+  with patch('cifereca.services.acquisition_lock_file',return_value=lock_path), \
+       patch('cifereca.core.canonical_recovery.acquisition_lock_file',return_value=lock_path):
+   original=self.initial(); before=original.read_bytes()
+   with InterProcessLock(lock_path) as locked:
+    begin_loan_adept_attempt(self.storage,source=key,
+                             offer_id='synthetic-attempt',shared_lock=locked)
+   marker=self.storage.metadata_get(_key(key))
+   self.assertIsNotNone(marker)
+   execute=self.service.execute_acquisition_request.side_effect
+   self.service.execute_acquisition_request.side_effect=AttentionRequired(
+    'Runtime refusé',code='runtime_refused')
+   with self.assertRaises(AttentionRequired):
+    self.service.reacquire_digital_loan(loan)
+   self.assertEqual(original.read_bytes(),before)
+   self.assertEqual(self.storage.metadata_get(_key(key)),marker)
+   self.assertIsNone(inherited_explicit_source_epoch())
+   self.service.execute_acquisition_request.side_effect=execute
+   result=self.service.reacquire_digital_loan(loan)
+   self.assertEqual(result['status'],'complete')
+   final=Path(result['path'])
+   self.assertNotEqual(final,original)
+   self.assertTrue(final.is_file())
+   self.assertEqual(original.read_bytes(),before)
+   self.assertEqual(self.service.acquire_digital_loan.call_count,3)
+   self.assertEqual(self.service.execute_acquisition_request.call_count,3)
+   self.assertEqual(self.service.acquire_digital_loan.call_args.kwargs,
+                    {'force_refresh':True})
+   self.assertIsNone(inherited_explicit_source_epoch())
+   self.assertEqual(self.storage.metadata_get(_key(key)),marker)
+   self.assertTrue(pending_loan_adept_attempt(self.storage,key))
+   self.assertTrue(historical_adept_retry_blocked(self.storage,account,None,key))
  def test_manual_deleted_file_forces_complete_recovery(self):
   self.initial().unlink();result=self.service.reacquire_digital_loan(self.loan)
   self.assertTrue(Path(result['path']).is_file());self.assertFalse(result['adept_return_available'])
