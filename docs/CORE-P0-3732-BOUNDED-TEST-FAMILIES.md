@@ -66,3 +66,36 @@ git ls-tree -r --name-only HEAD -- tests src/plugins |
 - Aucun test local exécuté lors de cette revue. Les résultats de collecte,
   l'état détaillé de dernière Sync et la sélection E2E doivent encore être
   vérifiés dans la recette commune #5376/#3732 ; aucune clôture anticipée.
+
+
+## Réception exacte sur main `c3d089f694f83fa98c092a81a422756014d7a26b` (18/11/2026)
+
+ZIP Core 14431733355 et Kobo 14432175608 du run 44313990355, rapports
+`execution.json` et `test-tree.txt` effectivement lus, six suites SUCCESS.
+Le filtre git ls-tree documenté ci-dessus trouve dix fichiers : neuf
+collectables et une fixture seule (`test_kobo_backup_fault_isolation.py`,
+aucun item). **Aucun** fichier au motif `test_numilog_materialization_*`
+ou `test_bnf_auto_materialization.py` dans le périmètre tests/src/plugins.
+Aucune suppression supplémentaire.
+
+| Famille exacte retenue | Cas passés |
+|---|---:|
+| Kobo backup guard / observability / preview targeted connection / reconcile prune | 32 + 12 + 6 + 28 |
+| Kobo plugin manifest binding | 8 |
+| canonical_consent_broker / source_auto_consent_bridge | 13 + 16 |
+| BnF materialization phase | 6 |
+| reconciliation phase progress | 1 |
+
+122/122 cas passés dans ces familles, zéro skip/échec ; 17/17
+test_core_p0_3171_numilog_v2_single_executor.py, 37/37 source_sync_consent,
+1/1 six_v2_delivery_convergence, 4/4 opening_convergence_executor,
+18/18 post_placement_duplicates, 21/21 typed_source_cutover, 2/2
+reconciliation_compat_boundary. État détaillé dernière Sync : 30/30
+test_sync_p1_3416_last_run_two_axes.py, 8/8 test_sync_state_contract.py,
+41/41 test_core_ui_641_sync_states.py. Mutation writer legacy et cinq
+autres mutations détectées au même SHA, #5376. #6645 est déjà fusionnée.
+Les E2E/install/AST applicables des cutovers sont verts ; #6734 ne déclenchait
+pas d'E2E spécifique. Revue et liste finies selon arbitrage propriétaire,
+sans prétendre à une qualification de tous les anciens tests. Dette P2
+consignée dans BACKLOG.md : helpers, classification hors périmètre, assertions
+statiques, sans réduction automatique des gardes.
