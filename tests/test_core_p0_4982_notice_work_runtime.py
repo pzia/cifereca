@@ -218,3 +218,51 @@ def test_fetch_install_requires_same_storage_and_precedes_any_heartbeat(tmp_path
     finally:
         foreign.close()
         other.close()
+
+
+
+def test_late_hints_drain_new_durable_work_without_another_external_tick(tmp_path, monkeypatch):
+    budget = SharedTaskAdmission(max_inflight=4, reserve_user_slots=1)
+    scanned, release, committed = Event(), Event(), Event()
+    calls = []
+    with open_core(tmp_path, notice_work_admission=budget) as core:
+        runtime = core.notice_work
+        first = persist_exact_public_search_cover(
+            core.storage, source(core.storage, "Ancien", 10),
+        )
+        tick = runtime._pump.tick
+
+        def hold_first(*, control=None):
+            calls.append("scan")
+            outcome = tick(control=control)
+            if len(calls) == 1:
+                assert outcome.handles == ()
+                scanned.set()
+                assert release.wait(10)
+            return outcome
+
+        monkeypatch.setattr(runtime._pump, "tick", hold_first)
+        assert runtime.bind_committed_observer(lambda *_: committed.set())
+        scan = runtime.request_tick()
+        try:
+            assert scan is not None and scanned.wait(10)
+            source(core.storage, "Nouveau", 11)
+            ref = request_exact_public_recompute(
+                core.storage, first.document, now=100, expected_generation=0,
+            )
+            # All three hints arrive after the first cursor was read.
+            assert runtime.request_tick() is None
+            assert runtime.request_tick() is None
+            assert runtime.request_tick() is None
+            assert journal.read_job(core.storage, ref).attempts == 0
+        finally:
+            release.set()
+        assert scan.result(timeout=10).handles == ()
+        assert committed.wait(10)
+        assert calls == ["scan", "scan"]
+        assert journal.read_job(core.storage, ref).state == "current"
+        assert read_consolidated_notice_cover(
+            core.storage, first.document,
+        ).sources[0].public_bibliography.title == "Nouveau"
+        assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
+    assert runtime.request_tick() is None
