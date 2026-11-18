@@ -4,6 +4,8 @@ Real OriginLink/Placement, public C and source eviction in SQLite; scoped
 Library read boundary supplied with the production projected fixture row.
 No GTK, N3 materialization, provider network or rights mutation.
 """
+import pytest
+
 from dataclasses import replace
 from types import SimpleNamespace as NS
 
@@ -117,6 +119,95 @@ def test_retained_documentary_audit_keeps_n1_separate_from_n3(tmp_path):
         rows[0] = row
         assert audit() == result
         assert broker.library_documentary_audit(identity_id="B", kind="covers")["status"] == "unavailable"
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
+
+
+
+@pytest.mark.parametrize("raw_a,raw_b,verdict", [
+    (("fra", "eng"), ("eng", "fre"), "concordant"),
+    (("fra",), ("eng",), "divergent"),
+    (("fra",), (), "partial"),
+    ((), (), "unknown"),
+])
+def test_retained_language_audit_recipes(tmp_path, raw_a, raw_b, verdict):
+    """Exact source evidence survives source eviction, not a mirror assertion."""
+    tags = {"fra": "fr", "fre": "fr", "eng": "en"}
+    filename = tmp_path / "language-c.sqlite"
+    db = Storage(filename)
+    try:
+        a, _, path = _real_origins(db, tmp_path)
+        saved = []
+        for provider, record, url, raw in (
+            ("seller-a", "edition-a", A_URL, raw_a),
+            ("seller-b", "edition-b", B_URL, raw_b),
+        ):
+            row = verified_public(source_provider=provider, record_id=record,
+                                  title="Un ouvrage commun", thumbnail_url=url)
+            if raw:
+                row.metadata = {
+                    "languages": [tags[tag] for tag in raw],
+                    "bibliography_evidence": {"languages": {
+                        "raw_tags": list(raw), "source": provider + ".fixture",
+                        "source_field": "dc.language", "scope": row.scenario,
+                        "confidence": "explicit_record_field", "freshness": "search_response",
+                    }},
+                }
+            else:
+                row.metadata = {"languages": ["fr"]}  # not an attested declaration
+            saved.append(persist(db, row, at=100))
+        for index, source in enumerate(saved):
+            canonical = persist_consolidated_cover_source(
+                db, canonical_edition_id="edition:verified-language-origins",
+                source=source, relation_proof_id=f"strong:fixture:audit-{index}",
+            )
+        for source in saved:
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+            assert read_notice_cover(db, source.document) is None
+    finally:
+        db.close()
+
+    db = Storage(filename)
+    try:
+        row, _ = _views(db, a.artifact_id, a.placement_id, path)
+        row["metadata"] = {"language": "FR"}
+        project_local_origin_public_c(db, [row], identity_id="A")
+        link = row["_public_canonical_cover_link"]
+        assert link.document == canonical.document
+        retained = read_consolidated_notice_cover(db, link.document)
+        by_provider = {source.provider_id: source.public_bibliography.language_observation
+                       for source in retained.sources}
+        for provider, raw in (("seller-a", raw_a), ("seller-b", raw_b)):
+            observation = by_provider[provider]
+            if raw:
+                assert observation.raw_tags == raw
+                assert observation.languages == tuple(tags[tag] for tag in raw)
+            else:
+                assert observation is None
+        rows = [row]
+        def library_entries(*, identity_id, scan):
+            assert identity_id == "A" and scan is False
+            return rows
+        service = NS(storage=db, identity_by_id=lambda owner: object() if owner == "A" else None,
+                     _account_context_epoch=1, _source_context_epoch=1,
+                     library_entries=library_entries)
+        broker = CatalogBrokerImpl(service)
+        def audit():
+            return broker.library_language_audit(identity_id="A")
+        result = audit()
+        assert result["schema"] == 2 and result["status"] == "partial"
+        assert result["entries"] == result["noncanonical"] == 1
+        assert result["provenance"][verdict] == 1
+        assert sum(result["provenance"].values()) == 1
+        assert A_URL not in repr(result) and str(path) not in repr(result)
+        for wrong in (replace(link, identity_id="B"), replace(link, epoch=link.epoch + 1),
+                      replace(link, source_refs=link.source_refs[:1])):
+            rows[0] = {**row, "_public_canonical_cover_link": wrong}
+            assert audit()["provenance"]["unknown"] == 1
+        rows[0] = row
+        assert audit() == result
+        assert broker.library_language_audit(identity_id="B")["status"] == "unavailable"
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
