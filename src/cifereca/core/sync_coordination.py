@@ -80,18 +80,29 @@ def _read_sync_loan_inventory(account: Account, session: Any, *, scope_current=N
     return snapshot, list(snapshot.loans)
 
 
-def _sync_loan_inventory_observation(self, account: Account, session: Any):
-    """Opening-only bridge pending migration of its historical fixture seams.
+def _opening_loan_scope(self, account: Account, session: Any) -> tuple[Any, ...]:
+    return (
+        account.identity_id, account.provider_id,
+        account.credential_id, account.unique_id,
+        source_context_epoch(self), account.is_primary,
+        getattr_static(session, "descriptor", None),
+    )
 
-    Explicit source Sync no longer selects a legacy Core reader. Keep this
-    opening bridge until its account fixtures and cache publication migrate.
-    No second read after a malformed/failed typed observation.
-    """
-    if session is not None and getattr_static(
-        session, "loan_inventory_snapshot", None,
-    ) is not None:
-        return _read_sync_loan_inventory(account, session)
-    return None, self._loans_for_account(account, force=True)
+
+def _sync_loan_inventory_observation(self, account: Account, session: Any, *, scope):
+    """Opening uses the same envelope as explicit Sync, never a Core list."""
+    if session is None or getattr_static(session, "connected", None) is not True:
+        raise ProviderConfigurationError("loan_inventory_read_unavailable")
+    capability = getattr(getattr(session, "capabilities", None), "loans", None)
+    if capability is False:
+        return None, []
+    if capability is not True:
+        raise ProviderConfigurationError("loan_inventory_read_unavailable")
+    return _read_sync_loan_inventory(
+        account, session, scope_current=lambda: _registered_typed_loan_scope_current(
+            self, account, session, scope,
+        ),
+    )
 
 
 def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False, control: Any=None, inventory_only: bool=False) -> dict[str, Any]:
@@ -812,11 +823,10 @@ def _registered_typed_loan_scope_current(
     old Python object. The provider adapter cannot see the Core registry.
     """
     try:
-        if (type(account) is not Account or (
-            account.identity_id, account.provider_id,
-            account.credential_id, account.unique_id,
-            source_context_epoch(self),
-        ) != scope):
+        if (type(account) is not Account
+                or _opening_loan_scope(self, account, session)[:5] != scope[:5]
+                or account.is_primary is not scope[5]
+                or getattr_static(session, "descriptor", None) is not scope[6]):
             return False
         matching = [
             row for row in self.accounts
@@ -831,15 +841,17 @@ def _registered_typed_loan_scope_current(
             and self._sessions.get(self._session_key(
                 account.provider_id, account.credential_id,
             )) is session
-            and getattr(session, "connected", None) is True
-            and getattr(session, "provider_id", None) == scope[1]
-            and getattr(session, "credential_id", None) == scope[2]
+            and getattr_static(session, "connected", None) is True
+            and getattr_static(session, "_closed", None) in (None, False)
+            and getattr_static(session, "provider_id", None) == scope[1]
+            and getattr_static(session, "credential_id", None) == scope[2]
             and getattr(getattr(session, "capabilities", None), "loans", None) is True
             and any(
                 type(reader) is Account and (
                     reader.identity_id, reader.provider_id,
                     reader.credential_id, reader.unique_id,
                 ) == scope[:4]
+                and reader.is_primary is scope[5]
                 for reader in session.accounts
             )
             and self.sync_source_enabled(account)
@@ -954,17 +966,12 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     session = self._sessions.get(
                         self._session_key(account.provider_id, account.credential_id),
                     )
-                    typed_scope = (
-                        account.identity_id, account.provider_id,
-                        account.credential_id, account.unique_id,
-                        source_context_epoch(self),
-                    )
-                    # Preserve legacy positive normalization while typed
-                    # snapshots carry coverage; neither allows unproven
-                    # negative rights changes or a second provider read.
+                    typed_scope = _opening_loan_scope(self, account, session)
+                    # One observation boundary, with v1 adapted to partial
+                    # by the public Plugin API, never by the Core facade.
                     try:
                         snapshot, account_loans = _sync_loan_inventory_observation(
-                            self, account, session,
+                            self, account, session, scope=typed_scope,
                         )
                     finally:
                         _record_opening_observation_timing(
@@ -990,13 +997,12 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                     # Do not consult it. Personal-library-only providers are
                     # unaffected: they have no loan inventory to classify.
                     legacy_unverified = (
-                        snapshot is None and session is not None
-                        and getattr(getattr(session, "capabilities", None),
-                                    "loans", None) is True
+                        snapshot is not None and snapshot.status == "partial"
+                        and snapshot.reason_code == "legacy_unverified"
                     )
                     inventory_partial = (
                         snapshot is not None and snapshot.status == "partial"
-                    ) or legacy_unverified
+                    )
                     if inventory_partial:
                         # Unknown v1 coverage is not a *provider error*: do
                         # not inflate failure counts (or blame an acquisition).
