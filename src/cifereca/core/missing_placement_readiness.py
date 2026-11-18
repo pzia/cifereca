@@ -74,7 +74,7 @@ def preview_missing_placement_retirement(
         root = library_root.resolve(strict=True)
         if not root.is_dir():
             return blocked("root_unavailable")
-    except OSError:
+    except (OSError, RuntimeError):
         return blocked("root_unavailable")
 
     try:
@@ -124,9 +124,11 @@ def preview_missing_placement_retirement(
             # backup_items, all canonical metadata, variants, recovery
             # checkpoints and private user declarations. A linked catalogue
             # requires its own explicit unlink plan; do not auto-cascade.
-            if candidate_has_active_dependencies_in_db(
-                db, placement_id=placement_id, path=path,
-            ):
+            if (candidate_has_active_dependencies_in_db(
+                    db, placement_id=placement_id, path=path,
+                ) or candidate_has_active_dependencies_in_db(
+                    db, placement_id=placement_id, path=placement_id,
+                )):
                 return blocked("dependent_references", catalogue_rows=int(linked_count))
             return {
                 "status": "ready", "reason": "orphan_missing",
