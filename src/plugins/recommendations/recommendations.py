@@ -149,7 +149,10 @@ def _catalogue_coverage_projection(
                     and all(type(number) is int and 0 <= number <= 1000000
                             for number in (
                                 value.batches, value.results_seen, value.failures,
-                            ))):
+                                value.partial_batches, value.stale_batches,
+                            ))
+                    and value.failures <= value.batches
+                    and value.partial_batches + value.stale_batches <= value.batches):
                 observations[value.provider_id] = value
     if not observations:
         return f"{count} catalogue(s) disponibles · réponses individuelles non détaillées", ""
@@ -163,7 +166,7 @@ def _catalogue_coverage_projection(
                 continue
             ranked_sources.update(_public_ranked_values(raw_sources))
 
-    answered = empty = errors = not_ranked = no_response = 0
+    answered = empty = errors = not_ranked = no_response = partial = stale = 0
     visible = set()
     details: list[str] = []
     for provider_id, label in entries:
@@ -175,13 +178,26 @@ def _catalogue_coverage_projection(
             answered += 1
             if observation.failures:
                 errors += 1
-            if observation.results_seen == 0 and not observation.failures:
+            if observation.partial_batches:
+                partial += 1
+            if observation.stale_batches:
+                stale += 1
+            if (observation.results_seen == 0 and not observation.failures
+                    and not observation.partial_batches and not observation.stale_batches):
                 empty += 1
             if observation.results_seen and provider_id not in ranked_sources:
                 not_ranked += 1
             if provider_id in ranked_sources:
                 visible.add(provider_id)
-            if observation.failures:
+            if observation.stale_batches:
+                state = "résultats connus en cache ; recherche distante dégradée"
+                if observation.partial_batches:
+                    state += " ; couverture partielle"
+            elif observation.partial_batches:
+                state = "couverture partielle ; absence non attestée"
+                if observation.failures:
+                    state += " ; erreur fournisseur"
+            elif observation.failures:
                 state = ("réponse partielle en erreur" if observation.results_seen
                          else "erreur fournisseur")
             elif not observation.results_seen:
@@ -198,6 +214,8 @@ def _catalogue_coverage_projection(
         f"{len(visible)} retenu(s) · {not_ranked} hors classement · "
         f"{empty} sans notice · {errors} en erreur · {no_response} sans lot"
     )
+    if partial or stale:
+        summary += f" · {partial} partiel(s) · {stale} avec repli local"
     if len(entries) > len(details):
         details.append(f"{len(entries) - len(details)} autre(s) catalogue(s)")
     return summary, "\n".join(details)
