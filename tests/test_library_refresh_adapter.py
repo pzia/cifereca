@@ -223,8 +223,11 @@ def test_explicit_refresh_supersedes_background_followup_without_third_fetch():
     host.refresh_library(True, control=object())  # now the authoritative work
     assert len(host.runner.requests) == 2
     manual = host.runner.requests[-1]
-    assert background.work() == []  # superseded before any source IO
-    background.ok([])
+    # Already admitted work keeps its scope; only publication is superseded.
+    stale = background.work()
+    assert stale == [{"identity_id": "alice"}]
+    background.ok(stale)
+    assert host.library_shown == []
     manual.ok(manual.work())
     assert host.library_shown == [[{"identity_id": "alice"}]]
     assert len(host.runner.requests) == 2
