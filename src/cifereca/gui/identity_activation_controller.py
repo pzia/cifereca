@@ -40,17 +40,25 @@ def activate_identity(window, identity_id: str) -> None:
             "Nouvelle identité", "Chargement des emprunts de ce profil…",
         )
     window._identity_context_generation += 1
+    window._account_context_generation += 1
+    lifecycle_generation = window._identity_context_generation
     window._dispose_maintenance_lines()
+    from .page_lifecycle import notify_context, manages_route
+    notify_context(window)
+    # A lifecycle hook may synchronously navigate, rebuild, close, or switch
+    # identity. Never resume the abandoned identity activation.
+    if (getattr(window, "_closed", False) or window.service is not service
+            or window._identity_context_generation != lifecycle_generation):
+        return
     visible_route = window.view_stack.get_visible_child_name()
     if visible_route == "tools":
         window._refresh_tools_page()
-    elif visible_route == "sync":
+    elif visible_route == "sync" and not manages_route(window, "sync"):
         # Reproject the newly selected identity before the async loan load.
         # _refresh_sync_page resets the old cards/actions synchronously and
         # advances the preview generation: late A callbacks cannot repaint B.
         # No sync/network or consent change is started by this local refresh.
         window._refresh_sync_page()
-    window._account_context_generation += 1
     window._cached_book_request_generation += 1
     window._cached_book_context = None
     # Pending Library navigation belongs to the previous identity context.
