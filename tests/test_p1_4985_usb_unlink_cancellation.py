@@ -152,4 +152,6 @@ def test_sync_engine_forwards_one_user_revocation_token_to_locked_removal(
     result = engine.synchronize_usb_reader(**data)
     assert result.status == "completed" and result.removed == 1
     assert len(passed) == 1
-    assert token_calls == ["checked", "checked"]
+    # The additional post-removal check prevents a revoked GTK selection
+    # from persisting a new observed presence in SQLite.
+    assert token_calls == ["checked", "checked", "checked"]

@@ -281,3 +281,19 @@ def test_plugin_absolute_root_fixture_still_forces_full(tmp_path):
         root, ["tests/test_fixture.py"],
         consumer_globs=("src/plugins/*/tests/**/*.py",),
     )
+
+
+@pytest.mark.parametrize("source", [
+    'importlib.import_module(name="tests.test_fixture")',
+    'pytest.importorskip(modname="tests.test_fixture")',
+    'runpy.run_module(mod_name="tests.test_fixture")',
+    'runpy.run_path(path_name="tests/test_fixture.py")',
+    'spec_from_file_location(name="fixture", location="tests/test_fixture.py")',
+    'from importlib import import_module as load\nload(name=f"tests.{suffix}")',
+])
+def test_keyword_loader_consumer_cannot_be_skipped(tmp_path, source):
+    root = _sample(tmp_path, "pass")
+    plugin = root / "src/plugins/example/tests/test_client.py"
+    plugin.parent.mkdir(parents=True)
+    plugin.write_text(source, encoding="utf-8")
+    assert has_test_consumers(root, ["tests/test_fixture.py"])

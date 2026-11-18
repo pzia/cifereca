@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 
 import httpx
-from cifereca.plugin_api import HTTPX_TRANSPORT
+from cifereca.plugin_api import HTTPX_TRANSPORT, CatalogueXMLParseError, parse_atom_catalogue
 
 from cifereca.plugin_api import (
     Account,
@@ -286,39 +286,33 @@ class GutenbergSession(ProviderSession):
     def _safe_name(value: str, fallback: str = "gutenberg") -> str:
         return sanitize_filename_component(value, fallback)
 
+    def _read_atom_feed(self, content, *, started):
+        failure = None
+        try:
+            return parse_atom_catalogue(content)
+        except CatalogueXMLParseError as exc:
+            failure = exc.code
+        _LOG.warning(
+            "TRACE gutenberg parse failed bytes=%s reason=invalid_opds_feed", len(content),
+        )
+        self._diagnostic(
+            "GUTENBERG", "OPDS parse", "error",
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            detail={"bytes": len(content), "reason": "invalid_opds_feed"},
+            level="detailed",
+        )
+        # Only malformed/unrelated XML is treated as an established
+        # protocol outage. HTML and safety refusals never allow fallback.
+        raise (_unavailable_opds_xml() if failure in ("malformed", "unexpected_root")
+               else _unverified_html_opds())
+
     def _parse_feed(self, content: bytes, base_url: str) -> list[SearchResult]:
         started = time.perf_counter()
-        try:
-            root = ET.fromstring(content)
-        except ET.ParseError:
-            # XML parser details (and its exception chain) are not safe
-            # public diagnostics. Keep a closed reason and byte count.
-            _LOG.warning(
-                "TRACE gutenberg parse failed bytes=%s reason=invalid_opds_feed",
-                len(content),
-            )
-            self._diagnostic(
-                "GUTENBERG", "OPDS parse", "error",
-                duration_ms=int((time.perf_counter() - started) * 1000),
-                detail={"bytes": len(content), "reason": "invalid_opds_feed"},
-                level="detailed",
-            )
-            failed = (_unverified_html_opds() if _html_response_prefix(content)
-                      else _unavailable_opds_xml())
-        else:
-            failed = None
-        # Do not raise *inside* ParseError: Core examines even suppressed
-        # __context__, which would falsely authorize stale HTML login data.
-        if failed is not None:
-            raise failed
+        feed = self._read_atom_feed(content, started=started)
+        return self._parse_atom_entries(feed, base_url, byte_count=len(content), started=started)
 
-        # HTML/login pages and unrelated valid XML are not empty Atom feeds.
-        # HTML 200 does not authorize an outage-based stale catalogue.
-        if root.tag != f"{{{ATOM}}}feed":
-            raise (_unverified_html_opds() if _is_html_root(root)
-                   else _unavailable_opds_xml()) from None
-
-        entries = root.findall(f"{{{ATOM}}}entry")
+    def _parse_atom_entries(self, feed, base_url, *, byte_count, started):
+        entries = feed.entries
         stats = {
             "entries": len(entries),
             "placeholder": 0,
@@ -518,7 +512,7 @@ class GutenbergSession(ProviderSession):
             "unique_books": len(candidates),
             "duplicate_editions": duplicate_editions,
             "rows": len(rows),
-            "bytes": len(content),
+            "bytes": byte_count,
             "base_url": _safe_url(base_url),
         }
         _LOG.info(
@@ -538,34 +532,31 @@ class GutenbergSession(ProviderSession):
 
     @staticmethod
     def _next_page_url(content: bytes, base_url: str) -> str | None:
-        # A *missing* Atom next link means end-of-catalogue; an invalid
-        # server-advertised next link means pagination is unavailable, NOT
-        # a successful empty page. Never follow a changed origin/TLS scheme.
+        # Keep the historical direct-call facade; search shares a feed instead.
+        failure = None
         try:
-            root = ET.fromstring(content)
-        except ET.ParseError:
-            # A login gateway may emit invalid HTML with HTTP 200. That
-            # cannot attest a public catalogue outage or an empty page.
-            failed = (_unverified_html_opds() if _html_response_prefix(content)
-                      else _unavailable_opds_xml())
-        else:
-            failed = None
-        if failed is not None:
-            raise failed
-        if root.tag != f"{{{ATOM}}}feed":
-            raise (_unverified_html_opds() if _is_html_root(root)
-                   else _unavailable_opds_xml()) from None
+            feed = parse_atom_catalogue(content)
+        except CatalogueXMLParseError as exc:
+            failure = exc.code
+        if failure is not None:
+            raise (_unavailable_opds_xml() if failure in ("malformed", "unexpected_root")
+                   else _unverified_html_opds())
+        return GutenbergSession._next_page_from_atom(feed, base_url)
+
+    @staticmethod
+    def _next_page_from_atom(feed, base_url: str) -> str | None:
+        # Missing and unsafe/ambiguous declarations remain distinct.
         try:
             base = urlsplit(base_url)
             base_port = base.port or (443 if base.scheme == "https" else 80)
         except ValueError:
             raise ProviderError("Project Gutenberg : opds_next_link_unverified") from None
         next_urls = set()
-        for link in root.findall(f"{{{ATOM}}}link"):
-            rel = str(link.attrib.get("rel") or "").strip().casefold()
+        for link in feed.links:
+            rel = link.rel.strip().casefold()
             if rel != "next":
                 continue
-            href = html.unescape(str(link.attrib.get("href") or ""))
+            href = html.unescape(link.href)
             if (not href or len(href) > 2048 or href != href.strip()
                     or "\\" in href or any(ord(ch) < 33 or ord(ch) == 127 for ch in href)):
                 raise ProviderError("Project Gutenberg : opds_next_link_unverified")
@@ -757,8 +748,10 @@ class GutenbergSession(ProviderSession):
                     failure.code = "search_temporarily_unavailable"
                     failure.retryable = False  # No second equivalent GET.
                 raise failure from None
+            parse_started = time.perf_counter()
+            feed = self._read_atom_feed(content, started=parse_started)
             self._remember_page(rows_cache,page_index,response_url)
-            next_url=self._next_page_url(content,response_url)
+            next_url=self._next_page_from_atom(feed,response_url)
             if next_url: self._remember_page(rows_cache,page_index+1,next_url)
             if page_index == page: break
             if not next_url:
@@ -773,7 +766,7 @@ class GutenbergSession(ProviderSession):
                 return []
             current_url=next_url; params=None; page_index+=1
         assert response is not None
-        parsed = self._parse_feed(content, response_url); rows = self._field_filter(parsed, filter_query, field); duration_ms = int((time.perf_counter() - started) * 1000)
+        parsed = self._parse_atom_entries(feed, response_url, byte_count=len(content), started=parse_started); rows = self._field_filter(parsed, filter_query, field); duration_ms = int((time.perf_counter() - started) * 1000)
         if field not in ("all", ""):
             # Filters are applied *after* obtaining one requested OPDS page.
             # Zero rows here are not evidence that the entire corpus lacks

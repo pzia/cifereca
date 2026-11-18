@@ -185,3 +185,71 @@ def test_absent_usb_target_never_becomes_a_destructive_permission(live_broker):
     assert not rig.final.exists()
     assert rig.source.read_bytes() == original
     assert rig.journal.get(rig.consent.operation_id) is None
+
+def test_cancelled_selection_during_locked_inode_review_never_unlinks(
+    live_broker, monkeypatch,
+):
+    """Revocation after the worker's first check must prevent USB deletion.
+
+    User changed reader/book while Core was hashing the exact candidate.
+    The release-time check must run from Core's in-lock current_profile hook,
+    not only from the task worker's earlier preflight.
+    """
+    rig = live_broker
+    original = removal_review.inspect_usb_copy_recovery
+    flags = {"revoked": False, "checks": 0}
+
+    def check_selection():
+        flags["checks"] += 1
+        if flags["revoked"]:
+            raise RuntimeError("selected_reader_changed")
+
+    def revoke_during_inode_check(**kwargs):
+        result = original(**kwargs)
+        flags["revoked"] = True
+        return result
+
+    monkeypatch.setattr(
+        removal_review, "inspect_usb_copy_recovery",
+        revoke_during_inode_check,
+    )
+    local_bytes, reader_bytes = (
+        rig.source.read_bytes(), rig.final.read_bytes(),
+    )
+    observed_before = rig.storage.device_placement_get(
+        rig.consent.device_id, rig.consent.artifact_id,
+    )["observed_state"]
+    result = rig.facade.execute_one(
+        confirmation=rig.consent, mountpoint=rig.mountpoint,
+        expected_profile_epoch=3, check_cancelled=check_selection,
+    )
+    assert flags["revoked"] is True
+    assert flags["checks"] >= 3
+    assert result.status != "completed"
+    assert rig.final.read_bytes() == reader_bytes
+    assert rig.source.read_bytes() == local_bytes
+    assert rig.journal.get(rig.consent.operation_id) is None
+    # A cancelled UI selection cannot publish a false USB observation or
+    # retire the original completed-copy receipt.
+    saved = rig.storage.device_placement_get(
+        rig.consent.device_id, rig.consent.artifact_id,
+    )
+    assert saved["observed_state"] == observed_before
+    assert rig.journal.get(rig.consent.copy_operation_id).phase == "completed"
+
+
+def test_valid_selection_remains_accepted_by_rechecked_profile_callback(
+    live_broker,
+):
+    rig = live_broker
+    checks = []
+    def unchanged():
+        checks.append(1)
+    result = rig.facade.execute_one(
+        confirmation=rig.consent, mountpoint=rig.mountpoint,
+        expected_profile_epoch=3, check_cancelled=unchanged,
+    )
+    assert result == UsbSyncResult("completed", removed=1, observed=True)
+    assert len(checks) >= 3
+    assert not rig.final.exists()
+    assert rig.source.exists()

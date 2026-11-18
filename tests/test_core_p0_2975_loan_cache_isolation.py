@@ -39,6 +39,7 @@ def _loan(account, item):
 
 def _session(service, credential, loans, calls):
     session = NS(
+        provider_id="paris", credential_id=credential, connected=True,
         descriptor=ProviderDescriptor(
             "paris", "Paris", "Synthetic offline source", "ready",
             ProviderCapabilities(loans=True),

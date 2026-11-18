@@ -277,7 +277,10 @@ def test_cancel_reaps_real_installer_process_group_when_parent_exits_first(tmp_p
         "import os,signal,sys,time\n"
         "from pathlib import Path\n"
         "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-        "Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+        "marker = Path(sys.argv[1])\n"
+        "temporary = marker.with_suffix('.tmp')\n"
+        "temporary.write_text(str(os.getpid()))\n"
+        "temporary.replace(marker)\n"
         "while True: time.sleep(.1)\n"
     )
     parent_script = (

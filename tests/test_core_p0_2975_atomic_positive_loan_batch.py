@@ -5,6 +5,8 @@ earlier loans persisted. No negative inventory, receipt or file mutations.
 """
 from __future__ import annotations
 
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
+
 from dataclasses import replace
 import json
 
@@ -172,7 +174,7 @@ def test_opening_sync_does_not_publish_uncommitted_loan_batch(tmp_path, monkeypa
             assert selected is account and force is True
             return [first, clash]
 
-        monkeypatch.setattr(service, "_loans_for_account", source_read)
+        attach_opening_loan_reader(service, source_read)
         monkeypatch.setattr(
             service, "_acquire_active_loan_automatically",
             lambda _loan: pytest.fail("no acquisition for rejected loan batch"),

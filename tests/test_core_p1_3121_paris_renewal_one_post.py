@@ -565,3 +565,74 @@ def test_admitted_renewal_disabled_connection_refuses_before_inventory(tmp_path)
         assert service.storage.loan_renewal_state(_source_key(ui)) is None
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("change", ["navigation", "source", "identity", "account"])
+def test_headless_confirmed_renewal_uses_explicit_scope(tmp_path, change):
+    from cifereca.core.provider_loan_renewal import capture_confirmed_loan_renewal
+    service, a, ui, session = setup(tmp_path)
+    try:
+        service.select_identity("alex")
+        admitted = capture_confirmed_loan_renewal(
+            service, ui, identity_id="default", account_id="reader", confirmed=True,
+        )
+        assert admitted is not None
+        assert session.reads == session.posts == []
+        if change == "navigation":
+            service._account_context_epoch += 2
+        elif change == "source":
+            service._source_context_epoch += 1
+        elif change == "identity":
+            original = service.identity_by_id("default")
+            service.identities = [replace(i) if i is original else i for i in service.identities]
+        else:
+            service.accounts = [replace(a)]
+        result = service.renew_admitted_loan(ui, confirmed=True, admission=admitted)
+        if change == "navigation":
+            assert result["status"] == "submitted"
+            assert len(session.posts) == 1
+            service.renew_admitted_loan(ui, confirmed=True, admission=admitted)
+            assert len(session.posts) == 1
+        else:
+            assert result["status"] == "blocked"
+            assert session.reads == session.posts == []
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("identity,borrower,confirmed", [
+    ("alex", "reader", True), ("default", "other", True),
+    ("default", "reader", False), ("default", "reader", 1),
+])
+def test_headless_renewal_admission_requires_exact_confirmed_borrower(
+    tmp_path, identity, borrower, confirmed,
+):
+    from cifereca.core.provider_loan_renewal import capture_confirmed_loan_renewal
+    service, a, ui, session = setup(tmp_path)
+    try:
+        assert capture_confirmed_loan_renewal(
+            service, ui, identity_id=identity, account_id=borrower, confirmed=confirmed,
+        ) is None
+        assert session.reads == session.posts == []
+        assert service.storage.loan_renewal_state(_source_key(ui)) is None
+    finally:
+        service.close()
+
+
+def test_headless_renewal_facade_admits_original_account_without_gtk(tmp_path):
+    service, account, ui, session = setup(tmp_path)
+    try:
+        service.select_identity("alex")
+        admission = service.capture_confirmed_loan_renewal(
+            ui, identity_id="default", account_id=account.unique_id, confirmed=True,
+        )
+        assert admission is not None and not session.reads and not session.posts
+        assert service.capture_confirmed_loan_renewal(
+            ui, identity_id="alex", account_id=account.unique_id, confirmed=True,
+        ) is None
+        result = service.renew_admitted_loan(ui, confirmed=True, admission=admission)
+        assert result["status"] == "submitted"
+        assert service.current_identity.identity_id == "alex"
+        assert len(session.posts) == 1
+    finally:
+        service.close()

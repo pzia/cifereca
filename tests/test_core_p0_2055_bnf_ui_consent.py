@@ -101,15 +101,15 @@ def test_single_explicit_click_queues_once_without_second_confirmation(tmp_path)
         service.close()
 
 
-def test_identity_aba_before_queued_work_blocks_without_claim(tmp_path):
+def test_identity_aba_before_queued_work_preserves_admission(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
         window, errors, results, refreshes = view(service, session, account, item)
         request(window, item)
         window._identity_context_generation += 2
         outcome = window.runner.complete_one()
-        assert outcome["status"] == "blocked"
-        assert not window.runner.tasks and not session.dispatches
+        assert outcome["status"] == "confirmed"
+        assert not window.runner.tasks and session.dispatches == [("book-1", "reader")]
         assert results == refreshes == []
     finally:
         service.close()
@@ -143,29 +143,30 @@ def test_title_changed_after_click_blocks_before_claim(tmp_path):
         service.close()
 
 
-def test_scope_change_after_queued_click_blocks_worker(tmp_path):
+def test_account_navigation_after_queued_click_preserves_admission(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
         window, errors, results, refreshes = view(service, session, account, item)
         request(window, item)
         window._account_context_generation += 1
         outcome = window.runner.complete_one()
-        assert outcome["status"] == "blocked"
-        assert session.reads == session.dispatches == []
+        assert outcome["status"] == "confirmed"
+        assert session.reads == [] and session.dispatches == [("book-1", "reader")]
         assert not results and not refreshes
     finally:
         service.close()
 
 
-def test_core_epoch_change_after_click_does_not_claim_or_post(tmp_path):
+def test_core_navigation_epoch_change_after_click_preserves_admission(tmp_path):
     service, session, account, item = setup(tmp_path)
     try:
         window, errors, results, refreshes = view(service, session, account, item)
         request(window, item)
         service._account_context_epoch += 2
         outcome = window.runner.complete_one()
-        assert outcome["status"] == "blocked"
-        assert session.reads == session.dispatches == []
+        assert outcome["status"] == "confirmed"
+        assert session.reads == [] and session.dispatches == [("book-1", "reader")]
+        assert results == refreshes == []
     finally:
         service.close()
 

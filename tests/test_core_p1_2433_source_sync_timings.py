@@ -41,7 +41,9 @@ def test_real_sync_measures_nested_intervals_without_changing_result(tmp_path, m
             return value
 
         session.library = lambda: operation(7, iter(()))
-        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: operation(5, []))
+        session.loans = lambda _account: operation(5, [])
+        monkeypatch.setattr(service, "_loans_for_account",
+                            lambda *_a, **_kw: pytest.fail("legacy Core read"))
         monkeypatch.setattr(service, "_mirror_remote_results", lambda *_a, **_kw: operation(3, 0))
         monkeypatch.setattr(service, "catalog_scan", lambda: operation(11, {"entries": 0}))
         result = service.synchronize_account_source(account, deep=True)
@@ -188,7 +190,9 @@ def test_source_sync_separates_typed_loan_and_canonical_observation_wall_time(
             now[0] += canonical_ms * 1_000_000
             return None
 
-        monkeypatch.setattr(service, "_loans_for_account", loan_read)
+        session.loans = loan_read
+        monkeypatch.setattr(service, "_loans_for_account",
+                            lambda *_a, **_kw: pytest.fail("legacy Core read"))
         monkeypatch.setattr(
             canonical_sync_stage, "observe_canonical_rights_in_sync",
             canonical_read,

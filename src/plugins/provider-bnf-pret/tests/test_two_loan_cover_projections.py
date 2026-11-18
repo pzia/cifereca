@@ -4,6 +4,7 @@ Synthetic HTML and IDs. Real provider/parser and read-only Core projection;
 no GTK render, real account, cover GET, ACSM or database mutation.
 """
 from dataclasses import asdict
+from cifereca.core.loan_display_cache import _loan_cache_key
 from types import SimpleNamespace as NS
 
 import pytest
@@ -30,7 +31,7 @@ def activity(with_image):
     return '<section class="active-loans">' + ''.join(cards) + '</section>'
 
 
-def library_rows(loans, *, stored_covers=False):
+def library_rows(loans, *, session, account, stored_covers=False):
     """Consume provider payloads through the existing Library facade."""
     entitlements = [dict(
         entitlement_id="right-" + loan.id, identity_id=loan.identity_id,
@@ -40,13 +41,26 @@ def library_rows(loans, *, stored_covers=False):
         metadata=({"cover_url": f"https://pret.bnf.fr/covers/{key}.jpg"}
                   if stored_covers else {}),
     ) for (key, _), loan in zip(BOOKS, loans)]
+    reader = NS(identity_id="hugues")
+    cache = {_loan_cache_key(account): [asdict(loan) for loan in loans]}
     host = NS(
-        current_identity=NS(identity_id="hugues"),
-        identities=[NS(identity_id="hugues")], last_loans=loans,
+        identities=[reader], identity_by_id=lambda key: reader if key == "hugues" else None,
+        accounts_for_identity=lambda key: [account] if key == "hugues" else [],
+        _source_context_epoch=1,
+        _session_key=lambda p, c: (p, c),
+        _sessions={(account.provider_id, account.credential_id): session},
+        _provider_enabled_for_identity=lambda p, i: (p, i) == (account.provider_id, "hugues"),
         storage=NS(
             artifacts=lambda: [], placements=lambda **kw: [],
             catalog_entries=lambda: [], entitlements=lambda: entitlements,
             acquisitions=lambda **kw: [],
+            provider_connection_epoch=lambda *_: 1,
+            provider_connection_epoch_current=lambda p, c, i, e: e == 1,
+            provider_scope_account_bound=lambda **kw: kw == dict(
+                identity_id=account.identity_id, provider_id=account.provider_id,
+                credential_id=account.credential_id, account_id=account.unique_id,
+            ),
+            cache_get=lambda namespace, key: cache.get(key) if namespace == "account" else None,
         ),
     )
     return LibraryService.library_entries(host, identity_id="hugues")
@@ -62,7 +76,7 @@ def test_both_observed_covers_survive_loan_serialization_and_library_projection(
         loans = list(result.loans) if entrypoint != "loans" else result
         # Cached model rehydration must preserve the provider's exact URL.
         reloaded = [Loan(**asdict(loan)) for loan in loans]
-        rows = {row["item_id"]: row for row in library_rows(reloaded)}
+        rows = {row["item_id"]: row for row in library_rows(reloaded, session=s, account=account)}
         assert len(rows) == len(loans) == 2
         for (key, title), loan in zip(BOOKS, loans):
             expected = f"https://pret.bnf.fr/covers/{key}.jpg"
@@ -81,7 +95,7 @@ def test_library_can_have_covers_while_observed_loans_have_none():
         account, = s.connect()
         account.identity_id = "hugues"
         loans = s.loans(account)
-        rows = library_rows(loans, stored_covers=True)
+        rows = library_rows(loans, session=s, account=account, stored_covers=True)
         assert len(rows) == len(loans) == 2
         assert all(loan.thumbnail_url is None for loan in loans)
         assert all(row["thumbnail_url"] for row in rows)

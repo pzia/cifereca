@@ -263,6 +263,7 @@ def manual_borrow(
     additional_scope_current=None,
     verification: str | None = None,
     observed_loan_account_alias: str | None = None,
+    reader_scope=None,
 ) -> dict[str, object]:
     """Select the exact live lender account and admit at most one attempt.
 
@@ -274,6 +275,14 @@ def manual_borrow(
     """
     if confirmed is not True:
         return _result("blocked", "borrow_confirmation_required")
+    if reader_scope is not None:
+        from .search_orchestration import SearchReadScope
+        if (type(reader_scope) is not SearchReadScope
+                or reader_scope.identity_id != expected_identity_id
+                or not reader_scope.current(service)
+                or type(expected_account) is not Account
+                or expected_context_epoch is not None):
+            return _result("blocked", "borrow_scope_unverified")
     # The versioned plugin ABI supplies a checked verification convention.
     # Legacy source-specific callers retain their previous default until cutover.
     verification_mode = (
@@ -323,8 +332,14 @@ def manual_borrow(
                 or plugin.descriptor.type != "provider.library"
                 or plugin.descriptor.id != plugin_id):
             return _result("blocked", "borrow_capability_unavailable")
-        session = service._session_for_source(
-            provider_id, item.source_credential)
+        if reader_scope is None:
+            session = service._session_for_source(provider_id, item.source_credential)
+        else:
+            from .provider_sessions import _session_for_source
+            session = _session_for_source(
+                service, provider_id, item.source_credential,
+                identity_id=expected_identity_id,
+            )
         state = _inert_session_state(session)
         registered = _inert_session_accounts(session)
         if state is None or registered is None:
@@ -345,7 +360,8 @@ def manual_borrow(
             return _result("blocked", "borrow_scope_changed")
         lease = capture_borrow_action_scope(
             service, item, account, session,
-            expected_identity_id=expected_identity_id)
+            expected_identity_id=expected_identity_id,
+            **({"reader_scope": reader_scope} if reader_scope is not None else {}))
         key = borrow_claim_key(account, item)
         if lease is None or key is None:
             return _result("blocked", "borrow_scope_unverified")
@@ -452,6 +468,8 @@ def manual_borrow(
                 "TRACE initial_loan_acsm outcome=%s reason_code=%s",
                 verdict, reason,
             )
+        if reader_scope is not None and not current():
+            return _result("verification_unavailable", "borrow_scope_changed")
         return _result("confirmed", "borrow_active_loan_observed", verified=True)
     except BorrowRequestNotSubmitted:
         # The trusted provider raises this ONLY before attempting a mutating request.

@@ -1,5 +1,55 @@
 # #3628 · Producteurs de prêts installables — migration vers l'inventaire typé
 
+## Révision de réception #3197 — 17 novembre 2026
+
+L'inventaire initial à deux producteurs est historique. Sur main après #6605,
+les trois déclarations installables `sync.loans` sont :
+
+| Package / plugin | Producteur typé | Couverture |
+| --- | --- | --- |
+| provider-paris / provider.paris | ParisProviderSession.loan_inventory_snapshot | DILICOM / SYRACUSE indépendants ; ne pas inférer de négatif d'une branche inconnue |
+| provider-bnf-pret / provider.bnf-pret | BnfProviderSession.loan_inventory_snapshot | HTML partiel ; aucune absence attestée |
+| provider-biblioaccess / provider.biblioaccess.la-rochelle | LaRochelleSession.loan_inventory_snapshot | MyLoans authentifié, lignes toutes parsées et absence de pagination attestée : complet pour cette branche ; sinon partiel |
+
+Le quatrième service public `provider.biblioaccess-catalogue.la-rochelle`
+n'annonce pas sync.loans. Le runtime ADEPT expose des licences locales, pas
+un inventaire de prêts fournisseur. Le test
+`tests/test_core_p0_6560_loan_producer_inventory.py` vérifie **tous les manifestes
+livrés**, puis les vraies classes de ces trois producteurs, sans constructeur
+ni I/O. Un nouveau producteur doit enrichir la matrice et ses preuves.
+La conformité de forme ne remplace pas les tests de transport :
+Paris/BnF #3628/#3122 et BiblioAccess
+`src/plugins/provider-biblioaccess/tests/test_biblioaccess_sso.py`.
+
+### Politique explicite de migration et de retrait (#3197)
+
+- **Plugin API 1.4.8 / major 1.x** : maintenir les points publics historiques
+  `ProviderSession.loans(account)`, `legacy_loan_inventory` et
+  `read_loan_inventory` pour les extensions installables. La liste v1 exacte
+  produit uniquement `partial/legacy_unverified`, sans couverture négative.
+  Un snapshot typé absent ou échoué ne doit pas provoquer une deuxième lecture
+  après échec du producteur typé. Les chemins métier Core doivent converger
+  vers un seul consommateur d'enveloppe ; l'adaptateur public est l'unique
+  frontière de compatibilité à terme, pas un deuxième moteur.
+- **Cible de retrait : Plugin API 2.0**, après annonce de rupture et migration
+  des extensions ; ne pas bump la version ni interrompre une installation
+  1.x dans ce lot. Le nouveau producteur implémente
+  `loan_inventory_snapshot(account)`, émet une portée exacte, des copies
+  défensives, état explicite et couverture par branche. Les erreurs restent
+  `failed/cancelled/partial` selon le contrat, jamais une liste vide complète.
+  Tester 0/1/N, emprunteurs liés, rebind et absence de double lecture.
+- Avant activation 2.0 : inventaire des plugins réellement installés dans le
+  runtime de migration, refus explicite des manifestes non compatibles,
+  qualification des producteurs et des consumers, installation et rollback.
+  Une extension legacy ne doit pas être activée par simple réécriture de son
+  manifest. Un rollback restaure les packages/Core compatibles ensemble ; les
+  caches historiques ne deviennent pas des preuves négatives.
+- Aucune date de release 2.0 n'est décidée ; aucune preuve de l'ensemble
+  des plugins tiers privés n'est disponible. La migration Core 1.x et
+  l'absence de consommateurs décisionnels v1 doivent être validées avant
+  clôture #3197 ; l'extinction physique de l'ABI publique est conditionnée
+  à cette version incompatible, non à une suppression silencieuse.
+
 ## Périmètre vérifié (30 octobre 2026)
 
 Ticket enfant Plugins P0 de [#3197](https://github.com/pzia/cifereca/issues/3197),

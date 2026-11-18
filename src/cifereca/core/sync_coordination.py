@@ -61,32 +61,36 @@ def _record_opening_observation_timing(detail: dict, phase: str, started: float)
         pass
 
 
-def _sync_loan_inventory_observation(self, account: Account, session: Any):
-    """Read exactly once, preserving v1 Core normalization until migration.
-
-    Typed sessions use the validated atomic envelope. Legacy installations
-    still depend on the facade's account cache, positive normalization and
-    provider/session lease checks. Retiring that path before their Plugin API
-    migration loses positive loans; never mistake a v1 list for completeness.
-    The two synchronization entrypoints share this one selection point.
-    """
+def _read_sync_loan_inventory(account: Account, session: Any, *, scope_current=None):
+    """One validated envelope, including installed v1 positive-only readers."""
     from ..plugin_api import Cancelled
     from ..plugin_api.loan_inventory import read_loan_inventory
+
+    try:
+        snapshot = read_loan_inventory(
+            session, account, descriptor=getattr_static(session, "descriptor", None),
+            scope_current=scope_current,
+        )
+    except ValueError as exc:
+        raise ProviderConfigurationError("loan_inventory_read_unavailable") from exc
+    if snapshot.status == "cancelled":
+        raise Cancelled("loan_inventory_cancelled")
+    if snapshot.status == "failed":
+        raise ProviderConfigurationError("loan_inventory_read_unavailable")
+    return snapshot, list(snapshot.loans)
+
+
+def _sync_loan_inventory_observation(self, account: Account, session: Any):
+    """Opening-only bridge pending migration of its historical fixture seams.
+
+    Explicit source Sync no longer selects a legacy Core reader. Keep this
+    opening bridge until its account fixtures and cache publication migrate.
+    No second read after a malformed/failed typed observation.
+    """
     if session is not None and getattr_static(
         session, "loan_inventory_snapshot", None,
     ) is not None:
-        snapshot = read_loan_inventory(session, account, descriptor=getattr_static(session, "descriptor", None))
-        # A cancelled typed read is neither an empty successful inventory
-        # nor a provider failure. Preserve its cancellation through source
-        # Sync without a legacy retry or a rights/cache mutation.
-        if snapshot.status == "cancelled":
-            raise Cancelled("loan_inventory_cancelled")
-        if snapshot.status == "failed":
-            raise ProviderConfigurationError("loan_inventory_read_unavailable")
-        return snapshot, list(snapshot.loans)
-    # No second read after a failed/malformed typed snapshot, even when the
-    # v1 list reader is available. The legacy facade also covers test shims
-    # and currently installed v1 plugins which do not publish an envelope.
+        return _read_sync_loan_inventory(account, session)
     return None, self._loans_for_account(account, force=True)
 
 
@@ -132,37 +136,46 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
             account.credential_id, account.unique_id,
             source_context_epoch(self),
         )
-        # One selection point for typed envelope and installed v1 adapters.
-        # Legacy positive lists can never certify missing/returned loans.
+        primary = account.is_primary
+        descriptor = getattr_static(session, "descriptor", None)
+
+        def still_bound():
+            matching = [
+                row for row in self.accounts
+                if type(row) is Account
+                and (row.identity_id, row.provider_id,
+                     row.credential_id, row.unique_id) == source_scope[:4]
+            ]
+            return (
+                len(matching) == 1 and matching[0] is account
+                and (account.identity_id, account.provider_id,
+                     account.credential_id, account.unique_id) == source_scope[:4]
+                and source_context_epoch(self) == source_scope[4]
+                and account.is_primary == primary
+                and self.identity_by_id(account.identity_id) is not None
+                and self._sessions.get(self._session_key(
+                    account.provider_id, account.credential_id,
+                )) is session
+                and getattr_static(session, "descriptor", None) is descriptor
+                and getattr_static(session, "connected", None) is True
+                and self.sync_source_enabled(account)
+            )
+
+        # Both installed v1 and typed producers pass through the ABI adapter.
+        # The lease is checked before and after the provider's single read.
         with measure("loan_refresh_ms"):
-            snapshot, loans = _sync_loan_inventory_observation(
-                self, account, session,
+            snapshot, loans = _read_sync_loan_inventory(
+                account, session, scope_current=still_bound,
             )
         if not _opening_loans_scoped(account, source_scope[0], loans, session=session):
             raise ProviderConfigurationError("loan_source_scope_mismatch")
-        matching = [
-            row for row in self.accounts
-            if type(row) is Account
-            and (row.identity_id, row.provider_id,
-                 row.credential_id, row.unique_id) == source_scope[:4]
-        ]
-        if (len(matching) != 1 or matching[0] is not account
-                or source_context_epoch(self) != source_scope[4]
-                or self.identity_by_id(account.identity_id) is None
-                or self._sessions.get(self._session_key(
-                    account.provider_id, account.credential_id,
-                )) is not session
-                or session.connected is not True
-                or not self.sync_source_enabled(account)):
+        if not still_bound():
             raise ProviderConfigurationError("loan_source_scope_changed")
         if control is not None and callable(getattr(control, "check_cancelled", None)):
             control.check_cancelled()
         # Only a typed snapshot with explicit complete digital coverage
         # may prove absence. Legacy, unknown and partial stay positive-only.
-        complete_scope = (
-            _complete_digital_loan_scope(account, snapshot, session)
-            if snapshot is not None else None
-        )
+        complete_scope = _complete_digital_loan_scope(account, snapshot, session)
         if loans or complete_scope is not None:
             from . import library_mutation
             with measure("rights_mirror_ms"):
@@ -172,9 +185,9 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
                     complete_scopes={complete_scope} if complete_scope else None,
                     realize_expired=False,
                 )
-        if snapshot is not None:
-            # A typed read is not a committed observation if rights-mirroring
-            # rejected it. Never poison subsequent cache reads with that batch.
+        # Cache only after successful positive/negative rights persistence.
+        # If the source was revoked during persistence, discard the cache.
+        if still_bound():
             _cache_validated_typed_loan_observation(self, account, loans)
         result["loans"] = len(loans)
         # A v1 loans() list never proves full branch coverage, even when
@@ -182,7 +195,7 @@ def _synchronize_account_source_impl(self, account: Account, *, deep: bool=False
         # deliberately not an authority for this explicit sync result.
         # Typed producers may attest a successful observation, but only
         # explicit branch coverage can authorize a negative rights transition.
-        if snapshot is None or snapshot.status == "partial":
+        if snapshot.status == "partial":
             result["status"] = "partial"
     if session.capabilities.personal_library:
         # A provider may expose a one-shot iterable: consume it once for
