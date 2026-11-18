@@ -64,7 +64,8 @@ class EvidenceSnapshot:
 
 def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
                             max_bytes: int = 128*1024*1024, seconds: float = 10,
-                            cancelled=lambda: False, identity_id: str | None = None) -> EvidenceSnapshot:
+                            cancelled=lambda: False, identity_id: str | None = None,
+                            historical_dependencies: bool = False) -> EvidenceSnapshot:
     """Bounded copy of a stable, non-symlink, quiescent DB, queried in memory.
 
     A live WAL/journal yields snapshot_live_journal, not an empty rights list.
@@ -129,7 +130,8 @@ def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
             return result
         logging.getLogger('cifereca').info('TRACE reconciliation_snapshot phase=projection stage=direct')
         return _query_image(image, max_rows=max_rows, deadline=deadline,
-                            cancelled=cancelled, identity_id=identity_id)
+                            cancelled=cancelled, identity_id=identity_id,
+                            **({'historical_dependencies': True} if historical_dependencies else {}))
     except (OSError, sqlite3.Error, ValueError):
         result.tables.clear()
         result.reasons.add('snapshot_cancelled' if cancelled() else 'snapshot_time_budget' if time.monotonic() >= deadline else 'snapshot_unavailable')
@@ -142,7 +144,8 @@ def read_quiescent_snapshot(path: Path, *, max_rows: int = 100_000,
 
 
 def _query_image(image: bytes, *, max_rows: int, deadline: float,
-                 cancelled=lambda: False, identity_id: str | None = None) -> EvidenceSnapshot:
+                 cancelled=lambda: False, identity_id: str | None = None,
+                            historical_dependencies: bool = False) -> EvidenceSnapshot:
     """Project a bounded coherent image in memory, never source SQLite handles."""
     result = EvidenceSnapshot()
     try:
@@ -318,6 +321,10 @@ def _query_image(image: bytes, *, max_rows: int, deadline: float,
                     result.reasons.add('snapshot_row_budget')
                 remaining_rows -= len(projected)
                 result.tables[name] = projected
+            if historical_dependencies and not result.reasons:
+                from .missing_placement_dependency_projection import project_missing_dependencies
+                project_missing_dependencies(db, result.tables['placements'],
+                                             deadline=deadline, cancelled=cancelled)
     except (sqlite3.Error, ValueError):
         result.tables.clear()
         result.reasons.add('snapshot_cancelled' if cancelled() else 'snapshot_time_budget' if time.monotonic() >= deadline else 'snapshot_unavailable')
@@ -338,7 +345,8 @@ _SNAPSHOT_TRACE_CODES = frozenset({
 
 def read_library_snapshot(path: Path, *, max_rows: int = 100_000,
                           max_bytes: int = 128*1024*1024, seconds: float = 10,
-                          cancelled=lambda: False, identity_id: str | None = None) -> EvidenceSnapshot:
+                          cancelled=lambda: False, identity_id: str | None = None,
+                            historical_dependencies: bool = False) -> EvidenceSnapshot:
     """Stable main image, or isolated Linux WAL capture, under one deadline.
 
     Emit only bounded timing + closed statuses for an operator to distinguish
@@ -366,7 +374,8 @@ def read_library_snapshot(path: Path, *, max_rows: int = 100_000,
 
     result = read_quiescent_snapshot(path, max_rows=max_rows, max_bytes=max_bytes,
                                      seconds=seconds, cancelled=cancelled,
-                                     identity_id=identity_id)
+                                     identity_id=identity_id,
+                                     **({'historical_dependencies': True} if historical_dependencies else {}))
     deadline = started+seconds
     if result.reasons != {'snapshot_live_journal'}:
         return finish(result, 'direct')
@@ -385,7 +394,8 @@ def read_library_snapshot(path: Path, *, max_rows: int = 100_000,
         return finish(EvidenceSnapshot(reasons={reason}), 'wal')
     trace.info('TRACE reconciliation_snapshot phase=projection stage=wal')
     return finish(_query_image(image, max_rows=max_rows, deadline=deadline,
-                               cancelled=cancelled, identity_id=identity_id), 'wal')
+                               cancelled=cancelled, identity_id=identity_id,
+                               **({'historical_dependencies': True} if historical_dependencies else {})), 'wal')
 
 
 @dataclass(frozen=True, repr=False)
