@@ -1910,10 +1910,12 @@ class LocalInspectionController:
                 missing_relocate_confirm.set_visible(False)
                 missing_note.set_text('Confirmation reçue · revalidation sous verrou…')
 
-                def commit():
-                    return session.confirm_missing_repair(
+                try:
+                    commit = session.admit_missing_repair(
                         chosen[0], file_key=chosen[1], user_confirmed=True,
                     )
+                except Exception:
+                    commit = None
 
                 def completed(outcome):
                     if (self.session is not session or not self.alive()
@@ -1945,6 +1947,10 @@ class LocalInspectionController:
                         missing_note.set_text(
                             'Relocalisation indisponible · aucun commit confirmé.'
                         )
+
+                if not callable(commit):
+                    completed({'status': 'blocked'})
+                    return
 
                 self.parent.runner.submit(
                     'Relocalisation transactionnelle du placement',
@@ -2068,10 +2074,12 @@ class LocalInspectionController:
                 missing_linked_apply.set_visible(False)
                 missing_note.set_text('Revalidation des références sous verrou…')
 
-                def commit():
-                    return session.confirm_missing_repair(
+                try:
+                    commit = session.admit_missing_repair(
                         chosen, user_confirmed=True,
                     )
+                except Exception:
+                    commit = None
 
                 def completed(outcome):
                     if (self.session is not session or not self.alive()
@@ -2102,6 +2110,10 @@ class LocalInspectionController:
                         missing_note.set_text(
                             'Détachement indisponible · aucune mutation confirmée.'
                         )
+
+                if not callable(commit):
+                    completed({'status': 'blocked'})
+                    return
 
                 self.parent.runner.submit(
                     'Détachement contrôlé des notices de placement',
@@ -2201,10 +2213,12 @@ class LocalInspectionController:
                 missing_apply.set_visible(False)
                 missing_note.set_text('Confirmation reçue · contrôle sous verrou…')
 
-                def commit():
-                    return session.confirm_missing_repair(
+                try:
+                    commit = session.admit_missing_repair(
                         chosen, user_confirmed=True,
                     )
+                except Exception:
+                    commit = None
 
                 def completed(outcome):
                     if (self.session is not session or not self.alive()
@@ -2233,6 +2247,10 @@ class LocalInspectionController:
                         missing_note.set_text(
                             'Retrait indisponible · aucune suppression confirmée.'
                         )
+
+                if not callable(commit):
+                    completed({'status': 'blocked'})
+                    return
 
                 self.parent.runner.submit(
                     'Retrait contrôlé du placement obsolète',
