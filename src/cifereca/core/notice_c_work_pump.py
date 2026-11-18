@@ -1,8 +1,9 @@
 """#4982: explicit Core-only pump for known public aggregate implementations.
 
 No timer, thread, extra queue, automatic caller or production activation.
-An existing Core maintenance coordinator may drive tick outside GTK and
-outside the broker's worker pool. The existing broker owns all actual work.
+An existing Core maintenance coordinator may drive tick outside GTK,
+including on an admitted maintenance worker that never waits for submitted
+work. The existing broker owns all actual work.
 """
 from __future__ import annotations
 
@@ -65,7 +66,7 @@ class PublicNoticeWorkPump:
         control.check_cancelled()
         return PreparedAggregate(publish)
 
-    def tick(self):
+    def tick(self, *, control=None):
         """Scan once and submit hints without waiting for execution.
 
         Reentry is rejected immediately. A refusal leaves the cursor at
@@ -75,12 +76,16 @@ class PublicNoticeWorkPump:
         if not self._tick_lock.acquire(blocking=False):
             return DispatchTick((), 0, 0, False, True)
         try:
+            if control is not None:
+                control.check_cancelled()
             page = journal.read_ready_page(
                 self._storage, now=self._clock(), after=self._after,
                 supported=_SUPPORTED,
             )
             handles = []
             for ref in page.refs:
+                if control is not None:
+                    control.check_cancelled()
                 handle = self._bridge.submit(ref)
                 if handle is None:
                     return DispatchTick(tuple(handles), page.examined,
