@@ -525,3 +525,42 @@ def test_kobo_brand_without_materialization_capability_does_not_create_tools():
         item.label == "Aperçu local…" for item in _source_row(w).suffixes
     )
     assert w.runner.tasks == []
+
+
+def test_native_opt_in_sync_revokes_hidden_and_previous_visit_actions():
+    from cifereca.gui.page_lifecycle_controller import PageLifecycleDispatcher
+    window, broker, calls, build, page = _fixture()
+    dispatcher = PageLifecycleDispatcher(lambda: not window._closed, lambda code: None)
+    window._page_lifecycle_dispatcher = dispatcher
+    dispatcher.context_changed("alice", None)
+    dispatcher.mount("sync", page)
+    dispatcher.show("sync")
+    token = window._sync_page_token
+    first = capture_sync_action_scope(window, page_token=token)
+    assert first is not None and sync_action_scope_current(window, first)
+    global_button = window._sync_all_button
+    global_button.click()
+    assert len(window.runner.tasks) == 1
+    admitted = window.runner.tasks[0]
+
+    dispatcher.show("library")
+    assert not sync_action_scope_current(window, first)
+    assert capture_sync_action_scope(window, page_token=token) is None
+    global_button.click()
+    assert len(window.runner.tasks) == 1
+
+    dispatcher.show("sync")
+    assert not sync_action_scope_current(window, first)
+    latest = capture_sync_action_scope(window, page_token=token)
+    assert latest is not None and sync_action_scope_current(window, latest)
+
+    # The old GUI lease never cancels the exact business operation.
+    assert admitted.work() == "ok"
+    assert ("sync-all", "alice") in calls
+    admitted.done("ok")
+    assert ("refresh-library", False) not in calls
+    global_button.click()
+    assert len(window.runner.tasks) == 2
+    dispatcher.dispose()
+    assert not sync_action_scope_current(window, latest)
+    assert capture_sync_action_scope(window, page_token=token) is None
