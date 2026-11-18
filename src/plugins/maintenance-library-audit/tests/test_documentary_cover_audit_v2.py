@@ -102,3 +102,60 @@ def test_impossible_cross_level_counts_are_rejected():
     invalid = facts()
     invalid["n3"].update(digest_valid=2, not_validated=0, signature_valid=0)
     assert plan(invalid).facts["status"] == "unavailable"
+
+
+@pytest.mark.parametrize("broken_port", [None, 42])
+def test_declared_but_noncallable_v2_does_not_fall_back(broken_port):
+    calls = []
+    class Broken:
+        library_cover_audit = broken_port
+
+        def library_documentary_audit(self, **kwargs):
+            calls.append("v1")
+            legacy = {k: v for k, v in facts().items() if k not in ("n2", "n3")}
+            legacy["schema"] = 1
+            return legacy
+
+        def catalog_entries(self, **kwargs):
+            calls.append("catalogue")
+            return []
+
+    tool = CoverAuditTool().activate(Context(Broken()))
+    prepared = tool.plan(MaintenanceContext(scope="library", identity_id="alice"))
+    assert prepared.facts["status"] == "unavailable"
+    assert not tool.run(prepared, Control()).ok
+    assert calls == []
+
+
+def test_broken_port_lookup_is_unavailable_without_legacy_fallback():
+    calls = []
+    class Broken:
+        @property
+        def library_cover_audit(self):
+            raise RuntimeError("private broker detail")
+
+        def library_documentary_audit(self, **kwargs):
+            calls.append("v1")
+            return {}
+
+    tool = CoverAuditTool().activate(Context(Broken()))
+    prepared = tool.plan(MaintenanceContext(scope="library", identity_id="alice"))
+    assert prepared.facts["status"] == "unavailable"
+    assert "private broker detail" not in repr(prepared)
+    assert not tool.run(prepared, Control()).ok
+    assert calls == []
+
+
+def test_declared_but_noncallable_v1_does_not_use_catalogue():
+    calls = []
+    class Broken:
+        library_documentary_audit = None
+
+        def catalog_entries(self, **kwargs):
+            calls.append("catalogue")
+            return []
+
+    tool = CoverAuditTool().activate(Context(Broken()))
+    prepared = tool.plan(MaintenanceContext(scope="library", identity_id="alice"))
+    assert prepared.facts["status"] == "unavailable"
+    assert calls == []

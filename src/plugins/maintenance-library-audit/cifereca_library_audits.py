@@ -343,16 +343,22 @@ def _documentary_preview(kind, facts):
 
 def _documentary_plan(tool, context, control, kind):
     broker = tool._broker("catalog")
-    runtime = getattr(broker, "library_cover_audit", None) if kind == "covers" else None
-    method = getattr(broker, "library_documentary_audit", None)
-    if not callable(runtime) and not callable(method):
-        return None  # historical ABI: existing reference/tag-only audit
+    absent = object()
     try:
-        if callable(runtime):
+        runtime = getattr(broker, "library_cover_audit", absent) if kind == "covers" else absent
+        if runtime is not absent:
+            # A declared but broken v2 port is not a legacy broker.
+            if not callable(runtime):
+                raise ValueError("invalid_runtime_documentary_audit")
             facts = runtime(identity_id=context.identity_id)
             if type(facts) is not dict or facts.get("schema") != 2:
                 raise ValueError("invalid_runtime_documentary_audit")
         else:
+            method = getattr(broker, "library_documentary_audit", absent)
+            if method is absent:
+                return None  # historical ABI: existing reference/tag-only audit
+            if not callable(method):
+                raise ValueError("invalid_documentary_audit")
             facts = method(identity_id=context.identity_id, kind=kind)
         summary, warnings = _documentary_preview(kind, facts)
     except Exception:
