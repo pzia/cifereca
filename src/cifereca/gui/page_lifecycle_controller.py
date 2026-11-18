@@ -38,6 +38,14 @@ class PageLifecycleDispatcher:
     def handles(self, route):
         return route in self._pages and self._valid()
 
+    def current_view(self, route):
+        """Lease for callbacks from a rendered opt-in page, not business work."""
+        page = self._pages.get(route)
+        if (not self._valid() or page is None or page.failed or page.dirty
+                or self._route != route or self._deferred):
+            return None
+        return self._event(route, page, "show")
+
     def _advance(self, page):
         self._generation += 1
         page.generation = self._generation
