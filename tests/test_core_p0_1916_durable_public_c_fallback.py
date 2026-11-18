@@ -177,7 +177,8 @@ def test_federated_outage_uses_retained_c_not_mirror(tmp_path, monkeypatch):
         row, = stale.results
         assert stale.result_status == "known_catalog_stale"
         assert stale.error_code == "SearchTemporarilyUnavailable"
-        assert len(live.results) == 1 and live.error_code is None
+        assert len(live.results) == 1 and live.error_code == ""
+        assert live.result_status == "live"
         assert row.record_id == "durable-only" and row.published_at == "2020"
         assert row.metadata["search_provenance"] == "known_catalog_stale"
         assert row.metadata["mirrored_at"] == now
