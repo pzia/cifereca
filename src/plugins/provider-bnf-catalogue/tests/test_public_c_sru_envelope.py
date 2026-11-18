@@ -122,11 +122,11 @@ def test_bnf_canonical_sru_redirect_never_parses_or_follows(tmp_path, monkeypatc
     (1, 1, None, "all", "title", False, True),
     (3, 2, None, "all", "title", False, False),
     (3, 1, 2, "all", "title", False, False),
-    (3, 1, None, "all", "title", True, False),
-    (3, 0, None, "all", "title", True, False),
-    (0, 1, None, "all", "title", True, False),
-    (1, 1, 2, "all", "title", True, False),
-    (3, 1, 3, "all", "title", True, False),
+    (3, 1, None, "all", "title", True, None),
+    (3, 0, None, "all", "title", True, None),
+    (0, 1, None, "all", "title", True, None),
+    (1, 1, 2, "all", "title", True, None),
+    (3, 1, 3, "all", "title", True, None),
     (1, 1, None, "digital", "title", False, False),
     (1, 1, None, "all", "series", False, False),
 ])
@@ -206,7 +206,7 @@ def test_sru_record_loss_is_not_a_clean_catalogue_window(monkeypatch, defect):
     session.connect()
     try:
         page = session.search_with_response_facets("Les loups")
-        assert page.partial is True and page.catalogue_complete is False
+        assert page.partial is True and page.catalogue_complete is None
         assert len(page.results) == len(page.public_notices) == 1
         assert len(calls) == 1
     finally:
