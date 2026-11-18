@@ -242,7 +242,13 @@ class ReaderUsbExecutionBrokerImpl:
         from .source_context import source_context_epoch
         from .device_usb_preview import _relative, _sha
         from .device_usb_copy_admission import _MAX_AGE
+        from .device_usb_removal_review import _OPERATION_ID
 
+        service = self.service
+        storage, config = service.storage, service.config
+        manager = getattr(service, "_plugin_manager", None)
+        registry_generation = getattr(manager, "registry_generation", -1)
+        epoch = source_context_epoch(service)
         now = int(time.time())
         if (type(confirmation) is not UsbRemovalConsent
                 or type(expected_profile_epoch) is not int
@@ -254,6 +260,9 @@ class ReaderUsbExecutionBrokerImpl:
                 or not _sha(confirmation.sha256)
                 or confirmation.artifact_id != "sha256:" + confirmation.sha256
                 or not _relative(confirmation.target_relative_path)
+                or any(type(value) is not str or _OPERATION_ID.fullmatch(value) is None
+                       for value in (confirmation.copy_operation_id, confirmation.operation_id))
+                or confirmation.copy_operation_id == confirmation.operation_id
                 or type(mount_key) is not tuple or len(mount_key) != 6
                 or not isinstance(mountpoint, Path) or not mountpoint.is_absolute()
                 or mountpoint == Path("/") or ".." in mountpoint.parts
@@ -273,11 +282,6 @@ class ReaderUsbExecutionBrokerImpl:
         scope = deepcopy(scope)
         # The selected identity object itself is no longer an authority; the
         # admitted scope contains only its captured identity value.
-        service = self.service
-        storage, config = service.storage, service.config
-        manager = getattr(service, "_plugin_manager", None)
-        registry_generation = getattr(manager, "registry_generation", -1)
-        epoch = source_context_epoch(service)
         identity = deepcopy(storage.identity_get(scope.identity_id))
         if type(identity) is not dict:
             raise ValueError("usb_reader_scope_revoked")
@@ -314,7 +318,8 @@ class ReaderUsbExecutionBrokerImpl:
         lock, used = Lock(), [False]
 
         def check():
-            if (not current()
+            if (not confirmation.confirmed_at <= int(time.time()) < confirmation.expires_at
+                    or not current()
                     or not self._mount_attested(scope, mountpoint,
                                                scope_current=current,
                                                mount_key=mount_key)):
