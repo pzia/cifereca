@@ -198,3 +198,34 @@ def test_explicit_requester_discovery_is_headless_and_rejects_unknown_identity(h
     assert len(choices) == 1 and choices[0].lender_identity_id == "alex"
     assert _discover(proxy, _candidate().notice, requester="missing") == ()
     assert session.calls == 0
+
+
+def test_same_account_two_collections_have_stable_inert_labels(harness):
+    service, account, session = harness
+    first = _candidate(collection="collection-a").notice
+    second = _candidate(collection="collection-b").notice
+    a = _discover(service, first, second)
+    b = _discover(service, second, first)
+    assert len(a) == len(b) == 2
+    assert [(c.label, c._notice.source_collection) for c in a] == [
+        (c.label, c._notice.source_collection) for c in b
+    ]
+    assert len({c.label for c in a}) == 2
+    assert session.calls == 0
+
+
+def test_composed_choice_label_cannot_collide_with_literal_profile_label(harness):
+    from cifereca.core.borrow_for_identity_discovery import _label_lenders
+    service, account, session = harness
+    first, = _discover(service, _candidate(collection="collection-a").notice)
+    second, = _discover(service, _candidate(collection="collection-b").notice)
+    composed = _label_lenders([first, second])
+    third = replace(first, label=composed[0].label,
+                    _notice=_candidate(collection="collection-c").notice)
+    # A different literal label may already contain the generated suffix.
+    result = _label_lenders([third, second, first])
+    assert len({row.label for row in result}) == 3
+    assert all(len(row.label) <= 80 and row.executable is False for row in result)
+    assert result[0].label.startswith("Choix 1/3 · ")
+    assert all(account.credential_id not in row.label for row in result)
+    assert session.calls == 0

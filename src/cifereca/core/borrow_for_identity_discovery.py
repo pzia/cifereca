@@ -212,6 +212,10 @@ def discover_possible_borrow_lenders(
             return ()
     except Exception:
         return ()
+    return _label_lenders(result)
+
+
+def _label_lenders(result: list[PossibleBorrowLender]) -> tuple[PossibleBorrowLender, ...]:
     # Multiple credentials of the same lender cannot be shown as identical
     # actionable-looking choices. Stable private sorting and public, bounded
     # account labels distinguish them without exposing the credential key.
@@ -219,6 +223,7 @@ def discover_possible_borrow_lenders(
         row.lender_identity_id, row._account.provider_id,
         row._account.credential_id, row._account.unique_id,
         row._notice.docbase, row._notice.record_id,
+        row._notice.source_collection or "",
     ))
     frequencies = Counter(row.label for row in ordered)
     public_accounts = {
@@ -243,6 +248,17 @@ def discover_possible_borrow_lenders(
             suffix = f" · {account_label}"
         safe_prefix = row.label[:max(1, 80 - len(suffix))].rstrip()
         visible.append(replace(row, label=safe_prefix + suffix))
+    # Composed public labels can collide with another profile's literal
+    # name (or with another truncated prefix). Number the entire ordered
+    # set only in that case, without ever displaying private route keys.
+    if len({row.label for row in visible}) != len(visible):
+        numbered = []
+        for index, row in enumerate(visible, 1):
+            prefix = f"Choix {index}/{len(visible)} · "
+            numbered.append(replace(
+                row, label=prefix + row.label[:80 - len(prefix)].rstrip(),
+            ))
+        visible = numbered
     return tuple(visible)
 
 
