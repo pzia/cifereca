@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from cifereca.plugin_api import CONTRACT_REGISTRY
 from cifereca.plugins import PackageStore, PluginConfigStore, PluginManager, PluginStateStore
 
@@ -10,8 +12,15 @@ from cifereca.plugins import PackageStore, PluginConfigStore, PluginManager, Plu
 def _package(root: Path, package_id: str, plugins: list[dict], modules: dict[str, str]):
     pkg = root / "packages" / package_id / "1.0.0"
     pkg.mkdir(parents=True)
+    # Contract witnesses must use owned, unambiguous package namespaces;
+    # "profile" is a stdlib module and "p" was shared by unrelated fixtures.
+    prefix = "fixture040_" + package_id.replace(".", "_").replace("-", "_") + "_"
     for name, source in modules.items():
-        (pkg / name).write_text(source, encoding="utf-8")
+        (pkg / (prefix + name)).write_text(source, encoding="utf-8")
+    plugins = [
+        {**plugin, "entrypoint": prefix + plugin["entrypoint"]}
+        for plugin in plugins
+    ]
     manifest = {
         "manifest": 1,
         "package": {"id": package_id, "version": "1.0.0", "plugin_api": ">=1.2,<2"},
@@ -29,6 +38,21 @@ def _manager(root: Path, brokers=None):
         config_store=PluginConfigStore(root / "config.json"),
         brokers=dict(brokers or {}),
     )
+
+
+@pytest.fixture(autouse=True)
+def _close_fixture_managers(monkeypatch):
+    original, managers = _manager, []
+    def make(*args, **kwargs):
+        manager = original(*args, **kwargs)
+        managers.append(manager)
+        return manager
+    monkeypatch.setitem(globals(), "_manager", make)
+    try:
+        yield
+    finally:
+        for manager in reversed(managers):
+            manager.close()
 
 
 def test_public_document_transformer_contract_registry():
