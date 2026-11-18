@@ -75,6 +75,10 @@ def adapter(tmp_path, monkeypatch):
         "cifereca.core.canonical_selected_delivery.acquisition_lock_file",
         lambda: lock_path,
     )
+    monkeypatch.setattr(
+        "cifereca.core.canonical_recovery.acquisition_lock_file",
+        lambda: lock_path,
+    )
     root = tmp_path / "EBooks"
 
     def complete():

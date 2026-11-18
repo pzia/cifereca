@@ -108,6 +108,7 @@ class CompletedDelivery:
     final_sha256: str
     receipt_ref: str
     adept_receipt_ref: str = ""
+    adept_attempt_id: str = ""  # ephemeral Core witness, not provider data
 
 
 OutcomeStatus = Literal[
