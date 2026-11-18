@@ -343,6 +343,28 @@ class GallicaSession(ProviderSession):
             raise _UnsafeOPDS("Gallica OPDS : unverified_navigation")
         return target
 
+    @staticmethod
+    def _bounded_xml_body(response, failure):
+        if response.headers.get("content-encoding", "").strip().casefold() not in {"", "identity"}:
+            raise failure()
+        length = response.headers.get("content-length", "")
+        if length.isascii() and length.isdecimal() and (
+            len(length) > 9 or int(length) > MAX_XML_BYTES
+        ):
+            raise failure()
+        if response.is_stream_consumed:
+            if not response.is_closed or len(response.content) > MAX_XML_BYTES:
+                raise failure()
+            return response.content
+        chunks = []
+        size = 0
+        for chunk in response.iter_raw(chunk_size=65536):
+            size += len(chunk)
+            if size > MAX_XML_BYTES:
+                raise failure()
+            chunks.append(chunk)
+        return b"".join(chunks)
+
     def _opds_get(self, url, *, params=None):
         # Only the two configured OPDS roots authorize origins. A supplied
         # feed/descriptor/redirect cannot extend them. Retain the configured
@@ -363,25 +385,9 @@ class GallicaSession(ProviderSession):
                     params = None
                     continue
                 response.raise_for_status()
-                if response.headers.get("content-encoding", "").strip().casefold() not in {"", "identity"}:
-                    raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
-                length = response.headers.get("content-length", "")
-                if length.isascii() and length.isdecimal() and (
-                    len(length) > 9 or int(length) > MAX_XML_BYTES
-                ):
-                    raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
-                if response.is_stream_consumed:
-                    if not response.is_closed or len(response.content) > MAX_XML_BYTES:
-                        raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
-                    return response.content, str(response.url)
-                chunks = []
-                size = 0
-                for chunk in response.iter_raw(chunk_size=65536):
-                    size += len(chunk)
-                    if size > MAX_XML_BYTES:
-                        raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
-                    chunks.append(chunk)
-                return b"".join(chunks), str(response.url)
+                return self._bounded_xml_body(
+                    response, lambda: _UnsafeOPDS("Gallica OPDS : invalid_opds_feed"),
+                ), str(response.url)
         raise _UnsafeOPDS("Gallica OPDS : unverified_navigation")
 
     def _discover_search_template(self) -> str:
@@ -643,21 +649,24 @@ class GallicaSession(ProviderSession):
         if index is None:
             raise ProviderError(f"Gallica : champ de recherche non pris en charge : {field}")
         cql = f'({index} all {_cql_literal(query)}) and (dc.type any "audio")'
-        response = self.client.get(self.sru_url, params={
+        with self.client.stream("GET", self.sru_url, params={
             "operation": "searchRetrieve",
             "version": "1.2",
             "query": cql,
             "startRecord": str(max(1, page * 50 + 1)),
             "maximumRecords": "50",
-        })
-        response.raise_for_status()
+        }, headers={"Accept-Encoding": "identity"}) as response:
+            response.raise_for_status()
+            content = self._bounded_xml_body(
+                response, lambda: _UnsafeSRU("Gallica SRU : invalid_audio_feed"),
+            )
+            status = response.status_code
         try:
-            return self._parse_sru_audio(response.content)
+            return self._parse_sru_audio(content)
         except ProviderError:
             self._diagnostic("GALLICA", "audio response metadata", "error", detail={
-                "http_status": response.status_code,
-                "content_type": response.headers.get("content-type", ""),
-                "bytes": len(response.content),
+                "http_status": status,
+                "bytes": len(content),
             })
             raise
 
