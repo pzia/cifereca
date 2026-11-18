@@ -80,3 +80,30 @@ def test_foreign_c_same_url_and_unqualified_delete_are_not_click_proofs(tmp_path
         assert choose(db, ma, ma.choices[0]) is None
         assert choose(db, mb, mb.choices[0]) == URL
         assert db.entitlements() == [] and db.acquisitions() == []
+
+
+def test_choices_with_same_provider_record_across_editions_are_distinct(tmp_path, monkeypatch):
+    from tests import test_core_p0_6397_c_web_reference_persistence as fixtures
+    original = fixtures.verified_public
+    with closing(Storage(tmp_path / "same-record.sqlite")) as db:
+        monkeypatch.setattr(fixtures, "verified_public",
+                            lambda **kw: original(revision_id="edition-a", **kw))
+        a = source(db, "seller-a", "same", [link("seller-a", URL), link("seller-a", OTHER)])
+        monkeypatch.setattr(fixtures, "verified_public",
+                            lambda **kw: original(revision_id="edition-b", **kw))
+        b = source(db, "seller-a", "same", [link("seller-a", URL)])
+        assert a.document != b.document
+        target = a.observation.key.edition_id
+        publish(db, target, a)
+        result = publish(db, target, b)
+        menu = read_public_web_choices(db, result.document)
+        assert len(menu.choices) == 3
+        assert {opt.label for opt in menu.choices} == {
+            "seller-a — same (1/3)", "seller-a — same (2/3)", "seller-a — same (3/3)",
+        }
+        assert len({opt.choice_id for opt in menu.choices}) == 3
+        assert sorted(choose(db, menu, opt) for opt in menu.choices) == sorted([URL, URL, OTHER])
+        assert read_public_web_choices(db, result.document) == menu
+        for item in (a, b):
+            assert evict_notice_cover(db, item.document, expected_epoch=item.epoch)
+        assert read_public_web_choices(db, result.document) == menu
