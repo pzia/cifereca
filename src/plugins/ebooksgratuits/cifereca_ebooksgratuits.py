@@ -1109,7 +1109,7 @@ def _opds_author_navigation_match(query, label):
     return _opds_author_match(query, (label,))
 
 
-def _opds_load_acquisition(session,initial,field,needle):
+def _opds_load_acquisition(session,initial,field,needle,*,initial_feed=None):
     """Follow bounded COPS navigation: search -> Books/Authors/Tags -> entries.
 
     COPS search is commonly a *navigation* feed listing result scopes, not a
@@ -1125,7 +1125,13 @@ def _opds_load_acquisition(session,initial,field,needle):
         if url in seen:
             raise ProviderError('Ebooks libres et gratuits : invalid_opds_pagination')
         seen.add(url)
-        feed,actual=_opds_fetch(session,url)
+        if initial_feed is not None:
+            # The caller already read this exact URL in this search. Keep the
+            # tree and actual response URL; never retain it across searches.
+            feed,actual=initial_feed
+            initial_feed=None
+        else:
+            feed,actual=_opds_fetch(session,url)
         if feed.tag!=ATOM+'feed':
             raise (_unverified_html_opds_response() if _is_html_document(feed)
                    else _malformed_opds_protocol()) from None
@@ -1234,7 +1240,12 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
     for index in range(page+1):
         if url in seen:raise ProviderError('Ebooks libres et gratuits : invalid_opds_pagination')
         seen.add(url)
-        feed,current=_opds_load_acquisition(session,url,field,needle)
+        if index==0 and not needle and url==root_url:
+            feed,current=_opds_load_acquisition(
+                session,url,field,needle,initial_feed=(root,root_url),
+            )
+        else:
+            feed,current=_opds_load_acquisition(session,url,field,needle)
         if index==page:
             # Keep verified books on this page, but do not certify the end
             # of the collection if a declared next destination is broken.
