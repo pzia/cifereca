@@ -40,6 +40,7 @@ class PublicRawInputReceipt:
     input_digest: str
     byte_count: int
     generation_token: str
+    producer_token: str | None = None
 
 
 def _hash(value):
@@ -89,7 +90,10 @@ def _valid(receipt):
             and type(receipt.byte_count) is int
             and 1 <= receipt.byte_count <= _MAX_BYTES
             and type(receipt.generation_token) is str
-            and _TOKEN.fullmatch(receipt.generation_token) is not None)
+            and _TOKEN.fullmatch(receipt.generation_token) is not None
+            and (receipt.producer_token is None or (
+                type(receipt.producer_token) is str
+                and _TOKEN.fullmatch(receipt.producer_token) is not None)))
 
 
 def _read(db, key, now):
@@ -129,14 +133,15 @@ def _body_digest(body):
 
 def record_public_raw_input_receipt(
     storage, source, body, *, transport_digest, parser_family_digest,
-    parser_implementation_digest, now, ttl_seconds,
+    parser_implementation_digest, now, ttl_seconds, producer_token=None,
 ):
     """Record only an opaque receipt after an actual retained raw response.
 
     Core-only qualification port, not a plugin claim. Caller owns the
     response provenance, parser identity and retention of the original
     bytes; it must not pass parsed DTOs or reconstruct bytes from C.
-    The receipt cannot locate, fetch or reconstruct the original body.
+    An optional producer_token is the opaque cache-only lookup coordinate,
+    never a URL or authority to fetch. A missing token cannot schedule replay.
     TTL must not exceed the producer's actual raw-input retention window.
     """
     _clock(now)
@@ -144,6 +149,8 @@ def record_public_raw_input_receipt(
             or type(ttl_seconds) is not int
             or not 1 <= ttl_seconds <= _MAX_TTL
             or now > _MAX_CLOCK - ttl_seconds
+            or (producer_token is not None and (
+                type(producer_token) is not str or _TOKEN.fullmatch(producer_token) is None))
             or not all(_digest(value) for value in (
                 transport_digest, parser_family_digest, parser_implementation_digest,
             ))):
@@ -164,7 +171,7 @@ def record_public_raw_input_receipt(
         old = _read(db, key, now)
         fields = (scope, state, transport_digest, parser_family_digest,
                   parser_implementation_digest, input_digest, len(body))
-        if old is not None and old == PublicRawInputReceipt(*fields, old.generation_token):
+        if old is not None and old == PublicRawInputReceipt(*fields, old.generation_token, producer_token):
             # Replay never extends retention; the owner may shorten it.
             db.execute(
                 "UPDATE cache SET expires_at=MIN(expires_at,?) "
@@ -179,7 +186,7 @@ def record_public_raw_input_receipt(
         ).fetchone()[0]
         if count >= _MAX_RECEIPTS:
             raise ValueError("notice_raw_input_capacity")
-        receipt = PublicRawInputReceipt(*fields, uuid4().hex)
+        receipt = PublicRawInputReceipt(*fields, uuid4().hex, producer_token)
         db.execute(
             "INSERT INTO cache(namespace,cache_key,payload,stored_at,expires_at) "
             "VALUES(?,?,?,?,?) ON CONFLICT(namespace,cache_key) DO UPDATE SET "
