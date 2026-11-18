@@ -14,6 +14,8 @@ from secrets import token_hex
 
 _PREFIX = "derived.publication.pending.v2:"
 _END = _PREFIX[:-1] + ";"
+_COMMITTED = "derived.publication.committed.v2:"
+_COMMITTED_END = _COMMITTED[:-1] + ";"
 _MAX_RECORDS = 1024
 _MAX_RECORD_BYTES = 8192
 _MAX_TOTAL_BYTES = 8 * 1024 * 1024
@@ -42,6 +44,16 @@ class DerivedIntent:
     options_fingerprint: str
     variant_kind: str
     media_format: str
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class DerivedReservation:
+    key: str
+    receipt_sha256: str
+
+
+def _receipt_digest(raw):
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _text(value, *, required=True, limit=1024):
@@ -122,7 +134,7 @@ def _decode(key, raw):
         data["output_stamp"] = tuple(data["output_stamp"])
         intent = DerivedIntent(**data)
         _validate(intent)
-        if _slot(intent) != key:
+        if key not in (_slot(intent), _COMMITTED + _receipt_digest(raw)):
             raise ValueError()
         return intent
     except (ValueError, TypeError, KeyError, RecursionError, OverflowError):
@@ -133,8 +145,9 @@ def _measure(db):
     # Read at most one overflow row. No unbounded JSON materialization.
     rows = db.execute(
         "SELECT key,length(CAST(value AS BLOB)) FROM metadata "
-        "WHERE key>=? AND key<? ORDER BY key LIMIT ?",
-        (_PREFIX, _END, _MAX_RECORDS + 1),
+        "WHERE (key>=? AND key<?) OR (key>=? AND key<?) "
+        "ORDER BY key LIMIT ?",
+        (_PREFIX, _END, _COMMITTED, _COMMITTED_END, _MAX_RECORDS + 1),
     ).fetchall()
     if len(rows) > _MAX_RECORDS:
         raise DerivedJournalConflict("derived_journal_capacity_exceeded")
@@ -147,7 +160,7 @@ def _measure(db):
     return rows, total
 
 
-def reserve_derived_intent(storage, intent: DerivedIntent) -> str:
+def reserve_derived_publication(storage, intent: DerivedIntent) -> DerivedReservation:
     """Reserve a recipe/target slot in one durable SQL transaction.
 
     Call only after Core has verified the exact physical input/output and
@@ -180,8 +193,9 @@ def reserve_derived_intent(storage, intent: DerivedIntent) -> str:
                         "SELECT value FROM metadata WHERE key=?", (existing_key,),
                     ).fetchone()[0]
                     prior = _decode(existing_key, existing)
-                    if (existing_key == key or prior.candidate_path == intent.candidate_path
-                            or prior.staged_path == intent.staged_path):
+                    if (existing_key.startswith(_PREFIX) and (
+                            existing_key == key or prior.candidate_path == intent.candidate_path
+                            or prior.staged_path == intent.staged_path)):
                         raise DerivedJournalConflict("derived_journal_slot_occupied")
                 parent = db.execute(
                     "SELECT artifact_id,identity_id,path,state FROM placements "
@@ -201,7 +215,103 @@ def reserve_derived_intent(storage, intent: DerivedIntent) -> str:
                 db.execute("INSERT INTO metadata(key,value) VALUES(?,?)", (key, raw))
         finally:
             db.execute(f"PRAGMA synchronous={int(synchronous)}")
-    return key
+    return DerivedReservation(key, _receipt_digest(raw))
+
+
+def reserve_derived_intent(storage, intent: DerivedIntent) -> str:
+    """Compatibility for the original private reservation API."""
+    return reserve_derived_publication(storage, intent).key
+
+
+def _read_pending_reservation(db, reservation):
+    if (not db.in_transaction or type(reservation) is not DerivedReservation
+            or type(reservation.key) is not str
+            or not reservation.key.startswith(_PREFIX)
+            or not _digest(reservation.key[len(_PREFIX):])
+            or not _digest(reservation.receipt_sha256)):
+        raise DerivedJournalConflict("derived_journal_reservation_invalid")
+    row = db.execute(
+        "SELECT value FROM metadata WHERE key=? "
+        "AND length(CAST(value AS BLOB)) BETWEEN 1 AND ?",
+        (reservation.key, _MAX_RECORD_BYTES),
+    ).fetchone()
+    if row is None or _receipt_digest(row[0]) != reservation.receipt_sha256:
+        raise DerivedJournalConflict("derived_journal_reservation_changed")
+    return row[0], _decode(reservation.key, row[0])
+
+
+def require_derived_reservation_in_transaction(db, reservation, *, expected):
+    """Compare the private reservation with exact publication coordinates."""
+    _raw, intent = _read_pending_reservation(db, reservation)
+    if any(getattr(intent, key) != value for key, value in expected.items()):
+        raise DerivedJournalConflict("derived_journal_reservation_mismatch")
+    return intent
+
+
+def commit_derived_reservation_in_transaction(
+    db, reservation, *, intent, placement_id, origin_id, recipe_id,
+):
+    """Move the exact receipt to history atomically with canonical B.
+
+    Only the Core writer calls this inside its existing BEGIN IMMEDIATE.
+    The receipt payload is unchanged, counts against the same quota, and
+    never authorizes a new publication by itself.
+    """
+    raw, current = _read_pending_reservation(db, reservation)
+    if current != intent:
+        raise DerivedJournalConflict("derived_journal_reservation_changed")
+    artifact_id = "sha256:" + intent.output_sha256
+    placement = db.execute(
+        "SELECT artifact_id,identity_id,path,state,provider_id FROM placements "
+        "WHERE placement_id=?", (placement_id,),
+    ).fetchone()
+    artifact = db.execute(
+        "SELECT sha256,size FROM artifacts WHERE artifact_id=?", (artifact_id,),
+    ).fetchone()
+    origin = db.execute(
+        "SELECT origin_kind,identity_id,artifact_id,source_reference_id,"
+        "parent_artifact_id,evidence_ref,metadata_json FROM origin_links "
+        "WHERE origin_link_id=?", (origin_id,),
+    ).fetchone()
+    recipe = db.execute(
+        "SELECT artifact_id,source_artifact_id,source_sha256,transformer_plugin_id,"
+        "options_fingerprint FROM artifact_variants WHERE variant_id=?", (recipe_id,),
+    ).fetchone()
+    parent_id = "sha256:" + intent.parent_sha256
+    if (placement != (artifact_id, intent.identity_id, intent.candidate_path,
+                      "present", "cifereca")
+            or artifact != (intent.output_sha256, intent.output_size)
+            or origin is None or origin[:6] != (
+                "derived", intent.identity_id, artifact_id, None, parent_id,
+                "derived:" + recipe_id + ":" + placement_id)
+            or recipe != (artifact_id, parent_id, intent.parent_sha256,
+                          intent.transformer_id, intent.options_fingerprint)):
+        raise DerivedJournalConflict("derived_journal_canonical_proof_missing")
+    try:
+        metadata = json.loads(origin[6], object_pairs_hook=_unique_pairs)
+    except (ValueError, TypeError, RecursionError):
+        raise DerivedJournalConflict("derived_journal_canonical_proof_missing") from None
+    if (type(metadata) is not dict
+            or any(metadata.get(key) != value for key, value in {
+                "source_placement_id": intent.parent_placement_id,
+                "transformer_plugin_id": intent.transformer_id,
+                "transformer_version": intent.transformer_version,
+                "profile_plugin_id": intent.profile_id,
+                "profile_version": intent.profile_version,
+                "options_fingerprint": intent.options_fingerprint,
+                "source_sha256": intent.parent_sha256,
+                "result_sha256": intent.output_sha256,
+            }.items())):
+        raise DerivedJournalConflict("derived_journal_canonical_proof_missing")
+    committed_key = _COMMITTED + reservation.receipt_sha256
+    if db.execute("SELECT 1 FROM metadata WHERE key=?", (committed_key,)).fetchone():
+        raise DerivedJournalConflict("derived_journal_reservation_changed")
+    updated = db.execute(
+        "UPDATE metadata SET key=? WHERE key=? AND value=?",
+        (committed_key, reservation.key, raw),
+    )
+    if updated.rowcount != 1:
+        raise DerivedJournalConflict("derived_journal_reservation_changed")
 
 
 def summarize_derived_journal(storage):
@@ -214,6 +324,8 @@ def summarize_derived_journal(storage):
             _decode(key, raw)
     return {
         "count": len(rows), "payload_bytes": total,
+        "pending_count": sum(key.startswith(_PREFIX) for key, _ in rows),
+        "committed_count": sum(key.startswith(_COMMITTED) for key, _ in rows),
         "record_capacity": _MAX_RECORDS, "payload_capacity": _MAX_TOTAL_BYTES,
         "recovery_authorized": False, "destructive_cleanup_allowed": False,
     }

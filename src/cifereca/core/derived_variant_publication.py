@@ -16,6 +16,10 @@ import time
 from typing import Any
 
 from .library_inventory import _open_root
+from .derived_variant_journal import (
+    DerivedJournalConflict, require_derived_reservation_in_transaction,
+    commit_derived_reservation_in_transaction,
+)
 
 
 class DerivedPublicationConflict(ValueError):
@@ -79,6 +83,7 @@ def _verified_variant_file(path: Path, digest: str, *, expected_size=None):
             finally:
                 if current_fd is not None:
                     os.close(current_fd)
+            return signature
 
         recheck()
         yield recheck
@@ -87,6 +92,24 @@ def _verified_variant_file(path: Path, digest: str, *, expected_size=None):
             os.close(file_fd)
         if directory_fd is not None:
             os.close(directory_fd)
+
+
+@contextmanager
+def _publication_connection(storage, *, durable):
+    db = storage._connect()
+    if not durable:
+        with db:
+            yield db
+        return
+    if db.in_transaction:
+        raise DerivedPublicationConflict("derived_journal_nested_transaction")
+    synchronous = db.execute("PRAGMA synchronous").fetchone()[0]
+    try:
+        db.execute("PRAGMA synchronous=FULL")
+        with db:
+            yield db
+    finally:
+        db.execute(f"PRAGMA synchronous={int(synchronous)}")
 
 
 def publish_derived_variant(
@@ -98,7 +121,7 @@ def publish_derived_variant(
     profile_id: str | None, profile_version: str,
     options_fingerprint: str, book_id: str | None,
     warnings: tuple[str, ...] | list[str], facts: dict[str, Any],
-    scope_current=None,
+    scope_current=None, journal_reservation=None,
 ) -> str:
     """Commit Artifact B, Placement B, OriginLink(derived), recipe and notice.
 
@@ -154,13 +177,41 @@ def publish_derived_variant(
     with (
         _verified_variant_file(parent_path, parent_sha256) as parent_current,
         _verified_variant_file(published_path, output_sha256, expected_size=output_size) as output_current,
-        storage._lock, storage._connect() as db,
+        storage._lock,
+        _publication_connection(storage, durable=journal_reservation is not None) as db,
     ):
         db.execute("BEGIN IMMEDIATE")
         if scope_current is not None and not scope_current(db):
             raise DerivedPublicationConflict("artifact_transform_scope_changed")
-        parent_current()
-        output_current()
+        parent_signature = parent_current()
+        output_signature = output_current()
+        journal_intent = None
+        if journal_reservation is not None:
+            try:
+                journal_intent = require_derived_reservation_in_transaction(
+                    db, journal_reservation, expected={
+                        "identity_id": identity_id,
+                        "parent_placement_id": parent_placement_id,
+                        "parent_sha256": parent_sha256,
+                        "parent_path": str(parent_path),
+                        "candidate_path": str(published_path),
+                        "output_sha256": output_sha256,
+                        "output_size": output_size,
+                        "parent_stamp": (parent_signature[0], parent_signature[1],
+                                         *parent_signature[3:]),
+                        "output_stamp": (output_signature[0], output_signature[1],
+                                         *output_signature[3:5]),
+                        "transformer_id": transformer_id,
+                        "transformer_version": transformer_version,
+                        "profile_id": profile_id or "",
+                        "profile_version": profile_version,
+                        "options_fingerprint": options_fingerprint,
+                        "variant_kind": variant_kind,
+                        "media_format": media_format,
+                    },
+                )
+            except DerivedJournalConflict as exc:
+                raise DerivedPublicationConflict(str(exc)) from None
         parent = db.execute(
             "SELECT artifact_id,identity_id,path,state FROM placements "
             "WHERE placement_id=?", (parent_placement_id,),
@@ -298,4 +349,12 @@ def publish_derived_variant(
             raise DerivedPublicationConflict("artifact_transform_scope_changed")
         parent_current()
         output_current()
+        if journal_intent is not None:
+            try:
+                commit_derived_reservation_in_transaction(
+                    db, journal_reservation, intent=journal_intent,
+                    placement_id=placement_id, origin_id=origin_id, recipe_id=recipe_id,
+                )
+            except DerivedJournalConflict as exc:
+                raise DerivedPublicationConflict(str(exc)) from None
     return placement_id
