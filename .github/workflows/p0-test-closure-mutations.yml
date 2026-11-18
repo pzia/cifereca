@@ -47,4 +47,4 @@ jobs:
           name: closure-mutations-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/closure-mutations.json
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 2

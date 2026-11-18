@@ -39,6 +39,9 @@ PUBLIC_ARTIFACT_PATHS = {
         "${{ runner.temp }}/cifereca-test-dependencies/core-test-provider-imports.json",
         "${{ runner.temp }}/cifereca-test-dependencies/provenance.json",
     ),
+    "p0-test-closure-mutations.yml": (
+        "${{ runner.temp }}/closure-mutations.json",
+    ),
     "e2e-smoke.yml": (
         "${{ runner.temp }}/cifereca-e2e-public/summary.json",
     ),
