@@ -167,6 +167,34 @@ def test_biblioaccess_core_canonical_convergence(
             assert pending_loan_adept_attempt(db, key)
             assert sync(not first_opening)["canonical_execution"]["blocked"] == 1
             assert calls == ["GET", "ADEPT"]
+
+            # A manually recovered historical journal may contain real bytes,
+            # but it is not a completed canonical intake. Reproduce that
+            # persisted state without issuing another real provider request.
+            # An unresolved canonical hold must neither disappear nor turn
+            # a legacy completion into a new provider-origin publication.
+            legacy_file = tmp_path / "legacy-manual-recovery.pdf"
+            legacy_file.write_bytes(BYTES)
+            recovered_id = db.acquisition_put({
+                "acquisition_id": "test-legacy-manual-recovery",
+                "identity_id": account.identity_id, "provider_id": account.provider_id,
+                "credential_id": account.credential_id, "account_id": account.unique_id,
+                "item_id": row.book_id, "status": "complete",
+                "strategy": "loan_auto", "executor": "kobo-adept",
+                "metadata": {
+                    "provider_loan_id": key.right_id,
+                    "path": str(legacy_file), "sha256": SHA,
+                },
+            })
+            old_recovery = db.acquisitions(acquisition_id=recovered_id)
+            assert len(old_recovery) == 1
+            recovered = sync(first_opening)["canonical_execution"]
+            assert recovered["blocked"] == 1
+            assert recovered["downloaded"] == recovered["present_attested"] == 0
+            assert pending_loan_adept_attempt(db, key)
+            assert calls == ["GET", "ADEPT"]
+            assert db.acquisitions(acquisition_id=recovered_id) == old_recovery
+            assert legacy_file.read_bytes() == BYTES
         if scenario == "unset":
             from cifereca.core.source_sync_consent import source_sync_consent
             assert source_sync_consent(service, account)["configured"] is False
