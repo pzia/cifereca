@@ -225,6 +225,46 @@ def project_attested_search_series(
     }
 
 
+
+def public_search_series_metadata(
+    metadata: object, scenario: str,
+) -> dict[str, object]:
+    """Copy only an already parsed result-owned series and its exact proof.
+
+    This is a public declaration projection, not another parser. The caller
+    owns the anonymous Search response. No raw HTML, page facet, account
+    metadata, URL, age or right is carried into the declaration.
+    """
+    if type(metadata) is not dict or scenario not in {"CATALOGUE", "EBOOKS"}:
+        return {}
+    values = metadata.get("series")
+    claims = metadata.get("bibliography_evidence")
+    if type(values) is not list or len(values) != 1 or type(claims) is not dict:
+        return {}
+    proof = claims.get("series")
+    if type(proof) is not dict:
+        return {}
+    source_field = proof.get("source_field")
+    if source_field not in ("Search.CustomResult", "Search.CompactResult"):
+        return {}
+    expected = {
+        "source": "paris.syracuse.search",
+        "source_field": source_field,
+        "scope": scenario,
+        "confidence": "linked_search_relation",
+        "freshness": "search_response",
+    }
+    label = values[0]
+    if (proof != expected or type(label) is not str
+            or _safe_facet_choice_text(label) != label
+            or re.match(r"(?i)^(?:~|file:|[a-z]:[/\\\\])", label)):
+        return {}
+    return {
+        "series": [label],
+        "bibliography_evidence": {"series": expected},
+    }
+
+
 def project_observed_resource_facets(
     resource: Mapping[str, object], scenario: str
 ) -> dict[str, object]:
