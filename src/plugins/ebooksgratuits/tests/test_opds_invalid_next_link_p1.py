@@ -84,7 +84,7 @@ def test_current_page_keeps_verified_rows_with_partial_warning(monkeypatch, link
     monkeypatch.setattr(eg, "_opds_search_url", lambda *_: FEED + "/search?q=livre")
     monkeypatch.setattr(eg, "_opds_load_acquisition",
                         lambda *_: (calls.append("page0") or page, FEED))
-    monkeypatch.setattr(eg, "_opds_items", lambda *_: [verified])
+    monkeypatch.setattr(eg, "_opds_items", lambda *_, **_kwargs: [verified])
     session = SimpleNamespace(connected=True,opds_feed_url=FEED,page_size=50,
                               last_search_warnings=[])
     assert eg._opds_search(session, "livre", page=0) == [verified]
