@@ -379,10 +379,6 @@
     "kind": "method",
     "signature": "(self) -> 'Path'"
   },
-  "_kobo_adapter": {
-    "kind": "method",
-    "signature": "(self)"
-  },
   "_required_plugin_service": {
     "kind": "method",
     "signature": "(self, plugin_id: 'str') -> 'Any'"
@@ -494,10 +490,6 @@
   "obtain_search_item": {
     "kind": "method",
     "signature": "(self, item: 'SearchResult')"
-  },
-  "prepare_direct_download": {
-    "kind": "method",
-    "signature": "(self, item: 'SearchResult') -> 'tuple[Path, str]'"
   },
   "library_dir": {
     "kind": "method",
@@ -634,10 +626,6 @@
   "acquire_digital_loan": {
     "kind": "method",
     "signature": "(self, loan: 'Loan', *, force_refresh: 'bool' = False) -> 'Acquisition'"
-  },
-  "prepare_digital_download": {
-    "kind": "method",
-    "signature": "(self, loan: 'Loan', *, force_refresh: 'bool' = False) -> 'tuple[Path, str]'"
   },
   "_download_filename": {
     "kind": "method",

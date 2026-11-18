@@ -7,6 +7,7 @@ The executor must independently revalidate source, account/rights and target.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from hashlib import sha256
 import os
 from pathlib import Path
@@ -44,18 +45,28 @@ def _safe_scope(root: Path, path: Path) -> bool:
     return True
 
 
-def attest_local_usb_source(
+@dataclass(frozen=True, slots=True)
+class UsbLocalSourceInspection:
+    """Closed advisory diagnosis; never a copy right, path or USB evidence."""
+
+    local: UsbLocalArtifact | None = field(repr=False)
+    reason: str = "owned_source_scope_unverified"
+
+
+def inspect_local_usb_source(
     *, identity_id: str, identity_root: Path,
     artifact: Mapping[str, object], placement: Mapping[str, object],
     max_bytes: int = _MAX_BOOK_BYTES,
-) -> UsbLocalArtifact | None:
-    """Hash one exact owned local file into a non-authorizing preview fact.
+) -> UsbLocalSourceInspection:
+    """Inspect once; return only bounded cause codes, no private file data.
 
-    A missing/foreign/ambiguous placement, symlink, stale metadata, file
-    mutation or SHA mismatch returns None. Never expose the path or content
-    in the resulting evidence. This is a potentially expensive blocking
-    operation: callers must execute it off the GTK/UI thread.
+    Verification uses exactly the original inode, no-follow, size and SHA
+    checks. A negative source classification cannot authorize any transfer.
+    The result belongs to the same selected identity/Artifact only.
     """
+    def blocked(reason: str) -> UsbLocalSourceInspection:
+        return UsbLocalSourceInspection(None, reason)
+
     if (type(identity_id) is not str or not identity_id
             or not isinstance(identity_root, Path)
             or not isinstance(artifact, Mapping)
@@ -63,7 +74,7 @@ def attest_local_usb_source(
             or type(max_bytes) is not int or not 1 <= max_bytes <= _MAX_BOOK_BYTES
             or placement.get("identity_id") != identity_id
             or placement.get("state") != "present"):
-        return None
+        return blocked("owned_source_scope_unverified")
     artifact_id = artifact.get("artifact_id")
     digest = artifact.get("sha256")
     expected_size = artifact.get("size")
@@ -77,24 +88,22 @@ def attest_local_usb_source(
             or not _sha(digest)
             or type(expected_size) is not int
             or not 0 < expected_size <= max_bytes
-            or kind != "file"
-            or type(path_text) is not str
-            or not path_text.startswith("/")):
-        return None
+            or kind != "file"):
+        return blocked("owned_source_artifact_unverified")
+    if type(path_text) is not str or not path_text.startswith("/"):
+        return blocked("owned_source_path_unverified")
     path = Path(path_text)
     try:
         if not _safe_scope(identity_root, path):
-            return None
+            return blocked("owned_source_path_unverified")
         leaf = path.lstat()
-        if not stat.S_ISREG(leaf.st_mode) or leaf.st_size != expected_size:
-            return None
-        # O_NOFOLLOW prevents the last component from switching to a
-        # symlink between lstat() and open(). Parent ancestry is checked
-        # before *and* after the read; future writes need stronger openat2
-        # or a pinned directory FD and a fresh identity/rights check.
+        if not stat.S_ISREG(leaf.st_mode):
+            return blocked("owned_source_file_not_regular")
+        if leaf.st_size != expected_size:
+            return blocked("owned_source_size_mismatch")
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
         if not hasattr(os, "O_NOFOLLOW"):
-            return None
+            return blocked("owned_source_platform_unverified")
         fd = os.open(path, flags | os.O_NOFOLLOW)
         try:
             first = os.fstat(fd)
@@ -102,7 +111,7 @@ def attest_local_usb_source(
                     or first.st_size != expected_size
                     or first.st_dev != leaf.st_dev
                     or first.st_ino != leaf.st_ino):
-                return None
+                return blocked("owned_source_changed_during_read")
             h = sha256()
             count = 0
             while True:
@@ -111,7 +120,7 @@ def attest_local_usb_source(
                     break
                 count += len(chunk)
                 if count > expected_size or count > max_bytes:
-                    return None
+                    return blocked("owned_source_changed_during_read")
                 h.update(chunk)
             after = os.fstat(fd)
             if (count != expected_size
@@ -120,23 +129,47 @@ def attest_local_usb_source(
                     or first.st_size != after.st_size
                     or first.st_mtime_ns != after.st_mtime_ns
                     or first.st_ctime_ns != after.st_ctime_ns):
-                return None
+                return blocked("owned_source_changed_during_read")
         finally:
             os.close(fd)
         if not _safe_scope(identity_root, path):
-            return None
+            return blocked("owned_source_path_unverified")
         final = path.lstat()
         if (not stat.S_ISREG(final.st_mode)
                 or (final.st_dev, final.st_ino, final.st_size,
                     final.st_mtime_ns, final.st_ctime_ns)
                 != (first.st_dev, first.st_ino, first.st_size,
-                    first.st_mtime_ns, first.st_ctime_ns)
-                or h.hexdigest() != digest):
-            return None
-        return UsbLocalArtifact(identity_id=identity_id,
-                                sha256=digest, verified=True)
+                    first.st_mtime_ns, first.st_ctime_ns)):
+            return blocked("owned_source_changed_during_read")
+        if h.hexdigest() != digest:
+            return blocked("owned_source_sha_mismatch")
+        return UsbLocalSourceInspection(
+            UsbLocalArtifact(identity_id=identity_id,
+                             sha256=digest, verified=True),
+            "owned_source_sha_verified",
+        )
+    except FileNotFoundError:
+        return blocked("owned_source_file_missing")
     except (OSError, ValueError, OverflowError):
-        return None
+        return blocked("owned_source_io_unverified")
 
 
-__all__ = ["attest_local_usb_source"]
+def attest_local_usb_source(
+    *, identity_id: str, identity_root: Path,
+    artifact: Mapping[str, object], placement: Mapping[str, object],
+    max_bytes: int = _MAX_BOOK_BYTES,
+) -> UsbLocalArtifact | None:
+    """Backward-compatible, non-authorizing local SHA fact.
+
+    The caller receives no path, account entitlement, or diagnostic detail.
+    """
+    return inspect_local_usb_source(
+        identity_id=identity_id, identity_root=identity_root,
+        artifact=artifact, placement=placement, max_bytes=max_bytes,
+    ).local
+
+
+__all__ = [
+    "UsbLocalSourceInspection", "inspect_local_usb_source",
+    "attest_local_usb_source",
+]

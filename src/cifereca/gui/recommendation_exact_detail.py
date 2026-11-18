@@ -16,6 +16,7 @@ from ..models import SearchResult, ItemDetail
 from .exact_search_notice_navigation import loaded_notice_key
 from ..task_queue import TaskPriority
 from ..core.source_context import source_context_epoch
+from ..core.search_orchestration import capture_search_read_scope
 
 
 def _loaded_item(window: Any, coords: dict[str, str]) -> SearchResult | None:
@@ -118,6 +119,7 @@ def present_loaded_search_detail_in_place(
         identity = service.current_identity
         if getattr(identity, "identity_id", None) != identity_id:
             return False
+        request_scope = capture_search_read_scope(service, identity_id)
         generation = window._identity_context_generation
         search_generation = window._search_generation
         shell_token = getattr(window, "_shell_page_rebuild_token", None)
@@ -141,6 +143,8 @@ def present_loaded_search_detail_in_place(
         if (getattr(view, "_cifereca_exact_detail_request_token", None)
                 is not request_token
                 or getattr(window, "_closed", False)
+                or getattr(window, "service", None) is not service
+                or not request_scope.current(service)
                 or window._identity_context_generation != generation
                 or window._search_generation != search_generation
                 or getattr(window, "_shell_page_rebuild_token", None) is not shell_token
@@ -198,6 +202,7 @@ def present_loaded_search_detail_in_place(
             and getattr(window, "_shell_page_rebuild_token", None) is shell_token
             and getattr(service.current_identity, "identity_id", None) == identity_id
             and source_context_epoch(service) == source_epoch
+            and request_scope.current(service)
             and _view_mapped(view)
             and is_current() is True
         )
@@ -218,7 +223,9 @@ def present_loaded_search_detail_in_place(
             public_c_snapshot = known_recommendation_public_c_snapshot(
                 service.storage, known_snapshot, **coords,
             )
-        return service.holdings(item, query, force=False)
+        # Preserve explicit-click and exact-notice revocation; the actual
+        # provider dispatch must not infer its borrower from GTK navigation.
+        return service.holdings_for_scope(request_scope, item, query, force=False)
 
     def deliver(detail: object) -> None:
         # Exact source admission is necessary even if the context/lease is

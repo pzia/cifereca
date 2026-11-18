@@ -187,3 +187,89 @@ def test_invalid_typed_lender_policy_is_not_an_override(harness):
     assert result.options == ()
     assert result.rejection_reasons == ("capability_unverified",)
     assert session.calls == 0
+
+
+def test_explicit_reader_previews_and_revalidates_without_navigation(harness):
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    service, _account, session = harness
+
+    class Headless:
+        def __getattr__(self, name):
+            if name in {"current_identity", "_account_context_epoch"}:
+                raise AssertionError("navigation read")
+            return getattr(service, name)
+
+    core = Headless()
+    scope = capture_search_read_scope(core, "default")
+    row = _candidate()
+    captured = live.preview_borrow_for_scope(
+        core, reader_scope=scope, expected_edition_id="edition-1",
+        observations=(row,), now=1100,
+    )
+    assert captured.preview.status == "external"
+    assert not captured.preview.executable
+    service._account_context_epoch += 2
+    again = live.preview_borrow_for_scope(
+        core, reader_scope=scope, expected_edition_id="edition-1",
+        observations=(row,), now=1100,
+    )
+    assert captured.preview == again.preview
+    result = live.revalidate_borrow_for_scope(
+        core, captured=captured, selected_option_id=captured.preview.options[0].option_id,
+        expected_edition_id="edition-1", observations=(row,), now=1100,
+    )
+    assert result.status == "current" and not result.executable
+    assert session.calls == 0
+
+
+@pytest.mark.parametrize("change", ["source", "reader", "core", "session"])
+def test_explicit_lender_read_scope_revoked_without_provider_io(harness, change):
+    from dataclasses import replace
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    service, _account, session = harness
+    scope = capture_search_read_scope(service, "default")
+    row = _candidate()
+    captured = live.preview_borrow_for_scope(
+        service, reader_scope=scope, expected_edition_id="edition-1",
+        observations=(row,), now=1100,
+    )
+    core = service
+    if change == "source":
+        service._source_context_epoch += 1
+    elif change == "reader":
+        old = service.identity_by_id("default")
+        service.identities = [replace(i) if i is old else i for i in service.identities]
+    elif change == "session":
+        session._epoch += 1
+    else:
+        core = object()
+    result = live.revalidate_borrow_for_scope(
+        core, captured=captured, selected_option_id=captured.preview.options[0].option_id,
+        expected_edition_id="edition-1", observations=(row,), now=1100,
+    )
+    assert result.status == "revoked" and not result.executable
+    assert session.calls == 0
+
+
+def test_headless_lender_service_facades_bind_original_reader(harness):
+    service, _account, session = harness
+    row = _candidate()
+    service.select_identity("alex")
+    captured = service.preview_borrow_for_identity_scope(
+        identity_id="default", expected_edition_id="edition-1",
+        observations=(row,), now=1100,
+    )
+    assert captured.preview.requesting_identity_id == "default"
+    assert captured.preview.status == "external"
+    kwargs = dict(captured=captured, selected_option_id=captured.preview.options[0].option_id,
+                  expected_edition_id="edition-1", observations=(row,), now=1100)
+    assert service.revalidate_scoped_borrow_lender_choice(**kwargs).status == "current"
+    service._source_context_epoch += 1
+    assert service.revalidate_scoped_borrow_lender_choice(**kwargs).status == "revoked"
+    assert service.current_identity.identity_id == "alex"
+    assert session.calls == 0
+    with pytest.raises(ValueError, match="search_identity_unknown"):
+        service.preview_borrow_for_identity_scope(
+            identity_id="missing", expected_edition_id="edition-1",
+            observations=(row,), now=1100,
+        )

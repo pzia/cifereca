@@ -129,12 +129,12 @@ def test_followup_after_cold_restart_is_available_without_reborrow(tmp_path):
 @pytest.mark.parametrize("change", [
     "identity", "account_generation", "edition", "source_epoch", "credential",
 ])
-def test_queued_followup_is_revoked_on_changed_context(tmp_path, change):
+def test_queued_followup_distinguishes_navigation_from_source_revocation(tmp_path, change):
     service, session, account, item, state, op = _pending(tmp_path)
     window, errors, messages, refreshes = view(service, session, account, item)
     window.runner = ReadOnlyTasks()
     calls = []
-    session.rights_observation_snapshot = lambda _a: calls.append("GET")
+    session.rights_observation_snapshot = lambda a: calls.append(a) or _snapshot(account, item)
     try:
         _run(window, item)
         assert len(window.runner.tasks) == 1
@@ -149,8 +149,10 @@ def test_queued_followup_is_revoked_on_changed_context(tmp_path, change):
         else:
             account.credential_id = "other"
         outcome = window.runner.complete()
-        assert outcome["status"] == "blocked"
-        assert calls == [] and messages == refreshes == errors == []
+        navigation_only = change in {"identity", "account_generation"}
+        assert outcome["status"] == ("observed_current_loan" if navigation_only else "blocked")
+        assert calls == ([account] if navigation_only else [])
+        assert messages == refreshes == errors == []
         assert state["mutations"] == 1
     finally:
         service.close()
@@ -219,7 +221,9 @@ def test_search_detail_routes_only_uncertain_paris_to_nonmutating_action():
     method = (Path(__file__).resolve().parents[1]
               / "src/cifereca/gui/manual_borrow_controller.py").read_text(encoding="utf-8")
     body = method.split("def present_manual_borrow_verification(", 1)[1]
-    assert "verify_manual_borrow_followup(" in body
+    assert "prepare_borrow_followup_for_scope(" in body
+    assert "return admitted()" in body
+    assert "verify_manual_borrow_followup(" not in body
     assert "borrow_paris_manual(" not in body
     assert "borrow_explicit_with_claim(" not in body
 

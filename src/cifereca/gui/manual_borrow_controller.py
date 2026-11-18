@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from copy import copy
 from ..models import Account, SearchResult
+from ..core.manual_borrow_contract import prepare_confirmed_manual_borrow
+from ..core.borrow_later_verification import prepare_borrow_followup_for_scope
 
 
 def _capture_borrow_ui_scope(window, item, account, session, *, provider_id):
@@ -83,9 +85,9 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
     """
     # The executor and readiness check come exclusively from the bound Core
     # service, not injected by a supplier-specific GTK callback.
-    available = getattr(window.service, "can_borrow_manual", None)
-    dispatch = getattr(window.service, "borrow_manual", None)
-    if not callable(available) or not callable(dispatch):
+    service = window.service
+    available = getattr(service, "can_borrow_manual", None)
+    if not callable(available):
         return
     if (getattr(window, "_closed", False)
             or type(item) is not SearchResult
@@ -112,8 +114,13 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
     )
     if scope is None:
         return
-    identity_id, core_epoch, current = scope
+    identity_id, _core_epoch, current = scope
     selected = copy(item)
+    notice_fields = ("id", "record_id", "docbase", "medium", "source_provider",
+                     "source_credential", "source_collection", "title", "source_account_id")
+    # Do not consult selected widgets after admission. Keep the original
+    # row's coordinates as a separate consent guard against mutation.
+    notice_scope = tuple(getattr(item, field, None) for field in notice_fields)
 
     # The click is the only consent gesture; Core owns durable one-shot guard.
     if getattr(window, "_manual_borrow_pending", None) is not None:
@@ -134,15 +141,23 @@ def _present_manual_borrow(window, item, control, *, TaskPriority,
             )
             return
 
-        def work():
-            if not current() or not available(selected):
-                return {"status": "blocked", "reason_code": "borrow_scope_changed"}
-            return dispatch(
-                selected, expected_identity_id=identity_id,
-                confirmed=True,
-                expected_context_epoch=core_epoch,
-                expected_account=account,
+        admitted = prepare_confirmed_manual_borrow(
+            service, selected, identity_id=identity_id,
+            account_id=account.unique_id, confirmed=True,
+        )
+        if not callable(admitted) or not current():
+            release_pending()
+            window.show_error(
+                "La demande n’est plus admissible pour ce compte.",
+                f"Emprunt {label}",
             )
+            return
+
+        def work():
+            if (getattr(window, "_closed", False) or window.service is not service
+                    or tuple(getattr(item, field, None) for field in notice_fields) != notice_scope):
+                return {"status": "blocked", "reason_code": "borrow_scope_changed"}
+            return admitted()
 
         def done(result):
             release_pending()
@@ -217,8 +232,8 @@ def present_manual_borrow_verification(window, item, control, *, TaskPriority):
     """Explicit read-only follow-up: no borrow dispatch or claim mutation.
 
     The controller never sees or displays the persisted operation_id. It
-    preserves the same exact notice/account/UI generation constraints as the
-    original borrower action, including across queued GTK callbacks. The
+    pins the exact notice/account/checkpoint before enqueue. UI generations
+    filter publication only; actual source and checkpoint revocation stop I/O. The
     provider-specific primary-account convention is verified by Core readiness
     and by the durable claim, not duplicated in this generic GTK boundary.
     """
@@ -246,8 +261,12 @@ def present_manual_borrow_verification(window, item, control, *, TaskPriority):
     )
     if scope is None:
         return
-    _identity_id, _core_epoch, scope_current = scope
+    identity_id, _core_epoch, scope_current = scope
     selected = copy(item)
+    service = window.service
+    notice_fields = ("id", "record_id", "docbase", "medium", "source_provider",
+                     "source_credential", "source_collection", "title", "source_account_id")
+    notice_scope = tuple(getattr(item, field, None) for field in notice_fields)
 
     def current():
         try:
@@ -258,6 +277,11 @@ def present_manual_borrow_verification(window, item, control, *, TaskPriority):
 
     if not current():
         return
+    admitted = prepare_borrow_followup_for_scope(
+        service, selected, identity_id=identity_id, account_id=account.unique_id,
+    )
+    if not callable(admitted) or not current():
+        return
     token = object()
     window._borrow_followup_pending = token
 
@@ -266,9 +290,10 @@ def present_manual_borrow_verification(window, item, control, *, TaskPriority):
             window._borrow_followup_pending = None
 
     def work():
-        if not current():
+        if (getattr(window, "_closed", False) or window.service is not service
+                or tuple(getattr(item, field, None) for field in notice_fields) != notice_scope):
             return {"status": "blocked", "retry_borrow": False, "mutated": False}
-        return window.service.verify_manual_borrow_followup(selected)
+        return admitted()
 
     def done(result):
         release()

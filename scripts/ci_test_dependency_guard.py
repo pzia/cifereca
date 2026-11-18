@@ -198,7 +198,7 @@ def has_test_consumers(
                     )
                     if name not in dynamic_loader_aliases:
                         continue
-                    for arg in node.args[:2]:
+                    for arg in [*node.args[:2], *(kw.value for kw in node.keywords)]:
                         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                             if _matches_changed_module(arg.value, changed_modules):
                                 return True

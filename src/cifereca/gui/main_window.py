@@ -2004,9 +2004,8 @@ class MainWindow(Adw.ApplicationWindow):
                 return source_context_epoch(self.service) == source_epoch
             except ValueError:
                 return False
-        # Core captures an exact private owner/session/SQLite source lease at
-        # this click. No remote GET, acquisition or new permission occurs here.
-        # For ordinary public results the existing legacy submit path remains.
+        # Core captures the exact source lease at this explicit click.
+        # No remote GET or durable right is created before enqueue.
         try:
             prepare = getattr(service, "capture_admitted_private_search_offer", None)
             admitted = prepare(item) if callable(prepare) else None
@@ -2016,6 +2015,27 @@ class MainWindow(Adw.ApplicationWindow):
                 getattr(service, "obtain_admitted_private_search_offer", None)
                 if admitted is not None else None
             )
+            if admitted is None:
+                prepare_legacy = getattr(service, "capture_confirmed_legacy_search_offer", None)
+                if callable(prepare_legacy):
+                    # The old direct-download ABI has no borrower parameter.
+                    # Offer no implicit account choice or cross-profile fallback.
+                    accounts = [
+                        account for account in service.accounts_for_identity(identity_id)
+                        if (account.identity_id, account.provider_id, account.credential_id)
+                        == (identity_id, item.source_provider, item.source_credential)
+                    ]
+                    observed = item.source_account_id
+                    if (len(accounts) != 1
+                            or (observed is not None and observed != accounts[0].unique_id)):
+                        raise ValueError("legacy_direct_account_unproven")
+                    admitted = prepare_legacy(
+                        item, identity_id=identity_id, account_id=accounts[0].unique_id,
+                        confirmed=True,
+                    )
+                    if admitted is None or not current():
+                        return
+                    execute = getattr(service, "obtain_admitted_legacy_search_offer", None)
             if admitted is not None and not callable(execute):
                 raise ValueError("selected_search_executor_unavailable")
         except Exception:
@@ -2027,7 +2047,7 @@ class MainWindow(Adw.ApplicationWindow):
 
         def work():
             if admitted is not None:
-                # An admitted private task cannot be retargeted to the
+                # An admitted task cannot be retargeted to the
                 # currently displayed profile even after A→B→A navigation.
                 # Core alone checks source_epoch and exact persisted owner
                 # before provider I/O and again before publication.

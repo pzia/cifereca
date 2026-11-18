@@ -11,7 +11,7 @@ def test_direct_download_hint_validates_only_origin_record_shape():
     fn = next(
         node for node in ast.walk(ast.parse(src))
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name == "can_direct_download"
+        and node.name == "_can_direct_download_read"
     )
     modules = [
         node.module for node in ast.walk(fn)

@@ -194,3 +194,51 @@ def test_confirmed_removal_count_ignores_other_pending_upload_only_if_scoped(
         "completed" if single else "pending",
         removed=1, pending=0 if single else 1, observed=True,
     )
+
+
+def test_revoked_selection_after_removal_refusal_skips_durable_observation(
+    copy, tmp_path, monkeypatch,
+):
+    """An inode-review cancellation cannot persist a later USB presence."""
+    from cifereca.core.device_usb_removal_review import UsbRemovalConsent
+    from cifereca.core.device_usb_removal_execute import UsbRemovalExecution
+
+    args, _, _, _ = copy
+    original = args["consent"]
+    consent = UsbRemovalConsent(
+        original.identity_id, original.device_id,
+        original.usb_fingerprint, original.artifact_id,
+        original.sha256, original.target_relative_path,
+        "b" * 32, "c" * 32, original.confirmed_at, original.expires_at,
+    )
+    data = _arguments(tmp_path, consent, None)
+    data["rights"] = {}
+    data["artifact_id"] = consent.artifact_id
+    state = {"revoked": False, "checks": 0}
+
+    def check_selected():
+        state["checks"] += 1
+        if state["revoked"]:
+            raise RuntimeError("reader_selection_revoked")
+
+    def cancelled_remove(**kwargs):
+        assert kwargs["check_cancelled"] is check_selected
+        state["revoked"] = True
+        return UsbRemovalExecution("blocked", "usb_removal_scope_changed")
+
+    data["check_cancelled"] = check_selected
+    monkeypatch.setattr(
+        engine, "inspect_usb_dry_run", lambda **_: UsbDryRun(
+            consent.identity_id, consent.device_id, "scanned", True, 1,
+            (_row(consent.artifact_id, "remove_candidate"),),
+        ),
+    )
+    monkeypatch.setattr(engine, "SqliteUsbOperationJournal", lambda _: object())
+    monkeypatch.setattr(engine, "execute_usb_removal", cancelled_remove)
+    monkeypatch.setattr(
+        engine, "record_verified_usb_observation",
+        lambda **_: pytest.fail("cancelled UI must never persist presence"),
+    )
+    with pytest.raises(RuntimeError, match="reader_selection_revoked"):
+        engine.synchronize_usb_reader(**data)
+    assert state == {"revoked": True, "checks": 2}

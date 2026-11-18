@@ -191,7 +191,7 @@ def _loan_matches_scope(loan: object, scope: LoanInventoryScope) -> bool:
         return False
     if not _valid_token(loan.id):
         return False
-    if loan.medium not in ("digital", "physical", "unknown"):
+    if type(loan.medium) is not str or loan.medium not in ("digital", "physical", "unknown"):
         return False
     account = loan.source_account_id
     # Prefer the exact descriptor-attested existing-borrower convention.
@@ -200,9 +200,9 @@ def _loan_matches_scope(loan: object, scope: LoanInventoryScope) -> bool:
     if scope.primary_account_alias is not None:
         allowed_accounts.add(scope.primary_account_alias)
     return (
-        loan.identity_id == scope.identity_id
-        and loan.source_provider == scope.provider_id
-        and loan.source_credential == scope.credential_id
+        type(loan.identity_id) is str and loan.identity_id == scope.identity_id
+        and type(loan.source_provider) is str and loan.source_provider == scope.provider_id
+        and type(loan.source_credential) is str and loan.source_credential == scope.credential_id
         and type(account) is str and account in allowed_accounts
     )
 
@@ -224,13 +224,15 @@ def legacy_loan_inventory(
 def read_loan_inventory(
     session: object, account: Account, *,
     descriptor: ProviderDescriptor | None = None,
+    scope_current=None,
 ) -> LoanInventorySnapshot:
     """Explicit opt-in I/O read: no action, synchronization or mutation.
 
     New providers may implement loan_inventory_snapshot(account). All others
     use loans(account) with unknown coverage. Rejections never echo provider
-    responses or exceptions. This API is intentionally not wired to rights
-    reconciliation until #2975 / #3122 prove its consumer invariants.
+    responses or exceptions. Core callers can supply an additional inert
+    lease guard checked before accessing provider attributes and after I/O.
+    Only a typed complete branch can furnish negative inventory evidence.
     """
     scope = LoanInventoryScope.for_account(account, descriptor=descriptor)
 
@@ -240,16 +242,23 @@ def read_loan_inventory(
         # A provider may set _closed while leaving connected=True stale.
         # Static lookup refuses a hostile closure property without running
         # its getter or performing an additional provider read.
-        closed = getattr_static(session, "_closed", None)
-        if closed is not None and closed is not False:
+        try:
+            if scope_current is not None and (
+                    not callable(scope_current) or scope_current() is not True):
+                return False
+            closed = getattr_static(session, "_closed", None)
+            if closed is not None and closed is not False:
+                return False
+            return (
+                LoanInventoryScope.for_account(account, descriptor=descriptor) == scope
+                and getattr_static(session, "connected", None) is True
+                and getattr_static(session, "provider_id", None) == scope.provider_id
+                and getattr_static(session, "credential_id", None) == scope.credential_id
+                and getattr(getattr(session, "capabilities", None), "loans", None) is True
+                and (scope_current is None or scope_current() is True)
+            )
+        except Exception:
             return False
-        return (
-            LoanInventoryScope.for_account(account, descriptor=descriptor) == scope
-            and getattr(session, "connected", None) is True
-            and getattr(session, "provider_id", None) == scope.provider_id
-            and getattr(session, "credential_id", None) == scope.credential_id
-            and getattr(getattr(session, "capabilities", None), "loans", None) is True
-        )
 
     if not still_bound():
         return LoanInventorySnapshot(
@@ -270,6 +279,10 @@ def read_loan_inventory(
             reader = object.__getattribute__(session, "loan_inventory_snapshot")
             if not callable(reader):
                 raise ValueError("invalid_loan_inventory_reader")
+            if not still_bound():
+                return LoanInventorySnapshot(
+                    scope=scope, loans=(), status="failed", reason_code="scope_changed",
+                )
             result = reader(account)
             if not still_bound():
                 return LoanInventorySnapshot(
@@ -291,7 +304,15 @@ def read_loan_inventory(
                 reason_code=result.reason_code,
             )
         reader_kind = "legacy"
-        rows = session.loans(account)
+        raw_legacy = getattr_static(session, "loans", None)
+        if not callable(raw_legacy):
+            raise ValueError("invalid_legacy_loan_reader")
+        legacy_reader = object.__getattribute__(session, "loans")
+        if not callable(legacy_reader) or not still_bound():
+            return LoanInventorySnapshot(
+                scope=scope, loans=(), status="failed", reason_code="scope_changed",
+            )
+        rows = legacy_reader(account)
         if not still_bound():
             return LoanInventorySnapshot(
                 scope=scope, loans=(), status="failed", reason_code="scope_changed",

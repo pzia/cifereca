@@ -600,3 +600,85 @@ def test_admitted_stage_refuses_disabled_persisted_connection(connected_core):
             loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
         )
     assert not downloaded
+
+
+def test_confirmed_headless_loan_stage_survives_navigation_once(connected_core):
+    from cifereca.core.loan_action_scope import capture_confirmed_loan_stage
+    service, session, account, loan, state, downloaded = connected_core
+    service.select_identity("alex")
+    lease = capture_confirmed_loan_stage(
+        service, loan, identity_id="default", account_id=account.unique_id,
+        confirmed=True,
+    )
+    assert lease is not None and not downloaded
+    service._account_context_epoch += 2
+    result = service.stage_explicit_loan_acsm(
+        loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
+    )
+    assert result["status"] == "candidate_acsm"
+    assert len(downloaded) == 1
+    assert not service.storage.acquisitions()
+    with pytest.raises(ProviderConfigurationError, match="explicit_confirmation_required"):
+        service.stage_explicit_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
+        )
+    assert len(downloaded) == 1
+
+
+@pytest.mark.parametrize("change", ["reader", "source", "session", "account"])
+def test_confirmed_headless_stage_revocation_precedes_get(connected_core, change):
+    from cifereca.core.loan_action_scope import capture_confirmed_loan_stage
+    service, session, account, loan, state, downloaded = connected_core
+    lease = capture_confirmed_loan_stage(
+        service, loan, identity_id="default", account_id=account.unique_id,
+        confirmed=True,
+    )
+    assert lease is not None
+    if change == "reader":
+        old = service.identity_by_id("default")
+        service.identities = [replace(i) if i is old else i for i in service.identities]
+    elif change == "source":
+        service._source_context_epoch += 1
+    elif change == "session":
+        session.connected = False
+    else:
+        service.accounts = [replace(account)]
+    with pytest.raises(ProviderConfigurationError, match="loan_scope_unproven"):
+        service.stage_explicit_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
+        )
+    assert not downloaded
+
+
+@pytest.mark.parametrize("confirmed,owner,account_id", [
+    (False, "default", "exact"), (1, "default", "exact"),
+    (True, "alex", "exact"), (True, "default", "other"),
+])
+def test_headless_stage_requires_explicit_consent_and_exact_account(
+    connected_core, confirmed, owner, account_id,
+):
+    from cifereca.core.loan_action_scope import capture_confirmed_loan_stage
+    service, session, account, loan, state, downloaded = connected_core
+    assert capture_confirmed_loan_stage(
+        service, loan, identity_id=owner,
+        account_id=account.unique_id if account_id == "exact" else account_id,
+        confirmed=confirmed,
+    ) is None
+    assert not downloaded
+
+
+def test_headless_stage_read_lease_is_not_confirmation(connected_core):
+    from cifereca.core.loan_action_scope import capture_loan_action_scope
+    from cifereca.core.search_orchestration import capture_search_read_scope
+    service, session, account, loan, state, downloaded = connected_core
+    scope = capture_search_read_scope(service, "default")
+    lease = capture_loan_action_scope(
+        service, loan, account, session, expected_identity_id="default",
+        admitted_source_epoch=scope.source_epoch, reader_scope=scope,
+    )
+    assert lease is not None
+    with pytest.raises(ProviderConfigurationError, match="explicit_confirmation_required"):
+        service.stage_explicit_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
+        )
+    assert not downloaded

@@ -213,8 +213,10 @@ def invoke_recommendation(db, row, *, fail=False, delayed=False, monkeypatch=Non
         storage=storage, current_identity=NS(identity_id="alice"),
         _source_context_epoch=1,
         _session_for_source=lambda provider, credential: session,
-        holdings=holdings,
+        holdings_for_scope=holdings,
     )
+    registered = service.current_identity
+    service.identity_by_id = lambda key: registered if key == "alice" else None
     view = NS(
         widget=NS(get_mapped=lambda: True),
         show_existing_search_detail=lambda *a, **k: presentations.append(("ok", a, k)),
