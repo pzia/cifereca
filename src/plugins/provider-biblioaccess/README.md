@@ -906,3 +906,25 @@ avec sa couverture et sa fraîcheur.
 La présente tranche réutilise le moteur UI de comptes existant ; elle ne
 prétend pas clôturer #5540, qui exige également l'uniformisation des autres
 types de comptes et une recette GTK plus large.
+
+### Contrat canonique de livraison (#3197)
+
+Le même lecteur authentifié `MyLoans` expose désormais les ressources
+téléchargeables via `downloadable_resource_snapshot`, puis une offre
+exactement sélectionnée via `downloadable_selected_offer_snapshot`.
+Les couples ProductRef/Book sont les identifiants réellement observés ;
+les doublons ambigus sont exclus. Couverture volontairement partielle :
+aucune disparition de ligne ne vaut retrait de droit.
+L'identifiant d'offre est stable et borné à la portée exacte, sans URL signée.
+
+`downloadable_selected_delivery_candidate_guarded` exige un bail Core
+révocable : nouvelle lecture MyLoans, contrôle avant le GET signé, chaque
+redirection et fragment, et avant/après écriture du candidat ACSM.
+Le candidat n'autorise ni placement, ni exécution ADEPT, ni publication
+canonique. Le Core reste propriétaire de ces étapes. Le chemin
+`download_digital` public historique est conservé pendant migration.
+Aucune permission CAS n'est migrée automatiquement dans ce lot :
+l'opt-in de compte historique et la politique générique de Sync doivent
+être rapprochés dans le Core avant retrait de l'acquisition automatique
+historique ; pas de changement de comportement par simple disponibilité
+du contrat.
