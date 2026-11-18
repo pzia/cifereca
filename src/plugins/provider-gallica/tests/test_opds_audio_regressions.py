@@ -455,3 +455,51 @@ def test_public_search_opds_refusal_never_authorizes_core_fallback(tmp_path, kin
         assert len(calls) == 1
     finally:
         session.close()
+
+
+def test_audio_recovery_is_partial_in_public_search(tmp_path):
+    bad = SRU_AUDIO.replace(b"</dc:title>", b"</dc:creator>")
+    # Keep one valid and one malformed record inside the actual SRU wrapper.
+    record = SRU_AUDIO.split(b"<srw:records>", 1)[1].split(b"</srw:records>", 1)[0]
+    body = bad.replace(b"</srw:records>", record + b"</srw:records>")
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, content=body)
+    session = _session(tmp_path, handler, include_audio=True)
+    try:
+        rows = session.search("audio", content_types=("mp3",))
+        assert len(rows) == 1
+        assert session.last_search_warnings == [
+            "partial_results : Gallica : récupération partielle du XML audio"
+        ]
+        assert len(calls) == 1
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("kind", ("doctype", "late_declaration", "depth", "foreign_root", "foreign_namespace"))
+def test_unsafe_audio_catalogue_is_not_recovered_or_an_outage(tmp_path, kind):
+    if kind == "doctype":
+        body = SRU_AUDIO.decode().replace(
+            "<srw:searchRetrieveResponse ", '<!DOCTYPE x [<!ENTITY x "PRIVATE">]><srw:searchRetrieveResponse ', 1
+        ).encode()
+    elif kind == "late_declaration":
+        body = SRU_AUDIO.replace(b"</dc:title>", b"</dc:creator><!DOCTYPE x>")
+    elif kind == "depth":
+        body = SRU_AUDIO.replace(b"<dc:title>", b"<x>" * 100 + b"<dc:title>").replace(
+            b"</dc:title>", b"</dc:title>" + b"</x>" * 100)
+    elif kind == "foreign_root":
+        body = SRU_AUDIO.replace(b"srw:searchRetrieveResponse", b"srw:other")
+    else:
+        body = SRU_AUDIO.replace(b"http://www.loc.gov/zing/srw/", b"https://outside.invalid/")
+    session = _session(tmp_path, lambda request: httpx.Response(200, content=body), include_audio=True)
+    try:
+        with pytest.raises(ProviderError) as caught:
+            session.search("audio", content_types=("mp3",))
+        assert getattr(caught.value, "code", None) is None
+        assert caught.value.retryable is False
+        assert caught.value.__cause__ is None
+        assert "PRIVATE" not in str(caught.value)
+    finally:
+        session.close()
