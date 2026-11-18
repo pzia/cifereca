@@ -106,6 +106,7 @@ def show_public_loan_c(
     if not callable(show):
         return False
     show(presentation, document=receipt.document)
+    request_borrower_public_web_action(host, panel, loan, receipt)
     return True
 
 
@@ -119,7 +120,66 @@ def show_public_history_c(host: Any, source: HistoryItem, presentation: HistoryI
     if not callable(show):
         return False
     show(presentation, document=receipt.document)
+    request_borrower_public_web_action(host, panel, source, receipt)
     return True
+
+
+def borrower_public_web_selection_check(host, panel, source, receipt):
+    """Capture the actual selected occurrence and DetailPanel render.
+
+    DetailPanel replaces its action list at every full render, revoking
+    both old buttons and requests that have not yet created a button.
+    """
+    if type(source) is Loan:
+        page_name, route, revision_name = "loan_page", "loans", "_loan_cover_decision_revision"
+        exact = exact_loan_public_c
+    elif type(source) is HistoryItem:
+        page_name, route, revision_name = "history_page", "history", "_history_cover_revision"
+        exact = exact_history_public_c
+    else:
+        return lambda: False
+    service = getattr(host, "service", None)
+    revision = getattr(host, revision_name, None)
+    page = getattr(host, page_name, None)
+    selection = getattr(page, "selection", None)
+    selected = getattr(selection, "get_selected_item", None)
+    row = selected() if callable(selected) else None
+    actions = getattr(panel, "_action_buttons", None)
+
+    def current():
+        stack = getattr(host, "view_stack", None)
+        visible = getattr(stack, "get_visible_child_name", None)
+        return (
+            not getattr(host, "_closed", False)
+            and type(receipt) is VerifiedBorrowerPublicC
+            and receipt.source_item is source
+            and getattr(host, "service", None) is service
+            and type(revision) is int
+            and getattr(host, revision_name, None) == revision
+            and getattr(host, page_name, None) is page
+            and getattr(page, "detail", None) is panel
+            and getattr(page, "selection", None) is selection
+            and type(actions) is list
+            and getattr(panel, "_action_buttons", None) is actions
+            and callable(visible) and visible() == route
+            and row is not None and callable(selected) and selected() is row
+            and exact(host, source) is receipt
+            and admit_borrower_public_c_cell(host, row, receipt.document)
+        )
+
+    return current
+
+
+def request_borrower_public_web_action(host, panel, source, receipt):
+    """Same public C action, never a private borrowing/renewal permission."""
+    current = borrower_public_web_selection_check(host, panel, source, receipt)
+    if not current():
+        return False
+    from .notice_c_web_action_controller import request_public_web_actions
+    return request_public_web_actions(
+        host, panel, receipt.document, expected_epoch=receipt.epoch,
+        current=current,
+    )
 
 
 def bind_borrower_public_c_detail(
