@@ -8,7 +8,7 @@ import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 from cifereca.plugin_api import (
     CatalogueXMLParseError, parse_bounded_catalogue_xml,
-    MAX_XML_BYTES, MAX_XML_DEPTH, MAX_XML_ELEMENTS,
+    MAX_XML_BYTES, MAX_XML_DEPTH, MAX_XML_ELEMENTS, catalogue_next,
 )
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession, TemporaryUnavailable, UnsupportedOperation, Conflict, Cancelled
 
@@ -817,22 +817,18 @@ def _opds_links(node,base):
 
 
 def _opds_find_link(node,base,rel):
-    # A *missing* rel=next ends a page set; a declared but unverified
-    # rel=next does not prove that the following page has zero books.
-    # Fail closed on multiple conflicting next links or invalid origins.
-    matches=[]
-    for r,mime,raw,_checked in _opds_links(node,base):
-        if r != rel:
-            continue
-        # A backslash is not a valid route separator in the attested
-        # COPS Atom next-link contract; URL parsers disagree on its meaning.
-        checked=_safe_opds_link(base,raw,'feed') if '\\' not in raw else None
-        if not checked:
-            raise ProviderError('Ebooks libres et gratuits : invalid_opds_pagination')
-        matches.append((checked,mime,raw))
-        if len({value[0] for value in matches}) > 1:
-            raise ProviderError('Ebooks libres et gratuits : invalid_opds_pagination')
-    return matches[0] if matches else (None,None,None)
+    # Preserve the first declaration's metadata for identical destinations.
+    # Missing, rejected and conflicting next links are distinct states.
+    declared=[(mime,raw) for r,mime,raw,_ in _opds_links(node,base) if r==rel]
+    def resolve(raw):
+        return _safe_opds_link(base,raw,'feed') if '\\' not in raw else None
+    decision=catalogue_next((raw for _,raw in declared),resolve=resolve)
+    if decision.state=='absent':
+        return None,None,None
+    if decision.state!='valid':
+        raise ProviderError('Ebooks libres et gratuits : invalid_opds_pagination')
+    mime,raw=declared[0]
+    return decision.url,mime,raw
 
 
 def _opds_template(href,query):
@@ -1228,6 +1224,14 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
         seen.add(url)
         feed,current=_opds_load_acquisition(session,url,field,needle)
         if index==page:
+            # Keep verified books on this page, but do not certify the end
+            # of the collection if a declared next destination is broken.
+            try:
+                _opds_find_link(feed,current,'next')
+            except ProviderError:
+                session.last_search_warnings.append(
+                    'partial_results : pagination OPDS non vérifiée'
+                )
             rows=_opds_items(session,feed,current)
             if field=='title':
                 rows=[row for row in rows if _fold(needle) in _fold(row.title)]

@@ -66,3 +66,35 @@ def test_page_one_request_refuses_broken_link_without_network(monkeypatch):
         eg._opds_search(session, "livre", page=1)
     assert calls == ["root", "page0"]
     assert session.last_search_warnings == []
+
+
+@pytest.mark.parametrize("links", [
+    ['<link rel="next" href="https://evil.test/private"/>'],
+    ['<link rel="next" href="/index.php/feed?page=2"/>',
+     '<link rel="next" href="/index.php/feed?page=3"/>'],
+    ['<link rel="next" href="/index.php/feed?page=2"/>',
+     '<link rel="next" href=""/>'],
+])
+def test_current_page_keeps_verified_rows_with_partial_warning(monkeypatch, links):
+    calls = []
+    page = xml(*links)
+    verified = object()
+    monkeypatch.setattr(eg, "_opds_fetch",
+                        lambda *_: (calls.append("root") or page, FEED))
+    monkeypatch.setattr(eg, "_opds_search_url", lambda *_: FEED + "/search?q=livre")
+    monkeypatch.setattr(eg, "_opds_load_acquisition",
+                        lambda *_: (calls.append("page0") or page, FEED))
+    monkeypatch.setattr(eg, "_opds_items", lambda *_: [verified])
+    session = SimpleNamespace(connected=True,opds_feed_url=FEED,page_size=50,
+                              last_search_warnings=[])
+    assert eg._opds_search(session, "livre", page=0) == [verified]
+    assert calls == ["root", "page0"]
+    assert session.last_search_warnings == ["partial_results : pagination OPDS non vérifiée"]
+
+
+def test_duplicate_destinations_preserve_first_link_metadata():
+    page = xml('<link rel="next" href="/index.php/feed?page=2" type="application/atom+xml"/>',
+               '<link rel="next" href="https://opds2.ebooksgratuits.org/index.php/feed?page=2"/>')
+    assert eg._opds_find_link(page, FEED, "next") == (
+        FEED + "?page=2", "application/atom+xml", "/index.php/feed?page=2"
+    )
