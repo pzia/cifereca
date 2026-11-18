@@ -2,6 +2,7 @@ from __future__ import annotations
 import html
 from cifereca_gallica_audio import download_bundle
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
 import re
 from unicodedata import category
 from pathlib import Path
@@ -42,6 +43,37 @@ EBOOK_FORMAT_CQL = '((dc.formatspecific all "epub") or (dc.formatspecific all "p
 
 def _cql_literal(value: str) -> str:
     return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def _publication_date(value: str | None) -> str | None:
+    """Recognize a bibliographic ISO date, not an Atom entry timestamp."""
+    if type(value) is not str:
+        return None
+    if re.fullmatch(r"[0-9]{4}", value):
+        return value if 1 <= int(value) <= 9999 else None
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}", value):
+        year, month = map(int, value.split("-"))
+        return value if 1 <= year <= 9999 and 1 <= month <= 12 else None
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            return None
+        return value
+    return None
+
+
+def _opds_publication(entry: ET.Element) -> tuple[str | None, str | None]:
+    # issued is the explicit publication assertion. Generic DC dates
+    # belong to an unspecified event: they do not establish issuance.
+    # Multiple contradictory or malformed assertions stay unknown.
+    nodes = entry.findall(f"{{{DCTERMS}}}issued")
+    if not nodes:
+        return None, None
+    values = {_publication_date(GallicaSession._text(node)) for node in nodes}
+    if None in values or len(values) != 1:
+        return None, None
+    return next(iter(values)), "opds.dcterms.issued"
 
 
 def _public_url(value: str) -> str:
@@ -296,7 +328,7 @@ class GallicaSession(ProviderSession):
 
             friendly = friendly or f"https://gallica.bnf.fr/{ark}"
             publisher = self._first_text(entry, (f"{{{DCTERMS}}}publisher", f"{{{DC}}}publisher"))
-            published = self._first_text(entry, (f"{{{DCTERMS}}}issued", f"{{{DCTERMS}}}date", f"{{{DC}}}date", f"{{{ATOM}}}updated"))
+            published, date_evidence = _opds_publication(entry)
             content_type, fmt = self._content_from_acquisition(acquisition_type, acquisition)
             stable_id = ark.split("/")[-1]
             rows.append(
@@ -322,6 +354,7 @@ class GallicaSession(ProviderSession):
                     downloadable=True,
                     metadata={
                         "format_evidence": "opds-acquisition", "mime_type": acquisition_type,
+                        **({"publication_date_evidence": date_evidence} if date_evidence else {}),
                         "rights": self._first_text(entry, (f"{{{DCTERMS}}}rights", f"{{{DC}}}rights")),
                         "languages": self._normalize_languages([self._text(n) for n in entry.findall(f"{{{DCTERMS}}}language") + entry.findall(f"{{{DC}}}language") if self._text(n)]),
                         "subjects": [n.attrib.get("label") or n.attrib.get("term") for n in entry.findall(f"{{{ATOM}}}category")],
