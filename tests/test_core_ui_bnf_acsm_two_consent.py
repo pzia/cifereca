@@ -395,3 +395,59 @@ def test_denied_core_source_lease_does_not_enqueue_or_get():
     assert actions == []
     w.service.stage_explicit_loan_acsm.assert_not_called()
     w.show_error.assert_called_once()
+
+
+def test_source_revocation_invalidates_both_unanswered_dialogs():
+    for phase in ("get", "import"):
+        w, _ = window()
+        w.service._source_context_epoch = 5
+        start(w)
+        if phase == "import":
+            Dialog.shown[0].respond("get")
+            assert len(Dialog.shown) == 2
+        # Source disconnected and rebound under the same visible identity;
+        # no GUI generation or account coordinate changed.
+        w.service._source_context_epoch += 2
+        Dialog.shown[-1].respond(phase)
+        assert w.service.import_bnf_loan_acsm.call_count == 0
+        assert w.service.stage_explicit_loan_acsm.call_count == (phase == "import")
+
+
+def test_revoked_source_after_confirmation_blocks_both_deferred_workers():
+    import pytest
+    from cifereca.plugin_api import Cancelled
+
+    for phase in ("get", "import"):
+        w, _ = window()
+        queue = []
+        w.service._source_context_epoch = 12
+        w.runner = NS(submit=lambda *args, **kwargs: queue.append(args))
+        start(w)
+        Dialog.shown[0].respond("get")
+        if phase == "import":
+            queue[0][2](queue[0][1]())
+            Dialog.shown[-1].respond("import")
+        work, done, failed = queue[-1][1:4]
+        w.service._source_context_epoch += 2
+        with pytest.raises(Cancelled, match="source_revoked"):
+            work()
+        # Even a stale successful/error delivery must not reopen the dialog
+        # or publish a completion after source revocation.
+        count = len(Dialog.shown)
+        done({"status": "candidate_acsm", "path": "/private/staged.acsm"}
+             if phase == "get" else {"status": "complete"})
+        failed(RuntimeError("PRIVATE"))
+        assert len(Dialog.shown) == count
+        w.show_error.assert_not_called()
+        w._activity_result.assert_not_called()
+        w.refresh_library.assert_not_called()
+        w.service.import_bnf_loan_acsm.assert_not_called()
+        assert w.service.stage_explicit_loan_acsm.call_count == (phase == "import")
+
+
+def test_source_epoch_invalid_is_not_a_new_consent():
+    w, actions = window()
+    w.service._source_context_epoch = True
+    start(w)
+    assert not Dialog.shown
+    assert not actions
