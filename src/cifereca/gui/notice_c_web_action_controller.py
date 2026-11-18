@@ -1,0 +1,112 @@
+"""#6397: one exact public C web action in the current standard detail.
+
+Read choices and resolve the selected opaque id on the existing task runner,
+never on GTK. The caller supplies its original selection/identity/epoch
+guard; a disposed or superseded detail cannot publish or open a browser.
+No provider request, generic fallback, private session or acquisition.
+"""
+from __future__ import annotations
+
+from ..core.notice_c_cover_index import is_canonical_cover_document
+from ..core.notice_c_web_choices import (
+    PublicWebChoices, read_public_web_choices, resolve_public_web_choice,
+)
+from ..storage import Storage
+
+
+def request_public_web_actions(host, panel, document, *, expected_epoch, current,
+                               Gtk, Gio=None):
+    if not is_canonical_cover_document(document) or not current():
+        return False
+    core = getattr(host, "service", None)
+    storage = getattr(core, "storage", None)
+    runner = getattr(host, "runner", None)
+    if (not isinstance(storage, Storage) or not callable(getattr(runner, "submit", None))
+            or not callable(getattr(panel, "add_actions", None))):
+        return False
+    if Gio is None:
+        from gi.repository import Gio
+    from ..task_queue import TaskPriority
+
+    def active():
+        return (not getattr(host, "_closed", False)
+                and getattr(host, "service", None) is core
+                and current())
+
+    def loaded(menu):
+        if (not active() or type(menu) is not PublicWebChoices
+                or menu.document != document or menu.epoch != expected_epoch
+                or not menu.choices):
+            return
+        root = None
+        busy = False
+
+        def root_current():
+            return (active() and root is not None
+                    and not getattr(root, "_cifereca_action_context_revoked", False))
+
+        def failed(_exc):
+            nonlocal busy
+            busy = False
+            if root_current():
+                host.toast("Fiche web indisponible ; actualisez la notice.")
+
+        def choose(_button, choice):
+            nonlocal busy
+            if busy or not root_current():
+                return
+            busy = True
+
+            def resolved(uri):
+                nonlocal busy
+                busy = False
+                if not root_current():
+                    return
+                if not uri:
+                    host.toast("Fiche web modifiée ; actualisez la notice.")
+                    return
+                try:
+                    Gio.AppInfo.launch_default_for_uri(uri, None)
+                except Exception:
+                    host.toast("Ouverture de la fiche web indisponible.")
+
+            runner.submit(
+                "Vérification de la fiche web…",
+                lambda: resolve_public_web_choice(
+                    storage, document, expected_epoch=menu.epoch,
+                    choice_id=choice.choice_id,
+                ),
+                resolved, failed, priority=TaskPriority.METADATA,
+                kind="detail-cache", origin="user",
+            )
+
+        if len(menu.choices) == 1:
+            root = Gtk.Button(label="Ouvrir la fiche web")
+            root.connect("clicked", lambda button: choose(button, menu.choices[0]))
+        else:
+            root = Gtk.MenuButton(label="Ouvrir la fiche sur…")
+            popover = Gtk.Popover()
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            # At most 32 sources × 8 references. Keep the bounded menu
+            # scrollable, without removing eligible options.
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_max_content_height(360)
+            scroller.set_propagate_natural_height(True)
+            scroller.set_child(box)
+            for choice in menu.choices:
+                button = Gtk.Button(label=choice.label)
+                button.connect("clicked", lambda b, selected=choice: choose(b, selected))
+                box.append(button)
+            popover.set_child(scroller)
+            root.set_popover(popover)
+        root._cifereca_action_id = "open-c-public-web"
+        root._cifereca_action_priority = 30
+        panel.add_actions([root])
+
+    runner.submit(
+        "Lecture des fiches web en cache…",
+        lambda: read_public_web_choices(storage, document),
+        loaded, lambda _exc: None, priority=TaskPriority.METADATA,
+        kind="detail-cache", origin="automatic",
+    )
+    return True
