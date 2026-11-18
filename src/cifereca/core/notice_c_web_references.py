@@ -36,7 +36,7 @@ def decode_public_web_references(raw, *, provider_id, source_ref, record_id,
     No proof inferred from URL alone, no fallback, no I/O. Absence of the
     optional extension means unknown, not a complete negative inventory.
     """
-    from .search_orchestration import _public_catalog_url
+    from .search_orchestration import _public_catalog_url, _is_public_web_evidence
 
     if (type(raw) is not dict or set(raw) != {"schema", "links"}
             or type(raw["schema"]) is not int or raw["schema"] != 1
@@ -49,7 +49,7 @@ def decode_public_web_references(raw, *, provider_id, source_ref, record_id,
         if (type(item) is not dict or set(item) != {"url", "evidence"}
                 or type(item["url"]) is not str
                 or type(item["evidence"]) is not str
-                or item["evidence"] != f"{provider_id}.public_search_product_card"
+                or not _is_public_web_evidence(item["evidence"], provider_id)
                 or _public_catalog_url(item["url"], evidence=item["evidence"],
                                        provider_id=provider_id) != item["url"]
                 or item["url"] in seen):

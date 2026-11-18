@@ -504,7 +504,7 @@ def _verified_public_web_reference(row: SearchResult) -> dict | None:
     if (witness[0] is not _CORE_PUBLIC_WEB_WITNESS
             or witness[1] is not row._core_same_call_public_cover_witness
             or witness[2] != url or witness[3] != evidence
-            or evidence != f"{row.source_provider}.public_search_product_card"
+            or not _is_public_web_evidence(evidence, row.source_provider)
             or _public_catalog_url(url, evidence=evidence, provider_id=row.source_provider) != url
             or type(url) is not str):
         return None
@@ -589,9 +589,9 @@ def _public_rows_from_response(
                 )
                 if valid_public_occurrence:
                     # Retain a URL only from this exact anonymous public
-                    # product card, not the generic foreign/private claim.
+                    # parser record/card, not a generic foreign/private claim.
                     evidence = row.metadata.get("public_url_evidence")
-                    if evidence == f"{row.source_provider}.public_search_product_card":
+                    if _is_public_web_evidence(evidence, row.source_provider):
                         product = _public_catalog_url(
                             row.friendly_url, evidence=evidence,
                             provider_id=row.source_provider,
@@ -2032,6 +2032,17 @@ def filter_loaded_search_results(rows: list[dict[str, Any]], query: str='', *, f
     )
 
 
+def _is_public_web_evidence(evidence, provider_id):
+    """Closed, provider-qualified public parser field types (not URL inference)."""
+    return (type(provider_id) is str
+            and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider_id) is not None
+            and type(evidence) is str
+            and evidence in (
+                f"{provider_id}.public_search_product_card",
+                f"{provider_id}.public_search_record_identifier",
+            ))
+
+
 def _public_catalog_url(
     value: Any, *, cover: bool = False, evidence: str | None = None,
     provider_id: str | None = None,
@@ -2092,10 +2103,8 @@ def _public_catalog_url(
         # flag, or a catalogue row. The marker must match the producer exactly.
         if (type(provider_id) is not str
                 or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider_id) is None
-                or evidence not in {
-                    f"{provider_id}.library_title_link",
-                    f"{provider_id}.public_search_product_card",
-                }):
+                or not (evidence == f"{provider_id}.library_title_link"
+                        or _is_public_web_evidence(evidence, provider_id))):
             return None
         # The optional historical library reference belongs only to the
         # private-card marker, never an anonymous search card.
