@@ -1,5 +1,6 @@
 name: P0 bounded test baseline
 
+# TEMPORARY receipt-only PR — DO NOT MERGE. Exact main snapshot: 901cec22d196b99152f3f41d23754a8ab09f68f8
 # #5376/#3732: bounded evidence, not another per-PR full gate.
 on:
   workflow_dispatch:
@@ -22,11 +23,11 @@ jobs:
       PYTHONDONTWRITEBYTECODE: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       SUITE: ${{ matrix.suite }}
-      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      EXPECTED_SHA: 901cec22d196b99152f3f41d23754a8ab09f68f8
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: 901cec22d196b99152f3f41d23754a8ab09f68f8
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
