@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from contextlib import ExitStack
 from copy import deepcopy
 from threading import Lock
 from collections.abc import Mapping
@@ -224,7 +225,7 @@ def _variant_ref(storage: Any, row: dict[str, Any], *, book_id: str = "",
 
 def _scoped_derived_preference_candidate(
     storage: Any, variant: Mapping[str, Any], identity_id: str,
-    *, source_placement_id: str | None = None,
+    *, source_placement_id: str | None = None, _db=None,
 ) -> tuple[str, str] | None:
     """One locally derived Placement, not a global SHA/recipe preference.
 
@@ -244,8 +245,14 @@ def _scoped_derived_preference_candidate(
             or aid == sid or len(digest) != 64):
         return None
     try:
-        with storage._lock, storage._connect() as db:
-            db.execute("BEGIN")
+        with ExitStack() as stack:
+            if _db is None:
+                stack.enter_context(storage._lock)
+                db = stack.enter_context(storage._connect())
+                db.execute("BEGIN")
+            else:
+                # Internal metadata commit owns the enclosing transaction.
+                db = _db
             physical = db.execute(
                 "SELECT placement_id,path,metadata_json FROM placements "
                 "WHERE artifact_id=? AND identity_id=? AND provider_id='cifereca' "
@@ -1222,7 +1229,10 @@ class LibraryReadBrokerImpl:
         if owner is None:
             owner = getattr(getattr(self.service, "current_identity", None),
                             "identity_id", None)
-        owner = owner if type(owner) is str and owner else None
+        if type(owner) is not str or not owner:
+            # Historical unscoped book() is an aggregate, not authority
+            # to choose a private preferred file without a reader.
+            return None
         view = self.book(book_id, identity_id=owner)
         if view is None or not view.artifacts:
             return None
@@ -1635,6 +1645,12 @@ class LibraryMaintenanceBrokerImpl:
             if qualified is None:
                 raise _VariantScopeConflict("Variante du profil non attestée")
             source_id, child_placement_id = qualified
+            if request.placement_id and request.placement_id != child_placement_id:
+                raise _VariantScopeConflict("Placement de variante non attesté")
+            # A historical preview may snapshot its selected owner but
+            # must return exact coordinates. The preview is not consent.
+            request = replace(request, target_identity_id=owner,
+                              placement_id=child_placement_id)
             return LibraryMutationPlan(
                 op, f"Définir la variante préférée pour {purpose}",
                 request, changes=(request.artifact_id, purpose),
@@ -1643,6 +1659,120 @@ class LibraryMaintenanceBrokerImpl:
                        "variant_id": rows[0]["variant_id"]},
             )
         raise UnsupportedOperation(f"Opération de maintenance non supportée: {op}")
+
+    def admit_preferred_variant(self, request: LibraryMutationRequest, *,
+                                user_confirmed: bool = False):
+        """Optional explicit local metadata command for trusted Core clients.
+
+        Like explicit reading preferences, identity and affirmative user
+        action are required. The exact derived Placement is independently
+        qualified; a SHA or caller-provided plan is not permission. No file
+        access, provider call, loan/right grant or new copy is involved.
+        """
+        return self._admit_preferred_variant(
+            request, user_confirmed=user_confirmed,
+        )
+
+    def _admit_preferred_variant(self, request, *, user_confirmed, expected_facts=None):
+        from .core.source_context import source_context_epoch
+
+        if (user_confirmed is not True
+                or type(request) is not LibraryMutationRequest
+                or request.operation != "set_preferred_variant"
+                or type(request.target_identity_id) is not str or not request.target_identity_id
+                or type(request.placement_id) is not str or not request.placement_id
+                or type(request.artifact_id) is not str or not request.artifact_id
+                or request.purpose not in ("read", "export", "transfer")):
+            raise _VariantScopeConflict("Préférence explicite non admise")
+        owner, pid, aid, purpose = (request.target_identity_id, request.placement_id,
+                                    request.artifact_id, request.purpose)
+        service = self.service
+        storage, config = service.storage, getattr(service, "config", None)
+        config_data = getattr(config, "data", None)
+        epoch = source_context_epoch(service)
+        lookup = getattr(service, "identity_by_id", None)
+        identity = lookup(owner) if callable(lookup) else None
+        if callable(lookup) and identity is None:
+            raise _VariantScopeConflict("Profil de préférence inconnu")
+
+        def memory_current():
+            return (self.service is service and service.storage is storage
+                    and getattr(service, "config", None) is config
+                    and getattr(config, "data", None) is config_data
+                    and source_context_epoch(service) == epoch
+                    and (not callable(lookup) or lookup(owner) is identity))
+
+        columns = ("variant_id", "artifact_id", "source_artifact_id",
+                   "source_sha256", "transformer_plugin_id", "transformer_version",
+                   "profile_plugin_id", "profile_version", "options_fingerprint")
+
+        def proof(db):
+            profile = db.execute(
+                "SELECT directory_name FROM identities WHERE identity_id=?", (owner,),
+            ).fetchone()
+            rows = db.execute(
+                "SELECT " + ",".join(columns) +
+                " FROM artifact_variants WHERE artifact_id=? LIMIT 2", (aid,),
+            ).fetchall()
+            if (not memory_current() or profile is None or len(rows) != 1):
+                raise _VariantScopeConflict("Portée de préférence modifiée")
+            recipe = dict(zip(columns, rows[0]))
+            qualified = _scoped_derived_preference_candidate(
+                storage, recipe, owner, _db=db,
+            )
+            if qualified is None or qualified[1] != pid:
+                raise _VariantScopeConflict("Placement de variante non attesté")
+            source_id = qualified[0]
+            key = f"artifact.variant.preferred.{owner}.{source_id}.{purpose}"
+            existing = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
+            return profile, recipe, source_id, key, existing
+
+        # This is a bounded read, not a mutation nor a selector snapshot.
+        with storage._lock, storage._connect() as db:
+            db.execute("BEGIN")
+            captured = proof(db)
+        if expected_facts is not None and (
+                expected_facts.get("identity_id") != owner
+                or expected_facts.get("source_artifact_id") != captured[2]
+                or expected_facts.get("placement_id") != pid
+                or expected_facts.get("variant_id") != captured[1]["variant_id"]):
+            raise _VariantScopeConflict("Variante préférée requalifiée après plan")
+        lock, used = Lock(), False
+
+        def operation(control=None):
+            nonlocal used
+            with lock:
+                if used:
+                    raise _VariantScopeConflict("Confirmation déjà consommée")
+                used = True
+            if control is not None:
+                control.check_cancelled()
+            if not memory_current():
+                raise _VariantScopeConflict("Portée de préférence modifiée")
+            # The same SQLite transaction verifies recipe, exact parent/child
+            # provenance, identity, and compared previous metadata value.
+            with storage._lock, storage._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                if proof(db) != captured:
+                    raise _VariantScopeConflict("Préférence modifiée depuis la confirmation")
+                if control is not None:
+                    control.check_cancelled()
+                if not memory_current():
+                    raise _VariantScopeConflict("Portée de préférence modifiée")
+                db.execute(
+                    "INSERT INTO metadata(key,value) VALUES(?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (captured[3], aid),
+                )
+                if not memory_current():
+                    raise _VariantScopeConflict("Portée de préférence modifiée")
+            return LibraryMutationResult(
+                True, 1, f"Définir la variante préférée pour {purpose}",
+                facts={"source_artifact_id": captured[2], "artifact_id": aid,
+                       "identity_id": owner, "purpose": purpose},
+            )
+
+        return operation
 
     def run(self, plan: LibraryMutationPlan, control: TaskControl | None = None) -> LibraryMutationResult:
         request=plan.request
@@ -2055,37 +2185,17 @@ class LibraryMaintenanceBrokerImpl:
                 self.service.storage.catalog_entry_update_metadata(str(entry.get("catalog_entry_id")),meta); changed += 1
             return LibraryMutationResult(True,changed,plan.summary,facts={"cover_artifact_id":request.cover_artifact_id})
         if request.operation == "set_preferred_variant":
-            rows = self.service.storage.artifact_variants(
-                artifact_id=request.artifact_id,
-            )
-            owner = getattr(getattr(self.service, "current_identity", None),
-                            "identity_id", None)
-            purpose = request.purpose or "read"
-            if (len(rows) != 1 or type(owner) is not str or not owner
-                    or (request.target_identity_id is not None
-                        and request.target_identity_id != owner)
-                    or purpose not in ("read", "export", "transfer")):
+            # This old synchronous plan/run API preserves its selected-profile
+            # admission rule. Execution below never consults navigation again.
+            owner = request.target_identity_id
+            if (type(owner) is not str or not owner
+                    or getattr(getattr(self.service, "current_identity", None),
+                               "identity_id", None) != owner):
                 raise _VariantScopeConflict("Portée de préférence modifiée")
-            qualified = _scoped_derived_preference_candidate(
-                self.service.storage, rows[0], owner,
+            operation = self._admit_preferred_variant(
+                request, user_confirmed=True, expected_facts=plan.facts,
             )
-            if (qualified is None
-                    or plan.facts.get("identity_id") != owner
-                    or plan.facts.get("source_artifact_id") != qualified[0]
-                    or plan.facts.get("placement_id") != qualified[1]
-                    or plan.facts.get("variant_id") != rows[0].get("variant_id")):
-                raise _VariantScopeConflict("Variante préférée requalifiée après plan")
-            source_id = qualified[0]
-            self.service.storage.metadata_set(
-                f"artifact.variant.preferred.{owner}.{source_id}.{purpose}",
-                request.artifact_id,
-            )
-            return LibraryMutationResult(
-                True, 1, plan.summary,
-                facts={"source_artifact_id": source_id,
-                       "artifact_id": request.artifact_id,
-                       "identity_id": owner, "purpose": purpose},
-            )
+            return operation(control)
         if request.operation == "delete_variant":
             rows = self.service.storage.artifact_variants(
                 artifact_id=request.artifact_id,
