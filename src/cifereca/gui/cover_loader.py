@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
+import math
 import base64
 import binascii
 from concurrent.futures import ThreadPoolExecutor
@@ -32,6 +34,7 @@ from ..paths import cache_dir
 _TRACE_LOG = logging.getLogger("cifereca")
 
 CACHE_SCHEMA = "v2"
+_UI_DECODE_WINDOW = 1024
 
 
 def _cover_failure_code(exc: BaseException) -> str:
@@ -130,6 +133,7 @@ class CoverLoader:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
+        self._ui_decode_recent: deque[float] = deque(maxlen=_UI_DECODE_WINDOW)
         self._stats = {
             "preview_created":0,"preview_hit":0,"preview_fallback":0,
             "requested": 0,
@@ -188,6 +192,13 @@ class CoverLoader:
             total = float(stats.pop("ui_decode_total_ms", 0.0) or 0.0)
             stats["ui_decode_avg_ms"] = round(total / count, 2) if count else 0.0
             stats["ui_decode_max_ms"] = round(float(stats.get("ui_decode_max_ms") or 0.0), 2)
+            # Nearest-rank percentiles of the bounded recent N4 sample, not
+            # lifetime percentiles or N2/N3 latency. Zero samples is explicit.
+            recent = sorted(self._ui_decode_recent)
+            stats["ui_decode_recent_count"] = len(recent)
+            if recent:
+                stats["ui_decode_recent_p50_ms"] = round(recent[(len(recent) * 50 + 99) // 100 - 1], 2)
+                stats["ui_decode_recent_p95_ms"] = round(recent[(len(recent) * 95 + 99) // 100 - 1], 2)
             # One sample per actual worker attempt, not per subscriber or
             # cache lookup. Includes transfer, validation and disk publication
             # (or failure cleanup); excludes queue time, preview and GTK decode.
@@ -375,8 +386,11 @@ class CoverLoader:
             self._stats["ui_failed"] += 1
 
     def note_ui_decode(self, duration_ms: float) -> None:
-        value = max(0.0, float(duration_ms))
+        value = float(duration_ms)
+        if not math.isfinite(value) or value < 0:
+            return
         with self._lock:
+            self._ui_decode_recent.append(value)
             self._stats["ui_decode_count"] += 1
             self._stats["ui_decode_total_ms"] += value
             self._stats["ui_decode_max_ms"] = max(float(self._stats["ui_decode_max_ms"]), value)
