@@ -76,6 +76,19 @@ def test_deferred_route_cannot_transfer_after_account_source_epoch_change():
         manager=manager,
     )
     w.service._source_context_epoch = 5
+
+    def admit(request, selected):
+        assert selected.target.target_id == request.target_id
+        epoch = w.service._source_context_epoch
+
+        def work():
+            if w.service._source_context_epoch != epoch:
+                raise Cancelled("source revoked")
+            return routing.transfer(routing.plan(request))
+
+        return work
+
+    routing.admit_transfer = admit
     add_local_book_actions(w, panel, item, **deps)
     button = actions[-1].popover.child.children[0]
     button.click()
@@ -161,17 +174,19 @@ def test_replaced_artifact_menu_blocks_child_even_if_child_itself_survives():
     add_local_book_actions(w, panel, item, **deps)
     menu = actions[-1]
     child = menu.popover.child.children[0]
+    routing.admit_transfer = lambda request, selected: lambda: routing.transfer(routing.plan(request))
     child.click()
     assert len(submissions) == 1
     menu._cifereca_action_context_revoked = True
     args, _kwargs = submissions[0]
-    with pytest.raises(Cancelled):
-        args[1]()
+    # The dismissed view cannot revoke an admitted Core transfer.
+    assert args[1]() == "complete"
     original = list(events)
     args[2]("complete")
     args[3](RuntimeError("PRIVATE https://example.invalid?token=PRIVATE"))
     child.click()
-    assert events == original and len(submissions) == 1 and operations == []
+    assert events == original and len(submissions) == 1
+    assert operations == [("plan", "d"), ("transfer", "plan")]
 
 
 @pytest.mark.parametrize("kind", ["send", "route"])
