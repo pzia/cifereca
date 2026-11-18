@@ -13,6 +13,7 @@ from ..task_admission import SharedTaskAdmission
 from ..task_queue import TaskPriority
 from ..task_runtime import TaskBrokerImpl
 from .notice_c_work_pump import PublicNoticeWorkPump
+from .notice_c_fetch_execution import PublicFetchExecution
 
 
 def validate_notice_work_admission(admission):
@@ -35,6 +36,11 @@ class NoticeWorkRuntime:
             raise ValueError("notice_work_invalid_runtime_broker")
         validate_notice_work_admission(broker.shared_admission)
         self._broker = broker
+        self._storage = storage
+        self._clock = clock
+        self._replay_registry = replay_registry
+        self._fetch_authority = None
+        self._dispatch_requested = False
         self._lock = RLock()
         self._closed = False
         self._scan = None
@@ -43,6 +49,30 @@ class NoticeWorkRuntime:
             storage, broker, clock=clock, on_committed=self._notify,
             replay_registry=replay_registry,
         )
+
+    def install_fetch_execution(self, execution):
+        """Trusted Core composition only, once, before any heartbeat hint.
+
+        The initial inert pump has never scanned or admitted work. Replace
+        that configuration before dispatch; never create a second active
+        pump or broker. The caller transfers lifetime ownership of the
+        authority only on success. Installation does not grant permission,
+        request a job, open a session or initiate transport.
+        """
+        with self._lock:
+            if self._closed or self._dispatch_requested or self._fetch_authority is not None:
+                return False
+            if (type(execution) is not PublicFetchExecution
+                    or execution._authority._storage is not self._storage
+                    or not execution.supported()):
+                raise ValueError("notice_fetch_invalid_registry")
+            self._pump = PublicNoticeWorkPump(
+                self._storage, self._broker, clock=self._clock,
+                on_committed=self._notify, replay_registry=self._replay_registry,
+                fetch_execution=execution,
+            )
+            self._fetch_authority = execution._authority
+            return True
 
     def bind_committed_observer(self, observer):
         """Install one thread-safe owner callback; None detaches it.
@@ -75,6 +105,7 @@ class NoticeWorkRuntime:
         with self._lock:
             if self._closed or self._scan is not None:
                 return None
+            self._dispatch_requested = True
             try:
                 handle = self._broker.submit(
                     self._scan_once, priority=TaskPriority.MAINTENANCE,
@@ -112,5 +143,9 @@ class NoticeWorkRuntime:
             handle = self._scan
             self._scan = None
             self._observer = None
+            authority = self._fetch_authority
+            self._fetch_authority = None
         if handle is not None:
             handle.cancel()
+        if authority is not None:
+            authority.close()
