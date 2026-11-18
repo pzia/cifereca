@@ -1957,7 +1957,6 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
     # The current synchronous known-task callback still returns a combined
     # snapshot; progressive public C UI batches remain a subsequent gate.
     c_page = None
-    c_rows = []
     if (type(query) is str and 2 <= len(query.strip()) <= 160
             and field in ("all", "title", "author", "publisher")
             and scope in ("all", "digital", "physical", "unknown")
@@ -1966,40 +1965,28 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
         if isinstance(getattr(self, "storage", None), Storage):
             from .notice_c_public_search import search_public_notice_c
             from .notice_c_known_projection import merge_public_notice_c_known_rows
-            from .search import filter_loaded_results
             from sqlite3 import Error as SQLiteError
             try:
                 c_page = search_public_notice_c(
                     self.storage, query, field=field, scope=scope,
                     provider_ids=tuple(provider_ids or ()), group_by_document=True,
+                    content_types=tuple(content_types or ()),
                 )
-                c_rows = merge_public_notice_c_known_rows(
-                    [], c_page, identity_id=resolved_identity,
-                )
-                if content_types:
-                    c_rows = filter_loaded_results(
-                        c_rows, "", content_types=content_types,
-                    )
             except (SQLiteError, ValueError, TypeError, AttributeError):
                 # Failed public metadata must never erase private possessions
                 # or turn an unproven empty C page into a search-zero verdict.
                 c_page = None
-                c_rows = []
     rows = KnownCatalogSearch(self.catalog_entries, self.library_entries).search(
         query, identity_id=resolved_identity, scope=scope, field=field,
         providers=provider_ids, content_types=content_types,
         age=age, age_kind=age_kind,
     )
     if c_page is not None:
-        # Deduplicate a mirror ONLY if its exact, rights-free C source is
-        # itself visible under the requested format filter. A hidden C hit
-        # cannot delete a visible local/mirrored entry.
-        if len(c_rows) == len(c_page.hits):
-            rows = merge_public_notice_c_known_rows(
-                rows, c_page, identity_id=resolved_identity,
-            )
-        else:
-            rows = c_rows + rows
+        # The C cursor already filters each source BEFORE grouping/page.
+        # The mirror is suppressed only against a visible exact source.
+        rows = merge_public_notice_c_known_rows(
+            rows, c_page, identity_id=resolved_identity,
+        )
     logger.info(
         "TRACE search known identity=%s query_len=%s scope=%s field=%s results=%s",
         resolved_identity, len(str(query or "")), scope, field, len(rows),
