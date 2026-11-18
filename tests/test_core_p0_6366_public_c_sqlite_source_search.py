@@ -246,12 +246,26 @@ def test_publication_date_retained_after_source_eviction_and_reopen(tmp_path):
         assert db.entitlements() == [] and db.acquisitions() == []
         # Corrupt/unsafe descriptive values are refused by the same strict
         # canonical decoder, not reflected into the public Search DTO.
-        with db._lock, db._connect() as sql:
-            key = _db_key(c.document)
-            raw = json.loads(sql.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0])
-            next(iter(raw["sources"].values()))["public_bibliography"]["published_at"] = "https://private.example.org/?token=secret"
-            sql.execute("UPDATE metadata SET value=? WHERE key=?", (json.dumps(raw), key))
-        with pytest.raises(ValueError, match="corrupt_canonical_cover"):
-            read_consolidated_notice_cover(db, c.document)
+        for unsafe in ("https://private.example.org/?token=secret",
+                       r"C:\private\book.epub", "  ~\\private\\book.epub"):
+            with db._lock, db._connect() as sql:
+                key = _db_key(c.document)
+                raw = json.loads(sql.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0])
+                next(iter(raw["sources"].values()))["public_bibliography"]["published_at"] = unsafe
+                sql.execute("UPDATE metadata SET value=? WHERE key=?", (json.dumps(raw), key))
+            with pytest.raises(ValueError, match="corrupt_canonical_cover"):
+                read_consolidated_notice_cover(db, c.document)
+    finally:
+        db.close()
+
+
+def test_location_in_scalar_never_promotes_cover_only_observation(tmp_path):
+    db = Storage(tmp_path / "location.sqlite")
+    try:
+        row = verified_public(title="Safe title", description=r"C:\private\book.epub")
+        observed = persist(db, row)
+        assert observed.observation.parser_version == "1"
+        assert search_public_notice_c(db, "Safe title", now=100).hits == ()
+        assert "private" not in repr(observed.observation.fields_copy())
     finally:
         db.close()

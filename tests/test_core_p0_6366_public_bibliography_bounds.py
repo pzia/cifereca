@@ -63,3 +63,19 @@ def test_invalid_field_is_not_silently_replaced_by_empty_inventory():
                    {"series":"token=secret"}, {"authors":[{}]}):
         assert _public_bibliographic_metadata(fields) is None
         assert project(fields) is None
+
+
+@pytest.mark.parametrize("field", ("title", "author", "publisher", "published_at", "description"))
+@pytest.mark.parametrize("location", (
+    r"C:\private\book.epub", "D:/private/book.epub", "  ~\\private\\book.epub",
+    "/home/reader/private.epub", "file:private.epub", "//outside.invalid/path",
+))
+def test_scalar_bibliography_uses_same_location_policy(field, location):
+    item = row(**{field: location})
+    response = ProviderSearchResponse([item], public_notices=(PublicSearchNotice(item),))
+    assert project_public_search_result(
+        response, item, provider_id=item.source_provider,
+        credential_id=item.source_credential,
+    ) is None
+    batch = project_public_search_results(response)
+    assert batch is not None and id(item) not in batch
