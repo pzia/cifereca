@@ -230,6 +230,7 @@ def test_routing_uses_selected_artifact_target_and_identity_without_guesswork():
         transfer=lambda plan: (operations.append(("transfer", plan))
                                or "complete"),
     )
+    routing.admit_transfer = lambda request, selected: lambda: routing.transfer(routing.plan(request))
     manager = NS(broker=lambda name: routing if name == "artifact.routing" else None)
     window, item, detail, actions, events, submitted, _, deps = _environment(manager=manager)
     add_local_book_actions(window, detail, item, **deps)
@@ -250,6 +251,22 @@ def test_routing_uses_selected_artifact_target_and_identity_without_guesswork():
     args[2]("complete")
     assert events[-3:] == [("activity", "Livre envoyé"),
                             ("library", False), ("recent",)]
+    routing_button.click()
+    queued = submitted[-1][0]
+    # View B -> A (including detached button) cannot cancel or redirect the
+    # already admitted route, but its late result must not repaint A.
+    window.service.current_identity = NS(identity_id="bob")
+    window._identity_context_generation = 1
+    window.service.current_identity = NS(identity_id="alice")
+    window._identity_context_generation = 2
+    routing_button._cifereca_action_context_revoked = True
+    before = list(events)
+    assert queued[1]() == "complete"
+    queued[2]("complete")
+    assert events == before
+    assert operations[-2:] == [
+        ("plan", "cloud-1"), ("transfer", "transfer-plan"),
+    ]
 
 
 def test_closed_window_is_inert_and_pending_actions_cannot_run_after_close():
@@ -338,7 +355,8 @@ def test_route_target_enumeration_exception_is_closed_diagnostic():
 def test_failed_artifact_route_preserves_safe_feedback_and_ignores_late_callbacks():
     from cifereca.plugin_api import UserFacingError
 
-    routing = NS(targets=lambda *_: [NS(target=NS(label="Cloud", target_id="cloud-1"))])
+    routing = NS(targets=lambda *_: [NS(target=NS(label="Cloud", target_id="cloud-1"))],
+                 admit_transfer=lambda *_: lambda: None)
     manager = NS(broker=lambda name: routing if name == "artifact.routing" else None)
     window, item, detail, actions, events, submitted, _, deps = _environment(
         identities=("alice",), manager=manager,
