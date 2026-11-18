@@ -69,12 +69,16 @@ def test_declaration_preview_and_confirmation_cancellation_are_gtk_thread_safe()
             assert cancelled() is False
             return {"status": "preview"}
 
-        def confirm_declared_link(self, right, file, *, user_confirmed, cancelled):
-            assert get_ident() != ui_thread
+        def admit_declared_link(self, right, file, *, user_confirmed):
+            require_ui()
             assert user_confirmed is True and (right, file) == pair
-            background_callbacks.append("confirm")
-            assert cancelled() is False
-            return {"status": "declared", "revoke_available": True}
+
+            def work():
+                assert get_ident() != ui_thread
+                background_callbacks.append("confirm")
+                return {"status": "declared", "revoke_available": True}
+
+            return work
 
         def revoke_manual_attachment_preview(self):
             raise AssertionError("no cancellation expected")
