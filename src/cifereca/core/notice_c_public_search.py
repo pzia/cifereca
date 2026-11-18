@@ -60,6 +60,7 @@ class PublicNoticeCHit:
     cover_state: str
     stale: bool
     edition_id: str = ""
+    published_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +169,7 @@ def _public_observation(
             cover_state=persisted.attribute.state,
             stale=now - last_seen > _STALE_AFTER,
             edition_id=key.edition_id,
+            published_at=bio["published_at"],
         )
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError,
             UnicodeError, RecursionError):
@@ -471,6 +473,7 @@ def search_public_notice_c(
                 cover_state=aggregate_cover,
                 stale=now - bib.last_seen_at > _STALE_AFTER,
                 edition_id=bib.edition_id,
+                published_at=bib.published_at,
             )
             if _matches_public_c(
                 hit, wanted=wanted, scope=scope,
