@@ -125,6 +125,11 @@ class BnfCatalogueSession(ProviderSession):
             pass
 
     def search(self, query: str, scope="all", page=0, field="all"):
+        rows, _partial, _complete = self._search_page(query, scope, page, field)
+        return rows
+
+    def _search_page(self, query: str, scope="all", page=0, field="all"):
+        """Return rows and coverage from this call, never mutable diagnostics."""
         # A previous partial search must not pollute subsequent requests,
         # including rejected fields, too-short queries and network failures.
         self.last_search_warnings = []
@@ -159,7 +164,7 @@ class BnfCatalogueSession(ProviderSession):
                 self.last_search_warnings.append(
                     'partial_results : requête trop courte ; BnF non interrogée'
                 )
-            return []
+            return [], bool(query), None
         relation = "adj" if field == "isbn" else "all"
         try:
             with self.client.stream("GET", self.sru_url, params={
@@ -199,7 +204,7 @@ class BnfCatalogueSession(ProviderSession):
                             raise ProviderError("BnF : invalid_sru_response")
                         chunks.append(chunk)
                     content = b"".join(chunks)
-            rows = self.parse_records(content)
+            rows, total, record_count, structural, next_positions = self._parse_page(content)
         except httpx.HTTPError as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             code = (
@@ -226,6 +231,35 @@ class BnfCatalogueSession(ProviderSession):
                 failure.retryable = False  # No duplicate SRU GET.
             # Request errors can contain signed URLs or account information.
             raise failure from None
+        # Determine coverage before local filtering. Discarded/duplicate SRU
+        # records, contradictory totals or truncated pages are execution
+        # partials, not legitimate pagination. A declared next position may
+        # authorize a shorter *window*, never an extra request.
+        start = page * self.page_size + 1
+        remaining = max(0, total - start + 1)
+        expected = min(self.page_size, remaining)
+        next_valid = (
+            len(next_positions) == 1
+            and type(next_positions[0]) is str
+            and re.fullmatch(r"[0-9]{1,12}", next_positions[0]) is not None
+            and int(next_positions[0]) == start + record_count <= total
+            and record_count > 0
+        )
+        partial = (
+            not structural or len(rows) != record_count
+            or record_count > expected
+            or (bool(next_positions) and not next_valid)
+            or (record_count < expected and not next_valid)
+        )
+        local_filter = scope != "all" or field in {"series", "collection"}
+        complete = bool(
+            not partial and page == 0 and not local_filter
+            and total == record_count and not next_positions
+        )
+        if partial:
+            self.last_search_warnings.append(
+                "partial_results : réponse SRU incomplète ou incohérente"
+            )
         # Unknown support is omitted from scoped searches. API v1 only allows
         # physical/digital; all-scope uses a documented physical fallback.
         if scope != "all":
@@ -241,12 +275,17 @@ class BnfCatalogueSession(ProviderSession):
                 "partial_results : post-filtre local limité à la page SRU demandée"
             )
         self._diagnostic("SRU search", "ok", detail={"results": len(rows), "page": page, "field": field})
-        return rows
+        return rows, partial, complete
 
     def search_with_response_facets(self, query, scope="all", *, field="all", content_types=()):
         """One same-call SRU page; no claim of exhaustive or private inventory."""
         scope = "all" if scope == "catalog" else scope
-        rows = self.search(query, scope, field=field)
+        rows, partial, complete = self._search_page(query, scope, field=field)
+        # The legacy list API retains its page-local warning. The typed
+        # envelope now carries that limitation in catalogue_complete, not
+        # in last_search_warnings (which older Core treats as a failure).
+        if not partial:
+            self.last_search_warnings = []
         # Only the configured canonical public SRU endpoint and genuinely
         # anonymous session can qualify cross-profile evidence. A custom
         # endpoint (including local simulation) is not silently relabelled.
@@ -255,11 +294,15 @@ class BnfCatalogueSession(ProviderSession):
                   and type(self.credentials) is dict and not self.credentials
                   and type(self._accounts) is list and not self._accounts)
         return ProviderSearchResponse(
-            results=rows, partial=True,
+            results=rows, partial=partial, catalogue_complete=complete,
             public_notices=tuple(PublicSearchNotice(row) for row in rows) if public else (),
         )
 
     def parse_records(self, content: bytes):
+        rows, *_coverage = self._parse_page(content)
+        return rows
+
+    def _parse_page(self, content: bytes):
         reason = None
         try:
             root = parse_bounded_catalogue_xml(content)
@@ -283,8 +326,20 @@ class BnfCatalogueSession(ProviderSession):
         if (len(totals) != 1 or totals[0].text is None
                 or re.fullmatch(r"[0-9]{1,12}", totals[0].text.strip()) is None):
             raise _bnf_unavailable_xml() from None
+        groups = root.findall(f"{{{SRU}}}records")
+        records = root.findall(f"{{{SRU}}}records/{{{SRU}}}record")
+        data_nodes = root.findall(f".//{{{SRU}}}recordData")
+        structural = (
+            len(groups) <= 1
+            and len(records) == len(data_nodes)
+            and all(len(record.findall(f"{{{SRU}}}recordData")) == 1 for record in records)
+        )
+        next_positions = tuple(
+            element.text.strip() if element.text is not None and len(element) == 0 else None
+            for element in root.findall(f"{{{SRU}}}nextRecordPosition")
+        )
         rows = {}
-        for data in root.findall(f".//{{{SRU}}}recordData"):
+        for data in data_nodes:
             values: dict[str, list[str]] = {}
             for node in data.iter():
                 if node.tag.startswith("{" + DC + "}"):
@@ -346,7 +401,8 @@ class BnfCatalogueSession(ProviderSession):
                           "support": support,
                           "format_evidence": "dc.format-mime" if fmt else "unknown"},
             )
-        return list(rows.values())
+        return (list(rows.values()), int(totals[0].text.strip()),
+                len(records), structural, next_positions)
 
     def holdings(self, item: SearchResult, search_terms=""):
         return ItemDetail(
