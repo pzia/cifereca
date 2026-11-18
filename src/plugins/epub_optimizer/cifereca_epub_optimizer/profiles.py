@@ -108,8 +108,19 @@ def discover_profiles(context: Any) -> dict[str, DeviceProfile]:
 
 
 def default_output_path(input_path: str | Path, profile: DeviceProfile) -> Path:
+    """Name an optimized EPUB, not an asserted Kobo-engine conversion.
+
+    A compound input suffix is a filename hint, never proof of layout, DRM
+    or KEPUB output. The optimizer's advertised output is generic EPUB.
+    """
     source = Path(input_path)
-    return source.with_name(f"{source.stem} [{profile.suffix}].epub")
+    name = source.name
+    base = source.stem
+    for suffix in (".fxl.kepub.epub", ".kepub.epub"):
+        if name.lower().endswith(suffix) and len(name) > len(suffix):
+            base = name[:-len(suffix)]
+            break
+    return source.with_name(f"{base} [{profile.suffix}].epub")
 
 
 __all__ = ["DeviceProfile", "profile_from_service", "discover_profiles", "default_output_path"]

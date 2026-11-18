@@ -19,7 +19,7 @@ from xml.etree import ElementTree as ET
 
 from PIL import Image, ImageEnhance, ImageOps, UnidentifiedImageError
 
-from .profiles import DeviceProfile
+from .profiles import DeviceProfile, default_output_path
 
 ProgressCallback = Callable[[int, str], None]
 
@@ -642,11 +642,6 @@ def _clone_info(info: zipfile.ZipInfo, *, compress_type: int) -> zipfile.ZipInfo
     clone.internal_attr = info.internal_attr
     clone.external_attr = info.external_attr
     return clone
-
-
-def default_output_path(input_path: str | os.PathLike[str], profile: DeviceProfile) -> Path:
-    source = Path(input_path)
-    return source.with_name(f"{source.stem} [{profile.suffix}].epub")
 
 
 def analyze_epub(
