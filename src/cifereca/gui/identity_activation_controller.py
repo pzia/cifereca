@@ -41,9 +41,11 @@ def activate_identity(window, identity_id: str) -> None:
         )
     window._identity_context_generation += 1
     from . import page_lifecycle_controller
-    page_lifecycle_controller.context_changed(window)
+    lifecycle_generation = window._identity_context_generation
+    page_lifecycle_controller.context_changed(window, defer=True)
     if (getattr(window, "_closed", False) or window.service is not service
-            or getattr(service.current_identity, "identity_id", None) != identity.identity_id):
+            or getattr(service.current_identity, "identity_id", None) != identity.identity_id
+            or window._identity_context_generation != lifecycle_generation):
         return
     window._dispose_maintenance_lines()
     visible_route = window.view_stack.get_visible_child_name()
@@ -106,6 +108,12 @@ def activate_identity(window, identity_id: str) -> None:
     if hasattr(window, "library_page"):
         window._render_library([])
         window.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")
+    # All native private projections have now been retired. Render the
+    # visible opt-in page once under the newly installed context.
+    page_lifecycle_controller.resume(window)
+    if (getattr(window, "_closed", False) or window.service is not service
+            or window._identity_context_generation != lifecycle_generation):
+        return
     from cifereca.core.source_context import source_context_epoch
     admitted_identity_id = identity_id
     admitted_source_epoch = source_context_epoch(service)
