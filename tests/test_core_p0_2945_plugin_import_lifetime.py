@@ -9,10 +9,11 @@ import pytest
 from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
 
 
-def _archive(tmp_path, name, version, marker, *, fail=False, sibling=False):
+def _archive(tmp_path, name, version, marker, *, fail=False, sibling=False,
+             helper_name=None, helper_package=False):
     package_id = f"org.test.lifetime.{name}"
     module = f"lifetime_{name}_entry"
-    helper = f"lifetime_{name}_helper"
+    helper = helper_name or f"lifetime_{name}_helper"
     plugins = [{"id": f"lifetime.{name}", "type": "recommendation",
                 "entrypoint": f"{module}:Plugin"}]
     if sibling:
@@ -30,7 +31,8 @@ def _archive(tmp_path, name, version, marker, *, fail=False, sibling=False):
             "  return MARKER\n")
     with zipfile.ZipFile(archive, "w") as z:
         z.writestr("cifereca-plugin.json", json.dumps(manifest))
-        z.writestr(f"{helper}.py", f"MARKER = {marker!r}\n")
+        path = f"{helper}/__init__.py" if helper_package else f"{helper}.py"
+        z.writestr(path, f"MARKER = {marker!r}\n")
         z.writestr(f"{module}.py", code + ("raise RuntimeError('synthetic')\n" if fail else ""))
         if sibling:
             z.writestr(f"{module}_sibling.py", code)
@@ -98,3 +100,74 @@ def test_same_version_replacement_reimports_helpers(tmp_path, manager):
     archive, _, _, _ = _archive(tmp_path, "replace", "1.0", "two")
     manager.install(archive, replace=True)
     assert manager.service("lifetime.replace").late() == "two"
+
+
+@pytest.mark.parametrize("order", [("aa", "bb"), ("bb", "aa")])
+@pytest.mark.parametrize("package_form", [False, True])
+def test_homonymous_helpers_are_refused_symmetrically_and_recover(
+    tmp_path, manager, order, package_form,
+):
+    helper = "cifereca_test_homonymous_helper"
+    archives = {
+        name: _archive(tmp_path, name, "1.0", name, helper_name=helper,
+                       helper_package=package_form and name == "bb")[0]
+        for name in order
+    }
+    first, second = order
+    manager.install(archives[first])
+    assert manager.service(f"lifetime.{first}").late() == first
+    manager.install(archives[second])
+    for name in order:
+        status = manager.status(f"lifetime.{name}")
+        assert status.state == "blocked"
+        assert status.reason_code == "import_namespace_conflict"
+        assert manager.service(f"lifetime.{name}") is None
+    assert helper not in sys.modules
+    manager.set_enabled(f"lifetime.{first}", False)
+    assert manager.service(f"lifetime.{second}").value() == second
+    assert manager.service(f"lifetime.{second}").late() == second
+    manager.set_enabled(f"lifetime.{second}", False)
+    manager.set_enabled(f"lifetime.{first}", True)
+    assert manager.service(f"lifetime.{first}").value() == first
+    assert manager.service(f"lifetime.{first}").late() == first
+
+
+def test_reserved_namespace_cannot_shadow_stdlib(tmp_path, manager):
+    archive, _, module, _ = _archive(
+        tmp_path, "reserved", "1.0", "bad", helper_name="json",
+    )
+    original = sys.modules["json"]
+    manager.install(archive)
+    assert manager.status("lifetime.reserved").reason_code == "import_namespace_conflict"
+    assert manager.service("lifetime.reserved") is None
+    assert sys.modules["json"] is original
+    assert module not in sys.modules
+
+
+def test_foreign_cache_is_not_evicted_or_used(tmp_path, manager, monkeypatch):
+    from types import ModuleType
+    helper = "cifereca_test_foreign_cached"
+    foreign = ModuleType(helper)
+    foreign.__file__ = str(tmp_path / "foreign" / (helper + ".py"))
+    foreign.MARKER = "wrong"
+    monkeypatch.setitem(sys.modules, helper, foreign)
+    archive, _, module, _ = _archive(
+        tmp_path, "cached", "1.0", "right", helper_name=helper,
+    )
+    manager.install(archive)
+    assert manager.status("lifetime.cached").state == "error"
+    assert manager.service("lifetime.cached") is None
+    assert sys.modules[helper] is foreign
+    assert module not in sys.modules
+
+
+def test_namespace_directory_claims_code_without_init(tmp_path):
+    from cifereca.plugins.loader import package_namespace_conflicts
+    roots = {name: tmp_path / name for name in ("a", "b")}
+    for root in roots.values():
+        (root / "fixture_namespace").mkdir(parents=True)
+        (root / "fixture_namespace" / "helper.py").write_text("VALUE = 1")
+        (root / "assets").mkdir()
+    assert package_namespace_conflicts(roots) == {
+        "a": ("fixture_namespace",), "b": ("fixture_namespace",),
+    }
