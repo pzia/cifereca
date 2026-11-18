@@ -173,3 +173,13 @@ def test_supplier_specific_compatibility_bridge_is_retired_from_core():
     from cifereca.core import search_orchestration
     assert not hasattr(search_orchestration, "_numilog_public_catalog_url")
     # All retained public-URL proof tests use the generic producer-qualified API.
+
+
+@pytest.mark.parametrize("path", ["/", "/search", "/ebooks/search.opds/", "/feed/book/42",
+                                  "/services/engine/search/opds", "/book/42.atom"])
+@pytest.mark.parametrize("kind", ["library_title_link", "public_search_product_card"])
+def test_exact_product_marker_does_not_attest_generic_or_feed_route(path, kind):
+    assert _public_catalog_url(
+        "https://books.new-publisher.org" + path,
+        evidence="numilog." + kind, provider_id="numilog",
+    ) is None
