@@ -365,3 +365,53 @@ def test_profile_epoch_cannot_be_omitted(rig):
         mod.ReaderUsbExecutionBrokerImpl(service).execute_one(
             confirmation=consent, mountpoint=mount,
         )
+
+
+@pytest.mark.parametrize("change", ["navigation", "source", "mount", "binding", "intent", "registry", "expired"])
+def test_admitted_removal_survives_only_navigation(rig, monkeypatch, change):
+    db, service, mount, consent, report, local = rig
+    instance = mod.ReaderUsbExecutionBrokerImpl(service)
+    monkeypatch.setattr(mod.ReaderUsbExecutionBrokerImpl, "completed_copy_operation",
+                        lambda *_a, **_kw: consent.copy_operation_id)
+    clock = [consent.confirmed_at]
+    monkeypatch.setattr(mod.time, "time", lambda: clock[0])
+    calls = []
+
+    def execute(**kwargs):
+        assert kwargs["current_profile"]() == ("alice", local.parent, 1)
+        kwargs["check_cancelled"]()
+        calls.append(kwargs)
+        return UsbSyncResult("completed", removed=1, observed=True)
+
+    monkeypatch.setattr(mod, "synchronize_usb_reader", execute)
+    worker = instance.admit_removal(
+        confirmation=consent, mountpoint=mount, expected_profile_epoch=1,
+        mount_key=(consent.usb_fingerprint, mount, "vfat", 8, 1, 77),
+    )
+    assert calls == []
+    service.current_identity = NS(identity_id="bob")
+    service._account_context_epoch += 1
+    if change == "source":
+        service._source_context_epoch = 1
+    elif change == "mount":
+        observable = mod.observe_linux_usb_mount
+        monkeypatch.setattr(mod, "observe_linux_usb_mount",
+                            lambda **kwargs: replace(observable(**kwargs), mount_id=78))
+    elif change == "binding":
+        db.device_usb_binding_declare(identity_id="alice", device_id="reader-a",
+                                      label="Reader", usb_fingerprint="UUID-ALICE-001",
+                                      enabled=False)
+    elif change == "intent":
+        db.device_usb_intent_set(identity_id="alice", device_id="reader-a",
+                                 artifact_id=consent.artifact_id, desired_state="keep")
+    elif change == "registry":
+        service._plugin_manager.registry_generation += 1
+    elif change == "expired":
+        clock[0] = consent.expires_at
+
+    result = worker()
+    expected = change == "navigation"
+    assert len(calls) == int(expected)
+    assert (result.status == "completed") is expected
+    assert worker().status == "blocked"
+    assert local.read_bytes() == b"synthetic local book"

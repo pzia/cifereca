@@ -65,7 +65,7 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
             or getattr(window, "_reader_scope_identity", None) != identity_id
             or getattr(window, "_reader_items", {}).get(book.key) is not book
             or storage is None or not callable(getattr(broker, "preview", None))
-            or not callable(getattr(broker, "execute_one", None))
+            or not callable(getattr(broker, "admit_removal", None))
             or not callable(getattr(getattr(window, "runner", None), "submit", None))):
         return False
     # The Core broker owns journal access. Its optional read-only facet
@@ -205,17 +205,11 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
             operation_id, book.artifact_id, book.target_relative_path,
         )
 
-    def execute(candidate: _RemovalCandidate, check_scope) -> UsbSyncResult:
-        check_scope()
+    def admit(candidate: _RemovalCandidate):
+        # The second explicit click starts the validity window. No new
+        # permission or generation may be manufactured by the queued worker.
         if not exact_intent():
-            return UsbSyncResult("blocked")
-        live = mounted()
-        if (live is None or live.mountpoint != candidate.mountpoint
-                or live.selection_key() != candidate.mount_key
-                or copy_id() != candidate.copy_operation_id
-                or not exact_intent()):
-            return UsbSyncResult("blocked")
-        check_scope()
+            raise ValueError("usb_reader_scope_revoked")
         now = int(time.time())
         consent = UsbRemovalConsent(
             identity_id, device_id, fingerprint, candidate.artifact_id,
@@ -223,12 +217,9 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
             candidate.target_relative_path, candidate.copy_operation_id,
             secrets.token_hex(16), now, now + 60,
         )
-        # Pin the generation from the original visible selection. The Core
-        # broker rejects A→B→A even if this worker starts after the switch.
-        return broker.execute_one(
+        return broker.admit_removal(
             confirmation=consent, mountpoint=candidate.mountpoint,
-            expected_profile_epoch=account_epoch,
-            check_cancelled=check_scope,
+            expected_profile_epoch=account_epoch, mount_key=candidate.mount_key,
         )
 
     def clicked(_button) -> None:
@@ -323,16 +314,25 @@ def append_reader_usb_execute_action(window, detail, book: ReaderLibraryBook, *,
                 window._reader_usb_execute_dialog = dialog
 
                 def answered(_dialog, response):
-                    if getattr(window, "_reader_usb_execute_dialog", None) is dialog:
-                        window._reader_usb_execute_dialog = None
+                    if getattr(window, "_reader_usb_execute_dialog", None) is not dialog:
+                        return
+                    window._reader_usb_execute_dialog = None
                     if response != "delete" or not active():
+                        return
+                    try:
+                        work = admit(candidate)
+                        if not callable(work) or not active():
+                            rejected()
+                            return
+                    except Exception:
+                        rejected()
                         return
                     window._reader_status_label.set_label(
                         "Retrait USB supervisé en cours… aucune réussite présumée."
                     )
                     window.runner.submit(
                         "Retirer la copie USB gérée…",
-                        lambda: execute(candidate, worker_scope_current),
+                        work,
                         ok=finished, err=rejected,
                         control=button, priority=TaskPriority.USER_ACTION,
                         kind="maintenance", origin="user",

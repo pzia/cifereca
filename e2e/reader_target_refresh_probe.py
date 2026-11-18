@@ -374,12 +374,11 @@ def main() -> int:
                         "managed_removal_requires_confirmation",
                     ),),
                 )
-            def execute_one(
+            def admit_removal(
                 self, *, confirmation, mountpoint, expected_profile_epoch,
-                check_cancelled,
+                mount_key,
             ):
-                assert callable(check_cancelled)
-                check_cancelled()
+                assert mount_key == fake_volume[0].selection_key()
                 assert expected_profile_epoch == fake_epoch[0]
                 assert confirmation.artifact_id == artifact_id
                 assert confirmation.copy_operation_id == "a" * 32
@@ -387,8 +386,10 @@ def main() -> int:
                     "Books/Cifereca/" + digest + ".epub"
                 )
                 assert mountpoint == fake_volume[0].mountpoint
-                fake_execution.append(confirmation)
-                return UsbSyncResult("completed", removed=1, observed=True)
+                def work():
+                    fake_execution.append(confirmation)
+                    return UsbSyncResult("completed", removed=1, observed=True)
+                return work
         window = state["window"]
         manager = window.plugin_manager
         assert manager is not None
