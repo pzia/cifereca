@@ -245,6 +245,21 @@ class GallicaSession(ProviderSession):
         return None
 
     @staticmethod
+    def _document_ark(*values: str | None) -> str | None:
+        """Only an exact bare ARK or Gallica document URL attests identity."""
+        arks = set()
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            match = re.fullmatch(
+                r"(?:https?://gallica\.bnf\.fr/)?(ark:/12148/[A-Za-z0-9]+)",
+                value, flags=re.ASCII | re.IGNORECASE,
+            )
+            if match:
+                arks.add("ark:/12148/" + match.group(1).rsplit("/", 1)[-1])
+        return next(iter(arks)) if len(arks) == 1 else None
+
+    @staticmethod
     def _first_text(entry: ET.Element, paths: tuple[str, ...]) -> str | None:
         for path in paths:
             node = entry.find(path)
@@ -322,7 +337,21 @@ class GallicaSession(ProviderSession):
                 if acquisition is None:
                     acquisition, acquisition_type = href, typ
 
-            ark = self._extract_ark(entry_id, friendly, acquisition, fallback_link)
+            if catalogue_url_origin(base_url) == catalogue_url_origin(EPUB_SEARCH):
+                # An acquisition or image URL is not a document identifier.
+                # Keep historical custom-catalogue behavior separate.
+                exact_ids = [
+                    self._text(node) for node in entry.findall(f"{{{ATOM}}}id")
+                ]
+                exact_links = [
+                    self._attr_href(link, base_url)
+                    for link in entry.findall(f"{{{ATOM}}}link")
+                    if str(link.attrib.get("rel") or "alternate") == "alternate"
+                    and str(link.attrib.get("type") or "") in {"text/html", "application/xhtml+xml", ""}
+                ]
+                ark = self._document_ark(*exact_ids, *exact_links)
+            else:
+                ark = self._extract_ark(entry_id, friendly, acquisition, fallback_link)
             if not ark or not acquisition:
                 continue
 
@@ -521,7 +550,12 @@ class GallicaSession(ProviderSession):
                 text = self._text(node)
                 if text and key in {"title", "creator", "date", "identifier", "description", "publisher", "type", "format", "subject", "language"}:
                     values.setdefault(key, []).append(text)
-            ark = self._extract_ark(*(values.get("identifier") or []))
+            if catalogue_url_origin(self.sru_url) == catalogue_url_origin(EPUB_SEARCH):
+                ark = self._document_ark(*(
+                    self._text(node) for node in record_data.iter(f"{{{DC}}}identifier")
+                ))
+            else:
+                ark = self._extract_ark(*(values.get("identifier") or []))
             if not ark:
                 continue
             types = " ".join(values.get("type") or []).casefold()
