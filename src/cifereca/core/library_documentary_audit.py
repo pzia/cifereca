@@ -41,7 +41,7 @@ def _cover_state_and_packet(storage, row, owner):
             return "ambiguous", local
         return "unknown", local
     if local is not None:
-        return "unknown", None, None
+        return "unknown", None
     link = row.get("_public_canonical_cover_link")
     if not valid_local_public_c_link(
         link, identity_id=owner, artifact_id=row.get("artifact_id"),
