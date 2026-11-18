@@ -143,3 +143,55 @@ def test_invalid_registration_and_invalid_request_do_not_pollute_counters(prepar
     assert service.stats()["n2_register_new"] == 1
     assert service.stats()["n2_register_reused"] == 1
     assert service.stats()["n2_register_changed"] == 0
+
+
+def test_n2_decision_latency_separates_outcomes_and_excludes_loader(prepared, monkeypatch):
+    from cifereca.gui import document_cover_service as module
+
+    service, loader, _ = prepared
+    clock = [0.0]
+    monkeypatch.setattr(module, "perf_counter", lambda: clock[0])
+    initial_load = loader.load
+
+    def load(*args, **kwargs):
+        clock[0] += 50.0  # physical loader must be outside N2 timing
+        return initial_load(*args, **kwargs)
+
+    monkeypatch.setattr(loader, "load", load)
+    initial_peek = service.decisions.peek
+
+    def peek(*args, **kwargs):
+        clock[0] += 0.001
+        return initial_peek(*args, **kwargs)
+
+    monkeypatch.setattr(service.decisions, "peek", peek)
+    assert service.stats()["n2_hit_recent_count"] == 0
+    assert "n2_hit_recent_p95_ms" not in service.stats()
+    service.get_cover(DOCUMENT, "detail", lambda _: None)
+    service.register(proof())
+    service.get_cover(DOCUMENT, "detail", lambda _: None)
+    service.get_cover(DOCUMENT, "detail", lambda _: None)
+    stats = service.stats()
+    assert stats["n2_source_unknown_recent_count"] == 1
+    assert stats["n2_source_unknown_recent_p95_ms"] == 0
+    assert stats["n2_resolution_miss_recent_count"] == 1
+    assert stats["n2_resolution_miss_recent_p95_ms"] == 2
+    assert stats["n2_hit_recent_count"] == 1
+    assert stats["n2_hit_recent_p95_ms"] == 1
+    assert stats["n2_below_floor_recent_count"] == 0
+
+
+def test_n2_latency_rolling_window_does_not_change_lifetime_counts(prepared, monkeypatch):
+    from cifereca.gui import document_cover_service as module
+
+    service, _, _ = prepared
+    clock = iter(x for n in range(1025) for x in (0.0, n / 1000))
+    monkeypatch.setattr(module, "perf_counter", lambda: next(clock))
+    for _ in range(1025):
+        service.get_cover(DOCUMENT, "detail", lambda _: None)
+    stats = service.stats()
+    assert stats["n2_miss"] == 1025
+    assert stats["n2_source_unknown_recent_count"] == 1024
+    assert stats["n2_source_unknown_recent_p50_ms"] == 512
+    assert stats["n2_source_unknown_recent_p95_ms"] == 973
+    assert stats["n2_hit_recent_count"] == 0
