@@ -58,22 +58,27 @@ def valid_local_public_c_link(
 
 def project_local_origin_public_c(
     storage: Any, rows: list[dict[str, Any]], *, identity_id: str,
+    documentary_only: bool = False,
 ) -> None:
     """Attach exact public C N2 proof in-place to already-built worker rows.
 
     The caller has already constructed Library/Recent snapshots. This
     additional bounded read neither looks up files nor consults a supplier.
     Invalid/ambiguous provenance simply leaves the existing cover path.
+    The separate opt-in documentary receipt is independent of EPUB cover
+    priority; it never creates or changes a cover fallback on the row.
     """
-    if type(rows) is not list:
+    if type(rows) is not list or type(documentary_only) is not bool:
         return
+    receipt_key = ("_public_canonical_document_link" if documentary_only
+                   else "_public_canonical_cover_link")
     # A repeated worker projection may receive previously annotated rows.
     # A proof from an earlier origin/C inventory cannot survive failed or
     # conflicting fresh evidence, a profile switch, or a removed Placement.
     # Always revoke the old binding before attempting the new admission.
     for row in rows:
         if type(row) is dict:
-            row.pop("_public_canonical_cover_link", None)
+            row.pop(receipt_key, None)
     if (len(rows) > _MAX_ROWS or type(identity_id) is not str
             or not identity_id or not rows):
         return
@@ -84,7 +89,7 @@ def project_local_origin_public_c(
         and type(row.get("artifact_id")) is str
         and type(row.get("placement_id")) is str
         and row["artifact_id"] and row["placement_id"]
-        and row.get("_exact_local_cover_evidence") is None
+        and (documentary_only or row.get("_exact_local_cover_evidence") is None)
         and row.get("_library_view_owner") in (None, identity_id)
     }
     if not wanted:
@@ -216,7 +221,7 @@ def project_local_origin_public_c(
         if (type(row) is not dict
                 or row.get("identity_id") != identity_id
                 or row.get("_library_view_owner") not in (None, identity_id)
-                or row.get("_exact_local_cover_evidence") is not None):
+                or (not documentary_only and row.get("_exact_local_cover_evidence") is not None)):
             continue
         artifact, placement = row.get("artifact_id"), row.get("placement_id")
         if (artifact, placement) not in wanted or (artifact, placement) not in present:
@@ -224,7 +229,7 @@ def project_local_origin_public_c(
         consolidated = selected.get(artifact)
         if consolidated is None:
             continue
-        row["_public_canonical_cover_link"] = VerifiedLocalPublicCLink(
+        row[receipt_key] = VerifiedLocalPublicCLink(
             identity_id=identity_id,
             artifact_id=artifact, placement_id=placement,
             document=consolidated.document,
