@@ -6,21 +6,22 @@ it never cancels an already admitted business operation.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from weakref import ref
 
 from ..plugin_api.models import UiPageLifecycleEvent
 
 
 @dataclass(frozen=True, slots=True)
 class PageScope:
-    owner: int
+    owner: object
     identity: str | None
     identity_epoch: int
     account: tuple[str, str, str] | None
     account_epoch: int
 
     def key(self, account_scoped):
-        identity = (self.owner, self.identity, self.identity_epoch)
+        identity = (id(self.owner), self.identity, self.identity_epoch)
         return identity + (self.account, self.account_epoch) if account_scoped else identity
 
 
@@ -32,6 +33,7 @@ class _Mounted:
     callback: object
     account_scoped: bool
     generation: int = 0
+    mount_token: object = field(default_factory=object)
 
 
 class PageLifecycles:
@@ -61,24 +63,23 @@ class PageLifecycles:
         entry.generation = self._counter
         generation = entry.generation
         scope = self._scope
-        visible = self._visible == entry.route
+        route, token, account_scoped = entry.route, entry.mount_token, entry.account_scoped
+        visible = self._visible == route
 
         def valid_stamp():
-            return (
-                self._alive()
-                and self._entries.get(entry.route) is entry
-                and entry.generation == generation
-            )
-
-        def current():
             try:
+                mounted = self._entries.get(route)
                 return (
-                    visible and valid_stamp() and self._visible == entry.route
-                    and self._read_scope().key(entry.account_scoped)
-                    == scope.key(entry.account_scoped)
+                    self._alive() and mounted is not None
+                    and mounted.mount_token is token
+                    and mounted.generation == generation
+                    and self._read_scope().key(account_scoped) == scope.key(account_scoped)
                 )
             except Exception:
                 return False
+
+        def current():
+            return visible and self._visible == route and valid_stamp()
 
         return entry, UiPageLifecycleEvent(
             route=entry.route, identity_id=scope.identity,
@@ -151,7 +152,7 @@ def _window_scope(window):
         if all(type(value) is str for value in candidate):
             coordinates = candidate
     return PageScope(
-        id(service), identity_id,
+        service, identity_id,
         getattr(window, "_identity_context_generation", 0),
         coordinates, getattr(window, "_account_context_generation", 0),
     )
@@ -159,16 +160,24 @@ def _window_scope(window):
 
 def renew_lifecycles(window):
     old = getattr(window, "_page_lifecycles", None)
+    try:
+        window_ref = ref(window)
+    except TypeError:
+        # Lightweight headless shell doubles may not support weak references.
+        window_ref = lambda: window
 
     def alive():
-        return (not getattr(window, "_closed", False)
-                and getattr(window, "_page_lifecycles", None) is owner)
+        live_window = window_ref()
+        return (live_window is not None and not getattr(live_window, "_closed", False)
+                and getattr(live_window, "_page_lifecycles", None) is owner)
 
     def failure():
-        window.diagnostics.add("PLUGIN", "ui.page lifecycle", "error",
-                               detail={"code": "page_lifecycle_failed"})
+        live_window = window_ref()
+        if live_window is not None:
+            live_window.diagnostics.add("PLUGIN", "ui.page lifecycle", "error",
+                                        detail={"code": "page_lifecycle_failed"})
 
-    owner = PageLifecycles(lambda: _window_scope(window), alive, failure)
+    owner = PageLifecycles(lambda: _window_scope(window_ref()), alive, failure)
     # Publish the replacement before invoking dispose callbacks: a recursive
     # rebuild owns its own generation and must never be overwritten here.
     window._page_lifecycles = owner
