@@ -178,6 +178,44 @@ class Reception:
         return panel
 
 
+@contextmanager
+def _audit(db, reception, artifact, placement, path):
+    from cifereca.brokers import CatalogBrokerImpl
+    from cifereca.gui.local_cover_adapter import LocalCoverEvidenceAdapter
+
+    row, _ = _views(db, artifact, placement, path)
+    project_local_origin_public_c(db, [row], identity_id=OWNER)
+    assert row["_public_canonical_cover_link"].document == reception.ref
+
+    def library_entries(*, identity_id, scan):
+        assert identity_id == OWNER and scan is False
+        return [row]
+
+    owner = NS(storage=db, identity_by_id=lambda value: value if value == OWNER else None,
+               library_entries=library_entries, _account_context_epoch=7,
+               _source_context_epoch=9)
+    broker = CatalogBrokerImpl(owner)
+    adapter = LocalCoverEvidenceAdapter()
+    adapter.bind_audit_observer(owner, reception.service)
+    try:
+        yield broker
+    finally:
+        adapter.close()
+        assert owner._documentary_cover_observer is None
+        detached = broker.library_cover_audit(identity_id=OWNER)
+        assert detached["n2"]["unknown"] == detached["n3"]["unknown"] == 1
+
+
+def _assert_audit(broker, physical):
+    facts = broker.library_cover_audit(identity_id=OWNER)
+    assert facts["schema"] == 2 and facts["entries"] == 1
+    assert facts["status"] == "partial"
+    assert facts["n2"]["catalog"] + facts["n2"]["origin"] == 1
+    assert facts["n3"][physical] == 1
+    assert broker.library_cover_audit(identity_id="B")["status"] == "unavailable"
+    return facts
+
+
 def _search(db, reception):
     page = search_public_notice_c(db, TITLE)
     assert len({hit.document for hit in page.hits}) == 2  # homonym stays distinct
@@ -367,7 +405,12 @@ def test_same_public_c_six_list_detail_paths_and_reopened_offline_cache(tmp_path
             # The detail variant deliberately bypasses the preview cache.
             image = reception.loader._path(URL)
             assert image.read_bytes() == png
-            image.unlink()
+            with _audit(db, reception, artifact, placement, path) as broker:
+                warm = _assert_audit(broker, "signature_valid")
+                image.unlink()
+                cold = _assert_audit(broker, "not_validated")
+                assert warm["n2"] == cold["n2"]
+                assert gets == [URL] and reception.reads == [ref]
             done, paths = Event(), []
             handle = reception.service.get_cover(
                 ref, "detail", lambda p: (paths.append(p), done.set()),
@@ -422,6 +465,10 @@ def test_same_public_c_six_list_detail_paths_and_reopened_offline_cache(tmp_path
         reception.assert_n2_reads(14)
         assert reception.reads == [ref]
         assert gets == [URL, URL]
+
+        with _audit(restored, reception, artifact, placement, path) as broker:
+            _assert_audit(broker, "signature_valid")
+            assert gets == [URL, URL] and reception.reads == [ref]
 
         # The homonym has exactly the same physical URL but a different C.
         # Its first N2 read must consult its own canonical source; N3 can
