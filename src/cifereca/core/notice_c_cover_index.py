@@ -8,7 +8,9 @@ N2 derives its decisions from this record; N3 owns image bytes/previews.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from .public_search_projection import PublicSeriesRelation
+
+from dataclasses import asdict, dataclass
 from hashlib import sha256
 import json
 import re
@@ -49,6 +51,7 @@ class ConsolidatedPublicBibliography:
     description: str | None
     last_seen_at: int
     published_at: str | None = None
+    series_relation: PublicSeriesRelation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,10 +170,11 @@ def _decode_public_bibliography(
     from .notice_search_cover_producer import _coordinate_digest
     from .notice_source_observation import NoticeSourceKey
     from .notice_cover_projection import notice_cover_document_ref
-    from .public_search_projection import _public_bibliographic_text
+    from .public_search_projection import _public_bibliographic_text, decode_public_series_relation
 
     if type(raw) is not dict or set(raw) not in (
         _BIB_KEYS, _BIB_KEYS | {"published_at"},
+        _BIB_KEYS | {"series_relation"}, _BIB_KEYS | {"published_at", "series_relation"},
     ):
         raise ValueError("corrupt_canonical_cover")
     def coord(value, *, optional=False):
@@ -220,7 +224,13 @@ def _decode_public_bibliography(
     )
     if notice_cover_document_ref(key).source_key != source_ref:
         raise ValueError("corrupt_canonical_cover")
-    return ConsolidatedPublicBibliography(**raw)
+    values = dict(raw)
+    if "series_relation" in values:
+        relation = decode_public_series_relation(values["series_relation"], provider_id=provider)
+        if relation is None:
+            raise ValueError("corrupt_canonical_cover")
+        values["series_relation"] = relation
+    return ConsolidatedPublicBibliography(**values)
 
 
 def _decode(raw: object, document: CoverDocumentScope) -> ConsolidatedNoticeCover:
@@ -450,6 +460,8 @@ def _persist_consolidated_cover_source_txn(
             # not an inferred year/edition or the observation timestamp.
             if hit.published_at is not None:
                 incoming["public_bibliography"]["published_at"] = hit.published_at
+            if hit.series_relation is not None:
+                incoming["public_bibliography"]["series_relation"] = asdict(hit.series_relation)
     # The extension belongs to this exact validated public source, not
     # the per-profile mirror or a different member of the canonical group.
     source_fields = source.observation.fields_copy().get("search_result")
