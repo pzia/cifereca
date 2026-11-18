@@ -33,7 +33,8 @@ def attach_opening_loan_reader(service, read, *, typed=True):
             )
             service._sessions[key] = session
         session.accounts = accounts
-        if typed:
+        use_typed = typed(accounts[0]) if callable(typed) else typed
+        if use_typed:
             def observe(account, bound=session):
                 return LoanInventorySnapshot(
                     scope=LoanInventoryScope.for_account(
