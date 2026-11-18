@@ -11,6 +11,8 @@ from ..services import LibraryService
 from ..brokers import build_public_brokers
 from ..storage import Storage
 from .llm_service import optional_llm_service
+from ..task_admission import SharedTaskAdmission
+from .notice_c_work_runtime import NoticeWorkRuntime, validate_notice_work_admission
 
 
 @dataclass(slots=True)
@@ -28,6 +30,7 @@ class CiferecaCore:
     library: LibraryService
     plugins: PluginManager
     brokers: dict[str, object] = field(default_factory=dict, repr=False)
+    notice_work: NoticeWorkRuntime | None = field(default=None, repr=False)
 
     @classmethod
     def open(
@@ -41,7 +44,12 @@ class CiferecaCore:
         no_plugins: bool = False,
         force_plugins: tuple[str, ...] = (),
         activate_plugins: bool = True,
+        notice_work_admission: SharedTaskAdmission | None = None,
     ) -> Self:
+        # Explicit trusted composition/acceptance option only; ordinary
+        # CLI and GTK startup retain their current admission and behavior.
+        if notice_work_admission is not None:
+            validate_notice_work_admission(notice_work_admission)
         config = Config(config_path) if config_path is not None else Config()
         diagnostics = Diagnostics(
             enabled=True if diagnostics_enabled is None else bool(diagnostics_enabled),
@@ -61,7 +69,10 @@ class CiferecaCore:
             PluginConfigStore(config_path.parent / "plugins-config.json")
             if config_path is not None else PluginConfigStore()
         )
-        brokers = build_public_brokers(library)
+        brokers = (build_public_brokers(library) if notice_work_admission is None
+                   else build_public_brokers(library, task_admission=notice_work_admission))
+        notice_work = (None if notice_work_admission is None else
+                       NoticeWorkRuntime(storage, brokers["tasks"]))
         llm = optional_llm_service(config)
         plugins = PluginManager(
             builtin_ui=builtin_ui,
@@ -85,6 +96,7 @@ class CiferecaCore:
             library=library,
             plugins=plugins,
             brokers=brokers,
+            notice_work=notice_work,
         )
 
     @staticmethod
@@ -101,6 +113,8 @@ class CiferecaCore:
             return DirectoryMigration(config, storage, root).abort()
 
     def close(self) -> None:
+        if self.notice_work is not None:
+            self.notice_work.close()
         self.plugins.close()
         seen: set[int] = set()
         for broker in self.brokers.values():
