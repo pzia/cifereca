@@ -91,19 +91,54 @@ class PublicCatalogueCache:
             if cached is not None:
                 self._entries.move_to_end(key)
                 return deepcopy(cached[1])
-            if now < self._paused_until:
-                raise ProviderError('Numilog : public_catalog_rate_limited')
-            if self._inflight is not None:
-                raise ProviderError('Numilog : public_catalog_request_in_progress')
-            # Two-request burst allows search -> explicit detail. Thereafter
-            # at most one new HTTP request per second, no sleeps or retries.
-            self._tokens = min(2.0, self._tokens + max(0.0, now - self._updated))
-            self._updated = now
-            if self._tokens < 1.0:
-                raise ProviderError('Numilog : public_catalog_request_budget_exhausted')
-            self._tokens -= 1.0
-            token, epoch = object(), self._epoch
-            self._inflight = token
+            token, epoch = self._reserve_locked(now)
+        return self._run_reserved(key, token, epoch, load)
+
+    def _reserve_locked(self, now):
+        """Shared single in-flight slot, cooldown and token bucket."""
+        if now < self._paused_until:
+            raise ProviderError('Numilog : public_catalog_rate_limited')
+        if self._inflight is not None:
+            raise ProviderError('Numilog : public_catalog_request_in_progress')
+        # Two-request burst allows search -> explicit detail. Thereafter
+        # at most one new HTTP request per second, no sleeps or retries.
+        self._tokens = min(2.0, self._tokens + max(0.0, now - self._updated))
+        self._updated = now
+        if self._tokens < 1.0:
+            raise ProviderError('Numilog : public_catalog_request_budget_exhausted')
+        self._tokens -= 1.0
+        token, epoch = object(), self._epoch
+        self._inflight = token
+        return token, epoch
+
+    def _reserve_retained_refresh_locked(self, input_token, record_id, transport_digest):
+        """Caller holds cache lock under the session generation guard.
+
+        An explicit refresh requires one still-live ordinary Search page
+        retaining the exact original response, not a cache MISS or arbitrary
+        URL. Reserve using exactly the normal HTTP budget.
+        """
+        entry, ttl = self._peek_retained_input_locked(input_token)
+        if entry is None or ttl < 1:
+            raise ProviderError("Numilog : public_catalog_refresh_input_unavailable")
+        raw = entry.raw_input
+        key = ("search", raw._url, "all")
+        current = self._entries.get(key)
+        if (current is None or current[1] is not entry
+                or raw.transport_digest != transport_digest):
+            raise ProviderError("Numilog : public_catalog_refresh_input_unavailable")
+        matches = [row for row in entry.page.items if row.record_id == record_id]
+        if len(matches) != 1:
+            raise ProviderError("Numilog : public_catalog_refresh_input_unavailable")
+        token, epoch = self._reserve_locked(self._clock())
+        return token, epoch, key, raw, matches[0]
+
+    def _release_reserved(self, token):
+        with self._lock:
+            if self._inflight is token:
+                self._inflight = None
+
+    def _run_reserved(self, key, token, epoch, load):
         try:
             value = load()  # No cache mutex held across HTTP.
             snapshot = deepcopy(value)
@@ -147,6 +182,4 @@ class PublicCatalogueCache:
                     )
             raise
         finally:
-            with self._lock:
-                if self._inflight is token:
-                    self._inflight = None
+            self._release_reserved(token)
