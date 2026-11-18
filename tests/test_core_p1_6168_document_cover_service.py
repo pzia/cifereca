@@ -372,7 +372,8 @@ def test_audit_current_n2_and_n3_are_independent(prepared, monkeypatch):
     monkeypatch.setattr(loader, "load_exact_epub", forbidden)
     monkeypatch.setattr(decisions, "resolve_and_publish", forbidden)
     before = service.stats()
-    valid = observe(b["scope"])
+    assert observe(b["scope"], expected_revision=8).n2_status == "unknown"
+    valid = observe(b["scope"], expected_revision=7)
     assert (valid.n2_status, valid.n2_tier, valid.n3_status) == (
         "selected", "embedded", "digest_valid",
     )

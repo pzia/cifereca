@@ -421,7 +421,7 @@ class DocumentCoverService:
             return self._trace.snapshot(document)
 
     def observe_cover_for_audit(
-        self, document: CoverDocumentScope,
+        self, document: CoverDocumentScope, *, expected_revision: int | None = None,
     ) -> CoverAuditObservation:
         """Read one registered exact reference, not a historical N0 trace.
 
@@ -431,9 +431,15 @@ class DocumentCoverService:
         """
         if type(document) is not CoverDocumentScope:
             raise TypeError("expected exact DocumentRef")
+        if expected_revision is not None and (
+            type(expected_revision) is not int or expected_revision < 0
+        ):
+            raise ValueError("invalid expected source revision")
         with self._lock:
             snapshot = self._snapshots.get(document)
-            if self._closed or snapshot is None:
+            if (self._closed or snapshot is None
+                    or (expected_revision is not None
+                        and snapshot.revision != expected_revision)):
                 return CoverAuditObservation()
             seen = self.decisions.observe(document, revision=snapshot.revision)
         if seen is None:
