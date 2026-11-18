@@ -165,7 +165,7 @@ def _build_sync_page(self):
     all_now.connect("clicked", sync_all)
     scroll.set_child(outer)
     root.append(scroll)
-    from ..plugin_api.page_lifecycle import PageLifecycleV1
+    from cifereca.plugin_api.page_lifecycle import PageLifecycleV1
 
     def invalidate(event):
         if (not event.is_current(require_visible=False)
