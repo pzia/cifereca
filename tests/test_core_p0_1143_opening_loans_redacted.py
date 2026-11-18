@@ -11,6 +11,8 @@ import logging
 import pytest
 from types import SimpleNamespace as NS
 
+from cifereca.core import sync_coordination
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from tests.test_core_p0_1346_opening_source_isolation import _accounts, _state
 from tests.test_sync_state_contract import _service
 
@@ -23,12 +25,17 @@ def test_opening_exception_is_safe_in_log_export_and_sqlite(tmp_path, monkeypatc
     try:
         paris, kobo, numilog = _accounts(service)
         calls = []
-        def loans(account, *, force=False):
+        attach_opening_loan_reader(service, lambda _account, **_kw: [])
+        original = sync_coordination._sync_loan_inventory_observation
+
+        # The coordinator's public logging boundary must sanitize even an
+        # unexpected exception. The ABI's dedicated raw TRACE is separate.
+        def loans(owner, account, session, *, scope):
             calls.append(account.provider_id)
             if account is paris:
                 raise RuntimeError(PRIVATE)
-            return []
-        monkeypatch.setattr(service, "_loans_for_account", loans)
+            return original(owner, account, session, scope=scope)
+        monkeypatch.setattr(sync_coordination, "_sync_loan_inventory_observation", loans)
         with caplog.at_level(logging.INFO, logger="cifereca"):
             result = service.opening_sync()
 
@@ -66,8 +73,8 @@ def test_partial_upstream_errors_are_counted_without_exporting_raw_error_fields(
                 {"upstream": PRIVATE, "error": PRIVATE},
             ],
         )
-        monkeypatch.setattr(service, "_loans_for_account",
-                            lambda account, force=False: [])
+        attach_opening_loan_reader(service, lambda account, force=False: [],
+                                   typed=lambda a: a.provider_id != "paris")
         with caplog.at_level(logging.INFO, logger="cifereca"):
             result = service.opening_sync()
         default = next(row for row in result["identities"]
@@ -100,7 +107,6 @@ def test_adept_profile_read_failure_is_a_closed_diagnostic(tmp_path, monkeypatch
         monkeypatch.setattr(service, "_kobo_adapter", lambda: (_ for _ in ()).throw(
             AssertionError("opening sync must not probe provider runtime")
         ), raising=False)
-        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
         result = service.opening_sync()
         assert result["identities"]
         rows = [
@@ -133,7 +139,6 @@ def test_opening_dashboard_resolves_bound_adept_profile_per_identity(tmp_path, m
         monkeypatch.setattr(service, "kobo_profiles", lambda: (
             pytest.fail("global profile enumeration must not occur")
         ))
-        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
         result = service.opening_sync()
         by_identity = {row["identity_id"]: row for row in result["identities"]}
         assert calls == [("default", "profile-A"), ("alex", "profile-B")]
@@ -154,7 +159,6 @@ def test_opening_dashboard_missing_scoped_profile_never_uses_other_identity(tmp_
         monkeypatch.setattr(service, "kobo_profiles", lambda: (
             pytest.fail("no global profile fallback")
         ))
-        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
         result = service.opening_sync()
         by_identity = {row["identity_id"]: row for row in result["identities"]}
         assert by_identity["default"]["adept_attention"] == "profile_missing"
@@ -173,7 +177,6 @@ def test_unbound_opening_sync_never_queries_adept_provider(tmp_path, monkeypatch
             raise AssertionError("unbound identity must not trigger ADEPT runtime")
         monkeypatch.setattr(service, "_kobo_adapter", forbidden, raising=False)
         monkeypatch.setattr(service, "kobo_profiles", forbidden)
-        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
         result = service.opening_sync()
         assert result["identities"]
         assert calls == []
@@ -192,7 +195,6 @@ def test_identity_level_failure_keeps_safe_persistent_cause_and_other_identity(
                 raise OSError(PRIVATE)
             return original(identity_id, loans)
         monkeypatch.setattr(service, "_persist_active_loans", failure_for_first)
-        monkeypatch.setattr(service, "_loans_for_account", lambda *_a, **_kw: [])
         result = service.opening_sync()
         by_identity = {row["identity_id"]: row for row in result["identities"]}
         assert by_identity["default"]["status"] == "failed"
