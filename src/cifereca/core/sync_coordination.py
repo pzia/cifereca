@@ -842,7 +842,8 @@ def _registered_typed_loan_scope_current(
                 account.provider_id, account.credential_id,
             )) is session
             and getattr_static(session, "connected", None) is True
-            and getattr_static(session, "_closed", None) in (None, False)
+            and (getattr_static(session, "_closed", None) is None
+                 or getattr_static(session, "_closed", None) is False)
             and getattr_static(session, "provider_id", None) == scope[1]
             and getattr_static(session, "credential_id", None) == scope[2]
             and getattr(getattr(session, "capabilities", None), "loans", None) is True
