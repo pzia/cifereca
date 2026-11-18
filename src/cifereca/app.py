@@ -30,7 +30,7 @@ Puis relancez :
 def _bind_desktop_notice_work(core, window):
     """Attach the existing Core pump to the ordinary desktop lifecycle.
 
-    No timer or executor is created here; GTK only submits a bounded hint.
+    No executor is created here; GTK only submits a bounded hint.
     The observer runs on the Core worker after commit and refreshes N2 only.
     """
     runtime = getattr(core, "notice_work", None)
@@ -53,6 +53,44 @@ def _bind_desktop_notice_work(core, window):
             return None
 
     window._notice_work_tick = hint
+
+
+def _start_notice_work_wakeup(window, *, timeout_add_seconds, source_remove):
+    """One desktop wake source, not another work scheduler or executor.
+
+    Five seconds bounds the gap between idle hints (subject to admission
+    and the main loop). The existing Core pump owns all reads and work.
+    """
+    hint = getattr(window, "_notice_work_tick", None)
+    if not callable(hint) or getattr(window, "_closed", False):
+        return
+    if callable(getattr(window, "_notice_work_wakeup_stop", None)):
+        return
+    source = [None]
+
+    def pulse():
+        if source[0] is None or getattr(window, "_closed", False):
+            source[0] = None
+            return False
+        hint()
+        return True
+
+    def stop():
+        handle, source[0] = source[0], None
+        if handle is not None:
+            source_remove(handle)
+
+    source[0] = timeout_add_seconds(5, pulse)
+    window._notice_work_wakeup_stop = stop
+
+
+def _stop_notice_work_wakeup(window):
+    stop = getattr(window, "_notice_work_wakeup_stop", None)
+    if callable(stop):
+        try:
+            stop()
+        except Exception:
+            pass
 
 
 def _run_application(*, capture_mode: bool = False) -> int:
@@ -208,8 +246,14 @@ def _run_application(*, capture_mode: bool = False) -> int:
                 self._startup_plugins_scheduled = True
                 from gi.repository import GLib
                 GLib.idle_add(self.window.activate_startup_plugins)
+                if callable(getattr(self.window, "_notice_work_tick", None)):
+                    _start_notice_work_wakeup(
+                        self.window, timeout_add_seconds=GLib.timeout_add_seconds,
+                        source_remove=GLib.source_remove,
+                    )
 
         def do_shutdown(self):
+            _stop_notice_work_wakeup(self.window)
             try:
                 core.close()
             except Exception:
@@ -232,6 +276,8 @@ def _run_application(*, capture_mode: bool = False) -> int:
         # credentials. Never forward an untrusted exception to application logs.
         logger.error("Fatal GTK GUI error code=gtk_runtime_failed")
         return 1
+    finally:
+        _stop_notice_work_wakeup(app.window)
 
 
 def main() -> int:

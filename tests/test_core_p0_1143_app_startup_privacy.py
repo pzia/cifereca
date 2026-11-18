@@ -137,3 +137,79 @@ def test_desktop_notice_hint_dispatches_real_retained_work_and_stops(tmp_path):
         assert win._notice_work_tick() is None
     win._closed = False
     assert win._notice_work_tick() is None
+
+
+
+def test_notice_wakeup_is_one_scoped_source_and_stops_once():
+    calls, removed, scheduled = [], [], []
+    win = NS(_closed=False, _notice_work_tick=lambda: calls.append("hint"))
+    def schedule(seconds, callback):
+        scheduled.append((seconds, callback))
+        return 42
+    for _ in range(2):
+        app._start_notice_work_wakeup(win, timeout_add_seconds=schedule,
+                                      source_remove=removed.append)
+    assert len(scheduled) == 1 and scheduled[0][0] == 5
+    pulse = scheduled[0][1]
+    assert calls == []
+    assert pulse() is True and calls == ["hint"]
+    app._stop_notice_work_wakeup(win)
+    app._stop_notice_work_wakeup(win)
+    assert removed == [42]
+    assert pulse() is False and calls == ["hint"]
+    inert = NS(_closed=False)
+    app._start_notice_work_wakeup(inert, timeout_add_seconds=schedule,
+                                  source_remove=removed.append)
+    assert len(scheduled) == 1
+
+
+def test_idle_wakeup_revisits_future_durable_job_without_user_action(tmp_path):
+    from threading import Event
+    from cifereca.task_admission import SharedTaskAdmission
+    from cifereca.core import notice_c_job_journal as journal
+    from cifereca.core.notice_c_exact_recompute import request_exact_public_recompute
+    from cifereca.core.notice_c_cover_index import (
+        persist_exact_public_search_cover, read_consolidated_notice_cover,
+    )
+    from tests.test_core_p0_4982_exact_public_recompute import source
+    from tests.test_core_p0_4982_notice_work_runtime import open_core
+
+    budget = SharedTaskAdmission(max_inflight=16, reserve_user_slots=3)
+    now = [100]
+    committed = Event()
+    scheduled, removed = [], []
+    def schedule(seconds, callback):
+        scheduled.append(callback)
+        return 42
+
+    with open_core(tmp_path, notice_work_admission=budget) as core:
+        runtime = core.notice_work
+        runtime._pump._clock = runtime._pump._bridge._clock = lambda: now[0]
+        old = persist_exact_public_search_cover(core.storage, source(core.storage, "Ancien", 10))
+        source(core.storage, "Nouveau", 11)
+        ref = request_exact_public_recompute(
+            core.storage, old.document, now=100, expected_generation=0,
+        )
+        lease = journal.claim_job(core.storage, ref, now=100, lease_seconds=30)
+        journal.fail_job(core.storage, lease, now=100, transient=True)
+        assert journal.read_job(core.storage, ref).due == 101
+        win = NS(_closed=False, document_covers=NS(
+            refresh_committed_source_in_worker=lambda *_: committed.set()))
+        app._bind_desktop_notice_work(core, win)
+        initial = win._notice_work_tick()
+        assert initial.result(timeout=10).handles == ()
+        assert journal.read_job(core.storage, ref).attempts == 1
+        app._start_notice_work_wakeup(win, timeout_add_seconds=schedule,
+                                     source_remove=removed.append)
+        now[0] = 105
+        # Only the idle loop driver wakes the persisted retry.
+        assert scheduled[0]() is True
+        assert committed.wait(10)
+        receipt = journal.read_job(core.storage, ref)
+        assert receipt.state == "current" and receipt.attempts == 2
+        assert read_consolidated_notice_cover(core.storage, old.document).sources[0].public_bibliography.title == "Nouveau"
+        win._closed = True
+        assert scheduled[0]() is False
+        app._stop_notice_work_wakeup(win)
+        assert removed == []  # GLib removes a callback returning False
+        assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
