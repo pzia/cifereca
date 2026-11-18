@@ -13,7 +13,7 @@ import re
 
 from .book_cover_projection import CoverDocumentScope
 from .notice_c_cover_index import _db_key, _decode, is_canonical_cover_document
-from .notice_c_web_references import FIELD, decode_public_web_references
+from .notice_c_web_references import FIELD, decode_public_web_references, qualified_public_web_source
 from .notice_cover_repository import (
     _opaque_key, _checked_source_state, _source_fingerprint,
 )
@@ -58,7 +58,7 @@ def _current_refs(db, source):
         identity_id=None, provider_id=source.provider_id, credential_id="__public__",
     )
     key = _opaque_key(doc)
-    _, live, fence = _checked_source_state(db, doc, key)
+    raw, live, fence = _checked_source_state(db, doc, key)
     if live is None:
         # A qualified retention eviction of THIS exact observation remains
         # eligible. A raw DELETE, missing fence or newer evicted revision
@@ -71,9 +71,10 @@ def _current_refs(db, source):
     observation = live.observation
     if (live.epoch != source.source_epoch
             or observation.source_revision != source.source_revision
-            or observation.status != "complete"
-            or live.attribute.field_path != _FIELD_PATH
-            or not live.attribute.snapshot_complete):
+            or live.attribute.state != source.state
+            or not qualified_public_web_source(
+                live, inventory_complete=json.loads(raw[0])["cover_inventory_complete"],
+            )):
         return ()
     fields = observation.fields_copy().get("search_result")
     if type(fields) is not dict or FIELD not in fields:
