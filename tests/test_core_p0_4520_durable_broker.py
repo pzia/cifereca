@@ -118,3 +118,16 @@ def test_known_capacity_refusal_precedes_link(tmp_path, monkeypatch):
         assert len(db.placements()) == 1
     finally:
         db.close()
+
+
+def test_durable_mode_requires_admission_before_transform(tmp_path, monkeypatch):
+    service, broker, request = _broker(tmp_path, monkeypatch)
+    try:
+        with pytest.raises(Conflict) as exc:
+            broker.execute_transform(request, control=Control())
+        assert exc.value.code == "artifact_transform_scope_unverified"
+        assert service.plugin_manager.transformer.plan_calls == 0
+        assert service.plugin_manager.transformer.transform_calls == 0
+        assert journal.summarize_derived_journal(service.storage)["count"] == 0
+    finally:
+        service.storage.close()

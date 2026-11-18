@@ -949,7 +949,11 @@ class ArtifactExecutionBrokerImpl:
             lease.active = False
             # Revalidate the physical target is still our just-published inode;
             # never report a variant if an unrelated writer substituted the path.
-            if (not final.is_file() or sha256_file(final) != actual_sha
+            # The durable writer will hash through no-follow pinned FDs
+            # and match the reserved inode. Do not reopen a racing path
+            # through the legacy pathname-based hash in that mode.
+            if reservation is None and (
+                    not final.is_file() or sha256_file(final) != actual_sha
                     or _variant_directory_stamp(final.parent) != lease.source_directory_stamp):
                 raise _VariantConflict("Variante publiée déplacée", code="artifact_variant_publish_race")
             # A source or another profile may have claimed the filename while
@@ -1180,6 +1184,9 @@ class ArtifactExecutionBrokerImpl:
 
     def _execute_transform(self, request, *, transformer_plugin_id="", control=None, admission=None):
         owner, current, _transaction_current = admission or (None, lambda: None, None)
+        if self._durable_variant_publication and admission is None:
+            raise _VariantConflict("Confirmation de transformation requise",
+                                   code="artifact_transform_scope_unverified")
         if control is None:
             control = _NullTaskControl()
         control.check_cancelled()
