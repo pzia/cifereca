@@ -117,3 +117,94 @@ def test_corrupt_payload_is_not_reused_or_overwritten(tmp_path):
         assert db.metadata_get(key) == before
     finally:
         db.close()
+
+
+def _prepared_publication(tmp_path):
+    service, intent = _fixture(tmp_path)
+    stage = Path(intent.staged_path)
+    stage.parent.mkdir(parents=True)
+    stage.write_bytes(b"new bytes")
+    info = stage.stat()
+    intent = replace(intent, output_stamp=(
+        info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
+    ))
+    reservation = journal.reserve_derived_publication(service.storage, intent)
+    import os
+    os.link(stage, intent.candidate_path)
+    return service, intent, reservation
+
+
+def _publish_reserved(storage, intent, reservation, **extra):
+    from cifereca.core.derived_variant_publication import publish_derived_variant
+    return publish_derived_variant(
+        storage, parent_artifact_id="sha256:" + intent.parent_sha256,
+        parent_sha256=intent.parent_sha256,
+        parent_placement_id=intent.parent_placement_id, parent_path=Path(intent.parent_path),
+        identity_id=intent.identity_id, published_path=Path(intent.candidate_path),
+        output_sha256=intent.output_sha256, output_size=intent.output_size,
+        media_format=intent.media_format, mime_type="application/epub+zip",
+        variant_kind=intent.variant_kind, transformer_id=intent.transformer_id,
+        transformer_version=intent.transformer_version, profile_id=None,
+        profile_version=intent.profile_version, options_fingerprint=intent.options_fingerprint,
+        book_id="book-1", warnings=(), facts={}, journal_reservation=reservation, **extra,
+    )
+
+
+def test_commit_moves_exact_receipt_with_canonical_origin(tmp_path):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        prior = db.metadata_get(reservation.key)
+        sync_before = db._connect().execute("PRAGMA synchronous").fetchone()
+        placement_id = _publish_reserved(db, intent, reservation)
+        assert db._connect().execute("PRAGMA synchronous").fetchone() == sync_before
+        assert db.metadata_get(reservation.key) is None
+        assert db.metadata_get(journal._COMMITTED + reservation.receipt_sha256) == prior
+        summary = journal.summarize_derived_journal(db)
+        assert (summary["count"], summary["pending_count"], summary["committed_count"]) == (1, 0, 1)
+        assert db.placement_get(placement_id)["path"] == intent.candidate_path
+        assert Path(intent.staged_path).read_bytes() == Path(intent.candidate_path).read_bytes()
+        with db._lock, db._connect() as sql:
+            assert sql.execute("SELECT count(*) FROM origin_links WHERE origin_kind='derived'").fetchone() == (1,)
+        # A completed receipt does not monopolize a recipe forever. A new
+        # target may reserve a new slot, but history remains quota-accounted.
+        new = replace(intent, candidate_path=str(Path(intent.candidate_path).with_name("next.epub")))
+        journal.reserve_derived_publication(db, new)
+        assert journal.summarize_derived_journal(db)["count"] == 2
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("failure", ["wrong_receipt", "changed_inode", "crash_after_transition"])
+def test_reservation_failure_keeps_pending_and_rolls_back_canonical_rows(tmp_path, monkeypatch, failure):
+    from cifereca.core import derived_variant_publication as publication
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        raw = db.metadata_get(reservation.key)
+        submitted = reservation
+        if failure == "wrong_receipt":
+            submitted = replace(reservation, receipt_sha256="0" * 64)
+        elif failure == "changed_inode":
+            candidate = Path(intent.candidate_path)
+            candidate.unlink()
+            candidate.write_bytes(b"new bytes")
+        else:
+            original = publication.commit_derived_reservation_in_transaction
+
+            def fail_after(*args, **kwargs):
+                original(*args, **kwargs)
+                raise journal.DerivedJournalConflict("synthetic_crash_after_transition")
+
+            monkeypatch.setattr(publication, "commit_derived_reservation_in_transaction", fail_after)
+        with pytest.raises(publication.DerivedPublicationConflict):
+            _publish_reserved(db, intent, submitted)
+        assert db.metadata_get(reservation.key) == raw
+        assert journal.summarize_derived_journal(db)["committed_count"] == 0
+        assert len(db.placements()) == 1
+        assert not db.artifact_variants()
+        with db._lock, db._connect() as sql:
+            assert sql.execute("SELECT count(*) FROM origin_links WHERE origin_kind='derived'").fetchone() == (0,)
+        assert Path(intent.candidate_path).read_bytes() == b"new bytes"
+    finally:
+        db.close()
