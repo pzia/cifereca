@@ -74,6 +74,23 @@ class Service:
     def sync_source_enabled(self, account):
         return self.enabled
 
+    def _paris_adept_identity_for_loan(self, loan, *, connection_identity_id):
+        # This generic executor fixture has only synthetic primary accounts.
+        # Real linked grants are exercised by the dedicated Core/SQLite suite.
+        matches = [
+            account for account in self.accounts
+            if (account.identity_id, account.provider_id, account.credential_id,
+                account.unique_id) == (
+                    connection_identity_id, loan.source_provider,
+                    loan.source_credential, loan.source_account_id,
+                ) and account.is_primary is True
+        ]
+        return ((connection_identity_id, None) if len(matches) == 1 else
+                (None, "adept_borrower_binding_required"))
+
+    def _adept_profile_row(self, reference, profiles):
+        return next((row for row in profiles if row.get("name") == reference), None)
+
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
