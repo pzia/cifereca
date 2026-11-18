@@ -78,3 +78,43 @@ def test_authentic_private_and_public_proofs_still_enrich_only_metadata():
     assert result.source_credential == "account-one"
     assert result.metadata["public_enrichment"]["scope"] == "public_listing_only"
     assert result.format is None
+
+
+@pytest.mark.parametrize("change", [
+    "url", "record", "source_item", "source_item_only",
+])
+@pytest.mark.parametrize("valid_sibling", [False, True])
+def test_partial_target_coordinates_are_conflicts_not_unrelated_cards(change, valid_sibling):
+    owned = private_row()
+    target, other = PAGE.items[:2]
+    assert target.friendly_url != other.friendly_url
+    assert target.record_id != other.record_id
+    assert target.metadata["source_item_id"] != other.metadata["source_item_id"]
+    if change == "url":
+        bad = replace(target, friendly_url=other.friendly_url)
+    elif change == "record":
+        bad = replace(target, record_id=other.record_id)
+    elif change == "source_item":
+        bad = replace(target, metadata={
+            **target.metadata, "source_item_id": other.metadata["source_item_id"],
+        })
+    else:
+        bad = replace(other, metadata={
+            **other.metadata, "source_item_id": target.metadata["source_item_id"],
+        })
+    candidates = (other, bad, target) if valid_sibling else (other, bad)
+    before = deepcopy(owned.metadata)
+    with pytest.raises(ProviderCapabilityError, match="public_edition_evidence_conflict"):
+        merge_attested_public_listing(owned, candidates)
+    assert owned.metadata == before
+
+
+def test_unrelated_cards_without_target_coordinates_do_not_block_exact_match():
+    owned = private_row()
+    target, other = PAGE.items[:2]
+    unchanged, status = merge_attested_public_listing(owned, (other,))
+    assert unchanged is owned and status == "not_attested_on_first_page"
+    enriched, status = merge_attested_public_listing(owned, (other, target))
+    assert status == "attested_listing_match"
+    assert enriched.record_id == owned.record_id
+    assert enriched.download_url is None and enriched.format is None

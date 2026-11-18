@@ -92,12 +92,19 @@ def merge_attested_public_listing(owned, public_rows):
     product_id = source_product[1]
     matched = []
     for public in public_rows:
-        if (getattr(public, "friendly_url", None) != owned_url
-                or getattr(public, "record_id", None) != "numilog:public:" + product_id):
-            continue
         meta = getattr(public, "metadata", None)
-        if (type(meta) is not dict
-                or meta.get("source_item_id") != product_id
+        claims = (
+            getattr(public, "friendly_url", None) == owned_url,
+            getattr(public, "record_id", None) == "numilog:public:" + product_id,
+            type(meta) is dict and meta.get("source_item_id") == product_id,
+        )
+        # An unrelated card is not evidence. But a card claiming even one
+        # target coordinate cannot be discarded as unrelated when its other
+        # coordinates conflict, even if another fully matching card exists.
+        if not any(claims):
+            continue
+        if (not all(claims)
+                or type(meta) is not dict
                 or getattr(public, "source_provider", None) not in ("numilog", "numilog-catalog")
                 or getattr(public, "source_credential", None) != "__public__"
                 or getattr(public, "source_collection", None) != "public_catalog"
