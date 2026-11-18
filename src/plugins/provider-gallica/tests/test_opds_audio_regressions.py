@@ -127,6 +127,8 @@ def test_opds_search_discovers_opensearch_and_normalizes_results(tmp_path):
         assert item.source_provider == "gallica"
         assert item.record_id == "ark:/12148/bpt6k5493831p"
         assert item.format == "EPUB"
+        assert item.published_at == "1880"
+        assert item.metadata["publication_date_evidence"] == "opds.dcterms.issued"
         assert item.medium == "digital"
         assert item.download_url and item.download_url.endswith(".epub")
         assert item.thumbnail_url == "https://gallica.bnf.fr/ark:/12148/bpt6k5493831p.thumbnail"
@@ -596,3 +598,27 @@ def test_legacy_atom_facade_malformed_xml_not_empty_catalogue():
             b'<feed xmlns="http://www.w3.org/2005/Atom">',
             "https://gallica.bnf.fr/opds",
         )
+
+
+@pytest.mark.parametrize(("date_fields", "expected"), [
+    ("<updated>2026-11-18T11:00:00Z</updated>", None),
+    ("<published>2025-03-14T08:00:00Z</published>", None),
+    ("<dcterms:date>1880</dcterms:date>", None),
+    ("<dcterms:issued>1880</dcterms:issued><updated>2026-11-18T11:00:00Z</updated>", "1880"),
+    ("<dcterms:issued>1880-02-29</dcterms:issued>", "1880-02-29"),
+    ("<dcterms:issued>1881-02-29</dcterms:issued>", None),
+    ("<dcterms:issued>1880-13</dcterms:issued>", None),
+    ("<dcterms:issued>1880</dcterms:issued><dcterms:issued>1881</dcterms:issued>", None),
+    ("<dcterms:issued>1880</dcterms:issued><dcterms:issued>1880</dcterms:issued>", "1880"),
+])
+def test_opds_publication_is_not_feed_chronology(tmp_path, date_fields, expected):
+    session = _session(tmp_path, lambda request: httpx.Response(404))
+    try:
+        payload = RESULTS.replace("<dcterms:issued>1880</dcterms:issued>", date_fields)
+        item, = session._parse_feed(payload.encode("utf-8"), "https://gallica.bnf.fr/opds/search")
+        assert item.published_at == expected
+        assert item.metadata.get("publication_date_evidence") == (
+            "opds.dcterms.issued" if expected else None
+        )
+    finally:
+        session.close()
