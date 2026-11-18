@@ -159,7 +159,7 @@ def fetch_public_search(query: str, *, page: int = 0, field: str = "all",
 
 
 def fetch_public_search_url(url: str, *, timeout: float = 15.0,
-                            _retain_input: bool = False):
+                            _retain_input: bool = False, _before_get=None):
     """Follow only an already-attested public pager/facet URL.
 
     The session enforces source provenance before calling this transport.
@@ -181,6 +181,11 @@ def fetch_public_search_url(url: str, *, timeout: float = 15.0,
             timeout=timeout, follow_redirects=False, trust_env=False,
             headers={"Accept": "text/html", "Accept-Language": "fr-FR,fr;q=0.9"},
         ) as client:
+            # Private refresh port linearizes transport start as late as
+            # possible, AFTER client construction and BEFORE the GET.
+            # It performs no IO and does not hold locks across the stream.
+            if _before_get is not None:
+                _before_get()
             with client.stream("GET", url) as response:
                 status = response.status_code
                 if status in (401, 403):
