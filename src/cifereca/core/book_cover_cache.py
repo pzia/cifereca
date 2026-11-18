@@ -198,6 +198,26 @@ class CoverDecisionCache:
             self._slots.move_to_end(scope)
             return slot.decision
 
+    def observe(
+        self, scope: CoverDocumentScope, *, revision: int,
+    ) -> tuple[CoverCacheToken, ResolvedBookCover] | None:
+        """Observe an existing N2 decision without touching TTL, LRU or slots.
+
+        Exact token + decision let a reader reject changes during external
+        physical observation. Unknown/expired is never documentary missing.
+        """
+        if type(scope) is not CoverDocumentScope:
+            raise TypeError("expected exact cover scope")
+        if type(revision) is not int or revision < 0:
+            raise ValueError("invalid cover revision")
+        with self._lock:
+            slot = self._slots.get(scope)
+            if (slot is None or slot.token.revision != revision
+                    or not slot.published or slot.decision is None
+                    or self._clock() >= slot.expires_at):
+                return None
+            return slot.token, slot.decision
+
     def selected_token(
         self, scope: CoverDocumentScope, *,
         revision: int, uri: str,
