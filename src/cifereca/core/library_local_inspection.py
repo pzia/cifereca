@@ -1882,6 +1882,20 @@ class LocalInspection:
             self._missing_pending = (case_key, file_key)
         return outcome
 
+    def admit_missing_repair(self, case_key, file_key=None, *,
+                             user_confirmed=False):
+        """Consume the exact private preview before the worker is queued."""
+        pending, self._missing_pending = self._missing_pending, None
+        operator = self._missing_operator
+        if (user_confirmed is not True or operator is None
+                or pending is None or pending != (case_key, file_key)
+                or not self.valid()):
+            self.cancel_missing_repair()
+            return None
+        # The returned command owns its durable scope, not this inspection.
+        # Closing or invalidating the view cannot cancel admitted work.
+        return operator.admit_confirmation(user_confirmed=True)
+
     def confirm_missing_repair(self, case_key, file_key=None, *,
                                user_confirmed=False):
         """One-shot confirmation of the same selected path and file keys."""
