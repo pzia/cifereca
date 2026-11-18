@@ -26,7 +26,7 @@ from ..core.book_cover_cache import (
     CoverCacheToken, CoverDecisionCache, CoverSubscription,
 )
 from ..core.book_cover_projection import (
-    CoverDocumentScope, ResolvedBookCover, resolve_book_cover,
+    CoverDocumentScope, ResolvedBookCover,
 )
 from ..core.book_cover_trace import CoverLifecycleTrace, CoverTraceSnapshot
 from ..core.covers import CoverCandidate, candidate
@@ -459,7 +459,7 @@ class DocumentCoverService:
             ):
                 return None
 
-            fallback = resolve_book_cover(
+            fallback = self.decisions.resolve_n1(
                 document, snapshot.candidates,
                 revision=snapshot.revision, snapshot_complete=True,
                 attested_book_identity=snapshot.attested_book_identity,
@@ -1073,10 +1073,10 @@ class DocumentCoverService:
         return handle
 
     def stats(self) -> dict[str, int | float]:
-        """N2 read counters and bounded synchronous decision latencies."""
+        """Separate N1 resolution and N2 synchronous decision statistics."""
         with self._lock:
             stats = {
-                **self._stats,
+                **self._stats, **self.decisions.n1_latency_stats(),
                 "n2_registered_documents": len(self._snapshots),
                 "n2_source_flights": len(self._read_active),
             }
