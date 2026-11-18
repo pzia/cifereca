@@ -154,8 +154,8 @@ def test_attested_public_facts_use_shared_core_compact_detail_header():
         ("essential-source-0", "Source", "Kobo", "text"),
         ("essential-source-1", "Source", "Gallica", "text"),
         ("essential-format", "Format", "EPUB", "text"),
-        ("essential-language-0", "Langue", "fr", "text"),
-        ("essential-language-1", "Langue", "en", "text"),
+        ("essential-language-0", "Langue", "Français", "text"),
+        ("essential-language-1", "Langue", "Anglais", "text"),
     ]
     # The compact summary has finite density, the detailed source evidence
     # remains independently copyable/filterable and must not be truncated.
