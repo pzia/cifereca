@@ -1391,3 +1391,130 @@ def test_older_myloans_rows_without_image_remain_accepted():
         assert inventory.loans[0].thumbnail_url is None
     finally:
         session.close()
+
+
+def _canonical_row(*, offer=True, book="20002"):
+    from types import SimpleNamespace as NS
+    return NS(product_ref="10001", book_id=book, title="SYNTHETIC",
+              due_at_local="08/11/2026 12:30:00", acsm_offer_present=offer,
+              acsm_url=("https://entrepot2r.numilog.com/fulfillment/URLLink.acsm"
+                        "?code=PRIVATE-SYNTHETIC-OFFER") if offer else None)
+
+
+def test_canonical_biblioaccess_observation_and_guarded_delivery(monkeypatch, tmp_path):
+    from cifereca.plugin_api import DeliveryCandidate
+    import biblioaccess_acsm_delivery
+
+    row = _canonical_row()
+    session, _, calls = _synced_session(rows=[row])
+    staged = []
+    def stage(url, folder, *, admission_current):
+        assert admission_current() is True
+        assert url == row.acsm_url
+        path = folder / "staged.acsm"
+        path.write_bytes(b"SYNTHETIC")
+        staged.append(path)
+        return path
+    monkeypatch.setattr(biblioaccess_acsm_delivery, "stage_loan_acsm", stage)
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        snapshot = session.downloadable_resource_snapshot(account)
+        observed, = snapshot.resources
+        assert snapshot.status == snapshot.coverage == "partial"
+        assert observed.source.scope.identity_id == "identity-a"
+        assert observed.source.edition_id == "20002"
+        assert observed.source.resource_id == "biblioaccess:1409:10001"
+        assert observed.capability.downloadable
+        assert observed.right is None
+        assert not snapshot.authorizes_acquisition
+        assert "PRIVATE-SYNTHETIC-OFFER" not in repr(snapshot)
+        args = dict(edition_id=observed.source.edition_id,
+                    resource_id=observed.source.resource_id, kind="loan",
+                    branch="biblioaccess", explicit_user_action=True)
+        selected = session.downloadable_selected_offer_snapshot(account, **args)
+        assert selected.resources[0].capability == observed.capability
+        assert not staged
+        assert calls.count("live_loans") == 2
+        result = session.downloadable_selected_delivery_candidate_guarded(
+            account, **args, selected_offer_id=observed.capability.offer_id,
+            target_dir=tmp_path, admission_current=lambda: True,
+        )
+        assert type(result) is DeliveryCandidate
+        assert result.source == observed.source
+        assert result.selected_offer_id == observed.capability.offer_id
+        assert result.path == staged[0] and result.provider_hint == ""
+        assert result.authorizes_publication is False
+        assert calls.count("live_loans") == 3
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("attack", ["revoked", "wrong_offer", "wrong_edition",
+                                   "rebound", "withdrawn", "duplicate",
+                                   "revoked_during_myloans"])
+def test_canonical_biblioaccess_never_gets_unadmitted_offer(
+    monkeypatch, tmp_path, attack,
+):
+    import biblioaccess_acsm_delivery
+
+    rows = [_canonical_row()]
+    session, client, calls = _synced_session(rows=rows)
+    monkeypatch.setattr(biblioaccess_acsm_delivery, "stage_loan_acsm",
+                        lambda *a, **kw: pytest.fail("unadmitted signed GET"))
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        row, = session.downloadable_resource_snapshot(account).resources
+        args = dict(edition_id=row.source.edition_id,
+                    resource_id=row.source.resource_id, kind="loan",
+                    branch="biblioaccess", explicit_user_action=True,
+                    selected_offer_id=row.capability.offer_id,
+                    target_dir=tmp_path)
+        live = [True]
+        if attack == "revoked":
+            live[0] = False
+        elif attack == "wrong_offer":
+            args["selected_offer_id"] = "wrong"
+        elif attack == "wrong_edition":
+            args["edition_id"] = "99999"
+        elif attack == "rebound":
+            account.identity_id = "identity-b"
+        elif attack == "withdrawn":
+            rows[:] = [_canonical_row(offer=False)]
+        elif attack == "duplicate":
+            rows.append(_canonical_row(book="99999"))
+            assert session.downloadable_resource_snapshot(account).resources == ()
+        else:
+            original = client.read_authenticated_loans
+            def read_then_revoke():
+                value = original()
+                live[0] = False
+                return value
+            monkeypatch.setattr(client, "read_authenticated_loans", read_then_revoke)
+        before = calls.count("live_loans")
+        with pytest.raises(mod.ProviderCapabilityError):
+            session.downloadable_selected_delivery_candidate_guarded(
+                account, **args, admission_current=lambda: live[0])
+        expected = 0 if attack in {"revoked", "wrong_offer", "wrong_edition", "rebound"} else 1
+        assert calls.count("live_loans") - before == expected
+        assert list(tmp_path.iterdir()) == []
+    finally:
+        session.close()
+
+
+def test_canonical_biblioaccess_loan_without_offer_is_observable_not_downloadable():
+    session, _, _ = _synced_session(rows=[_canonical_row(offer=False)])
+    try:
+        account, = session.connect()
+        account.identity_id = "identity-a"
+        row, = session.downloadable_resource_snapshot(account).resources
+        assert row.capability.state == "unknown"
+        assert row.capability.offer_id == ""
+        with pytest.raises(mod.ProviderCapabilityError, match="offer_unavailable"):
+            session.downloadable_selected_offer_snapshot(
+                account, edition_id=row.source.edition_id,
+                resource_id=row.source.resource_id, kind="loan",
+                branch="biblioaccess", explicit_user_action=True)
+    finally:
+        session.close()
