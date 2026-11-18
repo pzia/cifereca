@@ -727,3 +727,70 @@ def test_web_reference_witness_cannot_be_reused_after_url_or_marker_mutation(tmp
     finally:
         service.close()
         session.close()
+
+
+def test_numilog_web_reference_without_image_is_positive_but_cover_pending(tmp_path, monkeypatch):
+    import re
+    from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+    from cifereca.core.notice_c_web_choices import read_public_web_choices, resolve_public_web_choice
+    from cifereca.core.notice_cover_repository import evict_notice_cover, persist_notice_cover
+    from cifereca.core.notice_search_cover_producer import admit_public_search_catalogue
+
+    service, session, calls = build(tmp_path, monkeypatch)
+    try:
+        without = re.sub(r'<img\b[^>]*>', '', FIXTURE.read_text(encoding="utf-8"))
+        parsed = parse_public_search(without, SOURCE)
+        assert parsed.items[0].thumbnail_url is None
+        monkeypatch.setattr(numilog, "fetch_public_search",
+                            lambda *a, **k: calls.append(1) or parsed)
+        row, = service.search("loup", provider_id=session.provider_id, force=True)
+        assert row.thumbnail_url is None and row.friendly_url
+        doc = row._core_notice_cover_document_ref
+        canonical = row._core_notice_canonical_cover_document_ref
+        source = read_notice_cover(service.storage, doc)
+        assert source.observation.status == "partial"
+        assert source.attribute.state == "pending" and not source.attribute.candidates
+        c = read_consolidated_notice_cover(service.storage, canonical)
+        assert not c.snapshot_complete and not c.candidates
+        web, = c.catalogue_web_references
+        assert web.url == row.friendly_url
+        menu = read_public_web_choices(service.storage, canonical)
+        choice, = menu.choices
+        def resolve():
+            return resolve_public_web_choice(service.storage, canonical,
+                expected_epoch=menu.epoch, choice_id=choice.choice_id)
+        assert resolve() == row.friendly_url
+        assert evict_notice_cover(service.storage, doc, expected_epoch=source.epoch)
+        assert resolve() == row.friendly_url
+        assert calls == [1]
+        assert service.storage.entitlements() == [] and service.storage.acquisitions() == []
+
+        # Rehydrate a completed observation, then retain it against a later
+        # partial observation even if the latter has another qualified link.
+        complete_page = parse_public_search(FIXTURE.read_text(encoding="utf-8"), SOURCE)
+        full, = session._public_rows(complete_page.items)
+        full = _public_rows_from_response(
+            ProviderSearchResponse([full], public_notices=(PublicSearchNotice(full),)), session,
+        )[0]
+        observation = admit_public_search_catalogue(full, identity_id="alice",
+            observed_at=source.observation.observed_at+1, public_cover_url=full.thumbnail_url)
+        installed = persist_notice_cover(service.storage, observation,
+            field_path=("search_result", "thumbnail_url"), cover_inventory_complete=True)
+        assert installed.attribute.state == "available"
+        # Parse a new card with the same supplier ID, not a forged DTO marker.
+        changed = without.replace("du-loup.ebook", "du-loup-corrige.ebook")
+        partial_page = parse_public_search(changed, SOURCE)
+        partial_raw, = session._public_rows(partial_page.items)
+        partial = _public_rows_from_response(
+            ProviderSearchResponse([partial_raw], public_notices=(PublicSearchNotice(partial_raw),)), session,
+        )[0]
+        observation = admit_public_search_catalogue(partial, identity_id="alice",
+            observed_at=source.observation.observed_at+2, public_cover_url=None)
+        assert observation.fields_copy()["search_result"]["public_web_references"]["links"][0]["url"] != web.url
+        retained = persist_notice_cover(service.storage, observation,
+            field_path=("search_result", "thumbnail_url"), cover_inventory_complete=True)
+        assert retained == installed
+        assert resolve() is None
+    finally:
+        service.close()
+        session.close()
