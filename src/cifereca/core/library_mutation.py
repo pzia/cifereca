@@ -159,6 +159,7 @@ def _materialize_to_identity_locked(
                 "Emplacement source hors du profil propriétaire"
             ) from exc
 
+    from ..filename_suffixes import split_filename_suffix
     from .transfer_storage_policy import (
         TRANSFER_STORAGE_CLASS, directory_for_storage_class,
         transfer_readable_filename,
@@ -446,7 +447,7 @@ def _materialize_to_identity_locked(
         dest = dest_dir / transfer_readable_filename(
             src, title=source_entry.get("title"), author=source_entry.get("author"),
         )
-        stem, suffix = dest.stem, dest.suffix
+        stem, suffix = split_filename_suffix(dest)
         n = 2
         # A symbolic-link destination is a hard error, even when dangling.
         if dest.is_symlink():

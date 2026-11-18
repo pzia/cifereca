@@ -201,3 +201,16 @@ class DirectoryTests(unittest.TestCase):
         files=list((self.root/'hugues/paris').iterdir())
         self.assertEqual(len(files),2);self.assertTrue(all(p.name.endswith('.kepub.epub') for p in files))
         self.assertTrue(all(row['media_format']=='kepub' for row in self.storage.catalog_entries()))
+
+
+    def test_fxl_collision_preserves_longest_compound_extension(self):
+        self.book('roman.fxl.kepub.epub', body=b'original')
+        self.book('roman.fxl.kepub.epub', body=b'existing', directory='hugues')
+        result = self.service.change_identity_directory('stable-id', 'hugues')
+        files = list((self.root / 'hugues/paris').iterdir())
+        self.assertEqual(result['collisions'], 1)
+        self.assertEqual(len(files), 2)
+        self.assertTrue(all(p.name.endswith('.fxl.kepub.epub') for p in files))
+        self.assertEqual({p.read_bytes() for p in files}, {b'original', b'existing'})
+        self.assertTrue(all(row['media_format'] == 'kepub'
+                            for row in self.storage.catalog_entries()))

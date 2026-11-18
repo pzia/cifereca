@@ -130,3 +130,37 @@ def test_bidi_and_invisible_format_controls_cannot_spoof_readable_name(marker):
 def test_invisible_controls_in_source_fallback_name_are_sanitized():
     name = transfer_readable_filename(Path("Book\u202eexe.epub"))
     assert name == "Book exe.epub"
+
+
+@pytest.mark.parametrize("suffix", [".epub", ".kepub.epub", ".fxl.kepub.epub",
+                                    ".FXL.KePuB.EPUB", ".PDF", ""])
+def test_compound_suffix_preserved_as_name_only(suffix):
+    source = Path("Book" + suffix)
+    assert transfer_readable_filename(source) == "Book" + suffix
+    assert transfer_readable_filename(source, title="Titre", author="Auteur") == (
+        "Auteur - Titre" + suffix
+    )
+
+
+@pytest.mark.parametrize("suffix", [".kepub.epub", ".fxl.kepub.epub", ".FXL.KEPUB.EPUB"])
+def test_transfer_collision_preserves_compound_suffix_bytes_and_rights(tmp_path, suffix):
+    service = _service(tmp_path)
+    try:
+        source, placement = _source(service, tmp_path, filename="Book" + suffix)
+        folder = tmp_path / "EBooks" / "bob" / "Acquisitions"
+        folder.mkdir(parents=True)
+        occupied = folder / ("Author - Book" + suffix)
+        occupied.write_bytes(b"unrelated")
+        rights = service.storage.entitlements()
+        acquisitions = service.storage.acquisitions()
+        receipt = service.materialize_to_identity(placement, "bob")
+        sent = Path(receipt["path"])
+        assert sent == folder / ("Author - Book (2)" + suffix)
+        assert sent.read_bytes() == source.read_bytes()
+        assert occupied.read_bytes() == b"unrelated"
+        assert service.storage.entitlements() == rights
+        assert service.storage.acquisitions() == acquisitions
+        assert service.storage.placement_get(receipt["placement_id"])["identity_id"] == "bob"
+        assert service.materialize_to_identity(placement, "bob")["path"] == str(sent)
+    finally:
+        service.close()
