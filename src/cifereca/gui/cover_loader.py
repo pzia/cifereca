@@ -35,6 +35,7 @@ _TRACE_LOG = logging.getLogger("cifereca")
 
 CACHE_SCHEMA = "v2"
 _UI_DECODE_WINDOW = 1024
+_N3_URL_WINDOW = 1024
 
 
 def _cover_failure_code(exc: BaseException) -> str:
@@ -134,6 +135,8 @@ class CoverLoader:
         self._stop = threading.Event()
         self._threads: list[threading.Thread] = []
         self._ui_decode_recent: deque[float] = deque(maxlen=_UI_DECODE_WINDOW)
+        self._n3_url_recent = {outcome: deque(maxlen=_N3_URL_WINDOW)
+                               for outcome in ("ok", "failed")}
         self._stats = {
             "preview_created":0,"preview_hit":0,"preview_fallback":0,
             "requested": 0,
@@ -208,6 +211,11 @@ class CoverLoader:
                 total_ms = float(stats.pop(f"{prefix}_total_ms"))
                 stats[f"{prefix}_avg_ms"] = round(total_ms / attempts, 2) if attempts else 0.0
                 stats[f"{prefix}_max_ms"] = round(float(stats[f"{prefix}_max_ms"]), 2)
+                recent = sorted(self._n3_url_recent[outcome])
+                stats[f"{prefix}_recent_count"] = len(recent)
+                if recent:
+                    stats[f"{prefix}_recent_p50_ms"] = round(recent[(len(recent) * 50 + 99) // 100 - 1], 2)
+                    stats[f"{prefix}_recent_p95_ms"] = round(recent[(len(recent) * 95 + 99) // 100 - 1], 2)
             return {
                 **stats,
                 "queue": self._queue.qsize(),
@@ -764,6 +772,8 @@ class CoverLoader:
                         self._stats["download_ok"] += 1
                         self._stats["n3_url_published_bytes"] += len(data)
                         self._stats["n3_url_ok_total_ms"] += elapsed_ms
+                        if math.isfinite(elapsed_ms):
+                            self._n3_url_recent["ok"].append(elapsed_ms)
                         self._stats["n3_url_ok_max_ms"] = max(
                             self._stats["n3_url_ok_max_ms"], elapsed_ms,
                         )
@@ -779,6 +789,8 @@ class CoverLoader:
                         elapsed_ms = max(0.0, (time.perf_counter() - started) * 1000)
                         self._stats["download_failed"] += 1
                         self._stats["n3_url_failed_total_ms"] += elapsed_ms
+                        if math.isfinite(elapsed_ms):
+                            self._n3_url_recent["failed"].append(elapsed_ms)
                         self._stats["n3_url_failed_max_ms"] = max(
                             self._stats["n3_url_failed_max_ms"], elapsed_ms,
                         )
