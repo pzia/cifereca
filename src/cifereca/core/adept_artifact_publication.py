@@ -153,12 +153,11 @@ def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
         raise ProviderConfigurationError("Artefact Kobo-Adept invalide")
     actual_format = actual_before_publish.media_format
     actual_suffix = ".pdf" if actual_format == "pdf" else ".epub"
-    corrected = adept_acsm_plan.plan_produced_format_path(
-        produced_path, actual_suffix, unique_suffix=lambda: uuid.uuid4().hex,
-    )
-    if corrected != produced_path:
-        produced_path.replace(corrected)
-        produced_path = corrected
+    # Inspect the original stage by contents, not its provisional suffix.
+    # Never rename it to a guessed intermediate path: even an absent name
+    # can be claimed by an independent writer before replace(). The exclusive
+    # publication below chooses the final suffix directly.
+    if produced_path.suffix.casefold() != actual_suffix:
         _TRACE_LOG.info("TRACE download adept rename-format loan_ref=%s", trace_ref)
     destination = adept_acsm_plan.plan_publish_format_path(
         destination, actual_suffix, repair_mode=repair_mode,
