@@ -35,6 +35,7 @@ from .canonical_recovery import (
 )
 from .convergence_verified_presence import plan_existing_verified_presence
 from .source_convergence import SourceKey
+from .canonical_loan_retry_guard import historical_adept_retry_blocked
 
 _LOG = logging.getLogger("cifereca")
 
@@ -107,6 +108,7 @@ class CompletedDelivery:
     final_sha256: str
     receipt_ref: str
     adept_receipt_ref: str = ""
+    adept_attempt_id: str = ""  # ephemeral Core witness, not provider data
 
 
 OutcomeStatus = Literal[
@@ -509,6 +511,22 @@ def execute_admitted_convergence(
             was_recovered = completed is not None
             trace.emit(key, "recovery", "ok" if was_recovered else "miss")
             if completed is None:
+                # An outstanding historical ADEPT attention is a negative
+                # retry fence, not legacy acquisition authority. A current
+                # source CAS ON cannot consume the same loan again. A proven
+                # completed recovery above is safe (no GET or ADEPT).
+                if historical_adept_retry_blocked(
+                    initial_storage, account, session, key,
+                ):
+                    results.append(ConvergenceOutcome(
+                        key, "blocked", "persisted_adept_attention",
+                    ))
+                    continue
+                if not current() or not live_consent(key):
+                    results.append(ConvergenceOutcome(
+                        key, "blocked", "scope_or_consent_before_delivery",
+                    ))
+                    continue
                 phase = "delivery"
                 trace.emit(key, "delivery", "start")
                 completed = deliver(key, row)

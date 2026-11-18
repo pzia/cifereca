@@ -6,16 +6,18 @@ restores missing physical image bytes, coalescing list and detail requests.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from collections.abc import Callable
 import hashlib
+import math
 import os
 from pathlib import Path
 import re
 import stat
 import time
+from time import perf_counter
 from threading import Lock
 import zipfile
 
@@ -28,6 +30,7 @@ from ..epub_metadata import (
 _CACHE_NAME = re.compile(r"[0-9a-f]{64}\.(png|jpg|gif|webp|svg)\Z")
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _MAX_EPUB_BYTES = 2 * 1024 * 1024 * 1024
+_N3_EPUB_WINDOW = 1024
 # N3 source identity: NEVER key physical work by the N2 book/borrower scope.
 _PhysicalKey = tuple[str, str, str, Path]
 
@@ -120,6 +123,8 @@ class EpubCoverPhysicalCache:
         self._max_negative = min(4096, max_inflight * 4)
         self._pending: dict[_PhysicalKey, Future[str | None]] = {}
         # Physical N3 counters: no DocumentRef/profile/credential in export.
+        self._worker_recent = {outcome: deque(maxlen=_N3_EPUB_WINDOW)
+                               for outcome in ("ok", "failed")}
         self._counts = {
             "n3_epub_hit": 0, "n3_epub_miss": 0,
             "n3_epub_singleflight": 0, "n3_epub_cooldown": 0,
@@ -159,7 +164,7 @@ class EpubCoverPhysicalCache:
             if len(self._pending) >= self._limit:
                 self._counts["n3_epub_overflow"] += 1
                 return _finished(None)
-            future = self._pool.submit(self._restore, source, source_path)
+            future = self._pool.submit(self._restore_timed, source, source_path)
             self._counts["n3_epub_miss"] += 1
             self._pending[key] = future
         future.add_done_callback(lambda done: self._release(key, done))
@@ -185,6 +190,25 @@ class EpubCoverPhysicalCache:
                 self._negative_until.move_to_end(key)
                 while len(self._negative_until) > self._max_negative:
                     self._negative_until.popitem(last=False)
+
+    def _restore_timed(self, source, source_path):
+        # Measure actual worker execution, not queue delay, subscribers,
+        # cooldown responses, or cancellations before a worker starts.
+        started = perf_counter()
+        outcome = "failed"
+        try:
+            result = self._restore(source, source_path)
+            if result is not None:
+                outcome = "ok"
+            return result
+        finally:
+            self._record_worker_latency(outcome, (perf_counter() - started) * 1000)
+
+    def _record_worker_latency(self, outcome, elapsed_ms):
+        if not math.isfinite(elapsed_ms) or elapsed_ms < 0:
+            return
+        with self._lock:
+            self._worker_recent[outcome].append(elapsed_ms)
 
     @staticmethod
     def _restore(
@@ -224,10 +248,18 @@ class EpubCoverPhysicalCache:
             # Never expose untrusted path/member or ZIP error text to callers.
             return None
 
-    def stats(self) -> dict[str, int]:
-        """Counters for physical N3 work only, without documentary keys."""
+    def stats(self) -> dict[str, int | float]:
+        """Physical N3 counters and bounded worker-duration percentiles."""
         with self._lock:
-            return {"inflight": len(self._pending), **self._counts}
+            stats = {"inflight": len(self._pending), **self._counts}
+            for outcome, window in self._worker_recent.items():
+                prefix = f"n3_epub_{outcome}"
+                recent = sorted(window)
+                stats[f"{prefix}_recent_count"] = count = len(recent)
+                if count:
+                    stats[f"{prefix}_recent_p50_ms"] = round(recent[(count * 50 + 99) // 100 - 1], 2)
+                    stats[f"{prefix}_recent_p95_ms"] = round(recent[(count * 95 + 99) // 100 - 1], 2)
+            return stats
 
     def close(self) -> None:
         with self._lock:

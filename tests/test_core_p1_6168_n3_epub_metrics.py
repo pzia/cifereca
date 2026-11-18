@@ -56,6 +56,9 @@ def test_hot_n3_hits_shared_across_profiles_and_exposed_by_loader(physical):
         assert stats["n3_epub_hit"] == 2
         assert stats["n3_epub_miss"] == 0
         assert stats["n3_epub_singleflight"] == 0
+        assert stats["n3_epub_ok_recent_count"] == 0
+        assert stats["n3_epub_failed_recent_count"] == 0
+        assert "n3_epub_ok_recent_p95_ms" not in stats
         assert "alice" not in repr(stats) and "bob" not in repr(stats)
         assert "place:" not in repr(stats)
     finally:
@@ -100,6 +103,10 @@ def test_cold_n3_reuses_one_epub_worker_for_two_exact_documents(
         again = cache.request(other, source_path=path)
         assert again.done() and again.result() == image.resolve().as_uri()
         assert cache.stats()["n3_epub_hit"] == 1
+        stats = cache.stats()
+        assert stats["n3_epub_ok_recent_count"] == 1
+        assert stats["n3_epub_failed_recent_count"] == 0
+        assert stats["n3_epub_ok_recent_p95_ms"] >= 0
     finally:
         release.set()
         cache.close()
@@ -130,6 +137,7 @@ def test_failed_epub_is_one_miss_followed_by_cooldown_not_new_documentary_absenc
         assert cache.stats()["n3_epub_miss"] == 1
         assert cache.request(source, source_path=path).result() is None
         assert cache.stats()["n3_epub_cooldown"] == 1
+        assert cache.stats()["n3_epub_failed_recent_count"] == 1
         assert cache.stats()["n3_epub_miss"] == 1
         clock[0] = 50.1
         done.clear()
@@ -137,6 +145,8 @@ def test_failed_epub_is_one_miss_followed_by_cooldown_not_new_documentary_absenc
         assert done.wait(10)
         assert cache.stats()["n3_epub_miss"] == 2
         assert cache.stats()["n3_epub_failed"] == 2
+        assert cache.stats()["n3_epub_failed_recent_count"] == 2
+        assert cache.stats()["n3_epub_ok_recent_count"] == 0
     finally:
         cache.close()
 
@@ -171,4 +181,22 @@ def test_distinct_source_overflow_not_double_counted_as_n3_miss(
         assert first.result(timeout=10) == image.resolve().as_uri()
     finally:
         release.set()
+        cache.close()
+
+
+def test_epub_worker_percentiles_are_bounded_and_separate():
+    cache = EpubCoverPhysicalCache()
+    try:
+        for value in range(1025):
+            cache._record_worker_latency("ok", float(value))
+        cache._record_worker_latency("failed", 7.0)
+        cache._record_worker_latency("failed", float("nan"))
+        cache._record_worker_latency("failed", -1.0)
+        stats = cache.stats()
+        assert stats["n3_epub_ok_recent_count"] == 1024
+        assert stats["n3_epub_ok_recent_p50_ms"] == 512
+        assert stats["n3_epub_ok_recent_p95_ms"] == 973
+        assert stats["n3_epub_failed_recent_count"] == 1
+        assert stats["n3_epub_failed_recent_p95_ms"] == 7
+    finally:
         cache.close()

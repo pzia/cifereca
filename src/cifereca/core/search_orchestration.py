@@ -489,6 +489,28 @@ def _verified_public_cover_witness(row: SearchResult) -> bool:
     )
 
 
+_CORE_PUBLIC_WEB_WITNESS = object()
+
+
+def _verified_public_web_reference(row: SearchResult) -> dict | None:
+    """Read only the exact URL and marker sealed during same-call admission."""
+    if type(row) is not SearchResult or not _verified_public_cover_witness(row):
+        return None
+    witness = getattr(row, "_core_same_call_public_web_witness", None)
+    if type(row.metadata) is not dict or type(witness) is not tuple or len(witness) != 4:
+        return None
+    evidence = row.metadata.get("public_url_evidence")
+    url = row.friendly_url
+    if (witness[0] is not _CORE_PUBLIC_WEB_WITNESS
+            or witness[1] is not row._core_same_call_public_cover_witness
+            or witness[2] != url or witness[3] != evidence
+            or evidence != f"{row.source_provider}.public_search_product_card"
+            or _public_catalog_url(url, evidence=evidence, provider_id=row.source_provider) != url
+            or type(url) is not str):
+        return None
+    return {"url": url, "evidence": evidence}
+
+
 def _public_rows_from_response(
     response: ProviderSearchResponse, session: ProviderSession,
 ) -> list[SearchResult]:
@@ -566,6 +588,20 @@ def _public_rows_from_response(
                     projected, thumbnail_url=image, revision_id=revision,
                 )
                 if valid_public_occurrence:
+                    # Retain a URL only from this exact anonymous public
+                    # product card, not the generic foreign/private claim.
+                    evidence = row.metadata.get("public_url_evidence")
+                    if evidence == f"{row.source_provider}.public_search_product_card":
+                        product = _public_catalog_url(
+                            row.friendly_url, evidence=evidence,
+                            provider_id=row.source_provider,
+                        )
+                        if product is not None:
+                            projected = replace(
+                                projected, friendly_url=product,
+                                metadata={**projected.metadata,
+                                          "public_url_evidence": evidence},
+                            )
                     # Core-only same-call witness; not serialized into the
                     # shared Search cache or assigned by provider plugins.
                     from .notice_search_cover_producer import _CORE_PUBLIC_C_WITNESS
@@ -576,6 +612,13 @@ def _public_rows_from_response(
                         _CORE_PUBLIC_COVER_WITNESS,
                         _public_cover_witness_coordinates(projected),
                     )
+                    if projected.friendly_url is not None:
+                        projected._core_same_call_public_web_witness = (
+                            _CORE_PUBLIC_WEB_WITNESS,
+                            projected._core_same_call_public_cover_witness,
+                            projected.friendly_url,
+                            projected.metadata.get("public_url_evidence"),
+                        )
             admitted.append(projected)
     return admitted
 
@@ -1943,7 +1986,6 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
     # The current synchronous known-task callback still returns a combined
     # snapshot; progressive public C UI batches remain a subsequent gate.
     c_page = None
-    c_rows = []
     if (type(query) is str and 2 <= len(query.strip()) <= 160
             and field in ("all", "title", "author", "publisher")
             and scope in ("all", "digital", "physical", "unknown")
@@ -1952,40 +1994,28 @@ def search_known_catalog(self, query: str, scope: str='all', *, field: str='all'
         if isinstance(getattr(self, "storage", None), Storage):
             from .notice_c_public_search import search_public_notice_c
             from .notice_c_known_projection import merge_public_notice_c_known_rows
-            from .search import filter_loaded_results
             from sqlite3 import Error as SQLiteError
             try:
                 c_page = search_public_notice_c(
                     self.storage, query, field=field, scope=scope,
                     provider_ids=tuple(provider_ids or ()), group_by_document=True,
+                    content_types=tuple(content_types or ()),
                 )
-                c_rows = merge_public_notice_c_known_rows(
-                    [], c_page, identity_id=resolved_identity,
-                )
-                if content_types:
-                    c_rows = filter_loaded_results(
-                        c_rows, "", content_types=content_types,
-                    )
             except (SQLiteError, ValueError, TypeError, AttributeError):
                 # Failed public metadata must never erase private possessions
                 # or turn an unproven empty C page into a search-zero verdict.
                 c_page = None
-                c_rows = []
     rows = KnownCatalogSearch(self.catalog_entries, self.library_entries).search(
         query, identity_id=resolved_identity, scope=scope, field=field,
         providers=provider_ids, content_types=content_types,
         age=age, age_kind=age_kind,
     )
     if c_page is not None:
-        # Deduplicate a mirror ONLY if its exact, rights-free C source is
-        # itself visible under the requested format filter. A hidden C hit
-        # cannot delete a visible local/mirrored entry.
-        if len(c_rows) == len(c_page.hits):
-            rows = merge_public_notice_c_known_rows(
-                rows, c_page, identity_id=resolved_identity,
-            )
-        else:
-            rows = c_rows + rows
+        # The C cursor already filters each source BEFORE grouping/page.
+        # The mirror is suppressed only against a visible exact source.
+        rows = merge_public_notice_c_known_rows(
+            rows, c_page, identity_id=resolved_identity,
+        )
     logger.info(
         "TRACE search known identity=%s query_len=%s scope=%s field=%s results=%s",
         resolved_identity, len(str(query or "")), scope, field, len(rows),
@@ -2075,7 +2105,10 @@ def _public_catalog_url(
         )
         if parsed.query not in allowed_queries:
             return None
-        return value
+        # A producer-qualified marker does not turn a generic search/feed
+        # route or homepage into a book-specific HTML notice.
+        from ..catalogue_link import catalogue_notice_url
+        return catalogue_notice_url({"friendly_url": value})
     except (ValueError, AttributeError, TypeError):
         return None
 

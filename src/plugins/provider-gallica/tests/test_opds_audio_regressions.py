@@ -428,3 +428,171 @@ def test_opds_same_origin_redirect_and_configured_fallback(tmp_path):
         assert calls == ["/opds", "/opds-root", "/services/engine/search/opds"]
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("kind", ("foreign_navigation", "doctype", "html"))
+def test_public_search_opds_refusal_never_authorizes_core_fallback(tmp_path, kind):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        assert request.url.path == "/opds"
+        if kind == "foreign_navigation":
+            body = ROOT_FEED.replace(b'/opds-search.xml', b'https://outside.invalid/feed')
+        elif kind == "doctype":
+            body = ('<!DOCTYPE feed [<!ENTITY hidden "PRIVATE">]>'
+                    '<feed xmlns="http://www.w3.org/2005/Atom"><title>&hidden;</title></feed>').encode("utf-16")
+        else:
+            body = b"<html><body>PRIVATE_LOGIN</body></html>"
+        return httpx.Response(200, content=body)
+    session = _session(tmp_path, handler)
+    try:
+        with pytest.raises(ProviderError) as caught:
+            session.search("bruyere", "digital")
+        assert getattr(caught.value, "code", None) is None
+        assert caught.value.retryable is False
+        assert caught.value.__cause__ is None
+        assert "PRIVATE" not in str(caught.value)
+        assert len(calls) == 1
+    finally:
+        session.close()
+
+
+def test_audio_recovery_is_partial_in_public_search(tmp_path):
+    bad = SRU_AUDIO.replace(b"</dc:title>", b"</dc:creator>")
+    # Keep one valid and one malformed record inside the actual SRU wrapper.
+    record = SRU_AUDIO.split(b"<srw:records>", 1)[1].split(b"</srw:records>", 1)[0]
+    body = bad.replace(b"</srw:records>", record + b"</srw:records>")
+    calls = []
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, content=body)
+    session = _session(tmp_path, handler, include_audio=True)
+    try:
+        rows = session.search("audio", content_types=("mp3",))
+        assert len(rows) == 1
+        assert session.last_search_warnings == [
+            "partial_results : Gallica : récupération partielle du XML audio"
+        ]
+        assert len(calls) == 1
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("kind", ("doctype", "late_declaration", "depth", "foreign_root", "foreign_namespace"))
+def test_unsafe_audio_catalogue_is_not_recovered_or_an_outage(tmp_path, kind):
+    if kind == "doctype":
+        body = SRU_AUDIO.decode().replace(
+            "<srw:searchRetrieveResponse ", '<!DOCTYPE x [<!ENTITY x "PRIVATE">]><srw:searchRetrieveResponse ', 1
+        ).encode()
+    elif kind == "late_declaration":
+        body = SRU_AUDIO.replace(b"</dc:title>", b"</dc:creator><!DOCTYPE x>")
+    elif kind == "depth":
+        body = SRU_AUDIO.replace(b"<dc:title>", b"<x>" * 100 + b"<dc:title>").replace(
+            b"</dc:title>", b"</dc:title>" + b"</x>" * 100)
+    elif kind == "foreign_root":
+        body = SRU_AUDIO.replace(b"srw:searchRetrieveResponse", b"srw:other")
+    else:
+        body = SRU_AUDIO.replace(b"http://www.loc.gov/zing/srw/", b"https://outside.invalid/")
+    session = _session(tmp_path, lambda request: httpx.Response(200, content=body), include_audio=True)
+    try:
+        with pytest.raises(ProviderError) as caught:
+            session.search("audio", content_types=("mp3",))
+        assert getattr(caught.value, "code", None) is None
+        assert caught.value.retryable is False
+        assert caught.value.__cause__ is None
+        assert "PRIVATE" not in str(caught.value)
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("mode", ("compression", "declared", "stream"))
+def test_sru_audio_transport_refusal_is_not_an_outage(tmp_path, mode):
+    calls = []
+    reads = []
+    class Body(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(40):
+                reads.append(1)
+                yield b"x" * 65536
+
+    def handler(request):
+        calls.append(request)
+        assert request.headers["accept-encoding"] == "identity"
+        assert request.url.params["maximumRecords"] == "50"
+        headers = ({"content-encoding": "gzip"} if mode == "compression"
+                   else {"content-length": str(2 * 1024 * 1024 + 1)} if mode == "declared"
+                   else {})
+        return httpx.Response(200, headers=headers, stream=Body())
+
+    session = _session(tmp_path, handler, include_audio=True)
+    try:
+        with pytest.raises(ProviderError) as caught:
+            session.search("audio", content_types=("mp3",))
+        assert getattr(caught.value, "code", None) is None
+        assert caught.value.retryable is False
+        assert len(calls) == 1
+        assert len(reads) == (33 if mode == "stream" else 0)
+    finally:
+        session.close()
+
+
+def test_sru_audio_transport_preserves_observed_projection(tmp_path):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        assert request.headers["accept-encoding"] == "identity"
+        return httpx.Response(200, content=SRU_AUDIO)
+    session = _session(tmp_path, handler, include_audio=True)
+    try:
+        rows = session.search("audio", content_types=("mp3",))
+        assert len(calls) == 1
+        assert [row.record_id for row in rows] == ["ark:/12148/bpt6k1279113"]
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
+
+
+def test_legacy_atom_facade_preserves_dictionary_projection():
+    from cifereca_gallica import GallicaPlugin
+
+    rows = GallicaPlugin.parse_feed(
+        RESULTS.encode("utf-8"), "https://gallica.bnf.fr/opds/search",
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["id"] == "https://gallica.bnf.fr/ark:/12148/bpt6k5493831p"
+    assert row["format"] == "EPUB"
+    assert row["download_url"] == row["id"] + ".epub"
+    assert row["thumbnail_url"] == row["id"] + ".thumbnail"
+    assert row["friendly_url"] == row["id"]
+    assert row["provider_id"] == "gallica"
+    assert row["source_kind"] == "http"
+    assert row["drm"] == "none"
+    assert GallicaPlugin.parse_feed(
+        ROOT_FEED, "https://gallica.bnf.fr/opds",
+    ) == []
+
+
+@pytest.mark.parametrize("payload", [
+    b'<other xmlns="http://www.w3.org/2005/Atom"><entry/></other>',
+    b'<html><body>Unavailable</body></html>',
+    ('<!DOCTYPE feed [<!ENTITY title "fake">]>'
+     '<feed xmlns="http://www.w3.org/2005/Atom">&title;</feed>').encode("utf-16"),
+    b'<feed xmlns="http://www.w3.org/2005/Atom">' + b' ' * (2 * 1024 * 1024) + b'</feed>',
+    b'<feed xmlns="http://www.w3.org/2005/Atom">' + b'<x>' * 100 + b'</x>' * 100 + b'</feed>',
+])
+def test_legacy_atom_facade_refuses_unsafe_or_foreign_payload(payload):
+    from cifereca_gallica import GallicaPlugin, _UnsafeOPDS
+
+    with pytest.raises(_UnsafeOPDS):
+        GallicaPlugin.parse_feed(payload, "https://gallica.bnf.fr/opds")
+
+
+def test_legacy_atom_facade_malformed_xml_not_empty_catalogue():
+    from cifereca_gallica import GallicaPlugin
+
+    with pytest.raises(ProviderError, match="XML invalide"):
+        GallicaPlugin.parse_feed(
+            b'<feed xmlns="http://www.w3.org/2005/Atom">',
+            "https://gallica.bnf.fr/opds",
+        )

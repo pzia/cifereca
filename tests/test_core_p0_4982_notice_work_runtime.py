@@ -1,4 +1,5 @@
 """#4982: opt-in Core composition and admitted, single-flight heartbeat."""
+from contextlib import nullcontext
 from threading import Event
 from time import monotonic
 
@@ -7,6 +8,10 @@ import pytest
 from cifereca.core.runtime import CiferecaCore
 from cifereca.core import notice_c_job_journal as journal
 from cifereca.core.notice_c_exact_recompute import request_exact_public_recompute
+from cifereca.core.notice_c_fetch_authority import PublicFetchAuthority
+from cifereca.core.notice_c_fetch_execution import PublicFetchExecution, PublicFetchPort
+from cifereca.storage import Storage
+from cifereca.core.notice_c_public_search import search_public_notice_c
 from cifereca.core.notice_c_cover_index import (
     persist_exact_public_search_cover, read_consolidated_notice_cover,
 )
@@ -108,3 +113,108 @@ def test_coordinator_coalesces_ticks_and_detaches_observer(tmp_path, monkeypatch
         finally:
             release.set()
         assert handle.result(timeout=10) == "scanned"
+
+
+def test_real_core_restart_reclaims_expired_lease_but_not_fetch_authority(tmp_path):
+    """Model a persisted interrupted attempt, not an OS-level process kill."""
+    def admission():
+        return SharedTaskAdmission(max_inflight=4, reserve_user_slots=1)
+
+    with open_core(tmp_path, notice_work_admission=admission()) as core:
+        old = persist_exact_public_search_cover(
+            core.storage, source(core.storage, "Ancien", 10),
+        )
+        changed = source(core.storage, "Nouveau", 11)
+        ref = request_exact_public_recompute(
+            core.storage, old.document, now=100, expected_generation=0,
+        )
+        abandoned = journal.claim_job(core.storage, ref, now=100, lease_seconds=30)
+        assert abandoned is not None
+        assert journal.read_job(core.storage, ref).attempts == 1
+        # A live explicit grant is process-local. Only the pending hint is
+        # durable, and the next runtime must not infer a transport from it.
+        authority = PublicFetchAuthority(core.storage, clock=lambda: 100)
+        try:
+            fetch = authority.request(
+                changed, transport_digest="a" * 64,
+                implementation_digest="b" * 64,
+                hold_authority=lambda: nullcontext(True),
+                ttl_seconds=30, expected_generation=0,
+            )
+            assert journal.read_job(core.storage, fetch).attempts == 0
+        finally:
+            authority.close()
+        assert core.brokers["tasks"]._executor is None
+
+    with open_core(tmp_path, notice_work_admission=admission()) as core:
+        runtime = core.notice_work
+        assert core.brokers["tasks"]._executor is None
+        assert read_consolidated_notice_cover(core.storage, old.document) == old
+        assert journal.read_job(core.storage, ref).lease_until == abandoned.lease_until
+        assert journal.read_job(core.storage, fetch).state == "pending"
+        events = []
+
+        def committed(doc, epoch):
+            # Observer sees the *committed* C and journal, not prepared data.
+            events.append((
+                doc, epoch, journal.read_job(core.storage, ref).state,
+                read_consolidated_notice_cover(core.storage, doc).epoch,
+            ))
+
+        assert runtime.bind_committed_observer(committed)
+        scan = runtime.request_tick()
+        assert scan is not None
+        handles = scan.result(timeout=10).handles
+        worker, = handles
+        assert worker.result(timeout=10) == "current"
+        receipt = journal.read_job(core.storage, ref)
+        assert receipt.state == "current" and receipt.attempts == 2
+        assert receipt.fence == abandoned.fence + 1 and receipt.lease_until == 0
+        assert events == [(old.document, old.epoch + 1, "current", old.epoch + 1)]
+        with pytest.raises(ValueError, match="lease_changed"):
+            journal.fail_job(core.storage, abandoned, now=101, transient=True)
+        assert journal.read_job(core.storage, ref) == receipt
+        latest = read_consolidated_notice_cover(core.storage, old.document)
+        assert latest.sources[0].source_epoch == changed.epoch
+        assert latest.sources[0].public_bibliography.title == "Nouveau"
+        assert journal.read_job(core.storage, fetch).attempts == 0
+        assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
+
+    with open_core(tmp_path, notice_work_admission=admission()) as core:
+        # Reopening never re-executes the completed generation or adopts a
+        # fetch hint whose live consent/session/transport was not installed.
+        assert read_consolidated_notice_cover(core.storage, old.document) == latest
+        assert search_public_notice_c(core.storage, "nouveau", now=131).hits[0].document == old.document
+        scan = core.notice_work.request_tick()
+        assert scan is not None
+        assert scan.result(timeout=10).handles == ()
+        assert journal.read_job(core.storage, ref) == receipt
+        assert journal.read_job(core.storage, fetch).attempts == 0
+        assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
+
+
+def test_fetch_install_requires_same_storage_and_precedes_any_heartbeat(tmp_path):
+    budget = SharedTaskAdmission(max_inflight=4, reserve_user_slots=1)
+    other = Storage(tmp_path / "other.sqlite")
+    foreign = PublicFetchAuthority(other)
+    port = PublicFetchPort("supplier", "a" * 64, "b" * 64,
+                           lambda permit: pytest.fail("unexpected transport"))
+    try:
+        with open_core(tmp_path, notice_work_admission=budget) as core:
+            runtime = core.notice_work
+            authority = PublicFetchAuthority(core.storage)
+            try:
+                with pytest.raises(ValueError, match="invalid_registry"):
+                    runtime.install_fetch_execution(PublicFetchExecution(foreign, (port,)))
+                with pytest.raises(ValueError, match="invalid_registry"):
+                    runtime.install_fetch_execution(PublicFetchExecution(authority))
+                assert core.brokers["tasks"]._executor is None
+                scan = runtime.request_tick()
+                assert scan is not None and scan.result(timeout=10).handles == ()
+                assert runtime.install_fetch_execution(PublicFetchExecution(authority, (port,))) is False
+            finally:
+                authority.close()
+        assert not foreign._closed  # refused installation transfers no ownership
+    finally:
+        foreign.close()
+        other.close()

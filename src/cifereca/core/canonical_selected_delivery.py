@@ -31,6 +31,7 @@ from ..plugin_api.downloadable_resources import DeliveryCandidate, SourceReferen
 from .canonical_publication import _physical_target, _same_file
 from .canonical_encryption_diagnostics import rejected_epub_encryption_profile
 from .canonical_loan_borrower import pin_borrower
+from .canonical_adept_attempt import begin_loan_adept_attempt, pending_loan_adept_attempt
 from .adept_acsm_plan import profile_is_explicitly_acsm_unready
 from .convergence_execution import CompletedDelivery, CanonicalDrmUnresolved
 from .source_convergence import SourceKey
@@ -205,6 +206,8 @@ def complete_selected_delivery(
 
     if not current():
         raise ValueError("canonical_delivery_source_rebound")
+    if pending_loan_adept_attempt(storage, source):
+        raise ValueError("canonical_adept_attempt_pending")
     # Authenticated A/consent do not authorize a different Adobe borrower.
     # Resolve before any candidate GET (including a first claimed ACSM).
     borrower_identity, borrower_current = (
@@ -300,6 +303,17 @@ def complete_selected_delivery(
     # can execute it. Neither the recipe nor the runtime result is persisted
     # as B. Legacy providers never see this callback.
     runtime_used = [False]
+    adept_attempt_id = [""]
+
+    def mark_adept_attempt():
+        if source.kind == "loan":
+            require_borrower()
+            adept_attempt_id[0] = begin_loan_adept_attempt(
+                storage, source=source, offer_id=offer.delivery_offer_id,
+                shared_lock=shared_lock,
+            )
+            require_borrower()
+
     runtime_artifact_path: list[Path | None] = [None]
     runtime_artifact_digest: list[str | None] = [None]
     runtime_artifact_stat: list[os.stat_result | None] = [None]
@@ -336,6 +350,9 @@ def complete_selected_delivery(
             require_adept_profile(*expected_adept)
         require_borrower()
         runtime_used[0] = True
+        if expected_adept is not None:
+            mark_adept_attempt()
+            require_adept_profile(*expected_adept)
         result = service.execute_acquisition_request(request)
         require_borrower()
         if expected_adept is not None:
@@ -512,6 +529,8 @@ def complete_selected_delivery(
                 "options": {"force": False},
             }
             require_adept_profile(profile, profile_id)
+            mark_adept_attempt()
+            require_adept_profile(profile, profile_id)
             result = service.execute_acquisition_request(request)
             require_adept_profile(profile, profile_id)
             if type(result) is not dict:
@@ -599,8 +618,12 @@ def complete_selected_delivery(
             ensure_ascii=False, separators=(",", ":"),
         )
         receipt = "core-delivery:" + hashlib.sha256(fact.encode("utf-8")).hexdigest()
+        if adept_attempt_id[0] and not adept_receipt_ref:
+            # A runtime-guarded ACSM has the same Core ADEPT provenance.
+            adept_receipt_ref = "core-adept:" + secrets.token_hex(32)
         return CompletedDelivery(
             source, offer.delivery_offer_id, final, digest, receipt, adept_receipt_ref,
+            adept_attempt_id=adept_attempt_id[0],
         )
     except BaseException:
         # Best effort, without masking the original provider/cancellation

@@ -76,6 +76,8 @@ def gtk_core(tmp_path, live_broker, monkeypatch):
     # The deterministic Core copy fixture uses NOW for consent freshness.
     # Do not patch process-global time or replace Core's review clock.
     monkeypatch.setattr(gui, "time", NS(time=lambda: NOW))
+    from cifereca.core import device_usb_execution_broker
+    monkeypatch.setattr(device_usb_execution_broker, "time", NS(time=lambda: NOW))
     # Test-only deterministic operation ID distinct from the historical
     # completed-copy fixture's old removal consent.
     monkeypatch.setattr(gui, "secrets", NS(token_hex=lambda _: "c" * 32))
@@ -145,8 +147,9 @@ def test_gtk_cancel_then_confirm_unlinks_only_the_real_managed_usb_copy(
     )
 
 
-def test_gtk_selection_revoked_after_dialog_never_unlinks_real_file(
-    gtk_core,
+@pytest.mark.parametrize("change", ["navigation", "source_revocation"])
+def test_admitted_usb_removal_survives_navigation_not_real_revocation(
+    gtk_core, change,
 ):
     ctx = gtk_core
     rig = ctx.rig
@@ -157,10 +160,19 @@ def test_gtk_selection_revoked_after_dialog_never_unlinks_real_file(
     ctx.dialogs[0].answer("delete")
     assert len(ctx.host.runner.jobs) == 1
 
-    # The dialog existed under a now-abandoned selection. The worker's
-    # pinned scope must reject it BEFORE the Core journal or USB unlink.
+    # The destructive confirmation is already admitted. Navigation can
+    # suppress UI feedback, but durable revocation must stop the unlink.
     ctx.host._reader_selection_generation += 1
+    rig.service._account_context_epoch += 2
+    if change == "source_revocation":
+        rig.service._source_context_epoch = 1
     ctx.host.runner.advance()
-    assert rig.final.read_bytes() == before
+    if change == "navigation":
+        assert not rig.final.exists()
+        assert rig.journal.get("c" * 32).phase == "completed"
+    else:
+        assert rig.final.read_bytes() == before
+        assert rig.journal.get("c" * 32) is None
+    assert "Retrait USB supervisé terminé" not in ctx.host._reader_status_label.label
     assert rig.source.read_bytes() == before
     assert rig.journal.get(rig.consent.operation_id) is None

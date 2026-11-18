@@ -279,3 +279,41 @@ def test_grouped_pages_preserve_matching_sources_and_do_not_repeat_a_c(tmp_path)
         assert_pages(restored)
     finally:
         restored.close()
+
+
+def test_only_exact_unpossessed_public_mirror_coordinates_are_suppressed(tmp_path):
+    from contextlib import closing
+    with closing(Storage(tmp_path / "mirror.sqlite")) as db:
+        first, second = sources(db)
+        group = shared(db, first, second)
+        page = search_public_notice_c(db, "deux sources", now=100,
+                                     group_by_document=True)
+        assert page.hits[0].document == group.document
+        base = {
+            "source": "known_catalog", "identity_id": "alice",
+            "provider_id": "numilog-catalog", "item_id": "numilog-source-9",
+            "local": False, "state": "remote_catalog",
+            "metadata": {
+                "catalogue_scope_version": 2, "source_credential": "__public__",
+                "source_collection": "public_catalog", "docbase": "digital-books",
+                "medium": "digital",
+            },
+        }
+        retained = [
+            {**base, "key": "path", "local_path": "/local/book.epub"},
+            {**base, "key": "artifact", "artifact_id": "known-artifact"},
+            {**base, "key": "uncertain", "state": "unknown"},
+            {**base, "key": "no-local-proof", "local": None},
+            {**base, "key": "other-edition", "metadata": {
+                **base["metadata"], "source_revision": "rev-b"}},
+            {**base, "key": "malformed-v3", "metadata": {
+                **base["metadata"], "catalogue_scope_version": 3}},
+            {**base, "key": "foreign", "metadata": {
+                **base["metadata"], "source_account_id": "private"}},
+        ]
+        rows = merge_public_notice_c_known_rows(
+            [{**base, "key": "exact"}, *retained], page, identity_id="alice",
+        )
+        assert rows[0]["_cover_document_ref"] == group.document
+        assert rows[1:] == retained
+        assert db.entitlements() == [] and db.acquisitions() == []

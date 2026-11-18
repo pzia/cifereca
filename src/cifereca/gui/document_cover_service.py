@@ -11,11 +11,13 @@ are thread-agnostic: GTK callers must dispatch and bind-check on main.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Callable
 from dataclasses import dataclass
+import math
 import time
+from time import perf_counter
 from pathlib import Path
 from threading import Lock, RLock
 from typing import Literal
@@ -24,7 +26,7 @@ from ..core.book_cover_cache import (
     CoverCacheToken, CoverDecisionCache, CoverSubscription,
 )
 from ..core.book_cover_projection import (
-    CoverDocumentScope, ResolvedBookCover, resolve_book_cover,
+    CoverDocumentScope, ResolvedBookCover,
 )
 from ..core.book_cover_trace import CoverLifecycleTrace, CoverTraceSnapshot
 from ..core.covers import CoverCandidate, candidate
@@ -38,6 +40,7 @@ from .cover_loader import CoverLoader, CoverRequest
 
 CoverVariant = Literal["list", "detail"]
 _MAX_EVIDENCE = 4096
+_N2_LATENCY_WINDOW = 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +254,9 @@ class DocumentCoverService:
         self._snapshots: OrderedDict[CoverDocumentScope, CoverSourceSnapshot] = OrderedDict()
         # N2 performance counters, not document provenance. Never export
         # SourceKey, profile, credential, URL or private filesystem path.
+        self._n2_recent = {outcome: deque(maxlen=_N2_LATENCY_WINDOW) for outcome in (
+            "hit", "source_unknown", "below_floor", "resolution_miss",
+        )}
         self._stats = {
             "n2_hit": 0, "n2_miss": 0, "n2_source_unknown": 0,
             "n2_resolution_miss": 0, "n2_register_new": 0,
@@ -453,7 +459,7 @@ class DocumentCoverService:
             ):
                 return None
 
-            fallback = resolve_book_cover(
+            fallback = self.decisions.resolve_n1(
                 document, snapshot.candidates,
                 revision=snapshot.revision, snapshot_complete=True,
                 attested_book_identity=snapshot.attested_book_identity,
@@ -875,6 +881,9 @@ class DocumentCoverService:
                     or not is_notice_cover_document(document)):
                 raise ValueError("invalid Notice C read revision")
         handle = CoverReadRequest()
+        # Synchronous documentary decision only, including lock acquisition.
+        # No N3 I/O, async read-through, callback or GTK paint time.
+        started = perf_counter()
         with self._lock:
             if self._closed:
                 raise RuntimeError("cover service is closed")
@@ -888,12 +897,14 @@ class DocumentCoverService:
             if snapshot is None:
                 self._stats["n2_miss"] += 1
                 self._stats["n2_source_unknown"] += 1
+                outcome = "source_unknown"
                 decision = None
             elif below_floor:
                 # A previous consumer could have selected an older URI.
                 # Do not resolve, reuse, or materialize that token on this
                 # newer receipt. The producer still owns the source data.
                 self._stats["n2_miss"] += 1
+                outcome = "below_floor"
                 decision = None
             else:
                 self._snapshots.move_to_end(document)
@@ -925,8 +936,10 @@ class DocumentCoverService:
                 if decision is None:
                     self._stats["n2_miss"] += 1
                     self._stats["n2_resolution_miss"] += 1
+                    outcome = "resolution_miss"
                 else:
                     self._stats["n2_hit"] += 1
+                    outcome = "hit"
                 if decision is None and document not in self._resolving:
                     self._resolving.add(document)
                     try:
@@ -954,6 +967,9 @@ class DocumentCoverService:
                 if snapshot is not None and decision is not None
                 and decision.status == "selected" else None
             )
+            elapsed_ms = (perf_counter() - started) * 1000
+            if math.isfinite(elapsed_ms) and elapsed_ms >= 0:
+                self._n2_recent[outcome].append(elapsed_ms)
         if snapshot is None or decision is None or selected_token is None:
             # A pending or missing read can have queued a GTK idle before
             # Core registers a stronger N2 source. Never let its delayed
@@ -1056,14 +1072,22 @@ class DocumentCoverService:
         handle._attach(child)
         return handle
 
-    def stats(self) -> dict[str, int]:
-        """One count per get_cover N2 read, independent of physical N3 I/O."""
+    def stats(self) -> dict[str, int | float]:
+        """Separate N1 resolution and N2 synchronous decision statistics."""
         with self._lock:
-            return {
-                **self._stats,
+            stats = {
+                **self._stats, **self.decisions.n1_latency_stats(),
                 "n2_registered_documents": len(self._snapshots),
                 "n2_source_flights": len(self._read_active),
             }
+            for outcome, window in self._n2_recent.items():
+                prefix = f"n2_{outcome}"
+                recent = sorted(window)
+                stats[f"{prefix}_recent_count"] = count = len(recent)
+                if count:
+                    stats[f"{prefix}_recent_p50_ms"] = round(recent[(count * 50 + 99) // 100 - 1], 2)
+                    stats[f"{prefix}_recent_p95_ms"] = round(recent[(count * 95 + 99) // 100 - 1], 2)
+            return stats
 
     def close(self) -> None:
         with self._lock:

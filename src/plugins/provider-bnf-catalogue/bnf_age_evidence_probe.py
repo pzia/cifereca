@@ -7,7 +7,7 @@ Only exact own-ISBN matches are returned; contextual editions are excluded.
 from __future__ import annotations
 
 import re
-from xml.etree import ElementTree as ET
+from cifereca.plugin_api import CatalogueXMLParseError, parse_bounded_catalogue_xml
 
 SRU = "{http://www.loc.gov/zing/srw/}"
 MXC = "{info:lc/xmlns/marcxchange-v2}"
@@ -68,13 +68,29 @@ def exact_edition_age_fields(
         raise ValueError("invalid_sru_encoding") from None
     if "\x00" in text:
         raise ValueError("invalid_sru_encoding")
+    # Preserve the UTF-8-only evidence contract when the shared parser
+    # processes the original bytes. A conflicting encoding label must not
+    # reinterpret an otherwise valid UTF-8 bibliographic literal.
+    declaration = re.match(r"^<\?xml\s+([^?]*)\?>", text.lstrip("\ufeff"))
+    if declaration:
+        encoding = re.search(r"""\bencoding\s*=\s*(['"])([^'"]+)\1""",
+                             declaration.group(1))
+        if encoding and encoding.group(2).casefold() not in {"utf-8", "utf8"}:
+            raise ValueError("invalid_sru_encoding")
     markup = text.upper()
     if "<!DOCTYPE" in markup or "<!ENTITY" in markup:
         raise ValueError("sru_entities_forbidden")
+    failure = None
     try:
-        root = ET.fromstring(text)
-    except ET.ParseError as exc:
-        raise ValueError("invalid_sru_xml") from exc
+        root = parse_bounded_catalogue_xml(xml, max_bytes=MAX_XML_BYTES)
+    except CatalogueXMLParseError as exc:
+        failure = {
+            "budget": "sru_xml_budget",
+            "forbidden_doctype": "sru_entities_forbidden",
+            "html": "invalid_sru_root",
+        }.get(exc.code, "invalid_sru_xml")
+    if failure is not None:
+        raise ValueError(failure)
     if root.tag != SRU + "searchRetrieveResponse":
         raise ValueError("invalid_sru_root")
     counts = root.findall(SRU + "numberOfRecords")

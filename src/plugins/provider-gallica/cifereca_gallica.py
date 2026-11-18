@@ -114,6 +114,14 @@ class _UnsafeOPDS(ProviderError):
     """Rejected payload or navigation: never authorize a fallback GET."""
 
 
+class _UnsafeSRU(ProviderError):
+    """A rejected audio catalogue does not authorize an outage fallback."""
+
+
+class _RecoveredAudioRows(list):
+    """Private branch result marker: recovery is necessarily partial."""
+
+
 class GallicaSession(ProviderSession):
     """Session anonyme Gallica, EPUB + documents sonores du domaine public."""
 
@@ -335,6 +343,28 @@ class GallicaSession(ProviderSession):
             raise _UnsafeOPDS("Gallica OPDS : unverified_navigation")
         return target
 
+    @staticmethod
+    def _bounded_xml_body(response, failure):
+        if response.headers.get("content-encoding", "").strip().casefold() not in {"", "identity"}:
+            raise failure()
+        length = response.headers.get("content-length", "")
+        if length.isascii() and length.isdecimal() and (
+            len(length) > 9 or int(length) > MAX_XML_BYTES
+        ):
+            raise failure()
+        if response.is_stream_consumed:
+            if not response.is_closed or len(response.content) > MAX_XML_BYTES:
+                raise failure()
+            return response.content
+        chunks = []
+        size = 0
+        for chunk in response.iter_raw(chunk_size=65536):
+            size += len(chunk)
+            if size > MAX_XML_BYTES:
+                raise failure()
+            chunks.append(chunk)
+        return b"".join(chunks)
+
     def _opds_get(self, url, *, params=None):
         # Only the two configured OPDS roots authorize origins. A supplied
         # feed/descriptor/redirect cannot extend them. Retain the configured
@@ -355,25 +385,9 @@ class GallicaSession(ProviderSession):
                     params = None
                     continue
                 response.raise_for_status()
-                if response.headers.get("content-encoding", "").strip().casefold() not in {"", "identity"}:
-                    raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
-                length = response.headers.get("content-length", "")
-                if length.isascii() and length.isdecimal() and (
-                    len(length) > 9 or int(length) > MAX_XML_BYTES
-                ):
-                    raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
-                if response.is_stream_consumed:
-                    if not response.is_closed or len(response.content) > MAX_XML_BYTES:
-                        raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
-                    return response.content, str(response.url)
-                chunks = []
-                size = 0
-                for chunk in response.iter_raw(chunk_size=65536):
-                    size += len(chunk)
-                    if size > MAX_XML_BYTES:
-                        raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
-                    chunks.append(chunk)
-                return b"".join(chunks), str(response.url)
+                return self._bounded_xml_body(
+                    response, lambda: _UnsafeOPDS("Gallica OPDS : invalid_opds_feed"),
+                ), str(response.url)
         raise _UnsafeOPDS("Gallica OPDS : unverified_navigation")
 
     def _discover_search_template(self) -> str:
@@ -518,81 +532,141 @@ class GallicaSession(ProviderSession):
             ))
         return rows
 
-    def _recover_sru_audio_records(self, content: bytes) -> tuple[list[SearchResult], int, int]:
-        """Recover valid SRU records when one malformed record breaks the XML feed.
+    @staticmethod
+    def _sru_record_nodes(root):
+        ns = "{http://www.loc.gov/zing/srw/}"
+        if root.tag != ns + "searchRetrieveResponse":
+            raise _UnsafeSRU("Gallica SRU : invalid_audio_feed")
+        if any(node.tag.rsplit("}", 1)[-1] == "diagnostic" for node in root.iter()):
+            raise _UnsafeSRU("Gallica SRU : invalid_audio_feed")
+        return root.findall(f"{ns}records/{ns}record/{ns}recordData")
 
-        Gallica occasionally returns a globally invalid SRU document because a
-        single metadata record contains malformed embedded markup.  ElementTree
-        is intentionally strict, so parse each ``recordData`` fragment in
-        isolation and discard only the broken records instead of losing the
-        complete audio result set.
+    def _recover_sru_audio_records(self, content: bytes) -> tuple[list[SearchResult], int, int]:
+        """Conservative recovery of malformed recordData, not new XML authority.
+
+        Only UTF-8, small documents with a verifiable SRU envelope; never
+        recover DTD, comments, CDATA or processing instructions. Retain the
+        actual envelope/namespace declarations instead of inventing them.
         """
-        text = content.decode("utf-8", errors="replace")
-        fragments = re.findall(
-            r"<(?:[A-Za-z_][\w.-]*:)?recordData\b[^>]*>(.*?)</(?:[A-Za-z_][\w.-]*:)?recordData\s*>",
-            text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        nodes: list[ET.Element] = []
-        broken = 0
-        wrapper_start = (
-            '<root xmlns:dc="http://purl.org/dc/elements/1.1/" '
-            'xmlns:dcterms="http://purl.org/dc/terms/" '
-            'xmlns:oai_dc="http://www.openarchives.org/OAI/2.0/oai_dc/" '
-            'xmlns:srw="http://www.loc.gov/zing/srw/">'
-        )
-        for fragment in fragments:
+        if len(content) > 256 * 1024:
+            raise _UnsafeSRU("Gallica SRU : invalid_audio_feed")
+        text = None
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            pass
+        if text is None:
+            raise _UnsafeSRU("Gallica SRU : invalid_audio_feed")
+        # The declaration may be present, but no other markup declaration
+        # or PI may hide a fake record or a DTD after the first parse error.
+        body = re.sub(r"^<\?xml\s+[^<>]*\?>", "", text, count=1)
+        if "<!" in body or "<?" in body or "\x00" in body:
+            raise _UnsafeSRU("Gallica SRU : invalid_audio_feed")
+        tag_pattern = re.compile(r"<(/?)((?:[A-Za-z_][\w.-]*:)?recordData)\s*>")
+        spans = []
+        opening = None
+        for match in tag_pattern.finditer(body):
+            if not match.group(1):
+                if opening is not None:
+                    raise _UnsafeSRU("Gallica SRU : invalid_audio_feed")
+                opening = match
+            else:
+                if opening is None or opening.group(2) != match.group(2):
+                    raise _UnsafeSRU("Gallica SRU : invalid_audio_feed")
+                spans.append((opening.end(), match.start()))
+                opening = None
+                if len(spans) > 50:
+                    raise _UnsafeSRU("Gallica SRU : invalid_audio_feed")
+        if opening is not None or not spans:
+            return [], len(spans), 0
+
+        def document(keep):
+            chunks, offset = [], 0
+            for i, (start, stop) in enumerate(spans):
+                chunks.append(body[offset:start])
+                if i == keep:
+                    chunks.append(body[start:stop])
+                offset = stop
+            chunks.append(body[offset:])
+            return "".join(chunks).encode("utf-8")
+
+        def parse(payload):
+            failure = None
             try:
-                nodes.append(ET.fromstring((wrapper_start + fragment + "</root>").encode("utf-8")))
-            except ET.ParseError:
+                root = parse_bounded_catalogue_xml(payload)
+            except CatalogueXMLParseError as exc:
+                failure = exc.code
+            if failure == "malformed":
+                return None
+            if failure is not None:
+                raise _UnsafeSRU("Gallica SRU : invalid_audio_feed")
+            nodes = self._sru_record_nodes(root)
+            if len(nodes) != len(spans):
+                raise _UnsafeSRU("Gallica SRU : invalid_audio_feed")
+            return nodes
+
+        # The envelope must itself parse once ALL record contents are
+        # removed. Each recovered record is parsed in its original context.
+        if parse(document(None)) is None:
+            return [], len(spans), len(spans)
+        nodes = []
+        broken = 0
+        for i in range(len(spans)):
+            parsed = parse(document(i))
+            if parsed is None:
                 broken += 1
-        return self._audio_rows_from_nodes(nodes), len(fragments), broken
+            else:
+                nodes.append(parsed[i])
+        return self._audio_rows_from_nodes(nodes), len(spans), broken
 
     def _parse_sru_audio(self, content: bytes) -> list[SearchResult]:
+        failure = None
         try:
-            root = ET.fromstring(content)
-        except ET.ParseError as exc:
-            rows, fragments, broken = self._recover_sru_audio_records(content)
-            if rows:
-                self._diagnostic(
-                    "GALLICA", "SRU audio XML recovery", "ok",
-                    detail={
-                        "records_found": fragments,
-                        "records_skipped": broken,
-                        "records_recovered": len(rows),
-                        "parse_error": str(exc)[:180],
-                    },
-                    level="detailed",
-                )
-                return rows
+            root = parse_bounded_catalogue_xml(content)
+        except CatalogueXMLParseError as exc:
+            failure = exc.code
+        if failure is None:
+            return self._audio_rows_from_nodes(self._sru_record_nodes(root))
+        if failure != "malformed":
+            raise _UnsafeSRU("Gallica SRU : invalid_audio_feed")
+        rows, fragments, broken = self._recover_sru_audio_records(content)
+        if rows:
             self._diagnostic(
-                "GALLICA", "SRU audio XML parse", "error",
-                detail={"parse_error": str(exc)[:240], "records_found": fragments, "records_skipped": broken},
+                "GALLICA", "SRU audio XML recovery", "ok",
+                detail={"records_found": fragments, "records_skipped": broken,
+                        "records_recovered": len(rows)},
+                level="detailed",
             )
-            raise ProviderError("réponse audio temporairement inexploitable") from exc
-        record_nodes = [node for node in root.iter() if self._local_name(node.tag) == "recorddata"]
-        return self._audio_rows_from_nodes(record_nodes)
+            return _RecoveredAudioRows(rows)
+        self._diagnostic(
+            "GALLICA", "SRU audio XML parse", "error",
+            detail={"records_found": fragments, "records_skipped": broken},
+        )
+        raise ProviderError("réponse audio temporairement inexploitable")
 
     def _search_audio(self, query: str, page: int, field: str = "all") -> list[SearchResult]:
         index = {"all": "gallica", "title": "dc.title", "author": "dc.creator", "subject": "dc.subject", "isbn": "dc.identifier"}.get(field)
         if index is None:
             raise ProviderError(f"Gallica : champ de recherche non pris en charge : {field}")
         cql = f'({index} all {_cql_literal(query)}) and (dc.type any "audio")'
-        response = self.client.get(self.sru_url, params={
+        with self.client.stream("GET", self.sru_url, params={
             "operation": "searchRetrieve",
             "version": "1.2",
             "query": cql,
             "startRecord": str(max(1, page * 50 + 1)),
             "maximumRecords": "50",
-        })
-        response.raise_for_status()
+        }, headers={"Accept-Encoding": "identity"}) as response:
+            response.raise_for_status()
+            content = self._bounded_xml_body(
+                response, lambda: _UnsafeSRU("Gallica SRU : invalid_audio_feed"),
+            )
+            status = response.status_code
         try:
-            return self._parse_sru_audio(response.content)
+            return self._parse_sru_audio(content)
         except ProviderError:
             self._diagnostic("GALLICA", "audio response metadata", "error", detail={
-                "http_status": response.status_code,
-                "content_type": response.headers.get("content-type", ""),
-                "bytes": len(response.content),
+                "http_status": status,
+                "bytes": len(content),
             })
             raise
 
@@ -654,6 +728,7 @@ class GallicaSession(ProviderSession):
         errors: list[str] = []
         causes = []
         successful_branches = 0
+        recovered_audio = False
         # Independent services run concurrently; an audio timeout does not add
         # another complete timeout after the EPUB branch has finished.
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="gallica-search") as pool:
@@ -666,6 +741,7 @@ class GallicaSession(ProviderSession):
                     # this valid zero into total service_unavailable.
                     successful_branches += 1
                     rows.extend(branch_rows)
+                    recovered_audio |= isinstance(branch_rows, _RecoveredAudioRows)
                 except Exception as exc:
                     errors.append(message)
                     causes.append(exc)
@@ -681,6 +757,10 @@ class GallicaSession(ProviderSession):
             ("partial_results : " if successful_branches else "") + "Gallica : " + message
             for message in errors
         ]
+        if recovered_audio:
+            self.last_search_warnings.append(
+                "partial_results : Gallica : récupération partielle du XML audio"
+            )
         if skipped_audio and successful_branches:
             # Explicitly requested audio was not searched. An eligible EPUB
             # branch is not evidence that the combined query was exhaustive.
@@ -720,9 +800,14 @@ class GallicaSession(ProviderSession):
                     400 <= status < 500 and status not in {408, 429}
                     for status in statuses
                 )
-                if not semantic:
+                rejected_payload = any(isinstance(exc, (_UnsafeOPDS, _UnsafeSRU)) for exc in causes)
+                # A rejected payload/navigation must never become authority
+                # for Core's stale fallback or an equivalent retry.
+                if not semantic and not rejected_payload:
                     error.code = "search_temporarily_unavailable"
                     error.retryable = True
+                elif rejected_payload:
+                    error.retryable = False
             # Exceptions can contain signed request URLs, cookies and bodies.
             # Do not attach a raw branch error as public __cause__.
             raise error from None
@@ -877,9 +962,11 @@ class GallicaPlugin(ProviderPlugin):
         return self
     @staticmethod
     def parse_feed(content: bytes, base_url: str) -> list[dict[str, object]]:
-        root = ET.fromstring(content)
+        # Keep the historical dictionary projection, but share the exact
+        # bounded Atom parser and refusal classification of the session.
+        feed = GallicaSession._opds_atom(content)
         out: list[dict[str, object]] = []
-        for entry in root.findall(f"{{{ATOM}}}entry"):
+        for entry in feed.entries:
             title = GallicaSession._text(entry.find(f"{{{ATOM}}}title")) or "Sans titre"
             authors = [GallicaSession._text(a.find(f"{{{ATOM}}}name")) or "" for a in entry.findall(f"{{{ATOM}}}author")]
             acquisition = None; acquisition_type = ""; thumbnail = None; friendly = None

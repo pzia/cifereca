@@ -21,7 +21,7 @@ from PIL import Image
 
 from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
 from cifereca.core.notice_c_public_search import search_public_notice_c
-from cifereca.core.notice_cover_repository import _opaque_key, is_notice_cover_document
+from cifereca.core.notice_cover_repository import evict_notice_cover, read_notice_cover, is_notice_cover_document
 from cifereca.core.search_orchestration import _mirror_remote_results, _public_rows_from_response
 from cifereca.gui.book_widgets import BookListCell, CoverView
 from cifereca.gui.query_model import QueryState
@@ -93,13 +93,17 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             assert len(fact.sources) == 1 and fact.candidates[0].url == row.thumbnail_url
             # Force the subsequent worker to rely on durable canonical C,
             # not the previously retained short-lived source observation.
-            with db._lock, db._connect() as sql:
-                sql.execute("DELETE FROM metadata WHERE key=?", (
-                    _opaque_key(row._core_notice_cover_document_ref),
-                ))
+            # Web action eligibility specifically requires qualified
+            # eviction, never a raw DELETE with an ambiguous live fence.
+            source_doc = row._core_notice_cover_document_ref
+            source = read_notice_cover(db, source_doc)
+            assert source is not None
+            assert evict_notice_cover(db, source_doc, expected_epoch=source.epoch)
+            assert read_notice_cover(db, source_doc) is None
             page = search_public_notice_c(db, "loup")
             assert len(page.hits) == 1 and page.hits[0].document == doc
-            return doc, fact.epoch, row.thumbnail_url
+            assert fact.catalogue_web_references[0].url == row.friendly_url
+            return doc, fact.epoch, row.thumbnail_url, row.friendly_url
         finally:
             db.close()
             session.close()
@@ -158,7 +162,7 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             assert monotonic() < deadline, "C seed worker timeout"
             later(40, guard(after_seed))
             return
-        state["document"], state["epoch"], state["url"] = seed_job.result()
+        state["document"], state["epoch"], state["url"], state["web_url"] = seed_job.result()
         start_stage(False)
 
     def start_stage(offline):
@@ -253,10 +257,83 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             probe.destroy()
             state["probe"] = None
             window.present()
-            verify_mainwindow_search(offline, db, service, loader, reads)
+            verify_real_web_action(offline, db, lambda: verify_mainwindow_search(
+                offline, db, service, loader, reads,
+            ))
 
         later(40, guard(verify))
 
+
+
+    def verify_real_web_action(offline, db, done):
+        from cifereca.gui.detail_panel import DetailPanel
+        from cifereca.gui.notice_c_web_action_controller import request_public_web_actions
+        doc, epoch = state["document"], state["epoch"]
+        launches = []
+        messages = []
+        generation = [0]
+        host = NS(service=NS(storage=db), runner=window.runner,
+                  toast=messages.append, _closed=False)
+        panel = DetailPanel(window)
+        probe = state["probe"] = Gtk.Window(
+            transient_for=window, title="Notice C — fiche web",
+        )
+        probe.set_default_size(340, 300)
+        probe.set_child(panel)
+        probe.present()
+
+        def launch(uri, _context):
+            assert get_ident() == gtk_thread
+            launches.append(uri)
+
+        assert request_public_web_actions(
+            host, panel, doc, expected_epoch=epoch,
+            current=lambda: generation[0] == 0,
+            Gtk=Gtk, Gio=NS(AppInfo=NS(launch_default_for_uri=launch)),
+        )
+        until = monotonic() + 10
+
+        def wait_menu():
+            buttons = [button for button in panel._action_buttons
+                       if getattr(button, "_cifereca_action_id", None) == "open-c-public-web"]
+            if not buttons or not buttons[0].get_mapped():
+                assert monotonic() < until, "GTK web action timeout"
+                later(40, guard(wait_menu))
+                return
+            button, = buttons
+            assert isinstance(button, Gtk.Button)
+            assert not launches and not messages
+            label = "offline" if offline else "cold"
+            capture("00-notice-c-real-web-action-" + label)
+            button.emit("clicked")
+
+            def wait_launch():
+                if not launches:
+                    assert monotonic() < until, "GTK web action worker timeout"
+                    later(40, guard(wait_launch))
+                    return
+                assert launches == [state["web_url"]] and not messages
+                # Keep a physical reference to the old button after the
+                # real DetailPanel revokes it. Even an emitted signal
+                # cannot invoke the action again.
+                panel.empty("Sélection modifiée", "Ancienne action révoquée")
+                assert button._cifereca_action_context_revoked
+                generation[0] += 1
+                button.emit("clicked")
+                assert launches == [state["web_url"]]
+                assert image_gets == ["cold"]
+                report["notice_c_web_action_" + label] = {
+                    "gtk_mapped": True, "qualified_eviction": True,
+                    "browser_sink_calls": len(launches), "old_button_revoked": True,
+                }
+                probe.destroy()
+                state["probe"] = None
+                window.present()
+                done()
+
+            later(40, guard(wait_launch))
+
+        later(40, guard(wait_menu))
 
 
     def verify_mainwindow_search(offline, db, service, loader, reads):
@@ -355,6 +432,7 @@ def verify_notice_c_cover(window, later, capture, report, complete):
                 return
             report["checks"]["P0_6366_real_c_n2_n3_n4_restart_offline"] = True
             report["checks"]["P0_6366_mainwindow_search_list_detail_restart_offline"] = True
+            report["checks"]["P0_6397_real_gtk_web_action_retained_c"] = True
             cleanup()
             window.present()
             complete()

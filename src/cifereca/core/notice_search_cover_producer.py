@@ -173,13 +173,19 @@ def admit_public_search_catalogue(
         else:
             fields[name] = value
 
+    result = {"thumbnail_url": public_cover_url, "public_bibliography": fields}
+    # An independently witnessed positive link is not a cover claim.
+    # The omitted image stays pending. The existing source writer retains
+    # any older complete observation rather than replacing it with partial.
+    from .search_orchestration import _verified_public_web_reference
+    link = _verified_public_web_reference(row)
+    if link is not None:
+        from .notice_c_web_references import FIELD
+        result[FIELD] = {"schema": 1, "links": [link]}
     return admit_source_notice(
         key=initial.key, parser_id=initial.parser_id,
         parser_version="2", observed_at=observed_at,
-        raw_fields={"search_result": {
-            "thumbnail_url": public_cover_url,
-            "public_bibliography": fields,
-        }},
+        raw_fields={"search_result": result},
         status="complete" if public_cover_url is not None else "partial",
     )
 

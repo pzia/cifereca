@@ -232,15 +232,40 @@ def test_public_supplier_same_call_not_previous_page_and_no_duplicate_get(
         live = session.search_with_response_facets("loup", scope="catalog")
         assert len(live.results) == len(live.public_notices) == 1
         assert live.public_notices[0].result is live.results[0]
-        assert _public_rows_from_response(live, session)[0].thumbnail_url is not None
         first = live.results[0]
+        projected = _public_rows_from_response(live, session)[0]
+        assert projected.thumbnail_url is not None
+        assert first.friendly_url is not None
+        marker = f"{session.provider_id}.public_search_product_card"
+        assert first.metadata["public_url_evidence"] == marker
+        assert projected.friendly_url == first.friendly_url
+        assert projected.metadata["public_url_evidence"] == marker
+        for bad in (
+            replace(first, metadata={**first.metadata,
+                                     "public_url_evidence": "numilog.public_search_product_card"}),
+            replace(first, friendly_url="https://www.numilog.com/search"),
+            replace(first, friendly_url=first.friendly_url + "?token=secret"),
+        ):
+            result, = _public_rows_from_response(
+                ProviderSearchResponse([bad], public_notices=(PublicSearchNotice(bad),)),
+                session,
+            )
+            assert result.friendly_url is None
+            assert "public_url_evidence" not in result.metadata
+        private = NS(provider_id=session.provider_id, credential_id="private",
+                     credentials={"test": "not-public"}, _accounts=[])
+        result, = _public_rows_from_response(live, private)
+        assert result.friendly_url is None
+        assert "public_url_evidence" not in result.metadata
         alternate = replace(first)
         # A same-key but not same-object notice keeps generic public metadata
         # but does NOT qualify the anonymous URL/edition exception.
         mismatch = ProviderSearchResponse(
             results=[first], public_notices=(PublicSearchNotice(alternate),),
         )
-        assert _public_rows_from_response(mismatch, session)[0].thumbnail_url is None
+        rejected = _public_rows_from_response(mismatch, session)[0]
+        assert rejected.thumbnail_url is None and rejected.friendly_url is None
+        assert "public_url_evidence" not in rejected.metadata
         second = session.search_with_response_facets("loup", scope="catalog")
         assert len(second.results) == 1 and len(calls) == 1
         assert second.public_notices[0].result is second.results[0]
@@ -547,6 +572,12 @@ def test_real_numilog_search_writes_public_bibliography_inside_same_notice_c(
         assert facts["public_bibliography"]["title"] == original.title
         assert facts["public_bibliography"]["record_id"] == original.record_id
         assert facts["thumbnail_url"] == original.thumbnail_url
+        assert facts["public_web_references"] == {
+            "schema": 1, "links": [{
+                "url": original.friendly_url,
+                "evidence": f"{session.provider_id}.public_search_product_card",
+            }],
+        }
 
         page = service.search_public_notice_c(
             "loup", provider_ids=(session.provider_id,),
@@ -557,6 +588,11 @@ def test_real_numilog_search_writes_public_bibliography_inside_same_notice_c(
         from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
         canonical = canonical_cover_document_ref(persisted.observation.key.edition_id)
         assert original._core_notice_canonical_cover_document_ref == canonical
+        from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+        web, = read_consolidated_notice_cover(service.storage, canonical).catalogue_web_references
+        assert web.url == original.friendly_url
+        assert web.provider_id == session.provider_id and web.record_id == original.record_id
+        assert web.source_ref == document.source_key
         assert first.document == canonical
         assert first.title == original.title
         assert first.record_id == original.record_id
@@ -601,6 +637,7 @@ def test_real_numilog_search_writes_public_bibliography_inside_same_notice_c(
         page = search_public_notice_c(db, "loup")
         assert len(page.hits) == 1 and page.hits[0].document == canonical
         assert page.hits[0].title == original.title
+        assert read_consolidated_notice_cover(db, canonical).catalogue_web_references == (web,)
         # +25h does not DELETE C; it marks its observed facts stale.
         stale = search_public_notice_c(
             db, "loup", now=persisted.observation.observed_at + 25 * 3600,
@@ -652,6 +689,108 @@ def test_real_numilog_notice_c_is_first_known_search_across_profiles_no_get(
         assert service.storage.acquisitions() == []
         # An offline known C read never launches a new online session.
         assert supplier_gets == [1]
+    finally:
+        service.close()
+        session.close()
+
+
+def test_web_reference_witness_cannot_be_reused_after_url_or_marker_mutation(tmp_path, monkeypatch):
+    from cifereca.core.notice_search_cover_producer import admit_public_search_catalogue
+    from cifereca.core.search_orchestration import _verified_public_web_reference
+
+    service, session, calls = build(tmp_path, monkeypatch)
+    try:
+        raw = session.search_with_response_facets("loup", scope="catalog")
+        def projected():
+            return _public_rows_from_response(raw, session)[0]
+        def facts(row):
+            item = admit_public_search_catalogue(
+                row, identity_id="alice", observed_at=100, public_cover_url=row.thumbnail_url,
+            )
+            return item.fields_copy()["search_result"]
+        good = projected()
+        assert _verified_public_web_reference(good)["url"] == good.friendly_url
+        assert "public_web_references" in facts(good)
+        altered = projected()
+        altered.friendly_url = "https://www.numilog.com/other-book"
+        assert _verified_public_web_reference(altered) is None
+        assert "public_web_references" not in facts(altered)
+        altered = projected()
+        altered.metadata["public_url_evidence"] = "other.public_search_product_card"
+        assert "public_web_references" not in facts(altered)
+        altered = projected()
+        altered.record_id = "foreign-record"
+        assert "public_web_references" not in facts(altered)
+        # Dataclass reconstruction (e.g. cache replay) cannot recreate the token.
+        assert _verified_public_web_reference(replace(good)) is None
+        assert calls == [1]
+    finally:
+        service.close()
+        session.close()
+
+
+def test_numilog_web_reference_without_image_is_positive_but_cover_pending(tmp_path, monkeypatch):
+    import re
+    from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+    from cifereca.core.notice_c_web_choices import read_public_web_choices, resolve_public_web_choice
+    from cifereca.core.notice_cover_repository import evict_notice_cover, persist_notice_cover
+    from cifereca.core.notice_search_cover_producer import admit_public_search_catalogue
+
+    service, session, calls = build(tmp_path, monkeypatch)
+    try:
+        without = re.sub(r'<img\b[^>]*>', '', FIXTURE.read_text(encoding="utf-8"))
+        parsed = parse_public_search(without, SOURCE)
+        assert parsed.items[0].thumbnail_url is None
+        monkeypatch.setattr(numilog, "fetch_public_search",
+                            lambda *a, **k: calls.append(1) or parsed)
+        row, = service.search("loup", provider_id=session.provider_id, force=True)
+        assert row.thumbnail_url is None and row.friendly_url
+        doc = row._core_notice_cover_document_ref
+        canonical = row._core_notice_canonical_cover_document_ref
+        source = read_notice_cover(service.storage, doc)
+        assert source.observation.status == "partial"
+        assert source.attribute.state == "pending" and not source.attribute.candidates
+        c = read_consolidated_notice_cover(service.storage, canonical)
+        assert not c.snapshot_complete and not c.candidates
+        web, = c.catalogue_web_references
+        assert web.url == row.friendly_url
+        menu = read_public_web_choices(service.storage, canonical)
+        choice, = menu.choices
+        def resolve():
+            return resolve_public_web_choice(service.storage, canonical,
+                expected_epoch=menu.epoch, choice_id=choice.choice_id)
+        assert resolve() == row.friendly_url
+        assert evict_notice_cover(service.storage, doc, expected_epoch=source.epoch)
+        assert resolve() == row.friendly_url
+        assert calls == [1]
+        assert service.storage.entitlements() == [] and service.storage.acquisitions() == []
+
+        # Rehydrate a completed observation, then retain it against a later
+        # partial observation even if the latter has another qualified link.
+        complete_page = parse_public_search(FIXTURE.read_text(encoding="utf-8"), SOURCE)
+        full, = session._public_rows(complete_page.items)
+        full = _public_rows_from_response(
+            ProviderSearchResponse([full], public_notices=(PublicSearchNotice(full),)), session,
+        )[0]
+        observation = admit_public_search_catalogue(full, identity_id="alice",
+            observed_at=source.observation.observed_at+1, public_cover_url=full.thumbnail_url)
+        installed = persist_notice_cover(service.storage, observation,
+            field_path=("search_result", "thumbnail_url"), cover_inventory_complete=True)
+        assert installed.attribute.state == "available"
+        # Parse a new card with the same supplier ID, not a forged DTO marker.
+        changed = without.replace("du-loup.ebook", "du-loup-corrige.ebook")
+        partial_page = parse_public_search(changed, SOURCE)
+        partial_raw, = session._public_rows(partial_page.items)
+        partial = _public_rows_from_response(
+            ProviderSearchResponse([partial_raw], public_notices=(PublicSearchNotice(partial_raw),)), session,
+        )[0]
+        observation = admit_public_search_catalogue(partial, identity_id="alice",
+            observed_at=source.observation.observed_at+2, public_cover_url=None)
+        assert observation.fields_copy()["search_result"]["public_web_references"]["links"][0]["url"] != web.url
+        retained = persist_notice_cover(service.storage, observation,
+            field_path=("search_result", "thumbnail_url"), cover_inventory_complete=True)
+        assert retained == installed
+        assert resolve() is None
     finally:
         service.close()
         session.close()

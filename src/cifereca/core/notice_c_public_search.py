@@ -24,7 +24,7 @@ from .notice_cover_repository import _PREFIX, _decode
 from .notice_search_cover_producer import _coordinate_digest
 from .notice_source_observation import NoticeSourceKey
 from .public_search_projection import _public_bibliographic_text
-from .search import local_search_evidence
+from .search import filter_loaded_results, local_search_evidence
 
 _MAX_SCAN = 10000
 _MAX_MATCHES = 50
@@ -197,18 +197,35 @@ def _hit_score(record, *, field, query):
                               record.publisher, record.description)
 
 
+def _matches_c_format(medium, media_format, content_types):
+    if not content_types:
+        return True
+    # Same descriptive row and format policy as the existing Search UI.
+    # The SQL prefilter may see corrupt raw JSON; do not coerce it.
+    if (type(medium) is not str or medium not in ("physical", "digital", "unknown")
+            or (media_format is not None
+                and (type(media_format) is not str or len(media_format) > 512))):
+        return False
+    return bool(filter_loaded_results(
+        [{"medium": medium, "media_format": media_format}],
+        content_types=content_types,
+    ))
+
+
 def _matches_public_c(
     record: PublicNoticeCHit, *, wanted: set[str],
-    scope: str, field: str, needle: str,
+    scope: str, field: str, needle: str, content_types=(),
 ) -> bool:
     if wanted and record.provider_id not in wanted:
         return False
     if scope != "all" and record.medium != scope:
         return False
-    return _hit_score(record, field=field, query=needle) > 0
+    return (_matches_c_format(record.medium, record.media_format, content_types)
+            and _hit_score(record, field=field, query=needle) > 0)
 
 
-def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit):
+def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit,
+                              content_types=()):
     """Prefilter with the very same matcher as the admitted source cursor.
 
     It is not a physical full-text index. All competing source claims still
@@ -217,11 +234,14 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
     raw = "CASE WHEN src.type='object' THEN src.value ELSE '{}' END"
     columns = ", ".join(
         f"json_extract({raw}, '$.public_bibliography.{name}')"
-        for name in ("title", "author", "publisher", "description")
+        for name in ("title", "author", "publisher", "description",
+                     "medium", "media_format")
     )
-    db.create_function("cifereca_c_search_match", 4,
-                       lambda *values: _public_text_score(needle, field, *values),
-                       deterministic=True)
+    def score(title, author, publisher, description, medium, media_format):
+        if not _matches_c_format(medium, media_format, content_types):
+            return 0
+        return _public_text_score(needle, field, title, author, publisher, description)
+    db.create_function("cifereca_c_search_match", 6, score, deterministic=True)
     try:
         rows = db.execute(
             "SELECT DISTINCT src.key FROM metadata AS m, "
@@ -238,7 +258,7 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
              json.dumps(sorted(wanted)), limit + 1),
         ).fetchall()
     finally:
-        db.create_function("cifereca_c_search_match", 4, None)
+        db.create_function("cifereca_c_search_match", 6, None)
     return {row[0] for row in rows[:limit]}, len(rows) > limit
 
 
@@ -247,7 +267,7 @@ def search_public_notice_c(
     scope: str = "all", provider_ids: tuple[str, ...] = (),
     page: int = 0, page_size: int = _MAX_MATCHES,
     max_scan: int = _MAX_SCAN, now: int | None = None,
-    group_by_document: bool = False,
+    group_by_document: bool = False, content_types: tuple[str, ...] = (),
 ) -> PublicNoticeCPage:
     """Search durable public C source rows without a supplier or account GET.
 
@@ -262,6 +282,9 @@ def search_public_notice_c(
             or type(provider_ids) is not tuple or len(provider_ids) > 128
             or any(type(provider) is not str or not provider
                    for provider in provider_ids)
+            or type(content_types) is not tuple or len(content_types) > 32
+            or any(type(value) is not str or not 0 < len(value) <= 64
+                   for value in content_types)
             or type(group_by_document) is not bool
             or type(page) is not int or not 0 <= page <= 200
             or type(page_size) is not int or not 1 <= page_size <= _MAX_MATCHES
@@ -305,7 +328,7 @@ def search_public_notice_c(
             seen_source_refs.add(record.document.source_key)
             if _matches_public_c(
                 record, wanted=wanted, scope=scope,
-                field=field, needle=needle,
+                field=field, needle=needle, content_types=content_types,
             ):
                 matches.append(record)
         cursor.close()  # Release the limited statement before registering a UDF.
@@ -319,7 +342,7 @@ def search_public_notice_c(
         )
         refs, canonical_exceeded = _canonical_candidate_refs(
             db, prefix=_CANON_PREFIX, wanted=wanted, scope=scope, field=field,
-            needle=needle, limit=max_scan,
+            needle=needle, limit=max_scan, content_types=content_types,
         )
         exceeded = exceeded or canonical_exceeded
         refs.update(hit.document.source_key for hit in matches)
@@ -383,7 +406,8 @@ def search_public_notice_c(
                     continue
                 seen_source_refs.add(current.document.source_key)
                 if _matches_public_c(current, wanted=wanted, scope=scope,
-                                     field=field, needle=needle):
+                                     field=field, needle=needle,
+                                     content_types=content_types):
                     matches.append(current)
 
         for source_ref, candidates in staged.items():
@@ -450,7 +474,7 @@ def search_public_notice_c(
             )
             if _matches_public_c(
                 hit, wanted=wanted, scope=scope,
-                field=field, needle=needle,
+                field=field, needle=needle, content_types=content_types,
             ):
                 matches.append(hit)
 

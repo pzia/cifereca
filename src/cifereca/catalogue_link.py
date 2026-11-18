@@ -58,15 +58,12 @@ def catalogue_url(row):
 
 def safe_document_link_url(value, *, relation='related'):
     """Validate an externally supplied detail-panel link at the render boundary."""
-    url = catalogue_url({'friendly_url': value})
-    if not url:
-        return None
+    # Explicit DocumentLink DTOs (including retained plugin detail) can
+    # bypass the row projector. Apply the same notice-shape refusals at
+    # the last render boundary; generic navigation remains distinct.
     if str(relation or '').casefold() == 'notice':
-        parts = urlsplit(url)
-        # A bare domain/catalogue homepage cannot be presented as a notice.
-        if not parts.path.strip('/') and not parts.query:
-            return None
-    return url
+        return catalogue_notice_url({'friendly_url': value})
+    return catalogue_url({'friendly_url': value})
 
 
 def catalogue_notice_url(row, *, base=None, provider=None):
@@ -95,11 +92,11 @@ def catalogue_notice_url(row, *, base=None, provider=None):
                 parts.port, parts.path.rstrip('/').casefold(), parts.query)
 
     for value in candidates:
-        if not isinstance(value, str) or not value.strip():
+        if not isinstance(value, str) or not value or value != value.strip():
             continue
-        # urljoin/urlsplit may silently remove tabs or line breaks: reject the
-        # original provider value *before* resolving any relative URL.
-        if any(ord(char) < 32 or ord(char) == 127 for char in value):
+        # urljoin/urlsplit may silently remove whitespace or control
+        # characters: reject the original value BEFORE relative resolution.
+        if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
             continue
         candidate = urljoin(base, value) if reference else value
         safe = catalogue_url({'friendly_url': candidate})
@@ -117,6 +114,8 @@ def catalogue_notice_url(row, *, base=None, provider=None):
         path = unquote(unquote(parts.path)).casefold().rstrip('/')
         if (path.endswith(('.xml', '.atom', '.opds'))
                 or path in {'/feed', '/feed.php', '/fetch.php',
+                            '/opds', '/opds/search', '/services/engine/search/opds',
+                            '/search', '/ebooks/search',
                             '/index.php/feed', '/index.php/feed.php',
                             '/index.php/fetch', '/index.php/fetch.php',
                             '/index.php/opensearch.xml'}

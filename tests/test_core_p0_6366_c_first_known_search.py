@@ -134,3 +134,41 @@ def test_partial_budget_and_stale_status_cannot_imply_a_complete_zero(tmp_path):
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+def test_c_format_filter_runs_before_page_and_survives_source_eviction(tmp_path):
+    from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
+    from cifereca.core.notice_cover_repository import _opaque_key
+
+    filename = tmp_path / "formats.sqlite"
+    saved = []
+    from contextlib import closing
+    with closing(Storage(filename)) as db:
+        for idx in range(51):
+            item = verified_public(
+                record_id=f"epub-{idx}", title=f"Contes A {idx:02d}", format="epub",
+            )
+            source = persist(db, item)
+            saved.append(source)
+            persist_exact_public_search_cover(db, source)
+        audio = persist(db, verified_public(
+            record_id="audio", title="Contes Z", format="mp3",
+        ))
+        saved.append(audio)
+        canonical = persist_exact_public_search_cover(db, audio)
+        def assert_result(storage):
+            page = search_public_notice_c(storage, "contes", field="title",
+                content_types=("audiobook",), page_size=1, group_by_document=True, now=100)
+            assert page.known_matches == page.known_documents == 1
+            assert not page.has_more and page.hits[0].document == canonical.document
+            rows = _known(storage, "contes", field="title", content_types=("audiobook",))
+            assert len(rows) == 1 and rows[0]["_cover_document_ref"] == canonical.document
+            assert rows[0]["media_format"] == "mp3"
+            assert storage.entitlements() == [] and storage.acquisitions() == []
+        assert_result(db)
+        with db._lock, db._connect() as sql:
+            for source in saved:
+                sql.execute("DELETE FROM metadata WHERE key=?", (_opaque_key(source.document),))
+        assert_result(db)
+    with closing(Storage(filename)) as db:
+        assert_result(db)

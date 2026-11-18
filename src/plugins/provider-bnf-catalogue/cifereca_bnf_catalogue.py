@@ -22,8 +22,11 @@ from cifereca.plugin_api import (
 SRU = "http://www.loc.gov/zing/srw/"
 DC = "http://purl.org/dc/elements/1.1/"
 ENDPOINT = "https://catalogue.bnf.fr/api/SRU"
+MAX_SRU_BYTES = 2 * 1024 * 1024
 MAX_REQUESTED_PAGES = 101  # Zero-indexed, page 0..100; no unbounded SRU offsets.
-ARK = re.compile(r"(?:https?://catalogue\.bnf\.fr/)?(ark:/12148/cb[0-9]+[a-z0-9])(?:[/?#\s]|$)", re.I)
+# A bibliographic identifier is an exact bare ARK or a Catalogue général
+# record URL, not an ARK-looking substring in arbitrary prose or a foreign URL.
+ARK = re.compile(r"(?:https?://catalogue\.bnf\.fr/)?(ark:/12148/cb[0-9]{1,20}[a-z0-9])", re.I)
 FIELDS = {
     "all": "bib.anywhere", "title": "bib.title", "author": "bib.author",
     "isbn": "bib.isbn", "subject": "bib.subject", "series": "bib.anywhere", "collection": "bib.anywhere",
@@ -158,14 +161,33 @@ class BnfCatalogueSession(ProviderSession):
             return []
         relation = "adj" if field == "isbn" else "all"
         try:
-            response = self.client.get(self.sru_url, params={
+            with self.client.stream("GET", self.sru_url, params={
                 "operation": "searchRetrieve", "version": "1.2", "recordSchema": "dublincore",
                 "query": f"{FIELDS[field]} {relation} {literal(query)}",
                 "startRecord": str(page * self.page_size + 1),
                 "maximumRecords": str(self.page_size),
-            })
-            response.raise_for_status()
-            rows = self.parse_records(response.content)
+            }, headers={"Accept-Encoding": "identity"}) as response:
+                response.raise_for_status()
+                encoding = response.headers.get("content-encoding", "").strip().casefold()
+                declared = response.headers.get("content-length", "")
+                if (encoding not in {"", "identity"}
+                        or (declared.isascii() and declared.isdecimal()
+                            and (len(declared) > 9 or int(declared) > MAX_SRU_BYTES))):
+                    raise ProviderError("BnF : invalid_sru_response")
+                if response.is_stream_consumed:
+                    if not response.is_closed or len(response.content) > MAX_SRU_BYTES:
+                        raise ProviderError("BnF : invalid_sru_response")
+                    content = response.content
+                else:
+                    chunks = []
+                    total = 0
+                    for chunk in response.iter_raw(chunk_size=65536):
+                        total += len(chunk)
+                        if total > MAX_SRU_BYTES:
+                            raise ProviderError("BnF : invalid_sru_response")
+                        chunks.append(chunk)
+                    content = b"".join(chunks)
+            rows = self.parse_records(content)
         except httpx.HTTPError as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             code = (
@@ -242,9 +264,17 @@ class BnfCatalogueSession(ProviderSession):
                     if value:
                         values.setdefault(node.tag.split("}", 1)[1], []).append(value)
             identifiers = values.get("identifier", [])
-            ark = next((m.group(1) for value in identifiers if (m := ARK.fullmatch(value.strip()) or ARK.search(value.strip()))), None)
-            if not ark:
+            arks = {
+                match.group(1).lower() for value in identifiers
+                if (match := ARK.fullmatch(value.strip())) is not None
+            }
+            if len(arks) > 1:
+                # Two competing exact Catalogue général records in one DC
+                # record cannot attest which book the link belongs to.
+                raise ProviderError("BnF : ambiguous_record_identifier")
+            if not arks:
                 continue
+            ark = next(iter(arks))
             formats = values.get("format", [])
             kinds = values.get("type", [])
             links = list(dict.fromkeys(link for value in values.get("relation", []) + identifiers if (link := _gallica_link(value))))

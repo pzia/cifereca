@@ -227,3 +227,34 @@ def test_sru_200_invalid_envelope_never_claims_legitimate_zero():
             assert "PRIVATE_TOKEN" not in str(caught.value)
         finally:
             session.close()
+
+
+@pytest.mark.parametrize("mode", ("compressed", "declared", "stream"))
+def test_sru_transport_budget_refuses_without_fallback_or_second_get(mode):
+    from cifereca_bnf_catalogue import MAX_SRU_BYTES
+    from cifereca.search_failures import search_failure_code
+
+    calls = []
+    reads = []
+    class Body(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(40):
+                reads.append(1)
+                yield b"x" * 65536
+
+    def handler(request):
+        calls.append(request)
+        assert request.headers["accept-encoding"] == "identity"
+        headers = ({"content-encoding": "gzip"} if mode == "compressed" else
+                   {"content-length": str(MAX_SRU_BYTES + 1)} if mode == "declared" else {})
+        return httpx.Response(200, headers=headers, stream=Body())
+
+    session, _ = _session(handler)
+    try:
+        with pytest.raises(ProviderError, match="invalid_sru_response") as caught:
+            session.search("Doyle")
+        assert search_failure_code(caught.value) is None
+        assert len(calls) == 1
+        assert len(reads) == (33 if mode == "stream" else 0)
+    finally:
+        session.close()
