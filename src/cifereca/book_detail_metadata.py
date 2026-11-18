@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from itertools import chain
 import re
+import math
 from .descriptions import description_text
 
 # These are *public bibliographic facts*, not provider-internal identities.
@@ -125,7 +126,11 @@ _MAX_COLLECTION_ENTRIES = 500
 
 
 def _safe_text(value: object) -> str:
-    if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+    if type(value) not in (str, int, float):
+        return ""
+    if type(value) is float and not math.isfinite(value):
+        return ""
+    if type(value) is int and value.bit_length() > 1024:
         return ""
     result = str(value).strip()
     if not result or result in {"—", "Inconnu"}:
@@ -150,30 +155,55 @@ def _safe_text(value: object) -> str:
 
 
 def _values(raw: object, key: str):
-    if isinstance(raw, Mapping):
-        if key == "contributors":
-            raw = [str(row.get("name", "")) + (
-                " · " + str(row.get("role")) if row.get("role") else ""
-            ) for row in (raw,) if row.get("name")]
-        elif key == "series":
-            raw = [str(raw.get("name", "")) + (
-                " · tome " + str(raw.get("index")) if raw.get("index") else ""
-            )] if raw.get("name") else []
-        else:
+    # One global traversal budget per field, including nested containers.
+    # A malformed cyclic/deep list must not hide the other detail fields.
+    remaining = _MAX_COLLECTION_ENTRIES
+    truncated = False
+    active = set()
+
+    def visit(value, depth):
+        nonlocal remaining, truncated
+        if remaining <= 0 or depth > 8:
+            truncated = True
             return
-    if isinstance(raw, (tuple, list)):
-        for index, value in enumerate(raw):
-            if index >= _MAX_COLLECTION_ENTRIES:
-                yield "Liste longue : valeurs supplémentaires non affichées"
-                break
-            yield from _values(value, key)
-    else:
-        value = _safe_text(raw)
-        if value and key in {"description", "summary", "synopsis"}:
-            # Reuse the plain-text contract; never render provider markup.
-            value = _safe_text(description_text(value))
-        if value:
-            yield value
+        if isinstance(value, Mapping):
+            if key not in {"contributors", "series"}:
+                remaining -= 1
+                return
+            name = _safe_text(value.get("name"))
+            extra = _safe_text(value.get("role" if key == "contributors" else "index"))
+            remaining -= 1
+            if name:
+                yield name + ((" · " if key == "contributors" else " · tome ") + extra
+                              if extra else "")
+        elif type(value) in (list, tuple):
+            if id(value) in active:
+                truncated = True
+                return
+            active.add(id(value))
+            try:
+                for child in value:
+                    if remaining <= 0:
+                        truncated = True
+                        break
+                    # Count containers too: empty nested lists cannot bypass
+                    # the work budget.
+                    if type(child) in (list, tuple):
+                        remaining -= 1
+                    yield from visit(child, depth + 1)
+            finally:
+                active.remove(id(value))
+        else:
+            remaining -= 1
+            text = _safe_text(value)
+            if text and key in {"description", "summary", "synopsis"}:
+                text = _safe_text(description_text(text))
+            if text:
+                yield text
+
+    yield from visit(raw, 0)
+    if truncated:
+        yield "Liste longue : valeurs supplémentaires non affichées"
 
 
 def _identifier_items(raw: object):
