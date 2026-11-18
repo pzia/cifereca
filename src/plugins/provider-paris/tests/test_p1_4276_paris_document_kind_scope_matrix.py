@@ -42,7 +42,7 @@ def client_with_rows(by_scenario):
     client.diagnostics = SimpleNamespace(add=lambda *_args, **_kwargs: None)
     client._timed = lambda _category, _operation, action: action()
     client._search_scenario = (
-        lambda _query, scenario, _page, _size: (by_scenario.get(scenario, []), [])
+        lambda _query, scenario, _page, _size: (by_scenario.get(scenario, []), [], False)
     )
     client.last_search_warnings = []
     client.last_search_response_facets = []
