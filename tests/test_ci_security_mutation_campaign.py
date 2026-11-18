@@ -63,3 +63,20 @@ def test_mutation_baseline_failure_never_counts_as_killed(monkeypatch, tmp_path)
     source.write_text("\n".join(m.anchor for m in MUTATIONS), encoding="utf-8")
     with pytest.raises(RuntimeError, match="baseline_failed"):
         campaign(tmp_path)
+
+
+def test_owner_closure_matrix_has_six_distinct_executable_witnesses():
+    from scripts.ci_security_mutation_campaign import CLOSURE_MUTATIONS, ROOT
+    assert len(CLOSURE_MUTATIONS) == 6
+    assert len({m.name for m in CLOSURE_MUTATIONS}) == 6
+    assert [m.name for m in CLOSURE_MUTATIONS] == [
+        "exact_inventory_credential", "respect_revoked_delivery_admission",
+        "one_shot_confirmed_stage", "verify_published_candidate_sha",
+        "retired_legacy_writer_fence", "replay_deleted_transitive_dependency",
+    ]
+    for mutation in CLOSURE_MUTATIONS:
+        assert (ROOT / mutation.target_path).read_text(encoding="utf-8").count(mutation.anchor) == 1
+        assert not mutation.additional_test_nodes
+        assert mutation.anchor != mutation.replacement
+        path, test = mutation.test_node.split("::", 1)
+        assert "def " + test + "(" in (ROOT / path).read_text(encoding="utf-8")

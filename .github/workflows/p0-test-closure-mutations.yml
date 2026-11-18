@@ -1,0 +1,50 @@
+name: P0 Test Closure Mutations
+
+on:
+  pull_request:
+    paths:
+      - scripts/ci_security_mutation_campaign.py
+      - tests/test_ci_security_mutation_campaign.py
+      - .github/workflows/p0-test-closure-mutations.yml
+  push:
+    branches: [main]
+    paths:
+      - scripts/ci_security_mutation_campaign.py
+      - .github/workflows/p0-test-closure-mutations.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutations:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install offline test harness dependencies
+        run: python -m pip install --disable-pip-version-check -e . "pytest>=8,<9" "Pillow>=10,<12" "cryptography>=42,<48"
+      - name: Execute six closure mutation witnesses
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          python -m scripts.ci_security_mutation_campaign --closure --json | tee "$RUNNER_TEMP/closure-mutations.json"
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: closure-mutations-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/closure-mutations.json
+          if-no-files-found: error
+          retention-days: 2
