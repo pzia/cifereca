@@ -40,11 +40,18 @@ def activate_identity(window, identity_id: str) -> None:
             "Nouvelle identité", "Chargement des emprunts de ce profil…",
         )
     window._identity_context_generation += 1
+    from . import page_lifecycle_controller
+    lifecycle_generation = window._identity_context_generation
+    page_lifecycle_controller.context_changed(window, defer=True)
+    if (getattr(window, "_closed", False) or window.service is not service
+            or getattr(service.current_identity, "identity_id", None) != identity.identity_id
+            or window._identity_context_generation != lifecycle_generation):
+        return
     window._dispose_maintenance_lines()
     visible_route = window.view_stack.get_visible_child_name()
     if visible_route == "tools":
         window._refresh_tools_page()
-    elif visible_route == "sync":
+    elif visible_route == "sync" and not page_lifecycle_controller.handles(window, "sync"):
         # Reproject the newly selected identity before the async loan load.
         # _refresh_sync_page resets the old cards/actions synchronously and
         # advances the preview generation: late A callbacks cannot repaint B.
@@ -101,6 +108,12 @@ def activate_identity(window, identity_id: str) -> None:
     if hasattr(window, "library_page"):
         window._render_library([])
         window.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")
+    # All native private projections have now been retired. Render the
+    # visible opt-in page once under the newly installed context.
+    page_lifecycle_controller.resume(window)
+    if (getattr(window, "_closed", False) or window.service is not service
+            or window._identity_context_generation != lifecycle_generation):
+        return
     from cifereca.core.source_context import source_context_epoch
     admitted_identity_id = identity_id
     admitted_source_epoch = source_context_epoch(service)

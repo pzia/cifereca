@@ -165,6 +165,32 @@ def _build_sync_page(self):
     all_now.connect("clicked", sync_all)
     scroll.set_child(outer)
     root.append(scroll)
+    from cifereca.plugin_api.page_lifecycle import PageLifecycleV1
+
+    def invalidate(event):
+        if (not event.is_current(require_visible=False)
+                or getattr(self, "_sync_page_token", None) is not page_token):
+            return
+        self._sync_preview_generation = getattr(self, "_sync_preview_generation", 0) + 1
+        self._sync_attention_targets = []
+        self._sync_attention_scope = None
+        self._sync_attention_cursor = 0
+        clear_box(self._sync_sources_box)
+        all_now.set_sensitive(False)
+        alert_row.set_visible(False)
+        jump.set_visible(False)
+        self._sync_summary.set_label("État des sources à actualiser")
+
+    def show(event):
+        if event.is_current() and getattr(self, "_sync_page_token", None) is page_token:
+            self._refresh_sync_page()
+
+    def dispose():
+        if getattr(self, "_sync_page_token", None) is page_token:
+            self._sync_page_token = None
+            self._sync_preview_generation = getattr(self, "_sync_preview_generation", 0) + 1
+
+    root.cifereca_page_lifecycle_v1 = PageLifecycleV1(invalidate, show, dispose)
     return root
 
 

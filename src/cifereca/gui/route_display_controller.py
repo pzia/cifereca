@@ -77,6 +77,11 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
     window.view_stack.set_visible_child_name(route)
     if not is_current():
         return
+    lifecycle = getattr(window, "_page_lifecycle_dispatcher", None)
+    if lifecycle is not None:
+        lifecycle.show(route)
+        if not is_current():
+            return
     page = window._pages.get(route)
     window.header_subtitle.set_label(page.title if page else "")
     if not is_current():
@@ -103,6 +108,10 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
             if not is_current():
                 return
 
+    if lifecycle is not None and lifecycle.handles(route):
+        # An opted-in page owns only its presentation; legacy refreshes must
+        # not run twice for the same visibility notification.
+        return
     if route == "dashboard":
         window._render_dashboard()
     elif route == "library":
