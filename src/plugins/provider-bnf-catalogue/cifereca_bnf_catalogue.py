@@ -252,8 +252,8 @@ class BnfCatalogueSession(ProviderSession):
             or (record_count < expected and not next_valid)
         )
         local_filter = scope != "all" or field in {"series", "collection"}
-        complete = bool(
-            not partial and page == 0 and not local_filter
+        complete = None if partial else bool(
+            page == 0 and not local_filter
             and total == record_count and not next_positions
         )
         if partial:
