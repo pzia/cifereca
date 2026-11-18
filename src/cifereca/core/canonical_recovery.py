@@ -96,13 +96,10 @@ def _path_verified(storage, *, root: Path, source: SourceKey,
             or type(final_sha256) is not str or len(final_sha256) != 64
             or any(c not in "0123456789abcdef" for c in final_sha256)):
         raise ValueError("canonical_intake_invalid_path_or_hash")
-    directories = [
-        item.get("directory_name") for item in storage.identities()
-        if item.get("identity_id") == source.scope.identity_id
-    ]
-    if len(directories) != 1 or type(directories[0]) is not str:
+    directory, unique = storage.exact_profile_directory_binding(source.scope.identity_id)
+    if type(directory) is not str or unique is not True:
         raise ValueError("canonical_intake_profile_unavailable")
-    actual = _physical_target(path, root, directories[0])
+    actual = _physical_target(path, root, directory)
     before = os.stat(actual, follow_symlinks=False)
     if not stat.S_ISREG(before.st_mode) or before.st_size == 0:
         raise ValueError("canonical_intake_invalid_final_bytes")
@@ -112,6 +109,10 @@ def _path_verified(storage, *, root: Path, source: SourceKey,
     valid, _reason = LocalCatalog._validate(actual, fmt)
     if not valid or LocalCatalog.sha256(actual) != final_sha256 or not _same_file(actual, before):
         raise ValueError("canonical_intake_final_sha_not_verified")
+    # Validation/hash may take time. A changed or newly shared physical
+    # owner cannot attest the same receipt, even when the bytes match.
+    if storage.exact_profile_directory_binding(source.scope.identity_id) != (directory, True):
+        raise ValueError("canonical_intake_profile_unavailable")
     return actual
 
 
