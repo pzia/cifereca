@@ -30,13 +30,21 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
         from gi.repository import Gio
     from ..task_queue import TaskPriority
 
+    def route_token():
+        return getattr(host, "_route_display_token", None)
+
+    requested_route = route_token()
+    mapped = getattr(panel, "get_mapped", None)
+
     def active():
         return (not getattr(host, "_closed", False)
                 and getattr(host, "service", None) is core
+                and (not callable(mapped) or mapped())
                 and current())
 
     def loaded(menu):
-        if (not active() or type(menu) is not PublicWebChoices
+        if (not active() or route_token() is not requested_route
+                or type(menu) is not PublicWebChoices
                 or menu.document != document or menu.epoch != expected_epoch
                 or not menu.choices):
             return
@@ -47,22 +55,29 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
             return (active() and root is not None
                     and not getattr(root, "_cifereca_action_context_revoked", False))
 
-        def failed(_exc):
-            nonlocal busy
-            busy = False
-            if root_current():
-                host.toast("Fiche web indisponible ; actualisez la notice.")
-
         def choose(_button, choice):
             nonlocal busy
             if busy or not root_current():
                 return
             busy = True
+            clicked_route = route_token()
+
+            def click_current():
+                return root_current() and route_token() is clicked_route
+
+            def failed(_exc):
+                nonlocal busy
+                busy = False
+                if click_current():
+                    host.toast("Fiche web indisponible ; actualisez la notice.")
 
             def resolved(uri):
                 nonlocal busy
                 busy = False
-                if not root_current():
+                # A → B → A navigation can retain the selected object and
+                # detail panel. A fresh deliberate click is allowed, but
+                # never complete the earlier asynchronous browser launch.
+                if not click_current():
                     return
                 if not uri:
                     host.toast("Fiche web modifiée ; actualisez la notice.")
