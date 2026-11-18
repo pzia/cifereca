@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from .covers import resolve_cover
 from .local_cover_evidence import VerifiedLocalCoverEvidence
-from .notice_c_local_origin_projection import valid_local_public_c_link
+from .notice_c_local_origin_projection import (
+    project_local_origin_public_c, valid_local_public_c_link,
+)
 from .notice_c_cover_index import read_consolidated_notice_cover
 from ..plugin_api import normalize_language_tag
 
@@ -128,7 +130,7 @@ def _classify_language_sources(values):
 
 
 def _language_provenance(storage, row, owner):
-    link = row.get("_public_canonical_cover_link")
+    link = row.get("_public_canonical_document_link")
     if not valid_local_public_c_link(
         link, identity_id=owner, artifact_id=row.get("artifact_id"),
         placement_id=row.get("placement_id"),
@@ -182,6 +184,13 @@ def library_documentary_audit(service, *, identity_id, kind, runtime=False,
                 or any(type(row) is not dict or row.get("identity_id") != identity_id
                        for row in rows)):
             return empty()
+        if language_provenance:
+            # Reattest the documentary relation even when EPUB N1 wins.
+            # Never mutate the Library snapshot or trust a supplied receipt.
+            rows = [dict(row) for row in rows]
+            project_local_origin_public_c(
+                service.storage, rows, identity_id=identity_id, documentary_only=True,
+            )
         counts = dict.fromkeys(keys, 0)
         n2, n3 = dict.fromkeys(_N2_KEYS, 0), dict.fromkeys(_N3_KEYS, 0)
         observer = getattr(service, "_documentary_cover_observer", None) if runtime else None
