@@ -166,6 +166,7 @@ class PublicBookMasterDetailView:
         # Only canonical C adds an optional current-row N3 lease.
         from contextlib import nullcontext
         stage = nullcontext()
+        pinned = None
         from cifereca.core.notice_c_cover_index import is_canonical_cover_document
         document = getattr(detail, "cover_document_ref", None)
         if is_canonical_cover_document(document):
@@ -246,6 +247,9 @@ class PublicBookMasterDetailView:
             button._cifereca_action_id = str(action.id)
             buttons.append(button)
         panel.add_actions(buttons)
+        if pinned is not None:
+            from cifereca.gui.plugin_public_c_guard import request_plugin_public_web_action
+            request_plugin_public_web_action(self, panel, pinned)
 
     def show_existing_search_detail(
         self, item, detail, *, context_sections=(), public_c_document=None,
@@ -258,6 +262,7 @@ class PublicBookMasterDetailView:
         influence a borrowing or acquisition decision.
         """
         panel = self._page.detail
+        pinned = None
         from .recommendation_exact_cover import loaded_recommendation_cover
         proof = loaded_recommendation_cover(self._window, item, detail)
         if proof is None:
@@ -273,6 +278,9 @@ class PublicBookMasterDetailView:
                     minimum_revision=public_c_minimum_revision,
                 )
                 if admitted:
+                    if callable(c_selection_is_current) and type(public_c_minimum_revision) is int:
+                        from .plugin_public_c_guard import selected_plugin_public_c
+                        pinned = selected_plugin_public_c(self, public_c_document)
                     with stage:
                         panel.show_public_c_search_document(
                             item, detail=detail,
@@ -290,6 +298,12 @@ class PublicBookMasterDetailView:
         from .query_model import result_row
         self._window._add_local_book_actions(panel, result_row(item))
         self._append_recommendation_context(panel, context_sections)
+        if pinned is not None:
+            from .plugin_public_c_guard import request_plugin_public_web_action
+            request_plugin_public_web_action(
+                self, panel, pinned, expected_epoch=public_c_minimum_revision,
+                selection_is_current=c_selection_is_current,
+            )
 
     def show_existing_search_unavailable(
         self, item, *, context_sections=(), public_c_document=None,
@@ -302,6 +316,7 @@ class PublicBookMasterDetailView:
         explicitly unverified; local/owned actions reuse Search's admission.
         """
         panel = self._page.detail
+        pinned = None
         from .recommendation_exact_cover import loaded_recommendation_cover
         proof = loaded_recommendation_cover(self._window, item)
         if proof is None:
@@ -315,6 +330,9 @@ class PublicBookMasterDetailView:
                     minimum_revision=public_c_minimum_revision,
                 )
                 if admitted:
+                    if callable(c_selection_is_current) and type(public_c_minimum_revision) is int:
+                        from .plugin_public_c_guard import selected_plugin_public_c
+                        pinned = selected_plugin_public_c(self, public_c_document)
                     with stage:
                         panel.show_public_c_search_document(
                             item, loading=False,
@@ -329,6 +347,12 @@ class PublicBookMasterDetailView:
         from .query_model import result_row
         self._window._add_local_book_actions(panel, result_row(item))
         self._append_recommendation_context(panel, context_sections)
+        if pinned is not None:
+            from .plugin_public_c_guard import request_plugin_public_web_action
+            request_plugin_public_web_action(
+                self, panel, pinned, expected_epoch=public_c_minimum_revision,
+                selection_is_current=c_selection_is_current,
+            )
 
     def _append_recommendation_context(self, panel, context_sections) -> None:
         """Read-only recommendation explanations, identical in both states."""
