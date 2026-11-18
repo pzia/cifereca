@@ -651,14 +651,20 @@ class PluginManager:
         roots = {Path(value).resolve() for value in inactive}
         for name, module in list(sys.modules.items()):
             filename = getattr(module, "__file__", None)
-            if not filename:
-                continue
             try:
-                resolved = Path(filename).resolve()
+                paths = ([filename] if filename else
+                         list(getattr(module, "__path__", ())))
+                locations = tuple(Path(path).resolve() for path in paths)
             except Exception:
                 continue
-            if (any(root == resolved or root in resolved.parents for root in roots)
-                    and not any(root == resolved or root in resolved.parents for root in live)
+            # PEP 420 modules have no __file__. Remove a namespace only when
+            # ALL its locations belong to retired roots; a mixed/foreign
+            # namespace must not be evicted by this manager.
+            if (locations
+                    and all(any(root == location or root in location.parents for root in roots)
+                            for location in locations)
+                    and not any(root == location or root in location.parents
+                                for location in locations for root in live)
                     and sys.modules.get(name) is module):
                 sys.modules.pop(name, None)
         for value in inactive:
