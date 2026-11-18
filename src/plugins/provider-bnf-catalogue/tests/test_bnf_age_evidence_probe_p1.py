@@ -429,3 +429,31 @@ def test_unqualified_secondary_record_does_not_establish_uniqueness():
     ):
         assert probe.exact_edition_age_fields(response(first, second), ISBN)
         assert probe.qualified_observed_age_fields(response(first, second), ISBN) == []
+
+
+@pytest.mark.parametrize("extra", [
+    b"<x>" * 100 + b"</x>" * 100,
+    b"<x/>" * 12001,
+])
+def test_bounded_xml_refuses_deep_or_wide_sru_without_numeric_evidence(extra):
+    content = response(_synthetic_cnlj_333()).replace(
+        b"</srw:searchRetrieveResponse>", extra + b"</srw:searchRetrieveResponse>",
+    )
+    assert len(content) < probe.MAX_XML_BYTES
+    for extractor in (probe.exact_edition_age_fields, probe.qualified_observed_age_fields):
+        with pytest.raises(ValueError, match="sru_xml_budget") as err:
+            extractor(content, ISBN)
+        assert err.value.__context__ is None
+
+
+def test_utf8_literal_cannot_be_reinterpreted_by_conflicting_encoding_declaration():
+    content = response(_synthetic_cnlj_333())
+    with pytest.raises(ValueError, match="invalid_sru_encoding"):
+        probe.qualified_observed_age_fields(
+            b'<?xml version="1.0" encoding="ISO-8859-1"?>' + content, ISBN,
+        )
+    value, = probe.qualified_observed_age_fields(
+        b'<?xml version="1.0" encoding="UTF-8"?>' + content, ISBN,
+    )
+    assert value["source_literal"] == "À partir de 13 ans"
+    assert value["core_youth_age_range_authorized"] is False
