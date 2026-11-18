@@ -15,7 +15,7 @@ from ..storage import Storage
 
 
 def request_public_web_actions(host, panel, document, *, expected_epoch, current,
-                               Gtk, Gio=None):
+                               Gtk=None, Gio=None):
     if not is_canonical_cover_document(document) or not current():
         return False
     core = getattr(host, "service", None)
@@ -24,6 +24,8 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
     if (not isinstance(storage, Storage) or not callable(getattr(runner, "submit", None))
             or not callable(getattr(panel, "add_actions", None))):
         return False
+    if Gtk is None:
+        from gi.repository import Gtk
     if Gio is None:
         from gi.repository import Gio
     from ..task_queue import TaskPriority
