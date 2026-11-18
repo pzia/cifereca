@@ -55,13 +55,17 @@ def _capture_reattested(storage, document):
 
 def request_origin_public_recompute(storage, document, *, now, expected_generation):
     """Explicit trusted request; a current proof is required even to enqueue."""
-    inputs = _capture_reattested(storage, document)
-    spec = journal.public_job_spec(
-        "recompute_aggregate", document, input_digest=inputs.input_digest,
-        implementation_digest=IMPLEMENTATION_DIGEST,
-    )
-    return journal.request_job(storage, spec, now=now,
-                               expected_generation=expected_generation)
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        inputs = _capture_txn(db, document)
+        _group_members(inputs)
+        reattest_exact_origin_group_txn(db, inputs.sources)
+        spec = journal.public_job_spec(
+            "recompute_aggregate", document, input_digest=inputs.input_digest,
+            implementation_digest=IMPLEMENTATION_DIGEST,
+        )
+        return journal._request_job_txn(db, spec, now=now,
+                                        expected_generation=expected_generation)
 
 
 def prepare_origin_public_recompute(storage, spec):
