@@ -21,7 +21,8 @@ from test_biblioaccess_sso import _canonical_row, _synced_session
 
 
 @pytest.mark.parametrize("first_opening", [False, True])
-@pytest.mark.parametrize("scenario", ["on", "off", "revoked_during_get"])
+@pytest.mark.parametrize("scenario", ["on", "off", "unset", "revoked_during_get",
+                                      "historical_attention", "other_loan_attention"])
 def test_biblioaccess_core_canonical_convergence(
     tmp_path, monkeypatch, first_opening, scenario,
 ):
@@ -56,7 +57,7 @@ def test_biblioaccess_core_canonical_convergence(
             monkeypatch.setattr("cifereca." + module + ".acquisition_lock_file",
                                 lambda: tmp_path / "acquisition.lock")
         service._acquire_active_loan_automatically = lambda *_a, **_kw: pytest.fail(
-            "configured source must never fall back to legacy executor"
+            "canonical producer must never fall back to legacy executor"
         )
         service.resolve_adept_profile_for_identity = (
             lambda identity: ("synthetic-adobe", "configured")
@@ -67,9 +68,26 @@ def test_biblioaccess_core_canonical_convergence(
         ]
         service._adept_profile_row = lambda _name, rows: rows[0]
         calls = []
-        policy = set_source_sync_consent(
+        policy = (None if scenario == "unset" else set_source_sync_consent(
             service, account, enabled=scenario != "off", expected_revision=None,
-        )
+        ))
+        expected_download = scenario in {"on", "other_loan_attention"}
+        historic_receipt = None
+        if scenario in {"historical_attention", "other_loan_attention"}:
+            historic_id = db.acquisition_put({
+                "acquisition_id": "test-historical-attention",
+                "identity_id": account.identity_id, "provider_id": account.provider_id,
+                "credential_id": account.credential_id, "account_id": account.unique_id,
+                "item_id": row.book_id,
+                "status": "attention_required", "strategy": "loan_auto",
+                "executor": "kobo-adept",
+                "attention_code": "adept_license_fulfilled_by_other_user",
+                "metadata": {"provider_loan_id": (
+                    "biblioaccess:1409:10001" if scenario == "historical_attention"
+                    else "biblioaccess:1409:other"
+                )},
+            })
+            historic_receipt, = db.acquisitions(acquisition_id=historic_id)
 
         def remote(request):
             assert request.method == "GET"
@@ -114,8 +132,15 @@ def test_biblioaccess_core_canonical_convergence(
             return service.synchronize_account_source(account)
 
         first = sync(first_opening)
-        assert first["canonical_execution"]["downloaded"] == int(scenario == "on")
-        if scenario == "on":
+        assert first.get("canonical_execution", {}).get("downloaded", 0) == int(expected_download)
+        if scenario == "unset":
+            from cifereca.core.source_sync_consent import source_sync_consent
+            assert source_sync_consent(service, account)["configured"] is False
+            assert first["canonical_rights"]["pending"] == 1
+        if scenario == "historical_attention":
+            assert first["canonical_execution"]["blocked"] == 1
+            assert sync(not first_opening)["canonical_execution"]["blocked"] == 1
+        if expected_download:
             assert calls == ["GET", "ADEPT"]
             placement, = db.placements()
             assert placement["identity_id"] == "default"
@@ -130,9 +155,11 @@ def test_biblioaccess_core_canonical_convergence(
             with db._lock, db._connect() as sql:
                 assert sql.execute("SELECT count(*) FROM origin_links").fetchone() == (2,)
         else:
-            assert calls == ([] if scenario == "off" else ["GET"])
+            assert calls == (["GET"] if scenario == "revoked_during_get" else [])
             assert db.placements() == []
             with db._lock, db._connect() as sql:
                 assert sql.execute("SELECT count(*) FROM origin_links").fetchone() == (0,)
+        if historic_receipt is not None:
+            assert db.acquisitions(acquisition_id=historic_id) == [historic_receipt]
     finally:
         service.close()
