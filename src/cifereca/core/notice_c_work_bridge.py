@@ -18,6 +18,8 @@ from ..task_runtime import TaskBrokerImpl
 from ..task_queue import TaskPriority
 from ..task_admission import SharedTaskAdmission
 from . import notice_c_job_journal as journal
+from .book_cover_projection import CoverDocumentScope
+from .notice_c_cover_index import _db_key, _decode
 
 _MAX_INFLIGHT = 2
 _LEASE_SECONDS = 300
@@ -43,13 +45,16 @@ class AggregateWorkBridge:
     execution/publication. Only public recompute_aggregate is admitted.
     """
 
-    def __init__(self, storage, broker, prepare, *, clock=None):
+    def __init__(self, storage, broker, prepare, *, clock=None, on_committed=None):
         if (type(broker) is not TaskBrokerImpl
                 or not isinstance(broker.shared_admission, SharedTaskAdmission)
                 or broker.shared_admission.reserve_user_slots < 1):
             raise ValueError("notice_work_shared_admission_required")
         if not callable(prepare) or (clock is not None and not callable(clock)):
             raise ValueError("notice_work_invalid_port")
+        if on_committed is not None and not callable(on_committed):
+            raise ValueError("notice_work_invalid_observer")
+        self._on_committed = on_committed
         self._storage = storage
         self._broker = broker
         self._prepare = prepare
@@ -125,16 +130,29 @@ class AggregateWorkBridge:
             if type(prepared) is not PreparedAggregate or not callable(prepared.publish):
                 raise TypeError("notice_work_invalid_publication")
             control.check_cancelled()
+            event = None
             with self._storage._lock, self._storage._connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 # Check before any canonical write, then again before commit.
                 journal._held(db, lease, self._clock())
                 control.check_cancelled()
+                if self._on_committed is not None:
+                    document = CoverDocumentScope(
+                        kind="public_catalogue", identity_id=None,
+                        provider_id="cifereca.c", credential_id="__public__",
+                        source_key=job.spec.target,
+                    )
+                    before = _canonical_revision(db, document)
                 if prepared.publish(db) is not True:
                     raise RetryableNoticeWork("notice_work_input_changed")
                 control.check_cancelled()
                 journal._complete_job_txn(db, lease, now=self._clock())
-            return "current"
+                if self._on_committed is not None:
+                    after = _canonical_revision(db, document)
+                    if after is None or (before is not None and after < before):
+                        raise ValueError("notice_work_invalid_publication")
+                    if before != after:
+                        event = (document, after)
         except Cancelled:
             self._fail(lease, transient=True)
             raise
@@ -146,3 +164,17 @@ class AggregateWorkBridge:
         except Exception:
             # Only a closed reason crosses the durable boundary.
             return self._fail(lease, transient=False)
+        # Commit and Storage lock release have both succeeded. An observer
+        # failure cannot roll back or retry an already successful job.
+        if event is not None:
+            try:
+                self._on_committed(*event)
+            except Exception:
+                pass
+        return "current"
+
+
+def _canonical_revision(db, document):
+    row = db.execute("SELECT value FROM metadata WHERE key=?",
+                     (_db_key(document),)).fetchone()
+    return None if row is None else _decode(row[0], document).epoch
