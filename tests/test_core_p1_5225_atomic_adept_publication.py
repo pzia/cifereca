@@ -22,18 +22,10 @@ def _publish(tmp_path, *, repair, fail_replace, monkeypatch):
     destination.write_bytes(previous_bytes)
     old = tmp_path / "prior.epub"
     old.write_bytes(b"PRIOR-LEDGER-ARTIFACT")
-    real_replace = Path.replace
     if fail_replace:
-        if repair:
-            def rejected_replace(self, target):
-                if self == produced and Path(target) == destination:
-                    raise OSError("synthetic: rename denied")
-                return real_replace(self, target)
-            monkeypatch.setattr(Path, "replace", rejected_replace)
-        else:
-            def rejected_link(*_args, **_kw):
-                raise OSError("synthetic: rename denied")
-            monkeypatch.setattr(os, "link", rejected_link)
+        def rejected_link(*_args, **_kw):
+            raise OSError("synthetic: rename denied")
+        monkeypatch.setattr(os, "link", rejected_link)
     inspection = lambda path, *_args: NS(
         valid=True, media_format="epub", protected=False,
     )
@@ -70,30 +62,28 @@ def test_rename_error_preserves_previous_valid_publication(
 
 
 @pytest.mark.parametrize("repair", [False, True])
-def test_atomic_replace_commits_new_bytes_without_unlink_first(
+def test_no_clobber_commits_new_bytes_without_unlink_first(
     tmp_path, monkeypatch, repair,
 ):
     run, produced, destination, old, new, previous = _publish(
         tmp_path, repair=repair, fail_replace=False, monkeypatch=monkeypatch,
     )
     final_path, *_rest = run()
-    if repair:
-        assert final_path == destination
-        assert destination.read_bytes() == new
-    else:
-        assert final_path != destination
-        assert final_path.name.startswith("existing.reacquired-")
-        assert final_path.read_bytes() == new
-        assert destination.read_bytes() == previous
+    assert final_path != destination
+    assert final_path.name.startswith("existing.reacquired-")
+    assert final_path.read_bytes() == new
+    assert destination.read_bytes() == previous
     assert not produced.exists()
-    # No premature cleanup before completed index+SQLite receipt.
+    # Neither a physical publication nor a completed receipt proves
+    # that an earlier file has no remaining dependencies.
     assert old.exists()
     assert adept_artifact_publication.cleanup_after_commit(
         previous_path=old, final_path=destination, repair_mode=repair,
         Path=Path, loan=NS(id="synthetic-loan", identity_id="owner"),
         _TRACE_LOG=logging.getLogger("synthetic"),
-    ) is repair
-    assert old.exists() is (not repair)
+    ) is False
+    assert old.read_bytes() == b"PRIOR-LEDGER-ARTIFACT"
+    assert destination.read_bytes() == previous
 
 
 def test_cleanup_never_removes_cross_profile_or_symlinked_prior(
@@ -123,7 +113,7 @@ def test_cleanup_never_removes_cross_profile_or_symlinked_prior(
     assert alias.is_symlink() and previous.read_bytes() == b"OLD"
 
 
-def test_cleanup_failure_is_nonfatal_after_committed_publication(
+def test_cleanup_does_not_attempt_unlink_after_committed_publication(
     tmp_path, monkeypatch,
 ):
     previous = tmp_path / "old.epub"
@@ -133,7 +123,7 @@ def test_cleanup_failure_is_nonfatal_after_committed_publication(
     real_unlink = Path.unlink
     def reject(self, *args, **kwargs):
         if self == previous:
-            raise PermissionError("private OS information")
+            pytest.fail("previous artifact must not be unlinked")
         return real_unlink(self, *args, **kwargs)
     monkeypatch.setattr(Path, "unlink", reject)
     assert adept_artifact_publication.cleanup_after_commit(
@@ -225,11 +215,12 @@ def test_nonrepair_adept_new_destination_is_published_at_exact_name(
     assert old.is_file()
 
 
-def test_nonrepair_adept_collision_exhaustion_keeps_old_bytes(
-    tmp_path, monkeypatch,
+@pytest.mark.parametrize("repair", [False, True])
+def test_adept_collision_exhaustion_keeps_old_bytes(
+    tmp_path, monkeypatch, repair,
 ):
     run, produced, target, old, fresh, previous = _publish(
-        tmp_path, repair=False, fail_replace=False, monkeypatch=monkeypatch,
+        tmp_path, repair=repair, fail_replace=False, monkeypatch=monkeypatch,
     )
     # A stable nonce collides across retries. Never overwrite either file
     # or infer ownership from a matching title/digest or source provider.

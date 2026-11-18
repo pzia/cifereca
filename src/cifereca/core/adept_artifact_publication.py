@@ -172,58 +172,31 @@ def publish(*, result, adept_destination, acsm_format, loan, repair_mode,
     if artifact_protected is True:
         raise ProviderConfigurationError("Artefact final encore protégé après Kobo-Adept")
 
+    # Even a legacy repair is a publication of new bytes. A filename
+    # collision is not evidence of ownership; replacing it before SQLite
+    # has committed can destroy the only recorded copy (or another loan).
+    final_path = _publish_new_adept_without_clobber(
+        produced_path, destination, uuid=uuid,
+        ProviderConfigurationError=ProviderConfigurationError,
+    )
     if repair_mode:
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        # os.replace is atomic on the destination filesystem. Do NOT unlink
-        # the existing valid publication first: if the rename fails (quota,
-        # permissions, power loss), the previously indexed artifact must
-        # remain readable for safe replay/rollback.
-        produced_path.replace(destination)
-        final_path = destination
-        # IMPORTANT: publication is NOT the Core/SQLite commit. Keep the
-        # old version until catalog indexing and acquisition_put(completed)
-        # succeed. This prevents an index/ledger error from destroying the
-        # last recorded artifact. The caller invokes cleanup_after_commit().
-        _TRACE_LOG.info("TRACE download adept repair-replace loan_ref=%s", trace_ref)
-    else:
-        final_path = _publish_new_adept_without_clobber(
-            produced_path, destination, uuid=uuid,
-            ProviderConfigurationError=ProviderConfigurationError,
-        )
+        _TRACE_LOG.info("TRACE download adept repair-preserve loan_ref=%s", trace_ref)
     return final_path, artifact_drm, artifact_format, artifact_protected, hook_info
 
 
 def cleanup_after_commit(*, previous_path, final_path, repair_mode: bool,
                          Path, _TRACE_LOG, loan, identity_id=None) -> bool:
-    """Best-effort, post-ledger cleanup of a *distinct* prior repair artifact.
+    """Retain the prior repair artifact until dependency-qualified maintenance.
 
-    A cleanup error must never convert a committed acquisition into a failed
-    loan or a second provider request. Never follow a symlink or include file
-    paths, title, loan identifiers, or exceptions in diagnostics.
+    A completed ledger receipt for the replacement is not proof that no
+    other placement, historical receipt or independent provenance refers to
+    the old file. Keep this compatibility hook read-only until a supervised
+    plan can establish retirement safety. No second GET is authorized.
     """
-    if (repair_mode is not True
-            or not isinstance(previous_path, Path)
-            or not isinstance(final_path, Path)
-            or previous_path.is_symlink()
-            or final_path.is_symlink()):
-        return False
-    try:
-        if (not previous_path.is_file()
-                or not final_path.is_file()
-                or previous_path.resolve() == final_path.resolve()
-                or previous_path.parent.resolve() != final_path.parent.resolve()):
-            return False
-        previous_path.unlink()
-    except OSError:
-        _TRACE_LOG.warning(
+    if repair_mode is True and isinstance(previous_path, Path):
+        _TRACE_LOG.info(
             "TRACE download adept prior-cleanup loan_ref=%s status=retained",
             loan_trace_ref(loan, identity_id if identity_id is not None
                            else getattr(loan, "identity_id", None)),
         )
-        return False
-    _TRACE_LOG.info(
-        "TRACE download adept prior-cleanup loan_ref=%s status=removed",
-        loan_trace_ref(loan, identity_id if identity_id is not None
-                       else getattr(loan, "identity_id", None)),
-    )
-    return True
+    return False
