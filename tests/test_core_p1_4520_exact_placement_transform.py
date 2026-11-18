@@ -191,3 +191,101 @@ def test_foreign_cached_sha_without_exact_derived_origin_is_not_reused(tmp_path)
         assert any(p["provider_id"] == "cifereca" for p in placements_b)
     finally:
         service.storage.close()
+
+
+@pytest.mark.parametrize("change", ["navigation", "aba", "epoch", "placement", "transformer"])
+def test_admitted_transform_pins_owner_and_refuses_real_revocation(tmp_path, change):
+    service, source, (pid_a, pid_b), transformer, broker = _two_profiles(tmp_path)
+    service._source_context_epoch = 3
+    original = replace(source, identity_id="id1", placement_id=pid_a)
+    request = TransformRequest(original, "optimize", identity_id="id1", placement_id=pid_a)
+    try:
+        operation = broker.admit_transform(
+            request, transformer_plugin_id="document.transformer.test",
+        )
+        assert transformer.plan_calls == transformer.transform_calls == 0
+        service.current_identity = NS(identity_id="id2")
+        if change == "aba":
+            service.current_identity = NS(identity_id="id1")
+        elif change == "epoch":
+            service._source_context_epoch += 1
+        elif change == "placement":
+            with service.storage._lock, service.storage._connect() as db:
+                db.execute("UPDATE placements SET state='missing' WHERE placement_id=?", (pid_a,))
+        elif change == "transformer":
+            service.plugin_manager.transformer = FakeTransformer()
+        if change in ("navigation", "aba"):
+            result = operation(Control())
+            children = [row for row in service.storage.placements()
+                        if row["artifact_id"] == result.artifact_id]
+            assert len(children) == 1 and children[0]["identity_id"] == "id1"
+            assert _origins(service.storage, result.artifact_id)[0][0] == "id1"
+            service.current_identity = NS(identity_id="id1")
+            again = broker.admit_transform(request, transformer_plugin_id="document.transformer.test")
+            service.current_identity = NS(identity_id="id2")
+            assert again(Control()).artifact_id == result.artifact_id
+            assert transformer.transform_calls == 1
+        else:
+            with pytest.raises(Conflict):
+                operation(Control())
+            assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+            assert transformer.transform_calls == 0
+        with pytest.raises(Conflict):
+            operation(Control())
+        assert (tmp_path / "library" / "Book.epub").read_bytes() == b"book-data"
+        assert (tmp_path / "other" / "Book.epub").read_bytes() == b"book-data"
+    finally:
+        service.storage.close()
+
+
+def test_admitted_transform_refuses_revocation_during_transform(tmp_path):
+    service, source, (pid_a, _), transformer, broker = _two_profiles(tmp_path)
+    service._source_context_epoch = 3
+    request = TransformRequest(replace(source, identity_id="id1", placement_id=pid_a),
+                               "optimize", identity_id="id1", placement_id=pid_a)
+    transform = transformer.transform
+    def revoked(*args):
+        result = transform(*args)
+        service._source_context_epoch += 1
+        return result
+    transformer.transform = revoked
+    try:
+        operation = broker.admit_transform(request, transformer_plugin_id="document.transformer.test")
+        with pytest.raises(Conflict):
+            operation(Control())
+        assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+        assert not (tmp_path / "library" / "Optimized.epub").exists()
+        assert (tmp_path / "library" / "Book.epub").read_bytes() == b"book-data"
+    finally:
+        service.storage.close()
+
+
+def test_admitted_transform_revocation_at_transaction_end_rolls_back(tmp_path, monkeypatch):
+    from cifereca.core import derived_variant_publication as publication
+
+    service, source, (pid_a, _), transformer, broker = _two_profiles(tmp_path)
+    service._source_context_epoch = 3
+    request = TransformRequest(replace(source, identity_id="id1", placement_id=pid_a),
+                               "optimize", identity_id="id1", placement_id=pid_a)
+    original = publication.publish_derived_variant
+    def publish(*args, **kwargs):
+        current = kwargs["scope_current"]
+        calls = 0
+        def revoke_at_end(db):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                service._source_context_epoch += 1
+            return current(db)
+        kwargs["scope_current"] = revoke_at_end
+        return original(*args, **kwargs)
+    monkeypatch.setattr(publication, "publish_derived_variant", publish)
+    try:
+        operation = broker.admit_transform(request, transformer_plugin_id="document.transformer.test")
+        with pytest.raises(Conflict):
+            operation(Control())
+        assert not service.storage.artifact_variants(source_artifact_id=source.artifact_id)
+        assert len(service.storage.placements()) == 2
+        assert (tmp_path / "library" / "Book.epub").read_bytes() == b"book-data"
+    finally:
+        service.storage.close()
