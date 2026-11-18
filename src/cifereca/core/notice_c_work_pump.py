@@ -40,13 +40,14 @@ class PublicNoticeWorkPump:
     One instance per Core owner; admission/fencing govern actual execution.
     """
 
-    def __init__(self, storage, broker, *, clock=None):
+    def __init__(self, storage, broker, *, clock=None, on_committed=None):
         if clock is not None and not callable(clock):
             raise ValueError("notice_work_invalid_clock")
         self._storage = storage
         self._clock = clock if clock is not None else lambda: int(time.time())
         self._bridge = AggregateWorkBridge(
             storage, broker, self._prepare, clock=self._clock,
+            on_committed=on_committed,
         )
         self._after = None
         self._tick_lock = Lock()
