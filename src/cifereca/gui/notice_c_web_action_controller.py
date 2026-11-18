@@ -26,7 +26,7 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
         return False
     if Gio is None:
         from gi.repository import Gio
-    from .task_runner import TaskPriority
+    from ..task_queue import TaskPriority
 
     def active():
         return (not getattr(host, "_closed", False)
