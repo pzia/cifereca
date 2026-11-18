@@ -14,6 +14,7 @@ class _Page:
     identity: str | None = None
     account: tuple[str, str, str] | None = None
     generation: int = 0
+    context_generation: int = 0
     dirty: bool = True
     failed: bool = False
 
@@ -66,10 +67,12 @@ class PageLifecycleDispatcher:
         event = self._event(route, page, reason)
         if not event.is_current(require_visible=False):
             return
+        context_generation = page.context_generation
         try:
             page.hooks.on_context_changed(event)
         except Exception:
-            if event.is_current(require_visible=False):
+            if (self._valid() and self._pages.get(route) is page
+                    and page.context_generation == context_generation):
                 page.failed = True
                 self._report("page_context_failed")
 
@@ -113,13 +116,14 @@ class PageLifecycleDispatcher:
             reason = "identity" if page.identity != identity else "account"
             page.identity, page.account = identity, target_account
             self._advance(page)
+            page.context_generation = page.generation
             page.dirty, page.failed = True, False
-            pending.append((route, page, page.generation, reason))
+            pending.append((route, page, page.context_generation, reason))
         self._depth += 1
         try:
             for route, page, generation, reason in pending:
                 if (self._valid() and self._pages.get(route) is page
-                        and page.generation == generation):
+                        and page.context_generation == generation):
                     self._notify_context(route, page, reason)
         finally:
             self._depth -= 1
