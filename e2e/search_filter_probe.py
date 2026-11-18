@@ -187,7 +187,9 @@ def main() -> int:
             "provider_id": "gallica" if i % 2 else "local",
             "item_id": f"camille-{i:03d}",
             "local_state": "remote_catalog",
-            "media_format": "epub" if i % 3 else "pdf",
+            # The exact #774 paired book (index 003) is EPUB in both
+            # Search and Recommendations; keep the other PDF/EPUB variety.
+            "media_format": "epub" if i == 3 or i % 3 else "pdf",
             "metadata": {
                 "medium": "digital", "language": "fr",
                 **({
@@ -609,6 +611,8 @@ def main() -> int:
         assert isinstance(exact, dict)
         assert exact.get("item_id") == PAIRED_BOOK["record_id"]
         assert exact.get("provider_id") == PAIRED_BOOK["source_provider"]
+        # Verify the projected format before interpreting the GTK evidence.
+        assert exact.get("media_format") == "epub"
         assert exact.get("metadata", {}).get("isbn") == PAIRED_BOOK["isbn"]
         assert PAIRED_BOOK["subject"] in exact["metadata"]["subjects"]
         # A selected row alone is insufficient for a visual comparison:
@@ -657,6 +661,89 @@ def main() -> int:
                 stack.append(child)
                 child = child.get_next_sibling()
         assert author_buttons == [PAIRED_BOOK["author"]]
+        # #4761/#774: compare the real, MAPPED Core compact heading on
+        # both surfaces. Previously only Recommendations proved that its
+        # source/format/language were actually painted; Search's paired
+        # screenshot could silently have an empty or stale compact header.
+        # Search has its own honest "Disponibilité non vérifiée" row,
+        # which is deliberately NOT inferred by Recommendations.
+        compact_heads = []
+        stack = [page.detail.content]
+        while stack:
+            current = stack.pop()
+            if (isinstance(current, Gtk.Box)
+                    and current.has_css_class("detail-heading")):
+                compact_heads.append(current)
+            child = current.get_first_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_next_sibling()
+        assert len(compact_heads) == 1
+        # The real Search facet adapter replaces ActionRow subtitles with
+        # keyboard-accessible, mapped Gtk.Button chips for Source, Format
+        # and Langue. Assert the *rendered* text in either representation,
+        # not only the intentionally emptied ActionRow.get_subtitle().
+        # A detached or hidden button does not count as visual evidence.
+        def rendered_compact_values(row):
+            subtitle = row.get_subtitle()
+            if subtitle:
+                return [subtitle]
+            values = []
+            stack = [row]
+            while stack:
+                current = stack.pop()
+                # The enclosing ActionRow already identifies the facet
+                # field. PyGObject can return another wrapper for a child,
+                # so the Python-only _cifereca_facet_field attribute is NOT
+                # durable GTK evidence. Read the mapped native button/label.
+                if (isinstance(current, Gtk.Button)
+                        and current.get_mapped()
+                        and current.has_css_class("facet-value")):
+                    label = current.get_child()
+                    if isinstance(label, Gtk.Label) and label.get_mapped():
+                        values.append(label.get_text())
+                child = current.get_first_child()
+                while child is not None:
+                    stack.append(child)
+                    child = child.get_next_sibling()
+            return values
+
+        compact_rows = []
+        field_names = {"Source", "Format", "Langue"}
+        stack = [compact_heads[0]]
+        while stack:
+            current = stack.pop()
+            if (isinstance(current, Adw.ActionRow)
+                    and current.get_mapped()
+                    and current.has_css_class("detail-compact-value")):
+                title = current.get_title()
+                if title in field_names:
+                    compact_rows.append(
+                        (title, rendered_compact_values(current))
+                    )
+            child = current.get_first_child()
+            while child is not None:
+                stack.append(child)
+                child = child.get_next_sibling()
+        expected_source = window.service.provider_display_name(
+            PAIRED_BOOK["source_provider"]
+        )
+        actual_sources = [value for label, values in compact_rows
+                          if label == "Source" for value in values]
+        if actual_sources != [expected_source]:
+            # Closed diagnostic counts/booleans only, never private labels.
+            print("P1_4761_SAFE_SOURCE_DIAG=" + json.dumps({
+                "compact_rows": len(compact_rows),
+                "source_values_count": len(actual_sources),
+                "source_value_equal": expected_source in actual_sources,
+                "expected_source_nonempty": bool(expected_source),
+            }, sort_keys=True), flush=True)
+        assert actual_sources == [expected_source]
+        assert [value for label, values in compact_rows
+                if label == "Format" for value in values] == ["EPUB"]
+        assert [value for label, values in compact_rows
+                if label == "Langue" for value in values] == ["Français"]
+        result["checks"]["P1_4761_search_shared_compact_essential_gtk"] = True
         # The same public Subject is already rendered in the canonical
         # Search DetailPanel metadata. Verify its actual GTK ActionRow
         # before comparing with Recommendations' new metadata section.
