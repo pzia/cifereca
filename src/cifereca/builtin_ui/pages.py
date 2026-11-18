@@ -1,6 +1,12 @@
 from cifereca.plugin_api import UiPageContribution, UiActionContribution
 
 
+def _sync_lifecycle(host, _widget, event):
+    # Core-owned page: existing local projection, never Sync admission.
+    if event.reason in {"show", "context_changed"} and event.is_current():
+        host.window._refresh_sync_page()
+
+
 class Pages:
     def activate(self, context):
         return self
@@ -39,6 +45,7 @@ class Pages:
                 if route == "library"
                 else (),
                 0,
+                lifecycle=_sync_lifecycle if route == "sync" else None,
             )
             for index, (route, title, icon, group) in enumerate(definitions)
         ]
