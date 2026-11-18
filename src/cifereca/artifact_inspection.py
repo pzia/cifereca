@@ -3,8 +3,10 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO, Literal
 from xml.etree import ElementTree
 
 
@@ -358,3 +360,96 @@ def inspect_artifact(
             return ArtifactInspection(actual, False, None, "unreadable_pdf")
 
     return ArtifactInspection(actual, True, protected, None)
+
+
+def inspect_epub_declared_layout(
+    stream: BinaryIO,
+) -> Literal["fixed", "reflowable", "unknown"]:
+    """Read explicit EPUB3 package layout, not rendering or KEPUB readiness.
+
+    The caller supplies the already-open, owner-validated binary stream.
+    No paths are reopened; no page, image or DRM payload is read. The
+    original stream position is restored. Missing, mixed, ambiguous or
+    inaccessible declarations stay unknown; no suffix-based inference.
+    """
+    from .epub_metadata import MAX_XML, _bounded_directory, _read, _xml
+
+    ocf = "{urn:oasis:names:tc:opendocument:xmlns:container}"
+    opf = "{http://www.idpf.org/2007/opf}"
+    position = None
+    try:
+        position = stream.tell()
+        _bounded_directory(stream)
+        with zipfile.ZipFile(stream) as archive:
+            infos = archive.infolist()
+            names = {info.filename for info in infos}
+            if (len(infos) != len(names)
+                    or any(info.flag_bits & 1 for info in infos)
+                    or "META-INF/encryption.xml" in names):
+                # Even benign obfuscation is not classified in this first
+                # conservative tranche. Never inspect protected resources.
+                return "unknown"
+            if _read(archive, "mimetype", 100).strip() != b"application/epub+zip":
+                return "unknown"
+            container = _xml(_read(archive, "META-INF/container.xml", MAX_XML))
+            if container.tag != ocf + "container":
+                return "unknown"
+            roots = list(container.iter(ocf + "rootfile"))
+            if (len(roots) != 1
+                    or container.findall(ocf + "rootfiles/" + ocf + "rootfile") != roots):
+                return "unknown"
+            member = roots[0].get("full-path", "")
+            if (not member or member.startswith("/")
+                    or any(char in member for char in ("\\", "\x00", ":", "?", "#", "%"))
+                    or any(part in ("", ".", "..") for part in member.split("/"))):
+                return "unknown"
+            package = _xml(_read(archive, member, MAX_XML))
+            if (package.tag != opf + "package"
+                    or not package.get("version", "").startswith("3.")):
+                return "unknown"
+            # Use only the reserved EPUB3 rendition vocabulary. An explicit
+            # redefinition or alias of that vocabulary is not supported here.
+            prefix = package.get("prefix", "")
+            if ("rendition:" in prefix or "http://www.idpf.org/vocab/rendition/#" in prefix):
+                return "unknown"
+            metadata = package.findall(opf + "metadata")
+            spines = package.findall(opf + "spine")
+            if len(metadata) != 1 or len(spines) != 1:
+                return "unknown"
+            declarations = [
+                node for node in metadata[0].findall(opf + "meta")
+                if node.get("property") == "rendition:layout"
+            ]
+            if (len(declarations) != 1 or "refines" in declarations[0].attrib
+                    or len(declarations[0])):
+                return "unknown"
+            layout = {"pre-paginated": "fixed", "reflowable": "reflowable"}.get(
+                (declarations[0].text or "").strip()
+            )
+            if layout is None:
+                return "unknown"
+            expected = ("rendition:layout-pre-paginated" if layout == "fixed"
+                        else "rendition:layout-reflowable")
+            items = spines[0].findall(opf + "itemref")
+            if not items or any(not item.get("idref", "").strip() for item in items):
+                return "unknown"
+            for item in items:
+                overrides = [
+                    token for token in item.get("properties", "").split()
+                    if token.startswith("rendition:layout-")
+                ]
+                if overrides and overrides != [expected]:
+                    # Mixed or unknown page layouts cannot be represented by
+                    # one document-wide fixed/reflowable classification.
+                    return "unknown"
+            return layout
+    except (OSError, ValueError, TypeError, AttributeError, EOFError, KeyError,
+            RuntimeError, NotImplementedError, zipfile.BadZipFile,
+            zlib.error, ElementTree.ParseError):
+        return "unknown"
+    finally:
+        if position is not None:
+            try:
+                stream.seek(position)
+            except (OSError, ValueError):
+                pass
