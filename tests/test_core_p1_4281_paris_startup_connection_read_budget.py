@@ -64,7 +64,7 @@ def test_connection_plus_opening_sync_keeps_exact_fresh_paris_read_budget(
             assert result["loans"] == []
             assert client.calls == []
         else:
-            service.refresh_identity_loans.assert_called_once_with(force=True)
+            service.refresh_identity_loans.assert_called_once_with(force=True, identity_id="identity-A")
             assert len(result["loans"]) == digital
             assert client.calls == [
                 ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
@@ -103,7 +103,7 @@ def test_startup_source_outside_sync_keeps_initial_pair_before_canonical_reads()
             caller_category="startup/connect_configured",
         )
         assert result["connected"] == ["paris:card-A"]
-        service.refresh_identity_loans.assert_called_once_with(force=True)
+        service.refresh_identity_loans.assert_called_once_with(force=True, identity_id="identity-A")
         assert client.calls == [
             ("DILICOM", "reader-A"), ("SYRACUSE", "reader-A"),
         ]

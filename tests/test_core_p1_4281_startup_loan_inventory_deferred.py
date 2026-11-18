@@ -50,7 +50,9 @@ def test_startup_is_only_global_connection_that_defers_forced_loan_read(
     assert session.connect.call_count == 1
     assert len(result["accounts"]) == 1
     if read_expected:
-        service.refresh_identity_loans.assert_called_once_with(force=True)
+        service.refresh_identity_loans.assert_called_once_with(
+            force=True, identity_id="identity-private",
+        )
         assert result["loans"] is refreshed
     else:
         service.refresh_identity_loans.assert_not_called()
@@ -74,7 +76,9 @@ def test_subsequent_explicit_reconnect_still_performs_fresh_inventory():
         caller_category="explicit_refresh",
     )
     assert session.connect.call_count == 2
-    service.refresh_identity_loans.assert_called_once_with(force=True)
+    service.refresh_identity_loans.assert_called_once_with(
+        force=True, identity_id="identity-private",
+    )
     assert second["loans"] is observed
     assert service.last_loans == []  # facade fake does not publish loans
 
@@ -89,7 +93,9 @@ def test_targeted_connection_is_not_treated_as_gui_startup():
         source_scope=("identity-private", "provider.test", SECRET),
     )
     assert len(result["accounts"]) == 1
-    service.refresh_identity_loans.assert_called_once_with(force=True)
+    service.refresh_identity_loans.assert_called_once_with(
+        force=True, identity_id="identity-private",
+    )
 
 
 def test_failed_connection_does_not_create_deferred_private_read():
@@ -116,7 +122,9 @@ def test_connected_source_not_covered_by_opening_sync_keeps_startup_loan_refresh
         service, logger=logging.getLogger("cifereca"),
         caller_category="startup/connect_configured",
     )
-    service.refresh_identity_loans.assert_called_once_with(force=True)
+    service.refresh_identity_loans.assert_called_once_with(
+        force=True, identity_id="identity-private",
+    )
 
 
 def test_startup_unknown_source_sync_coverage_falls_back_to_forced_read():
@@ -130,4 +138,62 @@ def test_startup_unknown_source_sync_coverage_falls_back_to_forced_read():
         service, logger=logging.getLogger("cifereca"),
         caller_category="startup/connect_configured",
     )
-    service.refresh_identity_loans.assert_called_once_with(force=True)
+    service.refresh_identity_loans.assert_called_once_with(
+        force=True, identity_id="identity-private",
+    )
+
+
+@pytest.mark.parametrize("switch_back", [False, True])
+def test_startup_fallback_keeps_connected_owner_after_policy_check_navigation(
+    switch_back,
+):
+    service, _session, _plugin = _rig(succeeds=True)
+    _covered_by_opening_sync(service)
+    foreign = NS(
+        identity_id="identity-B", provider_id="provider.test",
+        credential_id="card-B", unique_id="reader-B",
+    )
+    reads = []
+
+    def policy(account):
+        # This exact synchronous barrier is between selection publication
+        # and the fallback refresh. No thread timing or real HTTP is needed.
+        assert account.identity_id == "identity-private"
+        service.current_account = foreign
+        service.current_identity = NS(identity_id="identity-B")
+        if switch_back:
+            service.current_account = account
+            service.current_identity = NS(identity_id="identity-private")
+        return False
+
+    def refresh(*, force, identity_id=None):
+        reads.append((force, identity_id or service.current_identity.identity_id))
+        return [NS(id="synthetic-loan", identity_id=reads[-1][1])]
+
+    service.sync_source_enabled.side_effect = policy
+    service.refresh_identity_loans = Mock(side_effect=refresh)
+    result = provider_sessions.connect_configured(
+        service, logger=logging.getLogger("cifereca"),
+        caller_category="startup/connect_configured",
+    )
+    assert reads == [(True, "identity-private")]
+    service.refresh_identity_loans.assert_called_once_with(
+        force=True, identity_id="identity-private",
+    )
+    assert result["loans"][0].identity_id == "identity-private"
+    assert service.current_identity.identity_id == (
+        "identity-private" if switch_back else "identity-B"
+    )
+
+
+def test_unresolved_connected_owner_never_refreshes_selected_foreign_identity():
+    service, _session, _plugin = _rig(succeeds=True)
+    service.identity_by_id = lambda _identity_id: None
+    service.current_identity = NS(identity_id="identity-B")
+    service.refresh_identity_loans = Mock(return_value=[])
+    result = provider_sessions.connect_configured(
+        service, logger=logging.getLogger("cifereca"),
+        caller_category="explicit_refresh",
+    )
+    assert result["loans"] == []
+    service.refresh_identity_loans.assert_not_called()
