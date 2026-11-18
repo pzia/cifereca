@@ -31,6 +31,7 @@ class OptimizerPage:
         self.artifact = artifact
         self.action_host = action_host
         self._task_handle = None
+        self._run_token = None
         self._closed = False
         self._output_auto = True
         self._setting_output = False
@@ -266,6 +267,11 @@ class OptimizerPage:
         drm = str(getattr(artifact.format, "drm", "none") or "none").casefold()
         if fmt not in {"epub", "pdf"} or drm not in {"", "none"}:
             return False
+        # The Future may have finished before its GTK idle callback runs.
+        # Retire that projection before exposing a different original.
+        completed = self._task_handle is not None
+        self._task_handle = None
+        self._run_token = None
         self._invalidate_semantic_preview()
         self.artifact = artifact
         self.action_host = action_host
@@ -287,6 +293,8 @@ class OptimizerPage:
         self.status.set_text("")
         self.progress.set_fraction(0.0)
         self.progress.set_text("Prêt")
+        if completed:
+            self._set_busy(False)
         return True
 
     @staticmethod
@@ -477,7 +485,7 @@ class OptimizerPage:
     def _start(self, _button):
         from gi.repository import GLib
 
-        if self._task_handle is not None and not self._task_handle.done():
+        if self._closed or (self._task_handle is not None and not self._task_handle.done()):
             return
         plugin_id = self.profile_combo.get_active_id()
         profile = self.profiles.get(plugin_id) if plugin_id else None
@@ -490,15 +498,15 @@ class OptimizerPage:
             self.host.toast("Choisissez un fichier EPUB ou PDF")
             return
 
-        self._invalidate_semantic_preview()
-        self._set_busy(True)
-        self.progress.set_fraction(0.0)
-        self.progress.set_text("0% — Démarrage…")
-        self.status.set_text("")
-
-        artifact_mode = self.artifact is not None
+        artifact = self.artifact
+        artifact_mode = artifact is not None
+        logger = self.context.logger
         if artifact_mode:
-            operation = lambda control: self._execute_artifact(self.artifact, plugin_id, control)
+            try:
+                operation = self._prepare_artifact_operation(artifact, plugin_id)
+            except Exception:
+                self.host.toast("Optimisation indisponible")
+                return
             label = "Optimisation PDF" if suffix == ".pdf" else "Optimisation EPUB"
         else:
             source = self.source_entry.get_text().strip()
@@ -508,12 +516,21 @@ class OptimizerPage:
                 self.host.toast("Choisissez un document et un fichier de sortie")
                 return
 
+            # DeviceProfile is an immutable projection. Freeze the remaining
+            # execution limits too; the worker has no page-state dependency.
+            cpu_workers = self.cpu_workers
+            max_image_pixels = self.max_image_pixels
+            max_image_mb = self.max_image_mb
+            max_pdf_pages = self.max_pdf_pages
+            max_uncompressed_mb = self.max_uncompressed_mb
+
             def operation(control):
+                control.check_cancelled()
                 common = {
                     "profile": profile,
-                    "cpu_workers": self.cpu_workers,
-                    "max_image_pixels": self.max_image_pixels,
-                    "max_image_mb": self.max_image_mb,
+                    "cpu_workers": cpu_workers,
+                    "max_image_pixels": max_image_pixels,
+                    "max_image_mb": max_image_mb,
                     "progress": lambda pct, msg: control.report(current=pct, total=100, message=msg),
                     "cancel_event": _CancelEventAdapter(control),
                 }
@@ -522,34 +539,53 @@ class OptimizerPage:
                     return optimize_pdf(
                         source,
                         target,
-                        max_pages=self.max_pdf_pages,
+                        max_pages=max_pdf_pages,
                         **common,
                     )
                 from .engine import optimize_epub
                 return optimize_epub(
                     source,
                     target,
-                    max_uncompressed_mb=self.max_uncompressed_mb,
+                    max_uncompressed_mb=max_uncompressed_mb,
                     **common,
                 )
 
             label = "Optimisation PDF locale" if suffix == ".pdf" else "Optimisation EPUB locale"
+
+        self._invalidate_semantic_preview()
+        token = object()
+        self._run_token = token
+        self._set_busy(True)
+        self.progress.set_fraction(0.0)
+        self.progress.set_text("0% — Démarrage…")
+        self.status.set_text("")
+
+        def progress_ui(percent, message):
+            if self._closed or self._run_token is not token:
+                return False
+            return self._progress_ui(percent, message)
 
         def progress(current, total, message):
             if current is None or not total:
                 percent = 0
             else:
                 percent = max(0, min(100, int((int(current) * 100) / int(total))))
-            GLib.idle_add(self._progress_ui, percent, str(message or ""))
+            GLib.idle_add(progress_ui, percent, str(message or ""))
 
-        handle = self._tasks.submit(
-            operation,
-            label=label,
-            kind="document-optimizer",
-            on_progress=progress,
-        )
+        try:
+            handle = self._tasks.submit(
+                operation,
+                label=label,
+                kind="document-optimizer",
+                on_progress=progress,
+            )
+        except Exception:
+            self._run_token = None
+            self._task_handle = None
+            self._failure_ui("Optimisation indisponible")
+            return
         self._task_handle = handle
-        handle.add_done_callback(lambda done: self._task_done(done, artifact_mode))
+        handle.add_done_callback(lambda done: self._task_done(done, artifact_mode, token, logger))
 
     def _cancel_clicked(self, _button):
         if self._task_handle is not None:
@@ -558,6 +594,10 @@ class OptimizerPage:
         self.cancel_button.set_sensitive(False)
 
     def _execute_artifact(self, artifact, profile_plugin_id: str, control):
+        # Synchronous compatibility helper; the page uses the admitted callable.
+        return self._prepare_artifact_operation(artifact, profile_plugin_id)(control)
+
+    def _prepare_artifact_operation(self, artifact, profile_plugin_id: str):
         from cifereca.plugin_api import TransformRequest
         broker = self.context.broker("artifact.execution")
         if broker is None:
@@ -591,27 +631,38 @@ class OptimizerPage:
             identity_id=artifact.identity_id,
             placement_id=artifact.placement_id,
         )
-        return broker.execute_transform(
-            request,
-            transformer_plugin_id=transformer_id,
-            control=control,
-        )
+        execute = broker.execute_transform
 
-    def _task_done(self, handle, artifact_mode: bool):
+        def operation(control):
+            return execute(request, transformer_plugin_id=transformer_id, control=control)
+
+        return operation
+
+    def _task_done(self, handle, artifact_mode: bool, token, logger):
         from gi.repository import GLib
 
-        if self._closed:
-            return
-        if handle.control.cancelled():
-            GLib.idle_add(self._failure_ui, "Traitement annulé")
-            return
-        try:
-            result = handle.result()
-        except Exception as exc:
-            self.context.logger.error("Document optimization failed: %s", type(exc).__name__)
-            GLib.idle_add(self._failure_ui, f"Échec : {exc}")
-        else:
-            GLib.idle_add(self._artifact_success_ui if artifact_mode else self._success_ui, result)
+        cancelled = handle.control.cancelled()
+        result, failed = None, False
+        if not cancelled:
+            try:
+                result = handle.result()
+            except Exception as exc:
+                logger.error("Document optimization failed: %s", type(exc).__name__)
+                failed = True
+
+        def apply():
+            # A finished Future can be overtaken by a new book/action while
+            # GTK's idle queue still holds the previous result.
+            if self._closed or self._run_token is not token or self._task_handle is not handle:
+                return False
+            self._run_token = None
+            if cancelled:
+                return self._failure_ui("Traitement annulé")
+            if failed:
+                return self._failure_ui("Échec de l’optimisation. Consultez les diagnostics.")
+            return (self._artifact_success_ui if artifact_mode else self._success_ui)(result)
+
+        GLib.idle_add(apply)
 
     def _progress_ui(self, pct: int, message: str):
         self.progress.set_fraction(pct / 100.0)
@@ -763,6 +814,7 @@ class OptimizerPage:
 
     def cancel(self):
         self._closed = True
+        self._run_token = None
         self._invalidate_semantic_preview()
         if self._task_handle is not None:
             self._task_handle.cancel()
