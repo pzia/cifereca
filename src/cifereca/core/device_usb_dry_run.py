@@ -381,6 +381,7 @@ def inspect_usb_dry_run(
                     planned_bytes += size
                     qualified.append(replace(
                         row, reason=structural.reason,
+                        declared_layout=structural.declared_layout,
                     ))
                 else:
                     return unknown("scope_unverified")

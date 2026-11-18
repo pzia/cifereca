@@ -160,6 +160,7 @@ def test_verified_owned_source_and_complete_scan_only_propose_upload(tmp_path, m
     )
     assert result.rows[0].executable is False
     assert result.rows[0].reason == "epub_drm_and_transfer_rights_unverified"
+    assert result.rows[0].declared_layout == "unknown"
     assert calls[0]["binding"]["identity_id"] == "alice"
     assert calls[0]["mountpoint"] == mount
     assert db.device_placements() == before

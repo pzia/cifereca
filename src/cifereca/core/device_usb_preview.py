@@ -60,6 +60,8 @@ class UsbPreviewRow:
     reason: str
     # A preview is never an execution capability, including removal candidates.
     executable: bool = False
+    # Optional advisory EPUB3 declaration, not a format or engine selection.
+    declared_layout: str | None = None
 
 
 def _sha(value: object) -> bool:

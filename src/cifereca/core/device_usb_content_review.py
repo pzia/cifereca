@@ -15,7 +15,7 @@ from io import BytesIO
 from typing import Mapping
 from zipfile import BadZipFile, ZipFile
 
-from ..artifact_inspection import inspect_artifact_content
+from ..artifact_inspection import inspect_artifact_content, inspect_epub_declared_layout
 from .device_usb_preview import UsbLocalArtifact, _sha
 from .device_usb_variant_review import _SUFFIX
 
@@ -56,6 +56,9 @@ class UsbContentReview:
     observed_format: str | None = None
     # Invariant: inspection is evidence about bytes, NEVER copy permission.
     executable: bool = False
+    # Descriptive OPF evidence only. None = not observed (including PDF).
+    # Unknown is distinct: an EPUB was examined but not classified.
+    declared_layout: str | None = None
 
 
 def _blocked(reason: str, observed: str | None = None) -> UsbContentReview:
@@ -135,13 +138,18 @@ def review_usb_content(
         return UsbContentReview(
             "review", "pdf_drm_and_transfer_rights_unverified", "pdf",
         )
+    # Use only the already SHA-checked bytes; do not reopen a path.
+    # This observation neither selects a Kobo engine nor establishes KEPUB
+    # semantic compatibility, rights, or permission to rename the file.
+    layout = inspect_epub_declared_layout(BytesIO(content))
     if selected_format in {"kepub", "fxl.kepub"}:
         return UsbContentReview(
             "review", "kepub_semantics_drm_and_transfer_rights_unverified",
-            "epub",
+            "epub", declared_layout=layout,
         )
     return UsbContentReview(
         "review", "epub_drm_and_transfer_rights_unverified", "epub",
+        declared_layout=layout,
     )
 
 
