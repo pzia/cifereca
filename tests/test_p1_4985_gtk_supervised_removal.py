@@ -82,12 +82,29 @@ class FakeBroker:
         self.copy_calls.append(kwargs)
         return self.copy_operation
 
-    def execute_one(self, **kwargs):
-        # Core checks the pinned cancellation token while the locked
-        # operation is in flight, before the GTK success callback repaints.
-        assert kwargs["check_cancelled"]() is None
-        self.execution.append(kwargs)
-        return self.outcome
+    def admit_removal(self, **kwargs):
+        # The unit harness models the new Core admission seam. Real SQLite,
+        # mount and source-epoch revocations are covered in broker tests.
+        assert kwargs["expected_profile_epoch"] == self.service._account_context_epoch
+        assert kwargs["confirmation"].copy_operation_id == self.copy_operation
+        initial_source_epoch = getattr(self.service, "_source_context_epoch", 0)
+
+        def check():
+            consent = kwargs["confirmation"]
+            binding = self.storage.device_binding_get(consent.device_id)
+            intent = self.storage.device_placement_get(consent.device_id, consent.artifact_id)
+            if (getattr(self.service, "_source_context_epoch", 0) != initial_source_epoch
+                    or self.volume["volume"] is None
+                    or self.volume["volume"].selection_key() != kwargs["mount_key"]
+                    or self.copy_operation != consent.copy_operation_id
+                    or not binding["enabled"] or intent["desired_state"] != "remove"):
+                raise ValueError("usb_reader_scope_revoked")
+
+        def work():
+            check()
+            self.execution.append({**kwargs, "check_cancelled": check})
+            return self.outcome
+        return work
 
 
 @pytest.fixture
@@ -134,6 +151,7 @@ def rig(tmp_path, monkeypatch):
         "alice", "reader-alice", "scanned", True, int(time.time()), (row,),
     )
     backend = FakeBroker(report)
+    backend.service, backend.storage, backend.volume = host.service, db, selected
     host.plugin_manager = NS(
         broker=lambda name: backend if name == "reader.usb" else None,
     )
@@ -224,10 +242,8 @@ def test_confirmed_removal_has_distinct_worker_and_exact_consent(rig):
     assert invocation["mountpoint"] == rig.volume.mountpoint
     assert invocation["expected_profile_epoch"] == 1
     assert callable(invocation["check_cancelled"])
-    # A successful result repaints the selected detail and revokes its old
-    # callback. Core already checked its validity *inside* execute_one.
-    with pytest.raises(RuntimeError, match="reader_usb_selection_scope_revoked"):
-        invocation["check_cancelled"]()
+    # Repainting the detail does not revoke the Core admission.
+    assert invocation["check_cancelled"]() is None
     assert "Retrait USB supervisé terminé" in rig.host._reader_status_label.label
     assert rig.db.device_placement_get(
         "reader-alice", rig.book["artifact_id"],
@@ -369,12 +385,12 @@ def test_profile_aba_after_user_confirmed_is_pinned_in_core_worker(rig):
     rig.host.runner.advance()
     assert len(rig.dialogs) == 1
     rig.dialogs[0].answer("delete")
-    # Directly executing a previously queued worker after A→B→A must not
-    # re-issue fresh permission: the broker receives original epoch=1.
+    # The worker retains the original permission despite navigation ABA.
     rig.host.service._account_context_epoch = 3
     rig.host.runner.advance()
-    if rig.backend.execution:
-        assert rig.backend.execution[0]["expected_profile_epoch"] == 1
+    assert len(rig.backend.execution) == 1
+    assert rig.backend.execution[0]["expected_profile_epoch"] == 1
+    assert "terminé" not in rig.host._reader_status_label.label
     assert rig.db.device_placement_get(
         "reader-alice", rig.book["artifact_id"],
     )["desired_state"] == "remove"
@@ -421,7 +437,7 @@ def test_only_latest_of_two_overlapping_explicit_requests_can_prompt_user(rig):
     assert rig.backend.execution == []
 
 
-def test_replacing_selected_detail_revokes_queued_usb_unlink(rig):
+def test_replacing_selected_detail_only_revokes_late_usb_publication(rig):
     click(rig)
     rig.host.runner.advance()
     assert len(rig.dialogs) == 1
@@ -430,15 +446,16 @@ def test_replacing_selected_detail_revokes_queued_usb_unlink(rig):
     rig.button.get_root = lambda: None
     rig.button.callbacks["notify::root"](rig.button, None)
     rig.host.runner.advance()
-    assert rig.backend.execution == []
+    assert len(rig.backend.execution) == 1
+    assert "terminé" not in rig.host._reader_status_label.label
     assert rig.db.device_placement_get(
         "reader-alice", rig.book["artifact_id"],
     )["desired_state"] == "remove"
 
 
-def test_core_cancel_callback_is_revoked_on_device_aba(rig):
-    # A partial/blocked Core operation does not repaint the selection, so
-    # the cancellation token is still live until the user changes device.
+def test_core_cancel_callback_ignores_visual_device_aba_but_vetoes_source_revocation(rig):
+    # A partial operation does not repaint. Visual ABA is not revocation;
+    # real configuration/source change remains a business veto.
     rig.backend.outcome = UsbSyncResult("partial", failed=1, observed=False)
     click(rig)
     rig.host.runner.advance()
@@ -447,9 +464,10 @@ def test_core_cancel_callback_is_revoked_on_device_aba(rig):
     assert len(rig.backend.execution) == 1
     cancel = rig.backend.execution[0]["check_cancelled"]
     assert cancel() is None
-    # No GTK call from a worker: only Python selection-generation tokens.
     rig.host._reader_selection_generation += 2
-    with pytest.raises(RuntimeError, match="reader_usb_selection_scope_revoked"):
+    assert cancel() is None
+    rig.host.service._source_context_epoch = 1
+    with pytest.raises(ValueError, match="usb_reader_scope_revoked"):
         cancel()
 
 
