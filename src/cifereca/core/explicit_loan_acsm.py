@@ -59,10 +59,10 @@ def stage_explicit_loan_acsm(
     observe_phase('source_scope')
     if not active_identity():
         _refuse(error_codes["scope"])
-    # Scoped read authority is not staging consent. Consume the separate
-    # confirmed attempt before the lock: even a failed attempt requires a
-    # new confirmation. Historic GTK leases retain their existing behavior.
-    if (admitted_lease is not None and admitted_lease._reader_scope is not None
+    # Scoped read authority is not staging consent. Both explicit GTK and
+    # headless admissions carry a distinct single-use attempt. Consume it
+    # before the lock, so retry after a failed GET requires new consent.
+    if (admitted_lease is not None
             and (type(admitted_lease._stage_attempt) is not _ConfirmedStageAttempt
                  or not admitted_lease._stage_attempt.claim())):
         _refuse(error_codes["confirmation"])

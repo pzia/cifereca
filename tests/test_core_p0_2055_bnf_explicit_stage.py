@@ -682,3 +682,71 @@ def test_headless_stage_read_lease_is_not_confirmation(connected_core):
             loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
         )
     assert not downloaded
+
+
+@pytest.mark.parametrize("failed_activity", [False, True])
+def test_gtk_admitted_stage_is_single_use_even_after_failed_activity(
+    connected_core, failed_activity,
+):
+    service, session, account, loan, state, downloaded = connected_core
+    lease = service.capture_admitted_loan_acsm_stage(
+        loan, expected_identity_id="default",
+    )
+    assert lease is not None
+    original_activity = state["activity"]
+    service.select_identity("alex")
+    if failed_activity:
+        state["activity"] = '<section class="active-loans"></section>'
+        with pytest.raises(ProviderConfigurationError, match="bnf_loan_not_observed"):
+            service.stage_explicit_loan_acsm(
+                loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
+            )
+        assert not downloaded
+    else:
+        result = service.stage_explicit_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
+        )
+        staged = Path(result["path"])
+        original_bytes = staged.read_bytes()
+        assert len(downloaded) == 1
+
+    state["activity"] = original_activity
+    service.select_identity("default")
+    with pytest.raises(ProviderConfigurationError, match="explicit_confirmation_required"):
+        service.stage_explicit_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
+        )
+    assert len(downloaded) == (0 if failed_activity else 1)
+    if not failed_activity:
+        assert staged.read_bytes() == original_bytes
+    assert not service.storage.acquisitions()
+    assert not service.storage.placements()
+
+    if failed_activity:
+        # A fresh human confirmation can retry; a replay cannot.
+        new_lease = service.capture_admitted_loan_acsm_stage(
+            loan, expected_identity_id="default",
+        )
+        assert new_lease is not None and new_lease is not lease
+        assert service.stage_explicit_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default", admitted_lease=new_lease,
+        )["status"] == "candidate_acsm"
+        assert len(downloaded) == 1
+
+
+def test_scope_without_confirmed_attempt_cannot_authorize_gtk_stage(connected_core):
+    from cifereca.core.loan_action_scope import capture_loan_action_scope
+    from cifereca.core.source_context import source_context_epoch
+
+    service, session, account, loan, state, downloaded = connected_core
+    lease = capture_loan_action_scope(
+        service, loan, account, session, expected_identity_id="default",
+        admitted_source_epoch=source_context_epoch(service),
+    )
+    assert lease is not None
+    with pytest.raises(ProviderConfigurationError, match="explicit_confirmation_required"):
+        service.stage_explicit_loan_acsm(
+            loan, confirmed=True, expected_identity_id="default", admitted_lease=lease,
+        )
+    assert not downloaded
+    assert not service.storage.acquisitions()

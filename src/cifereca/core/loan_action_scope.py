@@ -296,7 +296,7 @@ def capture_admitted_loan_stage(service, loan: Loan, *, expected_identity_id: st
                 or service._account_context_epoch != account_epoch
                 or source_context_epoch(service) != source_epoch):
             return None
-        return lease
+        return replace(lease, _stage_attempt=_ConfirmedStageAttempt())
     except Exception:
         return None
 
