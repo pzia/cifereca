@@ -348,7 +348,9 @@ def test_online_reads_public_notice_c_before_provider_without_gtk_sqlite(
         request = host.requests[-1]
         request.work()  # runs in the normal TaskRunner worker, NOT GTK
         assert order == ["sqlite", "provider"]
-        assert host._populate_search.call_count == 0
+        host._populate_search.assert_called_once_with([], announce=False)
+        assert "old-c" not in host._search_local_objects
+        host._populate_search.reset_mock()
         assert len(host.scheduled) == 1
 
         dispatch, args = host.scheduled.pop(0)
@@ -431,3 +433,46 @@ def test_navigation_account_epoch_only_filters_publication_and_final_rows_are_lo
     assert host._online_search_warnings == ("partial",)
     assert host.service.last_search[0].id == "other"
     assert host.service.last_search_warnings == ["other request"]
+
+
+@pytest.mark.parametrize("mode", ["empty", "error", "unsupported"])
+def test_new_online_query_revokes_old_c_even_if_no_replacement(tmp_path, mode):
+    from cifereca.storage import Storage
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import persist, verified_public
+
+    db = Storage(tmp_path / "preview-revoke.sqlite")
+    try:
+        persist(db, verified_public(title="Dumas", author="Autrice témoin"))
+        host = _host()
+        host.service.search_public_notice_c = lambda q, **kw: search_public_notice_c(db, q, **kw)
+        host.run_search(True)
+        first = host.requests[-1]
+        first.work()
+        dispatch, args = host.scheduled.pop()
+        dispatch(*args)
+        old_key, = host._search_local_objects
+        assert host._search_local_objects[old_key]["source"] == "notice_c_public"
+        first.done((NS(warnings=[], cancelled=False), ()))
+        host._search_local_objects["owned"] = {"key": "owned", "source": "known_catalog"}
+        host._populate_search.reset_mock()
+        host.search_controls.state = lambda: QueryState("Dumas", field="author" if mode == "empty" else "title")
+        if mode == "error":
+            host.service.search_public_notice_c = Mock(side_effect=OSError("offline"))
+        elif mode == "unsupported":
+            host.service.search_public_notice_c = None
+        host.run_search(True)
+        assert old_key not in host._search_local_objects
+        assert "owned" in host._search_local_objects
+        host._populate_search.assert_called_once_with([], announce=False)
+        host.requests[-1].work()
+        while host.scheduled:
+            callback, params = host.scheduled.pop(0)
+            callback(*params)
+        assert old_key not in host._search_local_objects
+        assert "owned" in host._search_local_objects
+        assert host._remote_search_results == []
+        assert dispatch(*args) is False
+        assert old_key not in host._search_local_objects
+    finally:
+        db.close()

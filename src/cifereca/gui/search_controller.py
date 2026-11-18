@@ -257,11 +257,23 @@ def run_search(self: SearchControllerHost, force: bool = False, *, keyboard: boo
     # reversible without re-querying, using this request's loaded rows only.
     request_key = (state.text, state.field, state.scope)
     had_remote_rows = bool(self._remote_search_results)
+    previous_known = getattr(self, "_search_local_objects", None)
+    had_c_preview = type(previous_known) is dict and any(
+        type(row) is dict and row.get("source") == "notice_c_public"
+        for row in previous_known.values()
+    )
     if request_key != getattr(self, "_remote_query_key", None):
         if state.text != self._last_search_query: self._search_local_objects = {}
+    # A durable C is not an evergreen receipt of membership in a query.
+    # Every new Search must re-read the C cursor before republishing it.
+    if had_c_preview and type(self._search_local_objects) is dict:
+        self._search_local_objects = {
+            key: row for key, row in self._search_local_objects.items()
+            if type(row) is not dict or row.get("source") != "notice_c_public"
+        }
     self._remote_search_results = []
     self._remote_query_key = request_key
-    if had_remote_rows:
+    if had_remote_rows or had_c_preview:
         # Revoke old GTK row/detail actions synchronously, before any worker
         # completes. Late batches are independently rejected by generation.
         self._populate_search([], announce=False)
