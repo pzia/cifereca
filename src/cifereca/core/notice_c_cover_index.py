@@ -522,11 +522,11 @@ def persist_origin_linked_public_cover_group(
         return _persist_origin_linked_public_cover_group_txn(db, sources=sources)
 
 
-def _persist_origin_linked_public_cover_group_txn(
+def _resolve_origin_linked_public_group_txn(
     db: Any, *, sources: tuple[PersistedNoticeCover, ...],
     expected_document: CoverDocumentScope | None = None,
-) -> ConsolidatedNoticeCover:
-    """Same group writer inside the caller's publication transaction."""
+) -> tuple[str, set[str], str]:
+    """Resolve the same conflict-checked group target without a write."""
     if not db.in_transaction:
         raise ValueError("canonical_cover_transaction_required")
     refs = _public_group_refs(sources)
@@ -576,11 +576,22 @@ def _persist_origin_linked_public_cover_group_txn(
         target = next(iter(overlaps))
     if expected_document is not None and canonical_cover_document_ref(target) != expected_document:
         raise ValueError("canonical_cover_group_conflict")
+    return target, refs, proof_prefix + target[len(prefix):]
+
+
+
+def _persist_origin_linked_public_cover_group_txn(
+    db: Any, *, sources: tuple[PersistedNoticeCover, ...],
+    expected_document: CoverDocumentScope | None = None,
+) -> ConsolidatedNoticeCover:
+    """Same group writer inside the caller's publication transaction."""
+    target, refs, proof = _resolve_origin_linked_public_group_txn(
+        db, sources=sources, expected_document=expected_document,
+    )
     return _persist_public_group_txn(
         db, canonical_edition_id=target, sources=sources, refs=refs,
-        relation_proof_id=proof_prefix + target[len(prefix):],
+        relation_proof_id=proof,
     )
-
 
 def persist_exact_public_search_cover(
     storage: Any, source: PersistedNoticeCover,
