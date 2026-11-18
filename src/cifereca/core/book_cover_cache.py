@@ -12,12 +12,14 @@ check SourceKey / generation when handling the event.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 import logging
+import math
 from threading import Lock
 import time
+from time import perf_counter
 from typing import Literal
 
 from .book_cover_projection import (
@@ -33,6 +35,7 @@ CoverInvalidationCause = Literal[
     "materialization_requalified",
 ]
 _LOG = logging.getLogger("cifereca")
+_N1_LATENCY_WINDOW = 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +123,11 @@ class CoverDecisionCache:
         self._event_sequence = 0
         self._listener_id = 0
         self._subscriber_count = 0
+        self._n1_recent = {
+            status: deque(maxlen=_N1_LATENCY_WINDOW)
+            for status in ("selected", "missing", "pending", "ambiguous")
+        }
+        self._n1_counts = dict.fromkeys(self._n1_recent, 0)
 
     def _bump(self) -> int:
         self._generation += 1
@@ -243,13 +251,53 @@ class CoverDecisionCache:
             current = self._slots.get(token.scope)
             if current is None or current.token != token or current.published:
                 return False
-        decision = resolve_book_cover(
+        decision = self.resolve_n1(
             token.scope, candidates, revision=token.revision,
             snapshot_complete=snapshot_complete,
             attested_book_identity=attested_book_identity,
             catalog_priorities=catalog_priorities,
         )
         return self.publish_resolved(token, decision)
+
+    def resolve_n1(
+        self, scope: CoverDocumentScope, candidates: Iterable[CoverCandidate], *,
+        revision: int, snapshot_complete: bool,
+        attested_book_identity: str = "",
+        catalog_priorities: Mapping[str, int] | None = None,
+    ) -> ResolvedBookCover:
+        """Measure the existing pure resolver, not its N2 CAS or callbacks.
+
+        Counts actual resolver results (even if publication later loses its
+        token). Warm N2 hits, rejected tokens and direct publication do not
+        perform resolution. The bounded windows contain no source identifiers.
+        """
+        started = perf_counter()
+        decision = resolve_book_cover(
+            scope, candidates, revision=revision,
+            snapshot_complete=snapshot_complete,
+            attested_book_identity=attested_book_identity,
+            catalog_priorities=catalog_priorities,
+        )
+        elapsed_ms = (perf_counter() - started) * 1000
+        with self._lock:
+            self._n1_counts[decision.status] += 1
+            if math.isfinite(elapsed_ms) and elapsed_ms >= 0:
+                self._n1_recent[decision.status].append(elapsed_ms)
+        return decision
+
+    def n1_latency_stats(self) -> dict[str, int | float]:
+        """Read only, bounded nearest-rank percentiles by resolver outcome."""
+        with self._lock:
+            stats = {}
+            for status, samples in self._n1_recent.items():
+                prefix = f"n1_{status}"
+                recent = sorted(samples)
+                stats[f"{prefix}_count"] = self._n1_counts[status]
+                stats[f"{prefix}_recent_count"] = count = len(recent)
+                if count:
+                    stats[f"{prefix}_recent_p50_ms"] = round(recent[(count * 50 + 99) // 100 - 1], 2)
+                    stats[f"{prefix}_recent_p95_ms"] = round(recent[(count * 95 + 99) // 100 - 1], 2)
+            return stats
 
     @staticmethod
     def _validate_resolved_decision(decision: ResolvedBookCover) -> None:
