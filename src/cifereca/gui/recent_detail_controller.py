@@ -9,7 +9,13 @@ from .detail_model import book_detail_presentation
 
 
 def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
-    if getattr(window, "_closed", False) or not row:
+    if getattr(window, "_closed", False):
+        return
+    from cifereca.gui.local_public_c_detail_guard import (
+        begin_local_public_web_selection, request_local_public_web_action,
+    )
+    web_token = begin_local_public_web_selection(window, "recent")
+    if not row:
         return
     if getattr(row, "_recent_ambiguous_key", False) is True:
         # The lookup intentionally keeps the last row for compatibility,
@@ -108,6 +114,10 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
             window._add_book_notice(detail, item)
             window._add_local_book_actions(detail, item)
             window._add_facets(detail, item, window.search_controls)
+            request_local_public_web_action(
+                window, detail, row, link, view="recent",
+                token=web_token, source_current=check,
+            )
             return
         # A stale/foreign private proof does NOT authorize a legacy origin
         # URL. Only rows without any Core packet keep their old URL path.
