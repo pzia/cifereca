@@ -80,21 +80,50 @@ def test_preference_targets_require_exact_identity_and_unique_local_key():
     assert _explicit_feedback_targets(rows, "") == ()
 
 
-def test_feedback_worker_never_writes_after_profile_or_generation_change():
+def test_feedback_worker_persists_exact_identity_after_navigation_and_preserves_cas(tmp_path):
     import sys
+    from concurrent.futures import ThreadPoolExecutor
     from types import SimpleNamespace as NS
-    from unittest.mock import Mock
-    repo = Path(__file__).resolve().parents[1]
-    plugin = str(repo / "src/plugins/recommendations")
-    if plugin not in sys.path:
-        sys.path.insert(0, plugin)
-    from recommendations import UxRecommendationsView
 
-    submitted = []
+    from cifereca.brokers import MetadataBrokerImpl
+    from cifereca.core.explicit_reading_preferences import preference_snapshot
+    from cifereca.services import LibraryService
+    from cifereca.storage import Storage
+
+    repo = Path(__file__).resolve().parents[1]
+    plugin_path = str(repo / "src/plugins/recommendations")
+    if plugin_path not in sys.path:
+        sys.path.insert(0, plugin_path)
+    from recommendations import RecommendationsPlugin, UxRecommendationsView
+
+    submitted, idle, toasts, refreshes = [], [], [], []
     class Tasks:
         def submit(self, operation, **_kw):
-            submitted.append(operation)
-            return NS(add_done_callback=lambda _callback: None)
+            handle = NS(operation=operation, value=None, error=None)
+            def result():
+                if handle.error is not None:
+                    raise handle.error
+                return handle.value
+            handle.result = result
+            handle.add_done_callback = lambda callback: setattr(handle, "callback", callback)
+            submitted.append(handle)
+            return handle
+
+    tasks = Tasks()
+    context = NS(broker=lambda name: tasks)
+    plugin = RecommendationsPlugin()
+    plugin.activate(context)
+    storage = Storage(tmp_path / "feedback.sqlite")
+    identities = {"alice": NS(identity_id="alice"), "bob": NS(identity_id="bob")}
+    service = NS(
+        current_identity=identities["alice"], storage=storage,
+        identity_by_id=identities.get,
+        library_entries=lambda *, identity_id, scan: [
+            {"identity_id": identity_id, "key": "artifact:a"},
+        ],
+    )
+    service.change_reading_preference = lambda **kw: LibraryService.change_reading_preference(service, **kw)
+    broker = MetadataBrokerImpl(service)
 
     view = UxRecommendationsView.__new__(UxRecommendationsView)
     view._disposed = False
@@ -102,25 +131,82 @@ def test_feedback_worker_never_writes_after_profile_or_generation_change():
     view._active_identity_id = "alice"
     view._feedback_write_pending = False
     view._feedback_button = NS(set_sensitive=lambda _flag: None)
-    view.plugin = NS(context=NS(broker=lambda name: Tasks()))
-    view.host = NS(toast=lambda _message: None)
-    view.selected_identity_id = lambda: "alice"
-    broker = NS(change_reading_preference=Mock())
-    view._submit_feedback(
-        broker=broker, identity_id="alice", library_key="artifact:a",
-        preference="liked", revision=3, clear_all=False,
-    )
-    assert len(submitted) == 1
-    view._generation = 11
-    assert submitted[0](NS(cancelled=lambda: False)) is None
-    broker.change_reading_preference.assert_not_called()
-    view._feedback_write_pending = False
-    view.selected_identity_id = lambda: "bob"
-    view._submit_feedback(
-        broker=broker, identity_id="alice", library_key="artifact:a",
-        preference="liked", revision=3, clear_all=False,
-    )
-    assert len(submitted) == 1
+    view.plugin = plugin
+    view.host = NS(toast=toasts.append)
+    view.GLib = NS(idle_add=lambda cb: idle.append(cb))
+    view.refresh = lambda: refreshes.append(True)
+    view.selected_identity_id = lambda: service.current_identity.identity_id
+
+    def admit(revision, preference="liked", *, clear_all=False):
+        view._submit_feedback(
+            broker=broker, identity_id="alice", library_key=None if clear_all else "artifact:a",
+            preference=preference, revision=revision, clear_all=clear_all,
+        )
+        return submitted[-1]
+
+    def navigate(identity):
+        service.current_identity = identities[identity]
+        view._active_identity_id = identity
+        view._generation += 1
+
+    def run(pool, handle, *, cancelled=False):
+        try:
+            handle.value = pool.submit(handle.operation, NS(cancelled=lambda: cancelled)).result()
+        except Exception as exc:
+            handle.error = exc
+        handle.callback(handle)
+        while idle:
+            idle.pop(0)()
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            first = admit(0)
+            navigate("bob")
+            run(pool, first)
+            assert first.error is None
+            assert preference_snapshot(storage, "alice").preferences == (("artifact:a", "liked"),)
+            assert preference_snapshot(storage, "bob").revision == 0
+            assert not toasts and not refreshes
+            assert not view._feedback_write_pending
+
+            # An older Alice dialog cannot be admitted from Bob at all.
+            admit(1)
+            assert len(submitted) == 1
+            navigate("alice")
+            second = admit(1, None, clear_all=True)
+            navigate("bob")
+            navigate("alice")
+            run(pool, second)
+            assert second.error is None
+            assert preference_snapshot(storage, "alice").revision == 2
+            assert preference_snapshot(storage, "alice").preferences == ()
+            assert not toasts and not refreshes
+
+            stale = admit(1)
+            run(pool, stale)
+            assert "revision_changed" in str(stale.error)
+            assert preference_snapshot(storage, "alice").revision == 2
+
+            cancelled = admit(2)
+            run(pool, cancelled, cancelled=True)
+            assert preference_snapshot(storage, "alice").revision == 2
+
+            revoked = admit(2)
+            owner = identities.pop("alice")
+            run(pool, revoked)
+            assert "identity_unknown" in str(revoked.error)
+            assert preference_snapshot(storage, "alice").revision == 2
+            identities["alice"] = owner
+
+            last = admit(2)
+            plugin.deactivate()
+            plugin.activate(context)  # ABA of even the same plugin context
+            run(pool, last)
+            assert last.value is None
+            assert preference_snapshot(storage, "alice").revision == 2
+            assert preference_snapshot(storage, "bob").revision == 0
+    finally:
+        storage.close()
 
 
 def test_local_documentary_only_mode_is_separate_explicit_profile_optin():
