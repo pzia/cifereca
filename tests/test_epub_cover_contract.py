@@ -42,7 +42,12 @@ def _write_epub(path: Path, *, epub3: bool) -> bytes:
 def _cache(monkeypatch, tmp_path: Path) -> Path:
     root = tmp_path / "cover-cache"
     root.mkdir()
-    monkeypatch.setattr(epub_metadata, "cover_cache_dir", lambda: root)
+    def cover_cache_dir(*, create=True):
+        if create:
+            root.mkdir(parents=True, exist_ok=True)
+        return root
+
+    monkeypatch.setattr(epub_metadata, "cover_cache_dir", cover_cache_dir)
     return root
 
 

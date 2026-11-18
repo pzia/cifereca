@@ -79,3 +79,35 @@ def test_scalar_bibliography_uses_same_location_policy(field, location):
     ) is None
     batch = project_public_search_results(response)
     assert batch is not None and id(item) not in batch
+
+
+@pytest.mark.parametrize("mutation", [
+    {"source": "foreign.search"},
+    {"scope": "other-scenario"},
+    {"confidence": "page_facet"},
+    {"freshness": "cache"},
+    {"source_field": "https://private.example/"},
+    {"token": "secret"},
+])
+def test_public_series_projection_does_not_promote_malformed_proof(mutation):
+    proof = {
+        "source": "synthetic-a.search", "source_field": "Search.RecordLink",
+        "scope": "search", "confidence": "linked_search_relation",
+        "freshness": "search_response", **mutation,
+    }
+    actual = project({"series": ["Cycle A"], "bibliography_evidence": {"series": proof}})
+    assert actual.metadata == {"catalogue_access": "shared_read_only", "series": ["Cycle A"]}
+
+
+def test_public_series_projection_keeps_only_exact_bounded_proof():
+    proof = {
+        "source": "synthetic-a.search", "source_field": "Search.RecordLink",
+        "scope": "search", "confidence": "linked_search_relation",
+        "freshness": "search_response",
+    }
+    actual = project({"series": ["Cycle A"], "bibliography_evidence": {
+        "series": proof, "account": {"secret": "not public"},
+    }})
+    assert actual.metadata["bibliography_evidence"] == {"series": proof}
+    assert actual.metadata["bibliography_evidence"]["series"] is not proof
+    assert actual.metadata["series"] == ["Cycle A"]

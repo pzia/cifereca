@@ -6,7 +6,8 @@ The caller must still fence its own view/identity generation at delivery.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, replace
 from hashlib import sha256
 import json
 import re
@@ -96,15 +97,27 @@ def _read(db, document):
     pairs = []
     for source in snapshot.sources:
         refs = _current_refs(db, source)
-        for ordinal, ref in enumerate(refs, 1):
+        for ref in refs:
             choice = PublicWebChoice(
                 _choice_id(document, snapshot.epoch, ref), ref.provider_id,
                 ref.record_id, ref.edition_id, ref.observed_at,
-                f"{ref.provider_id} — {ref.record_id}"
-                + (f" ({ordinal})" if len(refs) > 1 else ""),
+                f"{ref.provider_id} — {ref.record_id}",
             )
             pairs.append((choice, ref))
-    return snapshot, tuple(pairs)
+    # Number across all source revisions, not just within one source.
+    # The same provider/record can contribute multiple exact references to C.
+    # Do not expose a URL or an opaque revision token in the menu.
+    counts = Counter(choice.label for choice, _ in pairs)
+    ordinals = Counter()
+    labelled = []
+    for choice, ref in pairs:
+        if counts[choice.label] > 1:
+            ordinals[choice.label] += 1
+            choice = replace(choice, label=(
+                f"{choice.label} ({ordinals[choice.label]}/{counts[choice.label]})"
+            ))
+        labelled.append((choice, ref))
+    return snapshot, tuple(labelled)
 
 
 def read_public_web_choices(storage, document):

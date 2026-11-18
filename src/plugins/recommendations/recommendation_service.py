@@ -138,6 +138,8 @@ class CatalogueSearchObservation:
     batches: int = 0
     results_seen: int = 0
     failures: int = 0
+    partial_batches: int = 0
+    stale_batches: int = 0
 
 
 @dataclass(frozen=True)
@@ -369,7 +371,7 @@ def compute_recommendations(
     if callable(progressive):
         for provider_id, _label in providers[:128]:
             if type(provider_id) is str and provider_id:
-                observed.setdefault(provider_id, [0, 0, 0])
+                observed.setdefault(provider_id, [0, 0, 0, 0, 0])
 
     def observations_snapshot() -> tuple[CatalogueSearchObservation, ...]:
         return tuple(
@@ -507,11 +509,15 @@ def compute_recommendations(
                 warnings.extend("catalogue_batch_warning" for _ in tuple(getattr(batch, "warnings", ()) or ()))
                 error_reported = bool(getattr(batch, "error_message", None))
                 failure_code = getattr(batch, "error_code", None)
+                status = getattr(batch, "result_status", None)
+                status = status if type(status) is str else None
                 if provider_id in observed:
                     counters = observed[provider_id]
                     counters[0] += 1
                     counters[1] += len(rows)
-                    counters[2] += int(bool(error_reported or failure_code))
+                    counters[2] += int(bool(error_reported or failure_code or status == "unavailable"))
+                    counters[3] += int(status == "partial")
+                    counters[4] += int(status == "known_catalog_stale")
                 if error_reported:
                     warnings.append("catalogue_provider_failed")
                 if progress:

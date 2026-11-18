@@ -12,6 +12,7 @@ the asynchronously scheduled query and the identity/generation lease.
 from __future__ import annotations
 
 from typing import Any
+from dataclasses import asdict
 
 from .notice_c_public_search import PublicNoticeCPage, PublicNoticeCHit
 from .notice_cover_repository import is_notice_cover_document
@@ -49,6 +50,14 @@ def _public_mirror_key(row: dict[str, Any], *, identity_id: str) -> tuple | None
     if any(type(value) is not str or not value for value in coords):
         return None
     return (*coords, revision)
+
+
+def _series_metadata(hit: PublicNoticeCHit) -> dict[str, Any]:
+    if hit.series_relation is None:
+        return {}
+    proof = asdict(hit.series_relation)
+    label = proof.pop("label")
+    return {"series": [label], "bibliography_evidence": {"series": proof}}
 
 
 def merge_public_notice_c_known_rows(
@@ -106,6 +115,7 @@ def merge_public_notice_c_known_rows(
                 "publisher": hit.publisher,
                 "description": hit.description,
                 **({"published_at": hit.published_at} if hit.published_at is not None else {}),
+                **_series_metadata(hit),
             })
             continue
         rows.append({
@@ -131,6 +141,7 @@ def merge_public_notice_c_known_rows(
                 "notice_c_query_status": page.status,
                 "publisher": hit.publisher,
                 "description": hit.description,
+                **_series_metadata(hit),
             },
             "_cover_document_ref": hit.document,
         })

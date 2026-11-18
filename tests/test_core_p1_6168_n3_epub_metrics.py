@@ -200,3 +200,52 @@ def test_epub_worker_percentiles_are_bounded_and_separate():
         assert stats["n3_epub_failed_recent_p95_ms"] == 7
     finally:
         cache.close()
+
+
+def test_n3_rejects_fifo_without_blocking_worker(physical, monkeypatch):
+    import os
+    from cifereca.core import epub_cover_materialization as materialization
+    if not hasattr(os, "mkfifo") or not hasattr(os, "O_NONBLOCK"):
+        pytest.skip("requires POSIX FIFO")
+    path, source, image = physical
+    image.unlink()
+    path.unlink()
+    os.mkfifo(path)
+    actual_open = os.open
+
+    def checked_open(name, flags, *args, **kwargs):
+        if name == path:
+            # Fail the test before opening a FIFO if the guard regresses.
+            assert flags & os.O_NONBLOCK
+        return actual_open(name, flags, *args, **kwargs)
+
+    opened = []
+    def observe_open(name, flags, *args, **kwargs):
+        if name == path:
+            opened.append(flags)
+        return checked_open(name, flags, *args, **kwargs)
+
+    monkeypatch.setattr(materialization.os, "open", observe_open)
+    assert EpubCoverPhysicalCache._restore(source, path) is None
+    assert len(opened) == 1 and opened[0] & os.O_NONBLOCK
+    assert not image.exists()
+
+
+def test_n3_refuses_growth_between_archive_read_and_publication(physical, monkeypatch):
+    from cifereca.core import epub_cover_materialization as materialization
+    path, source, image = physical
+    image.unlink()
+    actual_read = materialization._read
+    calls = []
+
+    def grow(archive, member, limit):
+        value = actual_read(archive, member, limit)
+        with path.open("ab") as output:
+            output.write(b"changed")
+        calls.append(member)
+        return value
+
+    monkeypatch.setattr(materialization, "_read", grow)
+    assert EpubCoverPhysicalCache._restore(source, path) is None
+    assert calls == [source.member]
+    assert not image.exists()

@@ -116,6 +116,9 @@ class Catalog:
     authentication_advertised: bool = False
     # None URL alone is not proof of the end of a catalogue.
     next_status: str = "absent"
+    search_status: str = "absent"
+    # Page-local projection only; this is not catalogue exhaustiveness.
+    entries_partial: bool = False
 
 
 def _catalog_navigation(raw: Any, *, base: str) -> list[Navigation]:
@@ -245,20 +248,36 @@ def parse_catalog(payload: Any, *, url: str = HOME_URL, status: int = 200,
     links = payload.get("links")
     if not isinstance(links, list) or len(links) > MAX_ENTRIES:
         raise OPDS2ContractError("invalid_links")
-    navigation = _catalog_navigation(payload.get("navigation"), base=base)
-    publications = _catalog_publications(payload.get("publications"), base=base)
+    # Budget raw entries, not just surviving projected rows; otherwise a
+    # succession of groups with rejected rows evades the aggregate limit.
+    navigation = []
+    publications = []
+    received = 0
+
+    def collect(container):
+        nonlocal received
+        raw_navigation = container.get("navigation")
+        raw_publications = container.get("publications")
+        for raw, code in ((raw_navigation, "invalid_navigation"),
+                          (raw_publications, "invalid_publications")):
+            if raw is not None and (type(raw) is not list or len(raw) > MAX_ENTRIES):
+                raise OPDS2ContractError(code)
+        received += len(raw_navigation or []) + len(raw_publications or [])
+        if received > MAX_ENTRIES:
+            raise OPDS2ContractError("too_many_entries")
+        navigation.extend(_catalog_navigation(raw_navigation, base=base))
+        publications.extend(_catalog_publications(raw_publications, base=base))
+
+    collect(payload)
     groups = payload.get("groups", [])
     if not isinstance(groups, list) or len(groups) > MAX_ENTRIES:
         raise OPDS2ContractError("invalid_groups")
     for group in groups:
         if not isinstance(group, Mapping):
             raise OPDS2ContractError("invalid_group")
-        navigation.extend(_catalog_navigation(group.get("navigation"), base=base))
-        publications.extend(_catalog_publications(group.get("publications"), base=base))
-    if len(navigation) + len(publications) > MAX_ENTRIES:
-        raise OPDS2ContractError("too_many_entries")
+        collect(group)
     declared_next = []
-    search = None
+    declared_search = []
     auth = False
     for link in links:
         if not isinstance(link, Mapping):
@@ -267,10 +286,35 @@ def parse_catalog(payload: Any, *, url: str = HOME_URL, status: int = 200,
         auth |= "authenticate" in rel or "http://opds-spec.org/authenticate" in rel
         if "next" in rel:
             declared_next.append(link.get("href") if _is_feed_type(link.get("type")) else None)
-        if "search" in rel and _is_feed_type(link.get("type")) and link.get("templated") is True:
-            search = _search_template(link.get("href"), base=base)
+        if "search" in rel:
+            declared_search.append(
+                _search_template(link.get("href"), base=base)
+                if _is_feed_type(link.get("type")) and link.get("templated") is True
+                else None
+            )
+    # Invalid declarations dominate, as for next; no last-wins selection.
+    # Compare validated destination and expression, not the spelling of
+    # equivalent relative/absolute links. Preserve the first raw template
+    # for the compatibility facade only when all declarations agree.
+    search = None
+    search_status = "absent"
+    if declared_search:
+        if any(template is None for template in declared_search):
+            search_status = "invalid"
+        else:
+            choices = {
+                (_safe_link(template.split("{?", 1)[0], base=base),
+                 template.split("{?", 1)[1])
+                for template in declared_search
+            }
+            if len(choices) != 1:
+                search_status = "ambiguous"
+            else:
+                search_status = "valid"
+                search = declared_search[0]
     if not (navigation or publications):
         raise OPDS2ContractError("empty_catalog")
     next_page = catalogue_next(declared_next, resolve=lambda raw: _safe_link(raw, base=base))
     return Catalog(title, tuple(navigation), tuple(publications), next_page.url, search, auth,
-                   next_status=next_page.state)
+                   next_status=next_page.state, search_status=search_status,
+                   entries_partial=received != len(navigation) + len(publications))

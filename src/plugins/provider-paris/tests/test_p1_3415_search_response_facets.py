@@ -398,3 +398,87 @@ def test_foreign_catalog_scope_uses_only_public_searchservice_routes():
         assert all("Search.svc/Search" in path for path in paths)
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("scenario,scope", [
+    ("CATALOGUE", "physical"), ("EBOOKS", "digital"),
+])
+def test_public_notice_series_is_exact_per_result_and_not_a_page_facet(scenario, scope):
+    """#1078/#6366: parser -> exact same-call public declaration; no new I/O."""
+    from copy import deepcopy
+    from cifereca.core.public_search_projection import project_public_search_results
+
+    payload = _response(scenario, _facet(
+        field="SeriesTitle_exact", label="Série",
+        values=[{"Label": "Global facet only", "Count": 7, "IsSelected": False}],
+    ))
+    good = payload["d"]["Results"][0]
+    good["Resource"]["Subj"] = ["Subject not selected by this declaration"]
+    good["CustomResult"] = '<a href="/Search?field=SeriesTitle_idx">Cycle A</a>'
+    other = deepcopy(good)
+    other["Resource"]["RscId"] += "-other"
+    other["CustomResult"] = '<a href="/Search?field=SeriesTitle_exact">Cycle B</a>'
+    other["CompactResult"] = '<a href="/Search?field=SeriesTitle_idx">Conflicting</a>'
+    facet_only = deepcopy(good)
+    facet_only["Resource"]["RscId"] += "-facet"
+    del facet_only["CustomResult"]
+    local = deepcopy(good)
+    local["Resource"]["RscId"] += "-local"
+    local["CustomResult"] = '<a href="/Search?field=SeriesTitle_idx">/home/reader/private</a>'
+    payload["d"]["Results"] = [good, other, facet_only, local]
+    calls = []
+
+    def respond(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json=payload)
+
+    session = ParisProviderSession(
+        credential_id="synthetic", label="Paris", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    session.client.close()
+    session.client = _client(respond)
+    try:
+        response = session.search_with_response_facets("synthetic", scope)
+        assert len(calls) == 1
+        assert len(response.results) == len(response.public_notices) == 4
+        rows = {row.record_id: row for row in response.results}
+        declared = {claim.result.record_id: claim.result for claim in response.public_notices}
+        source_id = good["Resource"]["RscId"]
+        first = rows[source_id]
+        public = declared[source_id]
+        assert public.metadata == {
+            "series": ["Cycle A"],
+            "bibliography_evidence": {"series": {
+                "source": "paris.syracuse.search",
+                "source_field": "Search.CustomResult",
+                "scope": scenario,
+                "confidence": "linked_search_relation",
+                "freshness": "search_response",
+            }},
+        }
+        assert public.metadata["series"] is not first.metadata["series"]
+        assert public.metadata["bibliography_evidence"]["series"] is not (
+            first.metadata["bibliography_evidence"]["series"]
+        )
+        for suffix in ("-other", "-facet", "-local"):
+            assert declared[source_id + suffix].metadata == {}
+        projected = project_public_search_results(response)
+        assert projected is not None and len(projected) == 4
+        # Core's bounded structured-evidence projection is an independent
+        # migration. If present it must match the declaration exactly.
+        projected_metadata = dict(projected[id(first)].metadata)
+        evidence = projected_metadata.pop("bibliography_evidence", None)
+        if evidence is not None:
+            assert evidence == public.metadata["bibliography_evidence"]
+        assert projected_metadata == {
+            "catalogue_access": "shared_read_only", "series": ["Cycle A"],
+        }
+        for suffix in ("-other", "-facet", "-local"):
+            assert projected[id(rows[source_id + suffix])].metadata == {
+                "catalogue_access": "shared_read_only",
+            }
+        assert all(not row.owned and not row.downloadable and row.download_url is None
+                   for row in projected.values())
+    finally:
+        session.close()

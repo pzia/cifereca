@@ -68,3 +68,33 @@ def test_implicit_first_page_still_rejects_changed_query_or_origin(old,new):
     with pytest.raises(PublicSearchParseError) as exc:
         parse_public_search(fixture('loup-1').replace(old,new),public_search_url('loup',1))
     assert 'PRIVATE' not in str(exc.value)
+
+
+@pytest.mark.parametrize("counter", ["indisponible", "9999999999", "", "973 résultats"])
+def test_unqualified_competing_counter_cannot_be_discarded(counter):
+    html = fixture("loup-0")
+    html = '<span class="ResultatDetail">' + counter + '</span>' + html
+    with pytest.raises(PublicSearchParseError, match="unqualified_total"):
+        parse_public_search(html, public_search_url("loup"))
+
+
+def test_observed_literal_count_label_is_not_a_second_counter():
+    html = '<span class="ResultatDetail">résultat(s)</span>' + fixture("loup-0")
+    page = parse_public_search(html, public_search_url("loup"))
+    assert page.total_results == 973 and not page.complete
+
+
+def test_empty_marker_cannot_override_a_malformed_count():
+    html = '<span class="ResultatDetail">indisponible</span>' + fixture("empty")
+    with pytest.raises(PublicSearchParseError, match="unqualified_total"):
+        parse_public_search(html, public_search_url(EMPTY_QUERY))
+
+
+def test_numeric_zero_with_pagination_is_contradictory_even_without_next_link():
+    html = (
+        '<span class="ResultatDetail">0</span>'
+        f'<table id="{GRID_ID}"></table>'
+        '<div class="pagination"><span class="PagerCurrentPage">1</span></div>'
+    )
+    with pytest.raises(PublicSearchParseError, match="inconsistent_pagination"):
+        parse_public_search(html, public_search_url(EMPTY_QUERY))

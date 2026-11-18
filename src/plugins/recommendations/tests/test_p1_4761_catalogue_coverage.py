@@ -166,3 +166,37 @@ def test_coverage_label_can_be_cleared_without_reloading_ranked_source_filter():
     view._set_catalogue_coverage()
     assert label.visible is False
     assert label.text == "" and label.tooltip is None
+
+
+def test_partial_empty_and_stale_batches_are_not_successful_empty_catalogues():
+    class Degraded(Catalog):
+        def search_progressive(self, query, *, on_batch, **kwargs):
+            for provider, rows, status, code in (
+                ("a", (), "partial", None),
+                ("b", ({"title": "Nouveau livre", "author": "Alice",
+                        "source_provider": "b"},), "known_catalog_stale",
+                 "SearchTemporarilyUnavailable"),
+                ("c", (), "live", None),
+                ("d", (), "unavailable", None),
+            ):
+                on_batch(NS(provider_id=provider, results=rows, result_status=status,
+                            error_code=code, error_message="", warnings=(), cached=False))
+            return NS(cancelled=False, warnings=())
+
+    result = compute_recommendations(
+        Metadata(), Degraded(), "alice", max_queries=1,
+        exclude_owned=False, exploration=0,
+    )
+    observed = {row.provider_id: row for row in result.catalogue_observations}
+    assert observed["a"].partial_batches == 1
+    assert observed["b"].stale_batches == 1
+    assert observed["d"].failures == 1
+    summary, detail = _catalogue_coverage_projection(result)
+    assert "1 sans notice" in summary
+    assert "1 partiel(s)" in summary
+    assert "1 avec repli local" in summary
+    assert "2 en erreur" in summary
+    assert "Catalogue A : couverture partielle ; absence non attestée" in detail
+    assert "Catalogue B : résultats connus en cache" in detail
+    assert "Catalogue C : réponse sans notice" in detail
+    assert "Catalogue D : erreur fournisseur" in detail

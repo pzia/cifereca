@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from cifereca.plugin_api import (
     ArtifactFormat, ArtifactRef, BookRef, SyncRequest, TransformCapability,
     UiActionContext,
@@ -13,7 +15,8 @@ from cifereca.plugins import PackageStore, PluginConfigStore, PluginManager, Plu
 def _write_package(root: Path, *, package_id: str, plugin_id: str, category: str = "recommendation", priority: int = 0):
     pkg = root / "packages" / package_id / "1.0.0"
     pkg.mkdir(parents=True)
-    (pkg / "plugin.py").write_text(
+    module_name = "fixture037_" + package_id.replace(".", "_").replace("-", "_")
+    (pkg / (module_name + ".py")).write_text(
         "class Plugin:\n"
         "    def activate(self, context):\n"
         "        self.context=context\n"
@@ -25,7 +28,7 @@ def _write_package(root: Path, *, package_id: str, plugin_id: str, category: str
         "manifest": 1,
         "package": {"id": package_id, "version": "1.0.0", "name": package_id, "publisher": "tests", "plugin_api": ">=1,<2"},
         "plugins": [{
-            "id": plugin_id, "type": category, "version": "1.0.0", "entrypoint": "plugin:plugin",
+            "id": plugin_id, "type": category, "version": "1.0.0", "entrypoint": module_name + ":plugin",
             "priority": priority, "capabilities": ["demo"], "requires_services": ["catalog"],
         }],
     }
@@ -43,6 +46,23 @@ def _manager(tmp_path: Path, **kwargs):
         config_store=PluginConfigStore(tmp_path / "config.json"),
         **kwargs,
     )
+
+
+@pytest.fixture(autouse=True)
+def _close_fixture_managers(monkeypatch):
+    # A fixture manager owns real imported modules, just like production.
+    # Do not leak its live namespace into the next test (or pytest worker).
+    original, managers = _manager, []
+    def make(*args, **kwargs):
+        manager = original(*args, **kwargs)
+        managers.append(manager)
+        return manager
+    monkeypatch.setitem(globals(), "_manager", make)
+    try:
+        yield
+    finally:
+        for manager in reversed(managers):
+            manager.close()
 
 
 def test_public_models_cover_core037_contract():

@@ -46,6 +46,10 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
         except Exception:
             # Plugin-contributed widgets must never prevent shell recovery.
             retained_plugins = None
+    from . import page_lifecycle_controller
+    lifecycle = page_lifecycle_controller.reset(window)
+    if not is_current():
+        return
     for widget in tuple(window._plugin_page_widgets.values()):
         window.view_stack.remove(widget)
         if not is_current():
@@ -120,6 +124,9 @@ def rebuild_plugin_pages(window, *, Gtk, Pango, clear_box, resolve_pages) -> Non
             return
         window._plugin_page_widgets[page.route] = widget
         window._pages[page.route] = page
+        lifecycle.mount(page.route, widget)
+        if not is_current():
+            return
         if page.group != group:
             group = page.group
             expanded = window._nav_group_expanded.setdefault(group, group != "configuration")

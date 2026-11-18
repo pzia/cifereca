@@ -574,3 +574,26 @@ def test_large_c_inventory_keeps_borrower_receipts_in_one_snapshot(tmp_path, mon
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("public_author", ["Autrice", None])
+@pytest.mark.parametrize("malformed", [42, ["Autrice"], {"name": "Autrice"}, False])
+def test_malformed_borrower_author_does_not_abort_sibling_projection(
+    tmp_path, public_author, malformed,
+):
+    db = Storage(tmp_path / "bad-author.sqlite")
+    try:
+        _, canonical = bibliography(db, author=public_author)
+        bad_loan, bad_history = loan(author=malformed), history(author=malformed)
+        good = loan(id="valid-sibling")
+        assert admit(db, [bad_loan, good, bad_history]) == 1
+        assert borrower_public_c_receipt(bad_loan, identity_id="alice") is None
+        assert borrower_public_c_receipt(bad_history, identity_id="alice") is None
+        assert borrower_public_c_receipt(good, identity_id="alice").document == canonical.document
+        # Mutation after a valid worker receipt must also refuse publication.
+        good.author = malformed
+        assert borrower_public_c_receipt(good, identity_id="alice") is None
+        assert admit(db, [good]) == 0
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()

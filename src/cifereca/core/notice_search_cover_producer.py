@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+from dataclasses import asdict
 
 from ..models import SearchResult
 from .notice_source_observation import (
@@ -127,7 +128,9 @@ def admit_public_search_catalogue(
             is not _CORE_PUBLIC_C_WITNESS):
         return initial
 
-    from .public_search_projection import _public_bibliographic_text
+    from .public_search_projection import (
+        _public_bibliographic_text, declared_public_series_relation,
+    )
     import re
 
     def coordinate(value: object, *, optional: bool = False) -> bool:
@@ -173,6 +176,11 @@ def admit_public_search_catalogue(
         else:
             fields[name] = value
 
+    relation = declared_public_series_relation(
+        row.metadata, provider_id=row.source_provider, scenario=row.scenario,
+    )
+    if relation is not None:
+        fields["series_relation"] = asdict(relation)
     result = {"thumbnail_url": public_cover_url, "public_bibliography": fields}
     # An independently witnessed positive link is not a cover claim.
     # The omitted image stays pending. The existing source writer retains

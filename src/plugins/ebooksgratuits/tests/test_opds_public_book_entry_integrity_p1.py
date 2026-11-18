@@ -114,9 +114,10 @@ def test_mixed_navigation_and_acquisitions_emit_partial_and_never_show_fake_book
         assert rows[0].source_collection == "public"
         assert rows[0].owned is False and rows[0].downloadable is True
         assert visited == [ROOT_URL, BASE + "/index.php/feed/all"]
-        assert len(s.last_search_warnings) == 1
+        assert len(s.last_search_warnings) == 2
         assert "partial_results" in s.last_search_warnings[0]
         assert "sous-catalogues" in s.last_search_warnings[0]
+        assert s.last_search_warnings[1] == "partial_results : entrées OPDS non qualifiées"
     finally:
         s.close()
 
@@ -143,8 +144,49 @@ def test_valid_acquisition_with_navigation_same_feed_not_a_second_http_scan():
     try:
         rows = s.search("")
         assert [r.title for r in rows] == ["Livre vraiment public"]
-        assert len(visited) == 2  # Root + same root acquisition reread (legacy).
-        assert all(u == ROOT_URL for u in visited)
+        assert visited == [ROOT_URL]  # The already parsed root is the page.
         assert any("partial_results" in w for w in s.last_search_warnings)
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("bad_entry", [
+    BOOK.replace("<id>urn:public:book:42</id>", ""),
+    BOOK.replace("<title>Livre vraiment public</title>", ""),
+    BOOK.replace("<id>urn:public:book:42</id>", "<id> </id>"),
+    BAD_FOREIGN, BAD_PRIVATE, BAD_MIME, BAD_ALTERNATE,
+    "<entry><title>Unknown entry</title></entry>",
+])
+def test_discarded_entries_without_navigation_are_partial(bad_entry):
+    s, visited = session(feed(branch()), all_books=feed(BOOK + bad_entry))
+    try:
+        rows = s.search("")
+        assert [row.title for row in rows] == ["Livre vraiment public"]
+        assert s.last_search_warnings == ["partial_results : entrées OPDS non qualifiées"]
+        assert visited == [ROOT_URL, BASE + "/index.php/feed/all"]
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize("bad_entry", [
+    BOOK.replace("<id>urn:public:book:42</id>", ""),
+    BOOK.replace("<title>Livre vraiment public</title>", ""),
+])
+def test_all_unprojectable_acquisitions_are_not_a_native_empty_page(bad_entry):
+    s, visited = session(feed(branch()), all_books=feed(bad_entry))
+    try:
+        assert s.search("") == []
+        assert s.last_search_warnings == ["partial_results : entrées OPDS non qualifiées"]
+        assert visited == [ROOT_URL, BASE + "/index.php/feed/all"]
+    finally:
+        s.close()
+
+
+def test_native_empty_acquisition_feed_has_no_loss_warning():
+    s, visited = session(feed(branch()), all_books=feed(""))
+    try:
+        assert s.search("") == []
+        assert s.last_search_warnings == []
+        assert visited == [ROOT_URL, BASE + "/index.php/feed/all"]
     finally:
         s.close()

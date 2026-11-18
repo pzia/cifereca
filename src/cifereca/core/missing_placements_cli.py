@@ -76,7 +76,7 @@ def _read_config(path: Path) -> _ReadOnlyConfig:
 
 
 def inspect_missing_placements(*, config: Path, database: Path,
-                               identity_id: str) -> dict:
+                               identity_id: str, historical: bool = False) -> dict:
     """Report one configured identity, without paths, IDs or book metadata.
 
     'complete' means all selected SQLite placement paths were directly
@@ -92,7 +92,8 @@ def inspect_missing_placements(*, config: Path, database: Path,
         raise ValueError("invalid_inspection_scope")
     roots = configured_identity_roots(_read_config(config), identity_id)
     snapshot = scope_evidence(
-        read_library_snapshot(database, identity_id=identity_id),
+        read_library_snapshot(database, identity_id=identity_id,
+                              **({'historical_dependencies': True} if historical else {})),
         (identity_id,),
     )
     selected = snapshot.tables.get("placements")
@@ -105,6 +106,7 @@ def inspect_missing_placements(*, config: Path, database: Path,
             "sqlite_coverage": "incomplete", "path_coverage": "not_checked",
             "counts": None, "reasons": sorted(snapshot.reasons) or [
                 "snapshot_schema_incomplete"],
+            **({"historical": None} if historical else {}),
         }
     paths = inspect_stored_paths(snapshot, roots)
     counts = {state: sum(x == state for x in paths.states.values())
@@ -120,9 +122,15 @@ def inspect_missing_placements(*, config: Path, database: Path,
         reasons.add("stored_path_budget")
     if counts["stored_path_out_of_scope"]:
         reasons.add("stored_path_out_of_scope")
+    historical_report = None
+    if historical:
+        from .missing_placement_dependency_projection import aggregate_historical_missing
+        historical_report = aggregate_historical_missing(selected, paths, coverage_complete=coverage_complete)
+        if historical_report["coverage"] != "complete":
+            reasons.add("historical_evidence_incomplete")
     return {
         "schema": 1,
-        "status": "complete" if coverage_complete else "incomplete_scan",
+        "status": "complete" if coverage_complete and not reasons else "incomplete_scan",
         "read_only": True, "repair_authorized": False,
         "acquisition_authorized": False, "scope": "selected_identity",
         "root_count": len(roots[identity_id]),
@@ -142,6 +150,7 @@ def inspect_missing_placements(*, config: Path, database: Path,
             "other": paths.missing_by_sqlite_state["other"],
         },
         "reasons": sorted(reasons),
+        **({"historical": historical_report} if historical else {}),
     }
 
 
@@ -149,13 +158,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Compteurs de Placements physiques (lecture seule, expurgés)")
     parser.add_argument("--identity", required=True, metavar="ID")
+    parser.add_argument("--historical", action="store_true", help="Qualifier les placements historiquement missing, sans autoriser leur retrait")
     parser.add_argument("--config", type=Path, default=config_file(create=False))
     parser.add_argument("--database", type=Path, default=database_file(create=False))
     args = parser.parse_args(argv)
     try:
         result = inspect_missing_placements(
             config=args.config, database=args.database,
-            identity_id=args.identity)
+            identity_id=args.identity, historical=args.historical)
     except (OSError, ValueError, TypeError, UnicodeError,
             RecursionError, RuntimeError):
         result = {
@@ -164,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
             "acquisition_authorized": False, "scope": "selected_identity",
             "sqlite_coverage": "incomplete", "path_coverage": "not_checked",
             "counts": None, "reasons": ["inspection_unavailable"],
+            **({"historical": None} if args.historical else {}),
         }
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0 if result["status"] == "complete" else 2

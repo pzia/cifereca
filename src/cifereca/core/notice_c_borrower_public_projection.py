@@ -102,6 +102,7 @@ def _coordinate(item: object, identity_id: str):
             or type(item.medium) is not str or item.medium != "digital"
             or type(item.provider) is not str or not item.provider
             or type(item.title) is not str or not item.title.strip()
+            or (item.author is not None and type(item.author) is not str)
             or type(item.source_credential) is not str
             or not item.source_credential
             or type(item.id) is not str or not item.id

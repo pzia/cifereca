@@ -8,6 +8,10 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
     if window._closed:
         return False
     window._closed = True
+    # Revoke presentation leases and detach opt-in plugin pages before any
+    # other window-owned resource is released. This is not Core cancellation.
+    from cifereca.gui import page_lifecycle_controller
+    page_lifecycle_controller.dispose(window)
     # #757: drop this window's scoped GTK4 overlay and StyleManager handler.
     # This is safe for headless windows with no theme installed.
     from cifereca.gui.modern_light_theme import release_modern_light

@@ -56,6 +56,10 @@ class ParisRedirectError(AttentionRequired, ParisError):
         )
 
 
+class ParisSearchResponseInvalid(ParisError):
+    """SearchService returned no trustworthy result-page envelope."""
+
+
 class ParisSearchUnavailable(ParisError):
     code = 'search_temporarily_unavailable'
     retryable = True
@@ -584,7 +588,7 @@ class ParisClient:
 
     def _search_scenario(
         self, query: str, scenario: str, page: int, result_size: int,
-    ) -> tuple[list[SearchResult], list[dict[str, Any]]]:
+    ) -> tuple[list[SearchResult], list[dict[str, Any]], bool]:
         body = {"query": self._search_query(query, scenario, page, result_size), "sst": 4}
         r = self.client.post(
             f"{self.base_url}{SEARCH_PATH}",
@@ -599,12 +603,41 @@ class ParisClient:
         if r.status_code in {401, 403, 408, 429} or r.status_code >= 500:
             r.raise_for_status()
         data = self._json(r, f"search {scenario}")
-        rows = ((data.get("d") or {}).get("Results") or [])
-        results = [
-            item for raw in rows if isinstance(raw, dict)
-            if (item := normalize_search_result(raw, scenario)) is not None
-        ]
-        return results, project_search_response_facets(data, scenario, page)
+        envelope = data.get("d")
+        rows = envelope.get("Results") if type(envelope) is dict else None
+        # Only an explicit native array can attest this page, including zero.
+        # A missing/null/malformed collection cannot certify an empty search.
+        if type(rows) is not list:
+            raise ParisSearchResponseInvalid("SearchService.d.Results: tableau absent ou invalide")
+        results = []
+        for index, raw in enumerate(rows):
+            resource = raw.get("Resource") if type(raw) is dict else None
+            if (type(resource) is not dict
+                    or type(resource.get("RscId")) not in (str, int)
+                    or type(resource.get("RscBase")) is not str
+                    or not str(resource["RscId"]).strip()
+                    or not resource["RscBase"].strip()):
+                continue
+            try:
+                item = normalize_search_result(raw, scenario)
+            except (ValueError, TypeError, AttributeError, KeyError, OverflowError) as exc:
+                self.diagnostics.add(
+                    "CATALOG", f"search {scenario} parse result", "error",
+                    detail={"index": index, "error": str(exc), "http_status": r.status_code},
+                )
+                continue
+            if item is not None:
+                results.append(item)
+        if rows and not results:
+            raise ParisSearchResponseInvalid("SearchService.d.Results: aucun résultat décodable")
+        partial = len(results) != len(rows)
+        if partial:
+            self.diagnostics.add(
+                "CATALOG", f"search {scenario} parse page", "partial",
+                detail={"received": len(rows), "decoded": len(results),
+                        "http_status": r.status_code},
+            )
+        return results, project_search_response_facets(data, scenario, page), partial
 
     def search_catalog(self, query: str, scenario: str = "CATALOGUE", page: int = 0, result_size: int = 20) -> list[SearchResult]:
         """Recherche un seul catalogue sans modifier l'état de recherche UI.
@@ -649,10 +682,16 @@ class ParisClient:
 
         for scenario in scenarios:
             try:
-                rows, branch_facets = self._timed(
+                rows, branch_facets, branch_partial = self._timed(
                     "CATALOG", f"search {scenario}",
                     lambda scenario=scenario: self._search_scenario(query, scenario, page, 50),
                 )
+            except ParisSearchResponseInvalid as exc:
+                # A smaller query cannot repair an invalid response contract.
+                failures.append((scenario, exc))
+                caption = "Catalogue numérique" if scenario == "EBOOKS" else "Catalogue physique"
+                warnings.append(caption + " : réponse invalide")
+                continue
             except ParisError as first_exc:
                 # Retry borné : utile surtout pour EBOOKS sur les recherches larges.
                 self.diagnostics.add(
@@ -661,14 +700,17 @@ class ParisClient:
                     level="detailed",
                 )
                 try:
-                    rows, branch_facets = self._timed(
+                    rows, branch_facets, branch_partial = self._timed(
                         "CATALOG", f"search {scenario} fallback",
                         lambda scenario=scenario: self._search_scenario(query, scenario, page, 20),
                     )
                 except Exception as second_exc:
                     failures.append((scenario, second_exc))
+                    caption = "Catalogue numérique" if scenario == "EBOOKS" else "Catalogue physique"
                     warnings.append(
-                        "Catalogue numérique momentanément indisponible" if scenario == "EBOOKS" else "Catalogue physique momentanément indisponible"
+                        caption + (" : réponse invalide" if isinstance(
+                            second_exc, ParisSearchResponseInvalid,
+                        ) else " momentanément indisponible")
                     )
                     continue
             except httpx.HTTPError as exc:
@@ -690,6 +732,9 @@ class ParisClient:
                 continue
 
             facets.extend(branch_facets)
+            if branch_partial:
+                caption = "Catalogue numérique" if scenario == "EBOOKS" else "Catalogue physique"
+                warnings.append(caption + " : résultats partiellement décodés")
             # An empty result from an available catalogue is still a
             # successful search, not evidence that every route failed.
             successful_scenarios += 1
@@ -763,7 +808,7 @@ class ParisClient:
                         metadata=metadata,
                     )
 
-        if failures and successful_scenarios:
+        if warnings and successful_scenarios:
             warnings = ["partial_results : " + warning for warning in warnings]
         # Preserve the last-call diagnostics for compatibility. The return
         # value uses the local collector even if another call completes now.
@@ -784,6 +829,11 @@ class ParisClient:
             elif 401 in http_statuses:
                 error = ParisSearchUnavailable("Authentification requise pour le catalogue Paris.")
                 error.code = "search_authentication_required"
+                error.retryable = False
+            elif any(isinstance(failure, ParisSearchResponseInvalid)
+                     for _name, failure in failures):
+                error = ParisSearchUnavailable("Réponse SearchService Paris invalide.")
+                error.code = "search_response_invalid"
                 error.retryable = False
             else:
                 message = (

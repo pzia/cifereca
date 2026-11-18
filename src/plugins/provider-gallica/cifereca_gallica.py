@@ -150,6 +150,10 @@ class _UnsafeSRU(ProviderError):
     """A rejected audio catalogue does not authorize an outage fallback."""
 
 
+class _PartialOPDSRows(list):
+    """Private branch marker: some entries did not qualify for projection."""
+
+
 class _RecoveredAudioRows(list):
     """Private branch result marker: recovery is necessarily partial."""
 
@@ -392,7 +396,9 @@ class GallicaSession(ProviderSession):
                     },
                 )
             )
-        return rows
+        # A real empty Atom page is distinct from a nonempty page whose
+        # entries did not satisfy the existing exact ID/acquisition guards.
+        return _PartialOPDSRows(rows) if len(rows) != len(feed.entries) else rows
 
     @staticmethod
     def _opds_resolve(base, raw):
@@ -811,6 +817,7 @@ class GallicaSession(ProviderSession):
         causes = []
         successful_branches = 0
         recovered_audio = False
+        partial_opds = False
         # Independent services run concurrently; an audio timeout does not add
         # another complete timeout after the EPUB branch has finished.
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="gallica-search") as pool:
@@ -824,6 +831,7 @@ class GallicaSession(ProviderSession):
                     successful_branches += 1
                     rows.extend(branch_rows)
                     recovered_audio |= isinstance(branch_rows, _RecoveredAudioRows)
+                    partial_opds |= isinstance(branch_rows, _PartialOPDSRows)
                 except Exception as exc:
                     errors.append(message)
                     causes.append(exc)
@@ -839,6 +847,10 @@ class GallicaSession(ProviderSession):
             ("partial_results : " if successful_branches else "") + "Gallica : " + message
             for message in errors
         ]
+        if partial_opds:
+            self.last_search_warnings.append(
+                "partial_results : Gallica : certaines entrées OPDS non qualifiées"
+            )
         if recovered_audio:
             self.last_search_warnings.append(
                 "partial_results : Gallica : récupération partielle du XML audio"

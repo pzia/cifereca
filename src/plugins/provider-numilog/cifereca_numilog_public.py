@@ -329,7 +329,15 @@ def parse_public_search(text, source_url):
                       and empty_markers[0].tag == 'span'
                       and {'alert', 'alert-warning'}.issubset(classes(empty_markers[0]))
                       and _selected_text(empty_markers[0]) == 'Aucun livre trouvé avec ces critères.')
-    totals = [_selected_text(n) for n in _nodes(root, 'ResultatDetail') if re.fullmatch(r'[0-9]{1,9}', _selected_text(n))]
+    # The observed layout uses a numeric ResultatDetail and optionally
+    # a separate literal "résultat(s)" label. Do not discard unknown
+    # competing counters and then claim an exhaustive zero/one result.
+    total_labels = [_selected_text(n) for n in _nodes(root, 'ResultatDetail')]
+    totals = [value for value in total_labels if re.fullmatch(r'[0-9]{1,9}', value)]
+    other_labels = [value for value in total_labels if not re.fullmatch(r'[0-9]{1,9}', value)]
+    if (other_labels not in ([], ['résultat(s)'])
+            or (other_labels and not totals)):
+        _fail('unqualified_total')
     if not totals and explicit_empty and not cards and not _nodes(root, 'pagination'):
         total = 0  # Observed upstream empty result, never a generic missing count.
     elif len(totals) == 1:
@@ -346,6 +354,8 @@ def parse_public_search(text, source_url):
     pagers = _nodes(root, 'pagination')
     if len(pagers) > 1:
         _fail('ambiguous_pagination')
+    if total == 0 and pagers:
+        _fail('inconsistent_pagination')
     pages, next_urls = [], set()
     if pagers:
         current = _optional(pagers[0], 'PagerCurrentPage', 8)

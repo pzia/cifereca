@@ -178,3 +178,40 @@ def test_sqlite_read_failure_blocks_without_disclosing_private_error(
     assert private_error not in repr(output)
     assert str(missing) not in repr(output)
     assert "SECRET" not in repr(output)
+
+
+def test_checkpoint_placement_id_without_path_blocks_retirement_preview(case):
+    store, _, missing, pid = case
+    before = store.placement_get(pid)
+    store.metadata_set("core.synthetic-checkpoint", {
+        "undo": {"placement_id": pid},
+    })
+    output = _plan(case)
+    assert output == {
+        "status": "blocked", "reason": "dependent_references",
+        "catalogue_rows": 0, "requires_confirmation": True,
+    }
+    assert store.placement_get(pid) == before
+    assert pid not in repr(output)
+    assert str(missing) not in repr(output)
+
+
+def test_checkpoint_of_other_placement_does_not_block_this_preview(case):
+    store, root, _, pid = case
+    other = store.placement_put({
+        "path": str(root / "bob" / "other.epub"),
+        "identity_id": "bob", "state": "missing",
+        "artifact_id": "sha256:" + "a" * 64,
+    })
+    assert other != pid
+    store.metadata_set("core.synthetic-checkpoint", {
+        "undo": {"placement_id": other},
+    })
+    assert _plan(case)["reason"] == "orphan_missing"
+
+
+def test_symlink_loop_root_is_unavailable_not_retirement_evidence(case):
+    _, root, _, _ = case
+    loop = root / "loop"
+    loop.symlink_to(loop)
+    assert _plan(case, root=loop)["reason"] == "root_unavailable"

@@ -1,6 +1,6 @@
 """Bounded EPUB metadata/cover inspection, independent of network and DRM."""
 from __future__ import annotations
-import hashlib, os, re, struct, tempfile, zipfile, zlib
+import hashlib, os, re, stat, struct, tempfile, zipfile, zlib
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree as ET
@@ -21,8 +21,11 @@ _SAFE_EPUB_REJECTION_CODES=frozenset({
     'unsupported_zip_directory',
 })
 
-def cover_cache_dir():
-    root=cache_dir()/'epub-covers-v1';root.mkdir(parents=True,exist_ok=True);return root
+def cover_cache_dir(*, create: bool = True):
+    root = cache_dir(create=create) / 'epub-covers-v1'
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+    return root
 
 def _xml(data):
     # UTF-16/32 declarations must not bypass the DTD/entity rejection.
@@ -93,13 +96,15 @@ def valid_cached_cover_path(path: Path) -> bool:
     try:
         if (_CACHED_IMAGE_NAME.fullmatch(path.name) is None
                 or path.is_symlink()
-                or path.resolve().parent != cover_cache_dir().resolve()):
+                or path.resolve().parent != cover_cache_dir(create=False).resolve()):
             return False
-        flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+        flags = (os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+                 | getattr(os, 'O_NONBLOCK', 0))
         fd = os.open(path, flags)
         with os.fdopen(fd, 'rb') as stream:
-            size = os.fstat(stream.fileno()).st_size
-            if size < 8 or size > MAX_IMAGE:
+            info = os.fstat(stream.fileno())
+            size = info.st_size
+            if not stat.S_ISREG(info.st_mode) or size < 8 or size > MAX_IMAGE:
                 return False
             data = stream.read(MAX_IMAGE + 1)
         return (len(data) == size

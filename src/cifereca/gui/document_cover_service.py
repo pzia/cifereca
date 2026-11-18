@@ -44,6 +44,19 @@ _N2_LATENCY_WINDOW = 1024
 
 
 @dataclass(frozen=True, slots=True)
+class CoverAuditObservation:
+    """Current exact N2 decision and independent physical N3 observation.
+
+    N3 'not_validated' combines absence, invalidity and unreadability; it
+    never revokes N2. A signature check is not a full image decode.
+    """
+
+    n2_status: str = "unknown"
+    n2_tier: str = ""
+    n3_status: str = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
 class CoverSourceSnapshot:
     """Producer-owned immutable set of proofs for exactly ONE book reference."""
 
@@ -406,6 +419,55 @@ class DocumentCoverService:
             if document not in self._trace_subscriptions:
                 return None
             return self._trace.snapshot(document)
+
+    def observe_cover_for_audit(
+        self, document: CoverDocumentScope, *, expected_revision: int | None = None,
+    ) -> CoverAuditObservation:
+        """Read one registered exact reference, not a historical N0 trace.
+
+        No N1 resolution, provider request, cache population or EPUB scan.
+        The caller must supply an already-authorized exact DocumentRef and
+        perform this bounded physical check off the GTK main thread.
+        """
+        if type(document) is not CoverDocumentScope:
+            raise TypeError("expected exact DocumentRef")
+        if expected_revision is not None and (
+            type(expected_revision) is not int or expected_revision < 0
+        ):
+            raise ValueError("invalid expected source revision")
+        with self._lock:
+            snapshot = self._snapshots.get(document)
+            if (self._closed or snapshot is None
+                    or (expected_revision is not None
+                        and snapshot.revision != expected_revision)):
+                return CoverAuditObservation()
+            seen = self.decisions.observe(document, revision=snapshot.revision)
+        if seen is None:
+            return CoverAuditObservation()
+        _token, decision = seen
+        physical = "unknown"
+        if decision.status == "selected":
+            media = self.loader.probe_media(decision.uri)
+            if media.source_kind in ("embedded", "remote", "data"):
+                if not media.source_cached:
+                    physical = "not_validated"
+                elif media.source_kind == "embedded":
+                    physical = "digest_valid"
+                else:
+                    physical = "signature_valid"
+        elif decision.status == "missing":
+            physical = "not_applicable"
+        # Never attribute bytes to a replaced or expired N2 generation.
+        with self._lock:
+            if (self._closed or self._snapshots.get(document) is not snapshot
+                    or self.decisions.observe(
+                        document, revision=snapshot.revision,
+                    ) != seen):
+                return CoverAuditObservation()
+        return CoverAuditObservation(
+            decision.status, decision.tier if decision.status == "selected" else "",
+            physical,
+        )
 
     def apply_qualified_epub_fallback(
         self,

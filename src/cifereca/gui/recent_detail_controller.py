@@ -79,6 +79,11 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
             ("Chemin", full_path or "—"),
         ],
     )
+    def presentation():
+        # Use the same bounded bibliographic projection as Library. The
+        # recovery section and source-scoped cover remain independent.
+        return book_detail_presentation(**summary, metadata=item.get("metadata"))
+
     if evidence is None:
         link = item.get("_public_canonical_cover_link")
         if (item.get("_exact_local_cover_evidence") is None
@@ -102,15 +107,15 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
                     "Actualisez les livres récents avant d'ouvrir ce détail.",
                 )
                 return
-            presentation = replace(
-                book_detail_presentation(**summary),
+            public_presentation = replace(
+                presentation(),
                 cover_document_ref=link.document,
                 thumbnail_url=None,
             )
             with staged_local_public_c_detail(
                 detail, check, minimum_revision=link.epoch,
             ):
-                detail.show_presentation(presentation)
+                detail.show_presentation(public_presentation)
             window._add_book_notice(detail, item)
             window._add_local_book_actions(detail, item)
             window._add_facets(detail, item, window.search_controls)
@@ -123,20 +128,29 @@ def recent_selected(window, row, *, Path, format_recent_timestamp) -> None:
         # URL. Only rows without any Core packet keep their old URL path.
         if item.get("_exact_local_cover_evidence") is not None:
             summary["thumbnail"] = None
-        detail.show_summary(**summary)
+        render = getattr(detail, "show_presentation", None)
+        if callable(render):
+            render(presentation())
+        else:
+            detail.show_summary(**summary)
     else:
         render = getattr(detail, "show_local_presentation", None)
         if callable(render):
             # One N2 DocumentRef for both list and detail. Do not issue a
             # legacy URL request before this attested EPUB source is chosen.
             render(
-                book_detail_presentation(**summary),
+                presentation(),
                 cover_evidence=evidence,
             )
         else:
             # A custom/old host cannot use the attested EPUB source; it
             # must not downgrade to a warm URL by accident.
-            detail.show_summary(**{**summary, "thumbnail": None})
+            summary["thumbnail"] = None
+            render = getattr(detail, "show_presentation", None)
+            if callable(render):
+                render(presentation())
+            else:
+                detail.show_summary(**summary)
     window._add_book_notice(detail,item)
     window._add_local_book_actions(detail,item)
     window._add_facets(detail, item, window.search_controls)

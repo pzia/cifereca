@@ -335,13 +335,23 @@ def test_official_package_install_activation_and_disable_without_network(tmp_pat
     monkeypatch.setattr(httpx.Client, 'request', forbidden)
     monkeypatch.setattr(httpx.Client, 'send', forbidden)
     archive = build_plugin_zip(ROOT, tmp_path / 'dist')
+    # This suite imported the checkout's provider during collection. An
+    # installed-package activation models a fresh runtime, not coexistence
+    # with those source modules. Restore only the test-owned cache entries
+    # after manager.close; production must never evict foreign namespaces.
+    for name, module in list(sys.modules.items()):
+        filename = getattr(module, '__file__', None)
+        if filename and ROOT.resolve() in Path(filename).resolve().parents:
+            monkeypatch.delitem(sys.modules, name)
     manager = PluginManager(brokers={'httpx': HTTPX_TRANSPORT},
                             package_store=PackageStore(tmp_path / 'packages'),
                             state_store=PluginStateStore(tmp_path / 'state.json'))
     try:
-        manager.install(archive)
+        installed = manager.install(archive)
         manager.set_enabled('provider.bnf-pret', True)
-        assert manager.status('provider.bnf-pret').state == 'ready'
+        status = manager.status('provider.bnf-pret')
+        assert status.state == 'ready', status.error
+        assert Path(sys.modules['cifereca_bnf_pret'].__file__).resolve().parent == installed.root.resolve()
         service = manager.service('provider.bnf-pret')
         assert service.descriptor.id == 'bnf-pret'
         manager.set_enabled('provider.bnf-pret', False)

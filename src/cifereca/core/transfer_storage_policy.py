@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Literal
 from unicodedata import category
 
+from ..filename_suffixes import split_filename_suffix
+
 
 TransferStorageClass = Literal["transfer"]
 
@@ -60,10 +62,10 @@ def transfer_readable_filename(
     """
     title_text = _filename_component(title)
     author_text = _filename_component(author)
-    suffix = source_path.suffix
+    source_stem, suffix = split_filename_suffix(source_path)
     # Suffix is the witnessed *file's* extension, not an inferred codec from
     # an upstream bibliographic Frmt.
-    suffix = suffix if len(suffix) <= 16 and re.fullmatch(r"\.[A-Za-z0-9]+", suffix) else ""
+    suffix = suffix if len(suffix) <= 16 and re.fullmatch(r"(?:\.[A-Za-z0-9]+)+", suffix) else ""
     budget = _TRANSFER_FILENAME_BYTE_LIMIT - len(suffix)
     if title_text:
         # Keep title text even when a long multibyte author fills the budget.
@@ -71,7 +73,7 @@ def transfer_readable_filename(
         author_text = _utf8_prefix(author_text, author_budget)
         stem = f"{author_text} - {title_text}" if author_text else title_text
     else:
-        stem = _filename_component(source_path.stem) or "Sans titre"
+        stem = _filename_component(source_stem) or "Sans titre"
     return _utf8_prefix(stem[:190], budget) + suffix
 
 

@@ -217,17 +217,36 @@ class EpubCoverPhysicalCache:
         """Recover the exact published member, without re-resolving the book."""
         try:
             fd = os.open(
-                source_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                source_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
             )
             with os.fdopen(fd, "rb") as stream:
                 info = os.fstat(stream.fileno())
                 if (not stat.S_ISREG(info.st_mode)
                         or not 0 < info.st_size <= _MAX_EPUB_BYTES):
                     return None
+                def unchanged():
+                    current = os.fstat(stream.fileno())
+                    return (
+                        current.st_dev, current.st_ino, current.st_size,
+                        current.st_mtime_ns, current.st_ctime_ns,
+                    ) == (
+                        info.st_dev, info.st_ino, info.st_size,
+                        info.st_mtime_ns, info.st_ctime_ns,
+                    )
+
+                # Never hash a growing file beyond its admitted size. Read
+                # at most one extra byte to distinguish growth from EOF.
                 digest = hashlib.sha256()
-                while chunk := stream.read(1024 * 1024):
+                remaining = info.st_size
+                while remaining:
+                    chunk = stream.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        return None
+                    remaining -= len(chunk)
                     digest.update(chunk)
-                if digest.hexdigest() != source.artifact_sha256:
+                if (stream.read(1) or not unchanged()
+                        or digest.hexdigest() != source.artifact_sha256):
                     return None
                 stream.seek(0)
                 _bounded_directory(stream)
@@ -235,6 +254,8 @@ class EpubCoverPhysicalCache:
                     if len(archive.infolist()) > MAX_ENTRIES:
                         return None
                     image = _read(archive, source.member, MAX_IMAGE)
+                if not unchanged():
+                    return None
             kind = _image_kind(image)
             if (kind is None or source.cache_name != (
                     hashlib.sha256(image).hexdigest() + "." + kind)):
