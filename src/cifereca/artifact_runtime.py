@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
+from threading import Lock
 from collections.abc import Mapping
 import hashlib
 import json
@@ -17,7 +19,7 @@ from .library_files import sha256_file
 from .plugin_api import (
     ArtifactFormat, ArtifactInput, ArtifactPlacementRef, ArtifactPossessionRef, ArtifactRef,
     ArtifactRoutePlan, ArtifactRouteRequest, ArtifactRouteTarget, ArtifactTransferResult,
-    ArtifactVariant, BookRef, Conflict, LibraryMutationPlan, LibraryMutationRequest,
+    ArtifactVariant, BookRef, Conflict, StorageTarget, LibraryMutationPlan, LibraryMutationRequest,
     LibraryMutationResult, LogicalBookArtifacts, NotFound, TaskControl, TransformRequest,
     TransformResult, UnsupportedOperation,
 )
@@ -458,6 +460,7 @@ class ArtifactExecutionBrokerImpl:
     def _source_placement(
         self, artifact: ArtifactRef, *, identity_id: str | None = None,
         placement_id: str | None = None,
+        admitted_owner: str | None = None,
     ) -> dict[str, Any]:
         rows = [row for row in self.service.storage.placements(state="present")
                 if str(row.get("artifact_id") or "") == artifact.artifact_id]
@@ -480,13 +483,18 @@ class ArtifactExecutionBrokerImpl:
         if len(rows) != 1:
             raise _VariantConflict("Placement source ambigu", code="artifact_source_ambiguous")
         row = rows[0]
-        # A valid SHA owned only by profile A still is not available to a
-        # user whose active profile is B. ArtifactRef has no identity, so the
-        # host's current selection is the second mandatory authority.
-        active_identity = getattr(getattr(self.service, "current_identity", None),
-                                  "identity_id", None)
+        # A global SHA is not permission. Ordinary synchronous callers
+        # still need the active profile; the admitted route instead pins
+        # its proven exact owner at the explicit user action.
+        # Only the internal, already admitted route may supply an owner.
+        # Ordinary public input/output leases retain their navigation check.
+        active_identity = (admitted_owner if admitted_owner is not None else
+                           getattr(getattr(self.service, "current_identity", None),
+                                   "identity_id", None))
         if (type(active_identity) is not str or not active_identity
-                or active_identity != row.get("identity_id")):
+                or active_identity != row.get("identity_id")
+                or (admitted_owner is not None and
+                    (identity_id != admitted_owner or not placement_id))):
             raise _VariantConflict("Profil actif distinct du placement",
                            code="artifact_source_identity_mismatch")
         path = Path(str(row.get("path") or ""))
@@ -532,8 +540,15 @@ class ArtifactExecutionBrokerImpl:
     def input_lease(self, artifact: ArtifactRef, *,
                     identity_id: str | None = None,
                     placement_id: str | None = None) -> _InputLease:
+        return self._input_lease(
+            artifact, identity_id=identity_id, placement_id=placement_id,
+        )
+
+    def _input_lease(self, artifact, *, identity_id=None, placement_id=None,
+                     admitted_owner=None):
         row = self._source_placement(
             artifact, identity_id=identity_id, placement_id=placement_id,
+            admitted_owner=admitted_owner,
         )
         path = Path(str(row["path"]))
         stamp = _variant_file_stamp(path)
@@ -2142,7 +2157,111 @@ class ArtifactRoutingBrokerImpl:
         filename=Path(request.filename or request.artifact.filename or (request.artifact.artifact_id.replace(":","-")+"."+request.artifact.format.format)).name
         return ArtifactRoutePlan(request,target,filename,summary=f"Envoyer {filename} vers {target.target.label or target.target.target_id}")
 
+    def admit_transfer(self, request: ArtifactRouteRequest, target: ArtifactRouteTarget):
+        """Capture an exact one-use Core worker at the explicit UI action.
+
+        No target enumeration, file hashing or remote write at enqueue.
+        This optional Core-host entry does not change the public broker ABI.
+        Legacy plan/transfer callers cannot acquire this private owner bypass.
+        """
+        from .core.source_context import source_context_epoch
+
+        if (type(request) is not ArtifactRouteRequest
+                or type(request.artifact) is not ArtifactRef
+                or type(target) is not ArtifactRouteTarget
+                or type(target.target) is not StorageTarget
+                or _is_usb_storage_target(target.target)
+                or type(request.identity_id) is not str or not request.identity_id
+                or request.artifact.identity_id != request.identity_id
+                or type(request.artifact.placement_id) is not str
+                or not request.artifact.placement_id
+                or request.target_id != target.target.target_id
+                or getattr(getattr(self.service, "current_identity", None),
+                           "identity_id", None) != request.identity_id):
+            raise _VariantConflict("Source de transfert non admise",
+                                   code="artifact_route_scope_unverified")
+        request, target = deepcopy(request), deepcopy(target)
+        service = self.service
+        storage, manager = service.storage, service.plugin_manager
+        epoch = source_context_epoch(service)
+        if manager is None:
+            raise _NoStorageTarget("Aucune cible de stockage compatible")
+
+        def matching_services():
+            return [row.service for row in manager.services("storage.target")
+                    if row.plugin_id == target.plugin_id
+                    and row.registry_generation == target.registry_generation]
+
+        services = matching_services()
+        if len(services) != 1:
+            raise _VariantConflict("La cible a changé",
+                                   code="storage_target_generation_changed")
+        pinned_target_service = services[0]
+        pid, owner = request.artifact.placement_id, request.identity_id
+        row = storage.placement_get(pid)
+        if (type(row) is not dict or row.get("identity_id") != owner
+                or row.get("artifact_id") != request.artifact.artifact_id
+                or row.get("state") != "present"):
+            raise _VariantConflict("Placement source non vérifié",
+                                   code="artifact_route_scope_unverified")
+        pinned_path = row.get("path")
+        profile = storage.identity_get(owner)
+        if type(profile) is not dict:
+            raise _VariantConflict("Profil source non vérifié",
+                                   code="artifact_route_scope_unverified")
+        directory = profile.get("directory_name")
+        lock, used = Lock(), [False]
+
+        def current():
+            if (self.service is not service or service.storage is not storage
+                    or service.plugin_manager is not manager
+                    or source_context_epoch(service) != epoch):
+                raise _VariantConflict("Source de transfert modifiée",
+                                       code="artifact_route_scope_changed")
+            live = storage.placement_get(pid)
+            identity = storage.identity_get(owner)
+            if (type(live) is not dict or live.get("state") != "present"
+                    or live.get("identity_id") != owner
+                    or live.get("artifact_id") != request.artifact.artifact_id
+                    or live.get("path") != pinned_path
+                    or type(identity) is not dict
+                    or identity.get("directory_name") != directory):
+                raise _VariantConflict("Placement source modifié",
+                                       code="artifact_route_scope_changed")
+
+        def exact_target():
+            current()
+            matches = [candidate for candidate in self.targets(request)
+                       if candidate == target]
+            services = matching_services()
+            if (len(matches) != 1 or len(services) != 1
+                    or services[0] is not pinned_target_service):
+                raise _VariantConflict("La cible a changé",
+                                       code="storage_target_generation_changed")
+            current()
+
+        def work():
+            with lock:
+                if used[0]:
+                    raise _VariantConflict("Transfert déjà admis",
+                                           code="artifact_route_admission_used")
+                used[0] = True
+            exact_target()
+            filename = Path(request.filename or request.artifact.filename or (
+                request.artifact.artifact_id.replace(":", "-") + "." +
+                request.artifact.format.format)).name
+            plan = ArtifactRoutePlan(request, target, filename)
+            return self._transfer(plan, admitted=(
+                owner, pid, current, exact_target, pinned_target_service,
+            ))
+
+        current()
+        return work
+
     def transfer(self, plan: ArtifactRoutePlan, control: TaskControl | None = None) -> ArtifactTransferResult:
+        return self._transfer(plan, control)
+
+    def _transfer(self, plan, control=None, *, admitted=None):
         recorder = getattr(self.service, "_record_action", None)
         try:
             # A caller can hold a previously constructed (or synthetic) plan
@@ -2158,7 +2277,30 @@ class ArtifactRoutingBrokerImpl:
             if manager is None: raise RuntimeError("plugin manager unavailable")
             resolved=next((r for r in manager.services("storage.target") if r.plugin_id == plan.target.plugin_id and r.registry_generation == plan.target.registry_generation),None)
             if resolved is None: raise Conflict("La cible a changé depuis la planification", code="storage_target_generation_changed")
-            lease=self.execution.input_lease(plan.request.artifact)
+            if admitted is None:
+                lease=self.execution.input_lease(plan.request.artifact)
+                if (plan.request.identity_id is not None
+                        and plan.request.identity_id != lease.source_identity_id):
+                    raise _VariantConflict("Profil source distinct",
+                                           code="artifact_source_identity_mismatch")
+            else:
+                owner, pid, current, exact_target, pinned_target_service = admitted
+                current()
+                if resolved.service is not pinned_target_service:
+                    raise _VariantConflict("La cible a changé",
+                                           code="storage_target_generation_changed")
+                lease=self.execution._input_lease(
+                    plan.request.artifact, identity_id=owner, placement_id=pid,
+                    admitted_owner=owner,
+                )
+                exact_target()
+                # No navigation is consulted after admission. But a changed
+                # source inode or target generation still blocks the write.
+                if (_variant_file_stamp(lease.path) != lease.source_stamp
+                        or _variant_directory_stamp(lease.path.parent)
+                           != lease.source_directory_stamp):
+                    raise _VariantConflict("Placement source modifié",
+                                           code="artifact_route_scope_changed")
             importer=getattr(resolved.service,"import_artifact",None)
             if not callable(importer): raise UnsupportedOperation("La cible ne supporte pas import_artifact")
             result=importer(ArtifactInput(path=lease.path,artifact_id=plan.request.artifact.artifact_id,title="",format=plan.request.artifact.format.format,sha256=plan.request.artifact.sha256),plan.target.target.target_id,filename=plan.filename)
@@ -2166,7 +2308,14 @@ class ArtifactRoutingBrokerImpl:
             if not destination.is_file(): raise NotFound("La cible n'a pas matérialisé le fichier", code="storage_transfer_missing")
             copied_sha=sha256_file(destination)
             if plan.request.artifact.sha256 and copied_sha != plan.request.artifact.sha256: raise Conflict("Checksum cible différent", code="storage_transfer_checksum_mismatch")
-            placement_id=self.service.storage.placement_put({"artifact_id":plan.request.artifact.artifact_id,"path":str(destination),"identity_id":plan.request.identity_id,"provider_id":"storage","state":"present","last_seen_at":int(time.time()),"metadata":{"placement_kind":"storage","storage_target_id":plan.target.target.target_id,"storage_plugin_id":plan.target.plugin_id,"relative_path":str(result.relative_path)}})
+            if admitted is not None:
+                exact_target()
+                if (_variant_file_stamp(lease.path) != lease.source_stamp
+                        or _variant_directory_stamp(lease.path.parent)
+                           != lease.source_directory_stamp):
+                    raise _VariantConflict("Placement source modifié",
+                                           code="artifact_route_scope_changed")
+            placement_id=self.service.storage.placement_put({"artifact_id":plan.request.artifact.artifact_id,"path":str(destination),"identity_id":lease.source_identity_id,"provider_id":"storage","state":"present","last_seen_at":int(time.time()),"metadata":{"placement_kind":"storage","storage_target_id":plan.target.target.target_id,"storage_plugin_id":plan.target.plugin_id,"relative_path":str(result.relative_path)}})
             row=self.service.storage.placement_get(placement_id); placement=_placement_ref(row) if row else None
             if control is not None: control.report(current=1,total=1,message="Transfert terminé")
             if callable(recorder): recorder(plan.request.identity_id, "transfer", "success", plugin_id=plan.target.plugin_id, facts={"target_id": plan.target.target.target_id, "artifact_id": plan.request.artifact.artifact_id})

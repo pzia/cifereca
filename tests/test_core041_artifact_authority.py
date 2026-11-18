@@ -173,3 +173,51 @@ def test_variant_preference_and_delete_are_core_owned(tmp_path):
     assert result.ok and service.storage.artifact_variants(artifact_id=variant.artifact_id)==[]
     assert read.preferred_artifact('book-1',purpose='transfer').artifact_id == source.artifact_id
 
+
+
+def test_admitted_storage_route_survives_navigation_and_preserves_owner(tmp_path):
+    from dataclasses import replace
+    from cifereca.plugin_api import Conflict
+    service, source, pid = make_service(tmp_path)
+    target = FakeStorageTarget(tmp_path / "reader")
+    service.plugin_manager = FakeManager(target=target)
+    execution = ArtifactExecutionBrokerImpl(service)
+    routing = ArtifactRoutingBrokerImpl(service, execution)
+    source = replace(source, identity_id="id1", placement_id=pid)
+    request = ArtifactRouteRequest(source, target_id="reader", identity_id="id1")
+    selected, = routing.targets(request)
+    worker = routing.admit_transfer(request, selected)
+    service.current_identity = SimpleNamespace(identity_id="id2")
+    result = worker()
+    assert result.ok and result.placement.identity_id == "id1"
+    assert (target.mount / "Book.epub").read_bytes() == b"book-data"
+    import pytest
+    with pytest.raises(Conflict):
+        worker()
+
+
+def test_admitted_route_rejects_real_revocation_before_import(tmp_path):
+    from dataclasses import replace
+    from cifereca.plugin_api import Conflict
+    import pytest
+    for mode in ("epoch", "target", "source"):
+        (tmp_path / mode).mkdir()
+        service, source, pid = make_service(tmp_path / mode)
+        target = FakeStorageTarget(tmp_path / mode / "reader")
+        service.plugin_manager = FakeManager(target=target)
+        routing = ArtifactRoutingBrokerImpl(service, ArtifactExecutionBrokerImpl(service))
+        source = replace(source, identity_id="id1", placement_id=pid)
+        request = ArtifactRouteRequest(source, target_id="reader", identity_id="id1")
+        selected, = routing.targets(request)
+        worker = routing.admit_transfer(request, selected)
+        if mode == "epoch":
+            service._source_context_epoch = 1
+        elif mode == "target":
+            target.mount = tmp_path / mode / "other-target"
+        else:
+            (tmp_path / mode / "library" / "Book.epub").write_bytes(b"changed")
+        with pytest.raises(Conflict):
+            worker()
+        assert not target.mount.exists()
+        assert not any(p["provider_id"] == "storage" for p in service.storage.placements())
+        service.storage.close()
