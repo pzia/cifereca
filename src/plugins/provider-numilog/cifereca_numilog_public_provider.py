@@ -236,7 +236,7 @@ class NumilogPublicSession(ProviderSession):
 
         rows, token, complete = self._search_retained_page(query, scope, page=page, field=field)
         return ProviderSearchResponse(
-            results=list(rows), partial=not complete,
+            results=list(rows), catalogue_complete=complete,
             public_notices=tuple(PublicSearchNotice(row) for row in rows),
         ), token
 
@@ -515,7 +515,7 @@ class NumilogPublicSession(ProviderSession):
         normalized_scope = "all" if scope == "catalog" else scope
         rows, complete = self._search_public_page(query, normalized_scope, field=field)
         return ProviderSearchResponse(
-            results=list(rows), partial=not complete,
+            results=list(rows), catalogue_complete=complete,
             public_notices=tuple(PublicSearchNotice(result=row) for row in rows),
         )
 
