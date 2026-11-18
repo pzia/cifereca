@@ -46,12 +46,13 @@ _PRIVATE_BIBLIOGRAPHIC_PATTERN = re.compile(
 def _public_bibliographic_text(
     value: object, *, required: bool = False, limit: int = 8192,
 ) -> bool:
-    """A public notice cannot launder private URLs or auth/account strings."""
+    """One scalar policy for public projection, durable C and structured metadata."""
     return (
         _text(value, required=required, limit=limit)
         and (value is None or (
             type(value) is str
             and _PRIVATE_BIBLIOGRAPHIC_PATTERN.search(value) is None
+            and _PRIVATE_LOCATION.match(value.lstrip()) is None
         ))
     )
 
@@ -88,8 +89,7 @@ def _public_bibliographic_metadata(raw: object) -> dict | None:
         # Explicit literary award labels have a tighter per-value bound.
         limit = 240 if name in ("awards", "prizes", "literary_prizes") else 8192
         for part in parts:
-            if (type(part) is not str or not _public_bibliographic_text(part, limit=limit)
-                    or _PRIVATE_LOCATION.match(part.lstrip()) is not None):
+            if type(part) is not str or not _public_bibliographic_text(part, limit=limit):
                 return None
         copied = value if type(value) is str else list(parts)
         # Count the actual bounded UTF-8 JSON, including escaping and keys.
