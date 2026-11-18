@@ -249,6 +249,7 @@ def _identifier_items(raw: object):
 # ranges as publisher-attested ages; keep each assertion separate.
 _AGE_KINDS = {
     "publisher": "Âge éditeur",
+    "recommended": "Âge recommandé",
     "reading": "Âge de lecture",
     "interest": "Âge d’intérêt",
     "inferred": "Âge inféré (non attesté)",
