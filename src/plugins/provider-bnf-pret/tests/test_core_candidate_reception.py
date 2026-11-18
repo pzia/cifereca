@@ -50,7 +50,7 @@ def adapter(tmp_path, monkeypatch):
         _sessions={(provider, credential): session},
         _session_key=lambda p, c: (p, c),
         sync_source_enabled=lambda a: a is account,
-        _paris_adept_identity_for_loan=lambda loan, *, connection_identity_id: (
+        resolve_adept_borrower_for_loan=lambda loan, *, connection_identity_id: (
             (identity, None) if (
                 connection_identity_id == identity
                 and (loan.source_provider, loan.source_credential, loan.source_account_id)
