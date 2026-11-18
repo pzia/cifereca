@@ -353,7 +353,7 @@ class GutenbergSession(ProviderSession):
         feed = self._read_atom_feed(content, started=started)
         return self._parse_atom_entries(feed, base_url, byte_count=len(content), started=started)
 
-    def _parse_atom_entries(self, feed, base_url, *, byte_count, started):
+    def _parse_atom_entries(self, feed, base_url, *, byte_count, started, warnings=None):
         entries = feed.entries
         stats = {
             "entries": len(entries),
@@ -545,6 +545,11 @@ class GutenbergSession(ProviderSession):
                     } if row.get("thumbnail") else {}),
                 },
             ))
+        if warnings is not None and (
+            stats["without_epub"] or stats["without_ebook_id"]
+            or (stats["placeholder"] and stats["entries"] != 1)
+        ):
+            warnings.append("partial_results : entrées OPDS non qualifiées")
         duplicate_editions = max(0, stats["candidate_editions"] - len(candidates))
         duration_ms = int((time.perf_counter() - started) * 1000)
         detail = {
@@ -786,7 +791,7 @@ class GutenbergSession(ProviderSession):
                 return []
             current_url=next_url; params=None; page_index+=1
         assert response is not None
-        parsed = self._parse_atom_entries(feed, response_url, byte_count=len(content), started=parse_started); rows = self._field_filter(parsed, filter_query, field); duration_ms = int((time.perf_counter() - started) * 1000)
+        parsed = self._parse_atom_entries(feed, response_url, byte_count=len(content), started=parse_started, warnings=self.last_search_warnings); rows = self._field_filter(parsed, filter_query, field); duration_ms = int((time.perf_counter() - started) * 1000)
         if field not in ("all", ""):
             # Filters are applied *after* obtaining one requested OPDS page.
             # Zero rows here are not evidence that the entire corpus lacks
