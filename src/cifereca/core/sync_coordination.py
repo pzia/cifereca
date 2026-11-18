@@ -1234,6 +1234,15 @@ def _opening_sync_locked(self, progress: Callable[[dict[str, Any]], None] | None
                 session = self._sessions.get(
                     self._session_key(loan.source_provider, loan.source_credential)
                 )
+                # Cut over installed canonical producers regardless of an
+                # unset policy or failed/partial A. Their legacy descriptor
+                # capability is not an acquisition grant. Never interpret
+                # a missing CAS revision as permission for a second executor.
+                from .canonical_delivery_abi import has_complete_delivery_abi
+                if has_complete_delivery_abi(session):
+                    continue
+                # Compatibility for pre-canonical installed Plugin API 1.x
+                # producers only. No current canonical producer reaches this.
                 if not _opening_loan_acquisition_allowed(loan, session=session):
                     continue
                 result = self._acquire_active_loan_automatically(loan)
