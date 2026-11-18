@@ -962,9 +962,11 @@ class GallicaPlugin(ProviderPlugin):
         return self
     @staticmethod
     def parse_feed(content: bytes, base_url: str) -> list[dict[str, object]]:
-        root = ET.fromstring(content)
+        # Keep the historical dictionary projection, but share the exact
+        # bounded Atom parser and refusal classification of the session.
+        feed = GallicaSession._opds_atom(content)
         out: list[dict[str, object]] = []
-        for entry in root.findall(f"{{{ATOM}}}entry"):
+        for entry in feed.entries:
             title = GallicaSession._text(entry.find(f"{{{ATOM}}}title")) or "Sans titre"
             authors = [GallicaSession._text(a.find(f"{{{ATOM}}}name")) or "" for a in entry.findall(f"{{{ATOM}}}author")]
             acquisition = None; acquisition_type = ""; thumbnail = None; friendly = None
