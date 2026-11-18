@@ -19,7 +19,7 @@ from .library_files import sha256_file
 from .plugin_api import (
     ArtifactFormat, ArtifactInput, ArtifactPlacementRef, ArtifactPossessionRef, ArtifactRef,
     ArtifactRoutePlan, ArtifactRouteRequest, ArtifactRouteTarget, ArtifactTransferResult,
-    ArtifactVariant, BookRef, Conflict, LibraryMutationPlan, LibraryMutationRequest,
+    ArtifactVariant, BookRef, Conflict, StorageTarget, LibraryMutationPlan, LibraryMutationRequest,
     LibraryMutationResult, LogicalBookArtifacts, NotFound, TaskControl, TransformRequest,
     TransformResult, UnsupportedOperation,
 )
@@ -483,9 +483,9 @@ class ArtifactExecutionBrokerImpl:
         if len(rows) != 1:
             raise _VariantConflict("Placement source ambigu", code="artifact_source_ambiguous")
         row = rows[0]
-        # A valid SHA owned only by profile A still is not available to a
-        # user whose active profile is B. ArtifactRef has no identity, so the
-        # host's current selection is the second mandatory authority.
+        # A global SHA is not permission. Ordinary synchronous callers
+        # still need the active profile; the admitted route instead pins
+        # its proven exact owner at the explicit user action.
         # Only the internal, already admitted route may supply an owner.
         # Ordinary public input/output leases retain their navigation check.
         active_identity = (admitted_owner if admitted_owner is not None else
@@ -2169,6 +2169,7 @@ class ArtifactRoutingBrokerImpl:
         if (type(request) is not ArtifactRouteRequest
                 or type(request.artifact) is not ArtifactRef
                 or type(target) is not ArtifactRouteTarget
+                or type(target.target) is not StorageTarget
                 or _is_usb_storage_target(target.target)
                 or type(request.identity_id) is not str or not request.identity_id
                 or request.artifact.identity_id != request.identity_id
@@ -2183,6 +2184,19 @@ class ArtifactRoutingBrokerImpl:
         service = self.service
         storage, manager = service.storage, service.plugin_manager
         epoch = source_context_epoch(service)
+        if manager is None:
+            raise _NoStorageTarget("Aucune cible de stockage compatible")
+
+        def matching_services():
+            return [row.service for row in manager.services("storage.target")
+                    if row.plugin_id == target.plugin_id
+                    and row.registry_generation == target.registry_generation]
+
+        services = matching_services()
+        if len(services) != 1:
+            raise _VariantConflict("La cible a changé",
+                                   code="storage_target_generation_changed")
+        pinned_target_service = services[0]
         pid, owner = request.artifact.placement_id, request.identity_id
         row = storage.placement_get(pid)
         if (type(row) is not dict or row.get("identity_id") != owner
@@ -2219,7 +2233,9 @@ class ArtifactRoutingBrokerImpl:
             current()
             matches = [candidate for candidate in self.targets(request)
                        if candidate == target]
-            if len(matches) != 1:
+            services = matching_services()
+            if (len(matches) != 1 or len(services) != 1
+                    or services[0] is not pinned_target_service):
                 raise _VariantConflict("La cible a changé",
                                        code="storage_target_generation_changed")
             current()
@@ -2235,7 +2251,9 @@ class ArtifactRoutingBrokerImpl:
                 request.artifact.artifact_id.replace(":", "-") + "." +
                 request.artifact.format.format)).name
             plan = ArtifactRoutePlan(request, target, filename)
-            return self._transfer(plan, admitted=(owner, pid, current, exact_target))
+            return self._transfer(plan, admitted=(
+                owner, pid, current, exact_target, pinned_target_service,
+            ))
 
         current()
         return work
@@ -2266,8 +2284,11 @@ class ArtifactRoutingBrokerImpl:
                     raise _VariantConflict("Profil source distinct",
                                            code="artifact_source_identity_mismatch")
             else:
-                owner, pid, current, exact_target = admitted
+                owner, pid, current, exact_target, pinned_target_service = admitted
                 current()
+                if resolved.service is not pinned_target_service:
+                    raise _VariantConflict("La cible a changé",
+                                           code="storage_target_generation_changed")
                 lease=self.execution._input_lease(
                     plan.request.artifact, identity_id=owner, placement_id=pid,
                     admitted_owner=owner,
@@ -2288,7 +2309,7 @@ class ArtifactRoutingBrokerImpl:
             copied_sha=sha256_file(destination)
             if plan.request.artifact.sha256 and copied_sha != plan.request.artifact.sha256: raise Conflict("Checksum cible différent", code="storage_transfer_checksum_mismatch")
             if admitted is not None:
-                current()
+                exact_target()
                 if (_variant_file_stamp(lease.path) != lease.source_stamp
                         or _variant_directory_stamp(lease.path.parent)
                            != lease.source_directory_stamp):
