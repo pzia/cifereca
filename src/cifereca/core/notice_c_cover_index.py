@@ -517,6 +517,18 @@ def persist_origin_linked_public_cover_group(
     overlapping or shrinking groups do not create a second competing C.
     Discovery and commit use the same SQLite transaction.
     """
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        return _persist_origin_linked_public_cover_group_txn(db, sources=sources)
+
+
+def _persist_origin_linked_public_cover_group_txn(
+    db: Any, *, sources: tuple[PersistedNoticeCover, ...],
+    expected_document: CoverDocumentScope | None = None,
+) -> ConsolidatedNoticeCover:
+    """Same group writer inside the caller's publication transaction."""
+    if not db.in_transaction:
+        raise ValueError("canonical_cover_transaction_required")
     refs = _public_group_refs(sources)
     digest = sha256(json.dumps(
         ["cifereca.c.origin-linked-public-edition.v1", *sorted(refs)],
@@ -526,48 +538,48 @@ def persist_origin_linked_public_cover_group(
     proof_prefix = "core.origin.linked.v1:"
     initial = prefix + digest
     target = initial
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN IMMEDIATE")
-        cursor = db.execute(
-            "SELECT m.key,m.value FROM metadata AS m "
-            "WHERE m.key>=? AND m.key<? AND EXISTS ("
-            "SELECT 1 FROM json_each(CASE WHEN json_valid(m.value) "
-            "THEN m.value ELSE '{}' END, '$.sources') AS src "
-            "WHERE src.key IN (SELECT value FROM json_each(?))) ORDER BY m.key",
-            (_PREFIX, _PREFIX + "\uffff", json.dumps(sorted(refs))),
-        )
-        overlaps = set()
-        for key, raw in cursor:
-            payload = _json(raw)
-            edition = payload["edition_id"]
-            document = canonical_cover_document_ref(edition)
-            if _db_key(document) != key:
-                raise ValueError("canonical_cover_group_conflict")
-            previous = _decode(raw, document)
-            members = previous.sources
-            if (len(members) == 1
-                    and members[0].public_bibliography is not None
-                    and edition == members[0].public_bibliography.edition_id):
-                # The independent exact self-C is not a competing relation.
-                continue
-            suffix = edition[len(prefix):] if edition.startswith(prefix) else ""
-            if (_HASH.fullmatch(suffix) is None
-                    or (len(members) == 1 and edition != initial)
-                    or any(member.source_ref not in refs
-                           or member.visibility != "public"
-                           or member.public_bibliography is None
-                           or member.relation_proof_id != proof_prefix + suffix
-                           for member in members)):
-                raise ValueError("canonical_cover_group_conflict")
-            overlaps.add(edition)
-            if len(overlaps) > 1:
-                raise ValueError("canonical_cover_group_conflict")
-        if overlaps:
-            target = next(iter(overlaps))
-        return _persist_public_group_txn(
-            db, canonical_edition_id=target, sources=sources, refs=refs,
-            relation_proof_id=proof_prefix + target[len(prefix):],
-        )
+    cursor = db.execute(
+        "SELECT m.key,m.value FROM metadata AS m "
+        "WHERE m.key>=? AND m.key<? AND EXISTS ("
+        "SELECT 1 FROM json_each(CASE WHEN json_valid(m.value) "
+        "THEN m.value ELSE '{}' END, '$.sources') AS src "
+        "WHERE src.key IN (SELECT value FROM json_each(?))) ORDER BY m.key",
+        (_PREFIX, _PREFIX + "\uffff", json.dumps(sorted(refs))),
+    )
+    overlaps = set()
+    for key, raw in cursor:
+        payload = _json(raw)
+        edition = payload["edition_id"]
+        document = canonical_cover_document_ref(edition)
+        if _db_key(document) != key:
+            raise ValueError("canonical_cover_group_conflict")
+        previous = _decode(raw, document)
+        members = previous.sources
+        if (len(members) == 1
+                and members[0].public_bibliography is not None
+                and edition == members[0].public_bibliography.edition_id):
+            # The independent exact self-C is not a competing relation.
+            continue
+        suffix = edition[len(prefix):] if edition.startswith(prefix) else ""
+        if (_HASH.fullmatch(suffix) is None
+                or (len(members) == 1 and edition != initial)
+                or any(member.source_ref not in refs
+                       or member.visibility != "public"
+                       or member.public_bibliography is None
+                       or member.relation_proof_id != proof_prefix + suffix
+                       for member in members)):
+            raise ValueError("canonical_cover_group_conflict")
+        overlaps.add(edition)
+        if len(overlaps) > 1:
+            raise ValueError("canonical_cover_group_conflict")
+    if overlaps:
+        target = next(iter(overlaps))
+    if expected_document is not None and canonical_cover_document_ref(target) != expected_document:
+        raise ValueError("canonical_cover_group_conflict")
+    return _persist_public_group_txn(
+        db, canonical_edition_id=target, sources=sources, refs=refs,
+        relation_proof_id=proof_prefix + target[len(prefix):],
+    )
 
 
 def persist_exact_public_search_cover(
@@ -582,6 +594,26 @@ def persist_exact_public_search_cover(
     admitted by a separate strong-link producer, never by this function.
     Revalidate current SQLite evidence transactionally in the index writer.
     """
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        return _persist_exact_public_search_cover_txn(db, source)
+
+
+def _persist_exact_public_search_cover_txn(
+    db: Any, source: PersistedNoticeCover, *, expected_epoch: int | None = None,
+) -> ConsolidatedNoticeCover:
+    """Same exact-source authority inside an existing writer transaction."""
+    if not db.in_transaction:
+        raise ValueError("canonical_cover_transaction_required")
+    edition_id, proof_id = _exact_public_search_evidence(source)
+    return _persist_consolidated_cover_source_txn(
+        db, canonical_edition_id=edition_id, source=source,
+        relation_proof_id=proof_id, expected_epoch=expected_epoch,
+    )
+
+
+def _exact_public_search_evidence(source: PersistedNoticeCover) -> tuple[str, str]:
+    """Derive only immutable self-identity evidence from the admitted source."""
     if (type(source) is not PersistedNoticeCover
             or source.observation.key.visibility != "public"
             or source.observation.key.branch_id != "search.public.catalogue"
@@ -626,10 +658,7 @@ def persist_exact_public_search_cover(
          source.document.source_key, key.edition_id],
         ensure_ascii=True, separators=(",", ":"),
     ).encode("ascii")).hexdigest()
-    return persist_consolidated_cover_source(
-        storage, canonical_edition_id=key.edition_id, source=source,
-        relation_proof_id="core.exact.search.v1:" + digest,
-    )
+    return key.edition_id, "core.exact.search.v1:" + digest
 
 
 __all__ = [

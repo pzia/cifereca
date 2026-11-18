@@ -37,6 +37,28 @@ class PublicCatalogueCache:
             # Budget/cooldown survive reconnect: reconnect is not a rate-limit
             # workaround. Keep the in-flight reservation until its own return.
 
+    def _peek_retained_input(self, token):
+        """Bounded cache-only lookup, no load callback, token or LRU renewal.
+
+        The session owns the cache and must fence its own generation before
+        and after replay. A retained input shares the existing entry's TTL,
+        eviction and reconnect invalidation. Do not export raw query/body
+        through the normal SearchResult or plugin UI surfaces.
+        """
+        from cifereca_numilog_public_client import _RetainedSearchPage
+
+        with self._lock:
+            now = self._clock()
+            for key, (until, _value) in tuple(self._entries.items()):
+                if until <= now:
+                    self._entries.pop(key, None)
+            for until, value in self._entries.values():
+                if (type(value) is _RetainedSearchPage
+                        and value.raw_input is not None
+                        and value.raw_input.token == token):
+                    return value, max(0, math.floor(until - now))
+        return None, 0
+
     def get(self, key, load):
         with self._lock:
             now = self._clock()

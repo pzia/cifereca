@@ -2,8 +2,6 @@
 
 Only an httpx MockTransport is used; no network, accounts or acquisition.
 """
-from types import SimpleNamespace as NS
-
 import httpx
 import pytest
 
@@ -14,7 +12,18 @@ from cifereca_gutenberg import GutenbergSession
 FEED = b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>'
 
 
-def make_session(status=200):
+def book_feed(*books):
+    entries = "".join(
+        f'<entry><id>urn:gutenberg:{index}</id><title>{title}</title>'
+        f'<author><name>{author}</name></author>'
+        f'<link rel="http://opds-spec.org/acquisition" type="application/epub+zip" '
+        f'href="/ebooks/{index}.epub3.images"/></entry>'
+        for index, (title, author) in enumerate(books, start=1)
+    )
+    return ('<feed xmlns="http://www.w3.org/2005/Atom">' + entries + '</feed>').encode("utf-8")
+
+
+def make_session(status=200, *, payload=FEED):
     calls = []
 
     def handle(request):
@@ -23,7 +32,7 @@ def make_session(status=200):
             return httpx.Response(
                 status, text="PRIVATE_SIGNED_URL?access_token=SECRET",
             )
-        return httpx.Response(200, content=FEED)
+        return httpx.Response(200, content=payload)
 
     session = GutenbergSession(
         credential_id="public", label="", credentials={},
@@ -56,11 +65,9 @@ def test_invalid_field_or_scope_rejected_before_http(field, scope, reason):
 
 
 def test_author_filter_explicitly_discloses_only_requested_opds_page():
-    session, calls = make_session()
-    session._parse_feed = lambda *_: [
-        NS(title="Sample", author="Jane Writer", metadata={}),
-        NS(title="Other", author="Someone Else", metadata={}),
-    ]
+    session, calls = make_session(payload=book_feed(
+        ("Sample", "Jane Writer"), ("Other", "Someone Else"),
+    ))
     try:
         rows = session.search("Writer", field="author")
         assert len(calls) == 1
@@ -77,8 +84,7 @@ def test_author_filter_explicitly_discloses_only_requested_opds_page():
 
 
 def test_general_search_has_no_false_partial_warning():
-    session, calls = make_session()
-    session._parse_feed = lambda *_: [NS(title="Sample", author="Writer", metadata={})]
+    session, calls = make_session(payload=book_feed(("Sample", "Writer")))
     try:
         assert len(session.search("Sample", field="all", scope="digital")) == 1
         assert len(calls) == 1

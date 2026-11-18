@@ -149,3 +149,37 @@ def test_malformed_or_oversized_result_cannot_leak_payload():
         {"CustomResult": '<a href="/Search?field=SeriesTitle_idx">A</a>'},
         "UNKNOWN",
     ) == {}
+
+
+@pytest.mark.parametrize("scenario", ("CATALOGUE", "EBOOKS"))
+@pytest.mark.parametrize("other", ("CustomResult", "CompactResult"))
+@pytest.mark.parametrize("bad", (
+    '<a href="/Search?field=SeriesTitle_idx">A</a><a href="/Search?field=SeriesTitle_exact">B</a>',
+    '<a href="/Search?field=SeriesTitle_idx">Unclosed',
+    '<a href="/Search?field=SeriesTitle_idx"><script>hidden()</script></a>',
+    '<template><a href="/Search?field=SeriesTitle_idx">Hidden</a></template>',
+    '<a href="https://bibliotheques.paris.fr:bad/Search?field=SeriesTitle_idx">Bad port</a>',
+    '<a href="/Search?field=SeriesTitle_idx%00">Control</a>',
+    '<a href="/%5c%5coutside.invalid/Search?field=SeriesTitle_idx">Separator</a>',
+    '<a href="/Search?field=SeriesTitle_idx%23fragment">Fragment</a>',
+    '<a href="/Search?field=SeriesTitle_idx" href="/anything">Duplicate href</a>',
+    '<a href="/Search?field=SeriesTitle_idx">PRIVATE@EMAIL.invalid</a>',
+    '<a href="/Search?field=SeriesTitle_idx">' + "A"*1025 + '</a>',
+    SERIES_LINK * 65,
+))
+def test_bad_or_conflicting_fragment_cannot_be_hidden_by_other_valid_fragment(scenario, other, bad):
+    good = "CompactResult" if other == "CustomResult" else "CustomResult"
+    item = _record(scenario, **{good: SERIES_LINK, other: bad})
+    assert item is not None
+    assert "series" not in item.metadata
+    assert item.metadata["subjects"] == ["Nature"]
+    assert "series" not in item.metadata["bibliography_evidence"]
+    assert "PRIVATE@" not in repr(item.metadata)
+
+
+@pytest.mark.parametrize("unrelated", (None, "", '<a href="/Search?field=Author_idx">Writer</a>',
+                                      '<div>Plain bibliographic text</div>'))
+def test_absent_series_in_second_fragment_does_not_cancel_valid_source(unrelated):
+    item = _record("EBOOKS", CustomResult=unrelated, CompactResult=SERIES_LINK)
+    assert item.metadata["series"] == ["La saga & ses suites"]
+    assert item.metadata["bibliography_evidence"]["series"]["source_field"] == "Search.CompactResult"
