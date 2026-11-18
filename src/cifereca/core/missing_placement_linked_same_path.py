@@ -51,6 +51,7 @@ def preview_reappeared_linked_placement(
 def restore_reappeared_linked_placement(
     storage, *, placement_id: str, identity_id: str, library_root: Path,
     plan_token: str, confirmed: bool, shared_lock,
+    admitted_scope=None,
 ) -> dict[str, object]:
     """Atomically restore only local presence; no right/source/bytes mutation."""
     if confirmed is not True:
@@ -70,6 +71,9 @@ def restore_reappeared_linked_placement(
             try:
                 db.execute("PRAGMA synchronous=FULL")
                 db.execute("BEGIN IMMEDIATE")
+                if admitted_scope is not None and admitted_scope(db, initial=True) is not True:
+                    db.rollback()
+                    return _blocked("scope_changed")
                 result, evidence = _evidence(
                     db, root=root, identity_id=identity_id,
                     placement_id=placement_id, linked_catalogue=True,
@@ -124,6 +128,9 @@ def restore_reappeared_linked_placement(
                         ) != "verified_sha256"):
                     db.rollback()
                     return _blocked("file_changed")
+                if admitted_scope is not None and admitted_scope(db, initial=False) is not True:
+                    db.rollback()
+                    return _blocked("scope_changed")
                 db.commit()
                 return {"status": "restored", "reason": "linked_catalogue_reappeared",
                         "catalogue_rows": len(linked)}
