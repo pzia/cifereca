@@ -12,7 +12,10 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 
 import httpx
-from cifereca.plugin_api import HTTPX_TRANSPORT, CatalogueXMLParseError, parse_atom_catalogue
+from cifereca.plugin_api import (
+    HTTPX_TRANSPORT, CatalogueXMLParseError, parse_atom_catalogue,
+    catalogue_next, catalogue_url_origin, resolve_catalogue_link,
+)
 
 from cifereca.plugin_api import (
     Account,
@@ -545,38 +548,29 @@ class GutenbergSession(ProviderSession):
 
     @staticmethod
     def _next_page_from_atom(feed, base_url: str) -> str | None:
-        # Missing and unsafe/ambiguous declarations remain distinct.
-        try:
-            base = urlsplit(base_url)
-            base_port = base.port or (443 if base.scheme == "https" else 80)
-        except ValueError:
-            raise ProviderError("Project Gutenberg : opds_next_link_unverified") from None
-        next_urls = set()
-        for link in feed.links:
-            rel = link.rel.strip().casefold()
-            if rel != "next":
-                continue
-            href = html.unescape(link.href)
-            if (not href or len(href) > 2048 or href != href.strip()
-                    or "\\" in href or any(ord(ch) < 33 or ord(ch) == 127 for ch in href)):
-                raise ProviderError("Project Gutenberg : opds_next_link_unverified")
-            try:
-                resolved = urljoin(base_url, href)
-                parsed = urlsplit(resolved)
-                port = parsed.port or (443 if parsed.scheme == "https" else 80)
-                if (parsed.scheme != base.scheme
-                        or parsed.scheme not in {"http", "https"}
-                        or not parsed.hostname or not base.hostname
-                        or parsed.hostname.casefold() != base.hostname.casefold()
-                        or port != base_port or parsed.username or parsed.password
-                        or parsed.fragment or len(resolved) > 4096):
-                    raise ValueError("unverified")
-            except ValueError:
-                raise ProviderError("Project Gutenberg : opds_next_link_unverified") from None
-            next_urls.add(resolved)
-            if len(next_urls) > 1:
-                raise ProviderError("Project Gutenberg : opds_next_link_ambiguous")
-        return next(iter(next_urls)) if next_urls else None
+        # Restrict the destination to the exact request origin, preserving
+        # the provider's existing raw link length and entity handling.
+        origin = catalogue_url_origin(base_url)
+        if origin is None:
+            raise ProviderError("Project Gutenberg : opds_next_link_unverified")
+
+        def resolve(raw):
+            href = html.unescape(raw)
+            if len(href) > 2048:
+                return None
+            return resolve_catalogue_link(
+                base_url, href, accept=lambda value: catalogue_url_origin(value) == origin,
+            )
+
+        decision = catalogue_next(
+            (link.href for link in feed.links if link.rel.strip().casefold() == "next"),
+            resolve=resolve,
+        )
+        if decision.state == "invalid":
+            raise ProviderError("Project Gutenberg : opds_next_link_unverified")
+        if decision.state == "ambiguous":
+            raise ProviderError("Project Gutenberg : opds_next_link_ambiguous")
+        return decision.url
 
     @staticmethod
     def _field_filter(rows: list[SearchResult], query: str, field: str) -> list[SearchResult]:
@@ -751,7 +745,17 @@ class GutenbergSession(ProviderSession):
             parse_started = time.perf_counter()
             feed = self._read_atom_feed(content, started=parse_started)
             self._remember_page(rows_cache,page_index,response_url)
-            next_url=self._next_page_from_atom(feed,response_url)
+            try:
+                next_url=self._next_page_from_atom(feed,response_url)
+            except ProviderError:
+                if page_index != page:
+                    raise
+                # Current page remains descriptive evidence. Never follow or
+                # certify a broken next declaration, nor discard valid rows.
+                self.last_search_warnings.append(
+                    "partial_results : pagination OPDS non vérifiée"
+                )
+                next_url=None
             if next_url: self._remember_page(rows_cache,page_index+1,next_url)
             if page_index == page: break
             if not next_url:

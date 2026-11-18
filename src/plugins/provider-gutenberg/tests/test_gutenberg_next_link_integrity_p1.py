@@ -76,3 +76,38 @@ def test_invalid_next_never_claims_page_one_empty_before_second_get():
         assert session.last_search_warnings == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("href", ["", " ", "?query=foo\\private", "?query=foo\u200b"])
+def test_invalid_next_dominates_valid_declaration(href):
+    import html
+    content = atom(
+        '<link rel="next" href="?query=foo&amp;start_index=26"/>'
+        '<link rel="next" href="' + html.escape(href, quote=True) + '"/>'
+    )
+    with pytest.raises(ProviderError, match="opds_next_link_unverified"):
+        GutenbergSession._next_page_url(content, BASE)
+
+
+def test_current_page_retains_verified_rows_on_invalid_next(monkeypatch):
+    seen = []
+    def mock(request):
+        seen.append(str(request.url))
+        return httpx.Response(200, content=atom(
+            '<link rel="next" href="https://evil.example/private?token=SECRET"/>'
+        ))
+
+    session = GutenbergSession(
+        credential_id="public", label="", credentials={},
+        options={"contact": "tests@example.test"}, config={}, diagnostics=None,
+    )
+    session.client.close()
+    session.client = httpx.Client(transport=httpx.MockTransport(mock))
+    verified = object()
+    monkeypatch.setattr(session, "_parse_atom_entries", lambda *args, **kwargs: [verified])
+    try:
+        assert session.search("foo", page=0) == [verified]
+        assert len(seen) == 1
+        assert session.last_search_warnings == ["partial_results : pagination OPDS non vérifiée"]
+    finally:
+        session.close()
