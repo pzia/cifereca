@@ -19,6 +19,9 @@ _COMMITTED_END = _COMMITTED[:-1] + ";"
 _MAX_RECORDS = 1024
 _MAX_RECORD_BYTES = 8192
 _MAX_TOTAL_BYTES = 8 * 1024 * 1024
+# Conservative cumulative output-size budget, not measured disk usage.
+# Both pending and committed receipts count; no implicit reclamation.
+_MAX_RESERVED_OUTPUT_BYTES = 16 * 1024 ** 3
 
 
 class DerivedJournalConflict(ValueError):
@@ -188,15 +191,19 @@ def reserve_derived_publication(storage, intent: DerivedIntent) -> DerivedReserv
                 rows, total = _measure(db)
                 if len(rows) >= _MAX_RECORDS or total + size > _MAX_TOTAL_BYTES:
                     raise DerivedJournalConflict("derived_journal_capacity_exceeded")
+                reserved_output_bytes = 0
                 for existing_key, _ in rows:
                     existing = db.execute(
                         "SELECT value FROM metadata WHERE key=?", (existing_key,),
                     ).fetchone()[0]
                     prior = _decode(existing_key, existing)
+                    reserved_output_bytes += prior.output_size
                     if (existing_key.startswith(_PREFIX) and (
                             existing_key == key or prior.candidate_path == intent.candidate_path
                             or prior.staged_path == intent.staged_path)):
                         raise DerivedJournalConflict("derived_journal_slot_occupied")
+                if reserved_output_bytes + intent.output_size > _MAX_RESERVED_OUTPUT_BYTES:
+                    raise DerivedJournalConflict("derived_journal_output_capacity_exceeded")
                 parent = db.execute(
                     "SELECT artifact_id,identity_id,path,state FROM placements "
                     "WHERE placement_id=?", (intent.parent_placement_id,),
@@ -319,13 +326,23 @@ def summarize_derived_journal(storage):
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN")
         rows, total = _measure(db)
+        pending_bytes = committed_bytes = 0
         for key, _ in rows:
             raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
-            _decode(key, raw)
+            intent = _decode(key, raw)
+            if key.startswith(_PREFIX):
+                pending_bytes += intent.output_size
+            else:
+                committed_bytes += intent.output_size
     return {
         "count": len(rows), "payload_bytes": total,
         "pending_count": sum(key.startswith(_PREFIX) for key, _ in rows),
         "committed_count": sum(key.startswith(_COMMITTED) for key, _ in rows),
         "record_capacity": _MAX_RECORDS, "payload_capacity": _MAX_TOTAL_BYTES,
+        "pending_output_bytes": pending_bytes,
+        "committed_output_bytes": committed_bytes,
+        "reserved_output_bytes": pending_bytes + committed_bytes,
+        "reserved_output_capacity": _MAX_RESERVED_OUTPUT_BYTES,
+        "physical_disk_usage_measured": False,
         "recovery_authorized": False, "destructive_cleanup_allowed": False,
     }

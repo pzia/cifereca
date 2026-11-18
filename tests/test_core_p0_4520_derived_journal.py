@@ -208,3 +208,61 @@ def test_reservation_failure_keeps_pending_and_rolls_back_canonical_rows(tmp_pat
         assert Path(intent.candidate_path).read_bytes() == b"new bytes"
     finally:
         db.close()
+
+
+def test_reserved_output_budget_includes_committed_history(tmp_path, monkeypatch):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        monkeypatch.setattr(journal, "_MAX_RESERVED_OUTPUT_BYTES", 18)
+        _publish_reserved(db, intent, reservation)
+        next_intent = replace(intent, candidate_path=str(Path(intent.candidate_path).with_name("next.epub")))
+        second = journal.reserve_derived_publication(db, next_intent)
+        before = journal.summarize_derived_journal(db)
+        assert before["pending_output_bytes"] == 9
+        assert before["committed_output_bytes"] == 9
+        assert before["reserved_output_bytes"] == before["reserved_output_capacity"] == 18
+        assert before["physical_disk_usage_measured"] is False
+        with pytest.raises(journal.DerivedJournalConflict, match="output_capacity_exceeded"):
+            journal.reserve_derived_publication(db, replace(
+                next_intent, options_fingerprint="new",
+                staged_path=str(Path(intent.staged_path).with_name("new.epub")),
+                candidate_path=str(Path(intent.candidate_path).with_name("third.epub")),
+            ))
+        assert journal.summarize_derived_journal(db) == before
+        assert db.metadata_get(second.key) is not None
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()
+
+
+def test_competing_distinct_reservations_share_one_output_budget(tmp_path, monkeypatch):
+    service, intent = _fixture(tmp_path)
+    db = service.storage
+    second = Storage(db.path)
+    monkeypatch.setattr(journal, "_MAX_RESERVED_OUTPUT_BYTES", 9)
+    other = replace(
+        intent, options_fingerprint="other",
+        staged_path=str(Path(intent.staged_path).with_name("other.epub")),
+        candidate_path=str(Path(intent.candidate_path).with_name("other.epub")),
+    )
+    barrier = Barrier(2)
+
+    def reserve(storage, value):
+        barrier.wait(timeout=10)
+        try:
+            return journal.reserve_derived_intent(storage, value)
+        except journal.DerivedJournalConflict as exc:
+            return str(exc)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a = pool.submit(reserve, db, intent)
+            b = pool.submit(reserve, second, other)
+            results = [a.result(timeout=20), b.result(timeout=20)]
+        assert sum(x.startswith(journal._PREFIX) for x in results) == 1
+        assert "derived_journal_output_capacity_exceeded" in results
+        assert journal.summarize_derived_journal(db)["reserved_output_bytes"] == 9
+    finally:
+        second.close()
+        db.close()
