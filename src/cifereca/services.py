@@ -4835,7 +4835,17 @@ class LibraryService:
         An explicit exceptional grant takes precedence without changing that
         identity's normal profile. Linked accounts always require a grant.
         """
-        return adept_borrower._paris_adept_identity_for_loan(self, loan, connection_identity_id=connection_identity_id)
+        return self.resolve_adept_borrower_for_loan(
+            loan, connection_identity_id=connection_identity_id,
+        )
+
+    def resolve_adept_borrower_for_loan(
+        self, loan: Loan, *, connection_identity_id: str,
+    ) -> tuple[str | None, str | None]:
+        """Read-only exact source-scoped grant resolution for any loan."""
+        return adept_borrower.resolve_adept_borrower_for_loan(
+            self, loan, connection_identity_id=connection_identity_id,
+        )
 
     @staticmethod
     def _cross_identity_loan_conflict(
