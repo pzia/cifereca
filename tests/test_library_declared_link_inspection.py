@@ -389,3 +389,33 @@ def test_bnf_user_declaration_is_lower_trust_not_a_provider_ownership_grant(
     assert observed['status'] == 'already_declared'
     assert observed['trust'] == 'user_declaration'
     assert observed['read_only'] is True
+
+
+def test_admitted_history_withdrawal_survives_navigation_and_is_one_shot(selected):
+    session, right, file, service, _ = selected
+    assert preview(selected)['status'] == 'preview'
+    assert confirm(selected, user_confirmed=True)['status'] == 'declared'
+    relation = records(service)[0]['relation_id']
+    assert session.preview_history_withdrawal(relation)['status'] == 'revoke_preview'
+    work = session.admit_history_withdrawal(relation, user_confirmed=True)
+    assert callable(work)
+    assert session.admit_history_withdrawal(relation, user_confirmed=True) is None
+    service.current_identity = service.identity_by_id('alex')
+    service._account_context_epoch += 1
+    session.close()
+    assert work()['status'] == 'revoked'
+    assert records(service)[0]['state'] == 'revoked'
+    assert work()['status'] == 'blocked'
+    assert not rows(service, 'placements')
+
+
+def test_admitted_history_refuses_changed_durable_state(selected):
+    session, right, file, service, _ = selected
+    assert preview(selected)['status'] == 'preview'
+    assert confirm(selected, user_confirmed=True)['status'] == 'declared'
+    relation = records(service)[0]['relation_id']
+    assert session.preview_history_withdrawal(relation)['status'] == 'revoke_preview'
+    work = session.admit_history_withdrawal(relation, user_confirmed=True)
+    service.storage.metadata_set('foreign-write', '1')
+    assert work()['status'] == 'blocked'
+    assert records(service)[0]['state'] == 'active'
