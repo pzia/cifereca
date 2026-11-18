@@ -108,6 +108,10 @@ def test_linked_loan_canonical_adept_uses_exact_grant(
             "cifereca.core.canonical_selected_delivery.acquisition_lock_file",
             lambda: path,
         )
+        monkeypatch.setattr(
+            "cifereca.core.canonical_recovery.acquisition_lock_file",
+            lambda: path,
+        )
         root = tmp_path / "EBooks"
         with InterProcessLock(path) as lock:
             def execute():
