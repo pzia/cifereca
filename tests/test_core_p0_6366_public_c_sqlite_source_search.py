@@ -269,3 +269,67 @@ def test_location_in_scalar_never_promotes_cover_only_observation(tmp_path):
         assert "private" not in repr(observed.observation.fields_copy())
     finally:
         db.close()
+
+
+def test_series_relation_survives_source_eviction_and_reopen(tmp_path):
+    from types import SimpleNamespace
+    from cifereca.core.search_orchestration import _public_rows_from_response
+    from cifereca.core.notice_c_cover_index import (
+        persist_exact_public_search_cover, read_consolidated_notice_cover, _db_key,
+    )
+    from cifereca.core.notice_cover_repository import evict_notice_cover
+    from cifereca.core.notice_c_known_projection import merge_public_notice_c_known_rows
+    from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+    import json
+
+    proof = {
+        "source": "bnf.catalogue.search", "source_field": "Search.RecordLink",
+        "scope": "search", "confidence": "linked_search_relation",
+        "freshness": "search_response",
+    }
+    metadata = {"series": ["Cycle A"], "bibliography_evidence": {"series": proof}}
+    first = public_row(record_id="series-a", metadata=metadata)
+    second = public_row(record_id="series-b", metadata={"series": ["Cycle B"]})
+    session = SimpleNamespace(provider_id="bnf", credential_id="__public__",
+                              credentials={}, _accounts=[])
+    response = ProviderSearchResponse([first, second], public_notices=(
+        PublicSearchNotice(first), PublicSearchNotice(second),
+    ))
+    rows = _public_rows_from_response(response, session)
+    assert len(rows) == 2
+    assert rows[0].metadata["bibliography_evidence"]["series"] == proof
+    assert rows[0].metadata["bibliography_evidence"]["series"] is not proof
+    path = tmp_path / "series.sqlite"
+    db = Storage(path)
+    try:
+        for row in rows:
+            source = persist(db, row)
+            canonical = persist_exact_public_search_cover(db, source)
+            if row.record_id == "series-a":
+                document = canonical.document
+                relation = canonical.sources[0].public_bibliography.series_relation
+                assert relation.label == "Cycle A"
+                assert relation.source_field == proof["source_field"]
+            else:
+                assert canonical.sources[0].public_bibliography.series_relation is None
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+    finally:
+        db.close()
+    db = Storage(path)
+    try:
+        page = search_public_notice_c(db, "titre", now=101, group_by_document=True)
+        projected = merge_public_notice_c_known_rows([], page, identity_id="bob")
+        by_id = {row["item_id"]: row["metadata"] for row in projected}
+        assert by_id["series-a"]["series"] == ["Cycle A"]
+        assert by_id["series-a"]["bibliography_evidence"] == {"series": proof}
+        assert "series" not in by_id["series-b"]
+        assert db.entitlements() == [] and db.acquisitions() == []
+        with db._lock, db._connect() as sql:
+            key = _db_key(document)
+            raw = json.loads(sql.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0])
+            next(iter(raw["sources"].values()))["public_bibliography"]["series_relation"]["source"] = "foreign.catalogue.search"
+            sql.execute("UPDATE metadata SET value=? WHERE key=?", (json.dumps(raw), key))
+        with pytest.raises(ValueError, match="corrupt_canonical_cover"):
+            read_consolidated_notice_cover(db, document)
+    finally:
+        db.close()
