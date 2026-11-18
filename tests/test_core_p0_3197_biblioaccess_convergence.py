@@ -136,7 +136,10 @@ def test_biblioaccess_core_canonical_convergence(
         if scenario == "unset":
             from cifereca.core.source_sync_consent import source_sync_consent
             assert source_sync_consent(service, account)["configured"] is False
-            assert first["canonical_rights"]["pending"] == 1
+            assert first["canonical_rights"]["observed"] == 1
+            assert first["canonical_rights"]["present_attested"] == 0
+            if not first_opening:
+                assert first["canonical_rights"]["pending"] == 1
         if scenario == "historical_attention":
             assert first["canonical_execution"]["blocked"] == 1
             assert sync(not first_opening)["canonical_execution"]["blocked"] == 1
