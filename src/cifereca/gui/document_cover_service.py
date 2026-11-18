@@ -692,6 +692,56 @@ class DocumentCoverService:
                 self._read_active.discard(document)
                 self._read_waiters.pop(document, None)
 
+    def refresh_committed_source_in_worker(
+        self, document: CoverDocumentScope, minimum_revision: int,
+    ) -> bool:
+        """Consume an exact Core post-commit epoch on its EXISTING worker.
+
+        Only a warm document, a visible subscriber or an already in-flight
+        first read warrants SQLite I/O. No new pool/submission/GET here.
+        Re-read authoritative C, never construct N2 from a notification.
+        Older/replayed hints are harmless; the normal snapshot CAS prevents
+        a stale worker rolling back a concurrently installed newer value.
+        """
+        from ..core.notice_c_cover_index import is_canonical_cover_document
+
+        if (not is_canonical_cover_document(document)
+                or type(minimum_revision) is not int
+                or not 1 <= minimum_revision < 2**63):
+            return False
+        reader = self._cached_source_reader
+        if reader is None:
+            return False
+        if self._cached_source_scope is not None:
+            try:
+                if self._cached_source_scope(document) is not True:
+                    return False
+            except Exception:
+                return False
+        with self._lock:
+            if self._closed:
+                return False
+            current = self._snapshots.get(document)
+            if current is not None and current.revision >= minimum_revision:
+                return False
+            if (current is None and document not in self._read_active
+                    and not self._source_subscriptions.get(document)):
+                return False
+        # Already off GTK, on the admitted Core worker and after COMMIT.
+        # Do not acquire the service lock while reading SQLite.
+        try:
+            latest = reader(document)
+            if (type(latest) is not CoverSourceSnapshot
+                    or latest.scope != document
+                    or latest.revision < minimum_revision):
+                return False
+            self._register_snapshot(latest, only_if_absent=False)
+            return True
+        except Exception:
+            # A hot newer snapshot, service shutdown or failed read is not
+            # documentary absence. Never invalidate unrelated N2/N3.
+            return False
+
     def refresh_cached_source_if_newer(
         self, document: CoverDocumentScope, minimum_revision: int,
     ) -> bool:
