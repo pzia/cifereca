@@ -10,6 +10,9 @@ blocked until a trusted positive rights resolver is available.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from threading import Lock
+import time
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable
 
@@ -52,14 +55,17 @@ class ReaderUsbExecutionBrokerImpl:
             "unavailable", False, None, (),
         )
 
-    def _scope(self, identity_id: str, device_id: str) -> _ReaderScope | None:
+    def _scope(self, identity_id: str, device_id: str, *,
+               admitted: _ReaderScope | None = None) -> _ReaderScope | None:
         service = self.service
         if (type(identity_id) is not str or not identity_id
                 or type(device_id) is not str or not device_id):
             return None
         try:
-            identity = service.current_identity
-            epoch = service._account_context_epoch
+            identity = (service.current_identity if admitted is None
+                        else admitted.identity)
+            epoch = (service._account_context_epoch if admitted is None
+                     else admitted.epoch)
             if (identity is None or getattr(identity, "identity_id", None) != identity_id
                     or type(epoch) is not int or epoch < 0):
                 return None
@@ -78,8 +84,9 @@ class ReaderUsbExecutionBrokerImpl:
                     or binding.get("enabled") is not True
                     or type(fingerprint) is not str
                     or not 8 <= len(fingerprint) <= 128
-                    or getattr(service, "current_identity", None) is not identity
-                    or service._account_context_epoch != epoch):
+                    or (admitted is None and (
+                        getattr(service, "current_identity", None) is not identity
+                        or service._account_context_epoch != epoch))):
                 return None
             # Verify the UUID is uniquely bound across profiles, not just
             # inside the selected reader's profile-scoped binding list.
@@ -99,9 +106,10 @@ class ReaderUsbExecutionBrokerImpl:
         except Exception:
             return None
 
-    def _current(self, scope: _ReaderScope) -> bool:
+    def _current(self, scope: _ReaderScope, *, admitted=False) -> bool:
         try:
-            fresh = self._scope(scope.identity_id, scope.device_id)
+            fresh = self._scope(scope.identity_id, scope.device_id,
+                                admitted=scope if admitted else None)
             return (
                 type(fresh) is _ReaderScope
                 and fresh.identity is scope.identity
@@ -113,10 +121,12 @@ class ReaderUsbExecutionBrokerImpl:
         except Exception:
             return False
 
-    def _mount_attested(self, scope: _ReaderScope, mountpoint: Path) -> bool:
+    def _mount_attested(self, scope: _ReaderScope, mountpoint: Path, *,
+                        scope_current=None, mount_key=None) -> bool:
+        current = scope_current or (lambda: self._current(scope))
         if (not isinstance(mountpoint, Path) or not mountpoint.is_absolute()
                 or mountpoint == Path("/") or ".." in mountpoint.parts
-                or not self._current(scope)):
+                or not current()):
             return False
         try:
             proof = observe_linux_usb_mount(
@@ -128,7 +138,8 @@ class ReaderUsbExecutionBrokerImpl:
                     and proof.device_id == scope.device_id
                     and proof.usb_fingerprint == scope.fingerprint
                     and proof.mountpoint == mountpoint
-                    and self._current(scope))
+                    and (mount_key is None or proof.scope_key()[2:] == mount_key)
+                    and current())
         except Exception:
             return False
 
@@ -218,6 +229,111 @@ class ReaderUsbExecutionBrokerImpl:
         except Exception:
             return unknown
 
+    def admit_removal(
+        self, *, confirmation: UsbRemovalConsent, mountpoint: Path,
+        expected_profile_epoch: int, mount_key: tuple,
+    ) -> Callable[[], UsbSyncResult]:
+        """Capture the second, destructive confirmation locally before enqueue.
+
+        No mount scan or file I/O on the UI thread. The returned one-use
+        worker retains the physical generation, exact managed-copy ID and
+        durable authority. Navigation is not business revocation.
+        """
+        from .source_context import source_context_epoch
+        from .device_usb_preview import _relative, _sha
+        from .device_usb_copy_admission import _MAX_AGE
+
+        now = int(time.time())
+        if (type(confirmation) is not UsbRemovalConsent
+                or type(expected_profile_epoch) is not int
+                or expected_profile_epoch < 0
+                or type(confirmation.confirmed_at) is not int
+                or type(confirmation.expires_at) is not int
+                or not 0 <= now - confirmation.confirmed_at <= _MAX_AGE
+                or not now < confirmation.expires_at <= confirmation.confirmed_at + _MAX_AGE
+                or not _sha(confirmation.sha256)
+                or confirmation.artifact_id != "sha256:" + confirmation.sha256
+                or not _relative(confirmation.target_relative_path)
+                or type(mount_key) is not tuple or len(mount_key) != 6
+                or not isinstance(mountpoint, Path) or not mountpoint.is_absolute()
+                or mountpoint == Path("/") or ".." in mountpoint.parts
+                or mount_key[:2] != (confirmation.usb_fingerprint, mountpoint)
+                or type(mount_key[2]) is not str
+                or any(type(value) is not int for value in mount_key[3:])):
+            raise ValueError("usb_removal_confirmation_invalid")
+        scope = self._scope(confirmation.identity_id, confirmation.device_id)
+        if (scope is None or scope.epoch != expected_profile_epoch
+                or confirmation.usb_fingerprint != scope.fingerprint
+                or self.completed_copy_operation(
+                    identity_id=scope.identity_id, device_id=scope.device_id,
+                    artifact_id=confirmation.artifact_id,
+                ) != confirmation.copy_operation_id
+                or not self._current(scope)):
+            raise ValueError("usb_reader_scope_revoked")
+        scope = deepcopy(scope)
+        # The selected identity object itself is no longer an authority; the
+        # admitted scope contains only its captured identity value.
+        service = self.service
+        storage, config = service.storage, service.config
+        manager = getattr(service, "_plugin_manager", None)
+        registry_generation = getattr(manager, "registry_generation", -1)
+        epoch = source_context_epoch(service)
+        identity = deepcopy(storage.identity_get(scope.identity_id))
+        if type(identity) is not dict:
+            raise ValueError("usb_reader_scope_revoked")
+
+        def current():
+            try:
+                placed = storage.device_placement_get(
+                    scope.device_id, confirmation.artifact_id,
+                )
+                return (
+                    self.service is service and service.storage is storage
+                    and service.config is config
+                    and getattr(service, "_plugin_manager", None) is manager
+                    and getattr(manager, "registry_generation", -1) == registry_generation
+                    and source_context_epoch(service) == epoch
+                    and storage.identity_get(scope.identity_id) == identity
+                    and type(placed) is dict
+                    and placed.get("desired_state") == "remove"
+                    and placed.get("target_relative_path") == confirmation.target_relative_path
+                    and type(placed.get("metadata")) is dict
+                    and placed["metadata"].get("intent_identity_id") == scope.identity_id
+                    and self._current(scope, admitted=True)
+                )
+            except Exception:
+                return False
+
+        # Check that the second click remains valid until the exact local
+        # facts are captured. This is the last navigation read.
+        if (not current() or not self._current(scope, admitted=True)
+                or getattr(getattr(service, "current_identity", None),
+                           "identity_id", None) != scope.identity_id
+                or service._account_context_epoch != expected_profile_epoch):
+            raise ValueError("usb_reader_scope_revoked")
+        lock, used = Lock(), [False]
+
+        def check():
+            if (not current()
+                    or not self._mount_attested(scope, mountpoint,
+                                               scope_current=current,
+                                               mount_key=mount_key)):
+                raise ValueError("usb_reader_scope_revoked")
+
+        def work():
+            with lock:
+                if used[0]:
+                    return UsbSyncResult("blocked")
+                used[0] = True
+            if int(time.time()) >= confirmation.expires_at or not current():
+                return UsbSyncResult("blocked")
+            return self._execute_scoped(
+                scope, confirmation=confirmation, mountpoint=mountpoint,
+                scope_current=current, check_cancelled=check, mount_key=mount_key,
+            )
+
+        return work
+
     def execute_one(
         self, *, confirmation: UsbRemovalConsent | UsbCopyConsent,
         mountpoint: Path, expected_profile_epoch: int,
@@ -244,8 +360,20 @@ class ReaderUsbExecutionBrokerImpl:
             return blocked
         scope = self._scope(confirmation.identity_id, confirmation.device_id)
         if (scope is None or scope.epoch != expected_profile_epoch
-                or confirmation.usb_fingerprint != scope.fingerprint
-                or not self._mount_attested(scope, mountpoint)):
+                or confirmation.usb_fingerprint != scope.fingerprint):
+            return blocked
+        return self._execute_scoped(
+            scope, confirmation=confirmation, mountpoint=mountpoint,
+            scope_current=lambda: self._current(scope),
+            check_cancelled=check_cancelled,
+        )
+
+    def _execute_scoped(self, scope, *, confirmation, mountpoint,
+                        scope_current, check_cancelled, mount_key=None):
+        blocked = UsbSyncResult("blocked")
+        if not self._mount_attested(scope, mountpoint,
+                                   scope_current=scope_current,
+                                   mount_key=mount_key):
             return blocked
         try:
             storage = self.service.storage
@@ -277,18 +405,20 @@ class ReaderUsbExecutionBrokerImpl:
                     or report.rows[0].action != "remove_candidate"
                     or report.rows[0].reason != "managed_removal_requires_confirmation"
                     or report.rows[0].executable is not False
-                    or not self._current(scope)
-                    or not self._mount_attested(scope, mountpoint)):
+                    or not scope_current()
+                    or not self._mount_attested(scope, mountpoint,
+                                                scope_current=scope_current,
+                                                mount_key=mount_key)):
                 return UsbSyncResult("unavailable")
 
             def current_profile() -> tuple[str, Path, int]:
                 # The locked removal review calls this callback before and
-                # after physical inode verification. It must also recheck
-                # the originating GTK selection/cancellation, not merely
-                # the profile epoch, before the journal commits a deletion.
+                # after physical inode verification. The admitted route
+                # checks durable scope/mount; the historical direct API
+                # retains its original active-profile/cancellation fence.
                 if check_cancelled is not None:
                     check_cancelled()
-                if not self._current(scope):
+                if not scope_current():
                     raise ValueError("usb_reader_scope_revoked")
                 if check_cancelled is not None:
                     check_cancelled()
