@@ -52,7 +52,8 @@ def rig(tmp_path, monkeypatch, *, typed=True):
             return snap
         session.rights_observation_snapshot = rights_read
     service._sessions[service._session_key("seller-a", "card-a")] = session
-    monkeypatch.setattr(service, "_loans_for_account", lambda a, force=False: [])
+    monkeypatch.setattr(service, "_loans_for_account",
+                        lambda *_a, **_kw: pytest.fail("no loan-capability read"))
     monkeypatch.setattr(
         service, "_acquire_active_loan_automatically",
         lambda _: pytest.fail("opening rights observation cannot download"),
