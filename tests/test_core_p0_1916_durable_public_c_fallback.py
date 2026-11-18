@@ -199,12 +199,14 @@ def test_federated_outage_uses_retained_c_not_mirror(tmp_path, monkeypatch):
 
         # A real empty response is never replaced by last known C.
         attempts.clear()
-        def empty(*args, **kwargs):
-            attempts.append("legitimate zero")
+        def empty(query, scope, **kwargs):
+            attempts.append(query)
             return []
         bad.search = empty
         rows = service.search("Progressive Book", force=True, field="title")
-        assert attempts == ["legitimate zero"]
+        # The existing bounded text-variant policy is allowed after a
+        # legitimate zero, unlike a failed transport.
+        assert attempts == list(service._search_query_variants("Progressive Book"))
         assert {r.source_provider for r in rows} == {"good"}
         assert service.storage.entitlements() == [] and service.storage.acquisitions() == []
     finally:
