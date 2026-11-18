@@ -137,8 +137,23 @@ def test_successful_acquisition_persists_decision_metadata():
     source = SERVICES.read_text(encoding='utf-8')
     # #1120: the successful receipt is composed in a pure helper while the
     # guarded caller keeps the same storage write and decision provenance.
-    receipt = (SERVICES.parent / 'core' / 'loan_completion_receipt.py').read_text(
-        encoding='utf-8'
-    )
+    from types import SimpleNamespace as NS
+    from cifereca.core.loan_completion_receipt import completed_receipt
+
     assert 'loan_completion_receipt.completed_receipt(' in source
-    assert '"acquisition_decision": decision.as_dict()' in receipt
+    decision = decide_artifact_reuse(
+        force_refresh=False, catalog_valid=False, ledger_complete_valid=False,
+        legacy_repair=True, legacy_reason='missing_post_process_marker',
+    )
+    result = completed_receipt(
+        ledger_base={}, scan={'artifact_id': 'artifact'}, acquisition_kind='acsm',
+        final_path=Path('/fictional/book.epub'), loan=NS(id='loan-a'),
+        force_refresh=False, decision=decision, previous_path=None,
+        adept_binding=None, artifact_drm='none', artifact_format='epub',
+        artifact_protected=False, hook_info=None,
+        final_inspection=NS(media_format='epub', protected=False),
+    )
+    assert result['metadata']['acquisition_decision'] == {
+        'action': 'repair_legacy', 'reason': 'missing_post_process_marker',
+        'source': 'ledger',
+    }

@@ -6,7 +6,10 @@ authorisation lives here; the caller retains their ordering and guards.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
+
+from .loan_provider_delivery import _has_symlink_component
 
 
 def completed_receipt(
@@ -16,8 +19,16 @@ def completed_receipt(
     artifact_format: Any, artifact_protected: Any,
     hook_info: Any, final_inspection: Any,
 ) -> dict:
-    """Exactly the historical successful acquisition_put mapping."""
+    """Project a successful receipt, including intentionally retained history."""
     is_acsm = acquisition_kind == "acsm"
+    decision_facts = decision.as_dict()
+    preserved = None
+    if (force_refresh or (is_acsm and decision_facts.get("action") == "repair_legacy")):
+        if (isinstance(previous_path, Path) and previous_path.is_absolute()
+                and previous_path != final_path
+                and not _has_symlink_component(previous_path)
+                and previous_path.is_file()):
+            preserved = str(previous_path)
     return {
         **ledger_base, "status": "complete", "strategy": "loan_auto",
         "artifact_id": scan.get("artifact_id"),
@@ -27,12 +38,8 @@ def completed_receipt(
             "catalog_index": scan,
             "provider_loan_id": loan.id,
             "reacquisition": force_refresh,
-            "acquisition_decision": decision.as_dict(),
-            "preserved_artifact_path": (
-                str(previous_path)
-                if force_refresh and previous_path and previous_path.is_file()
-                else None
-            ),
+            "acquisition_decision": decision_facts,
+            "preserved_artifact_path": preserved,
             "adept_binding": adept_binding if is_acsm else None,
             "post_processed": True if is_acsm else None,
             "adept_artifact_drm": artifact_drm if is_acsm else None,

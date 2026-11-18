@@ -7,6 +7,7 @@ here. The service retains both ownership/locking and the execution boundary.
 from __future__ import annotations
 
 from pathlib import Path
+import stat
 from typing import Any, Callable, Mapping
 
 
@@ -76,7 +77,7 @@ def plan_adept_destination(
     a colliding destination receives a fresh '.reacquired-<id>' filename
     instead of overwriting a potentially unrelated or historical book.
 
-    The service retains authority for directory creation, preflight unlink,
+    The service retains authority for directory creation, preflight admission,
     ADEPT execution, inspection, publish/rename and cleanup while under the
     same inter-process and in-process locks.
     """
@@ -93,6 +94,30 @@ def plan_adept_destination(
         if repair_mode else destination
     )
     return destination, adept_destination, repair_mode
+
+
+def fresh_adept_destination(path: Path) -> bool:
+    """Read-only negative preflight; no existing entry is expendable.
+
+    Reject relative paths, symlinked or unavailable ancestors, and every
+    existing leaf (including a dangling symlink). This is not an inode
+    reservation: the runtime must still honour its no-overwrite contract.
+    """
+    if not isinstance(path, Path) or not path.is_absolute() or ".." in path.parts:
+        return False
+    try:
+        if not path.name:
+            return False
+        for parent in reversed(path.parents):
+            if not stat.S_ISDIR(parent.lstat().st_mode):
+                return False
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return True
+        return False
+    except (OSError, ValueError, RuntimeError):
+        return False
 
 
 def profile_is_explicitly_acsm_unready(profile_row: Mapping[str, Any] | None) -> bool:

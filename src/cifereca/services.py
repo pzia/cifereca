@@ -5138,7 +5138,7 @@ class LibraryService:
                     unique_suffix=lambda: uuid.uuid4().hex,
                 )
                 # Format detection and path planning are external callbacks.
-                # Deny revocation before even unlinking a local ADEPT target.
+                # Deny revocation before admitting a local ADEPT target.
                 if not source_lease.current(self.storage, loan):
                     return loan_adept_profile_guard.refuse_staged_source(
                         self, ledger_base=ledger_base,
@@ -5146,10 +5146,11 @@ class LibraryService:
                         trace_ref=trace_ref, expected_loan_id=expected_loan_id,
                         raw_code="adept_borrower_ambiguous", _TRACE_LOG=_TRACE_LOG,
                     )
-                try:
-                    adept_destination.unlink(missing_ok=True)
-                except OSError:
-                    pass
+                # An occupied staging name may belong to an interrupted
+                # attempt or another artifact. Never remove it to admit
+                # a fresh fulfillment; a separate recovery must qualify it.
+                if not adept_acsm_plan.fresh_adept_destination(adept_destination):
+                    raise ProviderConfigurationError("Destination ADEPT de staging indisponible")
                 request = adept_acsm_plan.build_fulfillment_request(
                     acsm_path=acquisition.acsm_path,
                     destination=adept_destination,
