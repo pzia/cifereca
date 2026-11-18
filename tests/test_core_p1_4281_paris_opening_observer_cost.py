@@ -2,7 +2,7 @@
 
 This is a request-count baseline, NOT a benchmark of Paris or GTK latency.
 No HTTP, session login, ACSM, rights mutation or automatic acquisition occurs.
-The actual opening sync calls _sync_loan_inventory_observation, then the
+The actual opening sync calls _read_sync_loan_inventory, then the
 canonical v2 resource reader. These two entrypoints currently each perform a
 fresh DILICOM/SYRACUSE inventory, even for the same borrower.
 """
@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cifereca.core.sync_coordination import _sync_loan_inventory_observation
+from cifereca.core.sync_coordination import _read_sync_loan_inventory
 from cifereca.models import Account, Loan
 
 PLUGIN = Path(__file__).resolve().parents[1] / "src/plugins/provider-paris"
@@ -97,7 +97,7 @@ def test_opening_loans_then_v2_resources_repeat_two_scoped_branches(digital):
     """
     session, account, client = _session(digital)
     try:
-        snapshot, loans = _sync_loan_inventory_observation(None, account, session)
+        snapshot, loans = _read_sync_loan_inventory(account, session)
         assert snapshot is not None and snapshot.status == "success"
         assert len(loans) == digital
         assert all(
@@ -126,7 +126,7 @@ def test_rights_reader_does_not_reuse_previous_positive_loans_after_outage():
     """Across independent readers, stale positive loans are not fresh A."""
     session, account, client = _session(1)
     try:
-        first, loans = _sync_loan_inventory_observation(None, account, session)
+        first, loans = _read_sync_loan_inventory(account, session)
         assert first.status == "success" and len(loans) == 1
         client.fail_digital = True
         resources = session.downloadable_resource_snapshot(account)
