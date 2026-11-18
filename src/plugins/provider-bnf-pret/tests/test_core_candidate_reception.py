@@ -50,6 +50,14 @@ def adapter(tmp_path, monkeypatch):
         _sessions={(provider, credential): session},
         _session_key=lambda p, c: (p, c),
         sync_source_enabled=lambda a: a is account,
+        _paris_adept_identity_for_loan=lambda loan, *, connection_identity_id: (
+            (identity, None) if (
+                connection_identity_id == identity
+                and (loan.source_provider, loan.source_credential, loan.source_account_id)
+                    == (provider, credential, borrower)
+            ) else (None, "adept_borrower_ambiguous")
+        ),
+        _adept_profile_row=lambda _reference, _profiles: None,
         resolve_adept_profile_for_identity=lambda i: ("borrower-adobe", "configured"),
         _originating_adept_profile_id=lambda i, p: "synthetic-adobe-profile-id",
     )
