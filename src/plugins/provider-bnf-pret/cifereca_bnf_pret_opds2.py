@@ -11,6 +11,7 @@ from typing import Any, Mapping
 
 from cifereca.plugin_api import (
     CatalogueJSONError, parse_bounded_catalogue_json, validate_catalogue_json,
+    catalogue_next, catalogue_url_origin, resolve_catalogue_link,
 )
 from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -39,7 +40,12 @@ def _safe_link(raw: Any, *, base: str = HOME_URL) -> str | None:
     if not isinstance(raw, str) or len(raw) > 2048 or "{" in raw or "}" in raw:
         return None
     try:
-        resolved = urljoin(base, raw)
+        resolved = resolve_catalogue_link(
+            base, raw,
+            accept=lambda value: catalogue_url_origin(value) == ("https", "pret.bnf.fr", 443),
+        )
+        if resolved is None:
+            return None
         parts = urlsplit(resolved)
         query = parse_qsl(parts.query, keep_blank_values=True, strict_parsing=False,
                           max_num_fields=30)
@@ -260,21 +266,11 @@ def parse_catalog(payload: Any, *, url: str = HOME_URL, status: int = 200,
         rel = _rels(link.get("rel"))
         auth |= "authenticate" in rel or "http://opds-spec.org/authenticate" in rel
         if "next" in rel:
-            declared_next.append(_safe_link(link.get("href"), base=base)
-                                 if _is_feed_type(link.get("type")) else None)
+            declared_next.append(link.get("href") if _is_feed_type(link.get("type")) else None)
         if "search" in rel and _is_feed_type(link.get("type")) and link.get("templated") is True:
             search = _search_template(link.get("href"), base=base)
     if not (navigation or publications):
         raise OPDS2ContractError("empty_catalog")
-    next_url = None
-    next_status = "absent"
-    if declared_next:
-        if any(value is None for value in declared_next):
-            next_status = "invalid"
-        elif len(set(declared_next)) != 1:
-            next_status = "ambiguous"
-        else:
-            next_status = "valid"
-            next_url = declared_next[0]
-    return Catalog(title, tuple(navigation), tuple(publications), next_url, search, auth,
-                   next_status=next_status)
+    next_page = catalogue_next(declared_next, resolve=lambda raw: _safe_link(raw, base=base))
+    return Catalog(title, tuple(navigation), tuple(publications), next_page.url, search, auth,
+                   next_status=next_page.state)
