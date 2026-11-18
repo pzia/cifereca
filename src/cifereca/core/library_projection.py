@@ -325,7 +325,7 @@ def capture_history_cover_lookup(service, account, *, provider, record_id, title
             return None
         scope = (account.identity_id, account.provider_id,
                  account.credential_id, account.unique_id)
-        if any(type(value) is not str or "\\x00" in value for value in scope) or not all(scope[:3]):
+        if any(type(value) is not str or "\x00" in value for value in scope) or not all(scope[:3]):
             return None
         primary = account.is_primary
         if primary is not True:
@@ -364,7 +364,8 @@ def capture_history_cover_lookup(service, account, *, provider, record_id, title
         if not source_current() or service.current_account is not account:
             return None
         key = hashlib.sha256(json.dumps(
-            [*scope, epoch, id(account), id(session), id(storage)],
+            [*scope, epoch, id(account), id(session), id(storage),
+             id(provider_epoch)],
             ensure_ascii=True, separators=(",", ":"),
         ).encode("utf-8")).hexdigest()
 

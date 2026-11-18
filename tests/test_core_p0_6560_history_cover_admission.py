@@ -119,3 +119,33 @@ def test_native_resolver_does_not_replay_memory_after_persisted_binding_revoked(
     assert delivered == ["https://covers.example/ALICE", None]
     assert reads == ["alice"] and len(cache) == len(writes) == 1
     resolver.close()
+
+
+def test_admission_rejects_nul_coordinate_before_queue():
+    service, account, _, _, _, reads, writes, cache = _rig()
+    account.unique_id = "invalid\x00borrower"
+    assert _capture(service, account) is None
+    assert reads == writes == cache == []
+
+
+def test_reconnect_in_place_does_not_join_an_old_pending_cover():
+    service, account, _, session, _, reads, writes, cache = _rig()
+    resolver_type, workers, idle = _resolver_types()
+    resolver = resolver_type(service, NS(add=lambda *a, **k: None))
+    args = ("ORIGIN", "123", "Synthetic", None, None, None)
+    old, new = [], []
+    session._epoch = 1
+    resolver.request(*args, old.append, scope="same")
+    # Provider reconnects its own session object without changing the
+    # Core source epoch or the displayed account.
+    session._epoch = 2
+    resolver.request(*args, new.append, scope="same")
+    assert len(workers) == 2
+    for future, fn, arguments in workers:
+        future.set_result(fn(*arguments))
+    for fn, arguments in idle:
+        fn(*arguments)
+    assert old == []
+    assert new == ["https://covers.example/ALICE"]
+    assert reads == ["alice"] and len(writes) == len(cache) == 1
+    resolver.close()
