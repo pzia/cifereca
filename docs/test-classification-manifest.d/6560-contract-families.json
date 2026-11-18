@@ -1,0 +1,59 @@
+{
+  "schema": "cifereca.test-classification/1",
+  "files": [
+    {
+      "path": "tests/test_kobo_backup_guard.py",
+      "owner_architecture": "core",
+      "business_object": "acquisition",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_kobo_backup_observability.py",
+      "owner_architecture": "core",
+      "business_object": "diagnostics",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_kobo_backup_reconcile_prune.py",
+      "owner_architecture": "core",
+      "business_object": "storage_library",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_kobo_backup_preview_targeted_connection.py",
+      "owner_architecture": "core",
+      "business_object": "accounts_auth",
+      "test_level": "contract"
+    },
+    {
+      "path": "src/plugins/provider-kobo/tests/test_kobo_backup_manifest_binding_p1.py",
+      "owner_architecture": "plugin:provider-kobo",
+      "business_object": "accounts_auth",
+      "test_level": "contract"
+    },
+    {
+      "path": "tests/test_core_p0_3171_source_auto_consent_bridge.py",
+      "owner_architecture": "core",
+      "business_object": "acquisition",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_core_p0_3171_canonical_consent_broker.py",
+      "owner_architecture": "core",
+      "business_object": "acquisition",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_core_p0_3416_bnf_materialization_phase.py",
+      "owner_architecture": "coreui",
+      "business_object": "synchronization",
+      "test_level": "integration"
+    },
+    {
+      "path": "tests/test_core_p0_2565_reconciliation_phase_progress.py",
+      "owner_architecture": "core",
+      "business_object": "storage_library",
+      "test_level": "integration"
+    }
+  ]
+}

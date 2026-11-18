@@ -22,12 +22,25 @@ class ACSMDeliveryError(ValueError):
     """Closed error codes; no private token, URL or response content."""
 
 
-def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
+def stage_loan_acsm(
+    url: str, target_dir: Path, *, transport=None, admission_current=None,
+) -> Path:
     """Direct HTTPS GET of the observed signed offer; no replay restrictions.
 
     Every call fetches the current link. Existing files do not suppress a
     requested re-download, and the caller's source session owns the identity.
     """
+    def require_admission():
+        if admission_current is None:
+            return  # existing explicit download_digital ABI
+        try:
+            accepted = callable(admission_current) and admission_current() is True
+        except Exception:
+            accepted = False
+        if not accepted:
+            raise ACSMDeliveryError("biblioaccess_acsm_admission_revoked")
+
+    require_admission()
     if classify_loan_delivery(url) is None:
         raise ACSMDeliveryError("biblioaccess_acsm_url_invalid")
     if not isinstance(target_dir, Path):
@@ -46,12 +59,14 @@ def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
                 if current in visited:
                     raise ACSMDeliveryError("biblioaccess_acsm_redirect_cycle")
                 visited.add(current)
+                require_admission()
                 with client.stream(
                     "GET", current, follow_redirects=False,
                     headers={
                         "Accept": "application/vnd.adobe.adept+xml, application/xml, */*",
                     },
                 ) as response:
+                    require_admission()
                     status = response.status_code
                     if 300 <= status < 400:
                         location = response.headers.get("location")
@@ -86,6 +101,7 @@ def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
                     # requires independent Adobe ACSM structural validation.
                     chunks, size = [], 0
                     for chunk in response.iter_bytes():
+                        require_admission()
                         size += len(chunk)
                         if size > MAX_ACSM_BYTES:
                             raise ACSMDeliveryError("biblioaccess_acsm_body_limit")
@@ -95,6 +111,7 @@ def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
                 raise ACSMDeliveryError("biblioaccess_acsm_redirect_limit")
         except httpx.HTTPError:
             raise ACSMDeliveryError("biblioaccess_acsm_transport_unavailable") from None
+        require_admission()
         data = b"".join(chunks)
         try:
             structure = inspect_acsm_structure(data)
@@ -113,7 +130,13 @@ def stage_loan_acsm(url: str, target_dir: Path, *, transport=None) -> Path:
                     tmp_path = Path(tmp.name)
                     tmp.write(data)
                 destination = tmp_path.with_suffix(".acsm")
+                require_admission()
                 os.replace(tmp_path, destination)
+                try:
+                    require_admission()
+                except ACSMDeliveryError:
+                    destination.unlink(missing_ok=True)
+                    raise
                 return destination
             finally:
                 if tmp_path is not None:
