@@ -96,6 +96,33 @@ class NoticeWorkRuntime:
         if observer is not None:
             observer(document, epoch)
 
+    def recover_search_sources(self, sources, *, now):
+        """Recover failed live C publication on the existing Search worker.
+
+        Normal publication and reconciliation run first. Only established,
+        still-dirty relations qualify; no GET or extra queue.
+        """
+        from sqlite3 import Error as SQLiteError
+        from .notice_c_work_requests import request_affected_public_recompute
+
+        if type(sources) is not tuple or not 1 <= len(sources) <= 32:
+            raise ValueError("notice_work_invalid_repair_batch")
+        requested = 0
+        for source in sources:
+            with self._lock:
+                if self._closed:
+                    return requested
+            try:
+                result = request_affected_public_recompute(
+                    self._storage, source, now=now,
+                )
+            except (ValueError, TypeError, OSError, SQLiteError):
+                continue
+            requested += len(result.refs)
+        if requested:
+            self.request_tick()
+        return requested
+
     def request_tick(self):
         """Nonblocking heartbeat hint; no SQLite on the submitting thread.
 

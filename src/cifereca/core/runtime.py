@@ -80,6 +80,9 @@ class CiferecaCore:
         notice_work = (None if notice_work_admission is None else
                        NoticeWorkRuntime(storage, brokers["tasks"],
                                          replay_registry=notice_replay_registry))
+        if notice_work is not None:
+            # Private Core worker port, not a plugin broker.
+            library._notice_work_recover_search = notice_work.recover_search_sources
         llm = optional_llm_service(config)
         plugins = PluginManager(
             builtin_ui=builtin_ui,
