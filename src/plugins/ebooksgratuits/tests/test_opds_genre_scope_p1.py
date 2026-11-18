@@ -35,7 +35,7 @@ def offline(monkeypatch):
     monkeypatch.setattr(eg, "_opds_fetch", root)
     monkeypatch.setattr(eg, "_opds_search_url", search)
     monkeypatch.setattr(eg, "_opds_load_acquisition", page)
-    monkeypatch.setattr(eg, "_opds_items", lambda *_a: rows)
+    monkeypatch.setattr(eg, "_opds_items", lambda *_a, **_kwargs: rows)
     session = SimpleNamespace(
         opds_feed_url=url, connected=True, page_size=50,
         last_search_warnings=[],
