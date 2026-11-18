@@ -18,6 +18,7 @@ def _session():
     session = object.__new__(GallicaSession)
     session.provider_id = "gallica"
     session.credential_id = "__public__"
+    session.sru_url = "https://gallica.bnf.fr/services/engine/search/sru"
     return session
 
 
