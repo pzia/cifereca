@@ -18,7 +18,8 @@ class FakeClient:
         self.fail = fail
 
     @contextmanager
-    def stream(self, method, url, *, params, headers):
+    def stream(self, method, url, *, params, headers, follow_redirects):
+        assert follow_redirects is False
         assert method == "GET"
         assert headers["Accept-Encoding"] == "identity"
         self.calls.append((url, dict(params)))

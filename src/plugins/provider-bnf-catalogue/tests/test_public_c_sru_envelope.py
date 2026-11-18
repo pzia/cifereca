@@ -80,3 +80,38 @@ def test_bnf_sru_one_page_public_c_web_reference(tmp_path, monkeypatch, custom):
     finally:
         service.close()
         session.close()
+
+
+@pytest.mark.parametrize("destination", [
+    "https://foreign.example.org/api/SRU",
+    "https://catalogue.bnf.fr/other",
+    "http://catalogue.bnf.fr/api/SRU",
+    "https://catalogue.bnf.fr/api/SRU?query=other",
+])
+def test_bnf_canonical_sru_redirect_never_parses_or_follows(tmp_path, monkeypatch, destination):
+    from cifereca.plugin_api import ProviderError
+    requests = []
+
+    def serve(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(302, headers={"location": destination}, request=request)
+        # A syntactically valid SRU record cannot confer canonical origin.
+        return httpx.Response(200, content=BODY, request=request)
+
+    monkeypatch.setattr(provider.HTTPX_TRANSPORT, "client",
+        lambda **kw: httpx.Client(transport=httpx.MockTransport(serve),
+                                  trust_env=False, follow_redirects=True))
+    session = provider.BnfCatalogueSession(
+        credential_id="__public__", label="BnF", credentials={},
+        options={}, diagnostics=None,
+    )
+    session.connect()
+    try:
+        with pytest.raises(ProviderError, match="unverified_sru_navigation"):
+            session.search_with_response_facets("Les loups", "all")
+        assert len(requests) == 1
+        assert requests[0].url.host == "catalogue.bnf.fr"
+        assert requests[0].url.path == "/api/SRU"
+    finally:
+        session.close()
