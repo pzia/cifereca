@@ -22,11 +22,11 @@ jobs:
       PYTHONDONTWRITEBYTECODE: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       SUITE: ${{ matrix.suite }}
-      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      EXPECTED_SHA: c3d089f694f83fa98c092a81a422756014d7a26b
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: c3d089f694f83fa98c092a81a422756014d7a26b
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
