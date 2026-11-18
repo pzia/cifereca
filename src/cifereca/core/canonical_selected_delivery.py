@@ -30,6 +30,8 @@ from ..plugin_api.provider_rights_observation import ProviderRightObservation
 from ..plugin_api.downloadable_resources import DeliveryCandidate, SourceReference
 from .canonical_publication import _physical_target, _same_file
 from .canonical_encryption_diagnostics import rejected_epub_encryption_profile
+from .canonical_loan_borrower import pin_borrower
+from .adept_acsm_plan import profile_is_explicitly_acsm_unready
 from .convergence_execution import CompletedDelivery, CanonicalDrmUnresolved
 from .source_convergence import SourceKey
 
@@ -200,6 +202,47 @@ def complete_selected_delivery(
 
     if not current():
         raise ValueError("canonical_delivery_source_rebound")
+    # Authenticated A/consent do not authorize a different Adobe borrower.
+    # Resolve before any candidate GET (including a first claimed ACSM).
+    borrower_identity, borrower_current = (
+        pin_borrower(service, source) if source.kind == "loan"
+        else (scope.identity_id, lambda: True)
+    )
+
+    def require_borrower():
+        if not borrower_current() or not current():
+            raise ValueError("canonical_delivery_borrower_source_changed")
+
+    def acsm_profile():
+        require_borrower()
+        profile, _ = service.resolve_adept_profile_for_identity(borrower_identity)
+        if type(profile) is not str or not profile:
+            raise ValueError("canonical_delivery_adept_profile_missing")
+        require_borrower()
+        profile_id = service._originating_adept_profile_id(borrower_identity, profile)
+        # Older runtime contracts may omit readiness, but a published
+        # negative signal remains a hard refusal as in the historical path.
+        if source.kind == "loan":
+            try:
+                rows = service.adept_profiles_for_identity(
+                    borrower_identity, profile_name=profile,
+                )
+            except Exception:
+                rows = []
+            profile_row = service._adept_profile_row(profile, rows)
+            if profile_is_explicitly_acsm_unready(profile_row):
+                raise ValueError("adept_profile_acsm_not_ready")
+        require_borrower()
+        return profile, profile_id
+
+    def require_adept_profile(profile, profile_id):
+        require_borrower()
+        if (source.kind == "loan"
+                and service._originating_adept_profile_id(borrower_identity, profile)
+                    != profile_id):
+            raise ValueError("adept_borrower_profile_changed")
+        require_borrower()
+
     directory, exclusive_owner = storage.exact_profile_directory_binding(
         scope.identity_id,
     )
@@ -278,8 +321,22 @@ def complete_selected_delivery(
                 or type(request.get("format")) is not str
                 or request["format"].casefold() != destination.suffix[1:].casefold()):
             raise ValueError("canonical_delivery_runtime_target_invalid")
+        expected_adept = None
+        if source.kind == "loan" and request["source"].get("type") == "acsm":
+            expected_adept = acsm_profile()
+            if request.get("profile") != expected_adept[0]:
+                raise ValueError("adept_borrower_profile_changed")
+            require_adept_profile(*expected_adept)
+        require_borrower()
         runtime_used[0] = True
         result = service.execute_acquisition_request(request)
+        require_borrower()
+        if expected_adept is not None:
+            require_adept_profile(*expected_adept)
+            if type(result) is not dict:
+                raise ValueError("canonical_delivery_adept_result_invalid")
+            capture_binding(result, profile_name=expected_adept[0],
+                            profile_id=expected_adept[1])
         if not attempt_current():
             raise ValueError("canonical_delivery_staging_replaced")
         if not admission_current():
@@ -355,11 +412,13 @@ def complete_selected_delivery(
         # its exact one-shot ACSM. The canonical executor must consume that
         # claim-bound token before asking the provider for another signed URL.
         # Only an exact, current, private receipt bypasses the candidate GET.
+        require_borrower()
         from ..acsm_cache import stage_claimed_initial_acsm
         first_acsm = stage_claimed_initial_acsm(
             service, session, account, source, attempt=attempt,
             admission_current=current,
         )
+        require_borrower()
         candidate = (
             (first_acsm, "") if first_acsm is not None
             else getattr(session, reader_name)(
@@ -383,6 +442,7 @@ def complete_selected_delivery(
         )
         if not current():
             raise ValueError("canonical_delivery_source_rebound_after_get")
+        require_borrower()
         if not attempt_current():
             raise ValueError("canonical_delivery_staging_replaced")
         if not physical_owner_unique():
@@ -431,24 +491,22 @@ def complete_selected_delivery(
             fmt = detect_acsm_format(received)
             if fmt not in ("epub", "pdf"):
                 raise ValueError("canonical_delivery_adept_format_unconfirmed")
-            profile, _profile_source = service.resolve_adept_profile_for_identity(
-                scope.identity_id)
-            if type(profile) is not str or not profile:
-                raise ValueError("canonical_delivery_adept_profile_missing")
+            profile, profile_id = acsm_profile()
             destination = attempt / ("fulfilled." + fmt)
             if destination.exists() or destination.is_symlink():
                 raise ValueError("canonical_delivery_adept_target_occupied")
-            profile_id = service._originating_adept_profile_id(scope.identity_id, profile)
             request = {
                 "schema_version": 2,
                 "source": {"type": "acsm", "provider": scope.provider_id,
                            "path": str(received), "headers": {}},
                 "destination": str(destination), "format": fmt,
                 "profile": profile,
-                "metadata": {"identity_id": scope.identity_id},
+                "metadata": {"identity_id": borrower_identity},
                 "options": {"force": False},
             }
+            require_adept_profile(profile, profile_id)
             result = service.execute_acquisition_request(request)
+            require_adept_profile(profile, profile_id)
             if type(result) is not dict:
                 raise ValueError("canonical_delivery_adept_result_invalid")
             capture_binding(result, profile_name=profile, profile_id=profile_id)
@@ -527,6 +585,7 @@ def complete_selected_delivery(
         # This receipt is a Core witness issued AFTER the verified, in-scope
         # candidate callback. It is deliberately distinct from provider A's
         # inventory evidence and signed-offer ID, and contains no private URL.
+        require_borrower()
         fact = json.dumps(
             [*coords, source.branch, source.edition_id, source.right_id,
              source.kind, offer.delivery_offer_id, digest, secrets.token_hex(32)],
