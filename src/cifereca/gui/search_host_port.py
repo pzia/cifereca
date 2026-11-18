@@ -124,6 +124,11 @@ class SearchDetailPort:
     def __init__(self, window: Any) -> None:
         object.__setattr__(self, "_window", window)
 
+    @property
+    def _route_display_token(self):
+        """Read-only generation for asynchronous public web action delivery."""
+        return getattr(self._window, "_route_display_token", None)
+
     def __getattr__(self, name: str) -> Any:
         if name not in SEARCH_DETAIL_CAPABILITIES:
             raise AttributeError(name)
