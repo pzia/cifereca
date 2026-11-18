@@ -311,7 +311,76 @@ def _history_search_queries(cls, title: str) -> list[str]:
     return out[:3]
 
 
-def resolve_history_thumbnail(self, provider: str, record_id: str | None, title: str, author: str | None=None, year: str | None=None, default_url: str | None=None, *, account: Account) -> tuple[str | None, str]:
+def capture_history_cover_lookup(service, account, *, provider, record_id, title,
+                                 author, year, default_url):
+    """Freeze one visual fallback's account and registered session before enqueue.
+
+    Admission and projection keys use only in-memory coordinates. The worker
+    revalidates the existing durable history lease before every private read;
+    this does not authorize a loan, acquisition or documentary cover.
+    """
+    from .source_context import source_context_epoch
+    try:
+        if type(account) is not Account or account is not service.current_account:
+            return None
+        scope = (account.identity_id, account.provider_id,
+                 account.credential_id, account.unique_id)
+        if any(type(value) is not str or "\x00" in value for value in scope) or not all(scope[:3]):
+            return None
+        primary = account.is_primary
+        if primary is not True:
+            return None
+        epoch = source_context_epoch(service)
+        session_key = service._session_key(scope[1], scope[2])
+        session = service._sessions.get(session_key)
+        if session is None:
+            return None
+        provider_epoch = getattr(session, "_epoch", None)
+        storage = service.storage
+
+        def source_current():
+            try:
+                return (
+                    source_context_epoch(service) == epoch
+                    and service.storage is storage
+                    and service._sessions.get(session_key) is session
+                    and getattr(session, "_epoch", None) == provider_epoch
+                    and getattr(session, "connected", None) is True
+                    and getattr(session, "_closed", False) is False
+                    and any(row is account for row in service.accounts)
+                    and (account.identity_id, account.provider_id,
+                         account.credential_id, account.unique_id) == scope
+                    and account.is_primary is primary
+                )
+            except Exception:
+                return False
+
+        def current():
+            return (source_current()
+                    and service._history_source_lease_current(
+                        account, session, scope=scope, epoch=epoch,
+                    ) and source_current())
+
+        if not source_current() or service.current_account is not account:
+            return None
+        key = hashlib.sha256(json.dumps(
+            [*scope, epoch, id(account), id(session), id(storage),
+             id(provider_epoch)],
+            ensure_ascii=True, separators=(",", ":"),
+        ).encode("utf-8")).hexdigest()
+
+        def work():
+            return resolve_history_thumbnail(
+                service, provider, record_id, title, author, year, default_url,
+                account=account, admitted_session=session, admission_current=current,
+            )
+
+        return key, work, source_current
+    except Exception:
+        return None
+
+
+def resolve_history_thumbnail(self, provider: str, record_id: str | None, title: str, author: str | None=None, year: str | None=None, default_url: str | None=None, *, account: Account, admitted_session=None, admission_current=None) -> tuple[str | None, str]:
     """Résout une couverture manquante de l'historique via le catalogue.
 
     0.2.6 corrige deux défauts de 0.2.5 : les résultats négatifs ne sont
@@ -330,6 +399,11 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
             or type(account.unique_id) is not str
             or type(account.is_primary) is not bool):
         return default_url, "error"
+    def current():
+        return admission_current is None or admission_current()
+
+    if not current():
+        return None, "error"
     borrower_scope = (
         account.identity_id, account.provider_id, account.credential_id,
         account.unique_id, "primary" if account.is_primary else "linked",
@@ -351,6 +425,8 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
     # Nouveau namespace : invalide automatiquement les not_found de 0.2.5.
     namespace = "history-cover-search-v2"
     cached = self.storage.cache_get(namespace, key)
+    if not current():
+        return None, "error"
     if isinstance(cached, dict) and cached.get("status"):
         status = str(cached.get("status"))
         url = str(cached.get("url") or "").strip() or None
@@ -359,11 +435,12 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
             detail={"provider": provider, "result": status, "cache": True},
             level="detailed",
         )
-        return url or default_url, status
+        return (url or default_url, status) if current() else (None, "error")
 
     # Cover enrichment is provider-agnostic: use the current provider
     # session contract rather than any concrete Syracuse client.
-    session = self._session_for_account(account)
+    session = (self._session_for_account(account)
+               if admission_current is None else admitted_session)
     all_rows: list[SearchResult] = []
     seen: set[str] = set()
     attempts = 0
@@ -374,6 +451,8 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
     folded_queries = {self._history_fold(q) for q in search_queries if q}
 
     for query in search_queries:
+        if not current():
+            return None, "error"
         attempts += 1
         try:
             rows = session.search(query, scope="all", page=0, field="all")
@@ -389,6 +468,8 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
             )
             continue
 
+        if not current():
+            return None, "error"
         for row in rows:
             if row.id not in seen:
                 seen.add(row.id)
@@ -418,6 +499,8 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
                 break
 
     if not all_rows and search_error:
+        if not current():
+            return None, "error"
         self.storage.cache_put(namespace, key, {"url": "", "status": "error"}, 5 * 60)
         self.diagnostics.add(
             "COVER", "history search", "error",
@@ -429,7 +512,7 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
             },
             level="detailed",
         )
-        return default_url, "error"
+        return (default_url, "error") if current() else (None, "error")
 
     scored = sorted(
         ((self._history_cover_score(title, author, year, record_id, x), x) for x in all_rows),
@@ -471,6 +554,8 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
                 # Les résultats physiques peuvent être dépourvus d'image
                 # dans CompactResult/CustomResult. L'identifiant Search.svc
                 # est en revanche valide pour la fiche détaillée.
+                if not current():
+                    return None, "error"
                 try:
                     detail = session.holdings(best, search_terms="")
                     if detail.thumbnail_url:
@@ -496,6 +581,8 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
         "not_found": 15 * 60,
         "error": 5 * 60,
     }.get(status, 15 * 60)
+    if not current():
+        return None, "error"
     self.storage.cache_put(namespace, key, {"url": url or "", "status": status}, ttl)
     self.diagnostics.add(
         "COVER", "history search", "ok",
@@ -512,7 +599,7 @@ def resolve_history_thumbnail(self, provider: str, record_id: str | None, title:
         },
         level="detailed",
     )
-    return url or default_url, status
+    return (url or default_url, status) if current() else (None, "error")
 
 
 def _openable_scoped_placement(self, placement: dict[str, Any], *,
