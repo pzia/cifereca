@@ -10,10 +10,11 @@ from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
 
 
 def _archive(tmp_path, name, version, marker, *, fail=False, sibling=False,
-             helper_name=None, helper_package=False):
+             helper_name=None, helper_package=False, namespace=False):
     package_id = f"org.test.lifetime.{name}"
     module = f"lifetime_{name}_entry"
     helper = helper_name or f"lifetime_{name}_helper"
+    import_name = helper + '.leaf' if namespace else helper
     plugins = [{"id": f"lifetime.{name}", "type": "recommendation",
                 "entrypoint": f"{module}:Plugin"}]
     if sibling:
@@ -22,16 +23,17 @@ def _archive(tmp_path, name, version, marker, *, fail=False, sibling=False,
     manifest = {"manifest": 1, "package": {"id": package_id, "name": name,
                     "version": version, "plugin_api": ">=1,<2"}, "plugins": plugins}
     archive = tmp_path / f"{name}-{version}.zip"
-    code = (f"from {helper} import MARKER\n"
+    code = (f"from {import_name} import MARKER\n"
             "class Plugin:\n"
             " def activate(self, ctx): return self\n"
             " def value(self): return MARKER\n"
             " def late(self):\n"
-            f"  from {helper} import MARKER\n"
+            f"  from {import_name} import MARKER\n"
             "  return MARKER\n")
     with zipfile.ZipFile(archive, "w") as z:
         z.writestr("cifereca-plugin.json", json.dumps(manifest))
-        path = f"{helper}/__init__.py" if helper_package else f"{helper}.py"
+        path = (f"{helper}/leaf.py" if namespace else
+                f"{helper}/__init__.py" if helper_package else f"{helper}.py")
         z.writestr(path, f"MARKER = {marker!r}\n")
         z.writestr(f"{module}.py", code + ("raise RuntimeError('synthetic')\n" if fail else ""))
         if sibling:
@@ -171,3 +173,31 @@ def test_namespace_directory_claims_code_without_init(tmp_path):
     assert package_namespace_conflicts(roots) == {
         "a": ("fixture_namespace",), "b": ("fixture_namespace",),
     }
+
+
+def test_pep420_namespace_import_retirement_and_rollback(tmp_path, manager):
+    a1, aid, module, helper = _archive(tmp_path, "ns", "1.0", "old", namespace=True)
+    a2, _, _, _ = _archive(tmp_path, "ns", "2.0", "new", namespace=True)
+    manager.install(a1)
+    assert manager.service("lifetime.ns").late() == "old"
+    assert helper in sys.modules and helper + ".leaf" in sys.modules
+    manager.set_enabled("lifetime.ns", False)
+    assert all(name not in sys.modules for name in (module, helper, helper + ".leaf"))
+    manager.set_enabled("lifetime.ns", True)
+    assert manager.service("lifetime.ns").late() == "old"
+    manager.install(a2)
+    assert manager.service("lifetime.ns").late() == "new"
+    manager.rollback(aid)
+    assert manager.service("lifetime.ns").late() == "old"
+
+
+def test_mixed_namespace_is_not_evicted_by_retirement(tmp_path, manager, monkeypatch):
+    from types import ModuleType
+    archive, _, _, _ = _archive(tmp_path, "mixed", "1.0", "local")
+    installed = manager.install(archive)
+    name = "cifereca_test_mixed_namespace"
+    mixed = ModuleType(name)
+    mixed.__path__ = [str(installed.root / name), str(tmp_path / "foreign" / name)]
+    monkeypatch.setitem(sys.modules, name, mixed)
+    manager.set_enabled("lifetime.mixed", False)
+    assert sys.modules[name] is mixed
