@@ -129,3 +129,30 @@ compatibilité des extensions installées et migration/major Plugin API :**
 règle de compatibilité explicite pour tous les plugins installés,
 un chemin de migration/rollback, et les preuves Core Sync/ouverture/
 retour correspondantes. Le P0 parent #3197 reste piloté par A.
+
+### Migration du dispatch d'ouverture (#3197, 18/11/2026)
+
+Un producteur qui expose le trio canonique complet ne peut plus revenir au
+worker historique d'ouverture, y compris si A est partiel/échoue, si
+l'utilisateur n'a pas encore configuré son CAS ou si sa politique est OFF.
+Le réglage historique d'authentification d'un compte, ni la déclaration
+de capacité unattended, ne vaut un CAS ON : le passage au moteur canonique
+nécessite l'action explicite **Activer l'acquisition automatique** dans
+Synchronisation. L'inventaire authentifié continue sans livraison si la
+politique est absente. Ne pas changer silencieusement un OFF, et ne pas
+réécrire les anciennes préférences ni historiques ADEPT.
+
+Un ancien reçu `loan_auto / kobo-adept / attention_required` de ce prêt
+exact reste un veto de rejeu : identité, source, credential, emprunteur
+(alias primaire déclaré par le descriptor seulement), édition et loan ID.
+Les anciens reçus insuffisamment documentés sous la même portée restent
+conservateurs. Un autre prêt ou un autre compte n'hérite pas de ce veto.
+Aucun ancien reçu ne prouve B ou une permission positive. Un checkpoint
+canonique de livraison réellement achevée peut être repris sans GET/ADEPT.
+Le parcours explicite historique de remédiation reste disponible.
+
+Limites : le fallback d'ouverture reste réservé aux anciens plugins 1.x
+sans trio complet, et le writer historique peut encore servir une
+remédiation explicitement demandée. Ne pas le retirer avant équivalence
+des reçus de reprise et des refus après un échec ADEPT canonique en vol.
+Les états anciens ne sont ni effacés ni transformés en présence attestée.
