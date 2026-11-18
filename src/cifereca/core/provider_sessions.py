@@ -1421,21 +1421,27 @@ def connect_configured(self, *, logger, caller_category: str = "other",
         self.last_loans = []
         return {"accounts": self.accounts, "identities": self.identities, "loans": [], "connected": connected, "errors": errors, "connection_failures": public_failures}
 
-    self.accounts = all_accounts
-    self.current_account = all_accounts[0]
-    self.current_identity = self.identity_by_id(self.current_account.identity_id) or self.current_identity
-    self._active_session_key = self._session_key(self.current_account.provider_id, self.current_account.credential_id)
-    self.primary = self.current_account
-    # The startup selection is already published above. Capture its exact
-    # admitted account owner ONCE; never let a delayed Core helper re-select
-    # another GTK identity while deciding whether to suppress a loan refresh.
-    admitted = self.current_identity
+    # The initial refresh belongs to the first connected account of this
+    # sweep, not whichever profile the client happens to display later.
+    first_account = all_accounts[0]
+    connected_identity_id = first_account.identity_id
+    connected_identity = self.identity_by_id(connected_identity_id)
     opening_sync_identity_id = (
-        self.current_account.identity_id
-        if getattr(admitted, "identity_id", None) == self.current_account.identity_id
+        connected_identity_id
+        if type(connected_identity_id) is str
+        and bool(connected_identity_id.strip())
+        and getattr(connected_identity, "identity_id", None) == connected_identity_id
         else None
     )
-    if (caller_category == "startup/connect_configured"
+    self.accounts = all_accounts
+    self.current_account = first_account
+    self.current_identity = connected_identity or self.current_identity
+    self._active_session_key = self._session_key(first_account.provider_id, first_account.credential_id)
+    self.primary = first_account
+    if opening_sync_identity_id is None:
+        # An unproven owner cannot authorize a read of a different profile.
+        loans = []
+    elif (caller_category == "startup/connect_configured"
             and source_scope is None
             and _opening_sync_covers_visible_accounts(
                 self, selected_identity_id=opening_sync_identity_id,
@@ -1450,7 +1456,9 @@ def connect_configured(self, *, logger, caller_category: str = "other",
         # Keep explicit reconnects and targeted CLI connections unchanged.
         loans = []
     else:
-        loans = self.refresh_identity_loans(force=True)
+        loans = self.refresh_identity_loans(
+            force=True, identity_id=opening_sync_identity_id,
+        )
     return {"accounts": self.accounts, "identities": self.identities, "loans": loans, "connected": connected, "errors": errors, "connection_failures": public_failures}
 
 
