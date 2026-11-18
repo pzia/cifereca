@@ -236,3 +236,17 @@ def test_structure_budget_and_status_precedence():
     with pytest.raises(opds.OPDS2ContractError, match="invalid_catalog_json_duplicate_member") as caught:
         opds.parse_catalog(b'{"metadata":{},"metadata":{}}')
     assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize("href", ["", " ", "\t/v1/books?page=2", "/v1/bo\noks?page=2",
+                                   "/v1/book\u200bs?page=2", "/v1/book\\s?page=2"])
+def test_unsafe_raw_navigation_never_becomes_valid_next(href):
+    good = {"rel": "next", "href": "/v1/books?page=2", "type": "application/opds+json"}
+    bad = {"rel": "next", "href": href, "type": "application/opds+json"}
+    for links in ([bad], [good, bad], [bad, good]):
+        result = opds.parse_catalog(feed(links=links, navigation=[
+            {"title": "Unsafe", "href": href, "type": "application/opds+json"},
+        ]))
+        assert result.next_status == "invalid"
+        assert result.next_url is None and result.navigation == ()
+        assert result.publications[0].borrowable is False
