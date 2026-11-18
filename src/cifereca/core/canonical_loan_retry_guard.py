@@ -1,4 +1,4 @@
-"""Negative-only migration of historical ADEPT retry evidence (#3197).
+"""Negative-only historical and canonical ADEPT retry evidence (#3197).
 
 No legacy receipt ever authorizes a delivery, proves B, creates a grant or
 selects a profile. The exact loan's outstanding explicit-only attention
@@ -12,11 +12,14 @@ from inspect import getattr_static
 from ..plugin_api.loan_inventory import LoanInventoryScope
 from .adept_retry_guard import blocked_automatic_adept_retry
 from .source_convergence import SourceKey
+from .canonical_adept_attempt import pending_loan_adept_attempt
 
 
 def historical_adept_retry_blocked(storage, account, session, source: SourceKey) -> bool:
     if source.kind != "loan":
         return False
+    if pending_loan_adept_attempt(storage, source):
+        return True
     try:
         scope = LoanInventoryScope.for_account(
             account, descriptor=getattr_static(session, "descriptor", None),
