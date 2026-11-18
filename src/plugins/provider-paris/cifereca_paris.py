@@ -1,5 +1,6 @@
 from __future__ import annotations
 from cifereca_paris_formats import explicit_formats
+from cifereca_paris_bibliography import public_search_series_metadata
 
 import logging
 import hashlib
@@ -1351,7 +1352,8 @@ class ParisProviderSession(ProviderSession):
                 source_account_id=None, thumbnail_url=None, friendly_url=None,
                 # No raw Resource or account metadata crosses identities.
                 # Bibliographic text remains subject to Core v1 validation.
-                metadata={}, description=None, price=None, currency=None,
+                metadata=public_search_series_metadata(item.metadata, item.scenario),
+                description=None, price=None, currency=None,
                 revision_id=None, document_classification=None,
             ))
             for item in result_rows
