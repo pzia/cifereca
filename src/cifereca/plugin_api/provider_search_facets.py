@@ -54,6 +54,10 @@ class ProviderSearchResponse:
     # Additive: old positional construction and list-only search still work.
     # Absence means no attested public projection, never "all rows public".
     public_notices: tuple[PublicSearchNotice, ...] = ()
+    # Independent of partial (execution failure). False means a valid,
+    # non-exhaustive catalogue window, True an attested complete response,
+    # None no coverage declaration. No authority or pagination request.
+    catalogue_complete: bool | None = None
 
 
 @runtime_checkable
