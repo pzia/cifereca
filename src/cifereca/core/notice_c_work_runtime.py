@@ -30,7 +30,7 @@ def validate_notice_work_admission(admission):
 class NoticeWorkRuntime:
     """Private lifecycle adapter; composition root owns the existing broker."""
 
-    def __init__(self, storage, broker, *, clock=None):
+    def __init__(self, storage, broker, *, clock=None, replay_registry=None):
         if type(broker) is not TaskBrokerImpl or broker.max_workers < 3:
             raise ValueError("notice_work_invalid_runtime_broker")
         validate_notice_work_admission(broker.shared_admission)
@@ -41,6 +41,7 @@ class NoticeWorkRuntime:
         self._observer = None
         self._pump = PublicNoticeWorkPump(
             storage, broker, clock=clock, on_committed=self._notify,
+            replay_registry=replay_registry,
         )
 
     def bind_committed_observer(self, observer):
