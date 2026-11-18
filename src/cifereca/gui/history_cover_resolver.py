@@ -62,7 +62,10 @@ class HistoryCoverResolver:
         # Cancellation may happen after the worker queued this idle callback.
         with self._lock:
             active = not self._closed and holder.get("active", False)
-        if active:
+        # Native admissions carry a passive source fence. Never issue a
+        # provider/SQLite call on GTK merely to deliver a result.
+        current = holder.get("source_current")
+        if active and (current is None or current()):
             callback(value)
         return False
 
@@ -104,10 +107,31 @@ class HistoryCoverResolver:
         # Existing callers without a scope keep compatibility.
         if type(scope) is not str or len(scope) > 128 or not scope.isprintable():
             scope = ""
+        # Real Core callers must capture the borrower *before* the executor
+        # runs. Legacy embedded service doubles retain the old lookup ABI.
+        from cifereca.services import LibraryService
+        native = isinstance(self.service, LibraryService)
+        if native:
+            from cifereca.core.library_projection import capture_history_cover_lookup
+            admitted = capture_history_cover_lookup(
+                self.service, self.service.current_account,
+                provider=provider, record_id=record_id, title=title,
+                author=author, year=year, default_url=default_url,
+            )
+            if admitted is None:
+                GLib.idle_add(self._deliver, holder, callback, None)
+                return request
+            admitted_key, work, source_current = admitted
+            holder["source_current"] = source_current
+            scope = scope + ":" + admitted_key
+        else:
+            work = self.service.resolve_history_thumbnail
         key = self._key(provider, record_id, title, author, year, scope)
         with self._lock:
             self._stats["requested"] += 1
-            if key in self._memory:
+            # Native cache hits must still pass the durable borrower lease
+            # on a worker. Avoid replaying an old private URL from GTK memory.
+            if not native and key in self._memory:
                 self._stats["memory_hit"] += 1
                 value, _status = self._memory[key]
                 GLib.idle_add(self._deliver, holder, callback, value or default_url)
@@ -117,20 +141,20 @@ class HistoryCoverResolver:
             if len(callbacks) > 1:
                 return request
 
-        future = self.pool.submit(
-            self.service.resolve_history_thumbnail,
-            provider, record_id, title, author, year, default_url,
-        )
+        future = (self.pool.submit(work) if native else self.pool.submit(
+            work, provider, record_id, title, author, year, default_url,
+        ))
 
         def done(fut) -> None:
             try:
                 value, status = fut.result()
             except Exception:
-                value, status = default_url, "error"
+                value, status = (None if native else default_url), "error"
             with self._lock:
-                self._memory[key] = (value, status)
-                if len(self._memory) > 2048:
-                    self._memory.pop(next(iter(self._memory)))
+                if not native:
+                    self._memory[key] = (value, status)
+                    if len(self._memory) > 2048:
+                        self._memory.pop(next(iter(self._memory)))
                 callbacks = self._pending.pop(key, [])
                 self._stats[status if status in {"matched", "ambiguous", "not_found", "no_cover", "error"} else "error"] += 1
                 self._stats["completed"] += 1
