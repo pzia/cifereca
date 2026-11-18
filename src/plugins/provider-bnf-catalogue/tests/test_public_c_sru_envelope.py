@@ -21,6 +21,7 @@ BODY = f"""<srw:searchRetrieveResponse xmlns:srw="http://www.loc.gov/zing/srw/"
  <srw:records><srw:record><srw:recordData><dc:dc>
  <dc:identifier>{URL}</dc:identifier><dc:title>Les loups</dc:title>
  <dc:creator>Auteur</dc:creator><dc:format>1 vol. ; 20 cm</dc:format>
+ <dc:language>fre</dc:language><dc:language>eng</dc:language>
  </dc:dc></srw:recordData></srw:record></srw:records>
  </srw:searchRetrieveResponse>""".encode()
 
@@ -64,6 +65,11 @@ def test_bnf_sru_one_page_public_c_web_reference(tmp_path, monkeypatch, custom):
         source = read_notice_cover(db, doc)
         assert source.observation.status == "partial" and source.attribute.state == "pending"
         c = read_consolidated_notice_cover(db, canonical)
+        language = c.sources[0].public_bibliography.language_observation
+        assert language.raw_tags == ("fre", "eng")
+        assert language.languages == ("fr", "en")
+        assert language.source == "bnf-catalogue.sru"
+        assert language.source_field == "dc.language"
         ref, = c.catalogue_web_references
         assert ref.url == URL and ref.record_id == ARK and ref.provider_id == session.provider_id
         assert evict_notice_cover(db, doc, expected_epoch=source.epoch)
@@ -71,6 +77,15 @@ def test_bnf_sru_one_page_public_c_web_reference(tmp_path, monkeypatch, custom):
         known = service.search_known_catalog("loups", identity_id="bob")
         public, = [item for item in known if item.get("source") == "notice_c_public"]
         assert public["_cover_document_ref"] == canonical
+        assert public["metadata"]["languages"] == ["fr", "en"]
+        assert public["metadata"]["bibliography_evidence"]["languages"]["raw_tags"] == ["fre", "eng"]
+        reopened = Storage(tmp_path / "bnf.sqlite")
+        try:
+            # Exact canonical source survives transient-source eviction.
+            retained = read_consolidated_notice_cover(reopened, canonical)
+            assert retained.sources[0].public_bibliography.language_observation == language
+        finally:
+            reopened.close()
         menu = read_public_web_choices(db, canonical)
         choice, = menu.choices
         assert resolve_public_web_choice(db, canonical, expected_epoch=menu.epoch,
@@ -228,5 +243,47 @@ def test_sru_skipped_query_does_not_mint_coverage(monkeypatch):
         assert short.partial is True and short.catalogue_complete is None
         clear = session.search_with_response_facets("")
         assert clear.partial is False and clear.catalogue_complete is None
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("raw, expected", [
+    (b"<dc:language>fra</dc:language>", True),
+    (b"", False),
+    (b"<dc:language>fra</dc:language><dc:language>not a tag</dc:language>", False),
+])
+def test_language_proof_only_for_entire_explicit_record_declaration(monkeypatch, raw, expected):
+    from cifereca.core.search_orchestration import _public_rows_from_response
+    from cifereca.core.public_search_projection import declared_public_language_observation
+
+    body = BODY.replace(b"<dc:language>fre</dc:language><dc:language>eng</dc:language>", raw)
+    monkeypatch.setattr(provider.HTTPX_TRANSPORT, "client",
+        lambda **kw: httpx.Client(transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=body, request=request)), trust_env=False))
+    session = provider.BnfCatalogueSession(
+        credential_id="__public__", label="BnF", credentials={}, options={}, diagnostics=None,
+    )
+    session.connect()
+    try:
+        response = session.search_with_response_facets("Les loups")
+        row, = _public_rows_from_response(response, session)
+        proof = declared_public_language_observation(
+            row.metadata, provider_id=row.source_provider, scenario=row.scenario,
+        )
+        assert (proof is not None) is expected
+        if proof is not None:
+            assert proof.raw_tags == ("fra",) and proof.languages == ("fr",)
+            # A mismatched normalized value, provider or scope cannot certify
+            # a different edition/source's language.
+            assert declared_public_language_observation(
+                {**row.metadata, "languages": ["en"]},
+                provider_id=row.source_provider, scenario=row.scenario,
+            ) is None
+            assert declared_public_language_observation(
+                row.metadata, provider_id="other", scenario=row.scenario,
+            ) is None
+            assert declared_public_language_observation(
+                row.metadata, provider_id=row.source_provider, scenario="OTHER",
+            ) is None
     finally:
         session.close()

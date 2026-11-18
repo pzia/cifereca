@@ -376,6 +376,20 @@ class BnfCatalogueSession(ProviderSession):
                 canonical for raw in values.get("language", [])
                 if (canonical := normalize_language_tag(raw)) is not None
             ))
+            # Retain the exact record's raw DC tags only when the entire
+            # bounded declaration normalizes. Mixed invalid input must not
+            # masquerade as a complete, attested set of languages.
+            raw_tags = values.get("language", [])
+            language_proof = {}
+            if (languages and 1 <= len(raw_tags) <= 16
+                    and all(re.fullmatch(r"[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,8}", tag)
+                            and len(tag) <= 128 and normalize_language_tag(tag)
+                            for tag in raw_tags)):
+                language_proof = {"bibliography_evidence": {"languages": {
+                    "raw_tags": raw_tags, "source": self.provider_id + ".sru",
+                    "source_field": "dc.language", "scope": "SRU-DUBLINCORE",
+                    "confidence": "explicit_record_field", "freshness": "search_response",
+                }}}
             series, collections = _structured_group_values(values)
             first = lambda key: (values.get(key) or [None])[0]
             rows[ark] = SearchResult(
@@ -391,6 +405,7 @@ class BnfCatalogueSession(ProviderSession):
                 metadata={"source": "BnF Catalogue général", "isbns": isbns,
                           "public_url_evidence": f"{self.provider_id}.public_search_record_identifier",
                           "subjects": values.get("subject", []), "languages": languages,
+                          **language_proof,
                           "series": series, "collections": collections,
                           "rights": values.get("rights", []), "bibliographic_formats": formats,
                           "bibliographic_types": kinds,

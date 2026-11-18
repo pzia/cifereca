@@ -25,6 +25,7 @@ from .notice_search_cover_producer import _coordinate_digest
 from .notice_source_observation import NoticeSourceKey
 from .public_search_projection import (
     _public_bibliographic_text, PublicSeriesRelation, decode_public_series_relation,
+    PublicLanguageObservation, decode_public_language_observation,
 )
 from .search import filter_loaded_results, local_search_evidence
 
@@ -64,6 +65,7 @@ class PublicNoticeCHit:
     edition_id: str = ""
     published_at: str | None = None
     series_relation: PublicSeriesRelation | None = None
+    language_observation: PublicLanguageObservation | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,9 +119,8 @@ def _public_observation(
         if type(parsed) is not dict:
             return None
         bio = parsed.get("public_bibliography")
-        if (type(bio) is not dict or set(bio) not in (
-                    _BIBLIO_FIELDS, _BIBLIO_FIELDS | {"series_relation"},
-                )
+        if (type(bio) is not dict or not _BIBLIO_FIELDS <= set(bio)
+                or set(bio) - _BIBLIO_FIELDS - {"series_relation", "language_observation"}
                 or type(bio["schema"]) is not int or bio["schema"] != 1
                 or bio["source_collection"] != "public_catalog"
                 or bio["medium"] not in ("digital", "physical", "unknown")):
@@ -165,6 +166,14 @@ def _public_observation(
             )
             if relation is None:
                 return None
+        language = None
+        if "language_observation" in bio:
+            language = decode_public_language_observation(
+                bio["language_observation"], provider_id=key.provider_id,
+                scenario=bio["scenario"],
+            )
+            if language is None:
+                return None
         last_seen = payload.get("last_seen_at", persisted.observation.observed_at)
         if (type(last_seen) is not int
                 or last_seen < persisted.observation.observed_at
@@ -183,6 +192,7 @@ def _public_observation(
             stale=now - last_seen > _STALE_AFTER,
             edition_id=key.edition_id,
             published_at=bio["published_at"], series_relation=relation,
+            language_observation=language,
         )
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError,
             UnicodeError, RecursionError):
@@ -487,6 +497,7 @@ def search_public_notice_c(
                 stale=now - bib.last_seen_at > _STALE_AFTER,
                 edition_id=bib.edition_id,
                 published_at=bib.published_at, series_relation=bib.series_relation,
+                language_observation=bib.language_observation,
             )
             if _matches_public_c(
                 hit, wanted=wanted, scope=scope,
@@ -524,7 +535,8 @@ def search_public_notice_c(
                         and bib.source_revision == hit.source_revision
                         and bib.title == hit.title
                         and bib.author == hit.author
-                        and bib.series_relation == hit.series_relation):
+                        and bib.series_relation == hit.series_relation
+                        and bib.language_observation == hit.language_observation):
                     hit = replace(
                         hit, document=ref, epoch=epoch,
                         cover_state=cover_state,
