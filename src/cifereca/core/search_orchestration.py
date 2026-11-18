@@ -566,6 +566,20 @@ def _public_rows_from_response(
                     projected, thumbnail_url=image, revision_id=revision,
                 )
                 if valid_public_occurrence:
+                    # Retain a URL only from this exact anonymous public
+                    # product card, not the generic foreign/private claim.
+                    evidence = row.metadata.get("public_url_evidence")
+                    if evidence == f"{row.source_provider}.public_search_product_card":
+                        product = _public_catalog_url(
+                            row.friendly_url, evidence=evidence,
+                            provider_id=row.source_provider,
+                        )
+                        if product is not None:
+                            projected = replace(
+                                projected, friendly_url=product,
+                                metadata={**projected.metadata,
+                                          "public_url_evidence": evidence},
+                            )
                     # Core-only same-call witness; not serialized into the
                     # shared Search cache or assigned by provider plugins.
                     from .notice_search_cover_producer import _CORE_PUBLIC_C_WITNESS
@@ -2075,7 +2089,10 @@ def _public_catalog_url(
         )
         if parsed.query not in allowed_queries:
             return None
-        return value
+        # A producer-qualified marker does not turn a generic search/feed
+        # route or homepage into a book-specific HTML notice.
+        from ..catalogue_link import catalogue_notice_url
+        return catalogue_notice_url({"friendly_url": value})
     except (ValueError, AttributeError, TypeError):
         return None
 

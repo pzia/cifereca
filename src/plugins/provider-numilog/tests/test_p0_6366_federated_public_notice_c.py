@@ -232,15 +232,40 @@ def test_public_supplier_same_call_not_previous_page_and_no_duplicate_get(
         live = session.search_with_response_facets("loup", scope="catalog")
         assert len(live.results) == len(live.public_notices) == 1
         assert live.public_notices[0].result is live.results[0]
-        assert _public_rows_from_response(live, session)[0].thumbnail_url is not None
         first = live.results[0]
+        projected = _public_rows_from_response(live, session)[0]
+        assert projected.thumbnail_url is not None
+        assert first.friendly_url is not None
+        marker = f"{session.provider_id}.public_search_product_card"
+        assert first.metadata["public_url_evidence"] == marker
+        assert projected.friendly_url == first.friendly_url
+        assert projected.metadata["public_url_evidence"] == marker
+        for bad in (
+            replace(first, metadata={**first.metadata,
+                                     "public_url_evidence": "numilog.public_search_product_card"}),
+            replace(first, friendly_url="https://www.numilog.com/search"),
+            replace(first, friendly_url=first.friendly_url + "?token=secret"),
+        ):
+            result, = _public_rows_from_response(
+                ProviderSearchResponse([bad], public_notices=(PublicSearchNotice(bad),)),
+                session,
+            )
+            assert result.friendly_url is None
+            assert "public_url_evidence" not in result.metadata
+        private = NS(provider_id=session.provider_id, credential_id="private",
+                     credentials={"test": "not-public"}, _accounts=[])
+        result, = _public_rows_from_response(live, private)
+        assert result.friendly_url is None
+        assert "public_url_evidence" not in result.metadata
         alternate = replace(first)
         # A same-key but not same-object notice keeps generic public metadata
         # but does NOT qualify the anonymous URL/edition exception.
         mismatch = ProviderSearchResponse(
             results=[first], public_notices=(PublicSearchNotice(alternate),),
         )
-        assert _public_rows_from_response(mismatch, session)[0].thumbnail_url is None
+        rejected = _public_rows_from_response(mismatch, session)[0]
+        assert rejected.thumbnail_url is None and rejected.friendly_url is None
+        assert "public_url_evidence" not in rejected.metadata
         second = session.search_with_response_facets("loup", scope="catalog")
         assert len(second.results) == 1 and len(calls) == 1
         assert second.public_notices[0].result is second.results[0]
