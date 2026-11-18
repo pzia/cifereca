@@ -12,6 +12,8 @@ Ce bloc est la vue courante de la rationalisation. Les sections de versions plus
 
 ## Dette Core
 
+- [ ] **P2 — dette générale des tests après #5376/#3732 (18/11/2026)** : déplacer progressivement les helpers racine importés depuis des modules `test_*.py` vers des fixtures contractuelles stables, classifier les cas restant inconnus hors familles bornées et réduire les assertions purement structurelles seulement à preuve comportementale équivalente. Point de reprise : [qualification #6560](docs/CORE-P0-6560-CUTOVER-WITNESS-QUALIFICATION.md), SHA de recette `c3d089f6` (1474 arêtes root→root, 28 448 cas inconnus sur au moins un axe, 95 sites dynamiques/pytest_plugins et une inconnue dans l'inventaire provider). Risques : coût de maintenance et précision de sélection/classification ; aucune arête bloquante connue laissée dans ce lot. Reprendre par contrat modifié ou défaut de sélection constaté, non par suppression massive. Un faux vert, une autorité implicite, une perte de garde ou de copie unique ne sont jamais classés P2 par cette entrée. Pas de nouveau ticket P0.
+
 - [ ] Triage historique méthode par méthode de `test_core_0921.py`, `0923`, `0925`, `0927`, `0929`, `0931`, `0933`.
 - [ ] Extraire/rationaliser les zones historiques `src/cifereca/builtin_ui/`, `src/cifereca/paris/` et `src/cifereca/kobo/` dans des lots de code dédiés.
 - [ ] Évaluer l'enrichissement du validateur EPUB Core avant toute suppression du validateur strict Numilog.
