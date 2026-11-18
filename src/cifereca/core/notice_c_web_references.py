@@ -60,3 +60,31 @@ def decode_public_web_references(raw, *, provider_id, source_ref, record_id,
             source_revision, observed_at, item["url"], item["evidence"],
         ))
     return tuple(sorted(refs, key=lambda ref: ref.url))
+
+
+def qualified_public_web_source(source, *, inventory_complete):
+    """Exact Search v2 positive field, even when its cover is unknown.
+
+    Only the trusted source writer may persist this observation. A generic
+    partial parser or malformed candidate is not the declared thumbnail
+    omission of this ABI.
+    """
+    obs = source.observation
+    attr = source.attribute
+    if (inventory_complete is not True
+            or obs.key.visibility != "public"
+            or obs.key.branch_id != "search.public.catalogue"
+            or obs.parser_id != "core.search.public-cover"
+            or obs.parser_version != "2"
+            or attr.field_path != ("search_result", "thumbnail_url")):
+        return False
+    fields = obs.fields_copy().get("search_result")
+    if (type(fields) is not dict
+            or set(fields) != {"thumbnail_url", "public_bibliography", FIELD}):
+        return False
+    return (
+        (obs.status == "complete" and attr.state == "available"
+         and bool(attr.candidates))
+        or (obs.status == "partial" and attr.state == "pending"
+            and not attr.candidates and fields["thumbnail_url"] is None)
+    )
