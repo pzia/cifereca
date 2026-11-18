@@ -48,6 +48,7 @@ class ConsolidatedPublicBibliography:
     media_format: str | None
     description: str | None
     last_seen_at: int
+    published_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,7 +169,9 @@ def _decode_public_bibliography(
     from .notice_cover_projection import notice_cover_document_ref
     from .public_search_projection import _public_bibliographic_text
 
-    if type(raw) is not dict or set(raw) != _BIB_KEYS:
+    if type(raw) is not dict or set(raw) not in (
+        _BIB_KEYS, _BIB_KEYS | {"published_at"},
+    ):
         raise ValueError("corrupt_canonical_cover")
     def coord(value, *, optional=False):
         return (value is None and optional) or (
@@ -184,8 +187,8 @@ def _decode_public_bibliography(
             or not observed_at <= raw["last_seen_at"] <= _MAX_EPOCH):
         raise ValueError("corrupt_canonical_cover")
 
-    for name in ("title", "author", "publisher", "media_format", "description"):
-        value = raw[name]
+    for name in ("title", "author", "publisher", "media_format", "description", "published_at"):
+        value = raw.get(name)
         if value is None:
             if name == "title":
                 raise ValueError("corrupt_canonical_cover")
@@ -442,6 +445,11 @@ def _persist_consolidated_cover_source_txn(
                 # make an old source look freshly re-parsed.
                 "last_seen_at": source.observation.observed_at,
             }
+            # Optional additive field: do not churn old rows which never
+            # observed a date. Preserve the literal attested supplier text,
+            # not an inferred year/edition or the observation timestamp.
+            if hit.published_at is not None:
+                incoming["public_bibliography"]["published_at"] = hit.published_at
     # The extension belongs to this exact validated public source, not
     # the per-profile mirror or a different member of the canonical group.
     source_fields = source.observation.fields_copy().get("search_result")
