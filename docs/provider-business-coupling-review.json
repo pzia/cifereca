@@ -188,36 +188,20 @@
       "reachability": "unproven"
     },
     {
-      "id": "site-7874908d12d351ccb80742b1",
+      "id": "site-c80c69aa2b50e757ec2adcfd",
       "classification": "safety_guard_pending_contract",
-      "journey": "Resolve exact Paris loan borrower against legacy/v16 ADEPT grants",
-      "productive_caller": "core.adept_borrower._paris_adept_identity_for_loan through LibraryService._paris_adept_identity_for_loan, used by auto and explicit acquisition admission",
-      "effect": "Cross-checks historical Paris binding, canonical v16 owner, connection identity and pinned ADEPT profile. Disagreement or malformed proof refuses; the facade wrapper creates no second grant.",
+      "journey": "Resolve exact loan borrower against legacy/v16 ADEPT grants",
+      "productive_caller": "core.adept_borrower.resolve_adept_borrower_for_loan through LibraryService.resolve_adept_borrower_for_loan; canonical selected delivery and compatibility facade auto/explicit acquisition",
+      "effect": "Unchanged historical v15 consistency veto, canonical v16 owner and pinned profile checks; canonical candidate now reuses the same resolver.",
       "authority": "Persisted source credential/account, explicit v16 borrower grant, legacy binding consistency and current profile; never GTK selection or title.",
       "replacement_contract": "Versioned source-neutral borrower/profile grant attestation with exact connection/borrower and revocation; do not drop the Paris legacy conflict veto until migration is proved.",
       "tests": [
         "tests/test_core_p0_5851_dual_grant_conflict.py",
-        "tests/test_automatic_loan_admission.py"
+        "tests/test_automatic_loan_admission.py",
+        "tests/test_core_p0_3197_canonical_loan_borrower.py"
       ],
       "retirement_pr": "",
-      "rationale": "Active security safeguard, not a removable supplier branch. The two AST anchors represent one underlying borrower-resolution path.",
-      "decision_group_id": "adept.borrower-paris-legacy-v16-grant",
-      "reachability": "productive"
-    },
-    {
-      "id": "site-7587067dd7068ebdaad80ad9",
-      "classification": "safety_guard_pending_contract",
-      "journey": "Resolve exact Paris loan borrower against legacy/v16 ADEPT grants",
-      "productive_caller": "core.adept_borrower._paris_adept_identity_for_loan through LibraryService._paris_adept_identity_for_loan, used by auto and explicit acquisition admission",
-      "effect": "Cross-checks historical Paris binding, canonical v16 owner, connection identity and pinned ADEPT profile. Disagreement or malformed proof refuses; the facade wrapper creates no second grant.",
-      "authority": "Persisted source credential/account, explicit v16 borrower grant, legacy binding consistency and current profile; never GTK selection or title.",
-      "replacement_contract": "Versioned source-neutral borrower/profile grant attestation with exact connection/borrower and revocation; do not drop the Paris legacy conflict veto until migration is proved.",
-      "tests": [
-        "tests/test_core_p0_5851_dual_grant_conflict.py",
-        "tests/test_automatic_loan_admission.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Active security safeguard, not a removable supplier branch. The two AST anchors represent one underlying borrower-resolution path.",
+      "rationale": "Same active negative safety guard, identical AST expression fingerprint 7b56d5cdb94797b57256. Only the enclosing resolver function name changed; no structural or business guard retirement.",
       "decision_group_id": "adept.borrower-paris-legacy-v16-grant",
       "reachability": "productive"
     },
@@ -1744,6 +1728,38 @@
       "pr": "#6464",
       "in_ast_metric": true,
       "original_site_id": "site-07ee90e681f2ff0bf5ace55f"
+    },
+    {
+      "id": "struct-3197-adept-borrower-legacy-facade-call-neutralized",
+      "original": "LibraryService._paris_adept_identity_for_loan directly called the historical provider-branded resolver",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Compatibility facade delegates to resolve_adept_borrower_for_loan; canonical and historical callers share one implementation.",
+      "classification": "neutral_source_scoped_facade_cutover",
+      "evidence": "The call expression fingerprint 1e13edf4a67e3c7e5996 is removed; no grant or veto is removed. The source-neutral v16 resolver remains productive. New canonical borrower witnesses exercise grant revocation before GET, after GET and during ADEPT.",
+      "tests": [
+        "tests/test_core_p0_5851_dual_grant_conflict.py",
+        "tests/test_automatic_loan_admission.py",
+        "tests/test_core_p0_3197_canonical_loan_borrower.py"
+      ],
+      "pr": "#6656",
+      "in_ast_metric": true,
+      "original_site_id": "site-7587067dd7068ebdaad80ad9"
+    },
+    {
+      "id": "struct-3197-adept-borrower-guard-anchor-renamed",
+      "original": "core.adept_borrower._paris_adept_identity_for_loan: historical v15 consistency lookup",
+      "original_classification": "safety_guard_pending_contract",
+      "replacement": "Same expression under resolve_adept_borrower_for_loan, site-c80c69aa2b50e757ec2adcfd.",
+      "classification": "relocated_ast_anchor_guard_retained",
+      "evidence": "Deterministic old/new site IDs differ only by enclosing function name. Fingerprint 7b56d5cdb94797b57256 unchanged; current review retains the same decision group, productive reachability and safety_guard_pending_contract classification. No claim of guard removal or net AST reduction from the rename.",
+      "tests": [
+        "tests/test_core_p0_5851_dual_grant_conflict.py",
+        "tests/test_automatic_loan_admission.py",
+        "tests/test_core_p0_3197_canonical_loan_borrower.py"
+      ],
+      "pr": "#6656",
+      "in_ast_metric": true,
+      "original_site_id": "site-7874908d12d351ccb80742b1"
     }
   ],
   "guard_installations": [
