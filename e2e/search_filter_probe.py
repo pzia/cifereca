@@ -947,6 +947,126 @@ def main() -> int:
         assert not window._search_response_facets.get_visible()
         assert facet_queries == ["Facettes"]
         result["checks"]["response_facets_descriptive_and_scoped"] = True
+        begin_resilience()
+
+    # #1916: actual GTK and Core orchestration; only HTTP is synthetic.
+    resilience = {}
+    resilience_deadline = [0.0]
+    resilience_started = [0.0]
+    resilience_calls = []
+
+    def begin_resilience():
+        import httpx
+        from time import time
+        from cifereca.gui.query_model import QueryState
+        service = core.library
+        owner = service.current_identity.identity_id
+        service._sessions.pop("synthetic-facets", None)
+        service.storage.catalog_entry_put({
+            "catalog_entry_id": "resilience-known", "identity_id": owner,
+            "provider_id": "synthetic-outage", "item_id": "known-edition",
+            "title": "Resilience connue", "author": "Autrice E2E",
+            "local_state": "remote_catalog", "media_format": "EPUB",
+            "metadata": {"source_collection": "public_catalog",
+                         "medium": "digital", "mirrored_at": int(time())},
+        })
+
+        def make_session(provider, failure):
+            def transport(request):
+                resilience_calls.append((provider, request.url.params["q"]))
+                return httpx.Response(503 if failure else 200, json={})
+            client = httpx.Client(transport=httpx.MockTransport(transport),
+                                  trust_env=False)
+            credential = "fixture-" + provider
+            def search(query, scope, **options):
+                response = client.get("https://catalogue.invalid/search",
+                                      params={"q": query})
+                response.raise_for_status()
+                return [SearchResult(
+                    id=provider + ":live", record_id="live-edition",
+                    docbase="TEST", medium="digital", title=query + " en ligne",
+                    author="Autrice E2E", type="ebook", format="EPUB",
+                    publisher=None, published_at=None, description=None,
+                    thumbnail_url=None, friendly_url=None, scenario="TEST",
+                    source_provider=provider, source_credential=credential,
+                    source_collection="public_catalog", owned=False,
+                    downloadable=False, download_url=None,
+                )]
+            def facets(query, scope, **options):
+                return ProviderSearchResponse(search(query, scope, **options))
+            service.storage.provider_connection_put({
+                "identity_id": owner, "provider_id": provider,
+                "credential_id": credential, "label": provider,
+                "enabled": True, "metadata": {},
+            })
+            return SimpleNamespace(
+                provider_id=provider, credential_id=credential, connected=True,
+                descriptor=SimpleNamespace(display_name=provider),
+                capabilities=SimpleNamespace(search=True), client=client,
+                search=search, search_with_response_facets=facets,
+                last_search_warnings=[], close=client.close,
+            )
+        for provider, failure in (("synthetic-outage", True),
+                                  ("synthetic-healthy", False)):
+            session = make_session(provider, failure)
+            resilience[provider] = session
+            service._sessions[provider] = session
+        run_resilience("Resilience", True)
+
+    def run_resilience(query, known):
+        from cifereca.gui.query_model import QueryState
+        resilience_calls.clear()
+        window.search_controls.set_state(QueryState(text=query), notify=False)
+        resilience_started[0] = monotonic()
+        resilience_deadline[0] = resilience_started[0] + 6
+        device.click_widget(window.search_global_button)
+        later(100, lambda: check_resilience(query, known))
+
+    def check_resilience(query, known):
+        expected = {"synthetic-outage": "known_catalog_stale" if known else "unavailable",
+                    "synthetic-healthy": "live"}
+        statuses = dict(window._online_source_statuses)
+        if (not window.search_global_button.get_sensitive()
+                or statuses != expected):
+            if monotonic() < resilience_deadline[0]:
+                later(100, lambda: check_resilience(query, known))
+                return
+            raise AssertionError("Resilience GTK: missing final source status")
+        rows = list(window._remote_search_results)
+        assert sorted(resilience_calls) == sorted((key, query) for key in expected)
+        assert len(rows) == (2 if known else 1)
+        assert {row.source_provider for row in rows} == (
+            set(expected) if known else {"synthetic-healthy"})
+        label = window.search_page.count_label.get_label()
+        tooltip = window.search_page.count_label.get_tooltip_text()
+        assert "source en ligne" in label
+        assert ("source secours local" if known else "source indisponible") in label
+        assert "catalogue.invalid" not in label + (tooltip or "")
+        store = window.search_page.store
+        assert store.get_n_items() == len(rows)
+        items = [store.get_item(i) for i in range(store.get_n_items())]
+        if known:
+            stale, = (row for row in rows if row.source_provider == "synthetic-outage")
+            assert stale.metadata["search_provenance"] == "known_catalog_stale"
+            assert not stale.owned and not stale.downloadable
+            assert stale.friendly_url is stale.download_url is None
+            shown, = (item for item in items if "hors ligne" in item.meta)
+            assert "Notice indexée localement le" in shown.meta
+        else:
+            assert all("hors ligne" not in item.meta for item in items)
+        result.setdefault("resilience_1916", {})["known" if known else "empty"] = {
+            "statuses": statuses, "count": len(rows),
+            "requests": len(resilience_calls),
+            "elapsed_ms": round((monotonic() - resilience_started[0]) * 1000),
+        }
+        capture_stage("07b-resilience-known" if known else "07c-resilience-empty")
+        if known:
+            later(100, lambda: run_resilience("Introuvable", False))
+            return
+        for provider, session in resilience.items():
+            core.library._sessions.pop(provider, None)
+            session.close()
+        result["checks"]["P0_1916_gtk_resilience"] = True
         result["p0_4673_stage"] = "fixture_setup"
         begin_paris_profiles()
 
