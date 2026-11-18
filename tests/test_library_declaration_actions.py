@@ -163,3 +163,39 @@ def test_failed_preview_does_not_show_raw_exception_or_confirmation(ui, selected
     assert 'Aucune écriture' in controls.status.label
     assert 'PRIVATE' not in controls.status.label
     assert records(selected[3]) == []
+
+
+def test_admitted_declaration_survives_closed_view_and_aba(ui, selected):
+    controls, pair, runner = ui
+    session, _, _, service, _ = selected
+    controls.preview(False)
+    runner.deferred = True
+    Dialog.dialogs[-1].respond('apply')
+    assert len(runner.queue) == 1 and records(service) == []
+    owner = service.current_identity
+    service.current_identity = service.identity_by_id('alex')
+    service._account_context_epoch += 1
+    service.current_identity = owner
+    service._account_context_epoch += 1
+    pair[1] = None
+    controls.reset()
+    session.close()
+    label = controls.status.label
+    runner.run()
+    entry, = records(service)
+    assert entry['scope']['identity_id'] == 'default'
+    assert entry['state'] == 'active'
+    assert not rows(service, 'placements')
+    assert controls.status.label == label
+
+
+def test_admitted_declaration_real_source_revocation_still_blocks(ui, selected):
+    controls, _, runner = ui
+    service = selected[3]
+    controls.preview(False)
+    runner.deferred = True
+    Dialog.dialogs[-1].respond('apply')
+    assert len(runner.queue) == 1
+    service._source_context_epoch += 1
+    runner.run()
+    assert records(service) == []

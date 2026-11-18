@@ -196,12 +196,18 @@ class DeclarationActions:
             self.revoke.set_sensitive(False)
             self.status.set_text('Confirmation reçue · vérification locale finale…')
 
-            def commit():
-                return self.session.confirm_declared_link(
+            try:
+                commit = self.session.admit_declared_link(
                     *pair, user_confirmed=True,
-                    # The worker must not read GTK selection or session.valid().
-                    cancelled=lambda: self.generation != generation,
                 )
+            except Exception:
+                commit = None
+            if not callable(commit):
+                if self._current(pair, generation, require_fresh=False):
+                    self.declare.set_sensitive(self.session.valid())
+                    self.revoke.set_sensitive(True)
+                    self.status.set_text('Confirmation indisponible. Relancez la vérification locale.')
+                return
 
             def completed(result):
                 # A committed mutation remains successful even if its DB

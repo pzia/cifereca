@@ -58,5 +58,6 @@ def test_declared_link_actions_share_pinned_footer_without_second_writer():
     # No UI duplication that would bypass the revocable Core selection.
     assert code.count("pair_actions.prepend(declarations.declare)") == 1
     assert code.count("pair_actions.insert_child_after(declarations.revoke, declarations.declare)") == 1
-    assert "session.confirm_declared_link(" in actions
+    assert "session.admit_declared_link(" in actions
+    assert "session.confirm_declared_link(" not in actions
     assert "user_confirmed=True" in actions

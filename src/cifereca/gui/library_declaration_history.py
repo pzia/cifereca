@@ -274,14 +274,17 @@ class PrivateDeclarationHistory:
             self.withdraw_button.set_sensitive(False)
             self.status.set_text('Confirmation reçue · vérification finale…')
 
-            def write():
-                return self.session.confirm_history_withdrawal(
+            try:
+                write = self.session.admit_history_withdrawal(
                     relation_id, user_confirmed=True,
-                    # Worker code may check a scalar generation only; never
-                # inspect GTK widgets from a worker thread. Core independently
-                # revalidates the active identity, scope and SQLite state.
-                cancelled=lambda: self.generation != generation,
                 )
+            except Exception:
+                write = None
+            if not callable(write):
+                if self._current(relation_id, generation, fresh=False):
+                    self.withdraw_button.set_sensitive(self.session.valid())
+                    self.status.set_text('Révocation indisponible. Relancez la vérification privée.')
+                return
 
             def completed(result):
                 if not self._current(relation_id, generation, fresh=False):

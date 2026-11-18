@@ -16,6 +16,7 @@ import re
 import sqlite3
 import time
 import uuid
+from threading import Lock
 
 from ..locking import InterProcessLock, LockBusyError
 from ..paths import acquisition_lock_file
@@ -25,6 +26,9 @@ from ..providers.registry import ProviderRegistry
 from .library_audit_roots import configured_identity_roots
 from .library_fresh_file_check import revalidate_observed_file
 from .library_inventory import FileObservation
+from .library_sqlite_freshness import sqlite_source_stamp
+from .source_context import source_context_epoch
+from pathlib import Path
 
 _PREFIX = 'core.library.user-declaration.v1.'
 _MAX_RECORDS = 4096
@@ -105,14 +109,14 @@ def _account_current(accounts, scope, *, descriptor=None):
     return (len(matches) == 1
             and matches[0].identity_id == scope['identity_id'])
 
-def _scope(service, scope, *, require_live_account=True):
+def _scope(service, scope, *, require_live_account=True, admitted=None):
     _require(all(_text(scope.get(key)) for key in _SCOPE_FIELDS), 'invalid_scope')
-    current = service.current_identity
+    current = service.current_identity if admitted is None else admitted.owner
     _require(current is not None and current.identity_id == scope['identity_id'],
              'identity_not_active')
     config, storage = service.config, service.storage
     accounts, identities = service.accounts, service.identities
-    epoch, data = service._account_context_epoch, config.data
+    epoch, data = (service._account_context_epoch if admitted is None else admitted.epoch), config.data
     roots = configured_identity_roots(config, scope['identity_id'])[scope['identity_id']]
     descriptor = _installed_descriptor(service, scope['provider_id'])
 
@@ -128,12 +132,12 @@ def _scope(service, scope, *, require_live_account=True):
 
     def valid():
         try:
-            return (service.current_identity is current
+            return ((service.current_identity is current if admitted is None else admitted.current())
                     and current.identity_id == scope['identity_id']
                     and service.config is config and config.data is data
                     and service.storage is storage
                     and service.accounts is accounts and service.identities is identities
-                    and service._account_context_epoch == epoch
+                    and (admitted is not None or service._account_context_epoch == epoch)
                     and (not require_live_account or account_matches())
                     and configured_identity_roots(config, scope['identity_id'])[
                         scope['identity_id']] == roots)
@@ -443,6 +447,18 @@ def declare_local_link(service, *, observation: FileObservation, identity_id: st
                        provider_id: str, credential_id: str, account_id: str,
                        item_id: str, confirmation=None, revoke=None,
                        cancelled=lambda: False, on_committed=None):
+    return _declare_local_link(
+        service, observation=observation, identity_id=identity_id,
+        provider_id=provider_id, credential_id=credential_id, account_id=account_id,
+        item_id=item_id, confirmation=confirmation, revoke=revoke,
+        cancelled=cancelled, on_committed=on_committed,
+    )
+
+
+def _declare_local_link(service, *, observation: FileObservation, identity_id: str,
+                        provider_id: str, credential_id: str, account_id: str,
+                        item_id: str, confirmation=None, revoke=None,
+                        cancelled=lambda: False, on_committed=None, admitted=None):
     """Private preview/confirm, or preview/confirm revoking our own declaration.
 
     ``confirmation`` is the exact token of the private diff shown to the user.
@@ -461,7 +477,7 @@ def declare_local_link(service, *, observation: FileObservation, identity_id: st
         _require(on_committed is None or callable(on_committed), 'invalid_commit_hook')
         scope = dict(zip(_SCOPE_FIELDS, (identity_id, provider_id, credential_id,
                                         account_id, item_id)))
-        roots, valid, epoch = _scope(service, scope)
+        roots, valid, epoch = _scope(service, scope, admitted=admitted)
         _require(observation.identity_id == identity_id, 'file_scope_changed')
         write = confirmation is not None
         lock = InterProcessLock(acquisition_lock_file()) if write else nullcontext()
@@ -473,6 +489,8 @@ def declare_local_link(service, *, observation: FileObservation, identity_id: st
 
         with lock, _transaction(service.storage, write, notify_commit) as db:
             _require(valid() and not cancelled(), 'source_scope_changed')
+            if admitted is not None:
+                admitted.require_sql_owner(db)
             # Revocation withdraws a statement only. A removed right or a
             # missing/replaced book must not trap an obsolete declaration.
             context = _context(db, scope) if revoke is None else {}
@@ -761,6 +779,15 @@ def list_declared_links(service, *, identity_id, offset=0, limit=50,
 def withdraw_declared_link(service, *, identity_id, relation_id,
                            confirmation=None, cancelled=lambda: False,
                            on_committed=None):
+    return _withdraw_declared_link(
+        service, identity_id=identity_id, relation_id=relation_id,
+        confirmation=confirmation, cancelled=cancelled, on_committed=on_committed,
+    )
+
+
+def _withdraw_declared_link(service, *, identity_id, relation_id,
+                            confirmation=None, cancelled=lambda: False,
+                            on_committed=None, admitted=None):
     """Explicitly withdraw one *user* statement, even when its book is gone.
 
     This is deliberately NOT an attested-placement undo, entitlement removal,
@@ -783,22 +810,22 @@ def withdraw_declared_link(service, *, identity_id, relation_id,
         _require(callable(cancelled), 'invalid_cancellation')
         _require(on_committed is None or callable(on_committed),
                  'invalid_commit_hook')
-        current = service.current_identity
+        current = service.current_identity if admitted is None else admitted.owner
         _require(current is not None and current.identity_id == identity_id,
                  'identity_not_active')
         config, storage = service.config, service.storage
         accounts, identities = service.accounts, service.identities
-        epoch, data = service._account_context_epoch, config.data
+        epoch, data = (service._account_context_epoch if admitted is None else admitted.epoch), config.data
 
         def valid():
             try:
-                return (service.current_identity is current
+                return ((service.current_identity is current if admitted is None else admitted.current())
                         and current.identity_id == identity_id
                         and service.config is config and config.data is data
                         and service.storage is storage
                         and service.accounts is accounts
                         and service.identities is identities
-                        and service._account_context_epoch == epoch)
+                        and (admitted is not None or service._account_context_epoch == epoch))
             except Exception:
                 return False
 
@@ -812,6 +839,8 @@ def withdraw_declared_link(service, *, identity_id, relation_id,
 
         with lock, _transaction(storage, write, notify_commit) as db:
             _require(valid() and not cancelled(), 'source_scope_changed')
+            if admitted is not None:
+                admitted.require_sql_owner(db)
             records = _records(db)
             matches = [r for r in records if (
                 r['relation_id'] == relation_id
@@ -853,3 +882,89 @@ def withdraw_declared_link(service, *, identity_id, relation_id,
     except (ValueError, TypeError, KeyError, AttributeError, RecursionError,
             UnicodeError):
         raise DeclarationRejected('invalid_local_context') from None
+
+
+class _DeclarationAdmission:
+    """Core-only lease: the private preview token still binds the exact diff."""
+
+    def __init__(self, service, identity_id):
+        owner = service.current_identity
+        _require(owner is not None and owner.identity_id == identity_id,
+                 'identity_not_active')
+        self.owner = owner
+        self.epoch = service._account_context_epoch  # original preview token
+        self.service, self.identity_id = service, identity_id
+        self.config, self.storage = service.config, service.storage
+        self.data = self.config.data
+        self.identities, self.accounts = service.identities, service.accounts
+        self.registry = service.registry
+        self.source_epoch = source_context_epoch(service)
+        self.path = Path(self.storage.path)
+        self.roots = configured_identity_roots(self.config, identity_id)
+        self.directory = owner.directory_name or identity_id
+        self.stamp = sqlite_source_stamp(self.path)
+        with self.storage._lock, self.storage._connect() as db:
+            self.require_sql_owner(db)
+        _require(self.stamp is not None and self.current(), 'source_scope_changed')
+        _require(service.current_identity is owner
+                 and service._account_context_epoch == self.epoch,
+                 'source_scope_changed')
+
+    def current(self):
+        try:
+            s = self.service
+            return (s.storage is self.storage and Path(self.storage.path) == self.path
+                    and s.config is self.config and self.config.data is self.data
+                    and s.identities is self.identities and s.accounts is self.accounts
+                    and s.registry is self.registry
+                    and source_context_epoch(s) == self.source_epoch
+                    and self.owner.identity_id == self.identity_id
+                    and (self.owner.directory_name or self.identity_id) == self.directory
+                    and sum(i.identity_id == self.identity_id for i in self.identities) == 1
+                    and any(i is self.owner for i in self.identities)
+                    and configured_identity_roots(self.config, self.identity_id) == self.roots
+                    and sqlite_source_stamp(self.path) == self.stamp)
+        except Exception:
+            return False
+
+    def require_sql_owner(self, db):
+        row = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (self.identity_id,),
+        ).fetchone()
+        _require(row == (self.directory,), 'source_scope_changed')
+
+
+def _admit_declaration_command(service, *, identity_id, confirmation,
+                               options=None, relation_id=None, revoke=None,
+                               on_committed=None):
+    """Consume confirmation at the explicit click; never re-read UI at work."""
+    _require(type(confirmation) is str
+             and re.fullmatch('[0-9a-f]{64}', confirmation) is not None,
+             'invalid_confirmation')
+    _require((options is None) != (relation_id is None),
+             'invalid_local_context')
+    if options is not None:
+        _require(options.get('identity_id') == identity_id,
+                 'identity_not_active')
+        options = dict(options)
+    admitted = _DeclarationAdmission(service, identity_id)
+    lock, consumed = Lock(), [False]
+
+    def work():
+        with lock:
+            _require(not consumed[0], 'invalid_confirmation')
+            consumed[0] = True
+        _require(admitted.current(), 'source_scope_changed')
+        if options is None:
+            return _withdraw_declared_link(
+                service, identity_id=identity_id, relation_id=relation_id,
+                confirmation=confirmation, on_committed=on_committed,
+                admitted=admitted,
+            )
+        return _declare_local_link(
+            service, **options, confirmation=confirmation, revoke=revoke,
+            on_committed=on_committed, admitted=admitted,
+        )
+
+    return work
