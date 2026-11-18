@@ -740,3 +740,40 @@ def test_custom_audio_sru_retains_explicit_configuration_behavior(tmp_path):
         assert [row.record_id for row in rows] == ["ark:/12148/bpt6k1279113"]
     finally:
         session.close()
+
+
+def test_shared_parsers_once_per_payload_and_cached_discovery(tmp_path, monkeypatch):
+    import cifereca_gallica as adapter
+
+    atom, descriptors, requests = [], [], []
+    result_body = RESULTS.encode("utf-8")
+    real_atom = adapter.parse_atom_catalogue
+    real_xml = adapter.parse_bounded_catalogue_xml
+
+    def counted_atom(body):
+        atom.append(body)
+        return real_atom(body)
+
+    def counted_xml(body, **limits):
+        descriptors.append(body)
+        return real_xml(body, **limits)
+
+    def handler(request):
+        requests.append(request.url.path)
+        body = {"/opds": ROOT_FEED, "/opds-search.xml": OPEN_SEARCH,
+                "/opds/search": result_body}[request.url.path]
+        return httpx.Response(200, content=body)
+
+    monkeypatch.setattr(adapter, "parse_atom_catalogue", counted_atom)
+    monkeypatch.setattr(adapter, "parse_bounded_catalogue_xml", counted_xml)
+    session = _session(tmp_path, handler)
+    try:
+        for query in ("bruyere", "caracteres"):
+            rows = session.search(query, "digital")
+            assert [row.record_id for row in rows] == ["ark:/12148/bpt6k5493831p"]
+            assert rows[0].published_at == "1880"
+        assert requests == ["/opds", "/opds-search.xml", "/opds/search", "/opds/search"]
+        assert atom == [ROOT_FEED, result_body, result_body]
+        assert descriptors == [OPEN_SEARCH]
+    finally:
+        session.close()
