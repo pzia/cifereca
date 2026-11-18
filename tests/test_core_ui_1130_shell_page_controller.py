@@ -418,3 +418,30 @@ def test_custom_plugin_route_cannot_capture_built_in_plugins_widget(monkeypatch)
     assert created == [True]
     assert host._plugin_page_widgets["plugins"] is custom
     assert current in removed
+
+
+def test_shell_mounts_resolved_lifecycle_and_retires_rebuilt_page(monkeypatch):
+    from dataclasses import replace
+    from cifereca.gui.page_lifecycle import notify_visible, notify_context
+
+    events = []
+    page = replace(_page("search"), lifecycle=lambda _h, w, event: events.append((w, event)))
+    host, _, _, _, _ = _host(monkeypatch, contributions=[page])
+    host.service = NS(current_identity=NS(identity_id="A"), current_account=None)
+    host._identity_context_generation = 0
+    host._account_context_generation = 0
+    _rebuild(host)
+    first = host._plugin_page_widgets["search"]
+    notify_visible(host, "search")
+    old = events[-1][1]
+    assert events[-1][0] is first and old.is_current()
+    host.service.current_identity = NS(identity_id="B")
+    host._identity_context_generation = 1
+    notify_context(host)
+    assert not old.is_current() and events[-1][1].identity_id == "B"
+    old_b = events[-1][1]
+    _rebuild(host)
+    assert events[-1][1].reason == "dispose" and not old_b.is_current()
+    notify_visible(host, "search")
+    assert events[-1][0] is host._plugin_page_widgets["search"]
+    assert events[-1][0] is not first and events[-1][1].is_current()
