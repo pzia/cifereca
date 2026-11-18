@@ -87,4 +87,4 @@ def test_production_coreui_only_renders_sanitized_diagnostic():
     assert "missing_note.set_tooltip_text(diagnostic)" in handler
     assert "missing_apply.set_visible(ready)" in handler
     assert "result.get('requires_explicit_confirmation') is True" in handler
-    assert "session.confirm_missing_repair(" not in handler
+    assert "session.admit_missing_repair(" not in handler

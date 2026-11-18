@@ -28,7 +28,7 @@ def test_relocation_candidate_is_selected_from_scoped_inspection_not_file_picker
     assert "row._missing_file_key = item.key" in source
     assert "missing_file_key[0] = row._missing_file_key" in source
     assert "session.preview_missing_relocation(*chosen)" in source
-    assert "session.confirm_missing_repair(" in source
+    assert "session.admit_missing_repair(" in source
     assert "chosen[0], file_key=chosen[1], user_confirmed=True" in source
     assert "FileChooser" not in source
     assert "FileDialog" not in source

@@ -33,7 +33,7 @@ def test_missing_sqlite_retirement_has_separate_visible_preview_and_consent():
     assert "result.get('requires_explicit_confirmation') is True" in source
     assert "'Retirer cet emplacement SQLite ?'" in source
     assert "if response != 'apply':" in source
-    assert "session.confirm_missing_repair(" in source
+    assert "session.admit_missing_repair(" in source
     assert "chosen, user_confirmed=True," in source
     assert "dialog.set_default_response('cancel')" in source
     assert "dialog.set_close_response('cancel')" in source
@@ -70,9 +70,30 @@ def test_ui_does_not_make_sha_or_catalogue_summary_a_retirement_permit():
     assert "result.get('status') == 'ready'" in handler
     assert "result.get('read_only') is True" in handler
     assert "result.get('requires_explicit_confirmation') is True" in handler
-    assert "session.confirm_missing_repair(" not in handler
+    assert "session.admit_missing_repair(" not in handler
     confirm = source[source.index("def confirm_missing_retirement(*_args):"):
                      source.index("def render(*_args, reset=False):")]
     assert "Adw.MessageDialog.new" in confirm
-    assert "session.confirm_missing_repair(" in confirm
+    assert "session.admit_missing_repair(" in confirm
     assert "user_confirmed=True" in confirm
+
+
+def test_all_three_repair_confirmations_admit_at_click_before_queue():
+    source = _source()
+    for name, end in (
+        ("confirm_missing_relocation", "preview_missing_linked_retirement"),
+        ("confirm_missing_linked_retirement", "preview_missing_retirement"),
+        ("confirm_missing_retirement", "render"),
+    ):
+        handler = source[source.index("def " + name + "("):
+                         source.index("def " + end + "(")]
+        assert handler.index("if response != 'apply':") < handler.index(
+            "commit = session.admit_missing_repair(")
+        assert handler.index("commit = session.admit_missing_repair(") < handler.index(
+            "if not callable(commit):")
+        assert handler.index("if not callable(commit):") < handler.index(
+            "self.parent.runner.submit(")
+        assert "def commit():" not in handler
+        assert "session.confirm_missing_repair(" not in handler
+        assert "commit, completed, failed" in handler
+        assert "version != missing_version[0]" in handler

@@ -36,7 +36,7 @@ def test_linked_catalogue_action_is_separate_from_orphan_retirement():
     assert "result.get('requires_explicit_confirmation') is True" in linked
     assert "1 <= count <= 128" in linked
     assert "missing_linked_apply.set_visible(ready)" in linked
-    assert "session.confirm_missing_repair(" not in linked
+    assert "session.admit_missing_repair(" not in linked
 
 
 def test_linked_confirm_is_explicit_then_result_scope_checked():
@@ -49,7 +49,7 @@ def test_linked_confirm_is_explicit_then_result_scope_checked():
     assert "dialog.set_close_response('cancel')" in linked
     assert "if response != 'apply':" in linked
     assert "session.cancel_missing_repair()" in linked
-    assert "session.confirm_missing_repair(" in linked
+    assert "session.admit_missing_repair(" in linked
     assert "chosen, user_confirmed=True" in linked
     assert "outcome.get('reason') == 'catalogue_detached'" in linked
     assert "self.clear()" in linked and "self.start()" in linked
