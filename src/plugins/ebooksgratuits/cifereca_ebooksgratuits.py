@@ -993,17 +993,27 @@ def _opds_author_match(query, names):
     return False
 
 
-def _opds_items(session,feed,feed_url):
+def _opds_items(session,feed,feed_url,*,warnings=None):
     items=[]
+    unqualified=False
     for entry in feed.findall(ATOM+'entry'):
         # OPDS search responses may mix navigational scopes with acquisition
         # entries. Never publish a subsection as an undownloadable "book".
         if not _opds_entry_is_book(session,entry,feed_url):
+            # Qualified navigation is already reported by the loader.
+            # Other discarded entries are not evidence of absence.
+            if not any(
+                'atom+xml' in mime and '/acquisition' not in rel
+                and _opds_source_link(session,feed_url,raw,'feed')
+                for rel,mime,raw,_ in _opds_links(entry,feed_url)
+            ):
+                unqualified=True
             continue
         title=_opds_text(entry,ATOM+'title')
-        if not title:continue
         entry_id=_opds_text(entry,ATOM+'id')
-        if not entry_id:continue
+        if not title or not entry_id:
+            unqualified=True
+            continue
         epub=None; alternate=None; thumbnail=None; formats=set()
         for rel,mime,raw,_ in _opds_links(entry,feed_url):
             checked=(_opds_source_link(session,feed_url,raw,'download')
@@ -1065,6 +1075,8 @@ def _opds_items(session,feed,feed_url):
             source_credential=session.credential_id,
             download_url=epub,content_type='ebook',source_collection='public',
             owned=False,downloadable=bool(epub),metadata=metadata))
+    if unqualified and warnings is not None:
+        warnings.append('partial_results : entrées OPDS non qualifiées')
     return items
 
 
@@ -1232,7 +1244,7 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
                 session.last_search_warnings.append(
                     'partial_results : pagination OPDS non vérifiée'
                 )
-            rows=_opds_items(session,feed,current)
+            rows=_opds_items(session,feed,current,warnings=session.last_search_warnings)
             if field=='title':
                 rows=[row for row in rows if _fold(needle) in _fold(row.title)]
             elif field=='author':
