@@ -142,3 +142,15 @@ def test_rebuild_retires_all_previous_handles_before_dispose_callback():
     new = lifecycle.reset(host)
     assert old is not new and disposed == [False]
     assert not events[-1].is_current(require_visible=False)
+
+
+def test_reentrant_hide_does_not_skip_invalidation_of_previous_visible_page():
+    d, mount, calls, errors, alive = _fixture()
+    d.context_changed("alice", None)
+    mount("hidden", invalidate=lambda event: d.show("hidden") if event.reason == "identity" else None)
+    mount("visible")
+    d.show("visible")
+    calls.clear()
+    d.context_changed("bob", None)
+    assert ("invalidate", "visible") in [(op, route) for op, route, _ in calls]
+    assert calls[-1][:2] == ("show", "hidden")
