@@ -20,34 +20,35 @@ from .notice_c_cover_index import _MAX_SOURCES
 _MAX = 50
 
 
-def _same_public_mirror_source(
-    row: dict[str, Any], hit: PublicNoticeCHit, *, identity_id: str,
-) -> bool:
-    """The legacy mirror may be redundant, but never an action proof."""
+def _public_mirror_key(row: dict[str, Any], *, identity_id: str) -> tuple | None:
+    """Only an exact, unpossessed, descriptive anonymous mirror is redundant."""
     if (type(row) is not dict
             or row.get("source") != "known_catalog"
             or row.get("identity_id") != identity_id
-            or row.get("local") is True
-            or row.get("placement_id")
-            or row.get("state") in (
-                "local", "remote_owned", "remote_loan_active",
-                "remote_loan_realized",
-            )
-            or row.get("provider_id") != hit.provider_id
-            or row.get("item_id") != hit.record_id):
-        return False
+            or row.get("local") is not False
+            or any(row.get(name) for name in ("placement_id", "artifact_id", "local_path"))
+            or row.get("state") not in ("remote_catalog", "available_to_buy")):
+        return None
     meta = row.get("metadata")
     if (type(meta) is not dict
+            or type(meta.get("catalogue_scope_version")) is not int
             or meta.get("catalogue_scope_version") not in (2, 3)
             or meta.get("source_credential") != "__public__"
             or meta.get("source_collection") != "public_catalog"
-            or meta.get("docbase") != hit.docbase
-            or meta.get("medium") != hit.medium
             or meta.get("source_account_id") not in (None, "")):
-        return False
-    if meta.get("catalogue_scope_version") == 2:
-        return hit.source_revision is None
-    return meta.get("source_revision") == hit.source_revision
+        return None
+    revision = meta.get("source_revision")
+    if meta["catalogue_scope_version"] == 2:
+        if revision not in (None, ""):
+            return None
+        revision = None
+    elif type(revision) is not str or not revision:
+        return None
+    coords = (row.get("provider_id"), row.get("item_id"),
+              meta.get("docbase"), meta.get("medium"))
+    if any(type(value) is not str or not value for value in coords):
+        return None
+    return (*coords, revision)
 
 
 def merge_public_notice_c_known_rows(
@@ -77,7 +78,7 @@ def merge_public_notice_c_known_rows(
                 or {hit.document for hit in hits} != {hit.document for hit in page.hits}):
             raise ValueError("invalid_grouped_public_c_projection")
     rows: list[dict[str, Any]] = []
-    admitted: list[PublicNoticeCHit] = []
+    admitted: set[tuple] = set()
     by_document: dict[str, dict[str, Any]] = {}
     for hit in hits:
         if (type(hit) is not PublicNoticeCHit
@@ -85,7 +86,8 @@ def merge_public_notice_c_known_rows(
                 or hit.document.identity_id is not None
                 or not is_notice_cover_document(hit.document)):
             continue
-        admitted.append(hit)
+        admitted.add((hit.provider_id, hit.record_id, hit.docbase,
+                      hit.medium, hit.source_revision))
         prior = by_document.get(hit.document.source_key)
         if prior is not None:
             # Distinct providers can contribute different public text to ONE
@@ -134,8 +136,7 @@ def merge_public_notice_c_known_rows(
     for row in known:
         # Do not replace local placements, verified rights, private sources,
         # different revisions or medium with public descriptive metadata.
-        if not any(_same_public_mirror_source(row, hit, identity_id=identity_id)
-                   for hit in admitted):
+        if _public_mirror_key(row, identity_id=identity_id) not in admitted:
             rows.append(row)
     return rows
 
