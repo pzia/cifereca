@@ -20,6 +20,7 @@ from ..locking import InterProcessLock
 from ..paths import acquisition_lock_file
 from .canonical_publication import _physical_target, _same_file, _stable
 from .source_convergence import SourceKey
+from .canonical_adept_attempt import release_completed_attempt_in_transaction
 
 _SCHEMA = "canonical.completed-delivery.v1"
 # The generic opening recovery rewrites *every* status='acquiring' ledger
@@ -137,6 +138,9 @@ def record_completed_delivery_for_recovery(
             or len(completed.receipt_ref) > 1024
             or type(completed.adept_receipt_ref) is not str
             or len(completed.adept_receipt_ref) > 1024
+            or type(completed.adept_attempt_id) is not str
+            or (completed.adept_attempt_id and (
+                source.kind != "loan" or not completed.adept_receipt_ref))
             or any("\x00" in x or "\r" in x or "\n" in x for x in (
                 offer_id, completed.receipt_ref, completed.adept_receipt_ref,
             ))):
@@ -195,6 +199,13 @@ def record_completed_delivery_for_recovery(
                 )
         else:
             raise ValueError("canonical_intake_record_state_conflict")
+        # Clear only the very attempt whose independently verified bytes
+        # are now recoverable, in the same SQLite transaction. If the
+        # checkpoint fails or the process dies earlier, the hold survives.
+        release_completed_attempt_in_transaction(
+            db, source=source, offer_id=offer_id,
+            operation_id=completed.adept_attempt_id,
+        )
     return record_id
 
 
