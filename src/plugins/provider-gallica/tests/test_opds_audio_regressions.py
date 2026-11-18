@@ -695,3 +695,48 @@ def test_gallica_document_ark_accepts_bare_and_historical_http():
         "ark:/12148/bpt6k1279113",
         "http://gallica.bnf.fr/ark:/12148/bpt6k1279113",
     ) == "ark:/12148/bpt6k1279113"
+
+
+@pytest.mark.parametrize("location", [
+    "https://foreign.invalid/search",
+    "http://gallica.bnf.fr/services/engine/search/sru",
+    "/other-sru",
+    "/services/engine/search/sru",
+])
+def test_official_audio_sru_redirect_is_not_an_observation(tmp_path, location):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(302, headers={"Location": location})
+        return httpx.Response(200, content=SRU_AUDIO)
+
+    session = _session(tmp_path, handler, include_audio=True)
+    try:
+        with pytest.raises(ProviderError) as caught:
+            session.search("audio", content_types=("mp3",))
+        assert getattr(caught.value, "code", None) is None
+        assert caught.value.retryable is False
+        assert len(calls) == 1
+    finally:
+        session.close()
+
+
+def test_custom_audio_sru_retains_explicit_configuration_behavior(tmp_path):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(302, headers={"Location": "/configured-next"})
+        return httpx.Response(200, content=SRU_AUDIO)
+
+    session = _session(tmp_path, handler, include_audio=True)
+    session.sru_url = "https://custom.invalid/sru"
+    try:
+        rows = session.search("audio", content_types=("mp3",))
+        assert len(calls) == 2
+        assert [row.record_id for row in rows] == ["ark:/12148/bpt6k1279113"]
+    finally:
+        session.close()
