@@ -169,9 +169,10 @@ désactiver l'un des packages, puis réactiver. Les namespaces stdlib et
 `cifereca` sont réservés ; un helper étranger déjà importé n'est jamais
 évincé pour satisfaire une activation. Plusieurs contributions du même
 package partagent leurs modules ; le manager retire les imports du package
-après le dernier sibling actif. Le refresh ciblé conserve les packages
-distincts inchangés ; rollback et remplacement conservent leur cycle de
-vie global existant.
+après le dernier sibling actif. Le refresh, remplacement, rollback et changement de version conservent
+les packages indépendants ; les consommateurs de dépendances déclarées
+sont réactivés avec le package concerné. Une modification du venv partagé
+reste un motif distinct de réactivation globale.
 
 Ce contrat est une **isolation logique entre packages compatibles et de
 confiance**, pas une sandbox. Les dépendances Python externes restent
