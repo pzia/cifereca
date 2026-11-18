@@ -53,11 +53,18 @@ def _public_mirror_key(row: dict[str, Any], *, identity_id: str) -> tuple | None
 
 
 def _series_metadata(hit: PublicNoticeCHit) -> dict[str, Any]:
-    if hit.series_relation is None:
-        return {}
-    proof = asdict(hit.series_relation)
-    label = proof.pop("label")
-    return {"series": [label], "bibliography_evidence": {"series": proof}}
+    metadata, proofs = {}, {}
+    if hit.series_relation is not None:
+        proof = asdict(hit.series_relation)
+        metadata["series"] = [proof.pop("label")]
+        proofs["series"] = proof
+    if hit.language_observation is not None:
+        proof = hit.language_observation.wire()
+        metadata["languages"] = proof.pop("languages")
+        proofs["languages"] = proof
+    if proofs:
+        metadata["bibliography_evidence"] = proofs
+    return metadata
 
 
 def merge_public_notice_c_known_rows(

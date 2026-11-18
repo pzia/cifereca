@@ -157,6 +157,73 @@ def declared_public_series_relation(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class PublicLanguageObservation:
+    """A source's explicit language declaration, not a reconciled truth."""
+
+    raw_tags: tuple[str, ...]
+    languages: tuple[str, ...]
+    source: str
+    source_field: str
+    scope: str
+    confidence: str
+    freshness: str
+
+    def wire(self) -> dict:
+        return {**asdict(self), "raw_tags": list(self.raw_tags),
+                "languages": list(self.languages)}
+
+
+def decode_public_language_observation(
+    raw: object, *, provider_id: str, scenario: str | None = None,
+) -> PublicLanguageObservation | None:
+    from ..language import normalize_language_tag
+
+    labels = {"raw_tags", "languages"}
+    fields = {"source", "source_field", "scope", "confidence", "freshness"}
+    if type(raw) is not dict or set(raw) != labels | fields:
+        return None
+    if (type(provider_id) is not str or not provider_id
+            or any(type(raw[name]) is not str or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}", raw[name],
+            ) is None for name in fields)
+            or not raw["source"].startswith(provider_id + ".")
+            or (scenario is not None and raw["scope"] != scenario)
+            or raw["confidence"] != "explicit_record_field"
+            or raw["freshness"] != "search_response"):
+        return None
+    tags, values = raw["raw_tags"], raw["languages"]
+    if (type(tags) is not list or not 1 <= len(tags) <= 16
+            or type(values) is not list or not 1 <= len(values) <= 16
+            or any(type(tag) is not str or len(tag) > 128
+                   or re.fullmatch(r"[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,8}", tag) is None
+                   for tag in tags + values)):
+        return None
+    normalized = tuple(dict.fromkeys(normalize_language_tag(tag) for tag in tags))
+    if None in normalized or normalized != tuple(values):
+        return None
+    return PublicLanguageObservation(
+        tuple(tags), tuple(values), **{name: raw[name] for name in fields},
+    )
+
+
+def declared_public_language_observation(
+    metadata: object, *, provider_id: str, scenario: str,
+) -> PublicLanguageObservation | None:
+    if type(metadata) is not dict:
+        return None
+    evidence = metadata.get("bibliography_evidence")
+    proof = evidence.get("languages") if type(evidence) is dict else None
+    if type(proof) is not dict or set(proof) != {
+        "raw_tags", "source", "source_field", "scope", "confidence", "freshness",
+    }:
+        return None
+    return decode_public_language_observation(
+        {**proof, "languages": metadata.get("languages")},
+        provider_id=provider_id, scenario=scenario,
+    )
+
+
 def _key(row: object) -> tuple | None:
     if type(row) is not SearchResult:
         return None
@@ -268,10 +335,20 @@ def _project_public_notice(
     relation = declared_public_series_relation(
         public.metadata, provider_id=public.source_provider, scenario=public.scenario,
     )
+    proofs = {}
     if relation is not None:
         proof = asdict(relation)
         proof.pop("label")
-        extension = {"bibliography_evidence": {"series": proof}}
+        proofs["series"] = proof
+    language = declared_public_language_observation(
+        public.metadata, provider_id=public.source_provider, scenario=public.scenario,
+    )
+    if language is not None:
+        proof = language.wire()
+        proof.pop("languages")
+        proofs["languages"] = proof
+    if proofs:
+        extension = {"bibliography_evidence": proofs}
         candidate = {**bibliography, **extension}
         if len(json.dumps(candidate, ensure_ascii=False, separators=(",", ":")).encode(
             "utf-8"
