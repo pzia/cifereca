@@ -8,6 +8,7 @@ from __future__ import annotations
 from cifereca.core import canonical_sync_stage, sync_coordination
 from cifereca.models import Account
 from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from tests.test_sync_state_contract import _service
 
 
@@ -28,15 +29,16 @@ def test_opening_records_bounded_phase_counts_for_each_scoped_source(tmp_path, m
     accounts = _accounts(service)
     invocations = []
 
-    def loan_read(_service, account, _session):
+    def loan_read(account, *, force=False):
+        assert force is True
         invocations.append(("loans", account.unique_id))
-        return None, []
+        return []
 
     def resource_read(_service, account, **_kwargs):
         invocations.append(("resources", account.unique_id))
         return None
 
-    monkeypatch.setattr(sync_coordination, "_sync_loan_inventory_observation", loan_read)
+    attach_opening_loan_reader(service, loan_read)
     monkeypatch.setattr(canonical_sync_stage, "observe_canonical_rights_in_sync", resource_read)
     try:
         result = service.opening_sync()
@@ -68,11 +70,11 @@ def test_opening_failed_inventory_attempt_is_counted_without_rights_fallback(
     service.accounts = _accounts(service)[:1]
     calls = []
 
-    def loan_failure(_service, account, _session):
+    def loan_failure(account, *, force=False):
         calls.append("loans")
         raise RuntimeError("synthetic inventory read failure")
 
-    monkeypatch.setattr(sync_coordination, "_sync_loan_inventory_observation", loan_failure)
+    attach_opening_loan_reader(service, loan_failure)
     monkeypatch.setattr(
         canonical_sync_stage, "observe_canonical_rights_in_sync",
         lambda *_args, **_kwargs: calls.append("unexpected-rights"),
