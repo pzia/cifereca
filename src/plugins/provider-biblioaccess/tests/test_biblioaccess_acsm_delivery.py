@@ -73,3 +73,30 @@ def test_oversized_xml_rejected_before_creating_artifact(tmp_path):
             URL, tmp_path, transport=httpx.MockTransport(
                 lambda _: httpx.Response(200, content=b"x" * 128001)))
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("when", ["before", "after_response", "during_stream"])
+def test_guarded_signed_get_does_not_stage_after_revocation(tmp_path, when):
+    allowed = [when != "before"]
+    seen = []
+
+    class RevokingStream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield ACSM[:20]
+            allowed[0] = False
+            yield ACSM[20:]
+
+    def handler(request):
+        seen.append(request.method)
+        if when == "after_response":
+            allowed[0] = False
+        if when == "during_stream":
+            return httpx.Response(200, stream=RevokingStream())
+        return httpx.Response(200, content=ACSM)
+
+    with pytest.raises(delivery.ACSMDeliveryError, match="admission_revoked"):
+        delivery.stage_loan_acsm(
+            URL, tmp_path, transport=httpx.MockTransport(handler),
+            admission_current=lambda: allowed[0])
+    assert seen == ([] if when == "before" else ["GET"])
+    assert list(tmp_path.iterdir()) == []

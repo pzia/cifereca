@@ -233,25 +233,56 @@ def test_n3_url_worker_metrics_distinguish_published_bytes_cache_hits_and_failur
         return seen
 
     try:
-        assert loader.stats()["n3_url_published_bytes"] == 0
+        empty = loader.stats()
+        assert empty["n3_url_published_bytes"] == 0
+        for outcome in ("ok", "failed"):
+            assert empty[f"n3_url_{outcome}_recent_count"] == 0
+            assert f"n3_url_{outcome}_recent_p95_ms" not in empty
         assert fetch(good) == [loader._path(good)]
         first = loader.stats()
         assert first["download_ok"] == 1
         assert first["n3_url_published_bytes"] == len(PNG_HEAD)
         assert 0 <= first["n3_url_ok_avg_ms"] == first["n3_url_ok_max_ms"]
         assert first["n3_url_failed_avg_ms"] == 0
+        assert first["n3_url_ok_recent_count"] == 1
+        assert first["n3_url_ok_recent_p50_ms"] == first["n3_url_ok_recent_p95_ms"] == first["n3_url_ok_avg_ms"]
         assert fetch(good) == [loader._path(good)]
         warm = loader.stats()
         assert warm["cache_hit_valid"] == 1
         for key in ("download_ok", "n3_url_published_bytes",
-                    "n3_url_ok_avg_ms", "n3_url_ok_max_ms"):
+                    "n3_url_ok_avg_ms", "n3_url_ok_max_ms",
+                    "n3_url_ok_recent_count", "n3_url_ok_recent_p95_ms"):
             assert warm[key] == first[key]
         assert fetch(bad) == [None]
         assert fetch(bad) == [None]  # cooldown, not another worker sample
         failed = loader.stats()
         assert failed["download_failed"] == 1
+        assert failed["n3_url_failed_recent_count"] == 1
+        assert failed["n3_url_failed_recent_p50_ms"] == failed["n3_url_failed_recent_p95_ms"] == failed["n3_url_failed_avg_ms"]
+        assert failed["n3_url_ok_recent_count"] == 1
         assert 0 <= failed["n3_url_failed_avg_ms"] == failed["n3_url_failed_max_ms"]
         assert failed["n3_url_published_bytes"] == len(PNG_HEAD)
         assert calls == [good, bad]
+    finally:
+        loader.close()
+
+
+def test_n3_url_recent_windows_are_bounded_and_outcome_specific(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    loader = CoverLoader(max_workers=2)
+    try:
+        # Exercise eviction and nearest-rank calculation without 1025 GETs.
+        # The real worker append and cache/cooldown exclusions are covered above.
+        with loader._lock:
+            loader._n3_url_recent["ok"].extend([10000.0, *range(1, 1025)])
+            loader._n3_url_recent["failed"].extend([200.0, 400.0])
+        stats = loader.stats()
+        assert stats["n3_url_ok_recent_count"] == 1024
+        assert stats["n3_url_ok_recent_p50_ms"] == 512
+        assert stats["n3_url_ok_recent_p95_ms"] == 973
+        assert stats["n3_url_failed_recent_count"] == 2
+        assert stats["n3_url_failed_recent_p50_ms"] == 200
+        assert stats["n3_url_failed_recent_p95_ms"] == 400
+        assert stats["ui_decode_recent_count"] == 0
     finally:
         loader.close()
