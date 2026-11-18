@@ -5,6 +5,7 @@ import re
 import time
 from ipaddress import ip_address
 from itertools import islice
+from threading import Event
 from typing import Any, Mapping
 from unicodedata import category
 from urllib.parse import unquote, urlsplit
@@ -937,8 +938,12 @@ class RecommendationsPlugin:
         self.context = None
         self._view = None
         self._pending_reference = None
+        self._feedback_activation = Event()
+        self._feedback_activation.set()
 
     def activate(self, context):
+        self._feedback_activation.set()
+        self._feedback_activation = Event()
         self.context = context
         return self
 
@@ -983,6 +988,7 @@ class RecommendationsPlugin:
             return 8
 
     def deactivate(self):
+        self._feedback_activation.set()
         try:
             if self._view is not None:
                 self._view.dispose()
@@ -1553,6 +1559,17 @@ class UxRecommendationsView:
         broker = context.broker("metadata") if context is not None else None
         reader = getattr(broker, "reading_preference_snapshot", None)
         writer = getattr(broker, "change_reading_preference", None)
+        dialog_generation = self._generation
+        activation = self.plugin._feedback_activation
+
+        def dialog_current():
+            return (
+                not self._disposed and not activation.is_set()
+                and self.plugin.context is context
+                and self._generation == dialog_generation
+                and self.selected_identity_id() == identity_id
+                and self._active_identity_id == identity_id
+            )
         if not callable(reader) or not callable(writer):
             self.host.toast("Cette version de Core ne permet pas de modifier les appréciations.")
             return
@@ -1634,9 +1651,7 @@ class UxRecommendationsView:
                 dialog.add_response("erase_all", "Tout effacer")
 
             def answered(_dialog, response_id):
-                if (getattr(self, "_disposed", False)
-                        or self.selected_identity_id() != identity_id
-                        or self._active_identity_id != identity_id):
+                if not dialog_current():
                     return
                 if response_id in ("liked", "not_interested", "clear"):
                     if chooser is None:
@@ -1662,7 +1677,7 @@ class UxRecommendationsView:
                     confirm.add_response("erase", "Effacer les avis")
 
                     def erased(_confirm, answer_id):
-                        if answer_id == "erase":
+                        if answer_id == "erase" and dialog_current():
                             self._submit_feedback(
                                 broker=broker, identity_id=identity_id,
                                 library_key=None, preference=None,
@@ -1687,9 +1702,12 @@ class UxRecommendationsView:
                 or self.selected_identity_id() != identity_id
                 or self._active_identity_id != identity_id):
             return
-        context = self.plugin.context
+        plugin = self.plugin
+        context = plugin.context
+        activation = plugin._feedback_activation
         task_broker = context.broker("tasks") if context is not None else None
-        if task_broker is None:
+        writer = getattr(broker, "change_reading_preference", None)
+        if task_broker is None or not callable(writer) or activation.is_set():
             self.host.toast("Enregistrement indisponible.")
             return
         generation = self._generation
@@ -1697,11 +1715,12 @@ class UxRecommendationsView:
         self._feedback_button.set_sensitive(False)
 
         def write_feedback(control):
-            if control.cancelled() or generation != self._generation:
+            # A display generation is not revocation of a confirmed write.
+            # Actual task cancellation / plugin deactivation still blocks a
+            # queued operation. Core owns explicit identity, target and CAS.
+            if control.cancelled() or activation.is_set() or plugin.context is not context:
                 return None
-            # Core guards the active identity, exact library key, and CAS
-            # atomically. No stale-write retry or inferred consent is allowed.
-            return broker.change_reading_preference(
+            return writer(
                 identity_id=identity_id, library_key=library_key,
                 preference=preference, expected_revision=revision,
                 user_confirmed=True, clear_all=clear_all,
@@ -1717,9 +1736,12 @@ class UxRecommendationsView:
                     result = done_handle.result()
                 except Exception:
                     result = None
-                self.GLib.idle_add(
-                    self._feedback_completed, generation, identity_id, result,
-                )
+                def deliver():
+                    if activation.is_set() or plugin.context is not context:
+                        return False
+                    return self._feedback_completed(generation, identity_id, result)
+
+                self.GLib.idle_add(deliver)
             handle.add_done_callback(completed)
         except Exception:
             self._feedback_write_pending = False
