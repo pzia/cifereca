@@ -1020,6 +1020,27 @@ class UiActionContribution:
 
 
 @dataclass(frozen=True, slots=True)
+class UiPageLifecycleEvent:
+    """Presentation notification (ui.page.lifecycle/1), never business authority.
+
+    Hooks run on the shell thread. On hidden context changes, invalidate old
+    selections/callbacks without reading; project local state on show or on
+    a visible context change. Check is_current() on GTK before publishing any
+    deferred result or admitting an action from this presentation.
+    """
+    route: str
+    identity_id: str | None
+    account: tuple[str, str, str] | None
+    generation: int
+    reason: str
+    visible: bool
+    _current: Callable[[], bool] = field(repr=False, compare=False)
+
+    def is_current(self) -> bool:
+        return self._current()
+
+
+@dataclass(frozen=True, slots=True)
 class UiPageContribution:
     """Declarative navigation contribution returned by a ``ui.page`` plugin.
 
@@ -1035,6 +1056,10 @@ class UiPageContribution:
     group: str = "usage"
     actions: tuple[UiActionContribution, ...] = ()
     priority: int = 0
+    # Additive, optional v1 extension. A legacy positional constructor still
+    # has exactly the previous semantics.
+    lifecycle: Callable[["UiPageHost", object, UiPageLifecycleEvent], None] | None = None
+    lifecycle_account_scoped: bool = False
 
 
 @runtime_checkable
