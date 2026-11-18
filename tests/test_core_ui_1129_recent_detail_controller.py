@@ -137,3 +137,39 @@ def test_recent_provider_label_missing_or_empty_keeps_original_ui_contract():
     window.service = NS(provider_display_name=lambda _: "  ")
     recent_selected(window, NS(key="a"), Path=Path, format_recent_timestamp=stamp)
     assert events[1][1]["badges"] == ["Kobo", "Local"]
+
+
+def test_recent_standard_panel_receives_recovery_and_common_bibliography():
+    item = {
+        "key": "a", "title": "Titre", "author": "Autrice",
+        "provider_id": "kobo", "path": "/books/Titre.epub",
+        "metadata": {"language": "fr", "subjects": ["Science"]},
+    }
+    window, events, stamp = _fake({"a": item})
+    detail = window.recent_page.detail
+    detail.show_presentation = lambda model: events.append(("presentation", model))
+    detail.show_summary = lambda **_: (_ for _ in ()).throw(
+        AssertionError("standard host must not use legacy summary")
+    )
+    recent_selected(window, NS(key="a"), Path=Path, format_recent_timestamp=stamp)
+    model = events[1][1]
+    assert events[1][0] == "presentation"
+    assert model.title == "Titre" and model.badges == ("Kobo", "Local")
+    recovery = next(s for s in model.sections if s.title == "Récupération")
+    assert ("Chemin", "/books/Titre.epub") in [(f.label, f.value) for f in recovery.fields]
+    metadata = next(s for s in model.sections if s.title == "Détail")
+    assert ("Sujet", "Science") in [(f.label, f.value) for f in metadata.fields]
+    assert [event[0] for event in events[2:]] == ["notice", "local", "facets"]
+
+
+def test_recent_rejected_cover_packet_never_downgrades_to_url_on_standard_panel():
+    item = {"key": "a", "identity_id": "A", "title": "Titre",
+            "thumbnail_url": "https://example.org/unqualified.png",
+            "_exact_local_cover_evidence": object()}
+    window, events, stamp = _fake({"a": item})
+    window.service = NS(current_identity=NS(identity_id="A"))
+    window.recent_page.detail.show_presentation = lambda model: events.append(("presentation", model))
+    recent_selected(window, NS(key="a"), Path=Path, format_recent_timestamp=stamp)
+    assert events[1][0] == "presentation"
+    assert events[1][1].thumbnail_url is None
+    assert events[1][1].cover_document_ref is None
