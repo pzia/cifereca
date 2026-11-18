@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 import json
+from dataclasses import asdict, dataclass
 
 from ..models import SearchResult
 from ..plugin_api.provider_search_facets import ProviderSearchResponse, PublicSearchNotice
@@ -101,6 +102,59 @@ def _public_bibliographic_metadata(raw: object) -> dict | None:
             return None
         projected[name] = copied
     return projected
+
+
+
+@dataclass(frozen=True, slots=True)
+class PublicSeriesRelation:
+    """One exact producer-declared relation; never a page facet or edition join."""
+
+    label: str
+    source: str
+    source_field: str
+    scope: str
+    confidence: str
+    freshness: str
+
+
+def decode_public_series_relation(
+    raw: object, *, provider_id: str, scenario: str | None = None,
+) -> PublicSeriesRelation | None:
+    """Closed, bounded supplier-neutral provenance shape."""
+    names = {"label", "source", "source_field", "scope", "confidence", "freshness"}
+    if type(raw) is not dict or set(raw) != names:
+        return None
+    if (not _public_bibliographic_text(raw["label"], required=True, limit=240)
+            or type(provider_id) is not str or not provider_id
+            or any(type(raw[name]) is not str or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9_.-]{0,159}", raw[name],
+            ) is None for name in names - {"label"})
+            or not raw["source"].startswith(provider_id + ".")
+            or (scenario is not None and raw["scope"] != scenario)
+            or raw["confidence"] != "linked_search_relation"
+            or raw["freshness"] != "search_response"):
+        return None
+    return PublicSeriesRelation(**raw)
+
+
+def declared_public_series_relation(
+    metadata: object, *, provider_id: str, scenario: str,
+) -> PublicSeriesRelation | None:
+    if type(metadata) is not dict:
+        return None
+    evidence = metadata.get("bibliography_evidence")
+    values = metadata.get("series")
+    if (type(evidence) is not dict or type(values) is not list
+            or len(values) != 1):
+        return None
+    proof = evidence.get("series")
+    if type(proof) is not dict or set(proof) != {
+        "source", "source_field", "scope", "confidence", "freshness",
+    }:
+        return None
+    return decode_public_series_relation(
+        {"label": values[0], **proof}, provider_id=provider_id, scenario=scenario,
+    )
 
 
 def _key(row: object) -> tuple | None:
@@ -211,6 +265,18 @@ def _project_public_notice(
     if bibliography is None:
         return None
     metadata = {"catalogue_access": "shared_read_only", **bibliography}
+    relation = declared_public_series_relation(
+        public.metadata, provider_id=public.source_provider, scenario=public.scenario,
+    )
+    if relation is not None:
+        proof = asdict(relation)
+        proof.pop("label")
+        extension = {"bibliography_evidence": {"series": proof}}
+        candidate = {**bibliography, **extension}
+        if len(json.dumps(candidate, ensure_ascii=False, separators=(",", ":")).encode(
+            "utf-8"
+        )) <= _MAX_BIBLIOGRAPHY_BYTES:
+            metadata.update(extension)
     # Construct afresh so future SearchResult fields cannot accidentally gain
     # public visibility through dataclasses.replace/asdict or raw metadata.
     return SearchResult(
