@@ -1,0 +1,209 @@
+"""#4982 real recorded Numilog HTTP bytes -> parser -> C -> reparse -> C.
+
+Only HTTP transport and (in the upgrade case) the changed parser output
+are synthetic. No manually assigned Core witness; real Search admission,
+cache lease, journal, TaskBrokerImpl and source/canonical writers execute.
+No live provider request or actual production activation is claimed.
+"""
+from contextlib import contextmanager
+from dataclasses import replace
+from hashlib import sha256
+from pathlib import Path
+from threading import Event
+from time import monotonic
+
+import httpx
+import pytest
+
+from cifereca.core import notice_c_job_journal as journal, search_orchestration
+from cifereca.core.notice_c_cover_index import (
+    persist_exact_public_search_cover, read_consolidated_notice_cover,
+)
+from cifereca.core.notice_c_public_search_replay import (
+    make_public_search_replay_port, public_replay_same_call_observation,
+)
+from cifereca.core.notice_c_raw_input_receipt import record_public_raw_input_receipt
+from cifereca.core.notice_c_reparse_execution import PublicReplayRegistry, ReplayInput
+from cifereca.core.notice_c_reparse_requests import request_public_reparse
+from cifereca.core.notice_c_work_bridge import RetryableNoticeWork, UnavailableNoticeWork
+from cifereca.core.notice_c_work_pump import PublicNoticeWorkPump
+from cifereca.core.notice_cover_repository import persist_notice_cover, read_notice_cover
+from cifereca.core.notice_search_cover_producer import admit_public_search_catalogue
+from cifereca.plugin_api import ProviderError, ProviderSearchResponse
+from cifereca.storage import Storage
+from cifereca.task_admission import SharedTaskAdmission
+from cifereca.task_runtime import TaskBrokerImpl
+
+PLUGIN = Path(__file__).resolve().parents[1] / "src/plugins/provider-numilog"
+HTML = PLUGIN / "tests/fixtures/observed_search-loup-0.html"
+CORRECTED = "Titre corrigé par le parseur de recette"
+
+
+def make_session(monkeypatch):
+    monkeypatch.syspath_prepend(str(PLUGIN))
+    import cifereca_numilog_public_client as client
+    import cifereca_numilog_public_provider as provider
+    from cifereca_numilog_public_cache import PublicCatalogueCache
+
+    calls = []
+    body = HTML.read_bytes()
+
+    def serve(request):
+        calls.append((request.method, str(request.url)))
+        assert request.method == "GET"
+        assert request.url.host == "www.numilog.com"
+        return httpx.Response(
+            200, content=body, headers={"content-type": "text/html; charset=utf-8"},
+            request=request,
+        )
+
+    monkeypatch.setattr(
+        client.HTTPX_TRANSPORT, "client",
+        lambda **_: httpx.Client(transport=httpx.MockTransport(serve), trust_env=False),
+    )
+    clock = [100.]
+    session = provider.NumilogPublicSession(
+        credential_id="__public__", label="Public", credentials={}, options={},
+        _retain_public_search_inputs=True,
+    )
+    session._public_cache = PublicCatalogueCache(clock=lambda: clock[0])
+    session.connect()
+    return session, client, clock, calls, body
+
+
+def normalize(raw):
+    if raw is None:
+        return None
+    return ReplayInput(
+        raw.token, raw.transport_digest, raw.parser_family_digest,
+        raw.parser_implementation_digest, raw._body,
+    )
+
+
+def make_port(session, family, implementation):
+    def read(token):
+        raw, _ttl = session._read_retained_public_input(token)
+        return normalize(raw)
+
+    @contextmanager
+    def hold(token):
+        try:
+            with session._hold_retained_public_input(token) as raw:
+                yield normalize(raw)
+        except ProviderError as exc:
+            if str(exc) == "Numilog : public_catalog_replay_busy":
+                raise RetryableNoticeWork("notice_reparse_provider_busy") from None
+            raise UnavailableNoticeWork("notice_reparse_input_unavailable") from None
+
+    # Provider-specific wiring lives here in the trusted test composition,
+    # not in Core, a public plugin ABI, or the production registry.
+    return make_public_search_replay_port(
+        session, provider_id=session.provider_id,
+        parser_family_digest=family, implementation_digest=implementation,
+        read_input=read, reparse_response=session._reparse_retained_public_response,
+        hold_input=hold,
+    )
+
+
+@pytest.mark.parametrize("mode", ("unchanged", "upgrade", "expired"))
+def test_recorded_transport_to_real_reparse_and_c_without_new_get(tmp_path, monkeypatch, mode):
+    session, client, cache_clock, calls, body = make_session(monkeypatch)
+    db = Storage(tmp_path / "reparse.sqlite")
+    tasks = TaskBrokerImpl(object(), max_workers=1, shared_admission=
+                           SharedTaskAdmission(max_inflight=3, reserve_user_slots=1))
+    try:
+        response, token = session._search_response_with_retained_input("loup", "catalog")
+        assert token is not None and len(calls) == 1
+        rows = search_orchestration._public_rows_from_response(response, session)
+        row, = rows
+        observation = admit_public_search_catalogue(
+            row, identity_id="alice", observed_at=100,
+            public_cover_url=row.thumbnail_url,
+        )
+        assert observation is not None and observation.parser_version == "2"
+        original = persist_notice_cover(
+            db, observation, field_path=("search_result", "thumbnail_url"),
+            cover_inventory_complete=True,
+        )
+        canonical = persist_exact_public_search_cover(db, original)
+        assert public_replay_same_call_observation(response, session, original) == observation
+        with pytest.raises(UnavailableNoticeWork, match="original_response_changed"):
+            public_replay_same_call_observation(
+                ProviderSearchResponse(results=response.results), session, original,
+            )
+
+        raw, ttl = session._read_retained_public_input(token)
+        assert raw._body == body and ttl > 0
+        assert raw.input_digest == sha256(body).hexdigest()
+        with session._hold_retained_public_input(token) as held:
+            assert held == raw
+            receipt = record_public_raw_input_receipt(
+                db, original, held._body, transport_digest=held.transport_digest,
+                parser_family_digest=held.parser_family_digest,
+                parser_implementation_digest=held.parser_implementation_digest,
+                now=100, ttl_seconds=ttl, producer_token=held.token,
+            )
+            implementation = held.parser_implementation_digest
+            if mode == "upgrade":
+                # Emulate a new parser implementation using the SAME recorded
+                # input. First execute the actual parser, then model the one
+                # intended field correction; no fabricated source witness.
+                implementation = sha256(b"numilog.public.search.html.test-v2").hexdigest()
+            ref = request_public_reparse(
+                db, original, receipt, held._body, now=100,
+                expected_generation=0, implementation_digest=implementation,
+            )
+
+        parses = []
+        real_parse = client.parse_public_search
+
+        def counted(text, url):
+            parses.append(sha256(text.encode("utf-8")).hexdigest())
+            page = real_parse(text, url)
+            if mode == "upgrade":
+                return replace(page, items=(replace(page.items[0], title=CORRECTED),))
+            return page
+
+        monkeypatch.setattr(client, "parse_public_search", counted)
+        port = make_port(session, raw.parser_family_digest, implementation)
+        events = []
+        pump = PublicNoticeWorkPump(
+            db, tasks, clock=lambda: 100,
+            replay_registry=PublicReplayRegistry((port,)),
+            on_committed=lambda doc, epoch: events.append((doc, epoch)),
+        )
+        if mode == "expired":
+            cache_clock[0] += 61.
+        handle, = pump.tick().handles
+        assert handle.result(timeout=10) == ("error" if mode == "expired" else "current")
+        expected = "error" if mode == "expired" else "current"
+        assert journal.read_job(db, ref).state == expected
+
+        if mode == "upgrade":
+            deadline = monotonic() + 10
+            while monotonic() < deadline:
+                step = pump.tick()
+                for pending in step.handles:
+                    assert pending.result(timeout=5) == "current"
+                latest = read_consolidated_notice_cover(db, canonical.document)
+                if latest.epoch > canonical.epoch:
+                    break
+                Event().wait(.01)
+            assert latest.epoch == canonical.epoch + 1
+            assert latest.sources[0].public_bibliography.title == CORRECTED
+            assert latest.document == canonical.document
+            corrected = read_notice_cover(db, original.document)
+            assert corrected.epoch == original.epoch + 1
+            assert corrected.observation.observed_at == original.observation.observed_at
+            assert events == [(canonical.document, latest.epoch)]
+        else:
+            assert read_notice_cover(db, original.document) == original
+            assert read_consolidated_notice_cover(db, canonical.document) == canonical
+            assert events == []
+        assert len(parses) == (0 if mode == "expired" else 1)
+        assert len(calls) == 1
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        tasks.close()
+        session.close()
+        db.close()
