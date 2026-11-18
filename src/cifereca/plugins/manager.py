@@ -676,6 +676,47 @@ class PluginManager:
             self._import_roots.discard(value)
         importlib.invalidate_caches()
 
+    def _retire_package_runtime(self, package_id: str, upcoming=None) -> None:
+        """Retire the package and declared consumers, not unrelated services.
+
+        Contract dependencies can change even if the consumer descriptor
+        stays identical. Include declared optional consumers conservatively.
+        Dynamic, undeclared service use remains the plugin's responsibility.
+        """
+        affected = {
+            plugin_id for plugin_id, record in self._records.items()
+            if record.descriptor.package_id == package_id
+        }
+        declared = set(affected)
+        categories = {self._records[plugin_id].descriptor.type for plugin_id in affected}
+        if upcoming is not None:
+            declared.update(d.id for d in upcoming.plugins)
+            categories.update(d.type for d in upcoming.plugins)
+        # Walk to a fixed point for both plugin and service-contract edges.
+        while True:
+            added = {
+                plugin_id for plugin_id, record in self._records.items()
+                if plugin_id not in affected
+                and (
+                    any(dep.plugin in declared for dep in
+                        (*record.descriptor.requires, *record.descriptor.recommends))
+                    or any(req.category in categories for req in record.descriptor.requires_contracts)
+                )
+            }
+            if not added:
+                break
+            affected.update(added)
+            declared.update(added)
+            categories.update(self._records[pid].descriptor.type for pid in added)
+        descriptors = {pid: self._records[pid].descriptor for pid in affected}
+        try:
+            order = topological_order(descriptors, affected)
+        except DependencyError:
+            order = sorted(affected)
+        for plugin_id in reversed(order):
+            self._deactivate_record(self._records[plugin_id])
+        self._prune_inactive_import_roots()
+
     def deactivate_all(self) -> None:
         for record in reversed(list(self._records.values())):
             self._deactivate_record(record)
@@ -957,11 +998,9 @@ class PluginManager:
             backup_parent = Path(tempfile.mkdtemp(prefix=f"cifereca-plugin-{package_id}-"))
             backup_root = backup_parent / "package"
             shutil.copytree(final, backup_root)
-        if replace:
-            # A dev snapshot may replace code while keeping the same package
-            # version. Tear down live services first so the next activation is
-            # guaranteed to import the replacement instead of reusing instances.
-            self.deactivate_all()
+        if replace and old_active == version:
+            # Retire the active version before its files are replaced.
+            self._retire_package_runtime(package_id, manifest)
         transaction: PythonDependencyTransaction | None = None
         installed: InstalledPackage | None = None
         try:
@@ -973,6 +1012,11 @@ class PluginManager:
                 manifests, roots = self._active_manifests_with(installed)
                 with update_phase("plugin_dependencies"):
                     transaction = self.python_dependencies.ensure(manifests, package_roots=roots)
+                if getattr(transaction, "changed", False):
+                    # A shared venv change is not a package-local operation.
+                    self.deactivate_all()
+                elif old_active != version:
+                    self._retire_package_runtime(package_id, manifest)
                 self.packages.set_active(package_id, version)
             if transaction is not None:
                 # Dependency resolution itself is transactional. Plugin activation
@@ -989,7 +1033,10 @@ class PluginManager:
                 except Exception as exc:
                     self._diag("python dependency rollback", "error", {"package": package_id, "error": str(exc)})
             try:
-                self.deactivate_all()
+                if getattr(transaction, "changed", False):
+                    self.deactivate_all()
+                else:
+                    self._retire_package_runtime(package_id, manifest)
                 if backup_root is not None and backup_root.exists():
                     if final.exists():
                         shutil.rmtree(final, ignore_errors=True)
@@ -1019,16 +1066,23 @@ class PluginManager:
         if not target:
             from .errors import PackageInstallError
             raise PackageInstallError(f"no rollback version available for {package_id}")
-        self.deactivate_all()
         package = self.packages.load(package_id, target)
         manifests, roots = self._active_manifests_with(package)
         transaction = self.python_dependencies.ensure(manifests, package_roots=roots)
         try:
+            if getattr(transaction, "changed", False):
+                self.deactivate_all()
+            else:
+                self._retire_package_runtime(package_id, package.manifest)
             self.packages.set_active(package_id, target)
             self.activate()
             transaction.commit()
             return target
         except Exception:
+            if getattr(transaction, "changed", False):
+                self.deactivate_all()
+            else:
+                self._retire_package_runtime(package_id, package.manifest)
             transaction.rollback()
             if current and self.packages.version_root(package_id, current).is_dir():
                 self.packages.set_active(package_id, current)
@@ -1040,15 +1094,22 @@ class PluginManager:
 
     def set_active_package_version(self, package_id: str, version: str) -> None:
         old_active = self.packages.active_version(package_id)
-        self.deactivate_all()
         package = self.packages.load(package_id, version)
         manifests, roots = self._active_manifests_with(package)
         transaction = self.python_dependencies.ensure(manifests, package_roots=roots)
         try:
+            if getattr(transaction, "changed", False):
+                self.deactivate_all()
+            else:
+                self._retire_package_runtime(package_id, package.manifest)
             self.packages.set_active(package_id, version)
             self.activate()
             transaction.commit()
         except Exception:
+            if getattr(transaction, "changed", False):
+                self.deactivate_all()
+            else:
+                self._retire_package_runtime(package_id, package.manifest)
             transaction.rollback()
             if old_active and self.packages.version_root(package_id, old_active).is_dir():
                 self.packages.set_active(package_id, old_active)
@@ -1056,7 +1117,8 @@ class PluginManager:
             raise
 
     def remove_package(self, package_id: str, *, version: str | None = None) -> None:
-        self.deactivate_all()
+        if version is None or version == self.packages.active_version(package_id):
+            self._retire_package_runtime(package_id)
         if version is not None:
             self.installer.uninstall_version(package_id, version)
         else:
