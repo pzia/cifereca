@@ -503,3 +503,50 @@ def test_unsafe_audio_catalogue_is_not_recovered_or_an_outage(tmp_path, kind):
         assert "PRIVATE" not in str(caught.value)
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("mode", ("compression", "declared", "stream"))
+def test_sru_audio_transport_refusal_is_not_an_outage(tmp_path, mode):
+    calls = []
+    reads = []
+    class Body(httpx.SyncByteStream):
+        def __iter__(self):
+            for _ in range(40):
+                reads.append(1)
+                yield b"x" * 65536
+
+    def handler(request):
+        calls.append(request)
+        assert request.headers["accept-encoding"] == "identity"
+        assert request.url.params["maximumRecords"] == "50"
+        headers = ({"content-encoding": "gzip"} if mode == "compression"
+                   else {"content-length": str(2 * 1024 * 1024 + 1)} if mode == "declared"
+                   else {})
+        return httpx.Response(200, headers=headers, stream=Body())
+
+    session = _session(tmp_path, handler, include_audio=True)
+    try:
+        with pytest.raises(ProviderError) as caught:
+            session.search("audio", content_types=("mp3",))
+        assert getattr(caught.value, "code", None) is None
+        assert caught.value.retryable is False
+        assert len(calls) == 1
+        assert len(reads) == (33 if mode == "stream" else 0)
+    finally:
+        session.close()
+
+
+def test_sru_audio_transport_preserves_observed_projection(tmp_path):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        assert request.headers["accept-encoding"] == "identity"
+        return httpx.Response(200, content=SRU_AUDIO)
+    session = _session(tmp_path, handler, include_audio=True)
+    try:
+        rows = session.search("audio", content_types=("mp3",))
+        assert len(calls) == 1
+        assert [row.record_id for row in rows] == ["ark:/12148/bpt6k1279113"]
+        assert session.last_search_warnings == []
+    finally:
+        session.close()
