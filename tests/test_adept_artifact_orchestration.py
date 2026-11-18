@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import zipfile
 
+import pytest
+
 from cifereca.acquisition import Acquisition
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
@@ -143,7 +145,10 @@ def test_loan_auto_detects_pdf_from_acsm_and_cleans_source_after_success(tmp_pat
         service.close()
 
 
-def test_loan_auto_repairs_legacy_adept_artifact_via_repairing_file(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("failure", [None, "index", "receipt"])
+def test_loan_auto_repairs_legacy_adept_artifact_via_repairing_file(
+    tmp_path: Path, monkeypatch, failure,
+):
     service = _service(tmp_path)
     try:
         loan = _loan(loan_id="loan-repair", record_id="book-repair", title="Repair")
@@ -218,13 +223,44 @@ def test_loan_auto_repairs_legacy_adept_artifact_via_repairing_file(tmp_path: Pa
 
         monkeypatch.setattr(service, "execute_acquisition_request", execute)
 
+        observed = []
+        real_index = service.catalog_index_path
+
+        def index(path, *args, **kwargs):
+            observed.append(Path(path))
+            assert destination.read_bytes() == b"protected-old"
+            if failure == "index":
+                raise OSError("synthetic index interruption")
+            return real_index(path, *args, **kwargs)
+
+        monkeypatch.setattr(service, "catalog_index_path", index)
+        real_put = service.storage.acquisition_put
+
+        def put(payload):
+            if (failure == "receipt" and payload.get("status") == "complete"
+                    and payload.get("metadata", {}).get("post_processed") is True):
+                assert destination.read_bytes() == b"protected-old"
+                raise OSError("synthetic receipt interruption")
+            return real_put(payload)
+
+        monkeypatch.setattr(service.storage, "acquisition_put", put)
         result = service._acquire_active_loan_automatically(loan)
 
-        assert result["status"] == "complete"
-        assert Path(result["path"]) == destination
-        assert zipfile.is_zipfile(destination)
-        assert b"readable-new" in zipfile.ZipFile(destination).read("content.xhtml")
+        assert destination.read_bytes() == b"protected-old"
+        assert len(observed) == 1
+        final_path = observed[0]
+        assert final_path != destination
+        assert final_path.name.startswith(destination.stem + ".reacquired-")
+        assert zipfile.is_zipfile(final_path)
+        with zipfile.ZipFile(final_path) as archive:
+            assert b"readable-new" in archive.read("content.xhtml")
         assert not Path(captured["destination"]).exists()
+        if failure is not None:
+            assert result["status"] != "complete"
+            assert acsm.exists()
+            return
+        assert result["status"] == "complete"
+        assert Path(result["path"]) == final_path
         assert not acsm.exists()
 
         row = next(
@@ -232,7 +268,7 @@ def test_loan_auto_repairs_legacy_adept_artifact_via_repairing_file(tmp_path: Pa
             for row in service.storage.acquisitions(status="complete")
             if row["item_id"] == "book-repair"
         )
-        assert row["metadata"]["path"] == str(destination)
+        assert row["metadata"]["path"] == str(final_path)
         assert row["metadata"]["post_processed"] is True
     finally:
         service.close()
