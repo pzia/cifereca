@@ -243,34 +243,42 @@ def request_job(storage, spec, *, now, expected_generation):
     Full journal rejects new logical keys until explicit terminal maintenance.
     An absent key after maintenance may receive a generation greater than one.
     """
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        return _request_job_txn(db, spec, now=now,
+                                expected_generation=expected_generation)
+
+
+def _request_job_txn(db, spec, *, now, expected_generation):
+    """Compose a request with the producer's own exact input snapshot."""
+    if not db.in_transaction:
+        raise ValueError("notice_work_transaction_required")
     _check_spec(spec)
     if not _integer(now) or not _integer(expected_generation):
         raise ValueError("notice_work_invalid_clock_or_generation")
     key = _key(spec)
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN IMMEDIATE")
-        previous = _load(db, key)
-        if previous is not None and previous.spec == spec:
-            return previous.ref
-        generation = previous.ref.generation if previous else 0
-        if expected_generation != generation:
-            raise ValueError("notice_work_generation_changed")
-        if generation == _MAX:
-            raise ValueError("notice_work_generation_overflow")
-        if _dependency_status(db, spec) == "stale":
-            raise ValueError("notice_work_invalid_dependencies")
-        if previous is None:
-            count = db.execute(
-                "SELECT count(*) FROM (SELECT key FROM metadata "
-                "WHERE key>=? AND key<? LIMIT ?)",
-                (_PREFIX, _END, _MAX_JOBS),
-            ).fetchone()[0]
-            if count >= _MAX_JOBS:
-                raise ValueError("notice_work_capacity")
-        from .notice_c_job_retention import _allocate_generation_txn
-        ref = JobRef(key, _allocate_generation_txn(db, previous))
-        _save(db, Job(ref, spec, "pending", 0, 0, now, 0, "none"))
-        return ref
+    previous = _load(db, key)
+    if previous is not None and previous.spec == spec:
+        return previous.ref
+    generation = previous.ref.generation if previous else 0
+    if expected_generation != generation:
+        raise ValueError("notice_work_generation_changed")
+    if generation == _MAX:
+        raise ValueError("notice_work_generation_overflow")
+    if _dependency_status(db, spec) == "stale":
+        raise ValueError("notice_work_invalid_dependencies")
+    if previous is None:
+        count = db.execute(
+            "SELECT count(*) FROM (SELECT key FROM metadata "
+            "WHERE key>=? AND key<? LIMIT ?)",
+            (_PREFIX, _END, _MAX_JOBS),
+        ).fetchone()[0]
+        if count >= _MAX_JOBS:
+            raise ValueError("notice_work_capacity")
+    from .notice_c_job_retention import _allocate_generation_txn
+    ref = JobRef(key, _allocate_generation_txn(db, previous))
+    _save(db, Job(ref, spec, "pending", 0, 0, now, 0, "none"))
+    return ref
 
 
 def read_job(storage, ref):
