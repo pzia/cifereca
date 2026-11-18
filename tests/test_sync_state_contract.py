@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
 from cifereca.models import Account, Loan
@@ -90,7 +91,8 @@ def test_opening_sync_persists_per_identity_status_on_partial_errors(tmp_path: P
             )],
             "alex": [],
         }
-        monkeypatch.setattr(service, "_loans_for_account", lambda account, force=False: loans_by_identity[account.identity_id])
+        enable_synthetic_paris_opening(service)
+        attach_opening_loan_reader(service, lambda account, force=False: loans_by_identity[account.identity_id], typed=lambda a: a.provider_id != "paris")
         monkeypatch.setattr(service, "_acquire_active_loan_automatically", lambda loan: {"status": "attention_required", "loan_id": loan.id})
         monkeypatch.setattr(service, "catalog_scan", lambda: {"scanned": 0})
         service.config.set("kobo_backup.enabled", False)
