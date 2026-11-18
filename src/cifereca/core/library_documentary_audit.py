@@ -1,7 +1,8 @@
 """#3995: scoped, aggregate-only documentary audit using Core's existing Library.
 
-N1/source evidence and persistent C are NOT an observation of N2 runtime
-or N3 bytes. No loader, extraction, refresh or provider dispatch is invoked.
+N1 persisted evidence is independent from optional bounded observations of
+an exact registered N2 decision and its N3 bytes. No extraction, refresh or
+provider dispatch is invoked.
 The usual no-scan Library projection still performs its own Placement checks.
 """
 from __future__ import annotations
@@ -17,9 +18,13 @@ _KEYS = {
     "languages": ("canonical", "noncanonical", "invalid", "unknown"),
 }
 _MAX_ROWS = 10000
+# One selected EPUB probe can read up to 8 MiB. Limit physical IO per audit.
+_MAX_RUNTIME_PROBES = 128
+_N2_KEYS = ("embedded", "origin", "catalog", "pending", "ambiguous", "missing", "unknown")
+_N3_KEYS = ("digest_valid", "signature_valid", "not_validated", "not_applicable", "unknown")
 
 
-def _cover_state(storage, row, owner):
+def _cover_state_and_packet(storage, row, owner):
     local = row.get("_exact_local_cover_evidence")
     if (type(local) is VerifiedLocalCoverEvidence
             and local.scope.identity_id == owner
@@ -31,32 +36,53 @@ def _cover_state(storage, row, owner):
             candidates += (local.embedded.candidate,)
         decision = resolve_cover(candidates, attested_book_identity=local.scope.source_key)
         if decision.status == "selected":
-            return decision.tier
+            return decision.tier, local
         if decision.status == "ambiguous":
-            return "ambiguous"
-        return "unknown"
+            return "ambiguous", local
+        return "unknown", local
+    if local is not None:
+        return "unknown", None, None
     link = row.get("_public_canonical_cover_link")
     if not valid_local_public_c_link(
         link, identity_id=owner, artifact_id=row.get("artifact_id"),
         placement_id=row.get("placement_id"),
     ):
-        return "unknown"
+        return "unknown", None
     c = read_consolidated_notice_cover(storage, link.document)
     if c is None or c.epoch != link.epoch:
-        return "unknown"
+        return "unknown", None
     if tuple(source.source_ref for source in c.sources) != link.source_refs:
-        return "unknown"
+        return "unknown", None
     # Partial inventory may still contain candidates but cannot certify N1.
     if not c.snapshot_complete:
-        return "unknown"
+        return "unknown", link
     decision = resolve_cover(c.candidates, attested_book_identity=c.attested_book_identity)
     if decision.status == "selected":
-        return decision.tier
+        return decision.tier, link
     if decision.status == "ambiguous":
-        return "ambiguous"
+        return "ambiguous", link
     if c.sources and all(source.state == "missing" for source in c.sources):
-        return "missing"
-    return "unknown"
+        return "missing", link
+    return "unknown", link
+
+
+def _runtime_states(observer, packet):
+    """Validate internal observations without inferring either N2 or N3."""
+    result = observer(packet)
+    if type(result) is not tuple or len(result) != 3:
+        return "unknown", "unknown"
+    status, tier, physical = result
+    if any(type(value) is not str for value in result):
+        return "unknown", "unknown"
+    if status == "selected" and tier in ("embedded", "origin", "catalog"):
+        admissible = ("unknown", "not_validated",
+                      "digest_valid" if tier == "embedded" else "signature_valid")
+        return tier, physical if physical in admissible else "unknown"
+    if status == "missing" and tier == "" and physical == "not_applicable":
+        return "missing", "not_applicable"
+    if status in ("pending", "ambiguous") and tier == "" and physical == "unknown":
+        return status, "unknown"
+    return "unknown", "unknown"
 
 
 def _language_state(row):
@@ -88,13 +114,23 @@ def _language_state(row):
     return "canonical" if tags == canonical else "noncanonical"
 
 
-def library_documentary_audit(service, *, identity_id, kind):
+def library_documentary_audit(service, *, identity_id, kind, runtime=False):
     if type(kind) is not str or kind not in _KEYS:
         raise ValueError("invalid_audit_kind")
     keys = _KEYS[kind]
+    if runtime and kind != "covers":
+        raise ValueError("invalid_runtime_audit_kind")
+
+    def report(status, entries, counts, n2=None, n3=None):
+        result = {"schema": 2 if runtime else 1, "status": status,
+                  "entries": entries, **counts}
+        if runtime:
+            result.update(n2=n2 if n2 is not None else dict.fromkeys(_N2_KEYS, 0),
+                          n3=n3 if n3 is not None else dict.fromkeys(_N3_KEYS, 0))
+        return result
+
     def empty():
-        return {"schema": 1, "status": "unavailable", "entries": 0,
-                **dict.fromkeys(keys, 0)}
+        return report("unavailable", 0, dict.fromkeys(keys, 0))
     if (type(identity_id) is not str or not 0 < len(identity_id) <= 256
             or identity_id != identity_id.strip() or not identity_id.isprintable()):
         return empty()
@@ -108,16 +144,37 @@ def library_documentary_audit(service, *, identity_id, kind):
                        for row in rows)):
             return empty()
         counts = dict.fromkeys(keys, 0)
+        n2, n3 = dict.fromkeys(_N2_KEYS, 0), dict.fromkeys(_N3_KEYS, 0)
+        observer = getattr(service, "_documentary_cover_observer", None) if runtime else None
+        probes = 0
         for row in rows:
+            packet = None
             try:
-                status = (_cover_state(service.storage, row, identity_id)
-                          if kind == "covers" else _language_state(row))
+                if kind == "covers":
+                    status, packet = _cover_state_and_packet(service.storage, row, identity_id)
+                else:
+                    status = _language_state(row)
             except (ValueError, TypeError, OSError, RuntimeError, AttributeError):
                 status = "unknown"
             counts[status if status in counts else "unknown"] += 1
+            if runtime:
+                linked, media = "unknown", "unknown"
+                if packet is not None and callable(observer) and probes < _MAX_RUNTIME_PROBES:
+                    probes += 1
+                    try:
+                        linked, media = _runtime_states(observer, packet)
+                    except Exception:
+                        pass
+                n2[linked] += 1
+                n3[media] += 1
+        if runtime and observer is not getattr(service, "_documentary_cover_observer", None):
+            # A replaced/closed window is not the same observation authority.
+            n2 = dict.fromkeys(_N2_KEYS, 0)
+            n3 = dict.fromkeys(_N3_KEYS, 0)
+            n2["unknown"] = n3["unknown"] = len(rows)
         if (generation != (service._account_context_epoch, service._source_context_epoch)
                 or service.identity_by_id(identity_id) is None):
             return empty()
     except Exception:
         return empty()
-    return {"schema": 1, "status": "partial", "entries": len(rows), **counts}
+    return report("partial", len(rows), counts, n2, n3)

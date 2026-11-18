@@ -169,3 +169,26 @@ def test_invalid_facts_and_closed_service_cannot_publish(prepared):
 def test_bad_adapter_capacity_rejected(limit):
     with pytest.raises(ValueError):
         LocalCoverEvidenceAdapter(max_sources=limit)
+
+
+def test_audit_port_checks_exact_registered_evidence_and_revision(prepared, monkeypatch):
+    from types import SimpleNamespace
+    _input, facts, _image, service, adapter, _loader = prepared
+    calls = []
+    def probe(document, *, expected_revision):
+        calls.append((document, expected_revision))
+        return SimpleNamespace(n2_status="selected", n2_tier="embedded",
+                               n3_status="digest_valid")
+    monkeypatch.setattr(service, "observe_cover_for_audit", probe, raising=False)
+    assert adapter.observe_audit_packet(service, facts) is None
+    doc = adapter.register(service, facts)
+    assert adapter.observe_audit_packet(service, facts) == (
+        "selected", "embedded", "digest_valid",
+    )
+    assert calls == [(doc, 1)]
+    changed = replace(facts, candidates=())
+    adapter.register(service, changed)
+    assert adapter.observe_audit_packet(service, facts) is None
+    assert calls == [(doc, 1)]
+    adapter.close()
+    assert adapter.observe_audit_packet(service, changed) is None

@@ -16,6 +16,7 @@ from threading import Lock
 
 from ..core.book_cover_projection import CoverDocumentScope
 from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
+from ..core.notice_c_local_origin_projection import VerifiedLocalPublicCLink
 from .document_cover_service import CoverSourceSnapshot, DocumentCoverService
 
 
@@ -88,6 +89,27 @@ class LocalCoverEvidenceAdapter:
             while len(self._known) > self._limit:
                 self._known.popitem(last=False)
             return facts.scope
+
+    def observe_audit_packet(self, service: DocumentCoverService, packet):
+        """Exact existing publication only; never register a new snapshot."""
+        probe = getattr(service, "observe_cover_for_audit", None)
+        if not callable(probe):
+            return None
+        if type(packet) is VerifiedLocalPublicCLink:
+            # Core validated the retained C link/epoch before this call.
+            result = probe(packet.document, expected_revision=packet.epoch)
+        elif type(packet) is VerifiedLocalCoverEvidence:
+            with self._lock:
+                known = self._known.get(packet.scope)
+                if self._closed or known is None or known[0] != packet:
+                    return None
+            result = probe(packet.scope, expected_revision=known[1])
+            with self._lock:
+                if self._closed or self._known.get(packet.scope) != known:
+                    return None
+        else:
+            return None
+        return result.n2_status, result.n2_tier, result.n3_status
 
     def stats(self) -> dict[str, int]:
         with self._lock:
