@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import logging
 import shutil
 import sys
@@ -218,6 +219,7 @@ class PluginManager:
                 and old.enabled == record.enabled
                 and old.descriptor == record.descriptor
                 and old.package.root == record.package.root
+                and old.package.sha256 == record.package.sha256
             ):
                 reusable.add(plugin_id)
         changed = True
@@ -355,6 +357,7 @@ class PluginManager:
                 continue
             if old.instance is not None:
                 self._deactivate_record(old)
+        self._prune_inactive_import_roots()
         return self.statuses()
 
     def _static_contract_matches(self, requirement: ContractRequirement) -> tuple[list[str], dict[str, object]]:
@@ -530,6 +533,7 @@ class PluginManager:
                 break
             pending = next_pending
 
+        self._prune_inactive_import_roots()
         self._publish_registry_change()
         return self.statuses()
 
@@ -617,10 +621,15 @@ class PluginManager:
         record.instance = None
         record.service = None
 
-    def deactivate_all(self) -> None:
-        for record in reversed(list(self._records.values())):
-            self._deactivate_record(record)
-        roots = {Path(value).resolve() for value in self._import_roots}
+    def _prune_inactive_import_roots(self) -> None:
+        """Retire manager-owned paths/modules only after the last live sibling."""
+        live = {record.package.root.resolve() for record in self._records.values()
+                if record.instance is not None}
+        inactive = {value for value in self._import_roots
+                    if Path(value).resolve() not in live}
+        if not inactive:
+            return
+        roots = {Path(value).resolve() for value in inactive}
         for name, module in list(sys.modules.items()):
             filename = getattr(module, "__file__", None)
             if not filename:
@@ -629,12 +638,23 @@ class PluginManager:
                 resolved = Path(filename).resolve()
             except Exception:
                 continue
-            if any(root == resolved or root in resolved.parents for root in roots):
+            if (any(root == resolved or root in resolved.parents for root in roots)
+                    and not any(root == resolved or root in resolved.parents for root in live)
+                    and sys.modules.get(name) is module):
                 sys.modules.pop(name, None)
-        for value in list(self._import_roots):
-            while value in sys.path:
+        for value in inactive:
+            # Activation inserted one path; do not remove other owners' entries.
+            try:
                 sys.path.remove(value)
-        self._import_roots.clear()
+            except ValueError:
+                pass
+            self._import_roots.discard(value)
+        importlib.invalidate_caches()
+
+    def deactivate_all(self) -> None:
+        for record in reversed(list(self._records.values())):
+            self._deactivate_record(record)
+        self._prune_inactive_import_roots()
 
     def service(self, plugin_id: str) -> object | None:
         if plugin_id in self._core_services:
