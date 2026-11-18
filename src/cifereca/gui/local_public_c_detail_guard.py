@@ -110,3 +110,45 @@ __all__ = [
     "local_public_c_detail_current", "local_public_c_detail_check",
     "staged_local_public_c_detail",
 ]
+
+
+def begin_local_public_web_selection(window, view):
+    """Revoke outstanding actions on every selection, including same-row ABA."""
+    token = object()
+    setattr(window, "_public_web_selection_" + view, token)
+    return token
+
+
+def local_public_web_selection_check(window, row, *, view, token, source_current):
+    """An action requires the exact selected row and visible view as well as C."""
+    def current():
+        if (getattr(window, "_closed", False)
+                or getattr(window, "_public_web_selection_" + view, None) is not token
+                or not source_current()):
+            return False
+        stack = getattr(window, "view_stack", None)
+        page = getattr(window, view + "_page", None)
+        selection = getattr(page, "selection", None)
+        selected = getattr(selection, "get_selected_item", None)
+        visible = getattr(stack, "get_visible_child_name", None)
+        return (callable(visible) and visible() == view
+                and callable(selected) and selected() is row)
+    return current
+
+
+def request_local_public_web_action(window, detail, row, link, *, view,
+                                    token, source_current):
+    """Reuse the standard public C worker without a provider lookup."""
+    current = local_public_web_selection_check(
+        window, row, view=view, token=token, source_current=source_current,
+    )
+    from ..storage import Storage
+    if (not current()
+            or not isinstance(getattr(window.service, "storage", None), Storage)):
+        return False
+    from gi.repository import Gtk
+    from .notice_c_web_action_controller import request_public_web_actions
+    return request_public_web_actions(
+        window, detail, link.document, expected_epoch=link.epoch,
+        current=current, Gtk=Gtk,
+    )

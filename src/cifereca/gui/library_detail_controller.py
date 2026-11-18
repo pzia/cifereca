@@ -17,6 +17,10 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
     # Selection signals can arrive while widgets are being disposed.
     if getattr(window, "_closed", False):
         return
+    from cifereca.gui.local_public_c_detail_guard import (
+        begin_local_public_web_selection, request_local_public_web_action,
+    )
+    web_token = begin_local_public_web_selection(window, "library")
     window._cancel_cached_book_details()
     if not row:
         window.library_page.detail.empty(
@@ -122,6 +126,7 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         exact_local_detail_cover(item, active_identity_id=active)
         if not foreign else None
     )
+    web_source = None
     if cover_evidence is None:
         link = item.get("_public_canonical_cover_link")
         pinned_c = (
@@ -160,6 +165,7 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
                 detail.show_presentation(
                     presentation, description=description,
                 )
+            web_source = (link, check)
         else:
             detail.show_presentation(
                 presentation, description=description,
@@ -178,3 +184,9 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         # details or plugin actions with B's selected credentials.
         window._add_plugin_book_actions(detail, item)
         window._request_cached_book_details("library", row.key, item)
+    if web_source is not None:
+        link, check = web_source
+        request_local_public_web_action(
+            window, detail, row, link, view="library",
+            token=web_token, source_current=check,
+        )
