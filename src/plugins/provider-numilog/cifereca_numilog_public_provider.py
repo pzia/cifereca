@@ -454,12 +454,23 @@ class NumilogPublicSession(ProviderSession):
 
     def _public_rows(self, rows):
         # A public result can never be passed into an owned download session.
-        return tuple(
-            replace(row, source_provider=self.provider_id,
-                    source_credential="__public__", source_collection="public_catalog",
-                    owned=False, downloadable=False, download_url=None)
-            for row in rows
-        )
+        projected = []
+        for row in rows:
+            metadata = dict(row.metadata)
+            # The shared parser owns this exact public product-card proof.
+            # Bind it to the actual anonymous producer, not the historical
+            # authenticated provider ID. No proof from an arbitrary URL.
+            evidence = metadata.pop("public_url_evidence", None)
+            if evidence == "numilog.public_search_product_card":
+                metadata["public_url_evidence"] = (
+                    f"{self.provider_id}.public_search_product_card"
+                )
+            projected.append(replace(
+                row, source_provider=self.provider_id,
+                source_credential="__public__", source_collection="public_catalog",
+                owned=False, downloadable=False, download_url=None, metadata=metadata,
+            ))
+        return tuple(projected)
 
     def search(self, query, scope="all", page=0, field="all"):
         # Capture BEFORE validation: close/reconnect during validation cannot
