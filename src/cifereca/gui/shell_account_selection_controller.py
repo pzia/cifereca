@@ -71,4 +71,8 @@ def account_changed(window, dropdown, _pspec) -> None:
         account.unique_id, account.provider_id, account.credential_id,
     )
     invalidate_secondary_account_pages(window)
-    window.toast(f"Compte : {account.display_name or account.provider_label}")
+    from .page_lifecycle import notify_context
+    notify_context(window)
+    if (not getattr(window, "_closed", False)
+            and window.service.current_account is account):
+        window.toast(f"Compte : {account.display_name or account.provider_label}")
