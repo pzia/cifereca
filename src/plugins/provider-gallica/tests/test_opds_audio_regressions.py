@@ -622,3 +622,76 @@ def test_opds_publication_is_not_feed_chronology(tmp_path, date_fields, expected
         )
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("identifier", [
+    "https://foreign.invalid/ark:/12148/bpt6k5493831p",
+    "https://gallica.bnf.fr/ark:/12148/bpt6k5493831p.epub",
+    "https://gallica.bnf.fr/ark:/12148/bpt6k5493831p/f1",
+    "https://gallica.bnf.fr/ark:/12148/bpt6k5493831p?query=1",
+    "https://gallica.bnf.fr/ark:/12148/bpt6k5493831p#fragment",
+    "prefix ark:/12148/bpt6k5493831p",
+    "https://gallica.bnf.fr@foreign.invalid/ark:/12148/bpt6k5493831p",
+])
+def test_official_opds_does_not_infer_document_id_from_resources(tmp_path, identifier):
+    from xml.sax.saxutils import escape
+    feed = RESULTS.replace(
+        "<id>https://gallica.bnf.fr/ark:/12148/bpt6k5493831p</id>",
+        "<id>" + escape(identifier) + "</id>",
+    ).replace(
+        '<link rel="alternate" type="text/html" href="https://gallica.bnf.fr/ark:/12148/bpt6k5493831p" />',
+        "",
+    )
+    session = _session(tmp_path, lambda request: httpx.Response(404))
+    try:
+        assert session._parse_feed(feed.encode(), "https://gallica.bnf.fr/opds") == []
+    finally:
+        session.client.close()
+
+
+def test_official_opds_exact_id_and_conflicting_alternate(tmp_path):
+    session = _session(tmp_path, lambda request: httpx.Response(404))
+    try:
+        base = "https://gallica.bnf.fr/opds"
+        assert session._parse_feed(RESULTS.encode(), base)[0].record_id == "ark:/12148/bpt6k5493831p"
+        conflicting = RESULTS.replace(
+            'href="https://gallica.bnf.fr/ark:/12148/bpt6k5493831p"',
+            'href="https://gallica.bnf.fr/ark:/12148/bpt6k999"',
+        )
+        assert session._parse_feed(conflicting.encode(), base) == []
+        foreign = RESULTS.replace(
+            'href="https://gallica.bnf.fr/ark:/12148/bpt6k5493831p"',
+            'href="https://foreign.invalid/ark:/12148/bpt6k999"',
+        )
+        assert session._parse_feed(foreign.encode(), base)[0].friendly_url == (
+            "https://gallica.bnf.fr/ark:/12148/bpt6k5493831p"
+        )
+    finally:
+        session.client.close()
+
+
+@pytest.mark.parametrize("identifier_xml", [
+    b'<dc:identifier>https://foreign.invalid/ark:/12148/bpt6k1279113</dc:identifier>',
+    b'<dc:identifier>https://gallica.bnf.fr/ark:/12148/bpt6k1279113/f1</dc:identifier>',
+    b'<dc:identifier>ark:/12148/bpt6k1279113.</dc:identifier>',
+    b'<dc:identifier>ark:/12148/bpt6k1279113</dc:identifier><dc:identifier>ark:/12148/bpt6k999</dc:identifier>',
+    b'<identifier xmlns="urn:foreign">ark:/12148/bpt6k1279113</identifier>',
+])
+def test_official_sru_audio_requires_exact_dc_ark(tmp_path, identifier_xml):
+    session = _session(tmp_path, lambda request: httpx.Response(404))
+    try:
+        feed = SRU_AUDIO.replace(
+            b'<dc:identifier>https://gallica.bnf.fr/ark:/12148/bpt6k1279113</dc:identifier>',
+            identifier_xml,
+        )
+        assert session._parse_sru_audio(feed) == []
+        assert session._parse_sru_audio(SRU_AUDIO)[0].record_id == "ark:/12148/bpt6k1279113"
+    finally:
+        session.client.close()
+
+
+def test_gallica_document_ark_accepts_bare_and_historical_http():
+    assert GallicaSession._document_ark(
+        "ark:/12148/bpt6k1279113",
+        "http://gallica.bnf.fr/ark:/12148/bpt6k1279113",
+    ) == "ark:/12148/bpt6k1279113"
