@@ -68,6 +68,16 @@ def test_version_switch_drops_old_helpers_and_preserves_unrelated_instance(tmp_p
     assert Path(sys.modules[helper].__file__).parent == manager.packages.version_root(aid, "2.0")
     manager.rollback(aid)
     assert manager.service("lifetime.aa").late() == "old"
+    assert manager.service("lifetime.bb") is kept
+    manager.set_active_package_version(aid, "2.0")
+    assert manager.service("lifetime.aa").late() == "new"
+    assert manager.service("lifetime.bb") is kept
+    manager.remove_package(aid, version="1.0")
+    assert manager.service("lifetime.aa").late() == "new"
+    assert manager.service("lifetime.bb") is kept
+    manager.remove_package(aid)
+    assert manager.service("lifetime.aa") is None
+    assert manager.service("lifetime.bb") is kept
 
 
 def test_disable_last_sibling_retires_root_without_touching_live_sibling(tmp_path, manager):
@@ -98,10 +108,14 @@ def test_failed_import_does_not_leave_its_helper_or_path(tmp_path, manager):
 def test_same_version_replacement_reimports_helpers(tmp_path, manager):
     archive, aid, module, helper = _archive(tmp_path, "replace", "1.0", "one")
     manager.install(archive)
+    other, _, _, _ = _archive(tmp_path, "keep", "1.0", "independent")
+    manager.install(other)
+    kept = manager.service("lifetime.keep")
     assert manager.service("lifetime.replace").late() == "one"
     archive, _, _, _ = _archive(tmp_path, "replace", "1.0", "two")
     manager.install(archive, replace=True)
     assert manager.service("lifetime.replace").late() == "two"
+    assert manager.service("lifetime.keep") is kept
 
 
 @pytest.mark.parametrize("order", [("aa", "bb"), ("bb", "aa")])
