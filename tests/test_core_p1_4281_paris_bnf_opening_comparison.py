@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cifereca.core.sync_coordination import _sync_loan_inventory_observation
+from cifereca.core.sync_coordination import _read_sync_loan_inventory
 from tests.test_core_p1_4281_paris_opening_observer_cost import _session as paris
 
 BNF_DIR = Path(__file__).resolve().parents[1] / "src/plugins/provider-bnf-pret"
@@ -81,13 +81,13 @@ def test_paris_vs_bnf_two_opening_readers_have_independent_get_budgets(digital):
     paris_session, paris_account, paris_client = paris(digital)
     bnf_session, bnf_account, bnf_client = _bnf(digital)
     try:
-        paris_loan_snapshot, paris_loans = _sync_loan_inventory_observation(
-            None, paris_account, paris_session,
+        paris_loan_snapshot, paris_loans = _read_sync_loan_inventory(
+            paris_account, paris_session,
         )
         paris_resources = paris_session.downloadable_resource_snapshot(paris_account)
 
-        bnf_loan_snapshot, bnf_loans = _sync_loan_inventory_observation(
-            None, bnf_account, bnf_session,
+        bnf_loan_snapshot, bnf_loans = _read_sync_loan_inventory(
+            bnf_account, bnf_session,
         )
         bnf_resources = bnf_session.downloadable_resource_snapshot(bnf_account)
 
