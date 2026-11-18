@@ -465,7 +465,13 @@ def test_public_notice_series_is_exact_per_result_and_not_a_page_facet(scenario,
             assert declared[source_id + suffix].metadata == {}
         projected = project_public_search_results(response)
         assert projected is not None and len(projected) == 4
-        assert projected[id(first)].metadata == {
+        # Core's bounded structured-evidence projection is an independent
+        # migration. If present it must match the declaration exactly.
+        projected_metadata = dict(projected[id(first)].metadata)
+        evidence = projected_metadata.pop("bibliography_evidence", None)
+        if evidence is not None:
+            assert evidence == public.metadata["bibliography_evidence"]
+        assert projected_metadata == {
             "catalogue_access": "shared_read_only", "series": ["Cycle A"],
         }
         for suffix in ("-other", "-facet", "-local"):
