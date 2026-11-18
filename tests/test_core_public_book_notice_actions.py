@@ -6,7 +6,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from cifereca.catalogue_link import catalogue_notice_url
+from cifereca.catalogue_link import catalogue_notice_url, safe_document_link_url
 from cifereca.plugin_api import document_links
 from cifereca.services import LibraryService
 from cifereca.providers.base import AccountOptionField, ProviderCapabilities, ProviderDescriptor
@@ -261,3 +261,47 @@ def test_generic_notice_screen_preserves_independent_html_alternate(provider):
     assert catalogue_notice_url(row, provider=provider) == "https://books.example/notices/book-42"
     assert [link.url for link in document_links(row)] == ["https://books.example/notices/book-42"]
 
+
+
+@pytest.mark.parametrize("url", [
+    "https://gallica.bnf.fr/opds",
+    "https://gallica.bnf.fr/opds/search?q=roman",
+    "https://gallica.bnf.fr/services/engine/search/opds?query=roman",
+    "https://www.gutenberg.org/ebooks/search/?query=roman",
+    "https://www.gutenberg.org/ebooks/search.opds/?query=roman",
+    "https://books.example/search?q=roman",
+    "https://books.example/index.php/feed/item/42",
+    "https://books.example/book/42.atom",
+])
+def test_search_or_feed_notices_refused_at_row_and_direct_detail_boundary(url):
+    row = {"provider_id": "other", "friendly_url": url}
+    assert catalogue_notice_url(row) is None
+    assert document_links(row) == ()
+    assert safe_document_link_url(url, relation="notice") is None
+    # The shape check does not remove an explicitly generic navigation link.
+    assert safe_document_link_url(url, relation="catalogue") == url
+
+
+@pytest.mark.parametrize("url", [
+    " /notice/42",
+    "/notice/42 ",
+    " https://books.example/notice/42",
+    "/notice/4\u00a02",
+])
+def test_relative_resolution_does_not_launder_invalid_whitespace(url):
+    assert catalogue_notice_url(
+        {"friendly_url": url}, base="https://books.example/",
+    ) is None
+
+
+@pytest.mark.parametrize("url", [
+    "https://gallica.bnf.fr/ark:/12148/bpt6k5493831p",
+    "https://www.gutenberg.org/ebooks/123",
+    "https://books.example/notice/42?collection=public#detail",
+])
+def test_valid_book_shape_retained_at_render_boundary(url):
+    assert safe_document_link_url(url, relation="notice") == url
+    row = {"friendly_url": "https://books.example/search?q=42",
+           "metadata": {"product_url": url}}
+    assert catalogue_notice_url(row) == url
+    assert [link.url for link in document_links(row)] == [url]
