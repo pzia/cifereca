@@ -14,12 +14,14 @@ import time
 from . import notice_c_job_journal as journal
 from . import notice_c_exact_recompute as exact
 from . import notice_c_origin_recompute as origin
+from . import notice_c_origin_relink as relink
 from .notice_c_work_bridge import AggregateWorkBridge, PreparedAggregate
 from .notice_c_reparse_execution import PublicReplayRegistry, prepare_public_reparse
 
 _SUPPORTED = (
     ("recompute_aggregate", exact.IMPLEMENTATION_DIGEST),
     ("recompute_aggregate", origin.IMPLEMENTATION_DIGEST),
+    ("relink_notices", relink.IMPLEMENTATION_DIGEST),
 )
 
 
@@ -57,6 +59,7 @@ class PublicNoticeWorkPump:
         self._bridge = AggregateWorkBridge(
             storage, broker, self._prepare, clock=self._clock,
             on_committed=on_committed, allow_reparse=bool(replay_registry.supported()),
+            allow_relink=True,
         )
         self._after = None
         self._tick_lock = Lock()
@@ -67,6 +70,10 @@ class PublicNoticeWorkPump:
             return prepare_public_reparse(
                 self._storage, self._replay_registry, spec, control, clock=self._clock,
             )
+        if spec.kind == "relink_notices":
+            publish = relink.prepare_origin_public_relink(self._storage, spec)
+            control.check_cancelled()
+            return PreparedAggregate(publish)
         if spec.kind != "recompute_aggregate":
             raise ValueError("notice_recompute_unsupported_spec")
         if spec.implementation_digest == exact.IMPLEMENTATION_DIGEST:
