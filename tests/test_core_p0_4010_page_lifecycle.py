@@ -154,3 +154,28 @@ def test_reentrant_hide_does_not_skip_invalidation_of_previous_visible_page():
     d.context_changed("bob", None)
     assert ("invalidate", "visible") in [(op, route) for op, route, _ in calls]
     assert calls[-1][:2] == ("show", "hidden")
+
+
+def test_close_adapter_drops_dispatcher_and_disposes_every_hook_once():
+    events, seen = [], []
+    host = NS(service=NS(current_identity=NS(identity_id="alice")), _closed=False)
+    owner = lifecycle.reset(host)
+
+    def failed():
+        seen.append(("failed", host._page_lifecycle_dispatcher is None,
+                     events[-1].is_current(require_visible=False)))
+        lifecycle.dispose(host)
+        raise RuntimeError("synthetic hook failure")
+
+    owner.mount("first", NS(cifereca_page_lifecycle_v1=PageLifecycleV1(
+        lambda event: None, events.append, failed)))
+    owner.mount("second", NS(cifereca_page_lifecycle_v1=PageLifecycleV1(
+        lambda event: None, lambda event: None, lambda: seen.append("second"))))
+    owner.show("first")
+    assert events[-1].is_current()
+    host._closed = True
+    lifecycle.dispose(host)
+    lifecycle.dispose(host)
+    assert host._page_lifecycle_dispatcher is None
+    assert seen == [("failed", True, False), "second"]
+    assert not events[-1].is_current(require_visible=False)
