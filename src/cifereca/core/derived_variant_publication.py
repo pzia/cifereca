@@ -6,14 +6,87 @@ origin. Orphan file recovery after a crash remains a separate bounded step.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+import hashlib
 import json
+import os
 from pathlib import Path
+import stat
 import time
 from typing import Any
+
+from .library_inventory import _open_root
 
 
 class DerivedPublicationConflict(ValueError):
     """Scoped refusal: do not reinterpret a local variant as a supplier right."""
+
+
+def _file_signature(info):
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_size,
+            info.st_mtime_ns, info.st_ctime_ns)
+
+
+@contextmanager
+def _verified_variant_file(path: Path, digest: str, *, expected_size=None):
+    """Pin a regular file, hash its bytes, recheck its named inode on demand.
+
+    No-follow traversal covers every directory component. Holding the FD is
+    not a lock against external writers, so the caller must recheck before
+    committing. Neither this function nor its error path removes any file.
+    """
+    if (not path.is_absolute() or not path.name or ".." in path.parts
+            or len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest)):
+        raise DerivedPublicationConflict("derived_variant_invalid_coordinates")
+    directory_fd = file_fd = None
+    try:
+        try:
+            directory_fd = _open_root(path.parent)
+            directory_info = os.fstat(directory_fd)
+            file_fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW |
+                              os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory_fd)
+            before = os.fstat(file_fd)
+            if (not stat.S_ISREG(before.st_mode) or before.st_size <= 0
+                    or (expected_size is not None and before.st_size != expected_size)):
+                raise DerivedPublicationConflict("derived_variant_physical_proof_changed")
+            checksum = hashlib.sha256()
+            remaining = before.st_size
+            while remaining:
+                block = os.read(file_fd, min(1024 * 1024, remaining))
+                if not block:
+                    break
+                checksum.update(block)
+                remaining -= len(block)
+            if remaining or checksum.hexdigest() != digest:
+                raise DerivedPublicationConflict("derived_variant_physical_proof_changed")
+            signature = _file_signature(before)
+        except (OSError, ValueError, AttributeError, RuntimeError) as exc:
+            raise DerivedPublicationConflict("derived_variant_physical_proof_changed") from exc
+
+        def recheck():
+            current_fd = None
+            try:
+                current_fd = _open_root(path.parent)
+                current_dir = os.fstat(current_fd)
+                named = os.stat(path.name, dir_fd=current_fd, follow_symlinks=False)
+                if ((current_dir.st_dev, current_dir.st_ino)
+                        != (directory_info.st_dev, directory_info.st_ino)
+                        or _file_signature(named) != signature
+                        or _file_signature(os.fstat(file_fd)) != signature):
+                    raise DerivedPublicationConflict("derived_variant_physical_proof_changed")
+            except (OSError, ValueError, AttributeError, RuntimeError) as exc:
+                raise DerivedPublicationConflict("derived_variant_physical_proof_changed") from exc
+            finally:
+                if current_fd is not None:
+                    os.close(current_fd)
+
+        recheck()
+        yield recheck
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if directory_fd is not None:
+            os.close(directory_fd)
 
 
 def publish_derived_variant(
@@ -38,9 +111,10 @@ def publish_derived_variant(
         identity_id, output_sha256, transformer_id,
     )) or type(output_size) is not int or output_size <= 0
             or parent_sha256 == output_sha256
-            or not str(parent_artifact_id).startswith("sha256:")
-            or not str(output_sha256).isalnum()
-            or len(output_sha256) != 64
+            or parent_artifact_id != "sha256:" + parent_sha256
+            or any(len(digest) != 64 or any(
+                ch not in "0123456789abcdef" for ch in digest)
+                for digest in (parent_sha256, output_sha256))
             or not parent_path.is_absolute() or not published_path.is_absolute()
             or published_path == parent_path):
         raise DerivedPublicationConflict("derived_variant_invalid_coordinates")
@@ -74,10 +148,19 @@ def publish_derived_variant(
     def dumped(value):
         return storage._json_dump(value)
 
-    with storage._lock, storage._connect() as db:
+    # Rehash outside the SQLite writer lock; keep the pinned handles until
+    # the transaction exits. Check namespace and stat proofs inside BEGIN
+    # both before writing and after the last scope callback.
+    with (
+        _verified_variant_file(parent_path, parent_sha256) as parent_current,
+        _verified_variant_file(published_path, output_sha256, expected_size=output_size) as output_current,
+        storage._lock, storage._connect() as db,
+    ):
         db.execute("BEGIN IMMEDIATE")
         if scope_current is not None and not scope_current(db):
             raise DerivedPublicationConflict("artifact_transform_scope_changed")
+        parent_current()
+        output_current()
         parent = db.execute(
             "SELECT artifact_id,identity_id,path,state FROM placements "
             "WHERE placement_id=?", (parent_placement_id,),
@@ -213,4 +296,6 @@ def publish_derived_variant(
             )
         if scope_current is not None and not scope_current(db):
             raise DerivedPublicationConflict("artifact_transform_scope_changed")
+        parent_current()
+        output_current()
     return placement_id
