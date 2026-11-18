@@ -163,3 +163,124 @@ def test_unqualified_legacy_recipe_and_manual_sha_copy_never_grant_preference(tm
         assert service.storage.placement_get(source_pid)["artifact_id"] == source.artifact_id
     finally:
         service.storage.close()
+
+
+def _preference_request(service, derived, owner, purpose="read"):
+    rows = [row for row in service.storage.placements()
+            if row["artifact_id"] == derived.artifact_id and row["identity_id"] == owner]
+    assert len(rows) == 1
+    return LibraryMutationRequest(
+        "set_preferred_variant", artifact_id=derived.artifact_id,
+        target_identity_id=owner, placement_id=rows[0]["placement_id"], purpose=purpose,
+    )
+
+
+def test_explicit_preference_two_headless_clients_no_navigation(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+
+    service, source, (pid_a, pid_b), _, execution = _two_profiles(tmp_path)
+    try:
+        a = execution.execute_transform(_request(source, "id1", pid_a), control=Control())
+        service.current_identity = NS(identity_id="id2")
+        b = execution.execute_transform(_request(source, "id2", pid_b), control=Control())
+        assert a.artifact_id == b.artifact_id
+
+        class Headless:
+            def __getattr__(self, name):
+                if name == "current_identity":
+                    pytest.fail("explicit preference consulted selector")
+                return getattr(service, name)
+
+        # Separate client instances, same durable Core storage and same SHA.
+        first = LibraryMaintenanceBrokerImpl(Headless())
+        second = LibraryMaintenanceBrokerImpl(Headless())
+        ra, rb = (_preference_request(service, a, "id1"),
+                  _preference_request(service, b, "id2", "export"))
+        with pytest.raises(Conflict):
+            first.admit_preferred_variant(ra)
+        with pytest.raises(Conflict):
+            first.admit_preferred_variant(replace(ra, placement_id=rb.placement_id),
+                                          user_confirmed=True)
+        with pytest.raises(Conflict):
+            first.admit_preferred_variant(replace(ra, target_identity_id=None),
+                                          user_confirmed=True)
+
+        op_a = first.admit_preferred_variant(ra, user_confirmed=True)
+        op_b = second.admit_preferred_variant(rb, user_confirmed=True)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fa, fb = pool.submit(op_a, Control()), pool.submit(op_b, Control())
+            assert fa.result().facts["identity_id"] == "id1"
+            assert fb.result().facts["identity_id"] == "id2"
+        with pytest.raises(Conflict):
+            op_a(Control())
+        assert service.storage.metadata_get(
+            f"artifact.variant.preferred.id1.{source.artifact_id}.read"
+        ) == a.artifact_id
+        assert service.storage.metadata_get(
+            f"artifact.variant.preferred.id2.{source.artifact_id}.export"
+        ) == b.artifact_id
+        assert service.storage.metadata_get(
+            f"artifact.variant.preferred.id2.{source.artifact_id}.read"
+        ) is None
+    finally:
+        service.storage.close()
+
+
+@pytest.mark.parametrize("change", ["navigation", "epoch", "placement", "metadata"])
+def test_admitted_variant_preference_checks_real_changes_not_navigation(tmp_path, change):
+    service, source, (pid_a, _), _, execution = _two_profiles(tmp_path)
+    service._source_context_epoch = 4
+    try:
+        derived = execution.execute_transform(_request(source, "id1", pid_a), control=Control())
+        maintenance = LibraryMaintenanceBrokerImpl(service)
+        request = _preference_request(service, derived, "id1")
+        key = f"artifact.variant.preferred.id1.{source.artifact_id}.read"
+        op = maintenance.admit_preferred_variant(request, user_confirmed=True)
+        service.current_identity = NS(identity_id="id2")
+        if change == "epoch":
+            service._source_context_epoch += 1
+        elif change == "placement":
+            row = service.storage.placement_get(request.placement_id)
+            service.storage.placement_put({**row, "state": "missing"})
+        elif change == "metadata":
+            service.storage.metadata_set(key, "other-confirmed-value")
+        if change == "navigation":
+            assert op(Control()).ok
+            assert service.storage.metadata_get(key) == derived.artifact_id
+        else:
+            with pytest.raises(Conflict):
+                op(Control())
+            assert service.storage.metadata_get(key) == (
+                "other-confirmed-value" if change == "metadata" else None
+            )
+        with pytest.raises(Conflict):
+            op(Control())
+        assert service.storage.metadata_get(
+            f"artifact.variant.preferred.id2.{source.artifact_id}.read"
+        ) is None
+    finally:
+        service.storage.close()
+
+
+def test_legacy_preference_preview_pins_owner_and_no_headless_implicit_read(tmp_path):
+    service, source, (pid_a, _), _, execution = _two_profiles(tmp_path)
+    try:
+        derived = execution.execute_transform(_request(source, "id1", pid_a), control=Control())
+        maintenance = LibraryMaintenanceBrokerImpl(service)
+        request = LibraryMutationRequest("set_preferred_variant", artifact_id=derived.artifact_id)
+        plan = maintenance.plan(request)
+        assert plan.request.target_identity_id == "id1"
+        assert plan.request.placement_id
+        service.current_identity = NS(identity_id="id2")
+        with pytest.raises(Conflict):
+            maintenance.run(plan, Control())
+        assert service.storage.metadata_get(
+            f"artifact.variant.preferred.id1.{source.artifact_id}.read"
+        ) is None
+        service.current_identity = None
+        read = LibraryReadBrokerImpl(service)
+        assert read.preferred_artifact("book-1") is None
+        assert read.preferred_artifact("book-1", identity_id="id1") is not None
+    finally:
+        service.storage.close()
