@@ -25,7 +25,7 @@ def public_borrower_refusal_code(value: Any) -> str:
             else "adept_borrower_ambiguous")
 
 
-def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: str) -> tuple[str | None, str | None]:
+def resolve_adept_borrower_for_loan(self, loan: Loan, *, connection_identity_id: str) -> tuple[str | None, str | None]:
     """Resolve the Adobe borrower for one exact provider connection.
 
     Confirmed source-scoped v16 grants work for any library. Historical v15
@@ -197,6 +197,10 @@ def _paris_adept_identity_for_loan(self, loan: Loan, *, connection_identity_id: 
     if confirmed_v16_owner is None:
         return None, "adept_borrower_binding_required"
     return confirmed_v16_owner, None
+
+
+# Private import compatibility only; new consumers use the neutral resolver.
+_paris_adept_identity_for_loan = resolve_adept_borrower_for_loan
 
 
 def _cross_identity_loan_conflict(
