@@ -1616,7 +1616,7 @@ def main():
         assert compact == [
             ("Source", view._display_source(PAIRED_BOOK["source_provider"])),
             ("Format", "EPUB"),
-            ("Langue", "fr"),
+            ("Langue", "Français"),
         ]
         assert not any(label in ("Disponibilité", "Droit", "Prêt")
                        for label, _ in compact)

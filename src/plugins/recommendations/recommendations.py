@@ -2939,8 +2939,15 @@ class UxRecommendationsView:
             essential_fields.append(DetailField(
                 "essential-format", "Format", fmt,
             ))
+        # Match Core Search's human-readable compact language labels,
+        # while keeping the exact normalized tags in Catalogue (kind=language)
+        # for copy/search and local filter selection. "fr" is evidence;
+        # "Français" is its presentation, not a new inferred language.
         essential_fields.extend(
-            DetailField(f"essential-language-{index}", "Langue", language)
+            DetailField(
+                f"essential-language-{index}", "Langue",
+                _language_label(language),
+            )
             for index, language in enumerate(attested_languages[:2])
         )
         sections = []
