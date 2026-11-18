@@ -195,3 +195,58 @@ def test_n2_latency_rolling_window_does_not_change_lifetime_counts(prepared, mon
     assert stats["n2_source_unknown_recent_p50_ms"] == 512
     assert stats["n2_source_unknown_recent_p95_ms"] == 973
     assert stats["n2_hit_recent_count"] == 0
+
+
+def test_n1_resolver_latency_excludes_n2_hit_publication_and_loader(prepared, monkeypatch):
+    from cifereca.core import book_cover_cache as module
+
+    service, loader, _ = prepared
+    clock = [0.0]
+    monkeypatch.setattr(module, "perf_counter", lambda: clock[0])
+    original = module.resolve_book_cover
+    def resolve(*args, **kwargs):
+        clock[0] += .004
+        return original(*args, **kwargs)
+    monkeypatch.setattr(module, "resolve_book_cover", resolve)
+    old_publish = service.decisions.publish_resolved
+    def publish(*args, **kwargs):
+        clock[0] += 10
+        return old_publish(*args, **kwargs)
+    monkeypatch.setattr(service.decisions, "publish_resolved", publish)
+    old_load = loader.load
+    def load(*args, **kwargs):
+        clock[0] += 50
+        return old_load(*args, **kwargs)
+    monkeypatch.setattr(loader, "load", load)
+    service.get_cover(DOCUMENT, "detail", lambda _: None)
+    service.register(proof())
+    service.get_cover(DOCUMENT, "detail", lambda _: None)
+    service.get_cover(DOCUMENT, "detail", lambda _: None)
+    service.register(proof(2, complete=False))
+    service.get_cover(DOCUMENT, "detail", lambda _: None)
+    stats = service.stats()
+    assert stats["n1_selected_count"] == stats["n1_selected_recent_count"] == 1
+    assert stats["n1_selected_recent_p95_ms"] == 4
+    assert stats["n1_pending_count"] == 1
+    assert stats["n1_pending_recent_p50_ms"] == 4
+    assert stats["n1_ambiguous_recent_count"] == stats["n1_missing_recent_count"] == 0
+    assert "n1_missing_recent_p95_ms" not in stats
+    assert stats["n2_hit"] == 1
+
+
+def test_n1_window_bounded_and_revoked_token_is_not_a_resolution(monkeypatch):
+    from cifereca.core import book_cover_cache as module
+    cache = module.CoverDecisionCache()
+    invalid = cache.begin(DOCUMENT, revision=1)
+    cache.invalidate(DOCUMENT, cause="evidence_changed")
+    assert not cache.resolve_and_publish(invalid, (), snapshot_complete=True)
+    clock = iter(x for n in range(1025) for x in (0.0, n / 1000))
+    monkeypatch.setattr(module, "perf_counter", lambda: next(clock))
+    for n in range(1025):
+        token = cache.begin(DOCUMENT, revision=n + 2)
+        assert cache.resolve_and_publish(token, (), snapshot_complete=True)
+    stats = cache.n1_latency_stats()
+    assert stats["n1_missing_count"] == 1025
+    assert stats["n1_missing_recent_count"] == 1024
+    assert stats["n1_missing_recent_p50_ms"] == 512
+    assert stats["n1_missing_recent_p95_ms"] == 973
