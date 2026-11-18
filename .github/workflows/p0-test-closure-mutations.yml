@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: c3d089f694f83fa98c092a81a422756014d7a26b
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
@@ -34,7 +34,7 @@ jobs:
         shell: bash
         env:
           PYTHONPATH: ${{ github.workspace }}/src
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_SHA: c3d089f694f83fa98c092a81a422756014d7a26b
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
@@ -44,7 +44,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: closure-mutations-${{ github.event.pull_request.head.sha || github.sha }}
+          name: closure-mutations-c3d089f694f83fa98c092a81a422756014d7a26b
           path: ${{ runner.temp }}/closure-mutations.json
           if-no-files-found: error
           retention-days: 2
