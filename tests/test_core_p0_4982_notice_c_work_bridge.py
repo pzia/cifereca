@@ -88,6 +88,8 @@ def test_queue_cancellation_and_local_bound_do_not_claim(tmp_path):
         h1 = bridge.submit(first)
         h2 = bridge.submit(second)
         assert h1 is not None and h2 is not None
+        assert bridge.offer(first).outcome == "duplicate"
+        assert bridge.offer(third).outcome == "blocked"
         assert bridge.submit(first) is None and bridge.submit(third) is None
         assert journal.read_job(storage, third).attempts == 0
         h1.cancel()

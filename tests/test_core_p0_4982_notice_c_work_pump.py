@@ -53,9 +53,9 @@ def test_real_publication_both_ports_with_bounded_scan_and_backpressure(
     reservation = budget.acquire(priority=int(TaskPriority.METADATA))
     try:
         assert reservation is not None
-        # Exactly one page per tick, even if all its jobs are unsupported.
+        # Bounded class slices, even if all scanned jobs are unsupported.
         saw_deferral = False
-        for _ in range(4):
+        for _ in range(8):
             tick = pump.tick()
             assert tick.examined <= 32 and tick.handles == ()
             if tick.deferred:
@@ -117,8 +117,38 @@ def test_scan_filter_and_reentrant_tick(tmp_path):
             tick = pump.tick()
             assert tick.busy and tick.examined == 0 and tick.handles == ()
         tick = pump.tick()
-        assert not tick.busy and not tick.deferred and tick.examined == 1
+        assert not tick.busy and not tick.deferred and 1 <= tick.examined <= 32
         assert journal.read_job(storage, unknown).attempts == 0
     finally:
         broker.close()
         storage.close()
+
+
+def test_real_journal_rotation_offers_both_enabled_classes(tmp_path, monkeypatch):
+    from cifereca.core.notice_c_dispatch_rotation import RotationOffer
+    from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
+
+    db = Storage(tmp_path / "rotation.sqlite")
+    broker = TaskBrokerImpl(object(), max_workers=1, shared_admission=
+                            SharedTaskAdmission(max_inflight=3, reserve_user_slots=1))
+    try:
+        pump = PublicNoticeWorkPump(db, broker, clock=lambda: 100)
+        refs = {}
+        for (kind, implementation), suffix in zip((_SUPPORTED[0], _SUPPORTED[2]), ("a", "b")):
+            value = journal.public_job_spec(
+                kind, canonical_cover_document_ref("edition:rotation-" + suffix),
+                input_digest="a" * 64, implementation_digest=implementation,
+            )
+            refs[kind] = enqueue(db, value)
+        visited = []
+        def offer(ref):
+            visited.append(ref)
+            return RotationOffer("accepted", ref)
+        monkeypatch.setattr(pump._bridge, "offer", offer)
+        tick = pump.tick()
+        assert tick.examined <= 32 and len(tick.handles) == 2
+        assert set(visited) == set(refs.values())
+        assert all(journal.read_job(db, ref).attempts == 0 for ref in visited)
+    finally:
+        broker.close()
+        db.close()
