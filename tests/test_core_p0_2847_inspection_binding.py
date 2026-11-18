@@ -139,3 +139,62 @@ def test_inspected_context_switch_is_a_strict_veto(inspected):
         path_key, user_confirmed=True,
     )["status"] == "blocked"
     assert storage.placement_get(pid)["state"] == "missing"
+
+
+def _enable_admission(service):
+    service.current_identity.directory_name = "alice"
+    service.identities = [
+        service.current_identity,
+        SimpleNamespace(identity_id="bob", directory_name="bob"),
+    ]
+    service.accounts = []
+    service.registry = object()
+    service._source_context_epoch = 1
+    service.config.data = {}
+    service.config.identities = lambda: [
+        {"id": "alice", "directory_name": "alice"},
+        {"id": "bob", "directory_name": "bob"},
+    ]
+
+
+@pytest.mark.parametrize("action", ["retirement", "relocation"])
+@pytest.mark.parametrize("revoke", [False, True])
+def test_inspection_admits_exact_repair_before_navigation_and_close(inspected, action, revoke):
+    storage, service, session, old, candidate, pid = inspected
+    _enable_admission(service)
+    path_key, file_key = _cases(session)
+    selected = (path_key, file_key) if action == "relocation" else (path_key,)
+    preview = getattr(session, "preview_missing_" + action)(*selected)
+    assert preview["status"] in ("ready", "review_required")
+    command = session.admit_missing_repair(*selected, user_confirmed=True)
+    assert callable(command)
+    assert session.admit_missing_repair(*selected, user_confirmed=True) is None
+    owner = service.current_identity
+    service.current_identity = service.identities[1]
+    if revoke:
+        service._source_context_epoch += 1
+    else:
+        service.current_identity = owner  # A/B/A, not renewed consent.
+    session.close()
+    result = command()
+    if revoke:
+        assert result["status"] == "blocked"
+        assert storage.placement_get(pid)["state"] == "missing"
+    elif action == "retirement":
+        assert result["status"] == "retired"
+        assert storage.placement_get(pid) is None
+    else:
+        assert result["status"] == "relocated"
+        assert storage.placement_get(pid)["path"] == str(candidate)
+    assert command()["status"] == "blocked"
+    assert candidate.is_file() and not old.exists()
+
+
+def test_admission_refuses_wrong_selection_and_consumes_preview(inspected):
+    storage, service, session, old, candidate, pid = inspected
+    _enable_admission(service)
+    path_key, file_key = _cases(session)
+    assert session.preview_missing_relocation(path_key, file_key)["status"] == "review_required"
+    assert session.admit_missing_repair(path_key, "file:forged", user_confirmed=True) is None
+    assert session.admit_missing_repair(path_key, file_key, user_confirmed=True) is None
+    assert storage.placement_get(pid)["state"] == "missing"
