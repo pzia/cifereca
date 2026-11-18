@@ -572,6 +572,12 @@ def test_real_numilog_search_writes_public_bibliography_inside_same_notice_c(
         assert facts["public_bibliography"]["title"] == original.title
         assert facts["public_bibliography"]["record_id"] == original.record_id
         assert facts["thumbnail_url"] == original.thumbnail_url
+        assert facts["public_web_references"] == {
+            "schema": 1, "links": [{
+                "url": original.friendly_url,
+                "evidence": f"{session.provider_id}.public_search_product_card",
+            }],
+        }
 
         page = service.search_public_notice_c(
             "loup", provider_ids=(session.provider_id,),
@@ -582,6 +588,11 @@ def test_real_numilog_search_writes_public_bibliography_inside_same_notice_c(
         from cifereca.core.notice_c_cover_index import canonical_cover_document_ref
         canonical = canonical_cover_document_ref(persisted.observation.key.edition_id)
         assert original._core_notice_canonical_cover_document_ref == canonical
+        from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+        web, = read_consolidated_notice_cover(service.storage, canonical).catalogue_web_references
+        assert web.url == original.friendly_url
+        assert web.provider_id == session.provider_id and web.record_id == original.record_id
+        assert web.source_ref == document.source_key
         assert first.document == canonical
         assert first.title == original.title
         assert first.record_id == original.record_id
@@ -626,6 +637,7 @@ def test_real_numilog_search_writes_public_bibliography_inside_same_notice_c(
         page = search_public_notice_c(db, "loup")
         assert len(page.hits) == 1 and page.hits[0].document == canonical
         assert page.hits[0].title == original.title
+        assert read_consolidated_notice_cover(db, canonical).catalogue_web_references == (web,)
         # +25h does not DELETE C; it marks its observed facts stale.
         stale = search_public_notice_c(
             db, "loup", now=persisted.observation.observed_at + 25 * 3600,
@@ -677,6 +689,41 @@ def test_real_numilog_notice_c_is_first_known_search_across_profiles_no_get(
         assert service.storage.acquisitions() == []
         # An offline known C read never launches a new online session.
         assert supplier_gets == [1]
+    finally:
+        service.close()
+        session.close()
+
+
+def test_web_reference_witness_cannot_be_reused_after_url_or_marker_mutation(tmp_path, monkeypatch):
+    from cifereca.core.notice_search_cover_producer import admit_public_search_catalogue
+    from cifereca.core.search_orchestration import _verified_public_web_reference
+
+    service, session, calls = build(tmp_path, monkeypatch)
+    try:
+        raw = session.search_with_response_facets("loup", scope="catalog")
+        def projected():
+            return _public_rows_from_response(raw, session)[0]
+        def facts(row):
+            item = admit_public_search_catalogue(
+                row, identity_id="alice", observed_at=100, public_cover_url=row.thumbnail_url,
+            )
+            return item.fields_copy()["search_result"]
+        good = projected()
+        assert _verified_public_web_reference(good)["url"] == good.friendly_url
+        assert "public_web_references" in facts(good)
+        altered = projected()
+        altered.friendly_url = "https://www.numilog.com/other-book"
+        assert _verified_public_web_reference(altered) is None
+        assert "public_web_references" not in facts(altered)
+        altered = projected()
+        altered.metadata["public_url_evidence"] = "other.public_search_product_card"
+        assert "public_web_references" not in facts(altered)
+        altered = projected()
+        altered.record_id = "foreign-record"
+        assert "public_web_references" not in facts(altered)
+        # Dataclass reconstruction (e.g. cache replay) cannot recreate the token.
+        assert _verified_public_web_reference(replace(good)) is None
+        assert calls == [1]
     finally:
         service.close()
         session.close()

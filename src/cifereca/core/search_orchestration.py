@@ -489,6 +489,28 @@ def _verified_public_cover_witness(row: SearchResult) -> bool:
     )
 
 
+_CORE_PUBLIC_WEB_WITNESS = object()
+
+
+def _verified_public_web_reference(row: SearchResult) -> dict | None:
+    """Read only the exact URL and marker sealed during same-call admission."""
+    if type(row) is not SearchResult or not _verified_public_cover_witness(row):
+        return None
+    witness = getattr(row, "_core_same_call_public_web_witness", None)
+    if type(row.metadata) is not dict or type(witness) is not tuple or len(witness) != 4:
+        return None
+    evidence = row.metadata.get("public_url_evidence")
+    url = row.friendly_url
+    if (witness[0] is not _CORE_PUBLIC_WEB_WITNESS
+            or witness[1] is not row._core_same_call_public_cover_witness
+            or witness[2] != url or witness[3] != evidence
+            or evidence != f"{row.source_provider}.public_search_product_card"
+            or _public_catalog_url(url, evidence=evidence, provider_id=row.source_provider) != url
+            or type(url) is not str):
+        return None
+    return {"url": url, "evidence": evidence}
+
+
 def _public_rows_from_response(
     response: ProviderSearchResponse, session: ProviderSession,
 ) -> list[SearchResult]:
@@ -590,6 +612,13 @@ def _public_rows_from_response(
                         _CORE_PUBLIC_COVER_WITNESS,
                         _public_cover_witness_coordinates(projected),
                     )
+                    if projected.friendly_url is not None:
+                        projected._core_same_call_public_web_witness = (
+                            _CORE_PUBLIC_WEB_WITNESS,
+                            projected._core_same_call_public_cover_witness,
+                            projected.friendly_url,
+                            projected.metadata.get("public_url_evidence"),
+                        )
             admitted.append(projected)
     return admitted
 
