@@ -118,3 +118,75 @@ def test_no_loan_capability_stays_success_without_consulting_side_channel(tmp_pa
         assert calls == getter_calls == []
     finally:
         service.close()
+
+
+@pytest.mark.parametrize("mode", ["legacy_opt_in", "capability_off", "canonical_off"])
+def test_legacy_v1_only_dispatches_with_capability_and_without_canonical_policy(
+    tmp_path, monkeypatch, mode,
+):
+    """Exercise real v1 adapter + opening dispatcher, not a provider download."""
+    from cifereca.core.canonical_delivery_abi import has_complete_delivery_abi
+    from cifereca.core.source_sync_consent import set_source_sync_consent
+    from cifereca.providers.base import ProviderCapabilities, ProviderDescriptor
+    from tests.test_core_p0_3171_atomic_publication_v14 import register
+
+    service = _service(tmp_path)
+    calls, getter_calls, dispatched = [], [], []
+    try:
+        paris, kobo, numilog = _accounts(service)
+        register(service.storage, paris.identity_id, paris.provider_id,
+                 paris.credential_id, account=paris.unique_id)
+        row = Loan(
+            id="old-loan", record_id="old-edition", provider="DILICOM",
+            medium="digital", title="Synthetic v1",
+            source_provider=paris.provider_id, source_credential=paris.credential_id,
+            source_account_id=paris.unique_id, identity_id=paris.identity_id,
+            ebook_url="https://example.invalid/synthetic.acsm",
+            due_at="2099-01-01T00:00:00Z",
+        )
+        session = _legacy_session(
+            paris, getter_calls=getter_calls, calls=calls, rows=[row],
+        )
+        session.capabilities = ProviderCapabilities(
+            loans=True, digital_download=True,
+            opening_loan_auto_acquisition=mode != "capability_off",
+        )
+        session.descriptor = ProviderDescriptor(
+            id=paris.provider_id, display_name="Synthetic",
+            description="Historical Plugin API 1.x fixture", state="ready",
+            capabilities=session.capabilities,
+        )
+        assert not has_complete_delivery_abi(session)
+        service._sessions[service._session_key(
+            paris.provider_id, paris.credential_id,
+        )] = session
+        for account in (kobo, numilog):
+            _register(service, account, getter_calls=getter_calls,
+                      calls=calls, loan_capable=False)
+        if mode == "canonical_off":
+            policy = set_source_sync_consent(
+                service, paris, enabled=False, expected_revision=None,
+            )
+            assert policy["configured"] and not policy["enabled"]
+
+        def legacy_worker(loan, **kwargs):
+            dispatched.append((loan.id, loan.record_id, loan.source_credential,
+                               loan.source_account_id, kwargs))
+            # This is the dispatch boundary; do not simulate a successful B.
+            return {"status": "attention_required", "code": "synthetic_refusal"}
+
+        service.mirror_personal_libraries = lambda: {}
+        monkeypatch.setattr(service, "_acquire_active_loan_automatically", legacy_worker)
+        result = service.opening_sync()
+        default = next(item for item in result["identities"]
+                       if item["identity_id"] == paris.identity_id)
+        assert calls == [paris] and getter_calls == []
+        assert _state(service, paris)["status"] == "partial"
+        assert default["status"] == "partial"
+        assert default["new_acquisitions"] == 0
+        expected = [("old-loan", "old-edition", paris.credential_id,
+                     paris.unique_id, {})] if mode == "legacy_opt_in" else []
+        assert dispatched == expected
+        assert service.storage.placements() == []
+    finally:
+        service.close()
