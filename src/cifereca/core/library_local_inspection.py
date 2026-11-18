@@ -1185,6 +1185,44 @@ class LocalInspection:
                     'file_mutations': 0, 'placement_mutations': 0}
         return {'status': plan.status, 'read_only': True}
 
+    def admit_history_withdrawal(self, relation_id, *, user_confirmed=False):
+        """Consume the private preview before enqueue."""
+        from .library_declared_links import (
+            DeclarationRejected, _admit_declaration_command,
+        )
+        pending, self._history_withdraw_pending = self._history_withdraw_pending, None
+        if (user_confirmed is not True or pending is None
+                or pending[0] != relation_id or not self.valid()
+                or pending[2] != self._manual_preview_generation):
+            return None
+        generation = self._manual_preview_generation
+        acknowledged = [False]
+
+        def committed_under_lock():
+            if generation != self._manual_preview_generation:
+                return
+            callback = self._accept_own_core_commit
+            acknowledged[0] = callback() is True if callable(callback) else True
+
+        command = _admit_declaration_command(
+            self._manual_service, identity_id=self._manual_identity,
+            relation_id=relation_id, confirmation=pending[1],
+            on_committed=committed_under_lock,
+        )
+
+        def work():
+            try:
+                result = command()
+            except DeclarationRejected:
+                return {'status': 'blocked', 'read_only': True}
+            return {'status': result.status, 'read_only': True,
+                    'trust': 'user_declaration',
+                    'rights_mutations': 0, 'file_mutations': 0,
+                    'placement_mutations': 0,
+                    'commit_acknowledged': acknowledged[0]}
+
+        return work
+
     def confirm_history_withdrawal(self, relation_id, *,
                                    user_confirmed=False, cancelled=lambda: False):
         """Consume exactly one matching private, stale-safe preview."""
@@ -1517,6 +1555,58 @@ class LocalInspection:
             'edition': options['item_id'],
             'path': options['observation'].path,
         }
+
+    def admit_declared_link(self, right_key, file_key, *, user_confirmed=False):
+        """Detach exactly one confirmed command from this private view."""
+        from .library_declared_links import (
+            DeclarationRejected, _admit_declaration_command,
+        )
+        pending, self._declared_pending = self._declared_pending, None
+        generation = self._manual_preview_generation
+        if (user_confirmed is not True or pending is None
+                or pending[:2] != (right_key, file_key)):
+            return None
+        options = self._declaration_inputs(right_key, file_key)
+        if options is None:
+            return None
+        acknowledged = [False]
+
+        def committed_under_lock():
+            # Projection-only; an obsolete view never decides the write.
+            if generation != self._manual_preview_generation:
+                return
+            callback = self._accept_own_core_commit
+            acknowledged[0] = callback() is True if callable(callback) else True
+
+        command = _admit_declaration_command(
+            self._manual_service, identity_id=self._manual_identity,
+            options=options, confirmation=pending[2], revoke=pending[3],
+            on_committed=committed_under_lock,
+        )
+
+        def work():
+            try:
+                result = command()
+            except DeclarationRejected as error:
+                return {'status': 'blocked', 'read_only': True,
+                        'reason_code': _declaration_refusal(error)}
+            view_current = generation == self._manual_preview_generation
+            if result.status in ('declared', 'already_declared'):
+                if view_current and (acknowledged[0] or result.changed == 0) and self.valid():
+                    self._declared_last = (right_key, file_key, result.relation_id)
+                return {'status': result.status, 'read_only': result.changed == 0,
+                        'trust': 'user_declaration',
+                        'revoke_available': view_current and self._declared_last is not None,
+                        'rights_mutations': 0, 'placement_mutations': 0, 'file_mutations': 0}
+            if result.status in ('revoked', 'already_revoked'):
+                if view_current:
+                    self._declared_last = None
+                return {'status': result.status, 'read_only': result.changed == 0,
+                        'trust': 'user_declaration', 'revoke_available': False,
+                        'rights_mutations': 0, 'placement_mutations': 0, 'file_mutations': 0}
+            return {'status': 'unavailable', 'read_only': True}
+
+        return work
 
     def confirm_declared_link(self, right_key, file_key, *, user_confirmed=False,
                               cancelled=lambda: False):

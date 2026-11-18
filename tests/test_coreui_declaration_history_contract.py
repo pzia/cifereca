@@ -64,7 +64,8 @@ def test_stale_revocation_is_explicit_and_core_bound_without_gtk_worker_reads():
     assert "self.withdraw_button = Gtk.Button(label='Révoquer cette déclaration…')" in history
     assert "self.withdraw_button.set_sensitive(item.state == 'active')" in history
     assert "self.session.preview_history_withdrawal(" in history
-    assert "self.session.confirm_history_withdrawal(" in history
+    assert "self.session.admit_history_withdrawal(" in history
+    assert "self.session.confirm_history_withdrawal(" not in history
     assert "user_confirmed=True" in history
     assert "dialog.set_body_use_markup(False)" in history
     assert "dialog.set_default_response('cancel')" in history
