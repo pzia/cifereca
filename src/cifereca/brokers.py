@@ -1908,7 +1908,7 @@ class LibraryNamingBrokerImpl:
         return f"{safe}.{ext}"
 
 
-def build_public_brokers(service: Any) -> dict[str, object]:
+def build_public_brokers(service: Any, *, task_admission=None) -> dict[str, object]:
     from .http_trace import HTTPX_TRANSPORT
     from .core.release_update_read import ReleaseUpdateReadBrokerImpl
     from .core.library_audit_broker import LibraryReconciliationReadBrokerImpl
@@ -1938,5 +1938,5 @@ def build_public_brokers(service: Any) -> dict[str, object]:
         # P1 #4985: Core-only USB execution, no provider rights inferred.
         "reader.usb": ReaderUsbExecutionBrokerImpl(service),
         "cache": CacheBrokerImpl(service),
-        "tasks": TaskBrokerImpl(service),
+        "tasks": TaskBrokerImpl(service, shared_admission=task_admission),
     }
