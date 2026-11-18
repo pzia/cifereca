@@ -186,3 +186,51 @@ __all__ = [
     "plugin_public_c_cell_current", "selected_plugin_public_c",
     "plugin_public_c_detail_current", "staged_plugin_exact_public_c",
 ]
+
+
+def request_plugin_public_web_action(view, panel, pinned, *, expected_epoch=None,
+                                     selection_is_current=None):
+    """Use the opaque worker-issued C binding, never a plugin's bare ref.
+
+    Capture the rendered action-list identity as well as the original
+    selection. A full detail render revokes late menu publication before
+    a button even exists. No provider or rights lookup.
+    """
+    if type(pinned) is not tuple or len(pinned) != 2:
+        return False
+    selected, receipt = pinned
+    if (type(receipt) is not PinnedPluginPublicC
+            or receipt.binding is None
+            or type(receipt.minimum_revision) is not int
+            or receipt.minimum_revision < 1
+            or (expected_epoch is not None and
+                receipt.minimum_revision != expected_epoch)):
+        return False
+    window = getattr(view, "_window", None)
+    page = getattr(view, "_page", None)
+    actions = getattr(panel, "_action_buttons", None)
+    mapped = getattr(page, "get_mapped", None)
+
+    def current():
+        if (getattr(view, "_window", None) is not window
+                or getattr(view, "_page", None) is not page
+                or getattr(page, "detail", None) is not panel
+                or type(actions) is not list
+                or getattr(panel, "_action_buttons", None) is not actions
+                or not callable(mapped) or not mapped()
+                or not plugin_public_c_detail_current(view, selected, receipt)):
+            return False
+        if selection_is_current is None:
+            return True
+        try:
+            return callable(selection_is_current) and selection_is_current() is True
+        except Exception:
+            return False
+
+    if not current():
+        return False
+    from .notice_c_web_action_controller import request_public_web_actions
+    return request_public_web_actions(
+        window, panel, receipt.document, expected_epoch=receipt.minimum_revision,
+        current=current,
+    )
