@@ -53,7 +53,7 @@ def _register(service, account, **kwargs):
 
 @pytest.mark.parametrize("positive", [False, True], ids=["empty", "positive"])
 def test_opening_legacy_does_not_claim_complete_or_close_positive_right(
-    tmp_path, positive,
+    tmp_path, monkeypatch, positive,
 ):
     service = _service(tmp_path)
     getter_calls: list[str] = []
@@ -76,6 +76,8 @@ def test_opening_legacy_does_not_claim_complete_or_close_positive_right(
             _register(service, account, getter_calls=getter_calls,
                       calls=calls, loan_capable=False)
         service.mirror_personal_libraries = lambda: {}
+        monkeypatch.setattr(service, "_loans_for_account",
+                            lambda *_a, **_kw: pytest.fail("no Core v1 reader"))
         result = service.opening_sync()
         assert _state(service, paris)["status"] == "partial"
         assert _state(service, kobo)["status"] == "success"
@@ -97,7 +99,7 @@ def test_opening_legacy_does_not_claim_complete_or_close_positive_right(
         service.close()
 
 
-def test_no_loan_capability_stays_success_without_consulting_side_channel(tmp_path):
+def test_no_loan_capability_stays_success_without_consulting_side_channel(tmp_path, monkeypatch):
     service = _service(tmp_path)
     calls = []
     getter_calls = []
@@ -107,6 +109,8 @@ def test_no_loan_capability_stays_success_without_consulting_side_channel(tmp_pa
             _register(service, account, getter_calls=getter_calls,
                       calls=calls, loan_capable=False)
         service.mirror_personal_libraries = lambda: {}
+        monkeypatch.setattr(service, "_loans_for_account",
+                            lambda *_a, **_kw: pytest.fail("no Core v1 reader"))
         service.opening_sync()
         assert _state(service, paris)["status"] == "success"
         assert _state(service, kobo)["status"] == "success"

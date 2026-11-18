@@ -9,6 +9,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 from cifereca import acsm_cache
 from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from cifereca.core import CiferecaCore
 from cifereca.models import Account, Loan
 from cifereca.identities import AdeptProfileResolver, AdeptProfileResolutionError
@@ -180,7 +181,8 @@ class Core0913(unittest.TestCase):
         window.service.reacquire_digital_loan.assert_called_once_with(self.loan)
     def test_opening_sync_twice_preserves_staged_acsm_without_runtime_attempt(self):
         self.connect_provider()
-        self.service._loans_for_account=Mock(return_value=[self.loan])
+        enable_synthetic_paris_opening(self.service)
+        attach_opening_loan_reader(self.service, lambda *_a, **_kw: [self.loan], typed=False)
         self.service.kobo_profiles=Mock(return_value=[{'name':'hb','fetch_capable':True},{'name':'heloise','fetch_capable':True}])
         self.service._kobo_adapter=Mock(return_value=NS(available=lambda:False))
         self.service.kobo_backup_enabled=Mock(return_value=False)

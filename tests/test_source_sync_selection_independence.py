@@ -104,7 +104,8 @@ def test_concurrent_identity_reads_survive_ui_round_trip(context):
 
 def test_global_opening_sync_keeps_both_source_scopes_during_selection_changes(context, monkeypatch):
     service, scopes = context
-    monkeypatch.setattr(service, "_loans_for_account", lambda *a, **kw: [])
+    monkeypatch.setattr(service, "_loans_for_account",
+                        lambda *_a, **_kw: pytest.fail("no loan-capability read"))
     calls = []
     for owner, (account, session, key, expected) in scopes.items():
         def read(_account, identity=owner, snap=expected):

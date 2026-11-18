@@ -5,6 +5,7 @@ import json
 from types import SimpleNamespace as NS
 
 from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.models import Account, Loan
 from tests.test_sync_state_contract import _service
@@ -49,8 +50,8 @@ def test_opening_provider_failure_does_not_poison_healthy_siblings_or_other_iden
                 raise RuntimeError(private)
             return []
 
-        monkeypatch.setattr(service, "_loans_for_account", loans)
         enable_synthetic_paris_opening(service)
+        attach_opening_loan_reader(service, loans, typed=True)
         result = service.opening_sync()
         by_identity = {
             row["identity_id"]: row for row in result["identities"]
@@ -84,8 +85,8 @@ def test_opening_partial_provider_rows_do_not_erase_other_source_success(
             ),
             # Legacy v1 inventory is partial even without an error side channel.
         )
-        monkeypatch.setattr(service, "_loans_for_account", lambda _a, force=False: [])
         enable_synthetic_paris_opening(service)
+        attach_opening_loan_reader(service, lambda _a, force=False: [], typed=lambda a: a.provider_id != "paris")
         result = service.opening_sync()
         assert next(row for row in result["identities"]
                     if row["identity_id"] == "default")["status"] == "partial"
@@ -111,11 +112,10 @@ def test_failed_loan_acquisition_marks_only_origin_source_partial(
             ebook_url="https://example.invalid/fake.acsm",
             due_at="2099-01-01T00:00:00Z",
         )
-        monkeypatch.setattr(service, "_loans_for_account",
-                            lambda account, force=False: [loan] if account is paris else [])
         monkeypatch.setattr(service, "_acquire_active_loan_automatically",
                             lambda _loan: {"status": "attention_required"})
         enable_synthetic_paris_opening(service)
+        attach_opening_loan_reader(service, lambda account, force=False: [loan] if account is paris else [], typed=lambda a: a.provider_id != "paris")
         result = service.opening_sync()
         assert next(row for row in result["identities"]
                     if row["identity_id"] == "default")["attention_required"] == 1
@@ -143,8 +143,8 @@ def test_opening_failure_preserves_previous_confirmed_source_success(
                 raise RuntimeError("temporary error")
             return []
 
-        monkeypatch.setattr(service, "_loans_for_account", loans)
         enable_synthetic_paris_opening(service)
+        attach_opening_loan_reader(service, loans, typed=True)
         service.opening_sync()
         assert _state(service, paris)["last_success"] == previous
         assert _state(service, paris)["status"] == "failed"

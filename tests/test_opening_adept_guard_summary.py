@@ -2,6 +2,7 @@
 from types import SimpleNamespace as NS
 import pytest
 from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from cifereca.models import Account, Loan
 from tests.test_sync_state_contract import _service
 from tests.test_core_ui_1132_opening_sync_close_gate import _method, _host
@@ -26,7 +27,8 @@ def test_real_guards_are_counted_and_persisted_without_fulfillment(tmp_path, mon
                     'provider_id': 'paris', 'credential_id': 'source-b', 'account_id': 'borrower-b',
                     'identity_id': 'alex', 'item_id': loan.record_id, 'status': 'complete',
                     'strategy': 'loan_auto', 'metadata': {'provider_loan_id': loan.id}})
-        monkeypatch.setattr(service, '_loans_for_account', lambda *_a, **_kw: loans)
+        enable_synthetic_paris_opening(service)
+        attach_opening_loan_reader(service, lambda *_a, **_kw: loans, typed=False)
         monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
         monkeypatch.setattr(service, 'acquire_digital_loan', lambda *_a, **_kw: pytest.fail('guard cannot fetch ACSM'))
         monkeypatch.setattr(service, 'execute_acquisition_request', lambda *_a: pytest.fail('guard cannot fulfill'))
@@ -99,7 +101,8 @@ def test_two_identity_field_scenario_reports_eight_refusals_without_acquisition(
                 title='PRIVATE-TITLE', source_provider='paris', source_credential=account.credential_id,
                 source_account_id=account.unique_id, identity_id=account.identity_id, raw={'synthetic': True})
                 for i in range(4)]
-        monkeypatch.setattr(service, '_loans_for_account', loans)
+        enable_synthetic_paris_opening(service)
+        attach_opening_loan_reader(service, loans, typed=False)
         monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
         monkeypatch.setattr(service, 'acquire_digital_loan', lambda *_a, **_kw: pytest.fail('refusal must prevent ACSM acquisition'))
         monkeypatch.setattr(service, 'execute_acquisition_request', lambda *_a: pytest.fail('refusal must prevent fulfillment'))
@@ -139,8 +142,9 @@ def test_only_exact_attention_guard_codes_contribute(tmp_path, monkeypatch, stat
     try:
         service.accounts = [Account(provider_id='paris', credential_id='source-a', unique_id='borrower-a', identity_id='default')]
         loan = Loan(id='loan', record_id='edition', provider='PNB', medium='digital', title='Synthetic',
-                    source_provider='paris', source_credential='source-a', source_account_id='borrower-a', raw={'synthetic': True})
-        monkeypatch.setattr(service, '_loans_for_account', lambda *_a, **_kw: [loan])
+                    source_provider='paris', source_credential='source-a', source_account_id='borrower-a', identity_id='default', raw={'synthetic': True})
+        enable_synthetic_paris_opening(service)
+        attach_opening_loan_reader(service, lambda *_a, **_kw: [loan], typed=False)
         monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
         monkeypatch.setattr(service, '_acquire_active_loan_automatically', lambda _: {'status': status, 'code': code})
         enable_synthetic_paris_opening(service)

@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 
 from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from cifereca.brokers import SynchronizationBrokerImpl
 from cifereca.config import Config
 from cifereca.diagnostics import Diagnostics
@@ -214,7 +215,8 @@ def test_opening_sync_partial_never_invents_success(tmp_path, monkeypatch):
             ebook_url="https://example.invalid/fulfill.acsm",
             due_at="2099-01-01T00:00:00Z",
         )
-        monkeypatch.setattr(lib, "_loans_for_account", lambda _a, force=False: [loan])
+        enable_synthetic_paris_opening(lib)
+        attach_opening_loan_reader(lib, lambda _a, force=False: [loan], typed=False)
         monkeypatch.setattr(lib, "_acquire_active_loan_automatically",
                             lambda _loan: {"status": "attention_required", "loan_id": loan.id})
         monkeypatch.setattr(lib, "catalog_scan", lambda: {"scanned": 0})

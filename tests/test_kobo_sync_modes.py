@@ -47,14 +47,13 @@ def _service(tmp_path: Path) -> LibraryService:
             provider_id="kobo",
             credential_id="vault",
             accounts=list(service.accounts),
-            capabilities=SimpleNamespace(backup=True),
+            capabilities=SimpleNamespace(backup=True, loans=False),
         )
     }
     return service
 
 
 def _neutralize_unrelated_sync_work(service: LibraryService, monkeypatch) -> None:
-    monkeypatch.setattr(service, "_loans_for_account", lambda account, force=False: [])
     monkeypatch.setattr(service, "sync_source_enabled", lambda account: True)
     monkeypatch.setattr(service, "mirror_personal_libraries", lambda: {"mirrored": 0})
     monkeypatch.setattr(service, "_reconcile_identity_adept_inventory", lambda identity_id: {"status": "skipped"})

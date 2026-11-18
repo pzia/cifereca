@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 
 from cifereca.brokers import SynchronizationBrokerImpl
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from tests.test_core_p0_1346_opening_source_isolation import _accounts
 from tests.test_sync_state_contract import _service
 
@@ -34,7 +35,6 @@ def test_mirror_failure_reports_closed_reason_and_does_not_block_opening(
 ):
     service = _service(tmp_path)
     monkeypatch.setattr(service, "mirror_personal_libraries", _fail)
-    monkeypatch.setattr(service, "_loans_for_account", lambda *_args, **_kwargs: [])
     try:
         with caplog.at_level(logging.INFO, logger="cifereca"):
             result = service.opening_sync()
@@ -54,7 +54,7 @@ def test_source_projection_failure_does_not_log_provider_or_exception_class(
 ):
     service = _service(tmp_path)
     _accounts(service)
-    monkeypatch.setattr(service, "_loans_for_account", lambda *_args, **_kwargs: [])
+    attach_opening_loan_reader(service, lambda *_args, **_kwargs: [])
     monkeypatch.setattr(service, "mirror_personal_libraries", lambda: {})
     monkeypatch.setattr(SynchronizationBrokerImpl, "record_opening_state", _fail)
     try:

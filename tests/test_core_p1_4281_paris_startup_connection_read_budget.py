@@ -12,7 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from cifereca.core import provider_sessions
-from cifereca.core.sync_coordination import _sync_loan_inventory_observation
+from cifereca.core.sync_coordination import _read_sync_loan_inventory
 from tests.test_core_p0_1143_provider_connect_privacy import _rig
 from tests.test_core_p1_4281_paris_opening_observer_cost import _session
 
@@ -72,8 +72,8 @@ def test_connection_plus_opening_sync_keeps_exact_fresh_paris_read_budget(
 
         # These are the SAME two independent read contracts called by Core's
         # opening Sync. Do not substitute the display list for fresh rights.
-        snapshot, loans = _sync_loan_inventory_observation(
-            service, account, paris,
+        snapshot, loans = _read_sync_loan_inventory(
+            account, paris,
         )
         resources = paris.downloadable_resource_snapshot(account)
 

@@ -9,6 +9,7 @@ import json
 import pytest
 
 from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from cifereca.models import Account, Loan
 from tests.test_core_p0_1346_opening_source_isolation import _state
 from tests.test_sync_state_contract import _service
@@ -71,9 +72,9 @@ def test_opening_acquisition_error_is_exact_paris_borrower_only(
                 else {"status": "complete"}
             )
 
-        monkeypatch.setattr(service, "_loans_for_account", read)
         monkeypatch.setattr(service, "_acquire_active_loan_automatically", acquire)
         enable_synthetic_paris_opening(service)
+        attach_opening_loan_reader(service, read, typed=lambda a: a.provider_id != "paris")
         summary = service.opening_sync()
         assert sorted(seen) == ["paired", "primary"]
         by_identity = {entry["identity_id"]: entry for entry in summary["identities"]}
@@ -114,10 +115,8 @@ def test_unknown_post_fetch_origin_degrades_all_sources_instead_of_guessing(
         )
         service.accounts = [primary, sibling]
         loan = _loan("", "primary")
-        monkeypatch.setattr(
-            service, "_loans_for_account",
-            lambda account, force=False: [loan] if account is primary else [],
-        )
+        enable_synthetic_paris_opening(service)
+        attach_opening_loan_reader(service, lambda account, force=False: [loan] if account is primary else [], typed=False)
         def mutate_loan_on_acquisition(row):
             # Simulate a stale/mutated provider row while the Core is
             # attempting acquisition. Never credit the result to a guess.

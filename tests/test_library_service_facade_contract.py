@@ -9,6 +9,7 @@ import sys
 import pytest
 
 from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from cifereca.services import LibraryService
 
 CONTRACTS = json.loads((Path(__file__).parent / 'fixtures/library_service_facade.json').read_text())
@@ -57,7 +58,8 @@ def test_opening_partial_continues_other_loans_and_recovers_without_ui_identity_
                  replace(original, id='second', source_account_id='primary',
                          ebook_url='https://example.invalid/second.acsm', due_at='2099-01-01')]
         service.current_identity = service.identity_by_id('bob')
-        monkeypatch.setattr(service, '_loans_for_account', lambda _a, force=False: loans)
+        enable_synthetic_paris_opening(service)
+        attach_opening_loan_reader(service, lambda _a, force=False: loans, typed=False)
         service.config.set("kobo_backup.enabled", False)
         monkeypatch.setattr(service, 'mirror_personal_libraries', lambda: {})
         monkeypatch.setattr(service, '_reconcile_identity_adept_inventory', lambda _i: {})
