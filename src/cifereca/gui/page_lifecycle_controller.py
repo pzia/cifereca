@@ -38,6 +38,14 @@ class PageLifecycleDispatcher:
     def handles(self, route):
         return route in self._pages and self._valid()
 
+    def current_view(self, route):
+        """Lease for callbacks from a rendered opt-in page, not business work."""
+        page = self._pages.get(route)
+        if (not self._valid() or page is None or page.failed or page.dirty
+                or self._route != route or self._deferred):
+            return None
+        return self._event(route, page, "show")
+
     def _advance(self, page):
         self._generation += 1
         page.generation = self._generation
@@ -251,3 +259,15 @@ def resume(window):
 def handles(window, route):
     dispatcher = getattr(window, "_page_lifecycle_dispatcher", None)
     return dispatcher is not None and dispatcher.handles(route)
+
+
+def dispose(window):
+    """Detach the shell owner before notifying any plugin during teardown.
+
+    Call only after the window's closed flag is set. Reentrant disposal is
+    harmless and old leases cannot become valid again.
+    """
+    dispatcher = getattr(window, "_page_lifecycle_dispatcher", None)
+    window._page_lifecycle_dispatcher = None
+    if dispatcher is not None:
+        dispatcher.dispose()

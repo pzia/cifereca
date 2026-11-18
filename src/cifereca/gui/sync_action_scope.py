@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from cifereca.plugin_api.page_lifecycle import PageViewContext
+
 
 @dataclass(frozen=True, slots=True)
 class SyncActionScope:
@@ -15,6 +17,7 @@ class SyncActionScope:
     page_token: object
     preview_generation: int | None = None
     identity_generation: int | None = None
+    view_context: PageViewContext | None = None
 
 
 def capture_sync_action_scope(
@@ -42,11 +45,19 @@ def capture_sync_action_scope(
     identity_generation = getattr(window, "_identity_context_generation", None)
     if identity_generation is not None and type(identity_generation) is not int:
         return None
+    dispatcher = getattr(window, "_page_lifecycle_dispatcher", None)
+    view_context = None
+    if dispatcher is not None and dispatcher.handles("sync"):
+        view_context = dispatcher.current_view("sync")
+        if (view_context is None or view_context.identity_id != identity_id
+                or not view_context.is_current()):
+            return None
     return SyncActionScope(
         identity_id=identity_id,
         page_token=page_token,
         preview_generation=preview_generation,
         identity_generation=identity_generation,
+        view_context=view_context,
     )
 
 
@@ -55,6 +66,17 @@ def sync_action_scope_current(window, scope: SyncActionScope | None) -> bool:
     if type(scope) is not SyncActionScope or getattr(window, "_closed", False):
         return False
     if type(scope.identity_id) is not str or not scope.identity_id.strip():
+        return False
+    dispatcher = getattr(window, "_page_lifecycle_dispatcher", None)
+    if dispatcher is not None and dispatcher.handles("sync"):
+        view = scope.view_context
+        current = dispatcher.current_view("sync")
+        if (type(view) is not PageViewContext or current is None
+                or view.generation != current.generation
+                or not view.is_current()):
+            return False
+    elif scope.view_context is not None:
+        # A previously opted-in scope must not fall back to legacy authority.
         return False
     if getattr(window, "_sync_page_token", None) is not scope.page_token:
         return False

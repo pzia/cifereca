@@ -90,3 +90,50 @@ def test_broken_settings_page_dispose_does_not_skip_remaining_teardown():
         assert timers == []
         assert close_window_resources(host, source_remove=timers.append) is False
         assert events.count("service") == 1 and timers == []
+
+
+def test_close_revokes_all_page_leases_before_dispose_and_service_teardown():
+    from cifereca.gui import page_lifecycle_controller
+    from cifereca.plugin_api.page_lifecycle import PageLifecycleV1
+
+    host, events = _fixture()
+    dispatcher = page_lifecycle_controller.reset(host)
+    dispatcher.context_changed("identity-a", None)
+    leases = {}
+
+    def context_changed(event):
+        leases[event.route] = event
+
+    def dispose(route, *, fail=False):
+        events.append(("page_dispose", route, host._closed,
+                       host._page_lifecycle_dispatcher is None,
+                       tuple(lease.is_current(require_visible=False)
+                             for lease in leases.values())))
+        # A plugin can reenter the window close handler.
+        close_window_resources(host, source_remove=lambda _source: None)
+        if fail:
+            raise RuntimeError("fixture page dispose error")
+
+    for route in ("plugin:first", "plugin:second"):
+        widget = NS(cifereca_page_lifecycle_v1=PageLifecycleV1(
+            on_context_changed=context_changed,
+            on_show=context_changed,
+            on_dispose=lambda route=route: dispose(
+                route, fail=(route == "plugin:first")),
+        ))
+        assert dispatcher.mount(route, widget)
+    dispatcher.show("plugin:first")
+    assert leases["plugin:first"].is_current()
+    assert leases["plugin:second"].is_current(require_visible=False)
+
+    assert close_window_resources(host, source_remove=lambda _source: None) is False
+    assert events[:2] == [
+        ("page_dispose", "plugin:first", True, True, (False, False)),
+        ("page_dispose", "plugin:second", True, True, (False, False)),
+    ]
+    assert host._page_lifecycle_dispatcher is None
+    assert events[-4:] == ["runner", "history", "covers", "service"]
+    assert all(not lease.is_current(require_visible=False) for lease in leases.values())
+    before = events[:]
+    assert close_window_resources(host, source_remove=lambda _source: None) is False
+    assert events == before
