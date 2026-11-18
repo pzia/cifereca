@@ -1,0 +1,49 @@
+name: P0 task admission inventory
+
+# Source review only. Never add an expensive gate on unrelated PRs.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-task-admission-inventory.yml'
+      - 'scripts/ci_task_admission_inventory.py'
+      - 'tests/test_ci_task_admission_inventory.py'
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Enumerate exact source SHA without importing plugins
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          python scripts/ci_task_admission_inventory.py > "$RUNNER_TEMP/task-inventory.json"
+          python - "$RUNNER_TEMP/task-inventory.json" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          inventory = json.loads(Path(sys.argv[1]).read_text())
+          assert inventory["source_sha"] == os.environ["EXPECTED_SHA"]
+          print("Inventory:", {key: value for key, value in inventory.items() if key != "sites"})
+          for row in inventory["sites"]:
+              print(json.dumps(row, ensure_ascii=True, sort_keys=True))
+          PY
+      - name: Test inventory ambiguity and worker resolution
+        run: |
+          python -m pip install "pytest>=8,<9"
+          python -m pytest -q tests/test_ci_task_admission_inventory.py
