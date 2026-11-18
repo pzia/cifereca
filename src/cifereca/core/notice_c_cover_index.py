@@ -16,7 +16,8 @@ from typing import Any
 
 from .book_cover_projection import CoverDocumentScope
 from .covers import CoverCandidate, candidate
-from .notice_c_web_references import CatalogueWebReference, FIELD as _WEB_FIELD, decode_public_web_references
+from .notice_c_web_references import (CatalogueWebReference, FIELD as _WEB_FIELD,
+    decode_public_web_references, qualified_public_web_source)
 from .notice_cover_repository import (
     PersistedNoticeCover, _decode as _decode_source,
     _opaque_key as _source_db_key,
@@ -446,7 +447,9 @@ def _persist_consolidated_cover_source_txn(
     source_fields = source.observation.fields_copy().get("search_result")
     if type(source_fields) is dict and _WEB_FIELD in source_fields:
         if ("public_bibliography" not in incoming
-                or source.observation.status != "complete"):
+                or not qualified_public_web_source(
+                    source, inventory_complete=json.loads(original[0])["cover_inventory_complete"],
+                )):
             raise ValueError("invalid_public_web_references")
         incoming[_WEB_FIELD] = source_fields[_WEB_FIELD]
         # Final _decode below validates the closed shape and URL again
