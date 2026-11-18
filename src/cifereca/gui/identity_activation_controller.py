@@ -40,11 +40,16 @@ def activate_identity(window, identity_id: str) -> None:
             "Nouvelle identité", "Chargement des emprunts de ce profil…",
         )
     window._identity_context_generation += 1
+    from . import page_lifecycle_controller
+    page_lifecycle_controller.context_changed(window)
+    if (getattr(window, "_closed", False) or window.service is not service
+            or getattr(service.current_identity, "identity_id", None) != identity.identity_id):
+        return
     window._dispose_maintenance_lines()
     visible_route = window.view_stack.get_visible_child_name()
     if visible_route == "tools":
         window._refresh_tools_page()
-    elif visible_route == "sync":
+    elif visible_route == "sync" and not page_lifecycle_controller.handles(window, "sync"):
         # Reproject the newly selected identity before the async loan load.
         # _refresh_sync_page resets the old cards/actions synchronously and
         # advances the preview generation: late A callbacks cannot repaint B.
