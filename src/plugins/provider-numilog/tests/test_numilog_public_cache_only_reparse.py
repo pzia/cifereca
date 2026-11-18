@@ -214,3 +214,43 @@ def test_commit_guard_refuses_expiration_and_releases_on_failure(monkeypatch):
         assert len(requests) == 1
     finally:
         s.close()
+
+
+def test_paginated_public_envelopes_retain_partial_without_second_get(monkeypatch):
+    requests = fixture(monkeypatch)
+    s, _ = session()
+    try:
+        response = s.search_with_response_facets("jefferson", scope="catalog")
+        retained, token = s._search_response_with_retained_input("jefferson", "catalog")
+        assert token is not None
+        assert response.partial is True and retained.partial is True
+        assert len(response.results) == 20
+        assert retained.results == response.results == s.search("jefferson")
+        assert len(response.public_notices) == len(response.results)
+        assert len(retained.public_notices) == len(retained.results)
+        assert len(requests) == 1
+    finally:
+        s.close()
+
+
+def test_complete_public_page_does_not_claim_partial(monkeypatch):
+    requests = fixture(monkeypatch)
+    original = client.parse_public_search
+
+    def complete_fixture(*args):
+        # Controlled positive branch: a page with exactly its declared total
+        # and no other pages. The original recorded fixture is paginated.
+        page = original(*args)
+        return replace(page, total_results=len(page.items), next_url=None,
+                       pagination_links=(), complete=True)
+
+    monkeypatch.setattr(client, "parse_public_search", complete_fixture)
+    s, _ = session()
+    try:
+        result = s.search_with_response_facets("jefferson", scope="catalog")
+        retained, token = s._search_response_with_retained_input("jefferson", "catalog")
+        assert result.partial is False and retained.partial is False
+        assert retained.results == result.results and token is not None
+        assert len(requests) == 1
+    finally:
+        s.close()
