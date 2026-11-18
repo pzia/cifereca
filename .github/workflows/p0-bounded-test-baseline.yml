@@ -1,0 +1,129 @@
+name: P0 bounded test baseline
+
+# #5376/#3732: bounded evidence, not another per-PR full gate.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/p0-bounded-test-baseline.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [core, provider-paris, provider-kobo, provider-numilog, provider-biblioaccess, provider-bnf-pret]
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      SUITE: ${{ matrix.suite }}
+      EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install -e . "pytest>=8,<9" "Pillow>=10,<12" "cryptography>=42,<48"
+      - name: Prepare exact SHA and dependency inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          out="$RUNNER_TEMP/bounded-test-baseline"
+          mkdir -p "$out"
+          if [[ "$SUITE" == core ]]; then
+            path=tests
+            export PYTHONPATH="$PWD/src:$PWD/src/plugins/provider-kobo"
+            git ls-tree -r --name-only HEAD -- tests src/plugins > "$out/test-tree.txt"
+            python -m scripts.ci_test_core_consumer_graph --json > "$out/core-plugin-consumers.json"
+            python -m scripts.ci_test_provider_import_inventory --json > "$out/core-test-provider-imports.json"
+          else
+            path="src/plugins/$SUITE/tests"
+            export PYTHONPATH="$PWD/src:$PWD/src/plugins/$SUITE"
+          fi
+          printf 'BASELINE_PATH=%s\nPYTHONPATH=%s\n' "$path" "$PYTHONPATH" >> "$GITHUB_ENV"
+      - name: Collect pytest items on exact SHA
+        shell: bash
+        # The collector records every nodeid in JSON; avoid echoing tens
+        # of thousands of individual IDs to the Actions log.
+        env:
+          PYTEST_ADDOPTS: "-q"
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          out="$RUNNER_TEMP/bounded-test-baseline"
+          python scripts/ci_test_collection_inventory.py --suite "$BASELINE_PATH" --output "$out/collection.json"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Execute complete pytest suite on exact SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          out="$RUNNER_TEMP/bounded-test-baseline"
+          python scripts/ci_test_execution_inventory.py --suite "$BASELINE_PATH" --output "$out/execution.json"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Verify complete collection and execution evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          out="$RUNNER_TEMP/bounded-test-baseline"
+          python - "$out" "$BASELINE_PATH" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+          from scripts.ci_test_execution_aggregate import validate_execution_report
+          root = Path(sys.argv[1])
+          collection = json.loads((root / "collection.json").read_text())
+          execution = validate_execution_report(json.loads((root / "execution.json").read_text()))
+          assert collection["source_sha"] == execution["source_sha"] == os.environ["EXPECTED_SHA"]
+          assert collection["suite"] == execution["suite"] == sys.argv[2]
+          assert collection["collection_exit_code"] == execution["exit_code"] == 0
+          assert not execution["selection_scoped"] and execution["count_deselected"] == 0
+          collected = {row["nodeid"] for row in collection["items"]}
+          executed = {row["nodeid"] for row in execution["items"]}
+          assert collected == executed
+          assert len(collected) == collection["count_collected"] == execution["count_selected"]
+          unknown = sum(row["count"] for row in collection["matrix"] if "unclassified" in (
+              row["owner_architecture"], row["business_object"], row["test_level"]))
+          print("Bounded baseline:", json.dumps({
+              "sha": execution["source_sha"], "suite": execution["suite"],
+              "collected": len(collected), "executed": execution["count_executed"],
+              "unclassified": unknown, "outcomes": execution["outcomes"],
+          }, sort_keys=True))
+          if sys.argv[2] == "tests":
+              graph = json.loads((root / "core-plugin-consumers.json").read_text())
+              imports = json.loads((root / "core-test-provider-imports.json").read_text())
+              assert not graph["parse_errors"] and not imports["parse_or_io_errors"]
+              assert graph["root_test_files"] and graph["plugin_test_files"]
+              assert imports["root_test_modules_scanned"] and imports["provider_modules_indexed"]
+          PY
+      - name: Publish bounded evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bounded-baseline-${{ matrix.suite }}-${{ env.EXPECTED_SHA }}
+          path: |
+            ${{ runner.temp }}/bounded-test-baseline/collection.json
+            ${{ runner.temp }}/bounded-test-baseline/execution.json
+            ${{ runner.temp }}/bounded-test-baseline/test-tree.txt
+            ${{ runner.temp }}/bounded-test-baseline/core-plugin-consumers.json
+            ${{ runner.temp }}/bounded-test-baseline/core-test-provider-imports.json
+          retention-days: 2
+          if-no-files-found: error

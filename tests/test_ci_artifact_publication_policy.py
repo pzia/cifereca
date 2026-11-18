@@ -43,6 +43,15 @@ EXPECTED = {
             "${{ runner.temp }}/cifereca-test-dependencies/provenance.json",
         ),
     ),
+    "p0-bounded-test-baseline.yml": (
+        (
+            "${{ runner.temp }}/bounded-test-baseline/collection.json",
+            "${{ runner.temp }}/bounded-test-baseline/execution.json",
+            "${{ runner.temp }}/bounded-test-baseline/test-tree.txt",
+            "${{ runner.temp }}/bounded-test-baseline/core-plugin-consumers.json",
+            "${{ runner.temp }}/bounded-test-baseline/core-test-provider-imports.json",
+        ),
+    ),
     "p0-test-closure-mutations.yml": (
         ("${{ runner.temp }}/closure-mutations.json",),
     ),
