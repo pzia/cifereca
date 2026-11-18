@@ -10,6 +10,9 @@ from copy import copy
 from pathlib import Path
 from re import fullmatch
 
+from ..core.source_context import source_context_epoch
+from ..plugin_api import Cancelled
+
 
 # Finite UI categories, not a supplier response or a new entitlement.
 _SAFE_REASONS = frozenset({
@@ -69,6 +72,19 @@ def prepare_explicit_loan_acsm(
             or not callable(stage) or not callable(importer)):
         return
     service = window.service
+    try:
+        admitted_source_epoch = source_context_epoch(service)
+    except ValueError:
+        return
+
+    def source_bound():
+        # This is a Core source generation, not a GTK selection generation.
+        # A real revoke/rebind cannot be inherited by either consent.
+        try:
+            return source_context_epoch(service) == admitted_source_epoch
+        except ValueError:
+            return False
+
     identity = getattr(service, "current_identity", None)
     if (identity is None
             or getattr(identity, "identity_id", None) != getattr(loan, "identity_id", None)
@@ -96,6 +112,7 @@ def prepare_explicit_loan_acsm(
         return (
             not getattr(window, "_closed", False)
             and window.service is service
+            and source_bound()
             and getattr(window, "_identity_context_generation", None) == identity_generation
             and getattr(window, "_account_context_generation", None) == account_generation
             and getattr(getattr(service, "current_identity", None), "identity_id", None) == identity_id
@@ -138,6 +155,8 @@ def prepare_explicit_loan_acsm(
                 # an obsolete dialog/result, never cancel admitted Core work.
                 # The importer independently rechecks the live loan,
                 # persisted connection owner and staged path before DRM I/O.
+                if not source_bound():
+                    raise Cancelled("loan_import_source_revoked")
                 return importer(
                     Path(path), expected_identity_id=identity_id,
                     loan=selected, title=selected.title,
@@ -214,6 +233,8 @@ def prepare_explicit_loan_acsm(
         def work():
             # Core validates its frozen source lease; only GTK delivery
             # depends on the displayed selection after consent.
+            if not source_bound():
+                raise Cancelled("loan_stage_source_revoked")
             return stage(selected, confirmed=True, expected_identity_id=identity_id, **options)
 
         def done(result):
