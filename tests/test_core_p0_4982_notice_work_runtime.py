@@ -9,6 +9,8 @@ from cifereca.core.runtime import CiferecaCore
 from cifereca.core import notice_c_job_journal as journal
 from cifereca.core.notice_c_exact_recompute import request_exact_public_recompute
 from cifereca.core.notice_c_fetch_authority import PublicFetchAuthority
+from cifereca.core.notice_c_fetch_execution import PublicFetchExecution, PublicFetchPort
+from cifereca.storage import Storage
 from cifereca.core.notice_c_public_search import search_public_notice_c
 from cifereca.core.notice_c_cover_index import (
     persist_exact_public_search_cover, read_consolidated_notice_cover,
@@ -189,3 +191,30 @@ def test_real_core_restart_reclaims_expired_lease_but_not_fetch_authority(tmp_pa
         assert journal.read_job(core.storage, ref) == receipt
         assert journal.read_job(core.storage, fetch).attempts == 0
         assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
+
+
+def test_fetch_install_requires_same_storage_and_precedes_any_heartbeat(tmp_path):
+    budget = SharedTaskAdmission(max_inflight=4, reserve_user_slots=1)
+    other = Storage(tmp_path / "other.sqlite")
+    foreign = PublicFetchAuthority(other)
+    port = PublicFetchPort("supplier", "a" * 64, "b" * 64,
+                           lambda permit: pytest.fail("unexpected transport"))
+    try:
+        with open_core(tmp_path, notice_work_admission=budget) as core:
+            runtime = core.notice_work
+            authority = PublicFetchAuthority(core.storage)
+            try:
+                with pytest.raises(ValueError, match="invalid_registry"):
+                    runtime.install_fetch_execution(PublicFetchExecution(foreign, (port,)))
+                with pytest.raises(ValueError, match="invalid_registry"):
+                    runtime.install_fetch_execution(PublicFetchExecution(authority))
+                assert core.brokers["tasks"]._executor is None
+                scan = runtime.request_tick()
+                assert scan is not None and scan.result(timeout=10).handles == ()
+                assert runtime.install_fetch_execution(PublicFetchExecution(authority, (port,))) is False
+            finally:
+                authority.close()
+        assert not foreign._closed  # refused installation transfers no ownership
+    finally:
+        foreign.close()
+        other.close()
