@@ -58,7 +58,9 @@ def _one(root: Path, surface: str, sha: str = SHA, appearance: str = "light") ->
                 "P1_4761_filter_preserves_exact_edition_real_gtk": True,
                 "P1_4761_recommendations_shared_compact_essential_gtk": True,
                 "P1_4761_stale_metadata_search_button_inert_gtk": True,
-            } if surface == "recommendations" else {}),
+            } if surface == "recommendations" else {
+                "P1_4761_search_shared_compact_essential_gtk": True,
+            }),
         },
         "p1_774_paired_book": module.verified_fixture_receipt(),
         geom_key: {
@@ -251,6 +253,24 @@ def test_absent_shared_gtk_selection_proof_fails_closed(tmp_path):
     del report["checks"]["P1_774_search_selected_same_synthetic_book"]
     report_path.write_text(json.dumps(report), encoding="utf-8")
     with pytest.raises(module.ReviewError, match="Source/édition"):
+        module.build_review(tmp_path, sizes=SIZES)
+    assert not (tmp_path / "search-recommendations-private-review").exists()
+
+
+@pytest.mark.parametrize("state", ("missing", "false"))
+def test_search_compact_header_evidence_is_mandatory_for_paired_ux_review(
+    tmp_path, state,
+):
+    _pair(tmp_path)
+    path = tmp_path / "search-filter-1024/screen.json"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    proof = "P1_4761_search_shared_compact_essential_gtk"
+    if state == "missing":
+        del report["checks"][proof]
+    else:
+        report["checks"][proof] = False
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(module.ReviewError, match="détail GTK"):
         module.build_review(tmp_path, sizes=SIZES)
     assert not (tmp_path / "search-recommendations-private-review").exists()
 
