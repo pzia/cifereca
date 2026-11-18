@@ -7,6 +7,7 @@ cookies, infers ownership, or implements artifact acquisition.
 from __future__ import annotations
 
 from collections import OrderedDict
+from contextlib import contextmanager
 from dataclasses import replace
 import threading
 import time
@@ -68,24 +69,30 @@ class NumilogPublicSession(ProviderSession):
             raise ProviderCapabilityError("Numilog public : replay_scope_forbidden")
         self._retain_public_search_inputs = _retain_public_search_inputs
 
+    def _reset_navigation_locked(self):
+        self._navigation_epoch += 1
+        self._navigation_urls.clear()
+
     def _reset_navigation(self):
         with self._navigation_lock:
-            self._navigation_epoch += 1
-            self._navigation_urls.clear()
+            self._reset_navigation_locked()
 
     def connect(self):
-        # A public provider has no account and no network handshake.
-        self._public_cache.clear()
-        self._reset_navigation()
-        self.connected = True
-        self._accounts = []
+        # One order for session/cache generation and the publication guard:
+        # navigation -> public cache. Neither lock surrounds a network call.
+        with self._navigation_lock:
+            self._public_cache.clear()
+            self._reset_navigation_locked()
+            self.connected = True
+            self._accounts = []
         return []
 
     def close(self):
-        self.connected = False
-        self._public_cache.clear()
-        self._reset_navigation()
-        self._accounts = []
+        with self._navigation_lock:
+            self.connected = False
+            self._public_cache.clear()
+            self._reset_navigation_locked()
+            self._accounts = []
 
     def holdings(self, item, search_terms=""):
         """Display an already-retrieved public listing without ANY network I/O.
@@ -230,6 +237,32 @@ class NumilogPublicSession(ProviderSession):
         if entry is None or ttl < 1:
             return None, 0
         return entry.raw_input, ttl
+
+    @contextmanager
+    def _hold_retained_public_input(self, token):
+        """Opt-in worker publication guard; no parser or HTTP under locks.
+
+        This serializes cache eviction and the session lifecycle with an
+        exact final publication. The caller must not enter with a Storage
+        lock or call back into this session while holding the guard.
+        Busy is a refusal, not permission to retry via network. The
+        coordinator must release immediately after the final transaction.
+        """
+        if (not self._retain_public_search_inputs
+                or type(token) is not str or len(token) != 32
+                or any(ch not in "0123456789abcdef" for ch in token)):
+            raise ProviderCapabilityError("Numilog public : replay_scope_forbidden")
+        if not self._navigation_lock.acquire(blocking=False):
+            raise ProviderError("Numilog : public_catalog_replay_busy")
+        try:
+            if (not self.connected or self.credential_id != "__public__"
+                    or self.credentials or self._accounts):
+                yield None
+            else:
+                with self._public_cache._hold_retained_input(token) as raw:
+                    yield raw
+        finally:
+            self._navigation_lock.release()
 
     def _reparse_retained_public_row(self, token, record_id):
         """Run the existing offline parser on the exact retained input.

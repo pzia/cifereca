@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 
@@ -148,6 +149,68 @@ def test_parser_coordinate_change_and_corruption_refused_without_transport(monke
         monkeypatch.setattr(client, "parse_public_search", changed)
         with pytest.raises(ProviderError, match="coordinate_changed"):
             s._reparse_retained_public_row(token, rows[0].record_id)
+        assert len(requests) == 1
+    finally:
+        s.close()
+
+
+def test_commit_guard_serializes_reconnect_without_holding_network(monkeypatch):
+    requests = fixture(monkeypatch)
+    s, _ = session()
+    started, closed = Event(), Event()
+    thread = None
+    try:
+        _rows, token = s._search_with_retained_input("jefferson")
+        raw, _ = s._read_retained_public_input(token)
+
+        def reconnect():
+            started.set()
+            s.close()
+            s.connect()
+            closed.set()
+
+        with s._hold_retained_public_input(token) as held:
+            assert held == raw
+            # A second publication must refuse immediately, not deadlock.
+            with pytest.raises(ProviderError, match="replay_busy"):
+                with s._hold_retained_public_input(token):
+                    pytest.fail("overlapping replay guard")
+            thread = Thread(target=reconnect)
+            thread.start()
+            assert started.wait(5)
+            assert not closed.wait(.05)
+            assert len(requests) == 1
+
+        assert closed.wait(5)
+        thread.join(timeout=5)
+        with s._hold_retained_public_input(token) as held:
+            assert held is None
+        assert len(requests) == 1
+    finally:
+        if thread is not None:
+            thread.join(timeout=5)
+        s.close()
+
+
+def test_commit_guard_refuses_expiration_and_releases_on_failure(monkeypatch):
+    requests = fixture(monkeypatch)
+    s, clock = session()
+    try:
+        _rows, token = s._search_with_retained_input("jefferson")
+        with pytest.raises(RuntimeError, match="rollback"):
+            with s._hold_retained_public_input(token) as held:
+                assert held is not None
+                raise RuntimeError("rollback")
+        with s._hold_retained_public_input(token) as held:
+            assert held is not None
+        with s._public_cache._lock:
+            with pytest.raises(ProviderError, match="replay_busy"):
+                with s._hold_retained_public_input(token):
+                    pytest.fail("cache lock bypass")
+        # The failed cache admission must release the navigation lock too.
+        clock[0] += TTL_SECONDS
+        with s._hold_retained_public_input(token) as held:
+            assert held is None
         assert len(requests) == 1
     finally:
         s.close()
