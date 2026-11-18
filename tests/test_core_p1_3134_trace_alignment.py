@@ -57,9 +57,13 @@ def test_cli_override_reaches_core_before_plugin_initialization(monkeypatch, fla
 
     assert app.main() == 0
     configured.assert_called_once_with(verbose=True)
+    from cifereca.task_admission import SharedTaskAdmission
+    admission = opened.call_args.kwargs["notice_work_admission"]
+    assert type(admission) is SharedTaskAdmission
+    assert admission.max_inflight == 16 and admission.reserve_user_slots == 3
     opened.assert_called_once_with(
         no_plugins=False, force_plugins=(), activate_plugins=False,
-        diagnostics_level="trace",
+        diagnostics_level="trace", notice_work_admission=admission,
     )
     effective.assert_called_once_with("trace")
 
