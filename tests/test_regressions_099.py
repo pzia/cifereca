@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import Mock
 import httpx
 from tests.synthetic_lending_sessions import enable_synthetic_paris_opening
+from tests.synthetic_loan_inventory import attach_opening_loan_reader
 from cifereca.search_failures import is_technical_search_error
 from cifereca.gui.sync_issues import sync_issues_text
 from cifereca.gui.query_model import QueryState,FIELDS
@@ -201,7 +202,8 @@ class PersistedAcquisitionErrors(unittest.TestCase):
             try:
                 service.accounts=[Account(display_name='Paris',unique_id='reader',provider_id='paris',credential_id='p',identity_id='default')]
                 loans=[Loan(id=f'l{i}',provider='PNB',medium='digital',record_id=f'r{i}',title=f'Sapiens {i}',source_provider='paris',source_credential='p',source_account_id='reader',identity_id='default',ebook_url='https://example.test/book.acsm',due_at='2099-01-01T00:00:00Z') for i in range(4)]
-                service._loans_for_account=lambda *a,**kw:loans
+                enable_synthetic_paris_opening(service)
+                attach_opening_loan_reader(service, lambda *a, **kw: loans, typed=False)
                 service._acquire_active_loan_automatically=lambda loan:{'status':'retryable_error','code':'timeout','error':'Failure https://example.test/file?token=SECRET'}
                 service.catalog_scan=lambda:{'scanned':0};service.kobo_backup_enabled=lambda:False
                 enable_synthetic_paris_opening(service)
