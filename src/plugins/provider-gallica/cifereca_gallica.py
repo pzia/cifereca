@@ -720,9 +720,14 @@ class GallicaSession(ProviderSession):
                     400 <= status < 500 and status not in {408, 429}
                     for status in statuses
                 )
-                if not semantic:
+                rejected_opds = any(isinstance(exc, _UnsafeOPDS) for exc in causes)
+                # A rejected payload/navigation must never become authority
+                # for Core's stale fallback or an equivalent retry.
+                if not semantic and not rejected_opds:
                     error.code = "search_temporarily_unavailable"
                     error.retryable = True
+                elif rejected_opds:
+                    error.retryable = False
             # Exceptions can contain signed request URLs, cookies and bodies.
             # Do not attach a raw branch error as public __cause__.
             raise error from None
