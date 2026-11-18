@@ -109,7 +109,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
             from cifereca.gui.notice_c_web_action_controller import request_public_web_actions
             request_public_web_actions(
                 self, panel, document, expected_epoch=binding.epoch,
-                current=current_c_detail, Gtk=Gtk,
+                current=current_c_detail,
             )
             return
         description = self._book_description(item)
