@@ -82,12 +82,6 @@ def close_window_resources(window: Any, *, source_remove: Callable[[int], Any]) 
         window.history_cover_resolver.close()
     except Exception:
         pass
-    # Detach only this window's observer before closing its N2/N3 owners.
-    observer = getattr(window, "_documentary_cover_observer", None)
-    if observer is not None:
-        if getattr(window.service, "_documentary_cover_observer", None) is observer:
-            window.service._documentary_cover_observer = None
-        window._documentary_cover_observer = None
     # Close documentary subscriptions before physical N3 worker pools.
     # Both caches are process/window-owned, not per-profile slices.
     try:

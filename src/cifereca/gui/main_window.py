@@ -213,13 +213,8 @@ class MainWindow(Adw.ApplicationWindow):
         )
         # N2 revisions follow exact documents, N3 bytes stay shared on desktop.
         self.local_cover_adapter = LocalCoverEvidenceAdapter()
-        # Optional Core-only observation; headless and cold cache stay unknown.
-        # Capture owners, not the GTK window; the worker never accesses GTK.
-        self._documentary_cover_observer = (
-            lambda packet, adapter=self.local_cover_adapter, covers=self.document_covers:
-                adapter.observe_audit_packet(covers, packet)
-        )
-        service._documentary_cover_observer = self._documentary_cover_observer
+        # The adapter owns the audit observer and releases it in close().
+        self.local_cover_adapter.bind_audit_observer(service, self.document_covers)
         self.search_document_cover_registry = SearchDocumentCoverRegistry()
         self.history_cover_resolver = HistoryCoverResolver(service, diagnostics)
         self.runner = TaskRunner(self)

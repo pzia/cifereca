@@ -192,3 +192,28 @@ def test_audit_port_checks_exact_registered_evidence_and_revision(prepared, monk
     assert calls == [(doc, 1)]
     adapter.close()
     assert adapter.observe_audit_packet(service, changed) is None
+
+
+@pytest.mark.parametrize("newer_binding", [False, True])
+def test_audit_observer_lifetime_is_owned_by_adapter(prepared, monkeypatch, newer_binding):
+    from types import SimpleNamespace
+    _, facts, _, service, adapter, _ = prepared
+    owner = SimpleNamespace()
+    adapter.register(service, facts)
+    calls = []
+    def probe(document, *, expected_revision):
+        calls.append(document)
+        return SimpleNamespace(n2_status="selected", n2_tier="embedded",
+                               n3_status="digest_valid")
+    monkeypatch.setattr(service, "observe_cover_for_audit", probe, raising=False)
+    adapter.bind_audit_observer(owner, service)
+    old = owner._documentary_cover_observer
+    assert old(facts) == ("selected", "embedded", "digest_valid")
+    replacement = lambda packet: None
+    if newer_binding:
+        owner._documentary_cover_observer = replacement
+    adapter.close()
+    adapter.close()
+    assert owner._documentary_cover_observer is (replacement if newer_binding else None)
+    assert old(facts) is None
+    assert calls == [facts.scope]
