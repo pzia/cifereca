@@ -44,12 +44,6 @@ def activate_identity(window, identity_id: str) -> None:
     lifecycle_generation = window._identity_context_generation
     window._dispose_maintenance_lines()
     from .page_lifecycle import notify_context, manages_route
-    notify_context(window)
-    # A lifecycle hook may synchronously navigate, rebuild, close, or switch
-    # identity. Never resume the abandoned identity activation.
-    if (getattr(window, "_closed", False) or window.service is not service
-            or window._identity_context_generation != lifecycle_generation):
-        return
     visible_route = window.view_stack.get_visible_child_name()
     if visible_route == "tools":
         window._refresh_tools_page()
@@ -109,6 +103,13 @@ def activate_identity(window, identity_id: str) -> None:
     if hasattr(window, "library_page"):
         window._render_library([])
         window.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")
+    # Existing event leases already reject the new selection/generation.
+    # Notify only after clearing legacy private projections, before admitting
+    # the existing loan load. Hooks may synchronously switch or close again.
+    notify_context(window)
+    if (getattr(window, "_closed", False) or window.service is not service
+            or window._identity_context_generation != lifecycle_generation):
+        return
     from cifereca.core.source_context import source_context_epoch
     admitted_identity_id = identity_id
     admitted_source_epoch = source_context_epoch(service)
