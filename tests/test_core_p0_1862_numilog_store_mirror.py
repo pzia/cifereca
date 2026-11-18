@@ -199,7 +199,6 @@ def test_deprecated_backup_helper_fails_closed_with_no_provider_call(tmp_path):
 
 
 def _opening_dependencies(service, monkeypatch):
-    monkeypatch.setattr(service, "_loans_for_account", lambda *_args, **_kw: [])
     monkeypatch.setattr(service, "_reconcile_identity_adept_inventory",
                         lambda _identity: {"status": "skipped"})
     assert not hasattr(service, "_acquire_personal_library_item")
