@@ -366,8 +366,11 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             show_route("library")
 
         label = "offline" if offline else "cold"
+        route_timings = {}
+        route_started = {}
 
         def show_route(route):
+            route_started[(route, "list")] = monotonic()
             report["local_c_stage"] = label + "_" + route + "_route"
             if route == "search":
                 window.search_controls.set_state(
@@ -471,9 +474,15 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
                 assert image.convert("RGB").getpixel((0, 0)) == pixels
             assert reads == [doc] and gets == ["GET"]
+            # Wall clock from route/selection to observed N4, including GTK
+            # scheduling and polling. Distinct from worker/decoder percentiles.
+            route_timings[route + "/" + variant] = round(
+                (monotonic() - route_started[(route, variant)]) * 1000, 2,
+            )
             capture("00-notice-c-" + route + "-" + variant + "-" + label)
             if variant == "list":
                 report["local_c_stage"] = label + "_" + route + "_detail"
+                route_started[(route, "detail")] = monotonic()
                 page.selection.set_selected(0)
                 assert page.selection.get_selected_item() is row
                 # The actual production selection signal renders the detail.
@@ -493,6 +502,38 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             stats = loader.stats()
             assert stats["ui_applied"] >= 12 and stats["ui_failed"] == 0
             assert stats["download_ok"] == (0 if offline else 1)
+            decisions = n2.stats()
+            # A cold N2 is rebuilt even with warm N3. Do not infer a
+            # documentary HIT from an image file or a texture.
+            assert decisions["n2_register_new"] >= 1
+            assert decisions["n1_selected_count"] >= 1
+            assert decisions["n2_hit"] >= 1
+            assert stats["ui_decode_recent_count"] >= 1
+            assert stats["n3_url_ok_recent_count"] == (0 if offline else 1)
+            assert len(route_timings) == 12
+            # Report only fixed numeric metrics; no source, URI, path,
+            # document key or account. Empty samples have no percentile.
+            def select_metrics(values, prefixes):
+                return {
+                    key: value for key, value in values.items()
+                    if key.startswith(prefixes) and type(value) in (int, float)
+                }
+
+            report["notice_c_cover_metrics_" + label] = {
+                "schema": "cifereca.cover-six-views/1",
+                "fixture": "one_c_six_views_mock_transport",
+                "n1": select_metrics(decisions, ("n1_",)),
+                "n2": select_metrics(decisions, ("n2_",)),
+                "n3": {
+                    **select_metrics(stats, ("n3_url_", "n3_epub_", "preview_")),
+                    **{key: stats[key] for key in (
+                        "cache_hit_valid", "download_ok", "download_failed",
+                    )},
+                },
+                "n4": select_metrics(stats, ("ui_decode_", "ui_applied", "ui_failed", "ui_stale")),
+                "route_to_observed_texture_ms": route_timings,
+                "image_gets_total": len(gets),
+            }
             assert window.service._account_context_epoch == account_epoch
             assert window.service._source_context_epoch == source_epoch
             report["notice_c_local_views_" + label] = {
