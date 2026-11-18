@@ -165,7 +165,7 @@
   },
   "_loans_for_account": {
     "kind": "method",
-    "signature": "(self, account: 'Account', *, force: 'bool' = False) -> 'list[Loan]'"
+    "signature": "(self, account: 'Account', *, force: 'bool' = False, expected_source_epoch: 'int | None' = None) -> 'list[Loan]'"
   },
   "refresh_loans": {
     "kind": "method",
@@ -173,7 +173,7 @@
   },
   "refresh_identity_loans": {
     "kind": "method",
-    "signature": "(self, force: 'bool' = False, identity_id: 'str | None' = None) -> 'list[Loan]'"
+    "signature": "(self, force: 'bool' = False, identity_id: 'str | None' = None, *, expected_source_epoch: 'int | None' = None, publication_epoch: 'int | None' = None) -> 'list[Loan]'"
   },
   "public_catalogue_target": {
     "kind": "method",

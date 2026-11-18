@@ -101,12 +101,19 @@ def activate_identity(window, identity_id: str) -> None:
     if hasattr(window, "library_page"):
         window._render_library([])
         window.library_page.detail.empty("Nouvelle identité", "Chargement de la bibliothèque…")
+    from cifereca.core.source_context import source_context_epoch
+    admitted_identity_id = identity_id
+    admitted_source_epoch = source_context_epoch(service)
+    publication_epoch = getattr(service, "_account_context_epoch", None)
     def identity_loaded(rows: list[Loan]) -> None:
         if getattr(window, '_closed', False) or window.service is not service:
             return
-        if not service.current_identity or service.current_identity.identity_id != identity.identity_id:
+        if not service.current_identity or service.current_identity.identity_id != admitted_identity_id:
             return
-        if not window._identity_request_current(identity.identity_id, identity_generation):
+        if (source_context_epoch(service) != admitted_source_epoch
+                or getattr(service, "_account_context_epoch", None) != publication_epoch):
+            return
+        if not window._identity_request_current(admitted_identity_id, identity_generation):
             return
         window._populate_loans(rows)
         window.refresh_library(False)
@@ -117,7 +124,11 @@ def activate_identity(window, identity_id: str) -> None:
         window._activity_result(f"Identité chargée : {identity.label}")
     window.runner.submit(
         f"Chargement de {identity.label}…",
-        lambda: service.refresh_identity_loans(force=False, identity_id=identity.identity_id),
+        lambda: service.refresh_identity_loans(
+            force=False, identity_id=admitted_identity_id,
+            expected_source_epoch=admitted_source_epoch,
+            publication_epoch=publication_epoch,
+        ),
         identity_loaded,
         priority=TaskPriority.USER_ACTION,
         kind="identity",

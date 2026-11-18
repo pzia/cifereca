@@ -71,7 +71,7 @@ def test_identity_activation_ignores_late_results_from_previous_identity():
         MAIN, "MainWindow", "_activate_identity",
     )
     assert "window.service is not service" in source
-    assert "service.current_identity.identity_id != identity.identity_id" in source
+    assert "service.current_identity.identity_id != admitted_identity_id" in source
     assert "return" in source
 
 
