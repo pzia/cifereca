@@ -217,7 +217,12 @@ class MainWindow(Adw.ApplicationWindow):
         self.local_cover_adapter.bind_audit_observer(service, self.document_covers)
         self.search_document_cover_registry = SearchDocumentCoverRegistry()
         self.history_cover_resolver = HistoryCoverResolver(service, diagnostics)
-        self.runner = TaskRunner(self)
+        from ..task_admission import SharedTaskAdmission
+        admission = getattr(app, "_notice_work_admission", None)
+        self.runner = (
+            TaskRunner(self, shared_admission=admission)
+            if type(admission) is SharedTaskAdmission else TaskRunner(self)
+        )
         _TRACE_LOG.info("TRACE gui init pre-css")
         self._install_css()
         _TRACE_LOG.info("TRACE gui init post-css")
@@ -422,7 +427,12 @@ class MainWindow(Adw.ApplicationWindow):
     def activate_startup_plugins(self) -> bool:
         if getattr(self, "_closed", False):
             return False
-        return startup_coordinator.activate_startup_plugins(self, idle_add=GLib.idle_add)
+        try:
+            return startup_coordinator.activate_startup_plugins(self, idle_add=GLib.idle_add)
+        finally:
+            tick = getattr(self, "_notice_work_tick", None)
+            if callable(tick) and not self._closed:
+                tick()
 
     # ---------- compatibility / source configuration ----------
     def logout(self) -> None:

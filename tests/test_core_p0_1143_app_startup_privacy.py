@@ -88,3 +88,52 @@ def test_fatal_gtk_exception_is_fixed_code_without_traceback(
     assert PRIVATE not in caplog.text
     assert "Traceback" not in caplog.text
     assert IDENTITY not in caplog.text
+
+def test_desktop_composition_uses_one_admission_budget(monkeypatch):
+    from cifereca.task_admission import SharedTaskAdmission
+    _fake_gui(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["cifereca"])
+    assert app.main() == 0
+    opts = app.CiferecaCore.open.call_args.kwargs
+    budget = opts["notice_work_admission"]
+    assert type(budget) is SharedTaskAdmission
+    assert budget.max_inflight == 16 and budget.reserve_user_slots == 3
+    assert "notice_replay_registry" not in opts
+
+
+def test_desktop_notice_hint_dispatches_real_retained_work_and_stops(tmp_path):
+    from cifereca.task_admission import SharedTaskAdmission
+    from cifereca.core import notice_c_job_journal as journal
+    from cifereca.core.notice_c_exact_recompute import request_exact_public_recompute
+    from cifereca.core.notice_c_cover_index import (
+        persist_exact_public_search_cover, read_consolidated_notice_cover,
+    )
+    from tests.test_core_p0_4982_exact_public_recompute import source
+    from tests.test_core_p0_4982_notice_work_runtime import open_core
+
+    budget = SharedTaskAdmission(max_inflight=16, reserve_user_slots=3)
+    events = []
+    with open_core(tmp_path, notice_work_admission=budget) as core:
+        old = persist_exact_public_search_cover(core.storage, source(core.storage, "Ancien", 10))
+        source(core.storage, "Nouveau", 11)
+        ref = request_exact_public_recompute(
+            core.storage, old.document, now=100, expected_generation=0,
+        )
+        def observer(document, epoch):
+            assert journal.read_job(core.storage, ref).state == "current"
+            events.append((document, epoch))
+        win = NS(_closed=False, document_covers=NS(refresh_committed_source_in_worker=observer))
+        app._bind_desktop_notice_work(core, win)
+        assert core.brokers["tasks"]._executor is None
+        assert not events
+        handle = win._notice_work_tick()
+        assert handle is not None
+        worker, = handle.result(timeout=10).handles
+        assert worker.result(timeout=10) == "current"
+        assert events == [(old.document, old.epoch + 1)]
+        assert read_consolidated_notice_cover(core.storage, old.document).sources[0].public_bibliography.title == "Nouveau"
+        assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
+        win._closed = True
+        assert win._notice_work_tick() is None
+    win._closed = False
+    assert win._notice_work_tick() is None

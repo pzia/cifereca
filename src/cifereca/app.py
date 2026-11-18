@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import time
 
@@ -24,6 +25,34 @@ Puis relancez :
 """.strip()
     print(message, file=sys.stderr)
     return 3
+
+
+def _bind_desktop_notice_work(core, window):
+    """Attach the existing Core pump to the ordinary desktop lifecycle.
+
+    No timer or executor is created here; GTK only submits a bounded hint.
+    The observer runs on the Core worker after commit and refreshes N2 only.
+    """
+    runtime = getattr(core, "notice_work", None)
+    if runtime is None:
+        return
+    if not runtime.bind_committed_observer(
+        window.document_covers.refresh_committed_source_in_worker,
+    ):
+        return
+
+    def hint():
+        if getattr(window, "_closed", False):
+            return None
+        try:
+            return runtime.request_tick()
+        except Exception:
+            logging.getLogger("cifereca").warning(
+                "TRACE notice work lifecycle code=dispatch_unavailable"
+            )
+            return None
+
+    window._notice_work_tick = hint
 
 
 def _run_application(*, capture_mode: bool = False) -> int:
@@ -116,6 +145,14 @@ def _run_application(*, capture_mode: bool = False) -> int:
         force_plugins=tuple(force_plugins),
         activate_plugins=False,
     )
+    # One budget across the pre-existing Core broker and GTK task runner.
+    # No remote fetch port or replay registry is installed automatically.
+    # Diagnostic capture and explicit no-plugin startup keep legacy behavior.
+    if not no_plugins and not capture_mode:
+        from .task_admission import SharedTaskAdmission
+        core_options["notice_work_admission"] = SharedTaskAdmission(
+            max_inflight=16, reserve_user_slots=3,
+        )
     # Apply an explicit CLI override before constructing services/plugins.
     # Do not persist it: only an IHM preference change saves the next launch.
     if verbose:
@@ -139,6 +176,7 @@ def _run_application(*, capture_mode: bool = False) -> int:
         def __init__(self):
             super().__init__(application_id="org.cifereca.Cifereca")
             self.window = None
+            self._notice_work_admission = core_options.get("notice_work_admission")
 
         def do_activate(self):
             if self.window is None:
@@ -152,6 +190,7 @@ def _run_application(*, capture_mode: bool = False) -> int:
                 self.window = MainWindow(
                     self, config, service, diagnostics, **monitor_kw
                 )
+                _bind_desktop_notice_work(core, self.window)
                 logger.info("TRACE gui MainWindow-init end dt=%.3fs", time.monotonic()-t0)
             self.window.present()
             presented_ms = (time.monotonic() - t0) * 1000.0

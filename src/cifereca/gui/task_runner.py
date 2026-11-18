@@ -817,6 +817,11 @@ class TaskRunner:
                             del self._coalesced[key]
                 if getattr(self.window, '_closed', False):
                     return False
+                # Existing lifecycle signal, not another scheduler/timer.
+                # The optional Core adapter only submits a nonblocking hint.
+                tick = getattr(self.window, "_notice_work_tick", None)
+                if callable(tick):
+                    tick()
                 if control is not None and control.get_root() is not None:
                     control.set_sensitive(True)
                 kind_outcome, payload = outcome
