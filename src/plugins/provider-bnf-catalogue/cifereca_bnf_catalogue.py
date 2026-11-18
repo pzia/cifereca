@@ -22,6 +22,7 @@ from cifereca.plugin_api import (
 SRU = "http://www.loc.gov/zing/srw/"
 DC = "http://purl.org/dc/elements/1.1/"
 ENDPOINT = "https://catalogue.bnf.fr/api/SRU"
+MAX_SRU_BYTES = 2 * 1024 * 1024
 MAX_REQUESTED_PAGES = 101  # Zero-indexed, page 0..100; no unbounded SRU offsets.
 ARK = re.compile(r"(?:https?://catalogue\.bnf\.fr/)?(ark:/12148/cb[0-9]+[a-z0-9])(?:[/?#\s]|$)", re.I)
 FIELDS = {
@@ -158,14 +159,33 @@ class BnfCatalogueSession(ProviderSession):
             return []
         relation = "adj" if field == "isbn" else "all"
         try:
-            response = self.client.get(self.sru_url, params={
+            with self.client.stream("GET", self.sru_url, params={
                 "operation": "searchRetrieve", "version": "1.2", "recordSchema": "dublincore",
                 "query": f"{FIELDS[field]} {relation} {literal(query)}",
                 "startRecord": str(page * self.page_size + 1),
                 "maximumRecords": str(self.page_size),
-            })
-            response.raise_for_status()
-            rows = self.parse_records(response.content)
+            }, headers={"Accept-Encoding": "identity"}) as response:
+                response.raise_for_status()
+                encoding = response.headers.get("content-encoding", "").strip().casefold()
+                declared = response.headers.get("content-length", "")
+                if (encoding not in {"", "identity"}
+                        or (declared.isascii() and declared.isdecimal()
+                            and (len(declared) > 9 or int(declared) > MAX_SRU_BYTES))):
+                    raise ProviderError("BnF : invalid_sru_response")
+                if response.is_stream_consumed:
+                    if not response.is_closed or len(response.content) > MAX_SRU_BYTES:
+                        raise ProviderError("BnF : invalid_sru_response")
+                    content = response.content
+                else:
+                    chunks = []
+                    total = 0
+                    for chunk in response.iter_raw(chunk_size=65536):
+                        total += len(chunk)
+                        if total > MAX_SRU_BYTES:
+                            raise ProviderError("BnF : invalid_sru_response")
+                        chunks.append(chunk)
+                    content = b"".join(chunks)
+            rows = self.parse_records(content)
         except httpx.HTTPError as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             code = (

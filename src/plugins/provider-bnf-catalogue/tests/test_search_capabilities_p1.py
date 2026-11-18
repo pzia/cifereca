@@ -2,6 +2,7 @@
 
 All requests use a synthetic client. No network, private account or acquisition.
 """
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import httpx
@@ -16,13 +17,17 @@ class FakeClient:
         self.calls = []
         self.fail = fail
 
-    def get(self, url, *, params):
+    @contextmanager
+    def stream(self, method, url, *, params, headers):
+        assert method == "GET"
+        assert headers["Accept-Encoding"] == "identity"
         self.calls.append((url, dict(params)))
         if self.fail:
             raise httpx.ConnectError("PRIVATE_CREDENTIAL")
-        return SimpleNamespace(
+        yield httpx.Response(
+            200,
             content=b'<searchRetrieveResponse xmlns="http://www.loc.gov/zing/srw/"><numberOfRecords>0</numberOfRecords></searchRetrieveResponse>',
-            raise_for_status=lambda: None,
+            request=httpx.Request(method, url, params=params, headers=headers),
         )
 
     def close(self):
