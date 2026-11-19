@@ -200,7 +200,7 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
          + _values(meta.get("isbn")) + _values(meta.get("isbns"))),
         ("language", 5, _values(meta.get("languages")) + _values(meta.get("language"))),
         *((f"public_purchase_{name}", weight, _purchase_catalogue_values(row, name))
-          for name, weight in (("title", 90), ("author", 60), ("description", 25), ("publisher", 15))),
+          for name, weight in (("title", 90), ("author", 60), ("description", 25), ("publisher", 15), ("published_at", 5))),
     )
     scored = [(name, weight, tuple(" ".join(_words(value)) for value in values
                                      if type(value) is str and value))
@@ -236,6 +236,7 @@ _LOCAL_MATCH_LABELS = {
     "public_purchase_author": "Auteur (catalogue public)",
     "public_purchase_description": "Résumé (catalogue public)",
     "public_purchase_publisher": "Éditeur (catalogue public)",
+    "public_purchase_published_at": "Parution (catalogue public)",
 }
 
 
