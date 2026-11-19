@@ -198,3 +198,19 @@ def test_admission_refuses_wrong_selection_and_consumes_preview(inspected):
     assert session.admit_missing_repair(path_key, "file:forged", user_confirmed=True) is None
     assert session.admit_missing_repair(path_key, file_key, user_confirmed=True) is None
     assert storage.placement_get(pid)["state"] == "missing"
+
+
+def test_archive_review_is_bound_to_inspected_case_and_never_confirms(inspected):
+    storage, service, session, old, candidate, pid = inspected
+    path_key, file_key = _cases(session)
+    assert session.preview_missing_retirement(path_key)["status"] == "ready"
+    result = session.review_missing_archive(path_key)
+    assert result["proposal"] == "supervised_archive_candidate"
+    assert result["archive_authorized"] is False
+    assert result["retirement_authorized"] is False
+    assert session.admit_missing_repair(path_key, user_confirmed=True) is None
+    assert session.confirm_missing_repair(path_key, user_confirmed=True)["reason"] == "confirmation_required"
+    for foreign in ("path:forged", file_key):
+        assert session.review_missing_archive(foreign)["proposal"] == "preserve"
+    assert storage.placement_get(pid)["state"] == "missing"
+    assert candidate.is_file() and not old.exists()

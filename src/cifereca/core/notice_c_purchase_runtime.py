@@ -14,6 +14,7 @@ from . import notice_c_job_journal as journal
 from .notice_c_purchase_execution import PurchaseIntentExecution
 from .notice_c_purchase_composition import make_purchase_enrichment_sink
 from .notice_c_purchase_intent import _POLICY, _allowed_txn
+from .notice_c_purchase_settings import _read_policy_txn, read_purchase_policy
 from .notice_c_public_search_replay import _anonymous_session
 from .source_context import source_context_epoch
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
@@ -43,6 +44,7 @@ def _capture_sink(service, runtime, executor, account, private):
     epoch = source_context_epoch(service)
     accounts, sessions, storage = service.accounts, service._sessions, service.storage
     private_key = service._session_key(private_id, scope.credential_id)
+    policy = [None]
     capture = private.capture_purchase_enrichment_guard(account)
     if not callable(capture):
         return None
@@ -50,6 +52,7 @@ def _capture_sink(service, runtime, executor, account, private):
     def current():
         coords = (scope.identity_id, scope.provider_id, scope.credential_id, scope.account_id)
         return (not executor._closed and source_context_epoch(service) == epoch
+                and (policy[0] is None or read_purchase_policy(storage) == policy[0])
                 and service.accounts is accounts and service._sessions is sessions
                 and service.storage is storage and sessions.get(private_key) is private
                 and sessions.get(key) is public and _anonymous_session(public, public_id)
@@ -84,6 +87,9 @@ def _capture_sink(service, runtime, executor, account, private):
             db.execute("INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)",
                        (_POLICY, "true"))
             if not _allowed_txn(db, scope):
+                return None
+            policy[0] = _read_policy_txn(db)
+            if not policy[0].enabled:
                 return None
     return make_purchase_enrichment_sink(
         executor, private_provider_id=private_id, public_session=public,

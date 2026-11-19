@@ -101,6 +101,20 @@ def _missing_placement_retirement_message(result: object) -> str:
     )
 
 
+def _archive_proposal_message(result: object) -> str:
+    """Closed wording, including for malformed or hostile result envelopes."""
+    if (type(result) is dict
+            and result.get("proposal") == "supervised_archive_candidate"
+            and result.get("reason") == "no_dependency_observed"
+            and result.get("archive_authorized") is False
+            and result.get("retirement_authorized") is False
+            and result.get("requires_fresh_confirmation") is True):
+        return ('Candidat à un futur archivage supervisé : aucune dépendance '
+                'détectée par cette revue. Aucun archivage ni retrait effectué.')
+    return ('Conserver ce placement : dépendances ou preuves à examiner. '
+            'Aucun archivage ni retrait effectué.')
+
+
 def _toggle_inspection_maximize(window) -> None:
     """Only GTK window state changes, never a new read or a private export."""
     if window.is_maximized():
@@ -860,6 +874,11 @@ class LocalInspectionController:
         # A historical missing Placement has its own Core-only review flow.
         # Never reuse the acquisition/right attachment action or its token.
         missing_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        missing_archive_review = Gtk.Button(label='Examiner pour archivage…')
+        missing_archive_review.set_sensitive(False)
+        missing_archive_review.set_tooltip_text(
+            'Proposition en lecture seule : aucun archivage ni retrait effectué.'
+        )
         missing_review = Gtk.Button(label='Prévisualiser le retrait SQL…')
         missing_review.set_tooltip_text(
             'Vérifier le placement obsolète, les références SQLite et le '
@@ -894,6 +913,7 @@ class LocalInspectionController:
         missing_note.set_wrap(False)
         missing_note.set_max_width_chars(36)
         missing_note.set_ellipsize(Pango.EllipsizeMode.END)
+        missing_actions.append(missing_archive_review)
         missing_actions.append(missing_review)
         missing_actions.append(missing_apply)
         missing_actions.append(missing_linked_review)
@@ -975,6 +995,7 @@ class LocalInspectionController:
             missing_preview_ready[0] = False
             missing_linked_ready[0] = False
             missing_busy[0] = False
+            missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
             missing_file_key[0] = None
             missing_file_offset[0] = 0
             missing_relocation_ready[0] = False
@@ -1640,6 +1661,59 @@ class LocalInspectionController:
                 kind='maintenance-inspection',
             )
 
+        def review_missing_archive(*_args):
+            if (not valid() or missing_case[0] is None or missing_busy[0]
+                    or summary.get('status') != 'complete'):
+                return
+            chosen = missing_case[0]
+            # Switching to a read-only proposal revokes every older plan.
+            missing_version[0] += 1
+            version = missing_version[0]
+            session.cancel_missing_repair()
+            missing_preview_ready[0] = False
+            missing_linked_ready[0] = False
+            missing_relocation_ready[0] = False
+            for action in (missing_apply, missing_linked_apply, missing_relocate_confirm):
+                action.set_visible(False)
+                action.set_sensitive(False)
+            missing_busy[0] = True
+            missing_archive_review.set_sensitive(False)
+            missing_review.set_sensitive(False)
+            missing_linked_review.set_sensitive(False)
+            missing_relocate_review.set_sensitive(False)
+            missing_file_controls(False)
+            missing_note.set_text('Examen des dépendances historiques…')
+
+            def read():
+                if version != missing_version[0] or not session.valid():
+                    return None
+                return session.review_missing_archive(chosen)
+
+            def completed(result):
+                if (self.session is not session or not self.alive()
+                        or version != missing_version[0]
+                        or chosen != missing_case[0] or not valid()):
+                    return
+                missing_busy[0] = False
+                missing_archive_review.set_sensitive(True)
+                missing_review.set_sensitive(True)
+                missing_linked_review.set_sensitive(True)
+                missing_relocate_review.set_sensitive(missing_file_key[0] is not None)
+                missing_file_controls(True)
+                diagnostic = _archive_proposal_message(result)
+                missing_note.set_text(diagnostic)
+                missing_note.set_tooltip_text(diagnostic)
+
+            def failed(_error):
+                completed(None)
+
+            self.parent.runner.submit(
+                'Examen en lecture seule pour archivage historique',
+                read, completed, failed,
+                priority=TaskPriority.MAINTENANCE,
+                kind='maintenance-inspection',
+            )
+
         def select(_listing, row):
             if row is None or not valid():
                 return
@@ -1652,6 +1726,7 @@ class LocalInspectionController:
                     missing_case[0] = case.key
                     missing_actions_scroll.set_visible(True)
                     missing_files.set_visible(summary.get('status') == 'complete')
+                    missing_archive_review.set_sensitive(summary.get('status') == 'complete')
                     missing_review.set_sensitive(summary.get('status') == 'complete')
                     missing_linked_review.set_sensitive(summary.get('status') == 'complete')
                     if missing_files.get_visible():
@@ -1817,6 +1892,7 @@ class LocalInspectionController:
             chosen = (missing_case[0], missing_file_key[0])
             version = missing_version[0]
             missing_busy[0] = True
+            missing_archive_review.set_sensitive(False)
             missing_review.set_sensitive(False)
             missing_relocate_review.set_sensitive(False)
             missing_file_controls(False)
@@ -1831,6 +1907,7 @@ class LocalInspectionController:
                         or chosen != (missing_case[0], missing_file_key[0])):
                     return
                 missing_busy[0] = False
+                missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                 missing_file_controls(True)
                 ready = (type(result) is dict
                          and result.get('status') == 'review_required'
@@ -1852,6 +1929,7 @@ class LocalInspectionController:
                         and version == missing_version[0]):
                     session.cancel_missing_repair()
                     missing_busy[0] = False
+                    missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                     missing_file_controls(True)
                     missing_relocation_ready[0] = False
                     missing_review.set_sensitive(True)
@@ -1907,6 +1985,7 @@ class LocalInspectionController:
                     missing_note.set_text('Annulé · aucune modification.')
                     return
                 missing_busy[0] = True
+                missing_archive_review.set_sensitive(False)
                 missing_relocate_confirm.set_visible(False)
                 missing_note.set_text('Confirmation reçue · revalidation sous verrou…')
 
@@ -1927,6 +2006,7 @@ class LocalInspectionController:
                         self.start()
                         return
                     missing_busy[0] = False
+                    missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                     missing_file_controls(True)
                     missing_relocation_ready[0] = False
                     missing_review.set_sensitive(True)
@@ -1940,6 +2020,7 @@ class LocalInspectionController:
                             and version == missing_version[0]):
                         session.cancel_missing_repair()
                         missing_busy[0] = False
+                        missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                         missing_file_controls(True)
                         missing_relocation_ready[0] = False
                         missing_review.set_sensitive(True)
@@ -1972,6 +2053,7 @@ class LocalInspectionController:
             chosen = missing_case[0]
             version = missing_version[0]
             missing_busy[0] = True
+            missing_archive_review.set_sensitive(False)
             missing_linked_review.set_sensitive(False)
             missing_review.set_sensitive(False)
             missing_relocate_review.set_sensitive(False)
@@ -1987,6 +2069,7 @@ class LocalInspectionController:
                         or chosen != missing_case[0]):
                     return
                 missing_busy[0] = False
+                missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                 count = result.get('catalogue_rows') if type(result) is dict else None
                 ready = (type(result) is dict
                          and result.get('status') == 'review_required'
@@ -2018,6 +2101,7 @@ class LocalInspectionController:
                         and version == missing_version[0]):
                     session.cancel_missing_repair()
                     missing_busy[0] = False
+                    missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                     missing_linked_ready[0] = False
                     missing_linked_review.set_sensitive(True)
                     missing_review.set_sensitive(True)
@@ -2071,6 +2155,7 @@ class LocalInspectionController:
                     missing_note.set_text('Annulé · aucune écriture SQL.')
                     return
                 missing_busy[0] = True
+                missing_archive_review.set_sensitive(False)
                 missing_linked_apply.set_visible(False)
                 missing_note.set_text('Revalidation des références sous verrou…')
 
@@ -2092,6 +2177,7 @@ class LocalInspectionController:
                         self.start()
                         return
                     missing_busy[0] = False
+                    missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                     missing_linked_ready[0] = False
                     missing_linked_review.set_sensitive(True)
                     missing_review.set_sensitive(True)
@@ -2104,6 +2190,7 @@ class LocalInspectionController:
                             and version == missing_version[0]):
                         session.cancel_missing_repair()
                         missing_busy[0] = False
+                        missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                         missing_linked_ready[0] = False
                         missing_linked_review.set_sensitive(True)
                         missing_review.set_sensitive(True)
@@ -2132,6 +2219,7 @@ class LocalInspectionController:
             chosen = missing_case[0]
             version = missing_version[0]
             missing_busy[0] = True
+            missing_archive_review.set_sensitive(False)
             missing_review.set_sensitive(False)
             missing_apply.set_visible(False)
             missing_note.set_text('Vérification des références en cours…')
@@ -2145,6 +2233,7 @@ class LocalInspectionController:
                         or chosen != missing_case[0]):
                     return
                 missing_busy[0] = False
+                missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                 ready = (type(result) is dict and result.get('status') == 'ready'
                          and result.get('read_only') is True
                          and result.get('requires_explicit_confirmation') is True)
@@ -2161,6 +2250,7 @@ class LocalInspectionController:
                         and version == missing_version[0]):
                     session.cancel_missing_repair()
                     missing_busy[0] = False
+                    missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                     missing_preview_ready[0] = False
                     missing_review.set_sensitive(True)
                     missing_note.set_text(
@@ -2210,6 +2300,7 @@ class LocalInspectionController:
                     missing_note.set_text('Annulé · aucune modification.')
                     return
                 missing_busy[0] = True
+                missing_archive_review.set_sensitive(False)
                 missing_apply.set_visible(False)
                 missing_note.set_text('Confirmation reçue · contrôle sous verrou…')
 
@@ -2231,6 +2322,7 @@ class LocalInspectionController:
                         self.start()
                         return
                     missing_busy[0] = False
+                    missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                     missing_preview_ready[0] = False
                     missing_review.set_sensitive(True)
                     missing_note.set_text(
@@ -2242,6 +2334,7 @@ class LocalInspectionController:
                             and version == missing_version[0]):
                         session.cancel_missing_repair()
                         missing_busy[0] = False
+                        missing_archive_review.set_sensitive(missing_case[0] is not None and summary.get('status') == 'complete')
                         missing_preview_ready[0] = False
                         missing_review.set_sensitive(True)
                         missing_note.set_text(
@@ -2302,6 +2395,7 @@ class LocalInspectionController:
             offset[0] = max(0, min(offset[0]+delta, max(0, current_total[0]-1)))
             render()
 
+        missing_archive_review.connect('clicked', review_missing_archive)
         missing_review.connect('clicked', preview_missing_retirement)
         missing_apply.connect('clicked', confirm_missing_retirement)
         missing_linked_review.connect('clicked', preview_missing_linked_retirement)
