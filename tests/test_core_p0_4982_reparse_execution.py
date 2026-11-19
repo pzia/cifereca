@@ -158,13 +158,13 @@ def test_reparse_source_and_dirty_requests_roll_back_on_capacity_refusal(tmp_pat
     tasks = broker()
     try:
         source, canonical, ref, adapter = make_job(db)
-        original = execution.request_affected_public_recompute_txn
+        original = execution.request_source_worker_dependents_txn
         captured = []
         def refused(sql, published, *, now):
             result = original(sql, published, now=now)
             captured.extend(result.refs)
             return SourceChangeRequests(result.refs, result.examined, 1)
-        monkeypatch.setattr(execution, "request_affected_public_recompute_txn", refused)
+        monkeypatch.setattr(execution, "request_source_worker_dependents_txn", refused)
         pump = PublicNoticeWorkPump(db, tasks, clock=lambda: 100, replay_registry=adapter.registry())
         handle, = pump.tick().handles
         assert handle.result(timeout=5) == "transient_failure"
