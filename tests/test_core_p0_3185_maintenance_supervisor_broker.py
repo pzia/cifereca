@@ -8,35 +8,22 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-@pytest.fixture(autouse=True)
-def _enable_legacy_dedup_test_path(monkeypatch):
-    """Retain synthetic tests of the OLD Core retirement engine only.
-
-    Production is suspended by #4496. This file exercises pre-existing
-    SQLite/FS crash-recovery invariants under an explicit test-only monkeypatch.
-    New acceptance tests of the default safety hold never use this fixture.
-    """
-    from cifereca.core import canonical_dedup_supervisor
-    monkeypatch.setattr(canonical_dedup_supervisor, "_ordinary_cleanup_enabled",
-                        lambda: True)
-
-
-
+from cifereca.config import Config
+from cifereca.core.destructive_cleanup_policy import DESTRUCTIVE_CLEANUP_KEY as KEY
 from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
 from cifereca.plugin_api import Conflict, LibraryMutationRequest
 from tests.test_core_p0_3171_atomic_publication_v14 import BYTES, rows, store
 from tests.test_core_p0_3185_canonical_backup_relink import rig, backup
 
 
-def broker_for(rig, monkeypatch, *, root_override=None):
+def broker_for(rig, monkeypatch, *, root_override=None, enabled=False):
     storage, root, _paths, _pubs, lock_path = rig
     monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda: lock_path)
     configured_root = str(root if root_override is None else root_override)
-    config = SimpleNamespace(
-        get=lambda key, default=None: (
-            configured_root if key == "library.directory" else default
-        ),
-    )
+    config = Config(root.parent / "broker-config.json")
+    config.set("library.directory", configured_root)
+    config.set(KEY, enabled)
+    config.save()
     return LibraryMaintenanceBrokerImpl(SimpleNamespace(storage=storage, config=config))
 
 
@@ -54,7 +41,7 @@ def request(rig, *, action="preview", confirmed=None, keeper=None, candidate=Non
 
 def test_canonical_broker_default_preview_is_readonly(rig, monkeypatch):
     storage, _root, paths, pubs, _lock = rig
-    broker = broker_for(rig, monkeypatch)
+    broker = broker_for(rig, monkeypatch, enabled=True)
     req = LibraryMutationRequest(
         "canonical_dedup", placement_id=pubs[1].placement_id,
         keep_placement_id=pubs[0].placement_id,
@@ -76,7 +63,7 @@ def test_canonical_broker_default_preview_is_readonly(rig, monkeypatch):
 @pytest.mark.parametrize("confirmed", [None, False, 0, "yes"])
 def test_no_explicit_boolean_confirmation_never_deletes(rig, monkeypatch, confirmed):
     storage, _root, paths, pubs, _lock = rig
-    broker = broker_for(rig, monkeypatch)
+    broker = broker_for(rig, monkeypatch, enabled=True)
     plan = broker.plan(request(rig, action="commit", confirmed=confirmed))
     assert plan.destructive
     with pytest.raises(Conflict, match="Confirmation explicite requise"):
@@ -89,7 +76,7 @@ def test_no_explicit_boolean_confirmation_never_deletes(rig, monkeypatch, confir
 def test_explicit_canonical_broker_commit_retains_independent_origins(rig, monkeypatch):
     storage, _root, paths, pubs, _lock = rig
     backup(rig)
-    broker = broker_for(rig, monkeypatch)
+    broker = broker_for(rig, monkeypatch, enabled=True)
     plan = broker.plan(request(rig, action="commit", confirmed=True))
     assert plan.destructive and plan.facts["reason"] == "active_references"
     result = broker.run(plan)
@@ -106,7 +93,7 @@ def test_explicit_canonical_broker_commit_retains_independent_origins(rig, monke
 
 def test_canonical_legacy_delete_is_blocked_at_plan_and_stale_run(rig, monkeypatch):
     storage, _root, paths, pubs, _lock = rig
-    broker = broker_for(rig, monkeypatch)
+    broker = broker_for(rig, monkeypatch, enabled=True)
     legacy = LibraryMutationRequest(
         "delete_duplicate", placement_id=pubs[1].placement_id,
         keep_placement_id=pubs[0].placement_id,
@@ -125,7 +112,7 @@ def test_canonical_legacy_delete_is_blocked_at_plan_and_stale_run(rig, monkeypat
 
 def test_forged_non_destructive_plan_cannot_request_destructive_run(rig, monkeypatch):
     storage, _root, paths, pubs, _lock = rig
-    broker = broker_for(rig, monkeypatch)
+    broker = broker_for(rig, monkeypatch, enabled=True)
     plan = broker.plan(request(rig, action="commit", confirmed=True))
     with pytest.raises(Conflict, match="Plan de dédoublonnage invalide"):
         broker.run(replace(plan, destructive=False))
@@ -138,7 +125,7 @@ def test_forged_non_destructive_plan_cannot_request_destructive_run(rig, monkeyp
 ])
 def test_invalid_or_ambiguous_broker_action_fails_closed(rig, monkeypatch, invalid):
     _storage, _root, paths, pubs, _lock = rig
-    broker = broker_for(rig, monkeypatch)
+    broker = broker_for(rig, monkeypatch, enabled=True)
     opts = invalid if invalid else {"action": "unlink"}
     with pytest.raises(Conflict, match="Option de dédoublonnage invalide"):
         broker.plan(LibraryMutationRequest(
@@ -150,7 +137,7 @@ def test_invalid_or_ambiguous_broker_action_fails_closed(rig, monkeypatch, inval
 
 def test_missing_configured_library_root_blocks_even_readonly_plan(rig, monkeypatch):
     storage, root, paths, pubs, _lock = rig
-    broker = broker_for(rig, monkeypatch, root_override=root.parent / "elsewhere")
+    broker = broker_for(rig, monkeypatch, root_override=root.parent / "elsewhere", enabled=True)
     with pytest.raises(Conflict, match="Racine de bibliothèque indisponible"):
         broker.plan(request(rig, action="commit", confirmed=True))
     assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
@@ -159,7 +146,7 @@ def test_missing_configured_library_root_blocks_even_readonly_plan(rig, monkeypa
 
 def test_pending_cleanup_requires_another_explicit_confirmed_recover(rig, monkeypatch):
     storage, _root, paths, pubs, _lock = rig
-    broker = broker_for(rig, monkeypatch)
+    broker = broker_for(rig, monkeypatch, enabled=True)
     original_unlink = Path.unlink
 
     def refuse(path, *args, **kwargs):
@@ -190,7 +177,7 @@ def test_pending_cleanup_requires_another_explicit_confirmed_recover(rig, monkey
 
 def test_foreign_keeper_never_mints_right_or_deletes_file(rig, monkeypatch):
     storage, _root, paths, pubs, _lock = rig
-    broker = broker_for(rig, monkeypatch)
+    broker = broker_for(rig, monkeypatch, enabled=True)
     with pytest.raises(Conflict, match="Doublon canonique non vérifié"):
         broker.plan(request(
             rig, action="commit", confirmed=True,
@@ -209,7 +196,7 @@ def test_confirmed_gtk_host_execution_does_not_double_lock_canonical_broker(
 
     storage, root, paths, pubs, lock_path = rig
     monkeypatch.setattr(host, "acquisition_lock_file", lambda: lock_path)
-    broker = broker_for(rig, monkeypatch)
+    broker = broker_for(rig, monkeypatch, enabled=True)
 
     class ConfirmedDuplicateTool:
         def plan(self, _context):
@@ -251,7 +238,7 @@ def test_unrelated_sync_lock_still_blocks_canonical_broker_without_mutation(
     from cifereca.locking import InterProcessLock
 
     storage, root, paths, pubs, lock_path = rig
-    broker = broker_for(rig, monkeypatch)
+    broker = broker_for(rig, monkeypatch, enabled=True)
 
     # Different-thread lease cannot be borrowed even with reentrant=True.
     from concurrent.futures import ThreadPoolExecutor
@@ -267,5 +254,60 @@ def test_unrelated_sync_lock_still_blocks_canonical_broker_without_mutation(
     with InterProcessLock(lock_path):
         with ThreadPoolExecutor(max_workers=1) as executor:
             assert executor.submit(attempt).result(timeout=10) == "canonical_dedup_lock_busy"
+    assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_config_revocation_blocks_prepared_plan(rig, monkeypatch):
+    storage, _root, paths, pubs, _lock = rig
+    broker = broker_for(rig, monkeypatch, enabled=True)
+    plan = broker.plan(request(rig, action="commit", confirmed=True))
+    broker.service.config.set(KEY, False)
+    with pytest.raises(Conflict, match="suspendu") as exc:
+        broker.run(plan)
+    assert exc.value.code == "ordinary_cleanup_suspended"
+    assert rows(storage) == (1, 3, 3, 3)
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_config_replacement_during_prepare_blocks_retirement(rig, monkeypatch):
+    from cifereca.core import canonical_dedup_supervisor as supervisor
+    storage, root, paths, pubs, _lock = rig
+    broker = broker_for(rig, monkeypatch, enabled=True)
+    plan = broker.plan(request(rig, action="commit", confirmed=True))
+    original = supervisor.prepare_verified_canonical_duplicate
+
+    def replace_config(*args, **kwargs):
+        prepared = original(*args, **kwargs)
+        replacement = Config(root.parent / "replacement-config.json")
+        replacement.set("library.directory", str(root))
+        replacement.set(KEY, True)
+        broker.service.config = replacement
+        return prepared
+
+    monkeypatch.setattr(supervisor, "prepare_verified_canonical_duplicate", replace_config)
+    result = broker.run(plan)
+    assert not result.ok and not result.changed
+    assert result.facts["reason"] == "ordinary_cleanup_suspended"
+    assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_root_change_during_prepare_blocks_retirement(rig, monkeypatch):
+    from cifereca.core import canonical_dedup_supervisor as supervisor
+    storage, root, paths, pubs, _lock = rig
+    broker = broker_for(rig, monkeypatch, enabled=True)
+    plan = broker.plan(request(rig, action="commit", confirmed=True))
+    original = supervisor.prepare_verified_canonical_duplicate
+
+    def change_root(*args, **kwargs):
+        prepared = original(*args, **kwargs)
+        broker.service.config.set("library.directory", str(root.parent))
+        return prepared
+
+    monkeypatch.setattr(supervisor, "prepare_verified_canonical_duplicate", change_root)
+    result = broker.run(plan)
+    assert not result.ok and not result.changed
+    assert result.facts["reason"] == "ordinary_cleanup_suspended"
     assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
     assert all(path.read_bytes() == BYTES for path in paths)

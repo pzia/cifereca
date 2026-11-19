@@ -65,12 +65,19 @@ class _VariantNotFound(NotFound):
 
 
 
-def _enforce_ordinary_dedup_hold(request: LibraryMutationRequest) -> None:
-    """P0 #3185: a stored plan, forced plugin or direct broker cannot unlink.
+def _cleanup_config(service):
+    # Only the actual Core configuration is authoritative, not a request,
+    # a plugin's options, an arbitrary mapping or a persisted plan.
+    from .config import Config
+    cfg = getattr(service, "config", None)
+    return cfg if type(cfg) is Config else None
 
-    No preference may override the suspended keeper-policy decision #4496.
-    Non-mutating preview and recovery of an *existing* tombstone are separate
-    operations and remain admitted to their normal Core validations.
+
+def _enforce_ordinary_dedup_hold(service, request: LibraryMutationRequest) -> None:
+    """#4496: read the current Core opt-in before planning and execution.
+
+    Preview and explicit recovery of an existing tombstone stay independent.
+    The old no-config hook is retained solely for historical synthetic tests.
     """
     operation = request.operation
     if operation not in ("canonical_dedup", "delete_duplicate"):
@@ -80,11 +87,24 @@ def _enforce_ordinary_dedup_hold(request: LibraryMutationRequest) -> None:
     if action != "commit":
         return
     from .core.canonical_dedup_supervisor import _ordinary_cleanup_enabled
-    if not _ordinary_cleanup_enabled():
+    config = _cleanup_config(service)
+    enabled = (_ordinary_cleanup_enabled() if config is None
+               else _ordinary_cleanup_enabled(config))
+    if not enabled:
         raise _CanonicalDedupConflict(
-            "Nettoyage de doublons suspendu — décision produit #4496",
+            "Nettoyage de doublons suspendu — réglage Core #4496",
             code="ordinary_cleanup_suspended",
         )
+
+def _enforce_legacy_cleanup_hold():
+    """Opt-in to canonical cleanup does not revive the old supplier writer."""
+    from .core.canonical_dedup_supervisor import _ordinary_cleanup_enabled
+    if not _ordinary_cleanup_enabled():
+        raise _CanonicalDedupConflict(
+            "Nettoyage historique suspendu — supervision requise",
+            code="ordinary_cleanup_suspended",
+        )
+
 
 def _canonical_b_pair(row: dict[str, Any] | None, keeper: dict[str, Any] | None) -> bool:
     """The legacy source-scoped deleter cannot retire canonical B placements."""
@@ -1618,7 +1638,7 @@ class LibraryMaintenanceBrokerImpl:
 
     def plan(self, request: LibraryMutationRequest) -> LibraryMutationPlan:
         op=request.operation
-        _enforce_ordinary_dedup_hold(request)
+        _enforce_ordinary_dedup_hold(self.service, request)
         if op == "normalize_filename":
             row=self.service.storage.placement_get(request.placement_id)
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
@@ -1707,6 +1727,7 @@ class LibraryMaintenanceBrokerImpl:
             if row is None or keep is None: raise NotFound("Placement inconnu", code="placement_not_found")
             if _canonical_b_pair(row, keep):
                 raise _CanonicalDedupConflict("Utiliser le dédoublonnage canonique supervisé", code="canonical_dedup_supervised_required")
+            _enforce_legacy_cleanup_hold()
             if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
                 raise _DuplicateScopeConflict("Doublon hors du même périmètre vérifié")
             from .core.duplicate_maintenance_guard import candidate_has_active_dependencies
@@ -1877,7 +1898,7 @@ class LibraryMaintenanceBrokerImpl:
 
     def run(self, plan: LibraryMutationPlan, control: TaskControl | None = None) -> LibraryMutationResult:
         request=plan.request
-        _enforce_ordinary_dedup_hold(request)
+        _enforce_ordinary_dedup_hold(self.service, request)
         if control is not None: control.check_cancelled()
         if request.operation == "normalize_filename":
             row=self.service.storage.placement_get(request.placement_id)
@@ -2142,11 +2163,29 @@ class LibraryMaintenanceBrokerImpl:
                     # lock or accept an untrusted already_locked flag.
                     with InterProcessLock(acquisition_lock_file(), reentrant=True) as lease:
                         if control is not None: control.check_cancelled()
+                        _enforce_ordinary_dedup_hold(self.service, request)
+                        cfg = _cleanup_config(self.service)
+                        configured = {}
+                        if cfg is not None:
+                            raw_root = cfg.get("library.directory", None)
+                            if _canonical_maintenance_root(self.service) != root:
+                                raise _CanonicalDedupConflict(
+                                    "Racine de bibliothèque modifiée",
+                                    code="canonical_dedup_root_unavailable",
+                                )
+                            configured = {
+                                "config": cfg,
+                                "config_current": lambda: (
+                                    _cleanup_config(self.service) is cfg
+                                    and cfg.get("library.directory", None) == raw_root
+                                ),
+                            }
                         status = supervise_canonical_duplicate(
                             self.service.storage, library_root=root,
                             candidate_placement_id=request.placement_id,
                             keeper_placement_id=request.keep_placement_id,
                             action=action, shared_lock=lease, confirmed=True,
+                            **configured,
                         )
                 except LockBusyError as exc:
                     raise _CanonicalDedupConflict(
@@ -2186,6 +2225,7 @@ class LibraryMaintenanceBrokerImpl:
                     keep=self.service.storage.placement_get(request.keep_placement_id)
                     if _canonical_b_pair(row, keep):
                         raise _CanonicalDedupConflict("Utiliser le dédoublonnage canonique supervisé", code="canonical_dedup_supervised_required")
+                    _enforce_legacy_cleanup_hold()
                     if not _duplicate_placement_scope_safe(self.service.storage, row, keep):
                         raise _DuplicateScopeConflict("Le doublon n'est plus vérifiable")
                     from .core.duplicate_maintenance_guard import candidate_has_active_dependencies
