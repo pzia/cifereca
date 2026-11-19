@@ -115,3 +115,19 @@ def test_duplicate_jsonld_members_are_ambiguous_without_payload_leak(raw):
         parse_public_detail_jsonld(html, URL)
     assert caught.value.code == "ambiguous_jsonld_member"
     assert "PRIVATE_MARKER" not in str(caught.value)
+
+
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_non_json_constants_in_nested_object_are_refused(constant):
+    raw = json.dumps(book(offers={"price": "PRIVATE_MARKER"}))
+    raw = raw.replace('"PRIVATE_MARKER"', constant)
+    html = '<script type="application/ld+json">' + raw + '</script>'
+    with pytest.raises(PublicDetailError, match="invalid_jsonld") as caught:
+        parse_public_detail_jsonld(html, URL)
+    assert caught.value.code == "invalid_jsonld"
+    assert constant not in str(caught.value)
+
+
+def test_json_constants_inside_strings_remain_literal_text():
+    result = parse_public_detail_jsonld(page(book(description="NaN et Infinity")), URL)
+    assert result["fields"]["description"] == "NaN et Infinity"
