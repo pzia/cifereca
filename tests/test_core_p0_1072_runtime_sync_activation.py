@@ -107,7 +107,9 @@ def test_runtime_selects_same_read_and_dispatches_only_after_a_commit(rig, monke
                 assert calls == ["wake", "get_admitted", "public"]
             else:
                 assert not hits and calls == ["wake"]
-        assert runtime.documentary_revision() == (1 if mode == "qualified" else 0)
+        # A committed lease and its terminal receipt both invalidate views,
+        # including a failed transport fence. Refusal before claim does not.
+        assert runtime.documentary_revision() == (2 if mode in ("qualified", "late_revoke") else 0)
         assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
         assert not root.exists()
     finally:
