@@ -70,11 +70,13 @@ def test_composition_disposes_only_same_surface_and_wires_all_save_buttons(monke
         assert kwargs['identity_editors'] == []
         assert kwargs['page_lifetime'].alive
         return save, reconnect
+    purchase_settings = Mock()
     patches = {
         'build_settings_shell': lambda **kwargs: shell,
         'bind_settings_actions': tracking, 'build_settings_editors': editors,
         'build_library_download_section': lambda **kwargs: NS(download_group=Widget()),
         'build_cleanup_settings': lambda *args, **kwargs: None,
+        'build_purchase_enrichment_settings': purchase_settings,
         'build_settings_application_interface': lambda **kwargs: NS(plugins_button=Widget()),
         'build_sync_settings_section': lambda **kwargs: kobo,
         'build_settings_action_bars': lambda **kwargs: bars,
@@ -90,6 +92,8 @@ def test_composition_disposes_only_same_surface_and_wires_all_save_buttons(monke
         host, standalone=standalone, Gtk=NS(), Adw=NS(), Gdk=NS(), TaskPriority=NS(),
         AdaptiveActionBar=Mock(), action_button=Mock(), add_css=Mock(), clear_box=Mock(), mirror_sensitivity=Mock(),
     )
+    purchase_settings.assert_called_once_with(host, section=shell.sections['sync'],
+                                              page_lifetime=page.lifetime, Gtk=NS(), Adw=NS())
     assert page.scroll is shell.scroll
     assert previous_main.alive is standalone
     assert previous_standalone.alive is not standalone

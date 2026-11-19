@@ -19,6 +19,7 @@ from .settings_diagnostics_section import build_settings_diagnostics_section
 from .settings_diagnostics_actions import bind_settings_diagnostics
 from .settings_commit_actions import bind_settings_commit
 from .settings_destructive_cleanup import build_cleanup_settings
+from .settings_purchase_enrichment import build_purchase_enrichment_settings
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,9 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
         section=sections["sync"], download_group=download_group,
         config=self.config, Gtk=Gtk, Adw=Adw,
     )
+
+    build_purchase_enrichment_settings(self, section=sections["sync"],
+                                       page_lifetime=page_lifetime, Gtk=Gtk, Adw=Adw)
 
     settings_bars = build_settings_action_bars(
         root=settings_root, heading=settings_heading,
