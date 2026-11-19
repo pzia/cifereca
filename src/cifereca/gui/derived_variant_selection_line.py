@@ -1,9 +1,10 @@
-"""#4520: private GTK receipt choice and targeted review; no recovery action."""
+"""#4520: private GTK receipt choice, targeted review and confirmed dry-run."""
 from __future__ import annotations
 
 from ..core.derived_variant_maintenance_review import admit_maintenance_review
 from ..core.derived_variant_recovery_selection import (
     RecoveryChoicePage, ReviewedRecoveryChoice, recovery_choices, review_recovery_choice,
+    preview_confirmed_recovery_choice,
 )
 from ..task_queue import TaskPriority
 
@@ -30,6 +31,7 @@ def add_derived_variant_selection_line(window, box, *, Adw):
     rows = []
     busy = False
     active = None
+    confirming = None
 
     def clear():
         nonlocal active
@@ -85,7 +87,7 @@ def add_derived_variant_selection_line(window, box, *, Adw):
             done(None)
 
     def list_page(captured, previous=None):
-        if busy or captured is None or not current(*captured):
+        if busy or confirming is not None or captured is None or not current(*captured):
             return
         clear()
         header.set_subtitle("Liste des reçus en cours…")
@@ -130,7 +132,7 @@ def add_derived_variant_selection_line(window, box, *, Adw):
             ))
 
     def check(captured, page, choice, row):
-        if busy or active is not page or not alive():
+        if busy or confirming is not None or active is not page or not alive():
             return
         if not current(*captured):
             clear()
@@ -147,13 +149,67 @@ def add_derived_variant_selection_line(window, box, *, Adw):
                 if verified else "Preuve insuffisante ou devenue périmée ; aucune reprise."
             )
             row.set_subtitle(_choice_subtitle(choice) + "\n" + message)
+            if verified:
+                ask_confirmation(captured, page, result, row)
 
         submit(captured, lambda: review_recovery_choice(
             service, page, choice, explicitly_requested=True,
         ), finish)
 
+    def ask_confirmation(captured, page, reviewed, row):
+        nonlocal confirming
+        if (confirming is not None or active is not page or not current(*captured)):
+            return
+        choice = reviewed.choice
+        dialog = Adw.MessageDialog.new(
+            window, "Vérifier la reprise à blanc ?",
+            f"Source : {choice.parent_relative}\nSortie : {choice.target_relative}\n\n"
+            "Les preuves seront revérifiées. Aucun fichier, droit ou enregistrement "
+            "ne sera modifié. La reprise effective reste désactivée.",
+        )
+        dialog.set_body_use_markup(False)
+        dialog.add_response("cancel", "Annuler")
+        dialog.add_response("simulate", "Confirmer la simulation")
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        confirming = dialog
+
+        def response(_dialog, answer):
+            nonlocal confirming
+            # A dialog may emit only one usable response. Never accept stale
+            # views, clicks from an earlier page, or a response after close.
+            if confirming is not dialog:
+                return
+            confirming = None
+            if active is not page or not current(*captured):
+                if alive():
+                    clear()
+                    header.set_subtitle("Contexte modifié ; relancer la liste.")
+                return
+            if answer != "simulate":
+                row.set_subtitle(_choice_subtitle(choice) + "\nSimulation annulée.")
+                return
+            row.set_subtitle(_choice_subtitle(choice) + "\nSimulation en cours…")
+
+            def finished(status):
+                if active is not page:
+                    return
+                message = (
+                    "Simulation vérifiée ; aucune reprise effectuée."
+                    if status == "verified_no_write"
+                    else "Simulation refusée ou indisponible ; nouvelle revue nécessaire."
+                )
+                row.set_subtitle(_choice_subtitle(choice) + "\n" + message)
+
+            submit(captured, lambda: preview_confirmed_recovery_choice(
+                service, page, reviewed, confirmed=True,
+            ), finished)
+
+        dialog.connect("response", response)
+        dialog.present()
+
     def start_clicked(_btn):
-        if busy or not alive():
+        if busy or confirming is not None or not alive():
             return
         captured = epoch()
         if captured is None or not current(*captured):

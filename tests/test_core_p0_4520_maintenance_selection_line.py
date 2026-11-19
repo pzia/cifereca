@@ -1,14 +1,29 @@
 """#4520: the GTK receipt list remains private, explicit and non-mutating."""
 from types import SimpleNamespace as NS
+from pathlib import Path
 
 from cifereca.gui import derived_variant_selection_line as gui
 from tests.test_core_p0_4520_recovery_operator import _setup
-from tests.test_core_ui_1358_maintenance_preview_cancellation import Button, Container
+from tests.test_core_ui_1358_maintenance_preview_cancellation import Button, Container, Dialog
 
 
 class Group(Container):
     def remove(self, row):
         self.children.remove(row)
+
+
+class ConfirmDialog(Dialog):
+    def set_body_use_markup(self, value):
+        self.markup = value
+
+    def set_default_response(self, value):
+        self.default = value
+
+    def set_close_response(self, value):
+        self.close = value
+
+    def respond(self, answer):
+        self.handlers["response"](self, answer)
 
 
 class Row(Container):
@@ -18,11 +33,13 @@ class Row(Container):
 
 def _mount(service):
     jobs = []
+    ConfirmDialog.shown.clear()
     host = NS(service=service, _closed=False, _route_display_token=object(),
               action_button=lambda label, _icon: Button(label),
               runner=NS(submit=lambda *args, **kw: jobs.append((args, kw))))
     box = Container()
-    gui.add_derived_variant_selection_line(host, box, Adw=NS(PreferencesGroup=Group, ActionRow=Row))
+    gui.add_derived_variant_selection_line(host, box, Adw=NS(PreferencesGroup=Group, ActionRow=Row,
+                         MessageDialog=ConfirmDialog))
     return host, jobs, box.children[0]
 
 
@@ -52,6 +69,15 @@ def test_private_explicit_review_never_writes(tmp_path):
         assert service.storage.metadata_get(reservation.key) == before
         assert len(service.storage.placements()) == 1
         assert not jobs
+        dialog, = ConfirmDialog.shown
+        assert dialog.default == "cancel" and dialog.markup is False
+        dialog.respond("simulate")
+        dialog.respond("simulate")
+        assert len(jobs) == 1
+        _complete(jobs)
+        assert "Simulation vérifiée" in receipt.subtitle
+        assert service.storage.metadata_get(reservation.key) == before
+        assert len(service.storage.placements()) == 1
     finally:
         service.storage.close()
 
@@ -74,5 +100,46 @@ def test_route_change_drops_page_and_stale_choice(tmp_path):
         args[2](page)
         assert len(group.children) == 1
         assert "Contexte modifié" in group.children[0].subtitle
+    finally:
+        service.storage.close()
+
+
+def test_confirmation_cancel_or_stale_never_queues_simulation(tmp_path):
+    service, intent, reservation = _setup(tmp_path)
+    try:
+        host, jobs, group = _mount(service)
+        group.children[0].children[0].click()
+        _complete(jobs)
+        receipt = group.children[1]
+        verify, = receipt.children
+        verify.click()
+        _complete(jobs)
+        ConfirmDialog.shown[-1].respond("cancel")
+        assert not jobs and "annulée" in receipt.subtitle
+        verify.click()
+        _complete(jobs)
+        host._route_display_token = object()
+        ConfirmDialog.shown[-1].respond("simulate")
+        assert not jobs and len(group.children) == 1
+        assert service.storage.metadata_get(reservation.key) is not None
+    finally:
+        service.storage.close()
+
+
+def test_confirmation_revalidates_after_link_disappears(tmp_path):
+    service, intent, reservation = _setup(tmp_path)
+    try:
+        host, jobs, group = _mount(service)
+        group.children[0].children[0].click()
+        _complete(jobs)
+        receipt = group.children[1]
+        receipt.children[0].click()
+        _complete(jobs)
+        ConfirmDialog.shown[-1].respond("simulate")
+        Path(intent.candidate_path).unlink()
+        _complete(jobs)
+        assert "Simulation refusée" in receipt.subtitle
+        assert service.storage.metadata_get(reservation.key) is not None
+        assert len(service.storage.placements()) == 1
     finally:
         service.storage.close()
