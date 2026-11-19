@@ -7,14 +7,14 @@ source context guard. This is NOT installed by default.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from . import notice_c_job_journal as journal
 from .notice_c_purchase_execution import PurchaseIntentExecution, PreparedPurchaseSource
 from .notice_c_purchase_association import (
     record_purchase_association_txn, reattest_current_purchase_association,
 )
-from .notice_c_purchase_intent import request_purchase_enrichment_intents
+from .notice_c_purchase_intent import _MAX_BATCH, request_purchase_enrichment_intents
 from .notice_c_purchase_publication import (
     prepare_purchase_public_observation, publish_purchase_public_txn,
 )
@@ -29,6 +29,7 @@ class PurchaseHandoffResult:
     requested: int
     admitted: int
     deferred: int
+    unrequested: int = 0
 
 
 def make_purchase_enrichment_sink(execution, *, private_provider_id, public_session,
@@ -42,8 +43,10 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
     hold_context pins the original private runtime generation, not the
     current viewer; it must provide the same guarantees as execution.attest.
 
-    Bounded handoff (one atomic batch, <=32). Larger input must be chunked
-    by the coordinator and explicitly surfaced as deferred, never truncated.
+    Bounded atomic chunks of <=32, from one already read inventory. Intent
+    persistence is independent of the limited live admission registry.
+    An interrupted handoff reports the unrequested suffix explicitly; a
+    future qualified inventory can resume durable deferred work.
     No worker wait, transport or provider callbacks occur in this sink.
     """
     if (type(execution) is not PurchaseIntentExecution
@@ -56,33 +59,76 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
     def sink(snapshot, candidates):
         if (type(snapshot) is not ProviderRightsSnapshot
                 or snapshot.scope.provider_id != private_provider_id
-                or type(candidates) is not tuple or not 1 <= len(candidates) <= 32
+                or snapshot.status not in ("success", "partial") or snapshot.resume_cursor
+                or type(candidates) is not tuple or not 1 <= len(candidates) <= 10_000
                 or any(type(item) is not PurchaseEnrichmentCandidate for item in candidates)):
             raise ValueError("notice_purchase_invalid_handoff")
         snapshot, candidates = deepcopy(snapshot), deepcopy(candidates)
-        now = execution._now()
-        with hold_context() as allowed:
-            if allowed is not True:
-                raise ValueError("notice_purchase_context_changed")
-            refs = request_purchase_enrichment_intents(
-                execution._storage, snapshot, candidates, now=now,
-                context_current=lambda: allowed is True,
+        # Validate the entire candidate coordinate set before the first
+        # write, including ambiguity spanning different chunks. Keep only
+        # exact positive rows from this same read, not a new inventory claim.
+        rows = {(row.edition_id, row.right_id, row.kind): row for row in snapshot.rights}
+        seen = set()
+        proofs = []
+        for candidate in candidates:
+            source = candidate.source
+            coordinate = (source.edition_id, source.resource_id, source.kind)
+            row = rows.get(coordinate)
+            if (source.scope != snapshot.scope or source.branch != snapshot.branch
+                    or coordinate in seen or row is None or not row.provider_attested
+                    or row.state != "active" or row.observed_at != candidate.observed_at):
+                raise ValueError("notice_purchase_invalid_handoff")
+            seen.add(coordinate)
+            proofs.append(row)
+
+        requested = admitted = deferred = 0
+        for offset in range(0, len(candidates), _MAX_BATCH):
+            chunk = candidates[offset:offset + _MAX_BATCH]
+            # Never present a subset as a complete branch.
+            portion = replace(
+                snapshot, rights=tuple(proofs[offset:offset + _MAX_BATCH]),
+                status="partial", coverage="partial", pagination_complete=None,
             )
-        admitted = deferred = 0
-        for ref, candidate in zip(refs, candidates):
-            job = journal.read_job(execution._storage, ref)
-            if job.state == "current":
+            try:
                 with hold_context() as allowed:
                     if allowed is not True:
-                        deferred += 1
-                        continue
-                    ref = reattest_current_purchase_association(
-                        execution._storage, ref, snapshot, candidate, now=execution._now(),
+                        raise ValueError("notice_purchase_context_changed")
+                    refs = request_purchase_enrichment_intents(
+                        execution._storage, portion, chunk, now=execution._now(),
+                        context_current=lambda: allowed is True,
                     )
+            except ValueError:
+                if not requested:
+                    raise
+                break
+            requested += len(refs)
+            accepted, waiting = offer(portion, chunk, refs)
+            admitted += accepted
+            deferred += waiting
+        if admitted:
+            wake()
+        return PurchaseHandoffResult(requested, admitted, deferred, len(candidates) - requested)
+
+    def offer(snapshot, candidates, refs):
+        admitted = deferred = 0
+        for ref, candidate in zip(refs, candidates):
+            try:
                 job = journal.read_job(execution._storage, ref)
                 if job.state == "current":
-                    continue
-            spec = job.spec
+                    with hold_context() as allowed:
+                        if allowed is not True:
+                            deferred += 1
+                            continue
+                        ref = reattest_current_purchase_association(
+                            execution._storage, ref, snapshot, candidate, now=execution._now(),
+                        )
+                    job = journal.read_job(execution._storage, ref)
+                    if job.state == "current":
+                        continue
+                spec = job.spec
+            except ValueError:
+                deferred += 1
+                continue
 
             def execute(selected, check_authority, control, *, spec=spec):
                 if not _anonymous_session(public_session, getattr(public_session, "provider_id", None)):
@@ -124,8 +170,6 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                 # Admission pressure or revoked context does not roll back A
                 # or the durable intentions already committed above.
                 deferred += 1
-        if admitted:
-            wake()
-        return PurchaseHandoffResult(len(refs), admitted, deferred)
+        return admitted, deferred
 
     return sink
