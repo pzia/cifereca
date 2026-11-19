@@ -114,3 +114,71 @@ def test_budget_and_existing_transaction_do_not_claim_completion(tmp_path, monke
         if sql.in_transaction:
             sql.rollback()
         db.close()
+
+
+def test_local_symlink_observation_is_correlated_before_hash(tmp_path, monkeypatch):
+    service, intent, first = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, first)
+        stage = Path(intent.staged_path).with_name("second-stage.epub")
+        target = Path(intent.candidate_path).with_name("second.epub")
+        stage.write_bytes(b"second derivative")
+        info = stage.stat()
+        other = replace(intent, staged_path=str(stage), candidate_path=str(target),
+                        output_sha256=hashlib.sha256(stage.read_bytes()).hexdigest(),
+                        output_size=info.st_size,
+                        output_stamp=(info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns),
+                        options_fingerprint="second")
+        second = journal.reserve_derived_publication(db, other)
+        os.link(stage, target)
+        _publish_reserved(db, other, second)
+        alias = Path(intent.parent_path).parent / "alias"
+        alias.symlink_to(intent.staged_path)
+
+        def no_hash(*args):
+            raise AssertionError("an alias observation must block before hashing")
+
+        monkeypatch.setattr(review, "_observe", no_hash)
+        report = _review(db, tmp_path)
+        assert report["status"] == "observed" and report["checked"] == 2
+        assert report["counts"]["known_symlink_dependency"] == 1
+        assert report["counts"]["symlink_dependency_unverified"] == 1
+        assert report["counts"]["linked_pair_observed"] == 0
+        assert not report["retention_authorized"]
+    finally:
+        db.close()
+
+
+def test_symlink_added_during_hash_discards_whole_page(tmp_path, monkeypatch):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        original = review._observe
+
+        def changed(intent, profile, current):
+            (profile / "late-alias").symlink_to(intent.staged_path)
+            return original(intent, profile, current)
+
+        monkeypatch.setattr(review, "_observe", changed)
+        report = _review(db, tmp_path)
+        assert report["status"] == "evidence_changed"
+        assert report["checked"] == 0 and not any(report["counts"].values())
+    finally:
+        db.close()
+
+
+def test_incomplete_symlink_walk_never_claims_a_positive_page(tmp_path, monkeypatch):
+    from cifereca.core import derived_variant_stage_symlinks as symlinks
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        monkeypatch.setattr(symlinks, "_MAX_ENTRIES", 1)
+        report = _review(db, tmp_path)
+        assert report["status"] == "incomplete"
+        assert report["checked"] == 0 and not any(report["counts"].values())
+        assert not report["complete_committed_page"]
+    finally:
+        db.close()

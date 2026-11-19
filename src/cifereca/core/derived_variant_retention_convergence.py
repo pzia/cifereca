@@ -17,6 +17,7 @@ from .derived_variant_publication import DerivedPublicationConflict
 from .derived_variant_retention_review import _canonical, _directory
 from .derived_variant_retention_physical import _directory_stamp, _observe
 from .derived_variant_stage_dependencies import scan_stage_references
+from .derived_variant_stage_symlinks import _Incomplete, _receipt_alias_verdict, _walk
 from .library_inventory import _open_root
 
 _LIMIT = 4
@@ -24,7 +25,7 @@ _MAX_BYTES = 1024 ** 3
 _SECONDS = 3
 _CATEGORIES = (
     "canonical_sql_unverified", "known_dependency", "external_dependency_unverified",
-    "physical_unverified",
+    "known_symlink_dependency", "symlink_dependency_unverified", "physical_unverified",
     "linked_pair_observed", "stage_absent_target_verified",
     "additional_links_observed",
 )
@@ -114,15 +115,44 @@ def review_converged_derived_retention(storage, *, library_root, identity_id,
         profile = library_root / directory
         counts = dict.fromkeys(_CATEGORIES, 0)
         checked = budget = 0
+        stages = tuple(intent.staged_path
+                       for _key, _digest, intent, verdict in owned[:_LIMIT]
+                       if verdict == "canonical"
+                       and Path(intent.staged_path).is_relative_to(profile)
+                       and Path(intent.staged_path) != profile)
+        witness = _walk(profile, stages, deadline=deadline) if stages else None
+        invalidated = False
+        incomplete = False
 
         def current():
+            nonlocal invalidated, incomplete
+            if invalidated or incomplete:
+                return False
             if _snapshot(storage, identity_id) != snapshot:
+                invalidated = True
                 return False
             fd = _open_root(library_root)
             try:
-                return _directory_stamp(fd) == stamp
+                if _directory_stamp(fd) != stamp:
+                    invalidated = True
+                    return False
             finally:
                 os.close(fd)
+            if witness is not None:
+                try:
+                    if _walk(profile, stages, deadline=deadline) != witness:
+                        invalidated = True
+                        return False
+                except _Incomplete:
+                    incomplete = True
+                    return False
+                except OSError:
+                    invalidated = True
+                    return False
+            return True
+
+        def changed_report():
+            return _report("incomplete" if incomplete else "evidence_changed")
 
         for _key, _digest, intent, verdict in owned[:_LIMIT]:
             if monotonic() >= deadline:
@@ -130,18 +160,25 @@ def review_converged_derived_retention(storage, *, library_root, identity_id,
             if verdict != "canonical":
                 counts[verdict] += 1
             else:
-                cost = intent.parent_stamp[2] + intent.output_size
-                if cost > _MAX_BYTES - budget:
-                    break
-                budget += cost
-                result = _observe(intent, profile, current)
-                counts["physical_unverified" if result == "unverified" else result] += 1
+                alias = (_receipt_alias_verdict(witness, intent.staged_path)
+                         if intent.staged_path in stages else "no_local_symlink_observed")
+                if alias != "no_local_symlink_observed":
+                    counts[alias] += 1
+                else:
+                    cost = intent.parent_stamp[2] + intent.output_size
+                    if cost > _MAX_BYTES - budget:
+                        break
+                    budget += cost
+                    result = _observe(intent, profile, current)
+                    counts["physical_unverified" if result == "unverified" else result] += 1
             checked += 1
             if not current():
-                return _report("evidence_changed")
+                return changed_report()
         if not current():
-            return _report("evidence_changed")
+            return changed_report()
         return _report("observed", total=len(owned), checked=checked, counts=counts)
+    except _Incomplete:
+        return _report("incomplete")
     except (DerivedJournalConflict, DerivedPublicationConflict, sqlite3.Error,
             OSError, TypeError, ValueError, RuntimeError, RecursionError, KeyError):
         return _report("unavailable")
