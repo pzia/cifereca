@@ -17,15 +17,16 @@ from .canonical_recovery import _scope
 from .source_convergence import SourceKey
 
 
-def _coordinate(value):
-    return (type(value) is str and 0 < len(value) <= 1024
+def _coordinate(value, *, empty=False):
+    return (type(value) is str and (empty or bool(value)) and len(value) <= 1024
             and all(32 <= ord(ch) != 127 for ch in value))
 
 
 def _candidate(storage, source):
     """Select only a unique recorded receipt and present local placement."""
     coords = tuple(_scope(source))
-    if len(coords) != 8 or not all(_coordinate(value) for value in coords):
+    if (len(coords) != 8 or not all(_coordinate(value, empty=(index == 3))
+                                    for index, value in enumerate(coords))):
         return "scope_unverified", None
     identity = coords[0]
     reference_id = _stable("source", *coords)

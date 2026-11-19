@@ -1,0 +1,145 @@
+"""Synthetic end-to-end Core operator review of historical evidence."""
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+
+from cifereca.core import adept_historical_maintenance as review
+from cifereca.gui.adept_historical_maintenance_line import _display
+from tests.test_core_p0_3171_atomic_publication_v14 import (
+    store, register, new_source, target, publish, rows, BYTES,
+)
+
+
+def _ledger(store, *, aid="history-0", identity="A", account="buyer-A",
+            credential="card-A", loan="loan-1"):
+    record = {
+        "acquisition_id": aid, "identity_id": identity, "provider_id": "seller",
+        "credential_id": credential, "account_id": account, "item_id": "edition",
+        "status": "complete", "strategy": "loan_auto", "executor": "kobo-adept",
+        "metadata": {"provider_loan_id": loan, "adept_binding": {
+            "adept_profile_id": "historical-adobe", "adept_loan_id": "adobe-loan",
+            "loan_state": "returned", "inventory_status": "resolved",
+            "inventory_checked_at": 1234,
+        }},
+    }
+    store.acquisition_put(record)
+    return record
+
+
+def _setup(store, tmp_path, *, account="buyer-A"):
+    source, snapshot = new_source(kind="loan", branch="loans", right="loan-1", account=account)
+    register(store, "A", "seller", "card-A", account=account)
+    root = tmp_path / "EBooks"
+    path = target(tmp_path, "A")
+    publication = publish(store, root, path, source, snapshot, adept_receipt_ref="opaque-receipt")
+    _ledger(store, account=account)
+    service = SimpleNamespace(storage=store, config={"library.directory": str(root)},
+                              current_identity=SimpleNamespace(identity_id="A", directory_name="A"),
+                              _account_context_epoch=0)
+    return service, source, path, publication
+
+
+def _run(service, **kwargs):
+    request = review.admit_historical_review(service)
+    assert request is not None
+    return review.run_historical_review(service, request, **kwargs)
+
+
+def test_historical_observations_are_independent_and_read_only(store, tmp_path):
+    service, _, path, _ = _setup(store, tmp_path)
+    baseline = rows(store), store.acquisition_get("history-0")
+    page = _run(service)
+    row, = page["rows"]
+    assert row["historical_license_state"] == "returned_recorded"
+    assert row["recorded_adept_profile_id"] == "historical-adobe"
+    assert row["inventory_checked_at"] == 1234
+    assert row["publication"]["canonical_origin_records"] == "provider_and_adept_recorded"
+    assert row["local_bytes"]["selection"] == "not_requested"
+    assert row["provider_loan_state"] == "not_checked"
+    assert not row["activation_attested"] and not row["inventory_transport_attested"]
+    assert not page["mutation_authorized"] and not page["complete_provider_inventory"]
+    physical = _run(service, verify_local_bytes=True)["rows"][0]
+    assert physical["local_bytes"]["evidence"]["placement_evidence"] == "verified_artifact_bytes"
+    assert "historical-adobe" in _display(page)
+    assert "opaque-receipt" not in _display(page)
+    assert baseline == (rows(store), store.acquisition_get("history-0"))
+    assert path.read_bytes() == BYTES
+
+
+def test_same_loan_other_account_not_adopted_and_legacy_gap_visible(store, tmp_path):
+    service, _, _, _ = _setup(store, tmp_path)
+    _ledger(store, aid="history-1", account="other")
+    _ledger(store, aid="history-2", loan="other")
+    reports = _run(service)["rows"]
+    assert reports[0]["canonical_status"] == "unique_source_record"
+    for row in reports[1:]:
+        assert row["canonical_status"] == "source_not_recorded"
+        assert row["publication"] is None and row["local_bytes"] is None
+        assert row["historical_license_state"] == "returned_recorded"
+
+
+def test_multiple_branches_block_candidate(store, tmp_path, monkeypatch):
+    service, _, _, _ = _setup(store, tmp_path)
+    with store._lock, store._connect() as db:
+        db.execute(
+            "INSERT INTO source_references (source_reference_id,identity_id,provider_id,"
+            "credential_id,account_id,branch_id,edition_id,right_id,reference_kind,created_at,updated_at) "
+            "VALUES ('other-ref','A','seller','card-A','buyer-A','other-branch','edition','loan-1','loan',1,1)"
+        )
+    monkeypatch.setattr(review, "review_historical_loan_diagnostic",
+                        Mock(side_effect=AssertionError("ambiguous branch")))
+    row, = _run(service, verify_local_bytes=True)["rows"]
+    assert row["canonical_status"] == "ambiguous_branch"
+    review.review_historical_loan_diagnostic.assert_not_called()
+
+
+def test_page_exact_identity_and_revocation(store, tmp_path):
+    service, _, _, _ = _setup(store, tmp_path)
+    register(store, "B", "seller", "card-B", account="buyer-B")
+    _ledger(store, aid="history-B", identity="B", credential="card-B", account="buyer-B")
+    for i in range(1, 6):
+        _ledger(store, aid=f"history-{i}", loan=f"loan-{i+1}")
+    page = _run(service)
+    assert [row["acquisition_id"] for row in page["rows"]] == [
+        "history-0", "history-1", "history-2", "history-3",
+    ]
+    rest = _run(service, cursor=page["next_cursor"])
+    assert [row["acquisition_id"] for row in rest["rows"]] == ["history-4", "history-5"]
+    assert rest["next_cursor"] is None
+    request = review.admit_historical_review(service)
+    service._account_context_epoch += 1
+    assert review.run_historical_review(service, request) is None
+
+
+def test_page_changed_during_review_is_discarded(store, tmp_path, monkeypatch):
+    service, _, _, _ = _setup(store, tmp_path)
+    original = review._row
+    def changed(request, row, verify):
+        value = original(request, row, verify)
+        with store._lock, store._connect() as db:
+            db.execute("UPDATE acquisition_ledger SET status='retryable_error' WHERE acquisition_id='history-0'")
+        return value
+    monkeypatch.setattr(review, "_row", changed)
+    assert _run(service) is None
+
+
+def test_empty_primary_account_is_not_unknown_scope(store, tmp_path):
+    service, _, _, _ = _setup(store, tmp_path, account="")
+    row, = _run(service, verify_local_bytes=True)["rows"]
+    assert row["account_id"] == ""
+    assert row["canonical_status"] == "unique_source_record"
+    assert row["local_bytes"]["evidence"]["placement_evidence"] == "verified_artifact_bytes"
+
+
+def test_native_maintenance_hook_exists_with_or_without_tools():
+    import ast
+    main = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+    tree = ast.parse(main.read_text())
+    method = next(node for node in ast.walk(tree)
+                  if isinstance(node, ast.FunctionDef) and node.name == "_refresh_tools_page")
+    calls = [node for node in ast.walk(method) if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Name)
+             and node.func.id == "add_adept_historical_maintenance_line"]
+    assert len(calls) == 2
