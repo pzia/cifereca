@@ -117,10 +117,41 @@ def _unique_pairs(pairs):
     return result
 
 
-def _slot(intent):
-    fields = (intent.identity_id, intent.parent_placement_id, intent.transformer_id,
-              intent.profile_id, intent.options_fingerprint)
+def _recipe_slot(identity_id, placement_id, transformer_id, profile_id, options_fingerprint):
+    fields = (identity_id, placement_id, transformer_id, profile_id, options_fingerprint)
     return _PREFIX + hashlib.sha256(_encode(fields).encode("ascii")).hexdigest()
+
+
+def _slot(intent):
+    return _recipe_slot(intent.identity_id, intent.parent_placement_id,
+                        intent.transformer_id, intent.profile_id, intent.options_fingerprint)
+
+
+def require_no_pending_derived_recipe(
+    storage, *, identity_id, placement_id, transformer_id,
+    profile_id, options_fingerprint,
+):
+    """Read-only early refusal, not an admission or a replacement for reserve.
+
+    An interrupted exact recipe must receive a supervised review before a
+    repeat transform allocates new staging bytes. A concurrent reservation
+    can still occur after this observation; only the existing transaction
+    in reserve_derived_publication authorizes the publication slot.
+    """
+    if (not all(_text(value) for value in (identity_id, placement_id, transformer_id))
+            or not all(_text(value, required=False)
+                       for value in (profile_id, options_fingerprint))):
+        raise DerivedJournalConflict("derived_journal_invalid_intent")
+    key = _recipe_slot(identity_id, placement_id, transformer_id, profile_id,
+                       options_fingerprint)
+    with storage._lock:
+        db = storage._connect()
+        if db.in_transaction:
+            raise DerivedJournalConflict("derived_journal_nested_transaction")
+        # Presence, even of a corrupt value, blocks a repeat of this recipe.
+        # No private payload, digest or path is returned to the caller.
+        if db.execute("SELECT 1 FROM metadata WHERE key=?", (key,)).fetchone():
+            raise DerivedJournalConflict("derived_journal_slot_occupied")
 
 
 def _decode(key, raw):
