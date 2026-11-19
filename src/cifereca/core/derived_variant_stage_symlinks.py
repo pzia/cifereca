@@ -43,6 +43,7 @@ def _walk(profile, stages, *, deadline):
     # Keep only bounded private witnesses for comparison, not for diagnostics.
     # Directory names are never reopened through a symlink.
     entries = {}
+    directories = set()
     direct = unresolved = 0
 
     def budget():
@@ -55,6 +56,12 @@ def _walk(profile, stages, *, deadline):
         if depth > _MAX_DEPTH:
             raise _Incomplete()
         before = _stamp(os.fstat(fd))
+        # Do not cross a distinct-device mount or walk a directory inode
+        # twice (e.g. a same-device bind alias). An incomplete walk is not
+        # absence evidence. Same-device mounts cannot all be detected here.
+        if before[0] != root[0] or before[:2] in directories:
+            raise _Incomplete()
+        directories.add(before[:2])
         with os.scandir(fd) as iterator:
             for entry in iterator:
                 budget()
@@ -77,6 +84,8 @@ def _walk(profile, stages, *, deadline):
                         unresolved += 1
                 entries[str(path)] = (expected, link)
                 if stat.S_ISDIR(info.st_mode):
+                    if expected[0] != root[0] or expected[:2] in directories:
+                        raise _Incomplete()
                     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
                     child = os.open(name, flags, dir_fd=fd)
                     try:

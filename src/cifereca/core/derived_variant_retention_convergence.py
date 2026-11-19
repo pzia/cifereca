@@ -97,7 +97,9 @@ def review_converged_derived_retention(storage, *, library_root, identity_id,
     First four committed rows, max 1 GiB of attested input/output hashed,
     cooperative time bound between rows. SQL classifications and all journal
     receipt digests are rechecked while file descriptors are pinned and
-    before returning. Evidence changes discard the entire observed page.
+    before returning. The nofollow symlink witness spans the supplied
+    library root, including sibling profiles and unregistered directories.
+    Evidence changes discard the entire observed page.
     """
     if (explicitly_requested is not True or not isinstance(library_root, Path)
             or not library_root.is_absolute() or library_root == Path("/")
@@ -120,7 +122,9 @@ def review_converged_derived_retention(storage, *, library_root, identity_id,
                        if verdict == "canonical"
                        and Path(intent.staged_path).is_relative_to(profile)
                        and Path(intent.staged_path) != profile)
-        witness = _walk(profile, stages, deadline=deadline) if stages else None
+        # A link in a sibling profile can still consume this owner's stage.
+        # Never follow it or inspect any path outside the supplied root.
+        witness = _walk(library_root, stages, deadline=deadline) if stages else None
         invalidated = False
         incomplete = False
 
@@ -140,7 +144,7 @@ def review_converged_derived_retention(storage, *, library_root, identity_id,
                 os.close(fd)
             if witness is not None:
                 try:
-                    if _walk(profile, stages, deadline=deadline) != witness:
+                    if _walk(library_root, stages, deadline=deadline) != witness:
                         invalidated = True
                         return False
                 except _Incomplete:

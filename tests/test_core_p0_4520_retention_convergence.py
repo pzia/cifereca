@@ -182,3 +182,85 @@ def test_incomplete_symlink_walk_never_claims_a_positive_page(tmp_path, monkeypa
         assert not report["complete_committed_page"]
     finally:
         db.close()
+
+
+def test_cross_profile_alias_blocks_exact_receipt_before_hash(tmp_path, monkeypatch):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        sibling = tmp_path / "other-profile"
+        sibling.mkdir()
+        (sibling / "alias").symlink_to(os.path.relpath(intent.staged_path, sibling))
+
+        def no_hash(*args):
+            raise AssertionError("cross-profile alias must block before hashing")
+
+        monkeypatch.setattr(review, "_observe", no_hash)
+        result = _review(db, tmp_path)
+        assert result["status"] == "observed"
+        assert result["counts"]["known_symlink_dependency"] == 1
+        assert result["counts"]["linked_pair_observed"] == 0
+        assert not result["all_dependencies_verified"]
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()
+
+
+def test_root_level_alias_and_unresolved_sibling_link_are_conservative(tmp_path):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        alias = tmp_path / "root-alias"
+        alias.symlink_to(Path(intent.staged_path).parent, target_is_directory=True)
+        assert _review(db, tmp_path)["counts"]["known_symlink_dependency"] == 1
+        alias.unlink()
+        sibling = tmp_path / "other-profile"
+        sibling.mkdir()
+        (sibling / "unresolved").symlink_to("unknown-chain")
+        result = _review(db, tmp_path)
+        assert result["counts"]["symlink_dependency_unverified"] == 1
+        assert not result["retention_authorized"]
+    finally:
+        db.close()
+
+
+def test_cross_profile_alias_created_during_hash_discards_page(tmp_path, monkeypatch):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        sibling = tmp_path / "other-profile"
+        sibling.mkdir()
+        original = review._observe
+
+        def changed(intent, profile, current):
+            (sibling / "late-alias").symlink_to(intent.staged_path)
+            return original(intent, profile, current)
+
+        monkeypatch.setattr(review, "_observe", changed)
+        result = _review(db, tmp_path)
+        assert result["status"] == "evidence_changed"
+        assert result["checked"] == 0 and not any(result["counts"].values())
+    finally:
+        db.close()
+
+
+def test_full_root_budget_is_not_reset_per_profile(tmp_path, monkeypatch):
+    from cifereca.core import derived_variant_stage_symlinks as symlinks
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        for i in range(3):
+            folder = tmp_path / ("other-" + str(i))
+            folder.mkdir()
+            (folder / "ordinary").write_bytes(b"fixture")
+        monkeypatch.setattr(symlinks, "_MAX_ENTRIES", 3)
+        result = _review(db, tmp_path)
+        assert result["status"] == "incomplete"
+        assert not result["complete_committed_page"]
+        assert not result["retention_authorized"]
+    finally:
+        db.close()
