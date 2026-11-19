@@ -4,6 +4,7 @@ from __future__ import annotations
 from ..core.derived_variant_maintenance_review import (
     admit_maintenance_review, read_maintenance_review,
 )
+from .derived_variant_capacity_line import add_derived_capacity_line
 from .derived_variant_selection_line import add_derived_variant_selection_line
 from ..storage import Storage
 from ..task_queue import TaskPriority
@@ -81,5 +82,6 @@ def add_derived_variant_maintenance_line(window, box, *, Gtk, Adw):
             done(None)
 
     button.connect("clicked", clicked)
+    add_derived_capacity_line(window, group, Adw=Adw)
     add_derived_variant_selection_line(window, box, Adw=Adw)
     return True
