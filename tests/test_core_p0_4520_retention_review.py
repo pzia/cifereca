@@ -47,7 +47,7 @@ def test_incomplete_sql_proof_is_not_a_retention_witness(tmp_path, damage):
         placement = _publish_reserved(db, intent, reservation)
         with db._lock, db._connect() as sql:
             if damage == "origin":
-                sql.execute("UPDATE origin_links SET evidence_ref=? WHERE origin_kind='derived'", ("wrong",))
+                sql.execute("UPDATE origin_links SET metadata_json=? WHERE origin_kind='derived'", ("{}",))
             else:
                 sql.execute("UPDATE placements SET state='missing' WHERE placement_id=?",
                             (intent.parent_placement_id if damage == "parent" else placement,))
