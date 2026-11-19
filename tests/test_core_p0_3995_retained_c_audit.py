@@ -225,3 +225,47 @@ def test_retained_language_audit_recipes(tmp_path, raw_a, raw_b, verdict):
         assert db.entitlements() == [] and db.acquisitions() == []
     finally:
         db.close()
+
+
+
+def test_single_language_declaration_is_not_multisource_concordance(tmp_path):
+    from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
+
+    filename = tmp_path / "single-language.sqlite"
+    db = Storage(filename)
+    try:
+        a, _, path = _real_origins(db, tmp_path)
+        def declared(provider, record, url):
+            row = verified_public(source_provider=provider, record_id=record,
+                                  title="Même titre", thumbnail_url=url)
+            row.metadata = {
+                "languages": ["fr"],
+                "bibliography_evidence": {"languages": {
+                    "raw_tags": ["fre"], "source": provider + ".fixture",
+                    "source_field": "dc.language", "scope": row.scenario,
+                    "confidence": "explicit_record_field", "freshness": "search_response",
+                }},
+            }
+            return persist(db, row, at=100)
+        first = declared("seller-a", "edition-a", A_URL)
+        own = persist_exact_public_search_cover(db, first)
+        assert own.sources[0].public_bibliography.language_observation.languages == ("fr",)
+        assert evict_notice_cover(db, first.document, expected_epoch=first.epoch)
+    finally:
+        db.close()
+    db = Storage(filename)
+    try:
+        row, _ = _views(db, a.artifact_id, a.placement_id, path)
+        service = NS(storage=db, identity_by_id=lambda owner: object() if owner == "A" else None,
+                     _account_context_epoch=1, _source_context_epoch=1,
+                     library_entries=lambda **kwargs: [row])
+        broker = CatalogBrokerImpl(service)
+        result = broker.library_language_audit(identity_id="A")
+        assert result["entries"] == 1
+        assert result["provenance"] == {
+            "concordant": 0, "divergent": 0, "partial": 1, "unknown": 0,
+        }
+        assert "_public_canonical_document_link" not in row
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()

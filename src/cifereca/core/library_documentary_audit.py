@@ -126,7 +126,9 @@ def _classify_language_sources(values):
         return "divergent"
     if not sets:
         return "unknown"
-    return "partial" if any(not value for value in values) else "concordant"
+    # One explicit declaration is evidence, not corroboration. Only two
+    # or more complete exact-source declarations can agree with each other.
+    return "partial" if len(values) < 2 or any(not value for value in values) else "concordant"
 
 
 def _language_provenance(storage, row, owner):
