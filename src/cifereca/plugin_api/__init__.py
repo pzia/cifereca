@@ -90,6 +90,7 @@ from .version import MANIFEST_VERSION, PLUGIN_API_VERSION
 from .contracts import (ContractStatus, ContractDefinition, ContractCheck, CONTRACT_REGISTRY, contract_definition, split_contract, capability_name_valid, contract_version_matches, check_service_contract)
 from cifereca.language import normalize_language_tag
 from cifereca.filename_normalization import sanitize_filename_component
+from cifereca.filename_suffixes import split_filename_suffix
 from cifereca.descriptions import description_text, description_element
 from cifereca.diagnostics import redact_text
 # Presentation-only helper shared with GTK; no reverse import into GUI.
@@ -159,7 +160,7 @@ __all__ = [
     "UiActionContext", "UiBookListHost", "UiBookDetailHost", "UiFacetHost", "UiActionHost", "UiBookNavigationHost", "UiLoadedSearchNoticeHost", "UiKnownSearchNoticeHost", "UiPluginManagementHost",
     "ReaderUsbExecutionBroker", "CatalogBroker", "CatalogueSourceInventoryBroker", "KnownPublicNoticeBroker", "LibraryCoverAuditBroker", "ReleaseUpdateReadBroker", "AcquisitionBroker", "SynchronizationBroker", "SourceSyncConsentBroker", "SourceInventoryRefreshScheduleBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DigitalLoanAvailabilityReadBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
     "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryReconciliationReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker",
-    "normalize_language_tag", "sanitize_filename_component", "prefer_downloads_for_save", "description_text", "description_element", "redact_text",
+    "normalize_language_tag", "sanitize_filename_component", "split_filename_suffix", "prefer_downloads_for_save", "description_text", "description_element", "redact_text",
     "normalize_acquisition_offers", "attested_offer_formats", "rank_acquisition_offers", "acquisition_format_projection", "ArtifactInspection", "detect_artifact_format", "inspect_artifact", "inspect_artifact_content", "publish_artifact_content", "publish_artifact_file",
     "ContractStatus", "ContractDefinition", "ContractCheck", "CONTRACT_REGISTRY", "contract_definition", "split_contract", "capability_name_valid", "contract_version_matches", "check_service_contract",
     "UiActionContribution", "UiPageContribution", "UiPageHost", "UiPerformanceHost", "UiSearchNavigationHost", "UiPublicNoticeCoverHost", "UiPublicNoticeCoverBindingHost", "UiIdentityHost", "UiIdentityViewHost", "UiMasterDetailHost", "UiBookMasterDetailView", "UiLocalQueryHost", "UiLocalQueryControls", "UiLocalDocumentFilters", "UiBookListEntry", "UiBookDetailAction", "DocumentLink", "UiBookDetailPresentation", "UiPageActionHost", "UiPageProvider", "UiTitlebarProvider", "WidgetCatalog",
