@@ -134,3 +134,50 @@ def test_page_continuation_invalidated_by_sql_or_identity_change(store, tmp_path
     assert review.run_organizer_review(service, scope, cursor=continuation) is None
     service._source_context_epoch += 1
     assert review.run_organizer_review(service, scope) is None
+
+
+@pytest.mark.parametrize("stale", [False, True])
+def test_native_organizer_only_runs_on_click_and_rejects_stale_delivery(store, tmp_path, stale):
+    from cifereca.gui.library_organizer_line import add_library_organizer_line
+    from tests.test_core_ui_1358_maintenance_preview_cancellation import Button, Container
+
+    class Label(Button):
+        def __init__(self, **kwargs):
+            super().__init__()
+            self.text = ""
+        def set_wrap(self, value): pass
+        def set_selectable(self, value): pass
+        def set_text(self, value): self.text = value
+
+    root, _ = setup_copies(store, tmp_path, (
+        "Acquisitions/opaque.pdf", "Livres/Autrice/Autrice - Roman.pdf",
+    ))
+    service = _service(store, root)
+    tasks = []
+    host = NS(service=service, _closed=False, _route_display_token=object(),
+              _identity_context_generation=1, action_button=lambda label, _: Button(label),
+              runner=NS(submit=lambda *args, **kwargs: tasks.append(args)))
+    gtk = NS(Box=lambda **kw: Container(), Orientation=NS(HORIZONTAL=0),
+             Button=Button, Label=Label)
+    adw = NS(PreferencesGroup=Container, ActionRow=Container)
+    box = Container()
+    assert add_library_organizer_line(host, box, Gtk=gtk, Adw=adw)
+    group, actions, detail = box.children
+    start, = group.children[0].children
+    following, accept = actions.children
+    assert not tasks and not detail.visible and not accept.sensitive
+    start.click()
+    start.click()
+    assert len(tasks) == 1
+    value = tasks[0][1]()
+    if stale:
+        host._route_display_token = object()
+    tasks[0][2](value)
+    tasks[0][2](value)
+    if stale:
+        assert not detail.visible and not accept.sensitive
+    else:
+        assert "Copie recommandée" in detail.text and accept.sensitive
+        accept.click()
+        assert "1 sélectionnés" in detail.text and not accept.sensitive
+        assert len(tasks) == 1 and not following.sensitive
