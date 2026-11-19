@@ -95,3 +95,17 @@ def test_cyclic_metadata_is_refused_with_bounded_traversal(tmp_path):
         assert known_public_c_binding_facts(item) is None
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("field", [
+    "source_credential", "source_collection", "title", "source_provider", "description",
+])
+def test_non_native_dto_field_is_rejected_before_any_equality(tmp_path, field):
+    db = Storage(tmp_path / "dto.sqlite")
+    try:
+        _seed(db)
+        item, = CatalogBrokerImpl(NS(storage=db)).known_public_notices("sciences")
+        setattr(item, field, CallbackBomb())
+        assert known_public_c_binding_facts(item) is None
+    finally:
+        db.close()

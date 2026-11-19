@@ -96,19 +96,19 @@ def known_public_c_binding_facts(item: object):
             or proof[0] is not _TOKEN or proof[1] != id(item)
             or not is_canonical_cover_document(proof[2])
             or type(proof[3]) is not int or not 1 <= proof[3] < 2**63
-            or item.source_credential != "" or item.source_account_id is not None
-            or item.source_collection != "notice_c_public"
-            or item.downloadable is not None or item.owned is not None
-            or item.thumbnail_url is not None or item.download_url is not None
-            or item.friendly_url is not None):
+            or type(proof[4]) is not tuple):
         return None
     # Compare only bounded native public fields. No callbacks, repr or
     # provider-supplied coercion on GTK.
-    if type(proof[4]) is not tuple:
-        return None
     try:
         if _snapshot(item) != proof[4]:
             return None
     except (ValueError, TypeError):
+        return None
+    if (item.source_credential != "" or item.source_account_id is not None
+            or item.source_collection != "notice_c_public"
+            or item.downloadable is not None or item.owned is not None
+            or item.thumbnail_url is not None or item.download_url is not None
+            or item.friendly_url is not None):
         return None
     return proof[2], proof[3]
