@@ -76,6 +76,28 @@ def _opds_publication(entry: ET.Element) -> tuple[str | None, str | None]:
     return next(iter(values)), "opds.dcterms.issued"
 
 
+def _opds_language_evidence(entry: ET.Element) -> dict:
+    """Attest the complete selected-entry language declaration, or nothing."""
+    terms = entry.findall(f"{{{DCTERMS}}}language")
+    dc = entry.findall(f"{{{DC}}}language")
+    nodes = terms + dc
+    if not 1 <= len(nodes) <= 16:
+        return {}
+    raw = [(node.text or "").strip() for node in nodes]
+    if any(len(node) or node.attrib or len(tag) > 128
+           or re.fullmatch(r"[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,8}", tag) is None
+           or normalize_language_tag(tag) is None
+           for node, tag in zip(nodes, raw)):
+        return {}
+    field = ("dcterms.language_and_dc.language" if terms and dc else
+             "dcterms.language" if terms else "dc.language")
+    return {"bibliography_evidence": {"languages": {
+        "raw_tags": raw, "source": "gallica.opds", "source_field": field,
+        "scope": "OPDS", "confidence": "explicit_record_field",
+        "freshness": "search_response",
+    }}}
+
+
 def _public_url(value: str) -> str:
     """Upgrade historical Gallica HTTP links without rewriting other hosts."""
     parsed = urlsplit(value)
@@ -392,6 +414,7 @@ class GallicaSession(ProviderSession):
                         **({"publication_date_evidence": date_evidence} if date_evidence else {}),
                         "rights": self._first_text(entry, (f"{{{DCTERMS}}}rights", f"{{{DC}}}rights")),
                         "languages": self._normalize_languages([self._text(n) for n in entry.findall(f"{{{DCTERMS}}}language") + entry.findall(f"{{{DC}}}language") if self._text(n)]),
+                        **_opds_language_evidence(entry),
                         "subjects": [n.attrib.get("label") or n.attrib.get("term") for n in entry.findall(f"{{{ATOM}}}category")],
                     },
                 )
