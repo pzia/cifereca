@@ -54,20 +54,27 @@ def request_initial_publication(storage, source, *, now):
         raise ValueError("notice_work_invalid_initial_source")
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        current, document, digest = _inputs(db, source.document.source_key)
-        if current != source:
-            raise ValueError("notice_work_source_changed")
-        if db.execute("SELECT 1 FROM metadata WHERE key=?", (_db_key(document),)).fetchone():
-            return None
-        spec = journal.public_job_spec(
-            "recompute_aggregate", document, input_digest=digest,
-            implementation_digest=IMPLEMENTATION_DIGEST,
-            source_ref=source.document.source_key,
-        )
-        previous = journal._load(db, journal._key(spec))
-        return journal._request_job_txn(
-            db, spec, now=now, expected_generation=previous.ref.generation if previous else 0,
-        )
+        return request_initial_publication_txn(db, source, now=now)
+
+
+def request_initial_publication_txn(db, source, *, now):
+    """Compose source and repair intent on the canonical writer transaction."""
+    if type(source) is not PersistedNoticeCover or not journal._integer(now):
+        raise ValueError("notice_work_invalid_initial_source")
+    current, document, digest = _inputs(db, source.document.source_key)
+    if current != source:
+        raise ValueError("notice_work_source_changed")
+    if db.execute("SELECT 1 FROM metadata WHERE key=?", (_db_key(document),)).fetchone():
+        return None
+    spec = journal.public_job_spec(
+        "recompute_aggregate", document, input_digest=digest,
+        implementation_digest=IMPLEMENTATION_DIGEST,
+        source_ref=source.document.source_key,
+    )
+    previous = journal._load(db, journal._key(spec))
+    return journal._request_job_txn(
+        db, spec, now=now, expected_generation=previous.ref.generation if previous else 0,
+    )
 
 
 def prepare_initial_publication(storage, spec):

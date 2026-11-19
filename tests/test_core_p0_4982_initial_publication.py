@@ -70,7 +70,7 @@ def test_first_live_search_failure_requests_initial_publication(tmp_path, monkey
         def fail(*args, **kwargs):
             raise OSError("simulated first live commit failure")
         with monkeypatch.context() as patch:
-            patch.setattr(index, "persist_exact_public_search_cover", fail)
+            patch.setattr(index, "_persist_exact_public_search_cover_txn", fail)
             pairs = search._ingest_public_search_c(
                 core.library, [row], identity_id="alice", now=100,
                 require_public_cover_witness=True,

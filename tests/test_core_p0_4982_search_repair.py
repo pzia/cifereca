@@ -40,13 +40,13 @@ def test_existing_c_repaired_after_failed_live_search_publication(tmp_path, monk
             events.append((document, epoch))
             committed.set()
         assert core.notice_work.bind_committed_observer(observe)
-        original = index.persist_exact_public_search_cover
+        original = index._persist_exact_public_search_cover_txn
         def fail_once(storage, source):
             if source.document == initial_source.document:
                 raise OSError("simulated failed live commit")
             return original(storage, source)
         with monkeypatch.context() as patch:
-            patch.setattr(index, "persist_exact_public_search_cover", fail_once)
+            patch.setattr(index, "_persist_exact_public_search_cover_txn", fail_once)
             row, changed, canonical = ingest("Nouveau titre", 101)
         assert canonical is None
         assert changed.epoch > initial_source.epoch
