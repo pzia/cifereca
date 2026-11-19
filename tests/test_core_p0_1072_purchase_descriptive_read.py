@@ -4,6 +4,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 from cifereca.core.notice_c_purchase_library_projection import project_purchase_library_notices, purchase_library_notice
 from cifereca.gui.library_rows import project_library_rows
+from cifereca.gui.local_book_detail_sections import local_book_detail_sections
 
 from cifereca.core import notice_c_job_journal as journal
 from cifereca.core.notice_c_purchase_execution import PurchaseIntentExecution
@@ -94,6 +95,18 @@ def test_public_descriptive_facts_keep_source_provenance_not_association_time(tm
         )
         assert rows[0]._purchase_library_notice == packet
         assert rows[0].values[1] == "Titre natif" and objects[card["key"]] is card
+        def detail(selected):
+            return local_book_detail_sections(
+                card, provider_display_name=str, availability_label=lambda _: "",
+                identity_by_id=lambda _: None, sync_status_label=str,
+                language_label=lambda _: "", purchase_notice=selected,
+            )
+        assert [name for name, _ in detail(None)] == ["Essentiel", "Bibliothèques et accès"]
+        name, values = detail(packet)[-1]
+        assert name == "Fiche du catalogue public"
+        assert ("Résumé", "Résumé public") in values
+        assert card["metadata"]["description"] == "Résumé local"
+
         # Duplicate key cannot claim the other row's proof.
         duplicate = deepcopy(card)
         project_purchase_library_notices(db, [card, duplicate], identity_id="A")
