@@ -231,24 +231,14 @@ def _readable_pdf_target_names(stream, *, opaque_name: str) -> tuple[str, ...]:
 
 
 def _profile(storage, root: Path, source: SourceKey) -> tuple[Path, Path]:
-    registered = storage.identities()
-    matches = [
-        x.get("directory_name") for x in registered
-        if x.get("identity_id") == source.scope.identity_id
-    ]
-    if (len(matches) != 1 or type(matches[0]) is not str
-            or not matches[0] or matches[0] in (".", "..")
-            or "/" in matches[0] or "\\" in matches[0]):
+    directory, unique = storage.exact_profile_directory_binding(source.scope.identity_id)
+    if (type(directory) is not str or not directory or directory in (".", "..")
+            or "/" in directory or chr(92) in directory or chr(0) in directory):
         raise ValueError("canonical_promotion_profile_unknown")
-    # Both pre-commit promotion and post-commit cleanup may touch physical
-    # bytes. An imported registry with two owners for one directory cannot
-    # authorize either action, regardless of matching SHA/account receipts.
-    if sum(
-        row.get("directory_name") == matches[0] for row in registered
-    ) != 1:
+    if unique is not True:
         raise ValueError("canonical_promotion_profile_ambiguous")
     canonical_root = Path(os.path.abspath(root.expanduser()))
-    profile = canonical_root.resolve() / matches[0]
+    profile = canonical_root.resolve() / directory
     if (canonical_root.is_symlink() or profile.is_symlink()
             or not profile.is_dir()):
         raise ValueError("canonical_promotion_profile_unsafe")

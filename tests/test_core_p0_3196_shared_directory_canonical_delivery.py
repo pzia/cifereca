@@ -164,3 +164,18 @@ def test_staging_promotion_and_cleanup_share_the_exact_directory_fence(
     canonical_root, profile = _profile(store, root, source)
     assert canonical_root == root
     assert profile == root / "A"
+
+
+def test_promotion_scope_does_not_materialize_identity_roster(store, tmp_path, monkeypatch):
+    from cifereca.core.canonical_promotion import _profile
+
+    source, _snapshot = new_source()
+    register(store, "A", "seller", "card-A")
+    root = tmp_path / "EBooks"
+    (root / "A").mkdir(parents=True)
+    monkeypatch.setattr(store, "identities",
+                        lambda: pytest.fail("unrelated identity roster"))
+    assert _profile(store, root, source) == (root, root / "A")
+    corrupt_shared_directory(store)
+    with pytest.raises(ValueError, match="canonical_promotion_profile_ambiguous"):
+        _profile(store, root, source)
