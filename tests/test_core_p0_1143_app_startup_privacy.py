@@ -131,6 +131,7 @@ def test_desktop_notice_hint_dispatches_real_retained_work_and_stops(tmp_path):
         worker, = handle.result(timeout=10).handles
         assert worker.result(timeout=10) == "current"
         assert events == [(old.document, old.epoch + 1)]
+        assert core.notice_work.documentary_revision() == 1
         assert read_consolidated_notice_cover(core.storage, old.document).sources[0].public_bibliography.title == "Nouveau"
         assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
         win._closed = True
@@ -213,3 +214,34 @@ def test_idle_wakeup_revisits_future_durable_job_without_user_action(tmp_path):
         app._stop_notice_work_wakeup(win)
         assert removed == []  # GLib removes a callback returning False
         assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
+
+
+def test_documentary_refresh_coalesces_on_existing_heartbeat(monkeypatch):
+    from cifereca.gui import library_refresh
+
+    calls, scheduled, version = [], [], [0]
+    runtime = NS(bind_committed_observer=lambda _: True,
+                 request_tick=lambda: calls.append("hint"),
+                 documentary_revision=lambda: version[0])
+    window = NS(_closed=False, document_covers=NS(
+        refresh_committed_source_in_worker=lambda *_: None))
+    monkeypatch.setattr(library_refresh, "invalidate_library",
+                        lambda host: calls.append(("refresh", host is window)))
+    app._bind_desktop_notice_work(NS(notice_work=runtime), window)
+    app._start_notice_work_wakeup(
+        window, timeout_add_seconds=lambda _, callback: scheduled.append(callback) or 1,
+        source_remove=lambda _: None)
+    pulse, = scheduled
+    assert calls == []
+    assert pulse() is True and calls == ["hint"]
+    version[0] = 3
+    # Ordinary task-finished hint never performs the refresh reentrantly.
+    window._notice_work_tick()
+    assert calls == ["hint", "hint"]
+    assert pulse() is True
+    assert calls[-2:] == ["hint", ("refresh", True)]
+    assert pulse() is True and calls[-1] == "hint"
+    assert calls.count(("refresh", True)) == 1
+    version[0] = 4
+    window._closed = True
+    assert pulse() is False and calls.count(("refresh", True)) == 1
