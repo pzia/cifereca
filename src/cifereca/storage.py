@@ -4370,6 +4370,12 @@ class Storage:
             if insert_only is not False:
                 raise CompletionEpochRevoked("loan_completion_source_changed")
             validate_completion_receipt(row, completion_lease)
+            # Freeze the exact JSON before opening the write transaction.
+            # Metadata is caller-owned and may change during serialization.
+            receipt_json = self._json_dump(row["metadata"])
+            validate_completion_receipt(
+                {**row, "metadata": json.loads(receipt_json)}, completion_lease,
+            )
         # SQLite's TEXT affinity silently coerces int/bool account markers
         # to digit strings. After that conversion the reader cannot tell
         # an untrusted numeric value from a legitimate borrower barcode.
@@ -4425,7 +4431,8 @@ class Storage:
                     row.get("account_id"), str(row.get("item_id") or ""), row.get("title"), str(row.get("status") or "discovered"),
                     row.get("strategy"), row.get("executor"), row.get("candidate_id"), row.get("artifact_id"), int(row.get("attempt_count") or 0),
                     row.get("last_attempt_at"), row.get("error_code"), row.get("error_message"), row.get("attention_code"),
-                    self._json_dump(row.get("metadata")), now, now, row.get("identity_id"),
+                    (receipt_json if completion_lease is not None
+                     else self._json_dump(row.get("metadata"))), now, now, row.get("identity_id"),
                 ),
             )
             if cursor.rowcount != 1:
