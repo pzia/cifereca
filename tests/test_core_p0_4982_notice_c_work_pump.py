@@ -134,7 +134,12 @@ def test_real_journal_rotation_offers_both_enabled_classes(tmp_path, monkeypatch
     try:
         pump = PublicNoticeWorkPump(db, broker, clock=lambda: 100)
         refs = {}
-        for (kind, implementation), suffix in zip((_SUPPORTED[0], _SUPPORTED[2]), ("a", "b")):
+        # Select distinct work classes, not implementation table offsets.
+        from cifereca.core import notice_c_origin_relink as relink
+        ports = (("recompute_aggregate", exact.IMPLEMENTATION_DIGEST),
+                 ("relink_notices", relink.IMPLEMENTATION_DIGEST))
+        assert all(port in _SUPPORTED for port in ports)
+        for (kind, implementation), suffix in zip(ports, ("a", "b")):
             value = journal.public_job_spec(
                 kind, canonical_cover_document_ref("edition:rotation-" + suffix),
                 input_digest="a" * 64, implementation_digest=implementation,

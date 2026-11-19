@@ -24,6 +24,7 @@ _MAX_JOBS = 2048
 _MAX_DEPS = 8
 _MAX_ATTEMPTS = 3
 _MAX_LEASE = 300
+_INITIAL_PUBLIC_C_DIGEST = sha256(b"core.initial-public-c-publication.v1").hexdigest()
 _KINDS = {
     "fetch_source_notice": 0,
     "reparse_cached_input": 1,
@@ -47,6 +48,7 @@ class JobSpec:
     input_digest: str
     implementation_digest: str
     dependencies: tuple[JobRef, ...] = ()
+    source_ref: str | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -95,10 +97,10 @@ def _document_target(document):
 
 
 def public_job_spec(kind, document, *, input_digest, implementation_digest,
-                    dependencies=()):
+                    dependencies=(), source_ref=None):
     """Build exact public coordinates; caller still owns actual admission."""
     spec = JobSpec(kind, _document_target(document), input_digest,
-                   implementation_digest, dependencies)
+                   implementation_digest, dependencies, source_ref)
     _check_spec(spec)
     return spec
 
@@ -116,6 +118,14 @@ def _check_spec(spec):
               else "notice-c:v1:")
     if not spec.target.startswith(prefix) or not _digest(spec.target[len(prefix):]):
         raise ValueError("notice_work_invalid_target")
+    if spec.implementation_digest == _INITIAL_PUBLIC_C_DIGEST:
+        if (spec.kind != "recompute_aggregate" or spec.dependencies
+                or type(spec.source_ref) is not str
+                or not spec.source_ref.startswith("notice-c:v1:")
+                or not _digest(spec.source_ref[len("notice-c:v1:"):])):
+            raise ValueError("notice_work_invalid_initial_source")
+    elif spec.source_ref is not None:
+        raise ValueError("notice_work_invalid_initial_source")
     for ref in spec.dependencies:
         _check_ref(ref)
     keys = tuple(ref.key for ref in spec.dependencies)
@@ -196,11 +206,15 @@ def _load(db, key):
 
 
 def _save(db, job):
+    payload = asdict(job)
+    # Preserve the wire shape of every pre-existing implementation.
+    if job.spec.source_ref is None:
+        payload["spec"].pop("source_ref")
     db.execute(
         "INSERT INTO metadata(key,value) VALUES(?,?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (_PREFIX + job.ref.key,
-         json.dumps(asdict(job), ensure_ascii=True, sort_keys=True,
+         json.dumps(payload, ensure_ascii=True, sort_keys=True,
                     separators=(",", ":"))),
     )
 
