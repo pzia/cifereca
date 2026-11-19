@@ -13,6 +13,7 @@ import pytest
 from cifereca.core.notice_c_purchase_runtime import install_purchase_runtime
 from cifereca.core.notice_c_work_runtime import NoticeWorkRuntime
 from cifereca.core.notice_c_purchase_intent import _POLICY
+from cifereca.core.notice_c_purchase_settings import read_purchase_policy, change_purchase_policy
 from cifereca.core.notice_c_public_search import search_public_notice_c
 from cifereca.core.source_context import revoke_source_context
 from cifereca.core.sync_coordination import synchronize_account_source
@@ -24,7 +25,7 @@ from tests.test_core_p0_1072_purchase_enrichment_same_read_admission import inst
 from tests.test_core_p0_6366_real_search_notice_c_ingestion import public_row
 
 
-@pytest.mark.parametrize("mode", ("qualified", "policy_off", "public_off", "revoke", "late_revoke"))
+@pytest.mark.parametrize("mode", ("qualified", "policy_off", "public_off", "revoke", "late_revoke", "policy_aba"))
 def test_runtime_selects_same_read_and_dispatches_only_after_a_commit(rig, monkeypatch, mode):
     service, db, root = rig
     service._source_context_lock = RLock()
@@ -86,10 +87,15 @@ def test_runtime_selects_same_read_and_dispatches_only_after_a_commit(rig, monke
             assert calls == ["wake"]
             if mode == "revoke":
                 revoke_source_context(service)
+            if mode == "policy_aba":
+                before = read_purchase_policy(db)
+                off = change_purchase_policy(service, expected_storage=db, expected=before, enabled=False)
+                on = change_purchase_policy(service, expected_storage=db, expected=off, enabled=True)
+                assert on.enabled and on.revision == before.revision + 2
             tick = runtime._pump.tick()
             handle, = tick.handles
             assert handle.result(timeout=10) == (
-                "current" if mode == "qualified" else "not_ready" if mode == "revoke" else "error"
+                "current" if mode == "qualified" else "not_ready" if mode in ("revoke", "policy_aba") else "error"
             )
             hits = search_public_notice_c(db, "synthétique", now=int(time.time())).hits
             if mode == "qualified":
