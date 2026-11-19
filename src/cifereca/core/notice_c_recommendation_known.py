@@ -6,15 +6,49 @@ projected object; only the UI host can exchange it for a current-view lease.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import fields
 from hashlib import sha256
 from typing import Any
 
 from ..models import SearchResult
 from .notice_c_cover_index import is_canonical_cover_document
 from .notice_c_public_search import search_public_notice_c
+from .notice_c_known_projection import _series_metadata
 
 _TOKEN = object()
+_DTO_FIELDS = tuple(field.name for field in fields(SearchResult))
+
+
+def _snapshot(item):
+    """Bounded native immutable DTO receipt; no deepcopy, repr or coercion."""
+    remaining = 512
+    characters = 65536
+
+    def freeze(value, depth=0):
+        nonlocal remaining, characters
+        remaining -= 1
+        if remaining < 0 or depth > 6:
+            raise ValueError("known_c_snapshot_budget")
+        kind = type(value)
+        if kind is str:
+            characters -= len(value)
+            if len(value) > 8192 or characters < 0:
+                raise ValueError("known_c_snapshot_budget")
+            return ("str", value)
+        if kind is bool or kind is int or value is None:
+            return (kind.__name__, value)
+        if kind is list and len(value) <= 32:
+            return ("list", tuple(freeze(child, depth + 1) for child in value))
+        if (kind is dict and len(value) <= 64
+                and all(type(key) is str and len(key) <= 160 for key in value)):
+            characters -= sum(len(key) for key in value)
+            if characters < 0:
+                raise ValueError("known_c_snapshot_budget")
+            return ("dict", tuple((key, freeze(value[key], depth + 1))
+                                  for key in sorted(value)))
+        raise ValueError("known_c_snapshot_non_native")
+
+    return freeze({name: getattr(item, name) for name in _DTO_FIELDS})
 
 
 def known_public_notice_candidates(
@@ -42,12 +76,13 @@ def known_public_notice_candidates(
             scenario="notice_c_public", source_provider=hit.provider_id,
             source_credential="", source_collection="notice_c_public",
             revision_id=hit.source_revision, owned=None, downloadable=None,
-            metadata={"notice_c_known": True, "notice_c_stale": hit.stale},
+            metadata={"notice_c_known": True, "notice_c_stale": hit.stale,
+                      **_series_metadata(hit)},
         )
         # Exact object and full DTO snapshot, not a serialized proof. Sources
         # with missing covers are still descriptive candidates.
         row._core_known_public_c_projection = (
-            _TOKEN, id(row), hit.document, hit.epoch, asdict(row),
+            _TOKEN, id(row), hit.document, hit.epoch, _snapshot(row),
         )
         rows.append(row)
     return rows
@@ -69,16 +104,11 @@ def known_public_c_binding_facts(item: object):
         return None
     # Compare only bounded native public fields. No callbacks, repr or
     # provider-supplied coercion on GTK.
-    original = proof[4]
-    for key, expected in original.items():
-        actual = getattr(item, key, None)
-        if type(actual) is not type(expected):
+    if type(proof[4]) is not tuple:
+        return None
+    try:
+        if _snapshot(item) != proof[4]:
             return None
-        if key == "metadata":
-            if (type(actual) is not dict or len(actual) != 2
-                    or any(type(k) is not str or type(v) is not bool
-                           for k, v in actual.items()) or actual != expected):
-                return None
-        elif actual != expected:
-            return None
+    except (ValueError, TypeError):
+        return None
     return proof[2], proof[3]
