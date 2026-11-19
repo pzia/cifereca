@@ -37,6 +37,7 @@ def test_reuse_public_detail_across_restart_and_exact_accounts(tmp_path):
                          metadata={"public_url_evidence": session.provider_id + ".public_search_product_card"})
         return ProviderSearchResponse(results=[row], public_notices=(PublicSearchNotice(result=row),)), 99, nullcontext
 
+    source_document = None
     for owner, credential, account in (("A", "card-a", "buyer-a"), ("B", "card-b", "buyer-b")):
         db = Storage(path)
         tasks = broker()
@@ -54,7 +55,15 @@ def test_reuse_public_detail_across_restart_and_exact_accounts(tmp_path):
             assert bridge.submit(ref).result(timeout=10) == "current"
             assert calls == ["public"]
             hit, = search_public_notice_c(db, "synthétique", now=100).hits
-            persist_exact_public_search_cover(db, read_notice_cover(db, hit.document))
+            if source_document is None:
+                # First search before aggregate publication exposes source C;
+                # subsequent search exposes the canonical DocumentRef.
+                source_document = hit.document
+                retained = read_notice_cover(db, source_document)
+                assert retained is not None
+                persist_exact_public_search_cover(db, retained)
+            else:
+                assert read_notice_cover(db, source_document) is not None
             receipt = read_purchase_notice_association(db, candidate.source, identity_id=owner)
             assert receipt is not None and receipt.observed_at == 99
             assert read_purchase_notice_association(db, candidate.source,
