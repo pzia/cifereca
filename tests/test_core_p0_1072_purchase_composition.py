@@ -71,6 +71,7 @@ def test_composed_core_handoff_and_real_publication(tmp_path, provider, revoked)
         bridge = AggregateWorkBridge(
             db, tasks, lambda *_: pytest.fail("not aggregate"), clock=lambda: 100,
             claim_purchase=execution.claim, prepare_purchase=execution.prepare,
+            finish_purchase=execution.finish,
         )
         outcome = bridge.submit(ref).result(timeout=10)
         assert calls == ["wake", "public"]

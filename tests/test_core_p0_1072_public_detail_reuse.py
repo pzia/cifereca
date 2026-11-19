@@ -4,6 +4,11 @@ import json
 import pytest
 from dataclasses import replace
 from types import SimpleNamespace
+from threading import Event
+
+from cifereca.core import notice_c_job_journal as journal
+from cifereca.task_runtime import TaskBrokerImpl
+from cifereca.task_admission import SharedTaskAdmission
 
 from cifereca.core.notice_c_purchase_composition import make_purchase_enrichment_sink
 from cifereca.core.notice_c_purchase_execution import PurchaseIntentExecution
@@ -63,7 +68,8 @@ def test_reuse_public_detail_across_restart_and_exact_accounts(tmp_path, monkeyp
             assert sink(snapshot, (candidate,)).admitted == 1
             ref, = request(db, snapshot, candidate, now=now)
             bridge = AggregateWorkBridge(db, tasks, lambda *_: None, clock=lambda: now,
-                claim_purchase=execution.claim, prepare_purchase=execution.prepare)
+                claim_purchase=execution.claim, prepare_purchase=execution.prepare,
+                finish_purchase=execution.finish)
             assert bridge.submit(ref).result(timeout=10) == "current"
             assert calls == ["public"]
             hit, = search_public_notice_c(db, "synthétique", now=now).hits
@@ -120,4 +126,76 @@ def test_full_public_receipt_cache_does_not_evict_current_or_unknown(tmp_path, m
                 assert sql.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0] == rows[key]
             assert sql.execute("SELECT value FROM metadata WHERE key=?", (expired,)).fetchone() is None
     finally:
+        db.close()
+
+
+@pytest.mark.parametrize("first_fails", (False, True))
+def test_single_flight_refuses_second_lease_until_worker_exits(tmp_path, first_fails):
+    db = Storage(tmp_path / "flight.sqlite")
+    tasks = TaskBrokerImpl(object(), max_workers=2, shared_admission=
+                           SharedTaskAdmission(max_inflight=3, reserve_user_slots=1))
+    execution = PurchaseIntentExecution(db, clock=lambda: 100)
+    entered, resume = Event(), Event()
+    calls = []
+    session = SimpleNamespace(provider_id="seller-a-catalog", connected=True,
+                              credential_id="__public__", credentials={}, _accounts=[])
+
+    @contextmanager
+    def context():
+        yield True
+
+    def read(url, title, *, check_authority, control):
+        assert check_authority()
+        calls.append("public")
+        if len(calls) == 1:
+            entered.set()
+            assert resume.wait(10)
+            if first_fails:
+                raise RuntimeError("synthetic producer failure")
+        row = public_row(source_provider=session.provider_id, title=title,
+                         friendly_url=url, thumbnail_url=None,
+                         metadata={"public_url_evidence": session.provider_id + ".public_search_product_card"})
+        return ProviderSearchResponse(results=[row], public_notices=(PublicSearchNotice(result=row),)), 99, nullcontext
+
+    try:
+        candidates, refs = [], []
+        for owner, credential, account in (("A", "card-a", "buyer-a"), ("B", "card-b", "buyer-b")):
+            snapshot, candidate = prepare(db, owner=owner, credential=credential, account=account)
+            persist_attested_source_references(db, snapshot)
+            set_policy(db, "true")
+            sink = make_purchase_enrichment_sink(execution, private_provider_id="seller-a",
+                public_session=session, read_response=read, hold_context=context, wake=lambda: None)
+            assert sink(snapshot, (candidate,)).admitted == 1
+            ref, = request(db, snapshot, candidate)
+            candidates.append(candidate)
+            refs.append(ref)
+        bridge = AggregateWorkBridge(db, tasks, lambda *_: None, clock=lambda: 100,
+            claim_purchase=execution.claim, prepare_purchase=execution.prepare,
+            finish_purchase=execution.finish)
+        first = bridge.submit(refs[0])
+        assert entered.wait(10)
+        assert refs[1] not in execution.ready_refs()
+        assert bridge.submit(refs[1]).result(timeout=10) == "not_ready"
+        assert journal.read_job(db, refs[1]).attempts == 0
+        assert calls == ["public"]
+        resume.set()
+        assert first.result(timeout=10) == ("error" if first_fails else "current")
+        assert refs[1] in execution.ready_refs()
+        # A fresh bridge avoids racing the completed-handle forget callback.
+        follow = AggregateWorkBridge(db, tasks, lambda *_: None, clock=lambda: 100,
+            claim_purchase=execution.claim, prepare_purchase=execution.prepare,
+            finish_purchase=execution.finish)
+        assert follow.submit(refs[1]).result(timeout=10) == "current"
+        assert calls == ["public"] * (2 if first_fails else 1)
+        assert journal.read_job(db, refs[1]).attempts == 1
+        hit, = search_public_notice_c(db, "synthétique", now=100).hits
+        persist_exact_public_search_cover(db, read_notice_cover(db, hit.document))
+        assert read_purchase_notice_association(db, candidates[1].source, identity_id="B") is not None
+        assert read_purchase_notice_association(db, candidates[1].source, identity_id="A") is None
+        assert not execution._public_flights
+        assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
+    finally:
+        resume.set()
+        execution.close()
+        tasks.close()
         db.close()

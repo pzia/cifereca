@@ -32,6 +32,7 @@ class _Admission:
     deadline: int
     lease: journal.JobLease | None = None
     preparing: bool = False
+    public_key: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -63,6 +64,9 @@ class PurchaseIntentExecution:
         self._capacity = attestation_capacity
         self._lock = RLock()
         self._live = {}
+        # A flight survives registry expiry/revocation until its worker exits.
+        # Process-local, bounded, no authority or result shared between accounts.
+        self._public_flights = {}
         self._closed = False
 
     def _now(self):
@@ -88,12 +92,15 @@ class PurchaseIntentExecution:
                 or _spec_txn(db, entry.snapshot, entry.candidate) != entry.spec):
             raise ValueError("notice_purchase_admission_changed")
 
-    def attest(self, ref, snapshot, candidate, *, hold_context, execute, ttl_seconds):
+    def attest(self, ref, snapshot, candidate, *, hold_context, execute, ttl_seconds,
+               public_provider_id=None):
         """Bind a pending generation to current A; no lease or task submission."""
         journal._check_ref(ref)
         if (type(snapshot) is not ProviderRightsSnapshot
                 or snapshot.status not in ("success", "partial") or snapshot.resume_cursor
                 or type(candidate) is not PurchaseEnrichmentCandidate
+                or (public_provider_id is not None and (
+                    type(public_provider_id) is not str or not 1 <= len(public_provider_id) <= 1024))
                 or not callable(hold_context) or not callable(execute)
                 or type(ttl_seconds) is not int or not 1 <= ttl_seconds <= _MAX_TTL):
             raise ValueError("notice_purchase_invalid_admission")
@@ -119,7 +126,9 @@ class PurchaseIntentExecution:
                     if job.spec.implementation_digest != journal._PURCHASE_INTENT_DIGEST:
                         raise ValueError("notice_purchase_invalid_admission")
                     entry = _Admission(snapshot, candidate, job.spec, hold_context,
-                                       execute, now + ttl_seconds)
+                                       execute, now + ttl_seconds,
+                                       public_key=None if public_provider_id is None else (
+                                           public_provider_id, candidate.public_locator))
                     self._verify(db, job, entry)
                 self._live[ref] = entry
                 return True
@@ -145,7 +154,9 @@ class PurchaseIntentExecution:
                 return ()
             latest = {}
             for ref, entry in self._live.items():
-                if entry.lease is None and (after is None or ref.key > after):
+                if (entry.lease is None
+                        and (entry.public_key is None or entry.public_key not in self._public_flights)
+                        and (after is None or ref.key > after)):
                     old = latest.get(ref.key)
                     if old is None or old.generation < ref.generation:
                         latest[ref.key] = ref
@@ -175,6 +186,10 @@ class PurchaseIntentExecution:
                 actual = self._now()
                 if self._lookup(ref, actual) is not entry or entry.lease is not None:
                     return None
+                if entry.public_key is not None and (
+                        entry.public_key in self._public_flights
+                        or len(self._public_flights) >= self._capacity):
+                    return None  # no lease/attempt consumed; normal rotation resumes
                 if not journal._integer(now, minimum=1) or now > actual:
                     raise ValueError("notice_purchase_invalid_clock")
                 with self._storage._lock, self._storage._connect() as db:
@@ -195,7 +210,24 @@ class PurchaseIntentExecution:
                     )
                 if lease is not None:
                     entry.lease = lease
+                    if entry.public_key is not None:
+                        self._public_flights[entry.public_key] = lease
                 return lease
+
+    def finish(self, lease):
+        """Called by the admitted worker after the final commit/failure/cancel.
+
+        Exact lease only: a late callback never releases a replacement flight.
+        A typed transient may keep its own live admission with lease=None.
+        """
+        with self._lock:
+            for key, active in tuple(self._public_flights.items()):
+                if active == lease:
+                    del self._public_flights[key]
+                    break
+            entry = self._live.get(lease.ref)
+            if entry is not None and entry.lease == lease:
+                self._live.pop(lease.ref, None)
 
     def prepare(self, spec, lease, control):
         """Recheck before producer work and on the same final writer transaction."""
