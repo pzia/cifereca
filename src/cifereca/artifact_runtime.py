@@ -1584,7 +1584,8 @@ def _require_epub_filename_convention(old: Path, new: Path) -> None:
     _, source_suffix = split_filename_suffix(old)
     _, target_suffix = split_filename_suffix(new)
     epub_suffixes = {".epub", ".kepub.epub", ".fxl.kepub.epub"}
-    if (source_suffix.lower() in epub_suffixes or target_suffix.lower() in epub_suffixes):
+    if (source_suffix.lower() in epub_suffixes
+            or target_suffix.lower() in {".kepub.epub", ".fxl.kepub.epub"}):
         if source_suffix != target_suffix:
             raise _LibraryFilenameConflict("Convention de suffixe EPUB modifiée")
 
