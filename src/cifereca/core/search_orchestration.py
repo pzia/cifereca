@@ -2823,7 +2823,13 @@ def _reconcile_progressive_public_c(storage, pairs, *, restore_own=False,
         ) if current else {}
     for row, source, _own in current:
         shared = linked.get(source.document.source_key)
-        if shared is None:
+        if shared is None or not any(
+                member.source_ref == source.document.source_key
+                and member.source_epoch == source.epoch
+                for member in shared.sources):
+            # The same opaque source may occur with several observation
+            # epochs across progressive batches. Do not stamp a newer
+            # group onto an earlier row by source key alone.
             continue
         row._core_notice_canonical_cover_document_ref = shared.document
         row._core_notice_canonical_cover_document_epoch = shared.epoch
