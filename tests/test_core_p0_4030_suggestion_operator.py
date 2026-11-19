@@ -91,3 +91,56 @@ def test_no_implicit_confirmation_or_directory_creation(store, tmp_path):
     service.config.root = tmp_path / "absent"
     assert _admit(service, pid, confirmed=False) is None
     assert not service.config.root.exists()
+
+
+def _more_public(store, count=2):
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import persist, verified_public
+    for i in range(count):
+        persist(store, verified_public(record_id=f"public-page-{i}",
+                                       title="Roman commun", author="Autrice"), at=100)
+
+
+def test_successive_explicit_pages_preserve_private_local_witness(store, tmp_path):
+    service, root, pid = _service(store, tmp_path)
+    _more_public(store)
+    request = _admit(service, pid, page_size=1)
+    seen = []
+    for page_index in range(3):
+        assert request.page == page_index
+        outcome = operator.run_local_origin_suggestion(service, request)
+        page = outcome["suggestions"]
+        assert page.page == page_index and page.page_size == 1
+        assert page.coverage_complete is False
+        assert not outcome["association_authorized"]
+        seen.append(page.suggestions[0].hit.record_id)
+        assert pid not in repr(outcome) and str(root) not in repr(outcome)
+        request = operator.continue_local_origin_suggestion(service, request, outcome)
+    assert len(set(seen)) == 3 and request is None
+
+
+@pytest.mark.parametrize("change", ["metadata", "bytes", "epoch", "unadmitted_page"])
+def test_continuation_cannot_retarget_or_mix_local_evidence(store, tmp_path, monkeypatch, change):
+    from cifereca.core import local_origin_documentary_suggestions as documentary
+    service, root, pid = _service(store, tmp_path)
+    _more_public(store)
+    request = _admit(service, pid, page_size=1)
+    first = operator.run_local_origin_suggestion(service, request)
+    next_request = operator.continue_local_origin_suggestion(service, request, first)
+    assert next_request is not None
+    if change == "metadata":
+        with store._lock, store._connect() as db:
+            db.execute("UPDATE catalog_entries SET title='Autre roman' WHERE placement_id=?", (pid,))
+    elif change == "bytes":
+        path = store.placement_get(pid)["path"]
+        from pathlib import Path
+        Path(path).write_bytes(b"changed")
+    elif change == "epoch":
+        service._account_context_epoch += 2
+    else:
+        from dataclasses import replace
+        next_request = replace(next_request, continuation=None)
+        assert _admit(service, pid, page=1) is None
+    monkeypatch.setattr(documentary, "suggest_known_public_documents",
+                        lambda *_a, **_kw: pytest.fail("invalid continuation must not search"))
+    outcome = operator.run_local_origin_suggestion(service, next_request)
+    assert outcome["suggestions"] is None and outcome["continuation"] is None
