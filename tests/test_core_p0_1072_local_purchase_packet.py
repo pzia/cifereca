@@ -71,6 +71,14 @@ def test_local_completed_origin_receives_product_description(tmp_path):
         packet = purchase_library_notice(row)
         assert packet is not None and packet.source == candidate.source
         assert any(f.value == "Résumé public" for f in packet.notice.facts)
+        from cifereca.core.search import filter_loaded_results, local_match_explanation
+        assert filter_loaded_results([row], "Résumé public") == [row]
+        assert "Résumé (catalogue public)" in local_match_explanation(row, '"Résumé public"')
+        assert filter_loaded_results([row], candidate.title, field="title") == [row]
+        assert filter_loaded_results([row], candidate.title, field="isbn") == []
+        assert filter_loaded_results([{**row, "identity_id": "B"}],
+                                     '"Résumé public"') == []
+
         assert {k: v for k, v in row.items() if k != "_purchase_library_notice"} == original
         row["placement_id"] = "foreign-placement"
         project_purchase_library_notices(db, [row], identity_id="A")
