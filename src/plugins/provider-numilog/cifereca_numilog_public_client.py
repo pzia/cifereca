@@ -219,7 +219,7 @@ def fetch_public_search_url(url: str, *, timeout: float = 15.0,
         raise ProviderError("Numilog : public_catalog_layout_unverified") from None
 
 
-def fetch_public_detail(product_url: str, *, timeout: float = 15.0):
+def fetch_public_detail(product_url: str, *, timeout: float = 15.0, _before_get=None):
     """Explicit on-demand, anonymous product detail; never called by sync/search.
 
     No redirects, account cookies, signed endpoints or unbounded responses.
@@ -239,6 +239,8 @@ def fetch_public_detail(product_url: str, *, timeout: float = 15.0):
             timeout=timeout, follow_redirects=False, trust_env=False,
             headers={"Accept": "text/html", "Accept-Language": "fr-FR,fr;q=0.9"},
         ) as client:
+            if _before_get is not None:
+                _before_get()
             with client.stream("GET", product_url) as response:
                 status = response.status_code
                 if status in (401, 403):
@@ -267,6 +269,59 @@ def fetch_public_detail(product_url: str, *, timeout: float = 15.0):
         )
     except PublicDetailError:
         raise ProviderError("Numilog : public_detail_layout_unverified") from None
+
+
+def fetch_guarded_purchase_detail(cache, product_url, expected_title, *, check_authority):
+    """Provider-private transport adapter; the Core owns the actual guard.
+
+    Reuse the existing public cache/key/budget, including on 429. The
+    title stays local to the comparison (never sent in a query), and the
+    result remains an independent public product, NOT a purchased edition.
+    Authority must also be rechecked by the Core writer at final commit.
+    No automatic caller or fallback to Search/Readzis/private HTTP.
+    """
+    from cifereca_numilog_html import public_book_url
+    from cifereca_numilog_public_cache import PublicCatalogueCache
+    from cifereca_numilog_public_detail import (
+        PublicDetailError, validated_public_jsonld_fields,
+    )
+    error = "Numilog : public_purchase_detail_unverified"
+
+    def title_key(value):
+        if (type(value) is not str or not 1 <= len(value) <= 512
+                or not value.strip()
+                or any(unicodedata.category(c) in {"Cc", "Cf", "Cs"} for c in value)):
+            return None
+        return unicodedata.normalize("NFKC", " ".join(value.split())).casefold()
+
+    expected = title_key(expected_title)
+    if (type(cache) is not PublicCatalogueCache or not callable(check_authority)
+            or expected is None or type(product_url) is not str
+            or public_book_url(product_url, base_url=PUBLIC_ORIGIN + "/") != product_url
+            or not product_url.startswith(PUBLIC_ORIGIN + "/")):
+        raise ProviderCapabilityError(error)
+
+    def checked():
+        if check_authority() is not True:
+            raise ProviderCapabilityError("Numilog : public_purchase_authority_revoked")
+
+    checked()
+    detail = cache.get(
+        ("detail", product_url),
+        lambda: fetch_public_detail(product_url, _before_get=checked),
+    )
+    checked()
+    if (type(detail) is not dict or detail.get("product_url") != product_url
+            or detail.get("owned") is not False or detail.get("downloadable") is not False
+            or detail.get("download_url", False) is not None):
+        raise ProviderCapabilityError(error)
+    try:
+        fields, _evidence = validated_public_jsonld_fields(detail, product_url)
+    except PublicDetailError:
+        raise ProviderCapabilityError(error) from None
+    if title_key(fields.get("title")) != expected:
+        raise ProviderCapabilityError("Numilog : public_purchase_title_conflict")
+    return detail
 
 
 
