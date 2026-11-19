@@ -11,7 +11,6 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
-import stat
 
 from ..filename_suffixes import split_filename_suffix
 from .canonical_placement_inventory import read_canonical_placement_inventory
@@ -87,10 +86,13 @@ def admit_organizer_review(service):
                 or owner.directory_name in (".", "..")
                 or "/" in owner.directory_name or chr(92) in owner.directory_name):
             return None
+        template = service.config.get("library.filename_template", "{author} - {title}")
+        if not _text(template, 2048):
+            return None
         scope = OrganizerScope(
             service, owner, owner.identity_id, owner.directory_name,
             _root(service.config), service.storage, Path(service.storage.path),
-            service.config, service.config.get("library.filename_template", "{author} - {title}"),
+            service.config, template,
             source_context_epoch(service), _navigation_epoch(service),
         )
         return scope if scope.current() else None
@@ -299,7 +301,27 @@ def run_organizer_review(service, scope, *, cursor=None):
                 "page": offset//_PAGE+1,
                 "next_cursor": OrganizerCursor(scope, stamp, following)
                 if following < len(inventory.groups) else None,
-                "keeper_advice": advice, "mutation_authorized": False,
+                "keeper_advice": advice, "keeper_reviews": tuple(reviews),
+                "mutation_authorized": False,
                 "classification_attested": False, "inventory_physical_complete": False}
     except Exception:
+        return None
+
+
+def select_organizer_keeper_advice(scope, result, *, confirmed=False):
+    """Explicit selection of reviewed ADVICE only; never a mutation plan."""
+    if (confirmed is not True or type(scope) is not OrganizerScope
+            or not scope.current() or type(result) is not dict
+            or result.get("mutation_authorized") is not False):
+        return None
+    try:
+        reviews = result["keeper_reviews"]
+        if type(reviews) is not tuple or len(reviews) > _PAGE:
+            return None
+        original = preview_keeper_bulk(reviews, identity_id=scope.identity)
+        if original != result.get("keeper_advice"):
+            return None
+        selected = preview_keeper_bulk(reviews, identity_id=scope.identity, accept_all=True)
+        return selected if scope.current() else None
+    except (ValueError, TypeError, KeyError):
         return None
