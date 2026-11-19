@@ -376,6 +376,22 @@ def sync_source_cycle_headline(source: object) -> str:
     return " · ".join(parts)
 
 
+def purchase_handoff_summary(receipt) -> str:
+    from ..core.notice_c_purchase_summary import closed_handoff_counts
+    raw = getattr(receipt, "purchase_enrichment", None)
+    if (type(raw) is not tuple or len(raw) != 4
+            or any(type(pair) is not tuple or len(pair) != 2
+                   or type(pair[0]) is not str for pair in raw)):
+        return ""
+    counts = closed_handoff_counts(dict(raw))
+    if counts is None:
+        return ""
+    return ("\nEnrichissement documentaire (dernier transfert vers le journal, "
+            "pas un décompte de fiches terminées) : "
+            f"{counts['requested']} intentions · {counts['admitted']} admises · "
+            f"{counts['deferred']} différées · {counts['unrequested']} non inscrites.")
+
+
 def sync_source_last_cycle_summary(source: object) -> str:
     """Render only an exact scoped Core terminal receipt, not log heuristics.
 
@@ -408,6 +424,7 @@ def sync_source_last_cycle_summary(source: object) -> str:
         + mode_labels[receipt.mode] + ", " + stamp + ") : "
         + status_labels[receipt.status]
     )
+    headline += purchase_handoff_summary(receipt)
     counts = receipt.canonical_execution
     if counts is None:
         return headline + "\nRésultats de réception locale : non attestés"
