@@ -231,7 +231,8 @@ def read_account_rights_snapshot(service, account: Account, *,
                if share else reader(account))
         candidates = ()
         if capture_purchase:
-            if type(raw) is not PurchaseEnrichmentObservation:
+            if (type(raw) is not PurchaseEnrichmentObservation
+                    or type(raw.inventory) is not ResourceSnapshot):
                 raise ValueError("invalid_purchase_enrichment_observation")
             # A and C are independently validated. If only the optional C
             # claims are malformed, the positive native A snapshot survives.
