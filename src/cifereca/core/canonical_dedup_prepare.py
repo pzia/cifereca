@@ -34,7 +34,7 @@ class CanonicalDedupPreparation:
 
 def prepare_verified_canonical_duplicate(
     storage, *, library_root: Path, candidate_placement_id: str,
-    keeper_placement_id: str, shared_lock,
+    keeper_placement_id: str, shared_lock, cleanup_current=None,
 ) -> CanonicalDedupPreparation:
     """Migrate only audited reference classes, preserving both physical copies.
 
@@ -67,9 +67,17 @@ def prepare_verified_canonical_duplicate(
     }
     # Independent transactions intentionally let a retry resume a partially
     # completed *safe* relink. No call below is allowed to unlink/delete B.
+    def check_current():
+        if cleanup_current is not None and cleanup_current() is not True:
+            raise ValueError("ordinary_cleanup_suspended")
+
+    check_current()
     catalogue = relink_canonical_duplicate_catalogue(storage, **kwargs)
+    check_current()
     backup = relink_canonical_duplicate_backup_paths(storage, **kwargs)
+    check_current()
     receipt = relink_completed_delivery_checkpoints(storage, **kwargs)
+    check_current()
 
     # A concurrent external writer may bypass the shared lock. The result is
     # only a diagnostic, never a stored destructive grant. Rehash again so

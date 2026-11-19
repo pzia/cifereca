@@ -216,11 +216,15 @@ def supervise_canonical_duplicate(
     if not cleanup_current():
         return report("blocked", "ordinary_cleanup_suspended")
     try:
-        prepared = prepare_verified_canonical_duplicate(storage, **kwargs)
+        prepared = prepare_verified_canonical_duplicate(
+            storage, **kwargs,
+            **({"cleanup_current": cleanup_current} if config is not None else {}),
+        )
     except (ValueError, sqlite3.Error, OSError):
         # Earlier *safe*, independently committed relinks may remain. A
         # retry will skip these idempotently; neither B nor bytes were lost.
-        return report("blocked", "relink_refused")
+        return report("blocked", "ordinary_cleanup_suspended"
+                      if not cleanup_current() else "relink_refused")
     if prepared.remaining_dependencies:
         return report("blocked", "remaining_dependencies", prep=prepared)
 
