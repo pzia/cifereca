@@ -47,15 +47,18 @@ def current_omission_txn(db, ref, proof):
         return None
 
 
-def record_purchase_omissions(storage, snapshot, omissions, candidates, *, context_current):
+def record_purchase_omissions(storage, snapshot, omissions, candidates, *, context_current,
+                              permission_current_txn=None):
     """Recheck exact committed positive A after the same-read Core handoff."""
     if (type(snapshot) is not ProviderRightsSnapshot or snapshot.status not in ("success", "partial")
             or snapshot.resume_cursor or type(omissions) is not tuple or type(candidates) is not tuple
-            or len(omissions) + len(candidates) > _MAX or not callable(context_current)):
+            or len(omissions) + len(candidates) > _MAX or not callable(context_current)
+            or (permission_current_txn is not None and not callable(permission_current_txn))):
         raise ValueError("invalid_purchase_omission_batch")
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        if context_current() is not True or not _allowed_txn(db, snapshot.scope):
+        if (context_current() is not True or not _allowed_txn(db, snapshot.scope)
+                or (permission_current_txn is not None and permission_current_txn(db) is not True)):
             raise ValueError("purchase_omission_context_changed")
         seen = set()
         rows = {(row.edition_id, row.right_id, row.kind): row for row in snapshot.rights}
@@ -80,5 +83,6 @@ def record_purchase_omissions(storage, snapshot, omissions, candidates, *, conte
                 wire = json.dumps({"a": proof, "reason": item.reason}, separators=(",", ":"))
                 db.execute("INSERT INTO metadata(key,value) VALUES(?,?) "
                            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (_key(ref), wire))
-        if context_current() is not True or not _allowed_txn(db, snapshot.scope):
+        if (context_current() is not True or not _allowed_txn(db, snapshot.scope)
+                or (permission_current_txn is not None and permission_current_txn(db) is not True)):
             raise ValueError("purchase_omission_context_changed")
