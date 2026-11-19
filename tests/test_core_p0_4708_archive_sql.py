@@ -125,3 +125,45 @@ def test_restore_collision_preserves_archive(rig):
         archive._change(db, **args, restore=True)
     assert db.execute("SELECT count(*) FROM " + archive._TABLE).fetchone() == (1,)
     db.rollback()
+
+
+@pytest.mark.parametrize("ddl", [
+    "CREATE TABLE missing_placement_archive_v1 (placement_id TEXT PRIMARY KEY NOT NULL,"
+    "identity_id TEXT NOT NULL,path TEXT NOT NULL,digest TEXT NOT NULL UNIQUE,payload BLOB NOT NULL)",
+    "CREATE TABLE missing_placement_archive_v1 (placement_id TEXT PRIMARY KEY NOT NULL,"
+    "identity_id TEXT NOT NULL,path TEXT COLLATE NOCASE NOT NULL UNIQUE,"
+    "digest TEXT NOT NULL UNIQUE,payload BLOB NOT NULL)",
+    "CREATE TABLE missing_placement_archive_v1 (placement_id TEXT PRIMARY KEY NOT NULL,"
+    "identity_id TEXT NOT NULL,path TEXT NOT NULL UNIQUE,"
+    "digest TEXT NOT NULL UNIQUE,payload TEXT NOT NULL)",
+])
+def test_lookalike_archive_schema_cannot_transfer(rig, ddl):
+    _, db, row, args = rig
+    db.execute("DROP TABLE " + archive._TABLE)
+    db.execute(ddl)
+    db.execute("BEGIN IMMEDIATE")
+    with pytest.raises(archive.ArchiveRefused, match="archive_schema"):
+        archive._change(db, **args, restore=False)
+    assert archive._live_row(db, row[0]) == row
+    db.rollback()
+
+
+def test_invalid_archive_coordinate_and_payload_type_preserve_live_row(rig):
+    _, db, row, args = rig
+    for pid, payload in (("x" * 16385, b"x"), ("other", "not bytes")):
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("INSERT INTO " + archive._TABLE + " VALUES(?,?,?,?,?)",
+                   (pid, row[3], "/other/path", "d", payload))
+        with pytest.raises(archive.ArchiveRefused, match="capacity_or_corruption"):
+            archive._change(db, **args, restore=False)
+        assert archive._live_row(db, row[0]) == row
+        db.rollback()
+
+
+def test_truthy_restore_direction_is_not_a_request(rig):
+    _, db, row, args = rig
+    db.execute("BEGIN IMMEDIATE")
+    with pytest.raises(archive.ArchiveRefused, match="direction_invalid"):
+        archive._change(db, **args, restore="restore")
+    assert archive._live_row(db, row[0]) == row
+    db.rollback()
