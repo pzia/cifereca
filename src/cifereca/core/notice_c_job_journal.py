@@ -342,22 +342,33 @@ def claim_job(storage, ref, *, now, lease_seconds):
         if job.spec.implementation_digest == _PURCHASE_INTENT_DIGEST:
             # Inert until a qualified private-to-public dispatch port exists.
             return None
-        status = _dependency_status(db, job.spec)
-        if status == "stale":
-            _save(db, replace(job, state="stale", reason="dependency_changed",
-                              lease_until=0))
-            return None
-        if (job.state != "pending" or status != "ready" or job.due > now
-                or job.lease_until > now):
-            return None
-        if job.attempts >= _MAX_ATTEMPTS or job.fence == _MAX:
-            _save(db, replace(job, state="error", lease_until=0,
-                              reason="exhausted"))
-            return None
-        claimed = replace(job, fence=job.fence + 1, attempts=job.attempts + 1,
-                          due=now, lease_until=now + lease_seconds, reason="none")
-        _save(db, claimed)
-        return JobLease(ref, claimed.fence, claimed.lease_until)
+        return _claim_ready_txn(db, job, now=now, lease_seconds=lease_seconds)
+
+
+def _claim_ready_txn(db, job, *, now, lease_seconds):
+    """Shared CAS; private callers must first prove their own exact admission."""
+    if (not db.in_transaction or not _integer(now)
+            or type(lease_seconds) is not int or not 1 <= lease_seconds <= _MAX_LEASE
+            or now > _MAX - lease_seconds):
+        raise ValueError("notice_work_invalid_lease")
+    if _get(db, job.ref) != job:
+        raise ValueError("notice_work_generation_changed")
+    status = _dependency_status(db, job.spec)
+    if status == "stale":
+        _save(db, replace(job, state="stale", reason="dependency_changed",
+                          lease_until=0))
+        return None
+    if (job.state != "pending" or status != "ready" or job.due > now
+            or job.lease_until > now):
+        return None
+    if job.attempts >= _MAX_ATTEMPTS or job.fence == _MAX:
+        _save(db, replace(job, state="error", lease_until=0,
+                          reason="exhausted"))
+        return None
+    claimed = replace(job, fence=job.fence + 1, attempts=job.attempts + 1,
+                      due=now, lease_until=now + lease_seconds, reason="none")
+    _save(db, claimed)
+    return JobLease(job.ref, claimed.fence, claimed.lease_until)
 
 
 def _held(db, lease, now):
