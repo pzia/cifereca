@@ -127,3 +127,55 @@ def test_adept_inspection_failure_never_exposes_untrusted_reason(
     assert staged.read_bytes() == b"synthetic source"
     assert destination.read_bytes() == b"old destination"
     assert previous.read_bytes() == b"old loan"
+
+
+@pytest.mark.parametrize("repair", [False, True])
+def test_format_change_never_renames_over_intermediate_path(tmp_path, monkeypatch, repair):
+    import os
+    staged = tmp_path / "staged.epub"
+    intermediate = staged.with_suffix(".pdf")
+    destination = tmp_path / "book.epub"
+    previous = tmp_path / "previous.epub"
+    previous.write_bytes(b"previous loan")
+    pdf = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n"
+    staged.write_bytes(pdf)
+    intermediate.write_bytes(b"unrelated intermediate file")
+    real_link = os.link
+
+    def no_replace(*args, **kwargs):
+        pytest.fail("a suffix correction must not replace a directory entry")
+
+    def collide(source, target, **kwargs):
+        if Path(target) == destination.with_suffix(".pdf"):
+            Path(target).write_bytes(b"other publication")
+        return real_link(source, target, **kwargs)
+
+    monkeypatch.setattr(Path, "replace", no_replace)
+    monkeypatch.setattr(os, "link", collide)
+    path, _, fmt, _, _ = _publish(staged, destination, previous, repair=repair)
+    assert fmt == "pdf"
+    assert path != destination.with_suffix(".pdf") and path.suffix == ".pdf"
+    assert path.read_bytes() == pdf
+    assert intermediate.read_bytes() == b"unrelated intermediate file"
+    assert destination.with_suffix(".pdf").read_bytes() == b"other publication"
+    assert previous.read_bytes() == b"previous loan"
+    assert not staged.exists()
+
+
+def test_format_change_refusal_leaves_original_stage_name(tmp_path):
+    staged = tmp_path / "staged.epub"
+    pdf = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n"
+    staged.write_bytes(pdf)
+    destination = tmp_path / "book.epub"
+
+    def inspector(path, expected=None):
+        assert path == staged
+        if expected is not None:
+            return NS(valid=False)
+        return inspect_artifact(path)
+
+    with pytest.raises(ProviderConfigurationError, match="Artefact final invalide"):
+        _publish(staged, destination, None, inspector=inspector, repair=False)
+    assert staged.read_bytes() == pdf
+    assert not staged.with_suffix(".pdf").exists()
+    assert not destination.with_suffix(".pdf").exists()
