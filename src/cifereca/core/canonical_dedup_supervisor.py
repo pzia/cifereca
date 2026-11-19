@@ -26,17 +26,10 @@ from .convergence_verified_presence import _verified_copy
 Action = Literal["preview", "commit", "recover"]
 
 
-def _ordinary_cleanup_enabled() -> bool:
-    """#4496: no ordinary duplicate deletion before the keeper-policy decision.
-
-    This fixed internal hold cannot be switched on by a plugin, a persisted
-    preference, a restored plan, or even a direct confirmed Core call. The
-    historical deletion mechanics remain tested in dedicated synthetic tests
-    using a local monkeypatch; this is not a product configuration flag.
-    Recovery of already durable tombstones stays independently available.
-    """
-    return False
-
+def _ordinary_cleanup_enabled(config=None) -> bool:
+    """Current Core preference. A missing config never authorizes deletion."""
+    from .destructive_cleanup_policy import destructive_cleanup_enabled
+    return destructive_cleanup_enabled(config)
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +112,7 @@ def _verified_postcheck(
 def supervise_canonical_duplicate(
     storage, *, library_root: Path, candidate_placement_id: str,
     keeper_placement_id: str, action: Action = "preview",
-    shared_lock=None, confirmed: bool = False,
+    shared_lock=None, confirmed: bool = False, config=None,
 ) -> SupervisedCanonicalDedup:
     """Run the exact Core preview→prepare→validate→commit→postcheck pipeline.
 
@@ -176,9 +169,13 @@ def supervise_canonical_duplicate(
 
     if confirmed is not True or not _lock_ok(shared_lock):
         raise ValueError("canonical_supervisor_confirmation_and_lock_required")
-    # Preview and explicit recovery remain functional. The ordinary commit
-    # must not infer which copy to retain from placement IDs before #4496.
-    if action == "commit" and not _ordinary_cleanup_enabled():
+    # Preview and recovery of a pre-existing tombstone retain separate guards.
+    # No config/plan value is snapshotted as lasting authorization.
+    def cleanup_current():
+        return (_ordinary_cleanup_enabled() if config is None
+                else _ordinary_cleanup_enabled(config))
+
+    if action == "commit" and not cleanup_current():
         return report("blocked", "ordinary_cleanup_suspended")
     kwargs = {
         "library_root": library_root,
@@ -214,6 +211,8 @@ def supervise_canonical_duplicate(
     ):
         return report("blocked", "pair_unverified")
 
+    if not cleanup_current():
+        return report("blocked", "ordinary_cleanup_suspended")
     try:
         prepared = prepare_verified_canonical_duplicate(storage, **kwargs)
     except (ValueError, sqlite3.Error, OSError):
@@ -240,9 +239,16 @@ def supervise_canonical_duplicate(
         ).fetchone()
     if candidate is None or type(candidate[0]) is not str or not candidate[0]:
         return report("blocked", "revalidation_refused", prep=prepared)
+    if not cleanup_current():
+        return report("blocked", "ordinary_cleanup_suspended", prep=prepared)
+    # Legacy synthetic direct-call tests retain their historical no-config
+    # hook; real configured calls carry the live guard into the writer.
+    retirement_kwargs = dict(kwargs)
+    if config is not None:
+        retirement_kwargs["cleanup_current"] = cleanup_current
     try:
         return finalize(
-            retire_verified_canonical_duplicate(storage, **kwargs),
+            retire_verified_canonical_duplicate(storage, **retirement_kwargs),
             candidate_path=candidate[0], prep=prepared,
         )
     except (ValueError, sqlite3.Error, OSError):

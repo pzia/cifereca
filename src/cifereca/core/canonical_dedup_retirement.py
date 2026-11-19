@@ -107,7 +107,7 @@ def _resolve_exact_completed_checkpoint(
 
 def retire_verified_canonical_duplicate(
     storage, *, library_root: Path, candidate_placement_id: str,
-    keeper_placement_id: str, shared_lock,
+    keeper_placement_id: str, shared_lock, cleanup_current=None,
 ) -> CanonicalRetirementResult:
     """Retire one fully-relocated, same-profile SHA copy; no rights transfer.
 
@@ -124,6 +124,11 @@ def retire_verified_canonical_duplicate(
             or not 0 < len(keeper_placement_id) <= 256
             or candidate_placement_id == keeper_placement_id):
         raise ValueError("canonical_retire_invalid_request")
+    def allowed():
+        return cleanup_current is None or cleanup_current() is True
+
+    if not allowed():
+        raise ValueError("ordinary_cleanup_suspended")
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         sql = (
@@ -221,6 +226,8 @@ def retire_verified_canonical_duplicate(
             "keeper_placement_id": keeper_placement_id,
             "stat": _file_signature(observations[0][1]),
         }
+        if not allowed():
+            raise ValueError("ordinary_cleanup_suspended")
         now = int(time.time())
         changed = db.execute(
             "UPDATE placements SET state=?,metadata_json=?,updated_at=? "
@@ -234,6 +241,8 @@ def retire_verified_canonical_duplicate(
             raise ValueError("canonical_retire_scope_changed")
         if any(not _same_file(path, before) for path, before in observations):
             raise ValueError("canonical_retire_bytes_changed")
+        if not allowed():
+            raise ValueError("ordinary_cleanup_suspended")
 
     # SQL committed: this persistent state is restart-safe. Cleanup may
     # return 'pending' on any filesystem or second-SQL failure; never lose
@@ -242,12 +251,13 @@ def retire_verified_canonical_duplicate(
         storage, library_root=library_root,
         candidate_placement_id=candidate_placement_id,
         keeper_placement_id=keeper_placement_id, shared_lock=shared_lock,
+        **({"cleanup_current": cleanup_current} if cleanup_current is not None else {}),
     )
 
 
 def recover_canonical_duplicate_retirement(
     storage, *, library_root: Path, candidate_placement_id: str,
-    keeper_placement_id: str, shared_lock,
+    keeper_placement_id: str, shared_lock, cleanup_current=None,
 ) -> CanonicalRetirementResult:
     """Resume ONLY a verified, same-profile tombstone under the common lock.
 
@@ -370,6 +380,8 @@ def recover_canonical_duplicate_retirement(
                 # All dependent SQL references were checked under this write
                 # transaction, and the two physical files re-hashed above.
                 # Crash after this unlink leaves _PENDING + original evidence.
+                if cleanup_current is not None and cleanup_current() is not True:
+                    return CanonicalRetirementResult(True, False, True)
                 copy_path.unlink()
                 removed = True
             if (os.path.lexists(copy_path)
