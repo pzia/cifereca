@@ -893,6 +893,7 @@ class LibraryService:
         """Apply staged settings and journal directory changes before publishing them."""
         from copy import deepcopy
         from .identities.directory_migration import DirectoryMigration, DirectoryMigrationError
+        from .core.destructive_cleanup_settings import preserve_destructive_cleanup_setting
         old_data = deepcopy(self.config.data)
         draft = deepcopy(self.config); draft.data = deepcopy(data)
         rows = draft.get("identities", [])
@@ -911,7 +912,11 @@ class LibraryService:
                     self._sync_identity_configuration()
                     self.catalog_scan(); engine.finish()
                 plan = engine.plan(rows)
-                self.config.data = deepcopy(data)
+                # General Settings drafts are never authority to change or
+                # restore the dedicated destructive-maintenance preference.
+                self.config.data = preserve_destructive_cleanup_setting(
+                    deepcopy(data), current=self.config,
+                )
                 self.config.set("identities", plan["new_identities"])
                 if plan["changes"]:
                     engine._write(plan)
@@ -930,7 +935,9 @@ class LibraryService:
         except Exception:
             pending = engine.pending()
             if not pending or pending["state"] == "planned":
-                self.config.data = old_data
+                self.config.data = preserve_destructive_cleanup_setting(
+                    old_data, current=self.config,
+                )
             else:
                 self.config.set("identities", pending["new_identities"])
                 self._sync_identity_configuration()
