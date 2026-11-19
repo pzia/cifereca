@@ -2665,6 +2665,10 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                 pending_positions = set()
 
                 def publish_or_request(db, source, position):
+                    # Discard in-memory hints from an uncommitted chunk
+                    # attempt before recomputing this exact row.
+                    atomic_c.pop(position, None)
+                    pending_positions.discard(position)
                     # The opt-in runtime owns durable recovery. Publish C on
                     # the source transaction; on failure roll back only that
                     # publication, then record the repair before source commit.
@@ -2697,11 +2701,15 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                     from .notice_c_group_batch_publication import publish_search_groups_txn
                     public = tuple((position, source) for position, source in accepted
                                    if position in atomic_c)
+                    refused_refs = set()
                     _, requests = publish_search_groups_txn(
                         db, tuple(source for _, source in public), now=now,
+                        _refused_refs=refused_refs,
                     )
                     if requests:
                         pending_positions.update(position for position, _ in public)
+                    return tuple(position for position, source in public
+                                 if source.document.source_key in refused_refs)
 
                 options = {"_after_persist": publish_or_request} if callable(recover) else {}
                 if atomic_groups:
