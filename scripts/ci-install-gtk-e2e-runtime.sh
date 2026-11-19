@@ -45,12 +45,17 @@ if (("${#missing[@]}" > 0)); then
     fi
     alternate_sources="${RUNNER_TEMP:-/tmp}/cifereca-gtk-ubuntu.sources.list"
     cat > "$alternate_sources" <<'APT_SOURCES'
-deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
-deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
-deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
+deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble main restricted universe multiverse
+deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble-updates main restricted universe multiverse
+deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu noble-security main restricted universe multiverse
 APT_SOURCES
     alternate_options=(
       "${apt_options[@]}"
+      # Fetch only required package indexes. Optional translation/CNF indexes
+      # exhausted the watchdog during repeated mirror failures.
+      -o Acquire::Retries=1
+      -o Acquire::Languages=none
+      -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false
       -o "Dir::Etc::sourcelist=$alternate_sources"
       -o Dir::Etc::sourceparts=-
       -o APT::Get::List-Cleanup=0
