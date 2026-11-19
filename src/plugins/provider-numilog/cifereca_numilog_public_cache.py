@@ -21,8 +21,9 @@ MAX_RATE_LIMIT_PAUSE_SECONDS = 30 * 24 * 60 * 60
 
 
 class PublicCatalogueCache:
-    def __init__(self, *, clock=None):
+    def __init__(self, *, clock=None, wall_clock=None):
         self._clock = clock or time.monotonic
+        self._wall_clock = wall_clock or time.time
         self._entries = OrderedDict()
         self._lock = threading.Lock()
         self._epoch = 0
@@ -53,10 +54,10 @@ class PublicCatalogueCache:
         from cifereca_numilog_public_client import _RetainedSearchPage
 
         now = self._clock()
-        for key, (until, _value) in tuple(self._entries.items()):
+        for key, (until, _value, _observed_at) in tuple(self._entries.items()):
             if until <= now:
                 self._entries.pop(key, None)
-        matches = [(until, value) for until, value in self._entries.values()
+        matches = [(until, value) for until, value, _observed_at in self._entries.values()
                    if (type(value) is _RetainedSearchPage
                        and value.raw_input is not None
                        and value.raw_input.token == token)]
@@ -83,16 +84,24 @@ class PublicCatalogueCache:
             self._lock.release()
 
     def get(self, key, load):
+        return self._get(key, load, with_observation=False)
+
+    def get_observed(self, key, load):
+        """Same entry/budget; return original load timestamp even on cache hit."""
+        return self._get(key, load, with_observation=True)
+
+    def _get(self, key, load, *, with_observation):
         with self._lock:
             now = self._clock()
-            for expired in [k for k, (until, _v) in self._entries.items() if until <= now]:
+            for expired in [k for k, (until, _v, _at) in self._entries.items() if until <= now]:
                 self._entries.pop(expired)
             cached = self._entries.get(key)
             if cached is not None:
                 self._entries.move_to_end(key)
-                return deepcopy(cached[1])
+                value = deepcopy(cached[1])
+                return (value, cached[2]) if with_observation else value
             token, epoch = self._reserve_locked(now)
-        return self._run_reserved(key, token, epoch, load)
+        return self._run_reserved(key, token, epoch, load, with_observation=with_observation)
 
     def _reserve_locked(self, now):
         """Shared single in-flight slot, cooldown and token bucket."""
@@ -138,9 +147,10 @@ class PublicCatalogueCache:
             if self._inflight is token:
                 self._inflight = None
 
-    def _run_reserved(self, key, token, epoch, load):
+    def _run_reserved(self, key, token, epoch, load, *, with_observation=False):
         try:
             value = load()  # No cache mutex held across HTTP.
+            observed_at = int(self._wall_clock())
             snapshot = deepcopy(value)
             with self._lock:
                 if self._epoch != epoch:
@@ -148,11 +158,11 @@ class PublicCatalogueCache:
                     # its cache entry. A late callback must not display rows
                     # from the session that initiated this HTTP request.
                     raise ProviderError('Numilog : public_catalog_request_invalidated')
-                self._entries[key] = (self._clock() + TTL_SECONDS, snapshot)
+                self._entries[key] = (self._clock() + TTL_SECONDS, snapshot, observed_at)
                 self._entries.move_to_end(key)
                 while len(self._entries) > MAX_ENTRIES:
                     self._entries.popitem(last=False)
-            return value
+            return (value, observed_at) if with_observation else value
         except ProviderError as exc:
             if str(exc) in {'Numilog : public_catalog_rate_limited',
                             'Numilog : public_detail_rate_limited',
