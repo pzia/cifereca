@@ -236,12 +236,12 @@ def test_loan_auto_repairs_legacy_adept_artifact_via_repairing_file(
         monkeypatch.setattr(service, "catalog_index_path", index)
         real_put = service.storage.acquisition_put
 
-        def put(payload):
+        def put(payload, **kwargs):
             if (failure == "receipt" and payload.get("status") == "complete"
                     and payload.get("metadata", {}).get("post_processed") is True):
                 assert destination.read_bytes() == b"protected-old"
                 raise OSError("synthetic receipt interruption")
-            return real_put(payload)
+            return real_put(payload, **kwargs)
 
         monkeypatch.setattr(service.storage, "acquisition_put", put)
         result = service._acquire_active_loan_automatically(loan)

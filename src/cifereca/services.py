@@ -5244,7 +5244,11 @@ class LibraryService:
             )
             if not source_lease.current(self.storage, loan):
                 return completion_scope_refusal()
-            self.storage.acquisition_put(receipt)
+            from .core.loan_completion_epoch import CompletionEpochRevoked
+            try:
+                self.storage.acquisition_put(receipt, completion_lease=source_lease)
+            except CompletionEpochRevoked:
+                return completion_scope_refusal()
             if not source_lease.current(self.storage, loan):
                 # The historical write may already have committed. Do not
                 # report success or cleanup after detecting revoked scope.
