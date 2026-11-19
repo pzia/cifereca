@@ -43,12 +43,14 @@ def _request_existing_group(db, document, sources, *, now):
     )
 
 
-def publish_search_groups_txn(db, currents, *, now):
+def publish_search_groups_txn(db, currents, *, now, _refused_refs=None):
     """Return (linked source refs, exact durable repair refs), before commit.
 
     Discover eligible groups once for the accepted chunk. A failed writer
     rolls back its partial group before requesting repair. Unqualified
     overlaps are not admitted and must not manufacture a repair job.
+    A caller that supplies a refusal set must roll back the whole snapshot
+    before reattempting any independent rows. No partial repair is retained.
     """
     if not db.in_transaction:
         raise ValueError("notice_work_transaction_required")
@@ -89,14 +91,25 @@ def publish_search_groups_txn(db, currents, *, now):
             continue
         # The entire eligible group has been rolled back; select initial,
         # strict extension or exact recomputation, never an invented target.
-        if old is None or {member.source_ref for member in old.sources} < refs:
-            request = request_search_group_repair_txn(db, sources[0], now=now)
-            if request is None:
-                raise ValueError("notice_work_group_repair_refused")
-        else:
-            request = _request_existing_group(db, document, sources, now=now)
-        if request is not None:
-            requests.append(request)
+        db.execute("SAVEPOINT notice_c_group_repair")
+        try:
+            if old is None or {member.source_ref for member in old.sources} < refs:
+                request = request_search_group_repair_txn(db, sources[0], now=now)
+                if request is None:
+                    raise ValueError("notice_work_group_repair_refused")
+            else:
+                request = _request_existing_group(db, document, sources, now=now)
+            if request is not None:
+                requests.append(request)
+        except ValueError:
+            db.execute("ROLLBACK TO SAVEPOINT notice_c_group_repair")
+            if _refused_refs is None:
+                raise
+            # Every admitted row in the refused group must be excluded
+            # together. Other groups can report their own exact refusals.
+            _refused_refs.update(refs)
+        finally:
+            db.execute("RELEASE SAVEPOINT notice_c_group_repair")
     return linked, tuple(requests)
 
 
