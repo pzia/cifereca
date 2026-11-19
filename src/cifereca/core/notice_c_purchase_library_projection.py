@@ -73,7 +73,7 @@ def purchase_status_label(packet):
     return _STATUS_LABELS.get(packet.state, "") if type(packet) is PurchaseLibraryStatus else ""
 
 
-def _status_txn(db, source, *, now):
+def _status_txn(db, source, *, now, has_notice=False):
     # Job state is historical intent, NOT an active in-memory admission.
     # Only an explicit same-read omission may explain an absent candidate.
     # Missing job/receipt alone remains unknown.
@@ -92,6 +92,10 @@ def _status_txn(db, source, *, now):
     except (ValueError, TypeError, KeyError, RecursionError):
         return None
     if job is None or job.spec.target != target or job.spec.implementation_digest != spec.implementation_digest:
+        return None
+    # A valid current notice does not require revalidation merely because
+    # it remains readable offline or the request policy is disabled.
+    if has_notice and job.state == "current":
         return None
     if not _allowed_txn(db, source.scope):
         state = "paused"
@@ -218,14 +222,13 @@ def project_purchase_library_notices(storage, rows, *, identity_id):
                     source = SourceReference(ProviderRightsScope(identity_id, *key[:3]),
                                              branch, key[3], right, "purchase")
                     notice = _read_descriptive_txn(db, source)
-                    facts[key] = (source, notice)
-                source, notice = facts[key]
+                    state = _status_txn(db, source, now=now, has_notice=notice is not None)
+                    facts[key] = (source, notice, state)
+                source, notice, state = facts[key]
                 if notice is not None:
                     staged.append((row, PurchaseLibraryNotice(row["key"], source, notice)))
-                else:
-                    state = _status_txn(db, source, now=now)
-                    if state is not None:
-                        statuses.append((row, PurchaseLibraryStatus(row["key"], source, *state)))
+                if state is not None:
+                    statuses.append((row, PurchaseLibraryStatus(row["key"], source, *state)))
     except (sqlite3.Error, AttributeError, TypeError, ValueError, KeyError):
         return
     for row, packet in staged:
@@ -272,8 +275,7 @@ def _local_notices_txn(db, local, identity_id, *, statuses, now):
         notice = _read_descriptive_txn(db, source)
         if notice is not None:
             result.append((row, PurchaseLibraryNotice(row["key"], source, notice, pair)))
-        else:
-            state = _status_txn(db, source, now=now)
-            if state is not None:
-                statuses.append((row, PurchaseLibraryStatus(row["key"], source, *state, pair)))
+        state = _status_txn(db, source, now=now, has_notice=notice is not None)
+        if state is not None:
+            statuses.append((row, PurchaseLibraryStatus(row["key"], source, *state, pair)))
     return result
