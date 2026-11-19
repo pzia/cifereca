@@ -160,3 +160,37 @@ def test_setting_command_rotates_review_epoch_on_each_transition(rig):
     assert None not in (initial, enabled, disabled, renewed)
     assert len({initial, enabled, disabled, renewed}) == 4
     assert cleanup_review_epoch(Config(service.config.path)) != renewed
+
+
+@pytest.mark.parametrize("replacement", [None, "null", "[]", '"invalid"', "{broken", "{}",
+                                         '{"maintenance":{"destructive_cleanup_enabled":"true"}}'])
+def test_reload_missing_or_invalid_config_revokes_previous_authorization(rig, replacement):
+    from cifereca.core.destructive_cleanup_policy import cleanup_review_epoch
+    service, _ = rig
+    cfg = service.config
+    assert _change(service, True).enabled
+    epoch = cleanup_review_epoch(cfg)
+    if replacement is None:
+        cfg.path.unlink()
+    else:
+        cfg.path.write_text(replacement, encoding="utf-8")
+    cfg.load()
+    assert not destructive_cleanup_enabled(cfg)
+    assert cleanup_review_epoch(cfg) != epoch
+    assert not destructive_cleanup_enabled(Config(cfg.path))
+
+
+def test_reload_valid_config_restores_only_persisted_explicit_true(rig):
+    from cifereca.core.destructive_cleanup_policy import cleanup_review_epoch
+    service, _ = rig
+    cfg = service.config
+    assert _change(service, True).enabled
+    epoch = cleanup_review_epoch(cfg)
+    cfg.load()
+    assert destructive_cleanup_enabled(cfg)
+    assert cleanup_review_epoch(cfg) != epoch
+    cfg.set(KEY, False)
+    cfg.save()
+    cfg.set(KEY, True)  # deliberately unsaved synthetic preference
+    cfg.load()
+    assert not destructive_cleanup_enabled(cfg)

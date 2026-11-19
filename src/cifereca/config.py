@@ -155,6 +155,11 @@ class Config:
     def load(self) -> None:
         # A reloaded configuration starts a new process-local review epoch.
         self._cleanup_review_epoch = secrets.token_hex(16)
+        # A missing file or a non-object JSON root historically retains the
+        # other in-memory preferences. Never retain a previous destructive
+        # authorization in those cases: only a successfully loaded object
+        # can restore its persisted strict boolean value.
+        self.set("maintenance.destructive_cleanup_enabled", False)
         if self.path.exists():
             try:
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
