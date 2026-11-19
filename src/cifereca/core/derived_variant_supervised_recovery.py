@@ -28,6 +28,11 @@ def _lock_current(lock):
     if type(lock) is not InterProcessLock:
         return False
     try:
+        if lock._existing_nofollow:
+            return (
+                lock.path == acquisition_lock_file(create=False)
+                and lock.strict_current()
+            )
         held = lock._lease
         if (held is None or lock._handle is None or held.handle.closed
                 or held.pid != os.getpid() or held.thread_id != get_ident()
