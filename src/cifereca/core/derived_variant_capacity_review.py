@@ -9,16 +9,17 @@ from __future__ import annotations
 from pathlib import Path
 import sqlite3
 
+from . import derived_variant_journal as journal
 from .derived_variant_journal import (
     DerivedJournalConflict, _measure, _decode, _receipt_digest, _PREFIX,
-    _MAX_RECORDS, _MAX_TOTAL_BYTES, _MAX_RESERVED_OUTPUT_BYTES, _MAX_RECORD_BYTES,
 )
 from .derived_variant_retention_review import _directory
 from .derived_variant_recovery_operator import _capture
 from .derived_variant_stock_review import review_derived_staging_stock
 
-_LIMITS = {"records": _MAX_RECORDS, "payload_bytes": _MAX_TOTAL_BYTES,
-           "reserved_output_bytes": _MAX_RESERVED_OUTPUT_BYTES}
+def _limits():
+    return {"records": journal._MAX_RECORDS, "payload_bytes": journal._MAX_TOTAL_BYTES,
+            "reserved_output_bytes": journal._MAX_RESERVED_OUTPUT_BYTES}
 
 
 def _empty():
@@ -76,8 +77,8 @@ def _snapshot(scope):
 def _report(status, *, installation=None, profile=None, unbound=None,
             remaining=None, stock=None):
     return {
-        "status": status, "limits": dict(_LIMITS),
-        "max_receipt_payload_bytes": _MAX_RECORD_BYTES,
+        "status": status, "limits": _limits(),
+        "max_receipt_payload_bytes": journal._MAX_RECORD_BYTES,
         "installation": installation, "profile": profile,
         "scope_unverified_receipts": unbound,
         "remaining_operational": remaining,
@@ -107,9 +108,9 @@ def review_derived_capacity(service, request):
         observed = _snapshot(scope)
         _, _, installation, owner, unbound = observed
         remaining = {key: max(0, limit - installation[key])
-                     for key, limit in _LIMITS.items()}
+                     for key, limit in _limits().items()}
         status = ("over_capacity" if any(installation[key] > limit
-                                        for key, limit in _LIMITS.items())
+                                        for key, limit in _limits().items())
                   else "limit_reached" if not all(remaining.values())
                   else "observed")
         stock = review_derived_staging_stock(
