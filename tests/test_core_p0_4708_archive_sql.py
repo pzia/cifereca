@@ -125,3 +125,33 @@ def test_restore_collision_preserves_archive(rig):
         archive._change(db, **args, restore=True)
     assert db.execute("SELECT count(*) FROM " + archive._TABLE).fetchone() == (1,)
     db.rollback()
+
+
+def test_reconcile_exact_states_and_ambiguous_commit(rig):
+    _, db, row, args = rig
+    proof = {k: args[k] for k in ("expected_payload", "expected_digest", "max_records", "max_bytes")}
+    assert archive._reconcile(db, **proof) == "live_exact"
+    db.execute("BEGIN IMMEDIATE")
+    archive._change(db, **args, restore=False)
+    assert archive._reconcile(db, **proof) == "unverified"
+    assert db.in_transaction
+    db.commit()
+    assert archive._reconcile(db, **proof) == "archive_exact"
+    assert not db.in_transaction
+    db.execute("BEGIN IMMEDIATE")
+    archive._change(db, **args, restore=True)
+    db.rollback()
+    assert archive._reconcile(db, **proof) == "archive_exact"
+
+
+def test_reconcile_corrupted_archive_is_not_authority(rig):
+    _, db, row, args = rig
+    proof = {k: args[k] for k in ("expected_payload", "expected_digest", "max_records", "max_bytes")}
+    db.execute("BEGIN IMMEDIATE")
+    archive._change(db, **args, restore=False)
+    db.commit()
+    db.execute("UPDATE " + archive._TABLE + " SET payload=?", (b"corrupt",))
+    db.commit()
+    assert archive._reconcile(db, **proof) == "unverified"
+    assert not db.in_transaction
+    assert archive._live_row(db, row[0]) is None

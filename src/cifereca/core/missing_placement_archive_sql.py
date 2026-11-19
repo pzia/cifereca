@@ -6,6 +6,8 @@ commit, filesystem operation or public capacity policy is provided here.
 """
 from __future__ import annotations
 
+import sqlite3
+
 from .destructive_cleanup_policy import cleanup_review_epoch, destructive_cleanup_enabled
 from .missing_placement_archive_envelope import (
     _COLUMNS, _MAX_BYTES, _decode_archive_row, _encode_archive_row,
@@ -174,3 +176,39 @@ def _change(db, *, expected_payload, expected_digest, config, expected_epoch,
         db.execute("ROLLBACK TO SAVEPOINT missing_archive_change")
         db.execute("RELEASE SAVEPOINT missing_archive_change")
         raise
+
+
+def _reconcile(db, *, expected_payload, expected_digest, max_records, max_bytes):
+    """Read-only outcome of an ambiguous commit; never retry a mutation.
+
+    Caller supplies a fresh isolated connection and exact private witness.
+    A classification is not a confirmation or a dependency proof.
+    """
+    if db.in_transaction:
+        return "unverified"
+    try:
+        db.execute("BEGIN")
+        try:
+            _schema(db)
+            row = _decode_archive_row(expected_payload, expected_digest)
+            records, _ = _inventory(db, max_records=max_records, max_bytes=max_bytes)
+            live = _live_row(db, row[0])
+            archived = records.get(row[0])
+            collision = db.execute(
+                "SELECT 1 FROM main.placements WHERE path=? AND placement_id<>?",
+                (row[2], row[0]),
+            ).fetchone()
+            if collision is not None or any(
+                pid != row[0] and other[0][2] == row[2]
+                for pid, other in records.items()
+            ):
+                return "unverified"
+            if live == row and archived is None:
+                return "live_exact"
+            if live is None and archived == (row, expected_payload, expected_digest):
+                return "archive_exact"
+            return "unverified"
+        finally:
+            db.rollback()
+    except (ValueError, TypeError, RuntimeError, sqlite3.Error):
+        return "unverified"
