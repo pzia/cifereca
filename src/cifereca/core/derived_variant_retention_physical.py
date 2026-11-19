@@ -11,7 +11,7 @@ import sqlite3
 import stat
 from time import monotonic
 
-from .derived_variant_journal import DerivedJournalConflict, _COMMITTED
+from .derived_variant_journal import DerivedJournalConflict, _COMMITTED, _digest
 from .derived_variant_publication import (
     DerivedPublicationConflict, _file_signature, _verified_variant_file,
 )
@@ -174,6 +174,58 @@ def review_committed_derived_physical(storage, *, library_root, identity_id,
     except (DerivedJournalConflict, DerivedPublicationConflict, sqlite3.Error,
             OSError, TypeError, ValueError, RuntimeError, RecursionError):
         return _report("unavailable")
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
+
+
+def _review_exact_committed_physical(storage, *, library_root, identity_id,
+                                     receipt_key, receipt_sha256,
+                                     explicitly_requested=False):
+    """Private exact receipt witness for a future combined preflight.
+
+    Use only a key and digest already captured in a private SQL snapshot.
+    A positive category cannot authorize retention, quota release, or a
+    filesystem operation. No coordinate or assertion of SQL validity is
+    returned. A separate live canonical/dependency guard remains required.
+    """
+    if (explicitly_requested is not True
+            or not isinstance(library_root, Path) or not library_root.is_absolute()
+            or library_root == Path("/") or ".." in library_root.parts
+            or type(identity_id) is not str or not 0 < len(identity_id) <= 1024
+            or any(ord(c) < 32 or ord(c) == 127 for c in identity_id)
+            or not _digest(receipt_sha256)
+            or type(receipt_key) is not str
+            or receipt_key != _COMMITTED + receipt_sha256):
+        return "unavailable"
+    root_fd = None
+    try:
+        root_fd = _open_root(library_root)
+        root_stamp = _directory_stamp(root_fd)
+        snapshot = _snapshot(storage, identity_id)
+        directory, records = snapshot
+        matches = tuple(intent for key, digest, intent in records
+                        if key == receipt_key and digest == receipt_sha256)
+        if len(matches) != 1:
+            return "unavailable"
+        intent = matches[0]
+        if intent.parent_stamp[2] + intent.output_size > _MAX_BYTES:
+            return "budget_exceeded"
+
+        def current():
+            if _snapshot(storage, identity_id) != snapshot:
+                return False
+            fd = _open_root(library_root)
+            try:
+                return _directory_stamp(fd) == root_stamp
+            finally:
+                os.close(fd)
+
+        result = _observe(intent, library_root / directory, current)
+        return result if current() else "evidence_changed"
+    except (DerivedJournalConflict, DerivedPublicationConflict, sqlite3.Error,
+            OSError, TypeError, ValueError, RuntimeError, RecursionError):
+        return "unavailable"
     finally:
         if root_fd is not None:
             os.close(root_fd)
