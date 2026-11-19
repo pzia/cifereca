@@ -4,6 +4,11 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 import sqlite3
+import time
+
+from . import notice_c_job_journal as journal
+from .notice_c_purchase_association import _current_a
+from .notice_c_purchase_intent import _binding_txn, _allowed_txn
 
 from ..plugin_api.downloadable_resources import SourceReference
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
@@ -11,6 +16,7 @@ from .notice_c_purchase_descriptive_read import PurchaseDescriptiveNotice, _read
 
 _MAX_ROWS = 10_000
 _PACKET = "_purchase_library_notice"
+_STATUS = "_purchase_library_status"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -19,6 +25,74 @@ class PurchaseLibraryNotice:
     source: SourceReference
     notice: PurchaseDescriptiveNotice
     placement: tuple[str, str] | None = None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PurchaseLibraryStatus:
+    key: str
+    source: SourceReference
+    state: str
+    attempts: int
+    placement: tuple[str, str] | None = None
+
+
+_STATUS_LABELS = {
+    "pending": "En attente d’enrichissement",
+    "running": "Enrichissement en cours",
+    "retry_wait": "Nouvelle tentative différée",
+    "failed": "Enrichissement non abouti",
+    "proof_unavailable": "Preuve documentaire à revalider",
+    "paused": "Requêtes d’enrichissement désactivées",
+}
+
+
+def purchase_library_status(row):
+    if type(row) is not dict:
+        return None
+    packet = row.get(_STATUS)
+    if (type(packet) is not PurchaseLibraryStatus
+            or type(packet.source) is not SourceReference
+            or packet.source.kind != "purchase"
+            or packet.key != row.get("key")
+            or packet.state not in _STATUS_LABELS
+            or type(packet.attempts) is not int
+            or not 0 <= packet.attempts <= journal._MAX_ATTEMPTS):
+        return None
+    scope = packet.source.scope
+    if packet.placement is not None:
+        return packet if _local_coordinate(row, scope.identity_id) == packet.placement else None
+    return packet if _coordinate(row, scope.identity_id) == (
+        scope.provider_id, scope.credential_id, scope.account_id, packet.source.edition_id,
+    ) else None
+
+
+def purchase_status_label(packet):
+    return _STATUS_LABELS.get(packet.state, "") if type(packet) is PurchaseLibraryStatus else ""
+
+
+def _status_txn(db, source, *, now):
+    # Job state is historical intent, NOT an active in-memory admission.
+    # Without a job, missing direct URL and unobserved cases cannot be
+    # distinguished; deliberately do not invent a failure or a zero.
+    ref, proof = _current_a(db, source)
+    if proof is None or not _binding_txn(db, source.scope):
+        return None
+    target = journal._PURCHASE_TARGET + ref.removeprefix("source:")
+    spec = journal.JobSpec("fetch_source_notice", target, "0" * 64,
+                           journal._PURCHASE_INTENT_DIGEST)
+    job = journal._load(db, journal._key(spec))
+    if job is None or job.spec.target != target or job.spec.implementation_digest != spec.implementation_digest:
+        return None
+    if not _allowed_txn(db, source.scope):
+        state = "paused"
+    elif job.state == "pending":
+        state = ("running" if job.lease_until > now else
+                 "retry_wait" if job.due > now and job.attempts else "pending")
+    elif job.state == "error":
+        state = "failed"
+    else:
+        state = "proof_unavailable"
+    return state, job.attempts
 
 
 def _coordinate(row, identity_id):
@@ -89,6 +163,7 @@ def project_purchase_library_notices(storage, rows, *, identity_id):
     for row in rows:
         if type(row) is dict:
             row.pop(_PACKET, None)
+            row.pop(_STATUS, None)
     if (type(identity_id) is not str or not identity_id
             or not 1 <= len(rows) <= _MAX_ROWS):
         return
@@ -105,6 +180,8 @@ def project_purchase_library_notices(storage, rows, *, identity_id):
     coordinates = {key for _, key in wanted}
     matches = {}
     staged = []
+    statuses = []
+    now = int(time.time())
     try:
         with storage._lock, storage._connect() as db:
             db.execute("BEGIN")
@@ -121,7 +198,7 @@ def project_purchase_library_notices(storage, rows, *, identity_id):
                 if key in coordinates:
                     matches.setdefault(key, []).append(record[4:])
             facts = {}
-            staged.extend(_local_notices_txn(db, local, identity_id))
+            staged.extend(_local_notices_txn(db, local, identity_id, statuses=statuses, now=now))
             for row, key in wanted:
                 candidates = matches.get(key, ())
                 if len(candidates) != 1:
@@ -135,13 +212,19 @@ def project_purchase_library_notices(storage, rows, *, identity_id):
                 source, notice = facts[key]
                 if notice is not None:
                     staged.append((row, PurchaseLibraryNotice(row["key"], source, notice)))
+                else:
+                    state = _status_txn(db, source, now=now)
+                    if state is not None:
+                        statuses.append((row, PurchaseLibraryStatus(row["key"], source, *state)))
     except (sqlite3.Error, AttributeError, TypeError, ValueError, KeyError):
         return
     for row, packet in staged:
         row[_PACKET] = packet
+    for row, packet in statuses:
+        row[_STATUS] = packet
 
 
-def _local_notices_txn(db, local, identity_id):
+def _local_notices_txn(db, local, identity_id, *, statuses, now):
     if not local:
         return []
     # Exact completed provider OriginLink, same owner and present Placement.
@@ -179,4 +262,8 @@ def _local_notices_txn(db, local, identity_id):
         notice = _read_descriptive_txn(db, source)
         if notice is not None:
             result.append((row, PurchaseLibraryNotice(row["key"], source, notice, pair)))
+        else:
+            state = _status_txn(db, source, now=now)
+            if state is not None:
+                statuses.append((row, PurchaseLibraryStatus(row["key"], source, *state, pair)))
     return result
