@@ -14,7 +14,11 @@ def test_purchase_search_exact_scope(tmp_path):
         scope = source.scope
         fact = PurchaseDescriptiveFact("description", "Archipel violet", "seller-a", "source", "revision", 100)
         date = PurchaseDescriptiveFact("published_at", "2031-04-19", "seller-a", "source", "revision", 100)
-        notice = PurchaseDescriptiveNotice(None, 1, 100, (fact, date))
+        genre = PurchaseDescriptiveFact("genres", "Policier nordique", "seller-a", "source", "revision", 100)
+        keywords = PurchaseDescriptiveFact("keywords", "Enquête maritime", "seller-a", "source", "revision", 100)
+        series = PurchaseDescriptiveFact("series", "Les Brumes", "seller-a", "source", "revision", 100)
+        languages = PurchaseDescriptiveFact("languages", "fr ; eo", "seller-a", "source", "revision", 100)
+        notice = PurchaseDescriptiveNotice(None, 1, 100, (fact, date, genre, keywords, series, languages))
         row = {"key": "remote", "identity_id": scope.identity_id,
                "provider_id": scope.provider_id, "item_id": source.edition_id,
                "source": "private_catalog_observation", "state": "remote_catalog",
@@ -33,5 +37,20 @@ def test_purchase_search_exact_scope(tmp_path):
         assert filter_loaded_results([row], "2031") == [row]
         assert "Parution (catalogue public)" in local_match_explanation(row, "2031")
         assert not filter_loaded_results([row], "2031", field="isbn")
+        for term in ("nordique", "maritime"):
+            assert filter_loaded_results([row], term, field="subject") == [row]
+            assert filter_loaded_results([row], term) == [row]
+            assert "Sujet (catalogue public)" in local_match_explanation(row, term)
+            assert not filter_loaded_results([row], term, field="isbn")
+            assert not filter_loaded_results([{**row, "identity_id": "B"}], term)
+        assert filter_loaded_results([row], "brumes", field="series") == [row]
+        assert "Série (catalogue public)" in local_match_explanation(row, "brumes")
+        assert "Langues déclarées (catalogue public)" in local_match_explanation(row, "eo")
+        assert not filter_loaded_results([row], "", languages=["eo"])
+        assert not filter_loaded_results([row], "eo", field="language")
+        assert not filter_loaded_results([row], "brumes", field="collection")
+        # Native subject outranks the commercial observation.
+        native = {**row, "key": "native", "metadata": {"genres": ["Policier nordique"]}}
+        assert filter_loaded_results([row, native], "nordique") == [native, row]
     finally:
         db.close()
