@@ -87,6 +87,11 @@ def _spec_txn(db, snapshot, candidate):
     if committed != (*coords, "active", "provider_response",
                      row.evidence_ref, row.observed_at):
         raise ValueError("notice_purchase_source_changed")
+    # A later same-A observation can explicitly withdraw the candidate.
+    # The omission is not a permission grant and cannot change A.
+    from .notice_c_purchase_omissions import current_omission_txn, proof_for_row
+    if current_omission_txn(db, ref, proof_for_row(ref, row)) is not None:
+        raise ValueError("notice_purchase_candidate_omitted")
     # Freshness/receipt changes alone are not a new association. The future
     # execution port MUST recheck the current A and this candidate fingerprint.
     wire = json.dumps(["cifereca.purchase-enrichment-intent.v1", ref,

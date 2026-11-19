@@ -35,7 +35,7 @@ from .downloadable_resources import (
 )
 from .provider_purchase_enrichment import (
     PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT,
-    PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation,
+    PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation, PurchaseEnrichmentOmission,
     PurchaseEnrichmentDeferred, MAX_PURCHASE_RETRY_SECONDS,
 )
 from .loan_inventory import (INVENTORY_CONTRACT, LoanInventoryScope, LoanBranchCoverage, LoanInventorySnapshot, legacy_loan_inventory, read_loan_inventory)
@@ -139,7 +139,7 @@ __all__ = [
     "CAPABILITY_MATRIX_CONTRACT", "CapabilityEvidence", "CapabilityMatrix", "declared_provider_matrix", "project_existing_capabilities",
     "RIGHTS_OBSERVATION_CONTRACT", "ProviderRightsScope", "ProviderRightObservation", "ProviderRightsSnapshot",
     "PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT",
-    "PurchaseEnrichmentCandidate", "PurchaseEnrichmentObservation",
+    "PurchaseEnrichmentCandidate", "PurchaseEnrichmentObservation", "PurchaseEnrichmentOmission",
     "PurchaseEnrichmentDeferred", "MAX_PURCHASE_RETRY_SECONDS",
     "DOWNLOADABLE_RESOURCE_CONTRACT", "SourceReference", "DownloadCapability",
     "OptionalRightMetadata", "ResourceObservation", "ResourceSnapshot",

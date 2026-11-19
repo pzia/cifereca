@@ -22,7 +22,7 @@ from cifereca.plugin_api.downloadable_resources import (
     ResourceSnapshot, as_legacy_rights_snapshot, from_legacy_rights_snapshot,
 )
 from cifereca.plugin_api.provider_purchase_enrichment import (
-    PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation,
+    PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation, PurchaseEnrichmentOmission,
 )
 
 _LOG = logging.getLogger("cifereca")
@@ -33,7 +33,8 @@ _MAX_INVENTORY_PAGES = 128
 
 def read_account_rights_snapshot(service, account: Account, *,
                                  cancelled=lambda: False,
-                                 purchase_candidates_sink=None) -> ProviderRightsSnapshot:
+                                 purchase_candidates_sink=None,
+                                 purchase_omissions_sink=None) -> ProviderRightsSnapshot:
     """Explicit opt-in account I/O, never invoked by a passive Core projection.
 
     The caller owns source enablement, task cancellation and exclusive sync
@@ -42,7 +43,8 @@ def read_account_rights_snapshot(service, account: Account, *,
     A missing optional reader is not replaced by library(), loans() or GET.
     """
     if (type(account) is not Account or not callable(cancelled)
-            or (purchase_candidates_sink is not None and not callable(purchase_candidates_sink))):
+            or (purchase_candidates_sink is not None and not callable(purchase_candidates_sink))
+            or (purchase_omissions_sink is not None and not callable(purchase_omissions_sink))):
         raise ValueError("invalid_rights_reader_request")
     scope = ProviderRightsScope(
         account.identity_id, account.provider_id,
@@ -194,7 +196,7 @@ def read_account_rights_snapshot(service, account: Account, *,
         # it. A same-cycle loan inventory retains its existing priority.
         purchase_reader = "purchase_enrichment_observation"
         capture_purchase = (
-            not share and purchase_candidates_sink is not None
+            not share and (purchase_candidates_sink is not None or purchase_omissions_sink is not None)
             and callable(getattr_static(session, purchase_reader, None))
         )
         reader_name = (
@@ -229,7 +231,7 @@ def read_account_rights_snapshot(service, account: Account, *,
 
         raw = (reader(account, loan_inventory=same_cycle_inventory)
                if share else reader(account))
-        candidates = ()
+        candidates, omissions = (), ()
         if capture_purchase:
             if (type(raw) is not PurchaseEnrichmentObservation
                     or type(raw.inventory) is not ResourceSnapshot):
@@ -254,6 +256,21 @@ def read_account_rights_snapshot(service, account: Account, *,
                 candidates = observed.candidates
             except (ValueError, TypeError, AttributeError, OverflowError):
                 _LOG.warning("TRACE purchase enrichment code=invalid_candidates")
+            else:
+                try:
+                    if type(raw.omissions) is not tuple or len(raw.omissions) > _MAX_INVENTORY_ROWS:
+                        raise ValueError("invalid_purchase_enrichment_omissions")
+                    copied = []
+                    for item in raw.omissions:
+                        if type(item) is not PurchaseEnrichmentOmission:
+                            raise ValueError("invalid_purchase_enrichment_omission")
+                        copied.append(replace(item, source=replace(
+                            item.source, scope=replace(item.source.scope),
+                        )))
+                    checked = replace(observed, omissions=tuple(copied))
+                    omissions = checked.omissions
+                except (ValueError, TypeError, AttributeError, OverflowError):
+                    _LOG.warning("TRACE purchase enrichment code=invalid_omissions")
         else:
             result = validated(raw)
         if cancelled():
@@ -265,11 +282,16 @@ def read_account_rights_snapshot(service, account: Account, *,
             # reader contract. Retain positive A if the producer returned
             # a continuation; do not dispatch another request or hand off
             # a potentially ambiguous candidate from an unfinished chain.
-            if candidates and not result.resume_cursor:
+            if candidates and purchase_candidates_sink is not None and not result.resume_cursor:
                 try:
                     purchase_candidates_sink(candidates)
                 except Exception:
                     _LOG.warning("TRACE purchase enrichment code=candidate_sink_failed")
+            if omissions and purchase_omissions_sink is not None and not result.resume_cursor:
+                try:
+                    purchase_omissions_sink(omissions)
+                except Exception:
+                    _LOG.warning("TRACE purchase enrichment code=omission_sink_failed")
             return result
         if not result.resume_cursor:
             # Unpaged providers preserve the original Core result contract.

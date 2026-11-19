@@ -799,20 +799,25 @@ class NumilogSession(ProviderSession):
                 return snapshot
             from cifereca.plugin_api import (
                 PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation,
-                from_legacy_rights_snapshot,
+                PurchaseEnrichmentOmission, from_legacy_rights_snapshot,
             )
             from cifereca_numilog_public import _safe_text
             import re
             inventory = from_legacy_rights_snapshot(snapshot)
-            candidates = []
+            candidates, omissions = [], []
             for resource in inventory.resources:
                 url, title = direct_cards.get(resource.source.edition_id, (None, None))
                 if (type(url) is not str
                         or public_book_url(url, base_url='https://www.numilog.com/') != url
-                        or re.fullmatch(r'https://www\.numilog\.com/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.ebook', url) is None
-                        or type(title) is not str or not _safe_text(title, 512)):
+                        or re.fullmatch(r'https://www\.numilog\.com/[0-9]{1,12}/[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.ebook', url) is None):
                     # No Readzis, legacy path, tracking query, guessed product
                     # URL or title search. Positive A remains unchanged.
+                    omissions.append(PurchaseEnrichmentOmission(
+                        resource.source, resource.observed_at, "direct_locator_unattested"))
+                    continue
+                if type(title) is not str or not _safe_text(title, 512):
+                    omissions.append(PurchaseEnrichmentOmission(
+                        resource.source, resource.observed_at, "comparison_title_unattested"))
                     continue
                 try:
                     candidates.append(PurchaseEnrichmentCandidate(
@@ -820,6 +825,8 @@ class NumilogSession(ProviderSession):
                     ))
                 except ValueError:
                     # Malformed descriptive evidence cannot erase positive A.
+                    omissions.append(PurchaseEnrichmentOmission(
+                        resource.source, resource.observed_at, "candidate_unqualified"))
                     continue
             if (self._inventory_owner_or_none() != owner or not self.connected
                     or len(self._accounts) != 1 or self._accounts[0] is not bound_account
@@ -830,7 +837,8 @@ class NumilogSession(ProviderSession):
                 raise ProviderCapabilityError(
                     'Numilog : identité propriétaire modifiée ; observations arrêtées'
                 )
-            return PurchaseEnrichmentObservation(inventory, tuple(candidates))
+            return PurchaseEnrichmentObservation(inventory, tuple(candidates),
+                                                 omissions=tuple(omissions))
 
     def rights_delivery_offer_snapshot(self, account, right_id):
         """Explicit, selected #3252 offer preflight; NEVER a delivery GET.

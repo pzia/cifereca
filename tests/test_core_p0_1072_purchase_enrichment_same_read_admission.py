@@ -4,7 +4,7 @@ import pytest
 
 from cifereca.core import canonical_sync_stage as stage
 from cifereca.plugin_api import (
-    PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation,
+    PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation, PurchaseEnrichmentOmission,
     from_legacy_rights_snapshot,
 )
 from tests.test_core_p0_3171_canonical_sync_stage import rig, refs
@@ -97,3 +97,52 @@ def test_a_transaction_failure_never_hands_off_candidate(rig, monkeypatch):
         )
     assert calls == ["same-read"] and service.read_calls == 0
     assert refs(db) == ([], 0) and handoffs == []
+
+
+def test_explicit_omission_after_a_commit_is_scoped_and_reversible(rig):
+    from cifereca.core.notice_c_purchase_library_projection import _status_txn
+    from cifereca.core.notice_c_purchase_omissions import _PREFIX
+    from tests.test_core_p0_1072_durable_purchase_intent import set_policy, request
+
+    service, db, _ = rig
+    calls = []
+    set_policy(db, "true")
+    snapshot = service.snapshot
+    inventory = from_legacy_rights_snapshot(snapshot)
+    resource, = inventory.resources
+    candidate = PurchaseEnrichmentCandidate(resource.source, "https://catalog.example.org/product/123",
+                                             "Title", resource.observed_at)
+    omitted = PurchaseEnrichmentOmission(resource.source, resource.observed_at,
+                                         "direct_locator_unattested")
+    report = [PurchaseEnrichmentObservation(inventory, omissions=(omitted,))]
+
+    def same_read(account):
+        assert account is service.account
+        calls.append("read")
+        return report[0]
+
+    service.session.purchase_enrichment_observation = same_read
+    received = []
+    def sink(*args):
+        received.append(args)
+
+    summary = stage.observe_canonical_rights_in_sync(service, service.account,
+                                                     purchase_enrichment_sink=sink)
+    assert summary["source_references_changed"] == 1 and received == []
+    with db._lock, db._connect() as sql:
+        assert _status_txn(sql, resource.source, now=100) == ("direct_locator_unattested", 0)
+        rows = sql.execute("SELECT key,value FROM metadata WHERE key>=? AND key<?",
+                           (_PREFIX, _PREFIX+"\uffff")).fetchall()
+        assert len(rows) == 1
+        assert all(private not in repr(rows) for private in ("card-a", "buyer-a", "Title", candidate.public_locator))
+    with pytest.raises(ValueError, match="notice_purchase_candidate_omitted"):
+        request(db, snapshot, candidate)
+    report[0] = PurchaseEnrichmentObservation(inventory, (candidate,))
+    stage.observe_canonical_rights_in_sync(service, service.account, purchase_enrichment_sink=sink)
+    assert calls == ["read", "read"] and len(received) == 1
+    with db._lock, db._connect() as sql:
+        assert _status_txn(sql, resource.source, now=100) is None
+        assert sql.execute("SELECT count(*) FROM metadata WHERE key>=? AND key<?",
+                           (_PREFIX, _PREFIX+"\uffff")).fetchone() == (0,)
+    assert len(request(db, snapshot, candidate)) == 1
+    assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []

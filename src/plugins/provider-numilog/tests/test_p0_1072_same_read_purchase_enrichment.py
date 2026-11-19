@@ -66,6 +66,12 @@ def test_one_read_two_homonymous_exact_cards_without_tracking_or_delivery(monkey
         assert {item.source for item in response.candidates} == {
             item.source for item in response.inventory.resources[:2]
         }
+        assert {item.source for item in response.omissions} == {
+            item.source for item in response.inventory.resources[2:]
+        }
+        assert all(item.reason == "direct_locator_unattested" and not item.authorizes_fetch
+                   for item in response.omissions)
+        assert all("trackid" not in repr(item) for item in response.omissions)
         assert not response.authorizes_fetch
         assert all(resource.capability.state == "unknown" for resource in response.inventory.resources)
         assert "private" not in repr(response)
