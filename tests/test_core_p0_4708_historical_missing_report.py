@@ -41,7 +41,7 @@ def _setup(tmp_path):
                                  "artifact_id": "sha256:" + f"{2:064x}",
                                  "identity_id": "a", "provider_id": "local",
                                  "item_id": "linked.epub", "title": "secret-title"})
-        store.metadata_set("core.synthetic-checkpoint", {"undo": {"placement_id": ids["unknown.epub"]}})
+        store.metadata_set("core.synthetic-checkpoint", json.dumps({"undo": {"placement_id": ids["unknown.epub"]}}))
     finally:
         store.close()
     (root / "a" / "returned.epub").write_bytes(b"unverified")

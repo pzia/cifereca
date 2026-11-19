@@ -136,3 +136,45 @@ def test_operator_archive_review_rejects_partial_and_changed_scope(rig, monkeypa
     assert result["proposal"] == "preserve" and result["reason"] == "scope_changed"
     assert operator.admit_confirmation(user_confirmed=True) is None
     assert store.placement_get(pid)["state"] == "missing"
+
+
+@pytest.mark.parametrize("source", ["metadata_key", "event_json_key", "device_artifact",
+                                      "device_path", "malformed_event", "budget"])
+def test_additional_reference_evidence_vetoes_archive_proposal(rig, monkeypatch, source):
+    from cifereca.core import missing_placement_dependency_projection as projection
+    store, root, ids = rig
+    pid = ids["unlinked.epub"]
+    path = str(root / "a" / "unlinked.epub")
+    item = store.placement_get(pid)
+    if source == "metadata_key":
+        store.metadata_set("synthetic:" + pid, {})
+    elif source == "event_json_key":
+        store.action_event_put(identity_id="b", action_type="test", outcome="observed",
+                               facts={pid: "opaque"})
+    elif source == "device_artifact":
+        store.device_placement_put({"device_id": "device-test", "artifact_id": item["artifact_id"]})
+    elif source == "device_path":
+        store.device_placement_put({"device_id": "device-test", "artifact_id": "synthetic-other",
+                                    "target_relative_path": path})
+    elif source == "malformed_event":
+        store.action_event_put(identity_id="b", action_type="test", outcome="observed")
+        with store._lock, store._connect() as db:
+            db.execute("UPDATE action_events SET facts_json='not-json'")
+    else:
+        monkeypatch.setattr(projection, "_MAX_REFERENCE_ROWS", 0)
+    before = store.placements()
+    report = _review(rig, "unlinked.epub")
+    assert report["proposal"] == "preserve"
+    assert not report["retirement_authorized"] and not report["archive_authorized"]
+    assert store.placements() == before
+
+
+def test_unreadable_checkpoint_preserves_even_unrelated_candidate(rig):
+    store, root, ids = rig
+    # metadata_set stores str(value), not a JSON serialization.
+    # An opaque legacy Python repr cannot prove the absence of references.
+    store.metadata_set("core.synthetic-opaque-checkpoint", {"undo": "unknown"})
+    report = _review(rig, "unlinked.epub")
+    assert report["proposal"] == "preserve"
+    assert report["reason"] == "additional_evidence_unavailable"
+    assert not report["archive_authorized"]
