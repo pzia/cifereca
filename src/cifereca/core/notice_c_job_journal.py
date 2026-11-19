@@ -325,6 +325,20 @@ def _renew_purchase_current_txn(db, job, *, now):
             or job.state != "current" or job.spec.implementation_digest != _PURCHASE_INTENT_DIGEST
             or _get(db, job.ref) != job):
         raise ValueError("notice_work_invalid_purchase_renewal")
+    return _next_purchase_generation_txn(db, job, now=now)
+
+
+def _retry_exhausted_purchase_txn(db, job, *, now):
+    """Explicit retry, retaining the last server-mandated not-before time."""
+    if (not db.in_transaction or not _integer(now, minimum=1)
+            or job.state != "error" or job.reason != "exhausted"
+            or job.spec.implementation_digest != _PURCHASE_INTENT_DIGEST
+            or job.lease_until != 0 or job.due > now or _get(db, job.ref) != job):
+        raise ValueError("notice_work_invalid_purchase_retry")
+    return _next_purchase_generation_txn(db, job, now=now)
+
+
+def _next_purchase_generation_txn(db, job, *, now):
     from .notice_c_job_retention import _allocate_generation_txn
     ref = JobRef(job.ref.key, _allocate_generation_txn(db, job))
     _save(db, Job(ref, job.spec, "pending", 0, 0, now, 0, "none"))
@@ -426,7 +440,17 @@ def fail_job(storage, lease, *, now, transient, retry_after_seconds=None):
             updated = replace(job, lease_until=0, due=now + delay,
                               reason="transient")
         else:
-            updated = replace(job, state="error", lease_until=0,
+            # A user retry must not become a loophole around the last
+            # successful Retry-After receipt at exhaustion. Ordinary
+            # aggregate and explicitly requested public fetch semantics
+            # remain unchanged.
+            due = job.due
+            if retry_after_seconds is not None:
+                delay = max((1, 4, 16)[job.attempts - 1], retry_after_seconds)
+                if now > _MAX - delay:
+                    raise ValueError("notice_work_clock_overflow")
+                due = now + delay
+            updated = replace(job, state="error", lease_until=0, due=due,
                               reason="exhausted" if transient else "permanent")
         _save(db, updated)
     return updated
