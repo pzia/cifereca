@@ -64,7 +64,8 @@ class AggregateWorkBridge:
 
     def __init__(self, storage, broker, prepare, *, clock=None, on_committed=None,
                  allow_reparse=False, allow_relink=False, prepare_fetch=None,
-                 claim_purchase=None, prepare_purchase=None, on_purchase_committed=None):
+                 claim_purchase=None, prepare_purchase=None, on_purchase_committed=None,
+                 finish_purchase=None):
         if (type(broker) is not TaskBrokerImpl
                 or not isinstance(broker.shared_admission, SharedTaskAdmission)
                 or broker.shared_admission.reserve_user_slots < 1):
@@ -84,6 +85,9 @@ class AggregateWorkBridge:
         if on_purchase_committed is not None and not callable(on_purchase_committed):
             raise ValueError("notice_work_invalid_observer")
         self._on_purchase_committed = on_purchase_committed
+        if finish_purchase is not None and (claim_purchase is None or not callable(finish_purchase)):
+            raise ValueError("notice_work_invalid_purchase_port")
+        self._finish_purchase = finish_purchase
         self._claim_purchase = claim_purchase
         self._prepare_purchase = prepare_purchase
         self._prepare_fetch = prepare_fetch
@@ -187,6 +191,13 @@ class AggregateWorkBridge:
             return "obsolete"
         if lease is None:
             return "not_ready"
+        try:
+            return self._run_claimed(job, lease, purchase, control)
+        finally:
+            if purchase and self._finish_purchase is not None:
+                self._finish_purchase(lease)
+
+    def _run_claimed(self, job, lease, purchase, control):
         if purchase:
             self._purchase_transition()
         committed = False
