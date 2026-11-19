@@ -18,7 +18,7 @@ from .canonical_publication import _stable
 from .notice_c_cover_index import (
     _db_key, _decode, _exact_public_search_evidence, canonical_cover_document_ref,
 )
-from .notice_c_purchase_intent import _allowed_txn, _spec_txn
+from .notice_c_purchase_intent import _allowed_txn, _binding_txn, _spec_txn
 from .notice_c_purchase_publication import PurchasePublicPublication, _association
 from .notice_cover_repository import _checked_source_state, _opaque_key
 
@@ -114,19 +114,7 @@ def _read_txn(db, source):
     scope = source.scope
     # Read visibility is not network permission. The user may turn off
     # public enrichment requests while retaining already attested facts.
-    binding = db.execute(
-        "SELECT c.connection_id FROM provider_connections c "
-        "JOIN provider_accounts a ON a.connection_id=c.connection_id "
-        "JOIN identities i ON i.identity_id=c.identity_id "
-        "WHERE c.identity_id=? AND c.provider_id=? AND c.credential_id=? "
-        "AND c.enabled=1 AND a.identity_id=c.identity_id "
-        "AND a.provider_id=c.provider_id AND a.credential_id=c.credential_id "
-        "AND a.account_id=? AND i.directory_name<>'' "
-        "AND NOT EXISTS(SELECT 1 FROM identities other "
-        "WHERE other.directory_name=i.directory_name AND other.identity_id<>i.identity_id) LIMIT 2",
-        (scope.identity_id, scope.provider_id, scope.credential_id, scope.account_id),
-    ).fetchall()
-    if len(binding) != 1:
+    if not _binding_txn(db, scope):
         return None
     row = db.execute("SELECT value FROM metadata WHERE key=?",
                      (_PREFIX + ref[len("source:"):],)).fetchone()
