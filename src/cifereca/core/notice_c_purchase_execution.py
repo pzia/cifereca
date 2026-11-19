@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from threading import RLock, get_ident
 
 from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
-from ..plugin_api.provider_purchase_enrichment import PurchaseEnrichmentCandidate
+from ..plugin_api.provider_purchase_enrichment import PurchaseEnrichmentCandidate, PurchaseEnrichmentDeferred
 from . import notice_c_job_journal as journal
 from .notice_c_purchase_intent import _allowed_txn, _spec_txn
 from .notice_c_work_bridge import PreparedSource, UnavailableNoticeWork
@@ -203,6 +203,24 @@ class PurchaseIntentExecution:
                     or not callable(prepared.publish)
                     or not callable(prepared.hold_input) or not check_authority()):
                 raise UnavailableNoticeWork("notice_purchase_invalid_publication")
+        except PurchaseEnrichmentDeferred as exc:
+            # A typed transient from the producer (never arbitrary text) may
+            # preserve the SAME short-lived admission. The bridge records
+            # the durable backoff; scans cannot claim before due. Expiration
+            # or revocation still requires a new same-read reattestation.
+            try:
+                if type(exc) is not PurchaseEnrichmentDeferred or not check_authority():
+                    raise ValueError("notice_purchase_admission_changed")
+                PurchaseEnrichmentDeferred(exc.reason, exc.retry_after_seconds)
+                with self._lock:
+                    if self._lookup(lease.ref, self._now()) is not entry:
+                        raise ValueError("notice_purchase_admission_changed")
+                    entry.lease = None
+                    entry.preparing = False
+            except BaseException:
+                self.revoke(lease.ref)
+                raise
+            raise
         except BaseException:
             self.revoke(lease.ref)
             raise
