@@ -478,6 +478,7 @@ def persist_notice_cover_many(
     storage: Any, observations: list[NoticeSourceObservation], *,
     field_path: tuple[str, ...],
     cover_inventory_complete: bool,
+    _after_persist=None,
 ) -> list[PersistedNoticeCover | None]:
     """Persist an already parsed Core batch, preserving each source's CAS.
 
@@ -520,10 +521,15 @@ def persist_notice_cover_many(
                 observation, attribute, key = item
                 db.execute("SAVEPOINT notice_c_batch_row")
                 try:
-                    results[position] = _persist_notice_cover_txn(
+                    published = _persist_notice_cover_txn(
                         db, observation, attribute, key, field_path,
                         cover_inventory_complete, None,
                     )
+                    # Private Core composition hook: canonical publication or
+                    # its durable repair must commit with the admitted source.
+                    if published is not None and _after_persist is not None:
+                        _after_persist(db, published, position)
+                    results[position] = published
                 except (ValueError, TypeError, UnicodeError, OverflowError,
                         RecursionError, sqlite3.Error):
                     db.execute("ROLLBACK TO SAVEPOINT notice_c_batch_row")

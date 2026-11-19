@@ -2656,13 +2656,43 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
 
         if observations:
             try:
+                recover = getattr(self, "_notice_work_recover_search", None)
+                atomic_c = {}
+
+                def publish_or_request(db, source, position):
+                    # The opt-in runtime owns durable recovery. Publish C on
+                    # the source transaction; on failure roll back only that
+                    # publication, then record the repair before source commit.
+                    if (source.observation.parser_version != "2"
+                            or not _verified_public_cover_witness(producing_rows[position])):
+                        return
+                    from .notice_c_cover_index import _persist_exact_public_search_cover_txn
+                    from .notice_c_work_requests import request_affected_public_recompute_txn
+                    from .notice_c_initial_publication import request_initial_publication_txn
+                    db.execute("SAVEPOINT notice_c_search_publication")
+                    try:
+                        canonical = _persist_exact_public_search_cover_txn(db, source)
+                    except (ValueError, TypeError, OSError, sqlite3.Error):
+                        db.execute("ROLLBACK TO SAVEPOINT notice_c_search_publication")
+                        canonical = None
+                    finally:
+                        db.execute("RELEASE SAVEPOINT notice_c_search_publication")
+                    if canonical is None:
+                        affected = request_affected_public_recompute_txn(db, source, now=now)
+                        if affected.refused or affected.overflow:
+                            raise ValueError("notice_work_search_repair_refused")
+                        request_initial_publication_txn(db, source, now=now)
+                    atomic_c[position] = canonical
+
+                options = {"_after_persist": publish_or_request} if callable(recover) else {}
                 persisted_batch = persist_notice_cover_many(
                     self.storage, observations,
                     field_path=("search_result", "thumbnail_url"),
                     cover_inventory_complete=True,
+                    **options,
                 )
                 failed_c = []
-                for row, persisted in zip(producing_rows, persisted_batch):
+                for position, (row, persisted) in enumerate(zip(producing_rows, persisted_batch)):
                     if persisted is None:
                         logging.getLogger("cifereca").warning(
                             "TRACE notice c public search code=source_persist_failed"
@@ -2681,9 +2711,14 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                             and _verified_public_cover_witness(row)):
                         canonical = None
                         try:
-                            canonical = persist_exact_public_search_cover(
-                                self.storage, persisted,
-                            )
+                            if position in atomic_c:
+                                canonical = atomic_c[position]
+                                if canonical is None:
+                                    raise ValueError("notice_work_search_repair_pending")
+                            else:
+                                canonical = persist_exact_public_search_cover(
+                                    self.storage, persisted,
+                                )
                         except (ValueError, TypeError, OSError, sqlite3.Error):
                             logging.getLogger("cifereca").warning(
                                 "TRACE notice c public search code=canonical_source_failed"
@@ -2700,7 +2735,6 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                             from .notice_c_live_revision import stamp_persisted_c_revision
                             stamp_persisted_c_revision(row, canonical)
                         pairs.append((row, persisted, canonical))
-                recover = getattr(self, "_notice_work_recover_search", None)
                 _reconcile_progressive_public_c(
                     self.storage, pairs, failed_sources=failed_c if callable(recover) else None,
                 )
