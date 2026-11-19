@@ -271,7 +271,8 @@ def fetch_public_detail(product_url: str, *, timeout: float = 15.0, _before_get=
         raise ProviderError("Numilog : public_detail_layout_unverified") from None
 
 
-def fetch_guarded_purchase_detail(cache, product_url, expected_title, *, check_authority):
+def fetch_guarded_purchase_detail(cache, product_url, expected_title, *, check_authority,
+                                  with_observation=False):
     """Provider-private transport adapter; the Core owns the actual guard.
 
     Reuse the existing public cache/key/budget, including on 429. The
@@ -306,7 +307,7 @@ def fetch_guarded_purchase_detail(cache, product_url, expected_title, *, check_a
             raise ProviderCapabilityError("Numilog : public_purchase_authority_revoked")
 
     checked()
-    detail = cache.get(
+    detail, observed_at = cache.get_observed(
         ("detail", product_url),
         lambda: fetch_public_detail(product_url, _before_get=checked),
     )
@@ -321,7 +322,7 @@ def fetch_guarded_purchase_detail(cache, product_url, expected_title, *, check_a
         raise ProviderCapabilityError(error) from None
     if title_key(fields.get("title")) != expected:
         raise ProviderCapabilityError("Numilog : public_purchase_title_conflict")
-    return detail
+    return (detail, observed_at) if with_observation else detail
 
 
 

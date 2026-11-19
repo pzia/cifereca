@@ -150,6 +150,50 @@ class NumilogPublicSession(ProviderSession):
         self._assert_public_generation(epoch)
         return result
 
+    def _guarded_purchase_detail(self, product_url, expected_title, *, check_authority):
+        """Private composition port; shared anonymous session/cache and timestamp.
+
+        Return raw public detail, actual load time, and a publication guard
+        that pins THIS anonymous session generation. Never open a session,
+        reread inventory, request a second GET, or grant purchase rights.
+        """
+        from contextlib import contextmanager
+        from cifereca_numilog_public_client import fetch_guarded_purchase_detail
+        generation = self._navigation_epoch_snapshot()
+
+        def checked():
+            if check_authority() is not True:
+                return False
+            self._assert_public_generation(generation)
+            return (self.credential_id == "__public__"
+                    and not self.credentials and not self._accounts)
+
+        if not checked():
+            raise ProviderCapabilityError("Numilog public : purchase_authority_revoked")
+        detail, observed_at = fetch_guarded_purchase_detail(
+            self._public_cache, product_url, expected_title,
+            check_authority=checked, with_observation=True,
+        )
+        if not checked():
+            raise ProviderCapabilityError("Numilog public : purchase_authority_revoked")
+
+        @contextmanager
+        def hold_publication():
+            # Core already holds its policy/lease guard. Nonblocking to
+            # avoid waiting for any ongoing provider operation at commit.
+            if not self._navigation_lock.acquire(blocking=False):
+                raise ProviderError("Numilog public : purchase_publication_revoked")
+            try:
+                if (not self.connected or self._navigation_epoch != generation
+                        or self.credential_id != "__public__"
+                        or self.credentials or self._accounts):
+                    raise ProviderError("Numilog public : purchase_publication_revoked")
+                yield
+            finally:
+                self._navigation_lock.release()
+
+        return detail, observed_at, hold_publication
+
     def enrich_loaded_page_product(self, page, record_id):
         """Explicitly enrich ONE public search card, retaining page provenance.
 
