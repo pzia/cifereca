@@ -115,7 +115,11 @@ def local_book_detail_sections(
         from ..core.notice_c_purchase_library_projection import purchase_library_notice
         if purchase_library_notice(item) == purchase_notice:
             labels = {"title": "Titre", "author": "Auteur", "publisher": "Éditeur",
-                      "description": "Résumé", "published_at": "Parution"}
+                      "description": "Résumé", "published_at": "Parution",
+                      "languages": "Langues déclarées", "series": "Série",
+                      "genre": "Genre", "genres": "Genres",
+                      "subject": "Sujet", "subjects": "Sujets",
+                      "tags": "Étiquettes", "keywords": "Mots-clés", "themes": "Thèmes"}
             facts = [fact for fact in purchase_notice.notice.facts if fact.field in labels]
             rows = [(labels[fact.field], fact.value) for fact in facts]
             origins = {}
