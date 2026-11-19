@@ -94,3 +94,24 @@ def test_nested_jsonld_graph_has_bounded_depth():
         obj = {"@graph": [obj]}
     with pytest.raises(PublicDetailError, match="jsonld_too_deep"):
         parse_public_detail_jsonld(page(obj), URL)
+
+
+
+@pytest.mark.parametrize("raw", [
+    # Last-wins would hide a competing exact product coordinate.
+    '{"url":"https://www.numilog.com/1958477/autre.ebook",' + json.dumps(book())[1:],
+    # Even identical values duplicate a declaration rather than attest it twice.
+    '{"@type":"Book",' + json.dumps(book())[1:],
+    # JSON escape normalization must not bypass duplicate detection.
+    '{"u\\u0072l":"PRIVATE_MARKER",' + json.dumps(book())[1:],
+    # Nested properties can also silently overwrite evidence.
+    json.dumps(book()).replace('"name": "Alice"', '"name": "PRIVATE_MARKER", "name": "Alice"'),
+    # Preserve the existing refusal for ambiguous graphs before traversing them.
+    '{"@graph":[],"@graph":[' + json.dumps(book()) + ']}',
+])
+def test_duplicate_jsonld_members_are_ambiguous_without_payload_leak(raw):
+    html = '<script type="application/ld+json">' + raw + '</script>'
+    with pytest.raises(PublicDetailError, match="ambiguous_jsonld_member") as caught:
+        parse_public_detail_jsonld(html, URL)
+    assert caught.value.code == "ambiguous_jsonld_member"
+    assert "PRIVATE_MARKER" not in str(caught.value)

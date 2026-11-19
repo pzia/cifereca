@@ -131,6 +131,17 @@ class _Scripts(HTMLParser):
                 break
 
 
+def _unique_json_object(pairs):
+    """Reject ambiguous declarations before dict conversion loses evidence."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            # Do not expose the key or its values from the raw provider body.
+            raise PublicDetailError("ambiguous_jsonld_member")
+        result[key] = value
+    return result
+
+
 def _nodes(obj, depth=0):
     if depth > 8:
         raise PublicDetailError("jsonld_too_deep")
@@ -195,7 +206,9 @@ def parse_public_detail_jsonld(html, product_url):
     matches = []
     for script in reader.scripts:
         try:
-            parsed = json.loads(script)
+            parsed = json.loads(script, object_pairs_hook=_unique_json_object)
+        except PublicDetailError:
+            raise
         except (ValueError, TypeError, RecursionError):
             raise PublicDetailError("invalid_jsonld") from None
         for node in _nodes(parsed):
