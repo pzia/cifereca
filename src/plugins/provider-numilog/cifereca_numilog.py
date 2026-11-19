@@ -381,7 +381,8 @@ class NumilogSession(ProviderSession):
             self._session_event('session_closed')
 
     def _rows(self, *, include_delivery=False, delivery_record_id=None,
-              enrichment_record_id=None, rights_observation=False):
+              enrichment_record_id=None, rights_observation=False,
+              capture_public_enrichment=False):
         # A signed library URL is only ever decoded for a single selected
         # account-scoped book at an explicit action; never during inventory,
         # search, or a broad scan of all owned purchases.
@@ -395,9 +396,10 @@ class NumilogSession(ProviderSession):
             or not enrichment_record_id.startswith('numilog:'+self.scope+':')
         ):
             raise ProviderError('Numilog : enrichissement ciblé du compte requis')
-        if type(rights_observation) is not bool or (
-            rights_observation and (include_delivery or enrichment_record_id is not None)
-        ):
+        if (type(rights_observation) is not bool
+                or type(capture_public_enrichment) is not bool
+                or (capture_public_enrichment and not rights_observation)
+                or (rights_observation and (include_delivery or enrichment_record_id is not None))):
             raise ProviderError('Numilog : inventaire de preuves incompatible')
         if not self.connected:
             self._session_event('not_connected')
@@ -483,6 +485,8 @@ class NumilogSession(ProviderSession):
                         (lambda row: self._id(row) == enrichment_record_id)
                         if enrichment_record_id is not None else None
                     ),
+                    **({'capture_public_enrichment': True}
+                       if capture_public_enrichment else {}),
                 )
                 if rights_observation:
                     all_pages_attested = (
@@ -669,7 +673,10 @@ class NumilogSession(ProviderSession):
                 raise ProviderCapabilityError(
                     'Numilog : propriétaire unique non attesté pour les achats'
                 )
-            observed_page_chain = self._rows(rights_observation=True)
+            observed_page_chain = self._rows(
+                rights_observation=True,
+                **({'capture_public_enrichment': True} if capture_enrichment else {}),
+            )
             # Only the real bounded MesLivres reader can attest that every
             # page was consumed. Legacy/testing readers returning a bare list
             # remain conservative. A successful HTTP 200 alone cannot certify
@@ -720,9 +727,9 @@ class NumilogSession(ProviderSession):
                         evidence_ref='numilog.meslivres',
                         observed_at=observed, delivery='unknown',
                     ))
-                    if capture_enrichment:
-                        # This is the same parsed card, never a caller's
-                        # cached DTO, inferred lid/product equality or title.
+                    if capture_enrichment and row.get('public_enrichment_direct') is True:
+                        # This is the same uniquely scoped parsed card,
+                        # never a caller's cached DTO or inferred lid/product equality.
                         direct_cards[record] = (row.get('public_url'), row.get('title'))
                 except (ValueError, KeyError, TypeError, IndexError, AttributeError):
                     # A malformed authenticated card makes this read
