@@ -25,6 +25,9 @@ from .notice_cover_repository import _checked_source_state, _opaque_key
 _PREFIX = "notice.c.purchase-association.v1:"
 _CANONICAL_PREFIX = "notice-c:canonical-cover:v1:"
 _SOURCE_PREFIX = "notice-c:v1:"
+# Product detail freshness, independent from the transient HTTP cache (60s).
+# Conservative initial default, configurable only by a future policy port.
+_DETAIL_TTL_SECONDS = 7 * 24 * 3600
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -121,10 +124,14 @@ def _receipt(db, ref):
     if type(row[0]) is not str or len(row[0]) > 2048:
         raise ValueError("notice_purchase_association_corrupt")
     value = json.loads(row[0], object_pairs_hook=journal._unique)
-    if (type(value) is not dict or set(value) != {
-            "schema", "a", "input", "job", "generation", "canonical", "source",
-            "source_epoch", "source_revision", "observed_at"}
+    required = {"schema", "a", "input", "job", "generation", "canonical", "source",
+                "source_epoch", "source_revision", "observed_at"}
+    if (type(value) is not dict or set(value) not in (required, required | {"refresh_generation"})
             or type(value["schema"]) is not int or value["schema"] != 1
+            or ("refresh_generation" in value and (
+                not journal._integer(value["refresh_generation"], minimum=1)
+                or not journal._integer(value["generation"], minimum=1)
+                or value["refresh_generation"] <= value["generation"]))
             or not all(journal._digest(value[name]) for name in ("a", "input", "job"))
             or not all(journal._integer(value[name], minimum=1)
                        for name in ("generation", "source_epoch", "observed_at"))
@@ -145,12 +152,34 @@ def _matches_job(value, job, ref):
             and job.spec.input_digest == value["input"])
 
 
+def _matches_refresh(value, job, ref):
+    # Only the exact successor issued by the TTL renewal txn. A changed
+    # candidate (even A→B→A), generic job request or recycled key cannot
+    # inherit this marker.
+    return (job is not None and job.state in ("pending", "error")
+            and job.ref.generation == value.get("refresh_generation")
+            and job.ref.key == value["job"]
+            and job.spec.implementation_digest == journal._PURCHASE_INTENT_DIGEST
+            and job.spec.target == journal._PURCHASE_TARGET + ref[len("source:"):]
+            and job.spec.input_digest == value["input"])
+
+
+def _store_receipt(db, ref, value):
+    cursor = db.execute("UPDATE metadata SET value=? WHERE key=?",
+                        (json.dumps(value, ensure_ascii=True, separators=(",", ":")),
+                         _PREFIX + ref[len("source:"):]))
+    if cursor.rowcount != 1:
+        raise ValueError("notice_purchase_association_changed")
+
+
 def reattest_current_purchase_association(storage, job_ref, snapshot, candidate, *, now):
     """Rebind identical same-read association to fresh A, without a GET.
 
     Revalidate the exact prior public source under the same transaction.
     A legacy current job without a receipt or a changed source requires a
-    new generation; no old lease is reopened and no stale pointer is read.
+    new generation; no old lease is reopened. On TTL expiry only, an exact
+    compatible successor may coexist with the prior descriptive receipt:
+    no metadata is withdrawn merely because refresh is pending or failed.
     A corrupt receipt is a refusal, not authority for another GET.
     The caller pins the same live context as the original request.
     """
@@ -190,11 +219,15 @@ def reattest_current_purchase_association(storage, job_ref, snapshot, candidate,
                     edition, _ = _exact_public_search_evidence(live)
                     if canonical_cover_document_ref(edition).source_key != value["canonical"]:
                         raise ValueError("notice_purchase_association_changed")
+                    if now - value["observed_at"] >= _DETAIL_TTL_SECONDS:
+                        successor = journal._renew_purchase_current_txn(db, job, now=now)
+                        value["refresh_generation"] = successor.generation
+                        value["a"] = proof
+                        _store_receipt(db, ref, value)
+                        return successor
                     if value["a"] != proof:
                         value["a"] = proof
-                        db.execute("UPDATE metadata SET value=? WHERE key=?",
-                                   (json.dumps(value, ensure_ascii=True, separators=(",", ":")),
-                                    _PREFIX + ref[len("source:"):]))
+                        _store_receipt(db, ref, value)
                     return job.ref
         return journal._renew_purchase_current_txn(db, job, now=now)
 
@@ -212,7 +245,7 @@ def _read_txn(db, source):
     if value is None or value["a"] != proof:
         return None
     job = journal._load(db, value["job"])
-    if not _matches_job(value, job, ref):
+    if not (_matches_job(value, job, ref) or _matches_refresh(value, job, ref)):
         return None
     document = _canonical_document(value["canonical"])
     member = value["source"]
