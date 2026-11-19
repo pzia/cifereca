@@ -32,6 +32,8 @@ class PurchasePublicPublication:
     document: object
     source: object
     created: bool
+    # Inert comparison only; this is not a second durable C or a write grant.
+    reconciliation: tuple = ()
 
 
 def _title_key(value):
@@ -133,9 +135,13 @@ def publish_purchase_public_txn(db, spec, snapshot, candidate, observation, *, n
             or not _association(source.observation, candidate)):
         raise ValueError("notice_purchase_public_association_changed")
     edition, _proof = _exact_public_search_evidence(source)
+    reconciliation = ()
+    if not created and source.observation != observation:
+        from .notice_c_purchase_field_comparison import compare_exact_purchase_fields
+        reconciliation = compare_exact_purchase_fields(source.observation, observation, candidate)
     if created:
         changed = request_source_worker_dependents_txn(db, source, now=now)
         if changed.overflow or changed.refused:
             raise ValueError("notice_purchase_dependents_refused")
     request_initial_publication_txn(db, source, now=now)
-    return PurchasePublicPublication(canonical_cover_document_ref(edition), source, created)
+    return PurchasePublicPublication(canonical_cover_document_ref(edition), source, created, reconciliation)
