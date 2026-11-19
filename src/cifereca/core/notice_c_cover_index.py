@@ -587,14 +587,18 @@ def persist_origin_linked_public_cover_group(
 ) -> ConsolidatedNoticeCover:
     """Extend ONE already attested OriginLink group without changing its ref.
 
-    The Core producer must reattest all group members before calling this
-    method. A disjoint group has a deterministic public-only initial id;
-    overlapping or shrinking groups do not create a second competing C.
-    Discovery and commit use the same SQLite transaction.
+    Reattest all exact group members under the owning writer transaction.
+    The legacy producer's earlier discovery is only a candidate snapshot,
+    not a lease on the OriginLink graph. A disjoint group has a deterministic
+    public-only initial id; overlapping or shrinking groups do not create
+    a second competing C. The internal transaction port remains available
+    to callers that already reattest the group in that same transaction.
     """
+    from .notice_c_origin_link_producer import reattest_exact_origin_group_txn
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        return _persist_origin_linked_public_cover_group_txn(db, sources=sources)
+        current = reattest_exact_origin_group_txn(db, sources)
+        return _persist_origin_linked_public_cover_group_txn(db, sources=current)
 
 
 def _resolve_origin_linked_public_group_txn(
