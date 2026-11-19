@@ -1828,6 +1828,18 @@ class LocalInspection:
             self._missing_pending = (case_key, None)
         return outcome
 
+    def review_missing_archive(self, case_key):
+        """CoreUI observation only, never populates the repair consent slot."""
+        self.cancel_missing_repair()
+        operator = self._missing_operator_for_case(case_key)
+        if operator is None:
+            return {"proposal": "preserve", "reason": "inspection_scope_unavailable",
+                    "archive_authorized": False, "retirement_authorized": False,
+                    "requires_fresh_confirmation": True}
+        return operator.review_archive_candidate(
+            placement_id=self._missing_case_placements[case_key],
+        )
+
     def preview_missing_retirement(self, case_key):
         """CoreUI-only read-only preview for a historical path in this audit."""
         self.cancel_missing_repair()
