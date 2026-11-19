@@ -59,39 +59,44 @@ def read_purchase_descriptive_notice(storage, source, *, identity_id):
         return None
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN")
-        try:
-            link = _read_txn(db, source)
-            if link is None:
-                return None
-            raw = db.execute("SELECT value FROM metadata WHERE key=?",
-                             (_db_key(link.document),)).fetchone()
-            if raw is None:
-                return None
-            notice = _decode(raw[0], link.document)
-            if len(notice.sources) != 1:
-                return None
-            member = notice.sources[0]
-            if member.visibility != "public" or member.public_bibliography is None:
-                return None
-            bibliographic = member.public_bibliography
-            facts = []
-            for field in _FIELDS:
-                value = getattr(bibliographic, field)
-                if value is None:
-                    continue
-                if type(value) is not str or not value.strip():
-                    return None
-                facts.append(PurchaseDescriptiveFact(
-                    field, value, member.provider_id, member.source_ref,
-                    member.source_revision, member.observed_at,
-                ))
-            if not facts:
-                return None
-            return PurchaseDescriptiveNotice(
-                link.document, notice.epoch, link.observed_at, tuple(facts),
-            )
-        except (ValueError, TypeError, KeyError, AttributeError, UnicodeError, RecursionError):
+        return _read_descriptive_txn(db, source)
+
+
+def _read_descriptive_txn(db, source):
+    """Same bounded decoder, also usable by a Core batch read snapshot."""
+    try:
+        link = _read_txn(db, source)
+        if link is None:
             return None
+        raw = db.execute("SELECT value FROM metadata WHERE key=?",
+                         (_db_key(link.document),)).fetchone()
+        if raw is None:
+            return None
+        notice = _decode(raw[0], link.document)
+        if len(notice.sources) != 1:
+            return None
+        member = notice.sources[0]
+        if member.visibility != "public" or member.public_bibliography is None:
+            return None
+        bibliographic = member.public_bibliography
+        facts = []
+        for field in _FIELDS:
+            value = getattr(bibliographic, field)
+            if value is None:
+                continue
+            if type(value) is not str or not value.strip():
+                return None
+            facts.append(PurchaseDescriptiveFact(
+                field, value, member.provider_id, member.source_ref,
+                member.source_revision, member.observed_at,
+            ))
+        if not facts:
+            return None
+        return PurchaseDescriptiveNotice(
+            link.document, notice.epoch, link.observed_at, tuple(facts),
+        )
+    except (ValueError, TypeError, KeyError, AttributeError, UnicodeError, RecursionError):
+        return None
 
 
 __all__ = ["PurchaseDescriptiveNotice", "PurchaseDescriptiveFact",
