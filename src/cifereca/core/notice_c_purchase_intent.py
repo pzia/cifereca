@@ -34,6 +34,11 @@ def _allowed_txn(db, scope):
                          ("sync.source.enabled." + _source_id(scope),)).fetchone()
     if not source_enabled(enabled[0] if enabled else None):
         return False
+    return _binding_txn(db, scope)
+
+
+def _binding_txn(db, scope):
+    """Exact live account binding; not a network preference or grant."""
     bindings = db.execute(
         "SELECT c.connection_id FROM provider_connections c "
         "JOIN provider_accounts a ON a.connection_id=c.connection_id "
