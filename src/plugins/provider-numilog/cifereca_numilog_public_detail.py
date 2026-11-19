@@ -540,6 +540,7 @@ def purchase_public_detail_response(detail, *, product_url):
     """
     from cifereca.plugin_api import (
         ProviderCapabilityError, ProviderSearchResponse, PublicSearchNotice, SearchResult,
+        normalize_language_tag,
     )
 
     error = "Numilog public : purchase_detail_evidence_unverified"
@@ -565,6 +566,23 @@ def purchase_public_detail_response(detail, *, product_url):
         author = None
     if summary is not None and len(summary) > 4000:
         summary = None
+    # Only fields with requalified JSON-LD evidence above. The commercial
+    # product language/classification is not an acquired-format assertion.
+    metadata = {"public_url_evidence": "numilog-catalog.public_product_jsonld"}
+    raw_language = fields.get("language")
+    if (type(raw_language) is str and re.fullmatch(
+            r"[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,8}", raw_language)):
+        normalized = normalize_language_tag(raw_language)
+        if normalized:
+            metadata["languages"] = [normalized]
+            metadata["bibliography_evidence"] = {"languages": {
+                "raw_tags": [raw_language], "source": "numilog-catalog.public_product_jsonld",
+                "source_field": "inLanguage", "scope": "NUMILOG_PUBLIC",
+                "confidence": "explicit_record_field", "freshness": "search_response",
+            }}
+    for source, target in (("genres", "genres"), ("public_keywords", "keywords")):
+        if source in fields:
+            metadata[target] = list(fields[source])
     record_id = "numilog:public:" + urlsplit(product_url).path.split("/")[1]
     row = SearchResult(
         id=record_id, record_id=record_id, docbase="NUMILOG",
@@ -575,7 +593,7 @@ def purchase_public_detail_response(detail, *, product_url):
         source_provider="numilog-catalog", source_credential="__public__",
         source_collection="public_catalog", source_account_id=None,
         owned=False, downloadable=False, download_url=None,
-        metadata={"public_url_evidence": "numilog-catalog.public_product_jsonld"},
+        metadata=metadata,
     )
     # Exact one product declaration, NOT exhaustive search coverage.
     return ProviderSearchResponse(
