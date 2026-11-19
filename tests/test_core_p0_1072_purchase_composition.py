@@ -3,6 +3,7 @@
 Synthetic public transports, real SQLite and existing broker; no external GET.
 """
 from contextlib import contextmanager, nullcontext
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +11,9 @@ import pytest
 from cifereca.core import notice_c_job_journal as journal
 from cifereca.core.notice_c_purchase_composition import make_purchase_enrichment_sink
 from cifereca.core.notice_c_purchase_execution import PurchaseIntentExecution
+from cifereca.core.notice_c_purchase_association import read_purchase_notice_association, _PREFIX
+from cifereca.core.notice_cover_repository import read_notice_cover
+from cifereca.core.notice_c_cover_index import persist_exact_public_search_cover
 from cifereca.core.notice_c_work_bridge import AggregateWorkBridge
 from cifereca.core.notice_c_public_search import search_public_notice_c
 from cifereca.core.canonical_sync_stage import persist_attested_source_references
@@ -73,12 +77,26 @@ def test_composed_core_handoff_and_real_publication(tmp_path, provider, revoked)
         hits = search_public_notice_c(db, "synthétique", now=100).hits
         if revoked:
             assert outcome == "error" and not hits
+            with db._lock, db._connect() as sql:
+                assert sql.execute("SELECT count(*) FROM metadata WHERE key LIKE ?",
+                                   (_PREFIX+"%",)).fetchone() == (0,)
         else:
             assert outcome == "current" and len(hits) == 1
             assert hits[0].last_seen_at == 99 and hits[0].provider_id == public_provider
-            again = sink(snapshot, (candidate,))
+            source = read_notice_cover(db, hits[0].document)
+            persist_exact_public_search_cover(db, source)
+            receipt = read_purchase_notice_association(db, candidate.source, identity_id="A")
+            assert receipt is not None and receipt.observed_at == 99
+            newer = replace(snapshot.rights[0], evidence_ref="another-positive-receipt",
+                            observed_at="2026-11-19T12:30:00Z")
+            updated = replace(snapshot, rights=(newer,))
+            persist_attested_source_references(db, updated)
+            changed = replace(candidate, observed_at=newer.observed_at)
+            assert read_purchase_notice_association(db, candidate.source, identity_id="A") is None
+            again = sink(updated, (changed,))
             assert (again.requested, again.admitted, again.deferred) == (1, 0, 0)
             assert calls == ["wake", "public"]
+            assert read_purchase_notice_association(db, candidate.source, identity_id="A") == receipt
         assert journal.read_job(db, ref).state == outcome
         assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
     finally:
