@@ -109,3 +109,45 @@ def test_non_native_dto_field_is_rejected_before_any_equality(tmp_path, field):
         assert known_public_c_binding_facts(item) is None
     finally:
         db.close()
+
+
+
+def test_classification_only_query_reissues_exact_c_without_other_source_facts(tmp_path):
+    path = tmp_path / "recommendation-classifications.sqlite"
+    db = Storage(path)
+    labels = {"subjects": ["Astronomie"], "genre": "Documentaire",
+              "keywords": ["Nébuleuses"], "themes": "Cosmos", "tags": ["illustré"]}
+    try:
+        selected = verified_public(title="Un ouvrage", record_id="science")
+        selected.metadata = deepcopy(labels)
+        source = persist(db, selected)
+        c = persist_exact_public_search_cover(db, source)
+        other = verified_public(title="Un ouvrage", record_id="cuisine")
+        other.metadata = {"subjects": ["Cuisine"], "genre": "Recettes"}
+        other_source = persist(db, other)
+        other_c = persist_exact_public_search_cover(db, other_source)
+        assert other_c.document != c.document
+        for saved in (source, other_source):
+            assert evict_notice_cover(db, saved.document, expected_epoch=saved.epoch)
+    finally:
+        db.close()
+
+    db = Storage(path)
+    try:
+        catalog = CatalogBrokerImpl(NS(storage=db))
+        for term in ("astronomie", "nébuleuses", "documentaire", "cosmos", "illustré"):
+            item, = catalog.known_public_notices(term)
+            assert item.metadata == {"notice_c_known": True, "notice_c_stale": True, **labels}
+            assert known_public_c_binding_facts(item) == (c.document, c.epoch)
+            assert item.source_account_id is None and item.source_credential == ""
+            assert item.owned is item.downloadable is item.download_url is None
+            assert item.thumbnail_url is item.friendly_url is None
+            item.metadata["subjects"].append("Cuisine")
+            assert known_public_c_binding_facts(item) is None
+        other_item, = catalog.known_public_notices("cuisine")
+        assert known_public_c_binding_facts(other_item) == (other_c.document, other_c.epoch)
+        assert "keywords" not in other_item.metadata
+        assert catalog.known_public_notices("astronomie", provider_ids=("unrelated",)) == []
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()
