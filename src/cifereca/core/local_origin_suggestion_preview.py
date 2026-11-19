@@ -25,7 +25,7 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False):
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN")
         row = db.execute(
-            "SELECT p.artifact_id,p.path,p.state,a.sha256,a.size,i.directory_name "
+            "SELECT p.artifact_id,p.path,p.state,a.sha256,a.size,i.directory_name,a.media_format "
             "FROM placements p JOIN artifacts a ON a.artifact_id=p.artifact_id "
             "JOIN identities i ON i.identity_id=p.identity_id "
             "WHERE p.placement_id=? AND p.identity_id=?",
@@ -33,7 +33,7 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False):
         ).fetchone()
         if row is None:
             return "scope_unverified", None
-        artifact, path, state, digest, size, directory = row
+        artifact, path, state, digest, size, directory, media_format = row
         if (state != "present" or not _text(path, 4096)
                 or not _text(digest, 64) or len(digest) != 64
                 or any(ch not in "0123456789abcdef" for ch in digest)
@@ -75,20 +75,21 @@ def _snapshot(storage, identity, placement_id, *, catalogue=False):
                 "FROM catalog_entries WHERE placement_id=? ORDER BY catalog_entry_id LIMIT 33",
                 (placement_id,),
             ).fetchall()
-            if not entries or len(entries) > 32:
+            if len(entries) > 32 or (not entries and media_format not in ('epub', 'kepub')):
                 return "catalogue_evidence_unavailable", None
             # All claims about this exact placement must agree. Do not pick
             # a convenient title from an ambiguous or foreign catalogue row.
             if any(entry[1:4] != (artifact, identity, "local") for entry in entries):
                 return "catalogue_evidence_unavailable", None
             descriptions = {(entry[4], entry[5]) for entry in entries}
-            if len(descriptions) != 1:
+            if len(descriptions) > 1:
                 return "catalogue_evidence_ambiguous", None
-            title, author = next(iter(descriptions))
-            if not _text(title, 160) or title.strip() == "Sans titre":
-                return "catalogue_title_unavailable", None
-            if author is not None and not _text(author, 512):
-                return "catalogue_evidence_unavailable", None
+            title, author = next(iter(descriptions)) if descriptions else (None, None)
+            if media_format not in ("epub", "kepub"):
+                if not _text(title, 160) or title.strip() == "Sans titre":
+                    return "catalogue_title_unavailable", None
+                if author is not None and not _text(author, 512):
+                    return "catalogue_evidence_unavailable", None
             row = (*row, tuple(entries), title, author)
         return "unlinked_snapshot", row
 
@@ -129,7 +130,7 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
                 raise _CandidateRejected("evidence_changed")
 
         current()
-        yield row
+        yield row, path, signature
         current()
 
 
@@ -166,18 +167,18 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
     """Private one-shot controller for known C, not a live catalogue search.
 
     The controller must pass the admitted identity and configured root, never
-    a plugin-selected path. Catalogue text is existing local descriptive
-    evidence only, not extraction from the verified inode or source proof.
+    a plugin-selected path. Catalogue text is existing local descriptive evidence only; EPUB text
+    comes from the verified inode. Neither is source proof.
     Revoke the entire page if scope, bytes or catalogue claims change.
     """
     from .local_origin_documentary_suggestions import suggest_known_public_documents
 
-    def result(reason, suggestions=None):
+    def result(reason, suggestions=None, *, metadata="local_catalogue_only"):
         return {
             "status": "partial" if suggestions is not None else "excluded",
             "reason": reason,
             "suggestions": suggestions,
-            "metadata_evidence": "local_catalogue_only" if suggestions is not None else "not_checked",
+            "metadata_evidence": metadata if suggestions is not None else "not_checked",
             "association_authorized": False,
             "may_write_origin_or_right": False,
             "provider_access_performed": False,
@@ -191,12 +192,23 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
     try:
         with _verified_candidate(storage, library_root=library_root,
                                  identity_id=identity_id, placement_id=placement_id,
-                                 catalogue=True) as local:
+                                 catalogue=True) as candidate:
+            local, path, signature = candidate
+            title, author = local[-2:]
+            metadata = "local_catalogue_only"
+            if local[6] in ("epub", "kepub"):
+                from .local_origin_epub_evidence import read_verified_epub_description
+                observation = read_verified_epub_description(path, signature)
+                if observation is None:
+                    raise _CandidateRejected("epub_description_unverified")
+                title, authors = observation
+                author = authors[0] if len(authors) == 1 else None
+                metadata = "verified_epub_opf_description"
             suggestions = suggest_known_public_documents(
-                storage, title=local[-2], author=local[-1],
+                storage, title=title, author=author,
                 page=page, page_size=page_size,
             )
-        return result("documentary_comparison_only", suggestions)
+        return result("documentary_comparison_only", suggestions, metadata=metadata)
     except _CandidateRejected as exc:
         return result(str(exc))
     except (DerivedPublicationConflict, sqlite3.Error, OSError, RuntimeError,
