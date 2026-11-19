@@ -196,10 +196,11 @@ def observe_canonical_rights_in_sync(
     registered_accounts = service.accounts
     registered_sessions = service._sessions
     original_storage = service.storage
-    candidate_batch = []
+    candidate_batch, omission_batch = [], []
     snapshot = read_account_rights_snapshot(
         service, account, cancelled=cancelled,
-        **({"purchase_candidates_sink": candidate_batch.extend}
+        **({"purchase_candidates_sink": candidate_batch.extend,
+            "purchase_omissions_sink": omission_batch.extend}
            if purchase_enrichment_sink is not None else {}),
     )
     if snapshot.status == "cancelled" or cancelled():
@@ -338,6 +339,17 @@ def observe_canonical_rights_in_sync(
     # No locator, account or candidate is placed into Sync facts. A C sink
     # failure cannot retroactively change the already successful A result.
     enrichment_summary = None
+    if (candidate_batch or omission_batch) and not cancelled():
+        try:
+            if current_context() and service.sync_source_enabled(account) is True:
+                from .notice_c_purchase_omissions import record_purchase_omissions
+                record_purchase_omissions(
+                    service.storage, snapshot, tuple(omission_batch), tuple(candidate_batch),
+                    context_current=lambda: not cancelled() and current_context(),
+                )
+        except Exception:
+            # Separate descriptive transaction: never rewrite the successful A.
+            _LOG.warning("TRACE purchase enrichment code=omission_record_failed")
     if candidate_batch and not cancelled():
         try:
             if current_context() and service.sync_source_enabled(account) is True:
