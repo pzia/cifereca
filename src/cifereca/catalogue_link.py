@@ -3,9 +3,19 @@ from urllib.parse import urlsplit, parse_qsl, unquote
 
 
 def _sensitive_parameters(text):
-    keys = {unquote(key).casefold() for key, _ in parse_qsl(
-        text.replace(';', '&'), keep_blank_values=True,
-    )}
+    keys = set()
+    for key, _ in parse_qsl(text.replace(';', '&'), keep_blank_values=True):
+        # Do not let nested escapes hide a sensitive parameter name from
+        # this boundary. A bounded decode suffices for ordinary names;
+        # unresolved escapes or encoded parameter delimiters are ambiguous.
+        for _ in range(4):
+            decoded = unquote(key)
+            if decoded == key:
+                break
+            key = decoded
+        if any(marker in key for marker in ('%', '&', ';', '=', '\\x00')):
+            return True
+        keys.add(key.casefold())
     if keys & {'token', 'signature', 'sig', 'access_token', 'auth', 'key', 'download', 'authorization'}:
         return True
     return any(
