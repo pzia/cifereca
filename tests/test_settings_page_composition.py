@@ -74,6 +74,7 @@ def test_composition_disposes_only_same_surface_and_wires_all_save_buttons(monke
         'build_settings_shell': lambda **kwargs: shell,
         'bind_settings_actions': tracking, 'build_settings_editors': editors,
         'build_library_download_section': lambda **kwargs: NS(download_group=Widget()),
+        'build_cleanup_settings': lambda *args, **kwargs: None,
         'build_settings_application_interface': lambda **kwargs: NS(plugins_button=Widget()),
         'build_sync_settings_section': lambda **kwargs: kobo,
         'build_settings_action_bars': lambda **kwargs: bars,

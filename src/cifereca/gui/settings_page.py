@@ -18,6 +18,7 @@ from .settings_ai_actions import bind_settings_ai_callbacks
 from .settings_diagnostics_section import build_settings_diagnostics_section
 from .settings_diagnostics_actions import bind_settings_diagnostics
 from .settings_commit_actions import bind_settings_commit
+from .settings_destructive_cleanup import build_cleanup_settings
 
 
 @dataclass(frozen=True)
@@ -81,6 +82,8 @@ def build_settings_page(self, standalone=False, *, Gtk, Adw, Gdk, TaskPriority,
         descriptors=descriptors, Gtk=Gtk, Adw=Adw, add_css=add_css,
     )
     download_group = download_settings.download_group
+    build_cleanup_settings(self, section=sections['library'],
+                           page_lifetime=page_lifetime, Gtk=Gtk, Adw=Adw)
 
     application_ui = build_settings_application_interface(
         diagnostic_section=sections["diagnostic"],
