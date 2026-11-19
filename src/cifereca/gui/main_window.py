@@ -710,6 +710,8 @@ class MainWindow(Adw.ApplicationWindow):
         if box is None: return
         self._dispose_maintenance_lines()
         clear_box(box)
+        from cifereca.gui.derived_variant_maintenance_line import add_derived_variant_maintenance_line
+        add_derived_variant_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
 
         services = self.plugin_manager.services("maintenance.tool") if self.plugin_manager else ()
         if not services:
