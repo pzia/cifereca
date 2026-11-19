@@ -69,6 +69,7 @@ class ConsolidatedCoverSource:
     visibility: str
     public_bibliography: ConsolidatedPublicBibliography | None = None
     public_web_references: tuple[CatalogueWebReference, ...] = ()
+    public_detail_facts: tuple = ()  # bounded typed alternatives for this exact source
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,7 +259,7 @@ def _decode(raw: object, document: CoverDocumentScope) -> ConsolidatedNoticeCove
     for ref, item in sorted(parsed["sources"].items()):
         if (type(ref) is not str or not ref.startswith("notice-c:v1:")
                 or _HASH.fullmatch(ref[len("notice-c:v1:"):]) is None
-                or type(item) is not dict or set(item) not in (
+                or type(item) is not dict or (set(item) - {"public_detail_fields"}) not in (
                     {"provider", "source_revision", "observed_at",
                      "source_epoch", "proof", "state", "urls", "visibility"},
                     {"provider", "source_revision", "observed_at",
@@ -321,6 +322,15 @@ def _decode(raw: object, document: CoverDocumentScope) -> ConsolidatedNoticeCove
                 )
             except ValueError:
                 raise ValueError("corrupt_canonical_cover") from None
+        detail_facts = ()
+        if "public_detail_fields" in item:
+            if biblio is None or not web_refs or item["visibility"] != "public":
+                raise ValueError("corrupt_canonical_cover")
+            from .notice_c_purchase_detail_fields import decode_detail_fields
+            detail_facts = decode_detail_fields(
+                item["public_detail_fields"], provider=provider, source_ref=ref,
+                base_revision=revision, base_observed_at=item["observed_at"],
+            )
         sources.append(ConsolidatedCoverSource(
             source_ref=ref, provider_id=provider,
             source_revision=revision, observed_at=item["observed_at"],
@@ -328,6 +338,7 @@ def _decode(raw: object, document: CoverDocumentScope) -> ConsolidatedNoticeCove
             relation_proof_id=proof, state=item["state"],
             urls=tuple(urls), visibility=item["visibility"],
             public_bibliography=biblio, public_web_references=web_refs,
+            public_detail_facts=detail_facts,
         ))
     # Any admitted positive public cover can be displayed, while a complete
     # lack of candidates is NOT 'missing' if sources remain unresolved/private.
@@ -494,6 +505,12 @@ def _persist_consolidated_cover_source_txn(
         incoming[_WEB_FIELD] = source_fields[_WEB_FIELD]
         # Final _decode below validates the closed shape and URL again
         # before the atomic write. No URL copied from another source.
+    # Preserve detail evidence only while the exact original contribution
+    # and relation proof remain unchanged. A replaced source must reattest.
+    prior_member = rows.get(source_ref)
+    if (type(prior_member) is dict and "public_detail_fields" in prior_member
+            and {k: v for k, v in prior_member.items() if k != "public_detail_fields"} == incoming):
+        incoming["public_detail_fields"] = prior_member["public_detail_fields"]
     if rows.get(source_ref) == incoming:
         return _decode(old[0], document)
     if len(rows) >= _MAX_SOURCES and source_ref not in rows:
