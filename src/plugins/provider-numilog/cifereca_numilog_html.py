@@ -284,7 +284,7 @@ def _scoped_confirmation_href(card, links, base_url):
     return next(iter(chosen)) if chosen else None
 
 
-def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None, delivery_selector=None, strict_public_enrichment_selector=None, inventory_diagnostics=None):
+def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_evidence=False, delivery_diagnostics=None, delivery_selector=None, strict_public_enrichment_selector=None, inventory_diagnostics=None, capture_public_enrichment=False):
     root = Parser(text).root
     tables = [n for n in root.walk() if n.attrs.get('id') == 'myTable']
     if len(tables) != 1:
@@ -297,6 +297,7 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
     allowed_covers.update(cover_origins or ())
 
     items, keys = [], set()
+    direct_by_key = {}
     cards = _scoped_library_cards(tables[0])
     if inventory_diagnostics is not None:
         # A card with no download link is not represented in the legacy
@@ -345,9 +346,9 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
         titles = [n.text() for n in title_nodes]
         images = [n.attrs.get('src') for n in nodes if n.tag == 'img' and 'imgCouv' in classes(n)]
         public_candidates=[]
-        for anchor in (n for n in nodes if n.tag == 'a'):
-            if not any('pTitle' in classes(nested) for nested in anchor.walk()):
-                continue
+        title_anchors = [n for n in nodes if n.tag == 'a'
+                         and any('pTitle' in classes(nested) for nested in n.walk())]
+        for anchor in title_anchors:
             raw_href=str(anchor.attrs.get('href') or '').strip()
             if not raw_href:
                 continue
@@ -374,6 +375,11 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
             variant = tuple((k,tuple(params[k])) for k in ('m','format','FormatId','FORMAT_ID') if k in params)
             key = (lid[0],variant)
             if key in keys:
+                prior_direct = direct_by_key.pop(key, None)
+                if prior_direct is not None:
+                    # Legacy inventory may keep a displayed positive card.
+                    # A duplicate within the page loses its enrichment claim.
+                    prior_direct.pop('public_enrichment_direct', None)
                 if inventory_diagnostics is not None:
                     inventory_diagnostics['complete'] = False
                 # Multiple distinct cards with the same download ID can
@@ -401,6 +407,10 @@ def parse_library_page(text, base_url=LIBRARY, *, cover_origins=None, delivery_e
                 if origin(cover) not in allowed_covers or parsed_cover.username or parsed_cover.password or parsed_cover.fragment or parsed_cover.query:
                     cover = None
             row = {'lid':lid[0],'variant':repr(key[1]),'title':titles[0] if titles else 'Livre Numilog '+lid[0], 'cover':cover, 'href':href, 'public_url':public_url}
+            if (capture_public_enrichment is True and public_url is not None
+                    and len(links) == len(title_nodes) == len(title_anchors) == 1):
+                row['public_enrichment_direct'] = True
+                direct_by_key[key] = row
             if (public_url is None and strict_public_enrichment_selector is not None
                     and strict_public_enrichment_selector(row)):
                 # Scoped only to a fresh selected purchase; absent from normal

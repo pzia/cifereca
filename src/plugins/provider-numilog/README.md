@@ -1,3 +1,7 @@
+## #1072 — observation des candidats d'enrichissement (port opt-in, non activé)
+
+`purchase_enrichment_observation(account)` utilise le même lecteur authentifié MesLivres que l'inventaire d'achat v2. Il émet un inventaire natif et les seules associations de carte à lien de titre direct officiel et non ambigu. Aucune visite publique, Readzis, recherche de titre, récupération de fichier ni seconde lecture d'inventaire. Les liens commerciaux suivis restent réservés au parcours explicite. Le titre est un comparateur local ; le lien ne prouve pas la variante achetée. Les doublons de carte et les liens non qualifiés n'attribuent aucun candidat C. Core doit encore raccorder ces observations au consentement et à l'ordonnanceur existants, sans écrire de preuve privée dans C publique.
+
 ## 0.1.79 — livraison autorisée par le tableau Links (#2024 P0)
 
 La confirmation liée au compte et à la carte de l'achat est

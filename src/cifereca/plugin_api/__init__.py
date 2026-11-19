@@ -33,6 +33,10 @@ from .downloadable_resources import (
     OptionalRightMetadata, ResourceObservation, ResourceSnapshot,
     DeliveryCandidate, from_legacy_rights_snapshot, as_legacy_rights_snapshot,
 )
+from .provider_purchase_enrichment import (
+    PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT,
+    PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation,
+)
 from .loan_inventory import (INVENTORY_CONTRACT, LoanInventoryScope, LoanBranchCoverage, LoanInventorySnapshot, legacy_loan_inventory, read_loan_inventory)
 from .lending_borrower_eligibility import (
     BorrowerEligibilityStatus, BorrowerOperationEvidence,
@@ -132,6 +136,8 @@ __all__ = [
     "ProviderSearchWithFacets",
     "CAPABILITY_MATRIX_CONTRACT", "CapabilityEvidence", "CapabilityMatrix", "declared_provider_matrix", "project_existing_capabilities",
     "RIGHTS_OBSERVATION_CONTRACT", "ProviderRightsScope", "ProviderRightObservation", "ProviderRightsSnapshot",
+    "PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT",
+    "PurchaseEnrichmentCandidate", "PurchaseEnrichmentObservation",
     "DOWNLOADABLE_RESOURCE_CONTRACT", "SourceReference", "DownloadCapability",
     "OptionalRightMetadata", "ResourceObservation", "ResourceSnapshot",
     "DeliveryCandidate", "from_legacy_rights_snapshot", "as_legacy_rights_snapshot",
