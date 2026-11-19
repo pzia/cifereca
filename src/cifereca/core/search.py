@@ -81,14 +81,21 @@ def _bundle_member_values(row: Mapping[str, Any], field: str = "all") -> list[st
     return values
 
 
+def _purchase_search_values(row, field):
+    from .notice_c_purchase_library_projection import purchase_library_notice
+    packet = purchase_library_notice(row)
+    return [fact.value for fact in packet.notice.facts
+            if fact.field == field] if packet is not None else []
+
+
 def _field_values(row: Mapping[str, Any], field: str) -> list[str]:
     field = str(field or "all").casefold()
     meta = _metadata(row)
     if field == "title":
-        return _values(row.get("title")) + _bundle_member_values(row, field)
+        return _values(row.get("title")) + _bundle_member_values(row, field) + _purchase_search_values(row, field)
     if field == "author":
         return (_values(row.get("author")) + _attested_author_names(meta.get("authors"))
-                + _bundle_member_values(row, field))
+                + _bundle_member_values(row, field) + _purchase_search_values(row, field))
     if field == "isbn":
         return _values(row.get("isbn")) + _values(row.get("item_id")) + _values(meta.get("isbn")) + _values(meta.get("isbns"))
     if field == "subject":
@@ -188,6 +195,10 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
          + _values(meta.get("isbn")) + _values(meta.get("isbns"))),
         ("language", 5, _values(meta.get("languages")) + _values(meta.get("language"))),
     )
+    groups += tuple(("public_" + field, weight, _purchase_search_values(row, field))
+                    for field, weight in (("title", 60), ("author", 40),
+                                          ("description", 15), ("publisher", 10),
+                                          ("published_at", 5)))
     scored = [(name, weight, tuple(" ".join(_words(value)) for value in values
                                      if type(value) is str and value))
               for name, weight, values in groups]
@@ -216,6 +227,11 @@ _LOCAL_MATCH_LABELS = {
     "award": "Prix littéraire",
     "description": "Résumé",
     "publisher": "Éditeur",
+    "public_title": "Titre (catalogue public)",
+    "public_author": "Auteur (catalogue public)",
+    "public_description": "Résumé (catalogue public)",
+    "public_publisher": "Éditeur (catalogue public)",
+    "public_published_at": "Parution (catalogue public)",
     "identifier": "Identifiant",
     "language": "Langue",
 }
