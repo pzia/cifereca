@@ -144,12 +144,13 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                 # The current private candidate still needs its own live admission.
                 with execution._storage._lock, execution._storage._connect() as db:
                     db.execute("BEGIN")
-                    observation = read_public_detail_txn(
+                    cached = read_public_detail_txn(
                         db, public_provider_id, selected, now=execution._now(),
                     )
-                reused = observation is not None
+                reused = cached is not None
                 if reused:
-                    observed_at, guard = observation.observed_at, nullcontext
+                    observation = cached.observation
+                    observed_at, guard = cached.observed_at, nullcontext
                 else:
                     response, observed_at, guard = read_response(
                         selected.public_locator, selected.title,
@@ -167,7 +168,7 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                     if input_current_txn is not None and input_current_txn(db) is not True:
                         raise UnavailableNoticeWork("notice_purchase_context_changed")
                     now = execution._now()
-                    if reused and read_public_detail_txn(db, public_provider_id, selected, now=now) != observation:
+                    if reused and read_public_detail_txn(db, public_provider_id, selected, now=now) != cached:
                         raise UnavailableNoticeWork("notice_purchase_public_detail_changed")
                     publication = publish_purchase_public_txn(
                         db, spec, snapshot, selected, observation, now=now,

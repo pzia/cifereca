@@ -28,7 +28,8 @@ from tests.test_core_p0_6366_real_search_notice_c_ingestion import public_row
 
 
 @pytest.mark.parametrize('pressure', (False, True))
-def test_reuse_public_detail_across_restart_and_exact_accounts(tmp_path, monkeypatch, pressure):
+@pytest.mark.parametrize('retained_listing', (False, True))
+def test_reuse_public_detail_across_restart_and_exact_accounts(tmp_path, monkeypatch, pressure, retained_listing):
     if pressure:
         monkeypatch.setattr(cache, '_MAX', 1)
     now = 7 * 86400 + 100 if pressure else 100
@@ -63,6 +64,21 @@ def test_reuse_public_detail_across_restart_and_exact_accounts(tmp_path, monkeyp
             snapshot, candidate = prepare(db, owner=owner, credential=credential, account=account)
             persist_attested_source_references(db, snapshot)
             set_policy(db, "true")
+            if retained_listing and owner == "A":
+                from cifereca.core.notice_c_purchase_publication import prepare_purchase_public_observation
+                from cifereca.core.notice_cover_repository import persist_notice_cover
+                from tests.test_core_p0_6366_real_search_notice_c_ingestion import URL
+                row = public_row(source_provider=session.provider_id, title=candidate.title,
+                                 author="Auteur catalogue", description=None,
+                                 friendly_url=candidate.public_locator, thumbnail_url=URL,
+                                 metadata={"public_url_evidence": session.provider_id + ".public_search_product_card"})
+                prior = prepare_purchase_public_observation(
+                    ProviderSearchResponse([row], public_notices=(PublicSearchNotice(row),)),
+                    session, candidate, observed_at=now - 2)
+                retained = persist_notice_cover(db, prior, field_path=("search_result", "thumbnail_url"),
+                                               cover_inventory_complete=True)
+                source_document = retained.document
+                persist_exact_public_search_cover(db, retained)
             sink = make_purchase_enrichment_sink(execution, private_provider_id="seller-a",
                 public_session=session, read_response=read, hold_context=context, wake=lambda: None)
             assert sink(snapshot, (candidate,)).admitted == 1
@@ -87,7 +103,31 @@ def test_reuse_public_detail_across_restart_and_exact_accounts(tmp_path, monkeyp
             assert read_purchase_notice_association(db, candidate.source,
                 identity_id="B" if owner == "A" else "A") is None
             with db._lock, db._connect() as sql:
-                assert read_public_detail_txn(sql, session.provider_id, candidate, now=now) is not None
+                reused = read_public_detail_txn(sql, session.provider_id, candidate, now=now)
+                assert reused is not None and reused.observed_at == now - 1
+                assert reused.observation.observed_at == now - (2 if retained_listing else 1)
+                assert (reused.canonical_epoch is not None) == retained_listing
+                if retained_listing:
+                    from cifereca.core.notice_c_cover_index import _db_key
+                    from cifereca.core.notice_c_purchase_public_detail_cache import _canonical_member
+                    from cifereca.core.notice_cover_repository import _checked_source_state, _opaque_key
+                    _, live, _ = _checked_source_state(sql, source_document, _opaque_key(source_document))
+                    canonical, member = _canonical_member(sql, live)
+                    assert member.public_bibliography.author == "Auteur catalogue"
+                    assert member.public_detail_facts
+                    assert canonical.epoch == reused.canonical_epoch
+                    # Any canonical change invalidates the extended receipt,
+                    # without rewriting or touching the retained source.
+                    if owner == "B":
+                        raw, = sql.execute("SELECT value FROM metadata WHERE key=?",
+                                           (_db_key(canonical.document),)).fetchone()
+                        payload = json.loads(raw)
+                        payload["epoch"] += 1
+                        sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                                    (json.dumps(payload), _db_key(canonical.document)))
+                        assert read_public_detail_txn(sql, session.provider_id, candidate, now=now) is None
+                        sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                                    (raw, _db_key(canonical.document)))
                 assert read_public_detail_txn(sql, session.provider_id, replace(candidate, title="Homonyme différent"), now=now) is None
                 assert read_public_detail_txn(sql, session.provider_id, candidate, now=now+7*86400) is None
                 rows = sql.execute("SELECT key,value FROM metadata WHERE key>=? AND key<?", (_PREFIX, _PREFIX+"\uffff")).fetchall()
