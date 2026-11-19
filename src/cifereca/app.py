@@ -31,7 +31,8 @@ def _bind_desktop_notice_work(core, window):
     """Attach the existing Core pump to the ordinary desktop lifecycle.
 
     No executor is created here; GTK only submits a bounded hint.
-    The observer runs on the Core worker after commit and refreshes N2 only.
+    The observer refreshes N2 on the worker; the existing GTK heartbeat
+    consumes a coalesced documentary revision to invalidate local views.
     """
     runtime = getattr(core, "notice_work", None)
     if runtime is None:
@@ -53,6 +54,25 @@ def _bind_desktop_notice_work(core, window):
             return None
 
     window._notice_work_tick = hint
+    # Do not call GTK from the worker or schedule one idle callback per
+    # catalogue commit. The already installed desktop heartbeat consumes
+    # only the latest watermark, covering both A/C receipts and C aggregates.
+    revision = getattr(runtime, "documentary_revision", None)
+    if callable(revision):
+        seen = [revision()]
+
+        def refresh_documentary_views():
+            current = revision()
+            if (getattr(window, "_closed", False) or current is None
+                    or current == seen[0]):
+                return
+            # Existing identity/generation fences and coalescing remain the
+            # only owner of the two SQLite-only snapshot refreshes.
+            from .gui.library_refresh import invalidate_library
+            invalidate_library(window)
+            seen[0] = current
+
+        window._notice_work_refresh_documents = refresh_documentary_views
 
 
 def _start_notice_work_wakeup(window, *, timeout_add_seconds, source_remove):
@@ -73,6 +93,14 @@ def _start_notice_work_wakeup(window, *, timeout_add_seconds, source_remove):
             source[0] = None
             return False
         hint()
+        refresh = getattr(window, "_notice_work_refresh_documents", None)
+        if callable(refresh):
+            try:
+                refresh()
+            except Exception:
+                logging.getLogger("cifereca").warning(
+                    "TRACE notice work lifecycle code=refresh_unavailable"
+                )
         return True
 
     def stop():
