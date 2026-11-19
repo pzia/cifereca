@@ -12,6 +12,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from threading import RLock, get_ident
 
+from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
+from ..plugin_api.provider_purchase_enrichment import PurchaseEnrichmentCandidate
 from . import notice_c_job_journal as journal
 from .notice_c_purchase_intent import _allowed_txn, _spec_txn
 from .notice_c_work_bridge import PreparedSource, UnavailableNoticeWork
@@ -78,7 +80,10 @@ class PurchaseIntentExecution:
     def attest(self, ref, snapshot, candidate, *, hold_context, execute, ttl_seconds):
         """Bind a pending generation to current A; no lease or task submission."""
         journal._check_ref(ref)
-        if (not callable(hold_context) or not callable(execute)
+        if (type(snapshot) is not ProviderRightsSnapshot
+                or snapshot.status not in ("success", "partial") or snapshot.resume_cursor
+                or type(candidate) is not PurchaseEnrichmentCandidate
+                or not callable(hold_context) or not callable(execute)
                 or type(ttl_seconds) is not int or not 1 <= ttl_seconds <= _MAX_TTL):
             raise ValueError("notice_purchase_invalid_admission")
         snapshot, candidate = deepcopy(snapshot), deepcopy(candidate)
@@ -132,7 +137,7 @@ class PurchaseIntentExecution:
                 actual = self._now()
                 if self._lookup(ref, actual) is not entry or entry.lease is not None:
                     return None
-                if now > actual or not journal._integer(now, minimum=1):
+                if not journal._integer(now, minimum=1) or now > actual:
                     raise ValueError("notice_purchase_invalid_clock")
                 with self._storage._lock, self._storage._connect() as db:
                     db.execute("BEGIN IMMEDIATE")
