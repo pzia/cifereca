@@ -26,8 +26,8 @@ def _display(result):
             f"Source : {value('provider_id')} / {value('credential_id')} / {value('account_id')}",
             f"Édition : {value('edition_id')} · Prêt : {value('provider_loan_id')}",
             f"Profil ADEPT enregistré : {value('recorded_adept_profile_id')}",
-            f"Licence enregistrée : {value('recorded_adept_loan_id')} · {value('historical_license_state')}",
-            f"Branche : {value('canonical_branch')} · {value('canonical_status')}",
+            f"Prêt ADEPT enregistré : {value('recorded_adept_loan_id')} · {value('historical_license_state')}",
+            f"Branche canonique candidate : {value('canonical_branch')} · {value('canonical_status')}",
             f"Origines : {pub.get('canonical_origin_records', 'not_checked')} · "
             f"Placement : {pub.get('canonical_placement_state', 'not_checked')}",
             f"Octets : {evidence.get('placement_evidence', physical.get('selection', 'not_checked'))}",
@@ -35,7 +35,7 @@ def _display(result):
         if row.get("inventory_checked_at") is not None:
             lines.append("Horodatage historique (Unix) : " + value("inventory_checked_at"))
     lines.append("")
-    lines.append("Autres observations possibles. Aucun retour, rattachement, acquisition ou suppression autorisé.")
+    lines.append("Branche et inventaire non attestés par le ledger. Aucun retour, rattachement, acquisition ou suppression autorisé.")
     return "\n".join(lines)
 
 
