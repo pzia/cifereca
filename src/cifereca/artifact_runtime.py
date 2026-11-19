@@ -1687,6 +1687,9 @@ class LibraryMaintenanceBrokerImpl:
             from .core.canonical_dedup_supervisor import supervise_canonical_duplicate
 
             action = _canonical_maintenance_action(request)
+            from .core.destructive_cleanup_policy import cleanup_review_epoch
+            cfg = _cleanup_config(self.service) if action == "commit" else None
+            epoch = cleanup_review_epoch(cfg)
             root = _canonical_maintenance_root(self.service)
             candidate = self.service.storage.placement_get(request.placement_id)
             keeper = self.service.storage.placement_get(request.keep_placement_id)
@@ -1715,12 +1718,22 @@ class LibraryMaintenanceBrokerImpl:
                            if action == "preview" else
                            "Consolider puis supprimer le doublon canonique confirmé")
             destructive = action in ("commit", "recover")
+            facts = {"action": action, "reason": reason}
+            if cfg is not None:
+                if (epoch is None or _cleanup_config(self.service) is not cfg
+                        or cleanup_review_epoch(cfg) != epoch):
+                    raise _CanonicalDedupConflict(
+                        "Plan de nettoyage périmé — recommencer la revue",
+                        code="ordinary_cleanup_plan_stale",
+                    )
+                _enforce_ordinary_dedup_hold(self.service, request)
+                facts["cleanup_review_epoch"] = epoch
             return LibraryMutationPlan(
                 op, summary, request, destructive=destructive,
                 changes=(request.placement_id,) if destructive else (),
                 warnings=(("La suppression physique nécessite une confirmation explicite.",)
                           if destructive else ()),
-                facts={"action": action, "reason": reason},
+                facts=facts,
             )
         if op == "delete_duplicate":
             row=self.service.storage.placement_get(request.placement_id); keep=self.service.storage.placement_get(request.keep_placement_id)
@@ -2138,7 +2151,22 @@ class LibraryMaintenanceBrokerImpl:
                     or type(plan.facts) is not dict
                     or plan.facts.get("action") != action):
                 raise _CanonicalDedupConflict("Plan de dédoublonnage invalide", code="canonical_dedup_invalid_plan")
+            from .core.destructive_cleanup_policy import cleanup_review_epoch
             root = _canonical_maintenance_root(self.service)
+            planned_epoch = plan.facts.get("cleanup_review_epoch")
+            cfg_at_run = _cleanup_config(self.service) if action == "commit" else None
+
+            def require_current_plan():
+                if cfg_at_run is not None and (
+                        _cleanup_config(self.service) is not cfg_at_run
+                        or type(planned_epoch) is not str
+                        or cleanup_review_epoch(cfg_at_run) != planned_epoch):
+                    raise _CanonicalDedupConflict(
+                        "Plan de nettoyage périmé — recommencer la revue",
+                        code="ordinary_cleanup_plan_stale",
+                    )
+
+            require_current_plan()
             if action == "preview":
                 status = supervise_canonical_duplicate(
                     self.service.storage, library_root=root,
@@ -2164,6 +2192,7 @@ class LibraryMaintenanceBrokerImpl:
                     with InterProcessLock(acquisition_lock_file(), reentrant=True) as lease:
                         if control is not None: control.check_cancelled()
                         _enforce_ordinary_dedup_hold(self.service, request)
+                        require_current_plan()
                         cfg = _cleanup_config(self.service)
                         configured = {}
                         if cfg is not None:
@@ -2178,6 +2207,8 @@ class LibraryMaintenanceBrokerImpl:
                                 "config_current": lambda: (
                                     _cleanup_config(self.service) is cfg
                                     and cfg.get("library.directory", None) == raw_root
+                                    and (action != "commit" or
+                                         cleanup_review_epoch(cfg) == planned_epoch)
                                 ),
                             }
                         status = supervise_canonical_duplicate(

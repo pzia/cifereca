@@ -18,3 +18,12 @@ def destructive_cleanup_enabled(config: Config | None) -> bool:
         return config.get(DESTRUCTIVE_CLEANUP_KEY, False) is True
     except (TypeError, ValueError, AttributeError, RuntimeError):
         return False
+
+
+def cleanup_review_epoch(config: Config | None) -> str | None:
+    """Opaque, process-local freshness witness, never a mutation grant."""
+    if type(config) is not Config:
+        return None
+    value = getattr(config, "_cleanup_review_epoch", None)
+    return value if (type(value) is str and len(value) == 32
+                     and all(c in "0123456789abcdef" for c in value)) else None
