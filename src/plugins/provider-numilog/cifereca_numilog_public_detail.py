@@ -530,6 +530,59 @@ def validated_public_jsonld_fields(detail, product_url):
     return result, proofs
 
 
+def purchase_public_detail_response(detail, *, product_url):
+    """Pure projection of an independently returned anonymous product page.
+
+    This intentionally uses the public catalogue provider namespace, never
+    the authenticated purchase record/credential. It makes no assertion
+    about an acquired manifestation or receipt, and does not manufacture
+    a timestamp for a cache hit. The caller must attest transport and time.
+    """
+    from cifereca.plugin_api import (
+        ProviderCapabilityError, ProviderSearchResponse, PublicSearchNotice, SearchResult,
+    )
+
+    error = "Numilog public : purchase_detail_evidence_unverified"
+    if (type(product_url) is not str
+            or public_book_url(product_url, base_url="https://www.numilog.com/") != product_url
+            or not product_url.startswith("https://www.numilog.com/")
+            or type(detail) is not dict or detail.get("product_url") != product_url
+            or detail.get("owned") is not False or detail.get("downloadable") is not False
+            or detail.get("download_url", False) is not None):
+        raise ProviderCapabilityError(error)
+    try:
+        fields, _proofs = validated_public_jsonld_fields(detail, product_url)
+    except PublicDetailError:
+        raise ProviderCapabilityError(error) from None
+    if not _valid_text(fields.get("title"), 512):
+        raise ProviderCapabilityError(error)
+
+    # Public C has narrower text bounds than the raw provider parser.
+    # Omit oversized values rather than truncating a qualified field.
+    author = " ; ".join(fields.get("authors", ())) or None
+    summary = fields.get("description")
+    if author is not None and len(author) > 512:
+        author = None
+    if summary is not None and len(summary) > 4000:
+        summary = None
+    record_id = "numilog:public:" + urlsplit(product_url).path.split("/")[1]
+    row = SearchResult(
+        id=record_id, record_id=record_id, docbase="NUMILOG",
+        medium="digital", title=fields["title"], author=author,
+        type="Livre numérique", format=None, publisher=fields.get("publisher"),
+        published_at=fields.get("published_at"), description=summary,
+        thumbnail_url=None, friendly_url=product_url, scenario="NUMILOG_PUBLIC",
+        source_provider="numilog-catalog", source_credential="__public__",
+        source_collection="public_catalog", source_account_id=None,
+        owned=False, downloadable=False, download_url=None,
+        metadata={"public_url_evidence": "numilog-catalog.public_product_jsonld"},
+    )
+    # Exact one product declaration, NOT exhaustive search coverage.
+    return ProviderSearchResponse(
+        results=[row], public_notices=(PublicSearchNotice(result=row),),
+    )
+
+
 def merge_public_detail(item, detail):
     """Opt-in projection of a public Book JSON-LD onto a catalogue result.
 
