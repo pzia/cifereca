@@ -97,7 +97,9 @@ def _report(status, *, installation=None, profile=None, unbound=None,
 def review_derived_capacity(service, request):
     """Explicit operator worker. Return unknown rather than false zero."""
     try:
-        if request is None or request.service is not service or not request.current():
+        from .derived_variant_maintenance_review import MaintenanceReviewRequest
+        if (type(request) is not MaintenanceReviewRequest or request.service is not service
+                or not request.current()):
             return _report("unavailable")
         scope = _capture(service, request.identity_id)
         if scope is None or not request.current():
