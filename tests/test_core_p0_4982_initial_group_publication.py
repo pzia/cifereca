@@ -111,3 +111,70 @@ def test_missing_source_prevents_publication(tmp_path):
             # Only the two initial exact self-C rows survive.
             assert db.execute("SELECT count(*) FROM metadata WHERE key>=? AND key<?",
                               (index._PREFIX, index._PREFIX + "\uffff")).fetchone()[0] == 2
+
+
+
+def test_group_intent_and_source_rollback_together_then_survive_restart(tmp_path):
+    from cifereca.core.notice_cover_repository import (
+        persist_notice_cover_many, read_notice_cover,
+    )
+    from cifereca.core.notice_search_cover_producer import admit_public_search_catalogue
+    from tests.test_core_p0_6366_public_c_sqlite_source_search import verified_public
+
+    with open_core(tmp_path, notice_work_admission=_budget()) as core:
+        _real_origins(core.storage, tmp_path)
+        first = _source(core.storage, "seller-a", "edition-a", A_URL)
+        index.persist_exact_public_search_cover(core.storage, first)
+        row = verified_public(source_provider="seller-b", record_id="edition-b",
+                              title="Un ouvrage commun", author="Autrice",
+                              thumbnail_url=B_URL)
+        observation = admit_public_search_catalogue(
+            row, identity_id="alice", observed_at=101, public_cover_url=B_URL,
+        )
+        assert observation is not None
+        attempts = []
+
+        def request_then_fail(db, source, position):
+            assert position == 0
+            ref = initial.request_search_group_repair_txn(db, source, now=101)
+            assert ref is not None
+            attempts.append((source, ref))
+            # Simulate failure after both writes, before the row savepoint commits.
+            raise ValueError("simulated source transaction failure")
+
+        def ingest(callback):
+            return persist_notice_cover_many(
+                core.storage, [observation],
+                field_path=("search_result", "thumbnail_url"),
+                cover_inventory_complete=True, _after_persist=callback,
+            )
+
+        assert ingest(request_then_fail) == [None]
+        (rolled_back, _), = attempts
+        assert read_notice_cover(core.storage, rolled_back.document) is None
+        with core.storage._lock, core.storage._connect() as db:
+            assert db.execute("SELECT count(*) FROM metadata WHERE key>=? AND key<?",
+                              (journal._PREFIX, journal._END)).fetchone()[0] == 0
+
+        def request(db, source, position):
+            ref = initial.request_search_group_repair_txn(db, source, now=101)
+            assert ref is not None
+            attempts.append((source, ref))
+
+        source, = ingest(request)
+        assert source is not None
+        _, ref = attempts[-1]
+        assert journal.read_job(core.storage, ref).state == "pending"
+        assert read_notice_cover(core.storage, source.document) == source
+        assert core.brokers["tasks"]._executor is None
+
+    with open_core(tmp_path, notice_work_admission=_budget()) as core:
+        worker, = core.notice_work.request_tick().result(timeout=10).handles
+        assert worker.result(timeout=10) == "current"
+        job = journal.read_job(core.storage, ref)
+        assert job.state == "current" and job.attempts == 1
+        with core.storage._lock, core.storage._connect() as db:
+            keys = db.execute("SELECT key FROM metadata WHERE key>=? AND key<?",
+                              (index._PREFIX, index._PREFIX + "\uffff")).fetchall()
+        assert len(keys) == 2  # The first self-C and the recovered group C.
+        assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
