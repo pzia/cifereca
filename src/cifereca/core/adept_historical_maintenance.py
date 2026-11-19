@@ -115,6 +115,7 @@ def _row(request, row, verify):
         "canonical_status": "scope_unverified", "publication": None, "local_bytes": None,
         "provider_loan_state": "not_checked",
         "inventory_transport_attested": False, "activation_attested": False,
+        "ledger_branch_attested": False,
         "may_rebind_or_return": False, "may_reacquire": False,
     }
     if (not all(_text(x) for x in (aid, provider, credential, edition))
