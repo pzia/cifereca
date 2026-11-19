@@ -34,6 +34,13 @@ class _Admission:
     preparing: bool = False
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class PreparedPurchaseSource:
+    """Trusted Core writer receives the exact lease, never a reconstructed one."""
+    publish: object
+    hold_input: object
+
+
 class PurchaseIntentExecution:
     """Short-lived reattestation, not a second job store.
 
@@ -192,7 +199,8 @@ class PurchaseIntentExecution:
             if not check_authority():
                 raise UnavailableNoticeWork("notice_purchase_admission_changed")
             prepared = entry.execute(deepcopy(entry.candidate), check_authority, control)
-            if (type(prepared) is not PreparedSource or not callable(prepared.publish)
+            if (type(prepared) not in (PreparedSource, PreparedPurchaseSource)
+                    or not callable(prepared.publish)
                     or not callable(prepared.hold_input) or not check_authority()):
                 raise UnavailableNoticeWork("notice_purchase_invalid_publication")
         except BaseException:
@@ -225,7 +233,9 @@ class PurchaseIntentExecution:
             if owner != get_ident() or not db.in_transaction:
                 raise UnavailableNoticeWork("notice_purchase_publication_guard_required")
             verify_held(db)
-            if prepared.publish(db) is not True:
+            result = (prepared.publish(db, lease) if type(prepared) is PreparedPurchaseSource
+                      else prepared.publish(db))
+            if result is not True:
                 return False
             verify_held(db)
             return True

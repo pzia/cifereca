@@ -319,6 +319,18 @@ def _request_job_txn(db, spec, *, now, expected_generation):
     return ref
 
 
+def _renew_purchase_current_txn(db, job, *, now):
+    """Fresh qualified producer request, never reuse a terminal lease."""
+    if (not db.in_transaction or not _integer(now, minimum=1)
+            or job.state != "current" or job.spec.implementation_digest != _PURCHASE_INTENT_DIGEST
+            or _get(db, job.ref) != job):
+        raise ValueError("notice_work_invalid_purchase_renewal")
+    from .notice_c_job_retention import _allocate_generation_txn
+    ref = JobRef(job.ref.key, _allocate_generation_txn(db, job))
+    _save(db, Job(ref, job.spec, "pending", 0, 0, now, 0, "none"))
+    return ref
+
+
 def read_job(storage, ref):
     """A replaced dependency makes even a previously current job stale."""
     with storage._lock, storage._connect() as db:

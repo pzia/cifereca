@@ -107,6 +107,98 @@ def record_purchase_association_txn(db, lease, snapshot, candidate, publication,
                 json.dumps(wire, ensure_ascii=True, separators=(",", ":"))))
 
 
+def _canonical_document(canonical):
+    return CoverDocumentScope(kind="public_catalogue", identity_id=None,
+                              provider_id="cifereca.c", credential_id="__public__",
+                              source_key=canonical)
+
+
+def _receipt(db, ref):
+    row = db.execute("SELECT value FROM metadata WHERE key=?",
+                     (_PREFIX + ref[len("source:"):],)).fetchone()
+    if row is None:
+        return None
+    if type(row[0]) is not str or len(row[0]) > 2048:
+        raise ValueError("notice_purchase_association_corrupt")
+    value = json.loads(row[0], object_pairs_hook=journal._unique)
+    if (type(value) is not dict or set(value) != {
+            "schema", "a", "input", "job", "generation", "canonical", "source",
+            "source_epoch", "source_revision", "observed_at"}
+            or type(value["schema"]) is not int or value["schema"] != 1
+            or not all(journal._digest(value[name]) for name in ("a", "input", "job"))
+            or not all(journal._integer(value[name], minimum=1)
+                       for name in ("generation", "source_epoch", "observed_at"))
+            or not all(type(value[name]) is str and value[name].startswith(prefix)
+                       and journal._digest(value[name][len(prefix):])
+                       for name, prefix in (("canonical", _CANONICAL_PREFIX),
+                                            ("source", _SOURCE_PREFIX),
+                                            ("source_revision", "notice-raw.v1:")))):
+        raise ValueError("notice_purchase_association_corrupt")
+    return value
+
+
+def _matches_job(value, job, ref):
+    return (job is not None and job.state == "current"
+            and job.ref.key == value["job"] and job.ref.generation == value["generation"]
+            and job.spec.implementation_digest == journal._PURCHASE_INTENT_DIGEST
+            and job.spec.target == journal._PURCHASE_TARGET + ref[len("source:"):]
+            and job.spec.input_digest == value["input"])
+
+
+def reattest_current_purchase_association(storage, job_ref, snapshot, candidate, *, now):
+    """Rebind identical same-read association to fresh A, without a GET.
+
+    Revalidate the exact prior public source under the same transaction.
+    A legacy current job without a receipt or a changed source requires a
+    new generation; no old lease is reopened and no stale pointer is read.
+    A corrupt receipt is a refusal, not authority for another GET.
+    The caller pins the same live context as the original request.
+    """
+    if not journal._integer(now, minimum=1):
+        raise ValueError("notice_purchase_association_invalid")
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        if not _allowed_txn(db, snapshot.scope):
+            raise ValueError("notice_purchase_association_changed")
+        job = journal._get(db, job_ref)
+        if job.state != "current" or _spec_txn(db, snapshot, candidate) != job.spec:
+            raise ValueError("notice_purchase_association_changed")
+        ref, proof = _current_a(db, candidate.source)
+        if proof is None:
+            raise ValueError("notice_purchase_association_changed")
+        value = _receipt(db, ref)
+        if value is not None and _matches_job(value, job, ref):
+            if value["observed_at"] > now:
+                raise ValueError("notice_purchase_association_changed")
+            # Look up the exact source using a bounded opaque key. The stored
+            # observation's public provider is then checked by the ordinary decoder.
+            from .notice_cover_repository import _PREFIX as source_prefix
+            from .notice_source_observation import NoticeSourceKey
+            from .notice_cover_projection import notice_cover_document_ref
+            raw = db.execute("SELECT value FROM metadata WHERE key=?",
+                             (source_prefix + value["source"][len(_SOURCE_PREFIX):],)).fetchone()
+            if raw is not None:
+                parsed = json.loads(raw[0], object_pairs_hook=journal._unique)
+                document = notice_cover_document_ref(NoticeSourceKey(**parsed["key"]))
+                key = _opaque_key(document)
+                if document.source_key != value["source"] or key is None:
+                    raise ValueError("notice_purchase_association_changed")
+                _, live, _ = _checked_source_state(db, document, key)
+                if live is not None and live.epoch == value["source_epoch"] and (
+                        live.observation.source_revision == value["source_revision"]
+                        and _association(live.observation, candidate)):
+                    edition, _ = _exact_public_search_evidence(live)
+                    if canonical_cover_document_ref(edition).source_key != value["canonical"]:
+                        raise ValueError("notice_purchase_association_changed")
+                    if value["a"] != proof:
+                        value["a"] = proof
+                        db.execute("UPDATE metadata SET value=? WHERE key=?",
+                                   (json.dumps(value, ensure_ascii=True, separators=(",", ":")),
+                                    _PREFIX + ref[len("source:"):]))
+                    return job.ref
+        return journal._renew_purchase_current_txn(db, job, now=now)
+
+
 def _read_txn(db, source):
     ref, proof = _current_a(db, source)
     if proof is None:
@@ -116,38 +208,14 @@ def _read_txn(db, source):
     # public enrichment requests while retaining already attested facts.
     if not _binding_txn(db, scope):
         return None
-    row = db.execute("SELECT value FROM metadata WHERE key=?",
-                     (_PREFIX + ref[len("source:"):],)).fetchone()
-    if row is None or type(row[0]) is not str or len(row[0]) > 2048:
-        return None
-    value = json.loads(row[0], object_pairs_hook=journal._unique)
-    if (type(value) is not dict or set(value) != {
-            "schema", "a", "input", "job", "generation", "canonical", "source",
-            "source_epoch", "source_revision", "observed_at"}
-            or type(value["schema"]) is not int or value["schema"] != 1
-            or value["a"] != proof or not journal._digest(value["input"])
-            or not journal._digest(value["job"])
-            or not journal._integer(value["generation"], minimum=1)
-            or not journal._integer(value["source_epoch"], minimum=1)
-            or not journal._integer(value["observed_at"], minimum=1)):
+    value = _receipt(db, ref)
+    if value is None or value["a"] != proof:
         return None
     job = journal._load(db, value["job"])
-    if (job is None or job.state != "current"
-            or job.ref.generation != value["generation"]
-            or job.spec.implementation_digest != journal._PURCHASE_INTENT_DIGEST
-            or job.spec.target != journal._PURCHASE_TARGET + ref[len("source:"):]
-            or job.spec.input_digest != value["input"]):
+    if not _matches_job(value, job, ref):
         return None
-    canonical = value["canonical"]
+    document = _canonical_document(value["canonical"])
     member = value["source"]
-    if (type(canonical) is not str or not canonical.startswith(_CANONICAL_PREFIX)
-            or not journal._digest(canonical[len(_CANONICAL_PREFIX):])
-            or type(member) is not str or not member.startswith(_SOURCE_PREFIX)
-            or not journal._digest(member[len(_SOURCE_PREFIX):])):
-        return None
-    document = CoverDocumentScope(kind="public_catalogue", identity_id=None,
-                                  provider_id="cifereca.c", credential_id="__public__",
-                                  source_key=canonical)
     row = db.execute("SELECT value FROM metadata WHERE key=?", (_db_key(document),)).fetchone()
     if row is None:
         return None

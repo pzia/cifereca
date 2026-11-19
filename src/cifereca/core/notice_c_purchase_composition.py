@@ -10,13 +10,16 @@ from copy import deepcopy
 from dataclasses import dataclass
 
 from . import notice_c_job_journal as journal
-from .notice_c_purchase_execution import PurchaseIntentExecution
+from .notice_c_purchase_execution import PurchaseIntentExecution, PreparedPurchaseSource
+from .notice_c_purchase_association import (
+    record_purchase_association_txn, reattest_current_purchase_association,
+)
 from .notice_c_purchase_intent import request_purchase_enrichment_intents
 from .notice_c_purchase_publication import (
     prepare_purchase_public_observation, publish_purchase_public_txn,
 )
 from .notice_c_public_search_replay import _anonymous_session
-from .notice_c_work_bridge import PreparedSource, UnavailableNoticeWork
+from .notice_c_work_bridge import UnavailableNoticeWork
 from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
 from ..plugin_api.provider_purchase_enrichment import PurchaseEnrichmentCandidate
 
@@ -69,7 +72,16 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
         for ref, candidate in zip(refs, candidates):
             job = journal.read_job(execution._storage, ref)
             if job.state == "current":
-                continue
+                with hold_context() as allowed:
+                    if allowed is not True:
+                        deferred += 1
+                        continue
+                    ref = reattest_current_purchase_association(
+                        execution._storage, ref, snapshot, candidate, now=execution._now(),
+                    )
+                job = journal.read_job(execution._storage, ref)
+                if job.state == "current":
+                    continue
             spec = job.spec
 
             def execute(selected, check_authority, control, *, spec=spec):
@@ -88,13 +100,17 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                 if observed_at > execution._now():
                     raise ValueError("notice_purchase_invalid_observation_time")
 
-                def publish(db):
-                    publish_purchase_public_txn(
-                        db, spec, snapshot, selected, observation, now=execution._now(),
+                def publish(db, lease):
+                    now = execution._now()
+                    publication = publish_purchase_public_txn(
+                        db, spec, snapshot, selected, observation, now=now,
+                    )
+                    record_purchase_association_txn(
+                        db, lease, snapshot, selected, publication, observed_at=observed_at, now=now,
                     )
                     return True
 
-                return PreparedSource(publish, guard)
+                return PreparedPurchaseSource(publish, guard)
 
             try:
                 if execution.attest(
