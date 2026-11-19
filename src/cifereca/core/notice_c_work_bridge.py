@@ -64,7 +64,7 @@ class AggregateWorkBridge:
 
     def __init__(self, storage, broker, prepare, *, clock=None, on_committed=None,
                  allow_reparse=False, allow_relink=False, prepare_fetch=None,
-                 claim_purchase=None, prepare_purchase=None):
+                 claim_purchase=None, prepare_purchase=None, on_purchase_committed=None):
         if (type(broker) is not TaskBrokerImpl
                 or not isinstance(broker.shared_admission, SharedTaskAdmission)
                 or broker.shared_admission.reserve_user_slots < 1):
@@ -81,6 +81,9 @@ class AggregateWorkBridge:
                 or (claim_purchase is not None and (
                     not callable(claim_purchase) or not callable(prepare_purchase)))):
             raise ValueError("notice_work_invalid_purchase_port")
+        if on_purchase_committed is not None and not callable(on_purchase_committed):
+            raise ValueError("notice_work_invalid_observer")
+        self._on_purchase_committed = on_purchase_committed
         self._claim_purchase = claim_purchase
         self._prepare_purchase = prepare_purchase
         self._prepare_fetch = prepare_fetch
@@ -257,6 +260,11 @@ class AggregateWorkBridge:
         if event is not None:
             try:
                 self._on_committed(*event)
+            except Exception:
+                pass
+        if purchase and self._on_purchase_committed is not None:
+            try:
+                self._on_purchase_committed()
             except Exception:
                 pass
         return "current"
