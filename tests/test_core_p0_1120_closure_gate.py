@@ -79,10 +79,13 @@ def test_acsm_stages_preserve_admission_provider_adept_index_receipt_order():
     commits = [i for i, call in enumerate(calls)
                if call == "self.storage.acquisition_put"]
     assert commits[0] < calls.index("loan_provider_delivery.acquire_provider_loan")
-    # The completed receipt is an *argument* of acquisition_put: AST
-    # parent location precedes its child, but evaluation is child first.
-    assert commits[1] < calls.index("loan_completion_receipt.completed_receipt")
-    assert commits[1] < calls.index("self._cleanup_acsm_after_success")
+    # The projection is now explicit so source admission can be checked
+    # after constructing the receipt and before the durable write.
+    projection = calls.index("loan_completion_receipt.completed_receipt")
+    cleanup = calls.index("self._cleanup_acsm_after_success")
+    assert projection < commits[1] < cleanup
+    assert "source_lease.current" in calls[projection + 1:commits[1]]
+    assert "source_lease.current" in calls[commits[1] + 1:cleanup]
     write_nodes = sorted(
         (node for node in ast.walk(_method("_acquire_active_loan_automatically_guarded"))
          if isinstance(node, ast.Call)
@@ -92,9 +95,16 @@ def test_acsm_stages_preserve_admission_provider_adept_index_receipt_order():
     assert ast.unparse(write_nodes[0].args[0].func) == (
         "loan_initial_receipt.acquiring_receipt"
     )
-    assert ast.unparse(write_nodes[1].args[0].func) == (
-        "loan_completion_receipt.completed_receipt"
-    )
+    assert ast.unparse(write_nodes[1].args[0]) == "receipt"
+    method = _method("_acquire_active_loan_automatically_guarded")
+    projections = [
+        node for node in ast.walk(method)
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+        and ast.unparse(node.value.func) == "loan_completion_receipt.completed_receipt"
+    ]
+    assert len(projections) == 1
+    assert [ast.unparse(target) for target in projections[0].targets] == ["receipt"]
+    assert projections[0].lineno < write_nodes[1].lineno
 
 
 def test_legacy_return_facades_reject_before_lock_or_delegate():
