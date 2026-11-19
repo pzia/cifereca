@@ -307,6 +307,30 @@ def evict_notice_cover(
         return True
 
 
+def _encode_source_row(observation, field_path, cover_inventory_complete, epoch):
+    """Shared bounded wire encoder; this function alone writes nothing."""
+    payload = {
+        "schema": 1, "key": asdict(observation.key),
+        "parser_id": observation.parser_id,
+        "parser_version": observation.parser_version,
+        "observed_at": observation.observed_at,
+        "status": observation.status,
+        "source_revision": observation.source_revision,
+        "raw_json": observation.raw_json,
+        "field_path": list(field_path),
+        "cover_inventory_complete": cover_inventory_complete,
+        "epoch": epoch,
+        _LAST_SEEN: observation.observed_at,
+    }
+    encoded = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False,
+    )
+    if len(encoded.encode("utf-8")) > _MAX_BYTES:
+        raise ValueError("notice_c_persisted_too_large")
+    return encoded
+
+
 def _persist_notice_cover_txn(
     db: Any, observation: NoticeSourceObservation,
     attribute: NoticeCoverAttribute, key: str,
@@ -402,25 +426,7 @@ def _persist_notice_cover_txn(
     if previous_epoch >= _MAX_EPOCH:
         raise ValueError("notice_c_persisted_epoch_overflow")
     epoch = previous_epoch + 1
-    payload = {
-        "schema": 1, "key": asdict(observation.key),
-        "parser_id": observation.parser_id,
-        "parser_version": observation.parser_version,
-        "observed_at": observation.observed_at,
-        "status": observation.status,
-        "source_revision": observation.source_revision,
-        "raw_json": observation.raw_json,
-        "field_path": list(field_path),
-        "cover_inventory_complete": cover_inventory_complete,
-        "epoch": epoch,
-        _LAST_SEEN: observation.observed_at,
-    }
-    encoded = json.dumps(
-        payload, sort_keys=True, separators=(",", ":"),
-        ensure_ascii=False, allow_nan=False,
-    )
-    if len(encoded.encode("utf-8")) > _MAX_BYTES:
-        raise ValueError("notice_c_persisted_too_large")
+    encoded = _encode_source_row(observation, field_path, cover_inventory_complete, epoch)
     db.execute(
         "INSERT INTO metadata(key,value) VALUES(?,?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
