@@ -43,6 +43,9 @@ _STATUS_LABELS = {
     "failed": "Enrichissement non abouti",
     "proof_unavailable": "Preuve documentaire à revalider",
     "paused": "Requêtes d’enrichissement désactivées",
+    "direct_locator_unattested": "Lien public direct non attesté",
+    "comparison_title_unattested": "Titre de comparaison non attesté",
+    "candidate_unqualified": "Candidat documentaire non qualifié",
 }
 
 
@@ -72,11 +75,15 @@ def purchase_status_label(packet):
 
 def _status_txn(db, source, *, now):
     # Job state is historical intent, NOT an active in-memory admission.
-    # Without a job, missing direct URL and unobserved cases cannot be
-    # distinguished; deliberately do not invent a failure or a zero.
+    # Only an explicit same-read omission may explain an absent candidate.
+    # Missing job/receipt alone remains unknown.
     ref, proof = _current_a(db, source)
     if proof is None or not _binding_txn(db, source.scope):
         return None
+    from .notice_c_purchase_omissions import current_omission_txn
+    omitted = current_omission_txn(db, ref, proof)
+    if omitted is not None:
+        return omitted, 0
     target = journal._PURCHASE_TARGET + ref.removeprefix("source:")
     spec = journal.JobSpec("fetch_source_notice", target, "0" * 64,
                            journal._PURCHASE_INTENT_DIGEST)
