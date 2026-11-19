@@ -22,6 +22,9 @@ from . import notice_c_job_journal as journal
 from .book_cover_projection import CoverDocumentScope
 from .notice_c_cover_index import _db_key, _decode
 from .notice_c_dispatch_rotation import RotationOffer
+from .notice_c_initial_group_publication import (
+    InitialGroupSuperseded, mark_initial_group_superseded,
+)
 
 _MAX_INFLIGHT = 2
 _LEASE_SECONDS = 300
@@ -203,6 +206,16 @@ class AggregateWorkBridge:
             return "current" if committed else self._fail(lease, transient=False)
         except (RetryableNoticeWork, sqlite3.OperationalError):
             return "current" if committed else self._fail(lease, transient=not fetch)
+        except InitialGroupSuperseded:
+            if committed:
+                return "current"
+            try:
+                if mark_initial_group_superseded(self._storage, lease, now=self._clock()):
+                    return "stale"
+            except ValueError:
+                return "obsolete"
+            # Successor disappeared between preparation and final CAS.
+            return self._fail(lease, transient=True)
         except ValueError:
             # CAS/source validation refusal; no successful publication.
             return "current" if committed else self._fail(lease, transient=not fetch)

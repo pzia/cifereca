@@ -33,7 +33,7 @@ _KINDS = {
     "recompute_aggregate": 3,
 }
 _STATES = {"pending", "current", "stale", "error"}
-_REASONS = {"none", "dependency_changed", "exhausted", "transient", "permanent"}
+_REASONS = {"none", "dependency_changed", "input_superseded", "exhausted", "transient", "permanent"}
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -198,7 +198,11 @@ def _load(db, key):
                 or (job.state == "current" and (
                     job.reason != "none" or not job.attempts
                 ))
-                or (job.state == "stale" and job.reason != "dependency_changed")
+                or (job.state == "stale" and job.reason not in
+                    ("dependency_changed", "input_superseded"))
+                or (job.reason == "input_superseded"
+                    and (job.state != "stale" or job.spec.implementation_digest != _INITIAL_GROUP_C_DIGEST
+                         or not job.attempts))
                 or (job.state == "error" and job.reason not in
                     ("permanent", "exhausted"))
                 or (job.state == "pending" and job.reason not in
@@ -277,8 +281,12 @@ def _request_job_txn(db, spec, *, now, expected_generation):
         raise ValueError("notice_work_invalid_clock_or_generation")
     key = _key(spec)
     previous = _load(db, key)
-    if previous is not None and previous.spec == spec:
+    if (previous is not None and previous.spec == spec
+            and previous.reason != "input_superseded"):
         return previous.ref
+    # A newly reattested initial group may return to the same vector after
+    # a superseding member is revoked. Explicit producer request only; a
+    # terminal superseded lease must never be reopened in place.
     generation = previous.ref.generation if previous else 0
     if expected_generation != generation:
         raise ValueError("notice_work_generation_changed")
