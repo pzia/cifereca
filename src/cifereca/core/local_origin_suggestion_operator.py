@@ -5,12 +5,15 @@ capability, filesystem mutation, provider request or origin writer.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 
 from .library_audit_roots import configured_identity_roots
-from .local_origin_suggestion_preview import suggest_local_placement_documents
+from .local_origin_suggestion_preview import (
+    _SuggestionContinuation, suggest_local_placement_documents,
+)
+from .local_origin_documentary_suggestions import DocumentarySuggestionPage
 from .source_context import source_context_epoch
 
 
@@ -49,6 +52,7 @@ class LocalOriginSuggestionRequest:
     navigation_epoch: int
     page: int
     page_size: int
+    continuation: _SuggestionContinuation | None = None
 
     def current(self):
         try:
@@ -78,7 +82,7 @@ def admit_local_origin_suggestion(service, *, identity_id: str, placement_id: st
             or any(type(item) is not str or not 0 < len(item) <= 256
                    or any(ord(c) < 32 or ord(c) == 127 for c in item)
                    for item in (identity_id, placement_id))
-            or type(page) is not int or not 0 <= page <= 200
+            or type(page) is not int or page != 0
             or type(page_size) is not int or not 1 <= page_size <= 50):
         return None
     try:
@@ -102,12 +106,34 @@ def admit_local_origin_suggestion(service, *, identity_id: str, placement_id: st
         return None
 
 
+def continue_local_origin_suggestion(service, request, result):
+    """Advance only a valid prior page from this private operator scope."""
+    if (type(request) is not LocalOriginSuggestionRequest
+            or request.service is not service
+            or not request.current()
+            or type(result) is not dict
+            or result.get("status") != "partial"):
+        return None
+    page = result.get("suggestions")
+    next_page = result.get("continuation")
+    if (type(page) is not DocumentarySuggestionPage or page.has_more is not True
+            or page.page != request.page or page.page_size != request.page_size
+            or type(next_page) is not _SuggestionContinuation
+            or next_page.storage is not request.storage or next_page.root != request.root
+            or next_page.identity != request.identity_id
+            or next_page.placement != request.placement_id
+            or next_page.next_page != request.page + 1 or next_page.page_size != request.page_size
+            or next_page.next_page > 200):
+        return None
+    return replace(request, page=next_page.next_page, continuation=next_page)
+
+
 def run_local_origin_suggestion(service, request):
     """Revoked request exposes no page; check again before handing to UI."""
     def excluded():
         return {
             "status": "excluded", "reason": "scope_changed",
-            "suggestions": None, "metadata_evidence": "not_checked",
+            "suggestions": None, "continuation": None, "metadata_evidence": "not_checked",
             "association_authorized": False, "may_write_origin_or_right": False,
             "provider_access_performed": False,
         }
@@ -120,6 +146,7 @@ def run_local_origin_suggestion(service, request):
             request.storage, library_root=request.root,
             identity_id=request.identity_id, placement_id=request.placement_id,
             explicitly_requested=True, page=request.page, page_size=request.page_size,
+            continuation=request.continuation,
         )
         return page if request.current() else excluded()
     except Exception:
