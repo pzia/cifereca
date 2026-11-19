@@ -765,6 +765,8 @@ class SyncSourceCycleReceipt:
     attempted_at: str
     mode: str
     canonical_execution: tuple[tuple[str, int], ...] | None = None
+    # Historical C handoff, never completed enrichments or acquisition counts.
+    purchase_enrichment: tuple[tuple[str, int], ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
