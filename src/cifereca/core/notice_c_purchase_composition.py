@@ -33,7 +33,8 @@ class PurchaseHandoffResult:
 
 
 def make_purchase_enrichment_sink(execution, *, private_provider_id, public_session,
-                                  read_response, hold_context, wake, ttl_seconds=120):
+                                  read_response, hold_context, wake, ttl_seconds=120,
+                                  input_current_txn=None):
     """Return the existing Sync sink(snapshot, candidates).
 
     read_response(url, comparison_title, *, check_authority, control) is
@@ -53,6 +54,7 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
             or type(private_provider_id) is not str or not private_provider_id
             or not _anonymous_session(public_session, getattr(public_session, "provider_id", None))
             or not all(callable(fn) for fn in (read_response, hold_context, wake))
+            or (input_current_txn is not None and not callable(input_current_txn))
             or type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 300):
         raise ValueError("notice_purchase_invalid_composition")
 
@@ -149,6 +151,8 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                     raise ValueError("notice_purchase_invalid_observation_time")
 
                 def publish(db, lease):
+                    if input_current_txn is not None and input_current_txn(db) is not True:
+                        raise UnavailableNoticeWork("notice_purchase_context_changed")
                     now = execution._now()
                     publication = publish_purchase_public_txn(
                         db, spec, snapshot, selected, observation, now=now,

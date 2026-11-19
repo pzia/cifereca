@@ -9,15 +9,38 @@ from __future__ import annotations
 from contextlib import contextmanager
 from inspect import getattr_static
 import time
+import sqlite3
+import re
 
 from . import notice_c_job_journal as journal
 from .notice_c_purchase_execution import PurchaseIntentExecution
 from .notice_c_purchase_composition import make_purchase_enrichment_sink
 from .notice_c_purchase_intent import _POLICY, _allowed_txn
-from .notice_c_purchase_settings import _read_policy_txn, read_purchase_policy
+from .notice_c_purchase_settings import _read_policy_txn
+from .source_sync_consent import inventory_epoch_key, policy_in_transaction
 from .notice_c_public_search_replay import _anonymous_session
 from .source_context import source_context_epoch
 from ..plugin_api.provider_rights_observation import ProviderRightsScope
+
+
+def _permission_fence_txn(db, scope):
+    """Capture both inventory ABA representations, not acquisition consent.
+
+    The source-wide policy revision can rotate instead of inventory_epoch
+    on legacy/configured toggles. Its mode is deliberately NOT a grant.
+    """
+    if not _allowed_txn(db, scope):
+        return None
+    preference = _read_policy_txn(db)
+    generic = policy_in_transaction(db, scope)
+    row = db.execute("SELECT value FROM metadata WHERE key=?",
+                     (inventory_epoch_key(scope),)).fetchone()
+    epoch = row[0] if row else None
+    if (not preference.enabled or generic.mode == "invalid"
+            or (row is not None and (type(epoch) is not str
+                or re.fullmatch("[0-9a-f]{32}", epoch) is None))):
+        return None
+    return preference, generic.revision, epoch
 
 
 def _capture_sink(service, runtime, executor, account, private):
@@ -49,10 +72,23 @@ def _capture_sink(service, runtime, executor, account, private):
     if not callable(capture):
         return None
 
+    def permission_current_txn(db):
+        return policy[0] is not None and _permission_fence_txn(db, scope) == policy[0]
+
+    def permission_current():
+        if policy[0] is None:
+            return True
+        try:
+            with storage._lock, storage._connect() as db:
+                db.execute("BEGIN")
+                return permission_current_txn(db)
+        except (ValueError, sqlite3.Error):
+            return False
+
     def current():
         coords = (scope.identity_id, scope.provider_id, scope.credential_id, scope.account_id)
         return (not executor._closed and source_context_epoch(service) == epoch
-                and (policy[0] is None or read_purchase_policy(storage) == policy[0])
+                and permission_current()
                 and service.accounts is accounts and service._sessions is sessions
                 and service.storage is storage and sessions.get(private_key) is private
                 and sessions.get(key) is public and _anonymous_session(public, public_id)
@@ -86,15 +122,17 @@ def _capture_sink(service, runtime, executor, account, private):
             db.execute("BEGIN IMMEDIATE")
             db.execute("INSERT OR IGNORE INTO metadata(key,value) VALUES(?,?)",
                        (_POLICY, "true"))
-            if not _allowed_txn(db, scope):
+            try:
+                policy[0] = _permission_fence_txn(db, scope)
+            except ValueError:
                 return None
-            policy[0] = _read_policy_txn(db)
-            if not policy[0].enabled:
+            if policy[0] is None:
                 return None
     return make_purchase_enrichment_sink(
         executor, private_provider_id=private_id, public_session=public,
         read_response=public.purchase_enrichment_public_response,
         hold_context=hold_context, wake=runtime.request_tick, ttl_seconds=300,
+        input_current_txn=permission_current_txn,
     )
 
 
