@@ -483,6 +483,12 @@ def main():
         assert "lecture seule" in review_rows[0].get_subtitle()
         assert not any(isinstance(node, Gtk.ProgressBar) for node in walk(review_rows[0]))
         report["checks"]["P0_4520_independent_read_only_review_row"] = True
+        historical_rows = [node for node in walk(w._tools_box)
+                           if isinstance(node, Adw.ActionRow)
+                           and node.get_title() == "Provenances de prêts historiques"]
+        assert len(historical_rows) == 1
+        assert "sans accès fournisseur" in historical_rows[0].get_subtitle()
+        report["checks"]["P0_976_historical_local_review_row"] = True
         preview_button[0] = next((
             b for b in walk(w._tools_box)
             if isinstance(b, Gtk.Button)
