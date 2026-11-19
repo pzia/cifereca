@@ -21,7 +21,7 @@ from .notice_c_work_bridge import AggregateWorkBridge, PreparedAggregate
 from .notice_c_reparse_execution import PublicReplayRegistry, prepare_public_reparse
 from .notice_c_fetch_execution import PublicFetchExecution
 from .notice_c_purchase_execution import PurchaseIntentExecution
-from .notice_c_dispatch_rotation import PublicDispatchRotation, RotationPage
+from .notice_c_dispatch_rotation import PublicDispatchRotation, RotationPage, _PURCHASE_LANE
 
 _SUPPORTED = (
     ("recompute_aggregate", exact.IMPLEMENTATION_DIGEST),
@@ -71,9 +71,7 @@ class PublicNoticeWorkPump:
         self._fetch_execution = fetch_execution
         self._replay_registry = replay_registry
         self._supported = (_SUPPORTED + replay_registry.supported()
-                           + (() if fetch_execution is None else fetch_execution.supported())
-                           + (() if purchase_execution is None else (
-                               ("fetch_source_notice", journal._PURCHASE_INTENT_DIGEST),)))
+                           + (() if fetch_execution is None else fetch_execution.supported()))
         self._storage = storage
         self._clock = clock if clock is not None else lambda: int(time.time())
         self._bridge = AggregateWorkBridge(
@@ -85,9 +83,10 @@ class PublicNoticeWorkPump:
             claim_purchase=None if purchase_execution is None else purchase_execution.claim,
             prepare_purchase=None if purchase_execution is None else purchase_execution.prepare,
         )
-        self._rotation = PublicDispatchRotation(tuple(dict.fromkeys(
-            kind for kind, _digest in self._supported
-        )))
+        lanes = tuple(dict.fromkeys(kind for kind, _digest in self._supported))
+        if purchase_execution is not None:
+            lanes += (_PURCHASE_LANE,)
+        self._rotation = PublicDispatchRotation(lanes)
         self._tick_lock = Lock()
 
     def _prepare_fetch(self, spec, lease, control):
@@ -135,14 +134,20 @@ class PublicNoticeWorkPump:
                 control.check_cancelled()
             now = self._clock()
 
-            purchase_refs = (None if self._purchase_execution is None
-                             else self._purchase_execution.ready_refs())
-
             def read(kind, after, limit):
+                if kind == _PURCHASE_LANE:
+                    # Independent exact-key lane, within the SAME rotation's
+                    # 32-row / two-submission tick budget. Never sweep inert
+                    # private intents or wait for sparse public fetch keys.
+                    refs = self._purchase_execution.ready_page_refs(after=after, limit=limit)
+                    supported = (("fetch_source_notice", journal._PURCHASE_INTENT_DIGEST),)
+                    options = {"purchase_refs": refs}
+                else:
+                    supported = tuple(pair for pair in self._supported if pair[0] == kind)
+                    options = {}
                 page = journal.read_ready_page(
                     self._storage, now=now, after=after, limit=limit,
-                    supported=tuple(pair for pair in self._supported if pair[0] == kind),
-                    **({"purchase_refs": purchase_refs} if purchase_refs is not None else {}),
+                    supported=supported, **options,
                 )
                 return RotationPage(page.refs, page.next_after, page.examined, page.corrupt)
 
