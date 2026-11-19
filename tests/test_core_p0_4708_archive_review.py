@@ -70,3 +70,69 @@ def test_symlink_root_refuses_even_if_it_points_at_same_directory(rig):
     )
     assert report["proposal"] == "preserve"
     assert len(store.placements()) == len(ids)
+
+
+def test_archive_review_does_not_finish_callers_transaction(rig):
+    store, root, ids = rig
+    db = store._connect()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        db.execute("INSERT INTO metadata(key,value) VALUES(?,?)",
+                   ("test.archive.uncommitted", "private"))
+        result = _review(rig, "unlinked.epub")
+        assert result["proposal"] == "preserve"
+        assert result["reason"] == "nested_transaction"
+        assert db.in_transaction
+    finally:
+        db.rollback()
+    assert store.metadata_get("test.archive.uncommitted") is None
+
+
+def _operator(rig, *, complete=True, valid=lambda: True):
+    from types import SimpleNamespace
+    from cifereca.core.missing_placement_operator import MissingPlacementOperatorSession
+
+    store, root, ids = rig
+    service = SimpleNamespace(
+        storage=store, current_identity=SimpleNamespace(identity_id="a"),
+        config=SimpleNamespace(get=lambda key, default=None: str(root)
+                               if key == "library.directory" else default),
+        identity_by_id=store.identity_get,
+    )
+    return service, MissingPlacementOperatorSession(
+        service, identity_id="a", scope_valid=valid, inspection_complete=complete,
+    )
+
+
+def test_operator_archive_review_consumes_old_retirement_preview_without_new_token(rig):
+    store, root, ids = rig
+    service, operator = _operator(rig)
+    pid = ids["unlinked.epub"]
+    assert operator.preview_retirement(placement_id=pid)["status"] == "ready"
+    result = operator.review_archive_candidate(placement_id=pid)
+    assert result["proposal"] == "supervised_archive_candidate"
+    assert not result["retirement_authorized"] and not result["archive_authorized"]
+    assert operator.admit_confirmation(user_confirmed=True) is None
+    assert operator.confirm(user_confirmed=True)["reason"] == "confirmation_required"
+    assert store.placement_get(pid)["state"] == "missing"
+
+
+def test_operator_archive_review_rejects_partial_and_changed_scope(rig, monkeypatch):
+    from cifereca.core import missing_placement_operator as session
+    store, root, ids = rig
+    pid = ids["unlinked.epub"]
+    _, partial = _operator(rig, complete=False)
+    assert partial.review_archive_candidate(placement_id=pid)["reason"] == "incomplete_inspection"
+    service, operator = _operator(rig)
+    original = session.review_missing_archive_candidate
+
+    def changed(*args, **kwargs):
+        result = original(*args, **kwargs)
+        service.current_identity.identity_id = "b"
+        return result
+
+    monkeypatch.setattr(session, "review_missing_archive_candidate", changed)
+    result = operator.review_archive_candidate(placement_id=pid)
+    assert result["proposal"] == "preserve" and result["reason"] == "scope_changed"
+    assert operator.admit_confirmation(user_confirmed=True) is None
+    assert store.placement_get(pid)["state"] == "missing"

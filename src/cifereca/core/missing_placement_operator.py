@@ -19,6 +19,7 @@ from .library_audit_roots import configured_identity_roots
 from .library_sqlite_freshness import sqlite_source_stamp
 from .source_context import source_context_epoch
 from .missing_placement_relocation_preview import preview_missing_placement_relocation
+from .missing_placement_archive_review import review_missing_archive_candidate
 from .missing_placement_relocation_transaction import relocate_missing_placement
 from .missing_placement_retirement import (
     prepare_missing_placement_retirement, retire_missing_placement,
@@ -249,6 +250,31 @@ class MissingPlacementOperatorSession:
                     preview=True,
                 )
         return _public(result, preview=True)
+
+    def review_archive_candidate(self, *, placement_id: str) -> dict[str, object]:
+        """One explicit historical candidate; NEVER installs a confirmable plan."""
+        self.cancel()
+
+        def preserve(reason):
+            return {
+                "proposal": "preserve", "reason": reason,
+                "retirement_authorized": False, "archive_authorized": False,
+                "requires_fresh_confirmation": True,
+            }
+
+        if not self._inspection_complete:
+            return preserve("incomplete_inspection")
+        root = self._root()
+        if root is None:
+            return preserve("scope_changed")
+        storage = self._service.storage
+        result = review_missing_archive_candidate(
+            storage, library_root=root, identity_id=self._identity_id,
+            placement_id=placement_id,
+        )
+        if self._root() != root or self._service.storage is not storage:
+            return preserve("scope_changed")
+        return result
 
     def preview_retirement(self, *, placement_id: str) -> dict[str, object]:
         self.cancel()

@@ -46,40 +46,44 @@ def review_missing_archive_candidate(storage, *, library_root: Path,
         info = os.fstat(fd)
         # A read transaction prevents cross-snapshot combinations of SQL
         # facts. No SQL write or use of the legacy deletion entry point.
-        with storage._lock, storage._connect() as db:
-            db.execute("BEGIN")
-            result, evidence = _evidence(
-                db, root=library_root, root_stat=info,
-                identity_id=identity_id, placement_id=placement_id,
-            )
-            if evidence is None:
-                return report("preserve", result["reason"])
-            _private_token, path, profile, _revision, profile_sig = evidence
-            row = db.execute(
-                "SELECT artifact_id FROM placements WHERE placement_id=? AND identity_id=?",
-                (placement_id, identity_id),
-            ).fetchone()
-            if row is None or type(row[0]) is not str or not row[0]:
-                return report("preserve", "artifact_unknown")
-            if _direct_dependency(db, {
-                "placement_id": placement_id, "path": path,
-                "identity_id": identity_id, "artifact_id": row[0],
-            }):
-                return report("preserve", "historical_dependency")
-            if not _extra_metadata_clear(
-                db, (path, placement_id), deadline=time.monotonic() + 2,
-                cancelled=lambda: False,
-            ):
-                return report("preserve", "additional_evidence_unavailable")
-            if (_physical_absence(profile, path) != "absent"
-                    or _directory_signature(profile) != profile_sig):
-                return report("preserve", "physical_evidence_changed")
-            current = _open_root(library_root)
-            try:
-                if _signature(current) != _signature(fd):
-                    return report("preserve", "root_changed")
-            finally:
-                os.close(current)
+        with storage._lock:
+            db = storage._connect()
+            if db.in_transaction:
+                return report("preserve", "nested_transaction")
+            with db:
+                db.execute("BEGIN")
+                result, evidence = _evidence(
+                    db, root=library_root, root_stat=info,
+                    identity_id=identity_id, placement_id=placement_id,
+                )
+                if evidence is None:
+                    return report("preserve", result["reason"])
+                _private_token, path, profile, _revision, profile_sig = evidence
+                row = db.execute(
+                    "SELECT artifact_id FROM placements WHERE placement_id=? AND identity_id=?",
+                    (placement_id, identity_id),
+                ).fetchone()
+                if row is None or type(row[0]) is not str or not row[0]:
+                    return report("preserve", "artifact_unknown")
+                if _direct_dependency(db, {
+                    "placement_id": placement_id, "path": path,
+                    "identity_id": identity_id, "artifact_id": row[0],
+                }):
+                    return report("preserve", "historical_dependency")
+                if not _extra_metadata_clear(
+                    db, (path, placement_id), deadline=time.monotonic() + 2,
+                    cancelled=lambda: False,
+                ):
+                    return report("preserve", "additional_evidence_unavailable")
+                if (_physical_absence(profile, path) != "absent"
+                        or _directory_signature(profile) != profile_sig):
+                    return report("preserve", "physical_evidence_changed")
+                current = _open_root(library_root)
+                try:
+                    if _signature(current) != _signature(fd):
+                        return report("preserve", "root_changed")
+                finally:
+                    os.close(current)
         # No returned identifier, action token or assertion of future safety.
         return report("supervised_archive_candidate", "no_dependency_observed")
     except (sqlite3.Error, OSError, RuntimeError, ValueError, TypeError, RecursionError):
