@@ -102,11 +102,16 @@ def prepare_initial_publication(storage, spec):
                     or inputs.canonical.sources[0].source_epoch != source.epoch):
                 raise ValueError("notice_work_initial_c_changed")
             return True
+        from .notice_c_origin_relink import (
+            capture_pending_self_relink_txn, refresh_pending_self_relink_txn,
+        )
+        pending_relink = capture_pending_self_relink_txn(db, source)
         published = _persist_exact_public_search_cover_txn(db, source, expected_epoch=0)
         if (published.document != document or len(published.sources) != 1
                 or published.sources[0].source_epoch != source.epoch
                 or published.sources[0].public_bibliography is None):
             raise ValueError("notice_work_invalid_initial_publication")
+        refresh_pending_self_relink_txn(db, pending_relink)
         return True
 
     return publish
