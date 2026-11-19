@@ -21,6 +21,7 @@ from .notice_source_observation import NoticeSourceObservation, _id
 from .notice_c_public_search import _public_observation
 from .notice_c_cover_index import _exact_public_search_evidence
 from .notice_c_work_requests import request_affected_public_recompute_txn
+from .notice_c_initial_publication import request_initial_publication_txn
 from .notice_c_work_bridge import PreparedSource, RetryableNoticeWork, UnavailableNoticeWork
 
 
@@ -174,6 +175,11 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
         dirty = request_affected_public_recompute_txn(db, persisted, now=now)
         if dirty.overflow or dirty.refused:
             raise RetryableNoticeWork("notice_reparse_dependents_deferred")
+        # Dirty recompute only discovers existing canonical documents.
+        # A source may have been committed with a still-pending first C
+        # intention; its old vector must not survive this source revision.
+        # The exact initial writer does nothing if self-C already exists.
+        request_initial_publication_txn(db, persisted, now=now)
         return True
 
     return PreparedSource(publish, guard)
