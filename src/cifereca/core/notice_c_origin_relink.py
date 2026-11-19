@@ -75,6 +75,66 @@ def _resolve_extension_txn(db, anchor):
     return vector, sources, proof
 
 
+def capture_pending_self_relink_txn(db, source):
+    """Only an already-current pending extension can follow a self-C write.
+
+    Capture before the exact self writer changes an overlapping C row.
+    Never turn an absent, revoked, obsolete or terminal intent into work.
+    """
+    if not db.in_transaction:
+        raise ValueError("notice_work_transaction_required")
+    from .notice_c_initial_group_publication import _group_inputs
+    try:
+        inputs = _group_inputs(db, source.document.source_key)
+        if inputs is None:
+            return None
+        document, sources, _anchor, _proof, _digest = inputs
+        if source not in sources:
+            return None
+        probe = journal.public_job_spec(
+            "relink_notices", document, input_digest="0" * 64,
+            implementation_digest=IMPLEMENTATION_DIGEST,
+        )
+        previous = journal._load(db, journal._key(probe))
+        if (previous is None or previous.state != "pending"
+                or previous.spec.implementation_digest != IMPLEMENTATION_DIGEST
+                or previous.spec.dependencies):
+            return None
+        vector, current_sources, _proof = _resolve_extension_txn(db, document)
+        if (previous.spec.input_digest != vector.input_digest
+                or source not in current_sources):
+            return None
+    except (ValueError, TypeError):
+        # Invalid evidence is not authorization to renew an existing job.
+        return None
+    return document, previous
+
+
+def refresh_pending_self_relink_txn(db, captured):
+    """Refresh its exact vector after the trusted self writer, before commit.
+
+    All overlapping canonical rows remain in the relink CAS. A new generation
+    fences any previously leased execution; preserve the old due time.
+    The caller also commits its exact self job on this same transaction.
+    """
+    if not db.in_transaction:
+        raise ValueError("notice_work_transaction_required")
+    if captured is None:
+        return None
+    document, previous = captured
+    if journal._load(db, previous.ref.key) != previous:
+        raise ValueError("notice_relink_request_changed")
+    vector, _sources, _proof = _resolve_extension_txn(db, document)
+    if vector.input_digest == previous.spec.input_digest:
+        return previous.ref
+    spec = journal.public_job_spec(
+        "relink_notices", document, input_digest=vector.input_digest,
+        implementation_digest=IMPLEMENTATION_DIGEST,
+    )
+    return journal._request_job_txn(db, spec, now=previous.due,
+                                    expected_generation=previous.ref.generation)
+
+
 def request_origin_public_relink(storage, anchor, *, now, expected_generation):
     """Explicit trusted Core request, group and journal in same transaction."""
     with storage._lock, storage._connect() as db:
