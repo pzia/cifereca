@@ -103,6 +103,11 @@ class PublicCatalogueCache:
             token, epoch = self._reserve_locked(now)
         return self._run_reserved(key, token, epoch, load, with_observation=with_observation)
 
+    def purchase_retry_delay(self):
+        """Read-only shared budget hint, never reserve a slot or clear pause."""
+        with self._lock:
+            return max(5, math.ceil(max(0.0, self._paused_until - self._clock())))
+
     def _reserve_locked(self, now):
         """Shared single in-flight slot, cooldown and token bucket."""
         if now < self._paused_until:
@@ -166,7 +171,9 @@ class PublicCatalogueCache:
         except ProviderError as exc:
             if str(exc) in {'Numilog : public_catalog_rate_limited',
                             'Numilog : public_detail_rate_limited',
-                            'Numilog : public_readzis_rate_limited'}:
+                            'Numilog : public_readzis_rate_limited'} or (
+                                str(exc) == 'Numilog : public_detail_unavailable'
+                                and hasattr(exc, 'retry_after_seconds')):
                 delay = getattr(exc, 'retry_after_seconds', 0.0)
                 # The exception is a remote transport boundary too: a huge
                 # integer can overflow float() and an infinite duration would
