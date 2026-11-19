@@ -183,3 +183,33 @@ def test_absent_series_in_second_fragment_does_not_cancel_valid_source(unrelated
     item = _record("EBOOKS", CustomResult=unrelated, CompactResult=SERIES_LINK)
     assert item.metadata["series"] == ["La saga & ses suites"]
     assert item.metadata["bibliography_evidence"]["series"]["source_field"] == "Search.CompactResult"
+
+
+@pytest.mark.parametrize("scenario", ("CATALOGUE", "EBOOKS"))
+@pytest.mark.parametrize("fragment", (
+    '<template><template></template>' + SERIES_LINK + '</template>',
+    '<template></unrelated>' + SERIES_LINK + '</template>',
+    '<noscript><template></template>' + SERIES_LINK + '</noscript>',
+    '<div hidden>' + SERIES_LINK + '</div>',
+    '<div aria-hidden="true" aria-hidden="false">' + SERIES_LINK + '</div>',
+    '<div style="display : none !important">' + SERIES_LINK + '</div>',
+    '<a hidden href="/Search?field=SeriesTitle_idx">Invisible</a>',
+    '<a href="/Search?field=SeriesTitle_idx"><span hidden>Hidden</span>Visible</a>',
+    '<iframe>' + SERIES_LINK + '</iframe>',
+    '<svg>' + SERIES_LINK + '</svg>',
+    '<div>' * 257 + SERIES_LINK + '</div>' * 257,
+))
+def test_hidden_or_overdeep_series_does_not_attest_result(scenario, fragment):
+    row = _record(scenario, CustomResult=fragment)
+    assert "series" not in row.metadata
+    assert "series" not in row.metadata["bibliography_evidence"]
+    row = _record(scenario, CustomResult=fragment, CompactResult=SERIES_LINK)
+    assert "series" not in row.metadata
+
+
+@pytest.mark.parametrize("scenario", ("CATALOGUE", "EBOOKS"))
+def test_closed_inert_subtree_and_void_elements_do_not_hide_visible_series(scenario):
+    row = _record(scenario, CustomResult=(
+        '<template><template><img src="ignored"></template></template>'
+        '<div hidden><br><span>Not a series</span></div>' + SERIES_LINK))
+    assert row.metadata["series"] == ["La saga & ses suites"]
