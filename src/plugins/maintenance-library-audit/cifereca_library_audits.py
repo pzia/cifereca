@@ -848,6 +848,55 @@ class LanguageAuditTool(_ReadOnlyTool):
         )
 
 
+_PHYSICAL_NAMING_COUNTS = ("conforming", "deviating", "missing", "unavailable", "ambiguous", "unexamined")
+
+
+def _physical_naming_report(raw):
+    # A broker or restored plan cannot inject filenames, paths, titles or
+    # extra mutable operations into a read-only public result.
+    fields = {"physical_schema", "status", "total", *_PHYSICAL_NAMING_COUNTS}
+    if type(raw) is not dict or set(raw) != fields or type(raw["physical_schema"]) is not int or raw["physical_schema"] != 1:
+        return None
+    status = raw["status"]
+    if type(status) is not str or status not in ("complete", "partial", "unavailable"):
+        return None
+    if any(type(raw[key]) is not int or not 0 <= raw[key] <= 5000
+           for key in ("total", *_PHYSICAL_NAMING_COUNTS)):
+        return None
+    if sum(raw[key] for key in _PHYSICAL_NAMING_COUNTS) != raw["total"]:
+        return None
+    checked = raw["conforming"] + raw["deviating"]
+    if ((status == "complete" and checked != raw["total"])
+            or (status == "partial" and checked >= raw["total"])
+            or (status == "unavailable" and raw["total"] != 0)):
+        return None
+    return dict(raw)
+
+
+def _physical_naming_unavailable():
+    return {"physical_schema": 1, "status": "unavailable", "total": 0,
+            **dict.fromkeys(_PHYSICAL_NAMING_COUNTS, 0)}
+
+
+def _physical_naming_text(report):
+    if report["status"] == "unavailable":
+        return ("Audit physique indisponible : aucun constat de conformité.",
+                ("Périmètre ou preuve indisponible. Relancer l’analyse.",))
+    checked = report["conforming"] + report["deviating"]
+    summary = (f'{report["deviating"]} nom(s) différent(s) de la politique Core '
+               f'sur {checked} placement(s) physiquement vérifié(s), '
+               f'{report["total"]} placement(s) enregistré(s).')
+    warnings = []
+    if report["status"] == "partial":
+        warnings.append(
+            f'Audit partiel : {report["missing"]} marqué(s) missing, '
+            f'{report["unavailable"]} indisponible(s), {report["ambiguous"]} ambigu(s), '
+            f'{report["unexamined"]} non examiné(s).'
+        )
+    warnings.append("Audit uniquement : aucune mutation de placement n'est effectuée.")
+    return summary, tuple(warnings)
+
+
 class NamingAuditTool(_ReadOnlyTool):
     info = MaintenanceToolInfo(
         id="library.naming.audit",
@@ -870,8 +919,26 @@ class NamingAuditTool(_ReadOnlyTool):
         if control is not None:
             control.check_cancelled()
             control.report(message="Noms : examen des fichiers : chargement")
-        entries = _rows(self._broker("metadata").library_entries(identity_id=context.identity_id))
         naming = self._broker("library.naming")
+        physical = getattr(naming, "audit_placements", None)
+        if callable(physical):
+            try:
+                report = _physical_naming_report(physical(
+                    identity_id=context.identity_id, control=control,
+                ))
+            except Exception:
+                if control is not None:
+                    control.check_cancelled()
+                report = None
+            if control is not None:
+                control.check_cancelled()
+            report = report if report is not None else _physical_naming_unavailable()
+            summary, warnings = _physical_naming_text(report)
+            return MaintenancePlan(tool_id=self.info.id, summary=summary,
+                                   warnings=warnings, facts=report)
+        # Older Core hosts keep the legacy descriptive audit. A supported
+        # physical audit that fails never falls back to notice-only evidence.
+        entries = _rows(self._broker("metadata").library_entries(identity_id=context.identity_id))
         checked = 0
         mismatch = 0
         unavailable = 0
@@ -951,6 +1018,25 @@ class NamingAuditTool(_ReadOnlyTool):
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
         """Defend the live UI boundary against forged cached naming previews."""
         facts = plan.facts
+        if type(facts) is dict and "physical_schema" in facts:
+            report = _physical_naming_report(facts)
+            summary, warnings = _physical_naming_text(
+                report if report is not None else _physical_naming_unavailable()
+            )
+            valid = (report is not None and plan.tool_id == self.info.id
+                     and type(plan.summary) is str and plan.summary == summary
+                     and type(plan.warnings) in (tuple, list)
+                     and tuple(plan.warnings) == warnings)
+            control.check_cancelled()
+            if not valid:
+                return MaintenanceResult(ok=False, changed=0,
+                    summary="Audit des noms non vérifiable : plan invalide.",
+                    warnings=("Plan d’audit des noms invalide : relancez l’analyse.",),
+                    facts={"invalid_plan": 1})
+            control.report(message=summary)
+            control.check_cancelled()
+            return MaintenanceResult(ok=report["status"] == "complete",
+                changed=0, summary=summary, warnings=warnings, facts=report)
         keys = {"checked", "mismatch", "unavailable", "policy_failures"}
         valid = (
             plan.tool_id == self.info.id
