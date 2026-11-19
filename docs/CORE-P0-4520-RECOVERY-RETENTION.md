@@ -72,3 +72,14 @@ vers le writer. Réception requise sur HEAD exact. Une activation
 effective, une politique de compaction/rétention exécutable, et une preuve
 de capacité physique globale restent des jalons distincts. Ne pas
 clôturer #4520 en présentant ces limites comme livrées.
+
+## Préflight canonique SQL (nouvelle tranche)
+
+La revue agrégée des reçus committed réutilise le contrôle de preuve SQL du
+writer : parent et placement de résultat exacts, Artifact, recette et
+OriginLink derived sans SourceReference ; elle bloque les coordonnées
+staging/cible partagées avec un autre reçu (y compris pending) ou un
+Placement enregistré au nom de staging. Le résultat reste une observation
+SQL sur snapshot, pas une preuve physique, un inventaire exhaustif de
+dépendances, une demande de compaction ou une autorisation de purge. Les
+reçus non référencés ou historiques ne sont ni oubliés ni réattribués.

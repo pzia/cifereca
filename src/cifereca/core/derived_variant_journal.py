@@ -255,18 +255,8 @@ def require_derived_reservation_in_transaction(db, reservation, *, expected):
     return intent
 
 
-def commit_derived_reservation_in_transaction(
-    db, reservation, *, intent, placement_id, origin_id, recipe_id,
-):
-    """Move the exact receipt to history atomically with canonical B.
-
-    Only the Core writer calls this inside its existing BEGIN IMMEDIATE.
-    The receipt payload is unchanged, counts against the same quota, and
-    never authorizes a new publication by itself.
-    """
-    raw, current = _read_pending_reservation(db, reservation)
-    if current != intent:
-        raise DerivedJournalConflict("derived_journal_reservation_changed")
+def _require_canonical_proof(db, intent, *, placement_id, origin_id, recipe_id):
+    """Verify the exact canonical SQL witness, without changing state."""
     artifact_id = "sha256:" + intent.output_sha256
     placement = db.execute(
         "SELECT artifact_id,identity_id,path,state,provider_id FROM placements "
@@ -310,6 +300,22 @@ def commit_derived_reservation_in_transaction(
                 "result_sha256": intent.output_sha256,
             }.items())):
         raise DerivedJournalConflict("derived_journal_canonical_proof_missing")
+
+
+def commit_derived_reservation_in_transaction(
+    db, reservation, *, intent, placement_id, origin_id, recipe_id,
+):
+    """Move the exact receipt to history atomically with canonical B.
+
+    Only the Core writer calls this inside its existing BEGIN IMMEDIATE.
+    The receipt payload is unchanged, counts against the same quota, and
+    never authorizes a new publication by itself.
+    """
+    raw, current = _read_pending_reservation(db, reservation)
+    if current != intent:
+        raise DerivedJournalConflict("derived_journal_reservation_changed")
+    _require_canonical_proof(db, intent, placement_id=placement_id,
+                             origin_id=origin_id, recipe_id=recipe_id)
     committed_key = _COMMITTED + reservation.receipt_sha256
     if db.execute("SELECT 1 FROM metadata WHERE key=?", (committed_key,)).fetchone():
         raise DerivedJournalConflict("derived_journal_reservation_changed")
