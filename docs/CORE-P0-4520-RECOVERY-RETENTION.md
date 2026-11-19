@@ -83,3 +83,24 @@ Placement enregistré au nom de staging. Le résultat reste une observation
 SQL sur snapshot, pas une preuve physique, un inventaire exhaustif de
 dépendances, une demande de compaction ou une autorisation de purge. Les
 reçus non référencés ou historiques ne sont ni oubliés ni réattribués.
+
+
+## Convergence et références externes au staging
+
+La revue convergée associe les observations SQL et physiques du même
+reçu et recontrôle les verdicts et tous les digests du journal. Elle
+ne classe que les quatre premiers committed du profil, avec un plafond
+de 1 GiB de hash et un délai coopératif. Avant hash, les noms de staging
+éligibles sont aussi confrontés aux chemins explicites (placements,
+backups, device placements) et aux enveloppes JSON des tables Core
+catalogue, acquisition, variantes, artefacts, placements, droits,
+provenance, sources, appareils et événements, ainsi qu'à metadata.
+Seul le reçu exact propre à chaque nom est exempté ; les autres
+références, y compris inter-profils, restent bloquantes. Budget par
+snapshot : 32 768 lignes, 16 MiB de payload, maximum 1 MiB par ligne et
+profondeur JSON 24 ; un dépassement ou une enveloppe indéterminée
+n'est jamais classé comme absence de dépendance. Le rapport ne révèle
+aucun nom ni chemin et n'affirme toujours pas une preuve exhaustive :
+les alias, systèmes externes, plugins et usages hors SQL restent à
+qualifier. La cible publiée demeure protégée, même si le stage est
+absent. Pas de writer de rétention ni remboursement de quota.
