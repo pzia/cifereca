@@ -62,3 +62,16 @@ def test_closed_live_states_and_historical_counters_stay_distinct():
     assert "preuves à revalider" in documentary_summary(counts)
     assert documentary_summary({"requested": 1}) == ""
     assert projected_purchase_counts(rows, identity_id=None) == {}
+
+
+def test_available_with_pending_refresh_counts_once_and_exposes_subset():
+    a, b = source(), source(edition="two")
+    row = remote("first", a, state="available")
+    row["_purchase_library_status"] = PurchaseLibraryStatus("first", a, "retry_wait", 1)
+    second = remote("second", b, state="pending")
+    counts = projected_purchase_counts([row, second], identity_id="A")
+    assert counts == {"available": 1, "refresh_retry_wait": 1, "pending": 1}
+    assert "Fiches conservées, dont actualisation : 1 différées" in documentary_summary(counts)
+    assert documentary_summary({"available": 1, "refresh_pending": 2}) == ""
+    conflicting = remote("conflicting", a, state="available")
+    assert projected_purchase_counts([row, conflicting, second], identity_id="A") == {"pending": 1}

@@ -59,11 +59,29 @@ def test_expired_receipt_renews_exact_generation_but_keeps_previous_c(tmp_path, 
         def read():
             return read_purchase_notice_association(db, candidate.source, identity_id="A")
 
+        def display_state(expected):
+            from cifereca.core.notice_c_purchase_library_projection import (
+                project_purchase_library_notices, purchase_library_notice, purchase_library_status,
+            )
+            from cifereca.core.notice_c_purchase_summary import projected_purchase_counts
+            from tests.test_core_p0_1072_library_live_counts import remote
+            card = remote("purchase", candidate.source, state=None)
+            project_purchase_library_notices(db, [card], identity_id="A")
+            assert purchase_library_notice(card) is not None
+            status = purchase_library_status(card)
+            assert (None if status is None else status.state) == expected
+            counts = projected_purchase_counts([card], identity_id="A")
+            wanted = {"available": 1}
+            if expected is not None:
+                wanted["refresh_" + expected] = 1
+            assert counts == wanted
+
         ref, = request(db, snapshot, candidate)
         initial = publish(ref, claim(ref))
         persist_exact_public_search_cover(db, initial.source)
         before = read()
         assert before is not None and before.observed_at == 100
+        display_state(None)
         clock[0] = 100 + _DETAIL_TTL_SECONDS - 1
         assert reattest_current_purchase_association(
             db, ref, snapshot, candidate, now=clock[0],
@@ -77,6 +95,7 @@ def test_expired_receipt_renews_exact_generation_but_keeps_previous_c(tmp_path, 
         assert request(db, snapshot, candidate, now=clock[0]) == (successor,)
         assert journal.read_job(db, successor).state == "pending"
         assert read() == before
+        display_state("pending")
         if mode in ("pending_new_a", "failed_new_a"):
             if mode == "failed_new_a":
                 lease = claim(successor)
@@ -107,12 +126,14 @@ def test_expired_receipt_renews_exact_generation_but_keeps_previous_c(tmp_path, 
             if mode == "failed":
                 journal.fail_job(db, lease, now=clock[0], transient=False)
                 assert read() == before
+                display_state("failed")
             else:
                 new = publish(successor, lease)
                 # New public response does not relabel old source fields.
                 assert new.source == initial.source
                 assert read().observed_at == clock[0]
                 assert read().document == before.document
+                display_state(None)
         assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
     finally:
         execution.close()

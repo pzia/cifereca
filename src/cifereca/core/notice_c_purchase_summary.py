@@ -46,18 +46,26 @@ def projected_purchase_counts(rows, *, identity_id):
             continue
         notice = purchase_library_notice(row)
         status = purchase_library_status(row)
-        if notice is not None and status is not None:
-            # The projection guarantees these are mutually exclusive.
+        if notice is not None and status is not None and (
+                notice.source != status.source or notice.placement != status.placement):
             states.setdefault(notice.source, set()).add(None)
             states.setdefault(status.source, set()).add(None)
             continue
-        if notice is not None:
-            source, state = notice.source, "available"
-        elif status is not None:
-            source, state = status.source, _LIVE_GROUPS.get(status.state)
-        else:
+        if notice is None and status is None:
             continue
+        source = notice.source if notice is not None else status.source
+        group = _LIVE_GROUPS.get(status.state) if status is not None else None
         if source.scope.identity_id == identity_id:
-            states.setdefault(source, set()).add(state)
-    return dict(Counter(next(iter(group)) for group in states.values()
-                        if len(group) == 1 and None not in group))
+            states.setdefault(source, set()).add((notice is not None, group))
+    counts = Counter()
+    for group in states.values():
+        if len(group) != 1 or None in group:
+            continue
+        available, status = next(iter(group))
+        if available:
+            counts["available"] += 1
+            if status is not None:
+                counts["refresh_" + status] += 1
+        elif status is not None:
+            counts[status] += 1
+    return dict(counts)
