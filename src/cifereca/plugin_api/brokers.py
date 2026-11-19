@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+from typing import Any, Callable, Literal, Mapping, Protocol, TypedDict, runtime_checkable
 from .digital_loan_availability import DigitalLoanAvailability
 from .models import (
     AccountRef, ActionStatistics, AdeptProfileRef, ArtifactFormat, ArtifactInputLease, ArtifactOutputLease, ArtifactRef, ArtifactRoutePlan,
@@ -258,6 +258,25 @@ class DiagnosticsBroker(Protocol):
 class LibraryNamingBroker(Protocol):
     def preview(self, *, title: str, author: str = "", series: str = "", index: str = "", extension: str = "epub") -> str: ...
 
+class PhysicalNamingAuditReport(TypedDict):
+    physical_schema: Literal[1]
+    status: Literal["complete", "partial", "unavailable"]
+    total: int
+    conforming: int
+    deviating: int
+    missing: int
+    unavailable: int
+    ambiguous: int
+    unexamined: int
+
+
+@runtime_checkable
+class LibraryPhysicalNamingReadBroker(Protocol):
+    """Optional extension of library.naming; no paths, titles or write method."""
+    def audit_placements(self, *, identity_id: str,
+                         control: TaskControl | None = None) -> PhysicalNamingAuditReport: ...
+
+
 @runtime_checkable
 class ArtifactExecutionBroker(Protocol):
     def input_lease(self, artifact: ArtifactRef, *,
@@ -299,4 +318,4 @@ class ArtifactRoutingBroker(Protocol):
     def transfer(self, plan: ArtifactRoutePlan, control: TaskControl | None = None) -> ArtifactTransferResult: ...
 
 __all__ = ["ReleaseUpdateReadBroker", "CatalogBroker", "CatalogueSourceInventoryBroker", "AcquisitionBroker", "SynchronizationBroker", "MetadataBroker", "ReconciliationBroker", "IdentityBroker", "DiagnosticsBroker", "LibraryNamingBroker", "RuntimeCapabilitiesBroker", "AdeptProfileBroker", "AdeptLoanBroker",
-    "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryReconciliationReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker"]
+    "PhysicalNamingAuditReport", "LibraryPhysicalNamingReadBroker", "ArtifactExecutionBroker", "LibraryReadBroker", "LibraryReconciliationReadBroker", "LibraryMaintenanceBroker", "ArtifactRoutingBroker", "CacheBroker", "TaskBroker"]
