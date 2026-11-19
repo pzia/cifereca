@@ -84,6 +84,7 @@ class PublicNoticeWorkPump:
             on_purchase_committed=on_purchase_committed,
             claim_purchase=None if purchase_execution is None else purchase_execution.claim,
             prepare_purchase=None if purchase_execution is None else purchase_execution.prepare,
+            finish_purchase=None if purchase_execution is None else purchase_execution.finish,
         )
         lanes = tuple(dict.fromkeys(kind for kind, _digest in self._supported))
         if purchase_execution is not None:
