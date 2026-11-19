@@ -6,6 +6,7 @@ A historical provider origin/receipt is a veto even if not currently usable.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
@@ -160,10 +161,26 @@ def preview_local_origin_suggestion(storage, *, library_root: Path,
         return result("evidence_unavailable")
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class _SuggestionContinuation:
+    """Private observation, no durable cursor or authorization."""
+    storage: object
+    root: Path
+    identity: str
+    placement: str
+    evidence: tuple
+    signature: tuple
+    title: str
+    author: str | None
+    next_page: int
+    page_size: int
+
+
 def suggest_local_placement_documents(storage, *, library_root: Path,
                                      identity_id: str, placement_id: str,
                                      explicitly_requested: bool = False,
-                                     page: int = 0, page_size: int = 20):
+                                     page: int = 0, page_size: int = 20,
+                                     continuation=None):
     """Private one-shot controller for known C, not a live catalogue search.
 
     The controller must pass the admitted identity and configured root, never
@@ -173,11 +190,12 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
     """
     from .local_origin_documentary_suggestions import suggest_known_public_documents
 
-    def result(reason, suggestions=None, *, metadata="local_catalogue_only"):
+    def result(reason, suggestions=None, *, metadata="local_catalogue_only", next_page=None):
         return {
             "status": "partial" if suggestions is not None else "excluded",
             "reason": reason,
             "suggestions": suggestions,
+            "continuation": next_page,
             "metadata_evidence": metadata if suggestions is not None else "not_checked",
             "association_authorized": False,
             "may_write_origin_or_right": False,
@@ -189,6 +207,16 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
     if (type(page) is not int or not 0 <= page <= 200
             or type(page_size) is not int or not 1 <= page_size <= 50):
         return result("invalid_page")
+    if ((page == 0 and continuation is not None)
+            or (page > 0 and (
+                type(continuation) is not _SuggestionContinuation
+                or continuation.storage is not storage
+                or continuation.root != library_root
+                or continuation.identity != identity_id
+                or continuation.placement != placement_id
+                or continuation.next_page != page
+                or continuation.page_size != page_size))):
+        return result("continuation_unverified")
     try:
         with _verified_candidate(storage, library_root=library_root,
                                  identity_id=identity_id, placement_id=placement_id,
@@ -204,11 +232,25 @@ def suggest_local_placement_documents(storage, *, library_root: Path,
                 title, authors = observation
                 author = authors[0] if len(authors) == 1 else None
                 metadata = "verified_epub_opf_description"
+            # Fresh SHA, inode and descriptive evidence must match the
+            # preceding page. C itself is re-read independently: its result
+            # set may change and no cross-page snapshot is claimed.
+            if continuation is not None and (
+                continuation.evidence != local
+                or continuation.signature != signature
+                or (continuation.title, continuation.author) != (title, author)
+            ):
+                raise _CandidateRejected("continuation_evidence_changed")
             suggestions = suggest_known_public_documents(
                 storage, title=title, author=author,
                 page=page, page_size=page_size,
             )
-        return result("documentary_comparison_only", suggestions, metadata=metadata)
+            following = (_SuggestionContinuation(
+                storage, library_root, identity_id, placement_id, local,
+                signature, title, author, page + 1, page_size,
+            ) if suggestions.has_more and page < 200 else None)
+        return result("documentary_comparison_only", suggestions,
+                      metadata=metadata, next_page=following)
     except _CandidateRejected as exc:
         return result(str(exc))
     except (DerivedPublicationConflict, sqlite3.Error, OSError, RuntimeError,
