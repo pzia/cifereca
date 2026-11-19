@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import unicodedata
 from copy import deepcopy
 from pathlib import Path
@@ -152,6 +153,8 @@ class Config:
         self.load()
 
     def load(self) -> None:
+        # A reloaded configuration starts a new process-local review epoch.
+        self._cleanup_review_epoch = secrets.token_hex(16)
         if self.path.exists():
             try:
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
@@ -289,6 +292,11 @@ class Config:
                 node[part] = {}
             node = node[part]
         node[parts[-1]] = value
+        # Invalidate old cleanup reviews even across true → false → true.
+        # General Settings also writes identities under the acquisition lock.
+        if parts[0] in ("maintenance", "library", "identities"):
+            self._cleanup_review_epoch = secrets.token_hex(16)
+
     def identities(self) -> list[dict[str, Any]]:
         rows = self.get("identities", [])
         if not isinstance(rows, list):

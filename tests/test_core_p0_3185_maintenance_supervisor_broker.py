@@ -311,3 +311,65 @@ def test_root_change_during_prepare_blocks_retirement(rig, monkeypatch):
     assert result.facts["reason"] == "ordinary_cleanup_suspended"
     assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
     assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_reactivation_never_revives_old_broker_plan(rig, monkeypatch):
+    storage, _root, paths, pubs, _lock = rig
+    broker = broker_for(rig, monkeypatch, enabled=True)
+    req = request(rig, action="commit", confirmed=True)
+    old = broker.plan(req)
+    cfg = broker.service.config
+    cfg.set(KEY, False)
+    cfg.set(KEY, True)
+    with pytest.raises(Conflict) as exc:
+        broker.run(old)
+    assert exc.value.code == "ordinary_cleanup_plan_stale"
+    assert rows(storage) == (1, 3, 3, 3)
+    assert all(path.read_bytes() == BYTES for path in paths)
+    assert broker.run(broker.plan(req)).facts["status"] == "retired"
+
+
+def test_old_broker_plan_is_stale_after_reload(rig, monkeypatch):
+    storage, _root, paths, _pubs, _lock = rig
+    broker = broker_for(rig, monkeypatch, enabled=True)
+    old = broker.plan(request(rig, action="commit", confirmed=True))
+    broker.service.config.load()
+    with pytest.raises(Conflict) as exc:
+        broker.run(old)
+    assert exc.value.code == "ordinary_cleanup_plan_stale"
+    assert rows(storage) == (1, 3, 3, 3)
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_missing_epoch_cannot_execute_a_configured_commit(rig, monkeypatch):
+    storage, _root, paths, _pubs, _lock = rig
+    broker = broker_for(rig, monkeypatch, enabled=True)
+    plan = broker.plan(request(rig, action="commit", confirmed=True))
+    facts = dict(plan.facts)
+    del facts["cleanup_review_epoch"]
+    with pytest.raises(Conflict) as exc:
+        broker.run(replace(plan, facts=facts))
+    assert exc.value.code == "ordinary_cleanup_plan_stale"
+    assert rows(storage) == (1, 3, 3, 3)
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_disable_then_reenable_inside_prepare_invalidates_epoch(rig, monkeypatch):
+    from cifereca.core import canonical_dedup_supervisor as supervisor
+    storage, _root, paths, pubs, _lock = rig
+    broker = broker_for(rig, monkeypatch, enabled=True)
+    plan = broker.plan(request(rig, action="commit", confirmed=True))
+    original = supervisor.prepare_verified_canonical_duplicate
+
+    def change(*args, **kwargs):
+        prepared = original(*args, **kwargs)
+        broker.service.config.set(KEY, False)
+        broker.service.config.set(KEY, True)
+        return prepared
+
+    monkeypatch.setattr(supervisor, "prepare_verified_canonical_duplicate", change)
+    result = broker.run(plan)
+    assert not result.ok and not result.changed
+    assert result.facts["reason"] == "ordinary_cleanup_suspended"
+    assert storage.placement_get(pubs[1].placement_id)["state"] == "present"
+    assert all(path.read_bytes() == BYTES for path in paths)

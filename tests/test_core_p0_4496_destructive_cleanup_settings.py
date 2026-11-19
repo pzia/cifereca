@@ -145,3 +145,18 @@ def test_general_settings_cannot_reactivate_or_revoke_stale_setting(rig):
         result = settings.preserve_destructive_cleanup_setting(data, current=service.config)
         assert result["maintenance"] == {"destructive_cleanup_enabled": live, "future": 7}
         assert result["unrelated"] == "retained"
+
+
+def test_setting_command_rotates_review_epoch_on_each_transition(rig):
+    from cifereca.core.destructive_cleanup_policy import cleanup_review_epoch
+    service, _ = rig
+    initial = cleanup_review_epoch(service.config)
+    _change(service, True)
+    enabled = cleanup_review_epoch(service.config)
+    _change(service, False, expected=True)
+    disabled = cleanup_review_epoch(service.config)
+    _change(service, True)
+    renewed = cleanup_review_epoch(service.config)
+    assert None not in (initial, enabled, disabled, renewed)
+    assert len({initial, enabled, disabled, renewed}) == 4
+    assert cleanup_review_epoch(Config(service.config.path)) != renewed
