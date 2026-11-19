@@ -15,6 +15,25 @@ from .provider_rights_observation import _timestamp
 
 PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT = "cifereca.provider.purchase-enrichment-observation/1"
 _MAX_CANDIDATES = 10_000
+MAX_PURCHASE_RETRY_SECONDS = 30 * 24 * 3600
+
+
+class PurchaseEnrichmentDeferred(Exception):
+    """Closed transient outcome from a qualified public metadata producer.
+
+    A bounded delay, not a GET grant. No raw header, URL, account or remote
+    exception is part of this contract. Core owns the retry budget.
+    """
+
+    def __init__(self, reason, retry_after_seconds):
+        if (type(reason) is not str or reason not in (
+                "rate_limited", "unavailable", "budget_busy")
+                or type(retry_after_seconds) is not int
+                or not 1 <= retry_after_seconds <= MAX_PURCHASE_RETRY_SECONDS):
+            raise ValueError("invalid_purchase_enrichment_deferral")
+        super().__init__("purchase_enrichment_deferred")
+        self.reason = reason
+        self.retry_after_seconds = retry_after_seconds
 
 
 def _public_locator(value):
@@ -106,4 +125,5 @@ class PurchaseEnrichmentObservation:
 __all__ = [
     "PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT",
     "PurchaseEnrichmentCandidate", "PurchaseEnrichmentObservation",
+    "PurchaseEnrichmentDeferred", "MAX_PURCHASE_RETRY_SECONDS",
 ]
