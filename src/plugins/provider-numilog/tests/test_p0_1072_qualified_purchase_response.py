@@ -60,3 +60,36 @@ def test_wrong_title_or_cancelled_control_cannot_produce_response(monkeypatch):
         assert count() == 1
     finally:
         s.close()
+
+
+@pytest.mark.parametrize("language,expected", (("fra", "fr"), ("Français", None)))
+def test_public_product_metadata_is_projected_without_acquired_edition_claim(monkeypatch, language, expected):
+    import json
+    from tests import test_public_detail_transport_p0 as transport
+
+    node = {"@type": "Book", "url": URL, "name": "Fixture",
+            "inLanguage": language, "genre": ["Policier"], "keywords": "enquête, mer",
+            "typicalAgeRange": "12+", "isPartOf": {"@type": "BookSeries", "name": "Série non qualifiée"}}
+    monkeypatch.setattr(transport, "BODY", '<script type="application/ld+json">'
+                        + json.dumps(node) + '</script>')
+    s, _, _ = session(monkeypatch)
+    try:
+        candidate = SimpleNamespace(public_locator=URL, title="Fixture")
+        response, at, hold = s._purchase_enrichment_response(
+            URL, candidate.title, check_authority=lambda: True, control=control(),
+        )
+        with hold():
+            obs = prepare_purchase_public_observation(response, s, candidate, observed_at=at)
+        bio = obs.fields_copy()["search_result"]["public_bibliography"]
+        assert bio["classification"] == {"genres": ["Policier"], "keywords": ["enquête, mer"]}
+        if expected is None:
+            assert "language_observation" not in bio
+        else:
+            assert bio["language_observation"]["raw_tags"] == [language]
+            assert bio["language_observation"]["languages"] == [expected]
+            assert bio["language_observation"]["source_field"] == "inLanguage"
+        row, = response.results
+        assert not row.owned and not row.downloadable and row.format is None
+        assert "series_relation" not in bio and "public_age_range_label" not in bio
+    finally:
+        s.close()
