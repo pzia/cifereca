@@ -80,8 +80,19 @@ def _read_descriptive_txn(db, source):
             return None
         bibliographic = member.public_bibliography
         facts = []
-        for field in _FIELDS:
-            value = getattr(bibliographic, field)
+        values = [(field, getattr(bibliographic, field)) for field in _FIELDS]
+        # Retain only already decoded, source-scoped typed observations.
+        # No native format/language/filter or purchased identity overwritten.
+        if bibliographic.language_observation is not None:
+            values.append(("languages", " ; ".join(bibliographic.language_observation.languages)))
+        if bibliographic.series_relation is not None:
+            values.append(("series", bibliographic.series_relation.label))
+        if bibliographic.classification is not None:
+            for field, raw in bibliographic.classification.entries:
+                value = raw if type(raw) is str else " ; ".join(x for x in raw if x.strip())
+                if value.strip():
+                    values.append((field, value))
+        for field, value in values:
             if value is None:
                 continue
             if type(value) is not str or not value.strip():
