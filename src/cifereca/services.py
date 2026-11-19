@@ -35,7 +35,7 @@ from .core import loan_return_verification
 from .core import adept_inventory_reconciliation
 from .core import sync_coordination, sync_projection
 from .core import library_projection, library_mutation
-from .core.source_context import source_context_epoch
+from .core.source_context import source_context_epoch, revoke_source_context
 from .core import provider_sessions, search_orchestration
 from .acquisition import Acquisition, AcquisitionManager, AcquisitionResult
 from .acquisition_engine import AcquisitionReconciler, Entitlement, SourceIdentity
@@ -153,6 +153,7 @@ class LibraryService:
         self._account_context_epoch = 0
         # Source operations survive UI selection changes. Reconfiguration
         # and disconnect revoke their admission independently of UI searches.
+        self._source_context_lock = RLock()
         self._source_context_epoch = 0
         recovered = self._recover_identity_directory_migration()
         self._sync_identity_configuration()
@@ -906,7 +907,7 @@ class LibraryService:
         engine = self._identity_directory_engine()
         try:
             with InterProcessLock(acquisition_lock_file()):
-                self._source_context_epoch += 1
+                revoke_source_context(self)
                 if engine.pending():
                     engine.run()
                     self._sync_identity_configuration()

@@ -150,6 +150,16 @@ class NumilogPublicSession(ProviderSession):
         self._assert_public_generation(epoch)
         return result
 
+    purchase_enrichment_source_provider_id = "numilog"
+
+    def purchase_enrichment_public_response(self, product_url, expected_title, *, check_authority, control):
+        """Qualified anonymous response, requiring the late Core start fence."""
+        if not callable(getattr(check_authority, "hold_transport_start", None)):
+            raise ProviderCapabilityError("Numilog public : purchase_start_fence_required")
+        return self._purchase_enrichment_response(
+            product_url, expected_title, check_authority=check_authority, control=control,
+        )
+
     def _guarded_purchase_detail(self, product_url, expected_title, *, check_authority):
         """Private composition port; shared anonymous session/cache and timestamp.
 
@@ -167,6 +177,23 @@ class NumilogPublicSession(ProviderSession):
             self._assert_public_generation(generation)
             return (self.credential_id == "__public__"
                     and not self.credentials and not self._accounts)
+
+        start = getattr(check_authority, "hold_transport_start", None)
+        if callable(start):
+            @contextmanager
+            def hold_provider_start():
+                with start() as allowed:
+                    if allowed is not True or not self._navigation_lock.acquire(blocking=False):
+                        raise ProviderCapabilityError("Numilog public : purchase_authority_revoked")
+                    try:
+                        if (not self.connected or self._navigation_epoch != generation
+                                or self.credential_id != "__public__"
+                                or self.credentials or self._accounts):
+                            raise ProviderCapabilityError("Numilog public : purchase_authority_revoked")
+                        yield True
+                    finally:
+                        self._navigation_lock.release()
+            checked.hold_transport_start = hold_provider_start
 
         if not checked():
             raise ProviderCapabilityError("Numilog public : purchase_authority_revoked")

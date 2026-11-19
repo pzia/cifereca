@@ -521,7 +521,8 @@ def provider_diagnostic_state(self) -> dict[str, Any]:
 
 
 def close(self) -> None:
-    self._source_context_epoch = getattr(self, "_source_context_epoch", 0) + 1
+    from .source_context import revoke_source_context
+    revoke_source_context(self)
     with self._virtual_schedule_lock:
         self._virtual_collection_closed = True
     with self._virtual_reconcile_lock:
@@ -543,7 +544,8 @@ def close(self) -> None:
 
 
 def disconnect_configured(self) -> None:
-    self._source_context_epoch = getattr(self, "_source_context_epoch", 0) + 1
+    from .source_context import revoke_source_context
+    revoke_source_context(self)
     for key, session in list(self._sessions.items()):
         try:
             session.close()
@@ -745,10 +747,17 @@ def bind_confirmed_source_account(
                 and getattr(row, "credential_id", None) == credential_id
             ]) != len(existing)):
         raise ProviderConfigurationError(error_prefix + "changed")
-    account.identity_id = owner
-    if not existing:
-        registry.append(account)
-    self._source_context_epoch = core_epoch + 1
+    from .source_context import source_context_mutation
+    with source_context_mutation(self):
+        if (getattr(self, "_source_context_epoch", 0) != core_epoch
+                or self._sessions.get(key) is not session or self.accounts is not registry
+                or len(registry) != len(registry_snapshot)
+                or any(row is not old for row, old in zip(registry, registry_snapshot))):
+            raise ProviderConfigurationError(error_prefix + "changed")
+        account.identity_id = owner
+        if not existing:
+            registry.append(account)
+        self._source_context_epoch = core_epoch + 1
     return session
 
 
@@ -1066,18 +1075,24 @@ def reconnect_expired_configured_source_once(
                        and r.get("enabled") is True
                        for r in live_bindings) != 1):
             return None
-        self._sessions[key] = replacement
-        self.accounts = [
-            candidate if existing is account else existing for existing in self.accounts
-        ]
-        if self.current_account is account:
-            self.current_account = candidate
-        if self.primary is account:
-            self.primary = candidate
-        self._source_context_epoch = epoch + 1
-        self._account_context_epoch += 1
-        self._session_errors.pop(key, None)
-        accepted = True
+        from .source_context import source_context_mutation
+        with source_context_mutation(self):
+            if (source_context_epoch(self) != epoch
+                    or self._sessions.get(key) is not expired_session
+                    or sum(a is account for a in self.accounts) != 1):
+                return None
+            self._sessions[key] = replacement
+            self.accounts = [
+                candidate if existing is account else existing for existing in self.accounts
+            ]
+            if self.current_account is account:
+                self.current_account = candidate
+            if self.primary is account:
+                self.primary = candidate
+            self._source_context_epoch = epoch + 1
+            self._account_context_epoch += 1
+            self._session_errors.pop(key, None)
+            accepted = True
         try:
             expired_session.close()
         except Exception:

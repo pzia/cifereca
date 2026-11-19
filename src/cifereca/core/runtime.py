@@ -100,6 +100,9 @@ class CiferecaCore:
         if activate_plugins:
             plugins.activate()
         library.attach_plugin_manager(plugins)
+        if notice_work is not None and activate_plugins and not no_plugins:
+            from .notice_c_purchase_runtime import install_purchase_runtime
+            install_purchase_runtime(library, notice_work)
         return cls(
             config=config,
             storage=storage,

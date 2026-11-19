@@ -224,6 +224,28 @@ class PurchaseIntentExecution:
             except ValueError:
                 return False
 
+        started = False
+
+        @contextmanager
+        def hold_transport_start():
+            """One-use qualified transport admission, no lock across HTTP."""
+            nonlocal started
+            control.check_cancelled()
+            with entry.hold_context() as allowed:
+                if allowed is not True:
+                    raise UnavailableNoticeWork("notice_purchase_admission_changed")
+                with self._lock:
+                    if started:
+                        raise UnavailableNoticeWork("notice_purchase_transport_consumed")
+                    with self._storage._lock, self._storage._connect() as db:
+                        db.execute("BEGIN")
+                        verify_held(db)
+                    started = True
+                    yield True
+
+        # Cache-only and existing synthetic producers can use the callable
+        # check. Qualified real transport must consume this late fence.
+        check_authority.hold_transport_start = hold_transport_start
         try:
             if not check_authority():
                 raise UnavailableNoticeWork("notice_purchase_admission_changed")

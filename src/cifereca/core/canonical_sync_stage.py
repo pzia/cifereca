@@ -176,6 +176,15 @@ def observe_canonical_rights_in_sync(
         )
     except (AttributeError, KeyError, ValueError, TypeError):
         return None
+    # The runtime owns the optional composition. Capture the original
+    # source before the same-read A observation.
+    if purchase_enrichment_sink is None and session is not None:
+        factory = getattr(service, "_notice_purchase_sink_factory", None)
+        if callable(factory):
+            try:
+                purchase_enrichment_sink = factory(account, session)
+            except Exception:
+                _LOG.warning("TRACE purchase enrichment code=composition_unavailable")
     names = ("downloadable_resource_snapshot", "rights_observation_snapshot")
     if purchase_enrichment_sink is not None:
         names += ("purchase_enrichment_observation",)
@@ -328,10 +337,17 @@ def observe_canonical_rights_in_sync(
     # only after the actual positive A transaction and presence checks.
     # No locator, account or candidate is placed into Sync facts. A C sink
     # failure cannot retroactively change the already successful A result.
+    enrichment_summary = None
     if candidate_batch and not cancelled():
         try:
             if current_context() and service.sync_source_enabled(account) is True:
-                purchase_enrichment_sink(snapshot, tuple(candidate_batch))
+                receipt = purchase_enrichment_sink(snapshot, tuple(candidate_batch))
+                from .notice_c_purchase_composition import PurchaseHandoffResult
+                if type(receipt) is PurchaseHandoffResult:
+                    enrichment_summary = {
+                        "requested": receipt.requested, "admitted": receipt.admitted,
+                        "deferred": receipt.deferred, "unrequested": receipt.unrequested,
+                    }
         except Exception:
             _LOG.warning("TRACE purchase enrichment code=handoff_failed")
     return {
@@ -343,6 +359,7 @@ def observe_canonical_rights_in_sync(
                        for d in plan.decisions),
         "skipped_archived": sum(d.state == "skipped_archived" for d in plan.decisions),
         "read_only_plan": True, "acquisition_authorized": False,
+        **({"purchase_enrichment": enrichment_summary} if enrichment_summary is not None else {}),
     }
 
 
