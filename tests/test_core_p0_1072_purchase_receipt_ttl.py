@@ -23,7 +23,7 @@ def allowed():
     yield True
 
 
-@pytest.mark.parametrize("mode", ("success", "failed", "changed"))
+@pytest.mark.parametrize("mode", ("success", "failed", "changed", "pending_new_a", "failed_new_a"))
 def test_expired_receipt_renews_exact_generation_but_keeps_previous_c(tmp_path, mode):
     db = Storage(tmp_path / "ttl.sqlite")
     clock = [100]
@@ -77,7 +77,24 @@ def test_expired_receipt_renews_exact_generation_but_keeps_previous_c(tmp_path, 
         assert request(db, snapshot, candidate, now=clock[0]) == (successor,)
         assert journal.read_job(db, successor).state == "pending"
         assert read() == before
-        if mode == "changed":
+        if mode in ("pending_new_a", "failed_new_a"):
+            if mode == "failed_new_a":
+                lease = claim(successor)
+                journal.fail_job(db, lease, now=clock[0], transient=False)
+            old_job = journal.read_job(db, successor)
+            newer = replace(snapshot.rights[0], evidence_ref="newer-positive-a",
+                            observed_at="2026-11-19T15:30:00Z")
+            updated = replace(snapshot, rights=(newer,))
+            persist_attested_source_references(db, updated)
+            changed = replace(candidate, observed_at=newer.observed_at)
+            assert read() is None
+            assert request(db, updated, changed, now=clock[0]) == (successor,)
+            assert reattest_current_purchase_association(
+                db, successor, updated, changed, now=clock[0],
+            ) == successor
+            assert journal.read_job(db, successor) == old_job
+            assert read() == before
+        elif mode == "changed":
             other = replace(candidate, public_locator="https://catalogue.example.org/edition/456")
             next_ref, = request(db, snapshot, other, now=clock[0])
             assert next_ref.generation == successor.generation + 1
