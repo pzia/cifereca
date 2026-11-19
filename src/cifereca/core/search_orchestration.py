@@ -2113,6 +2113,7 @@ def _is_public_web_evidence(evidence, provider_id):
             and evidence in (
                 f"{provider_id}.public_search_product_card",
                 f"{provider_id}.public_search_record_identifier",
+                f"{provider_id}.public_product_jsonld",
             ))
 
 
