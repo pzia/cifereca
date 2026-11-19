@@ -5,6 +5,7 @@ from cifereca.core import notice_c_job_journal as journal
 from cifereca.core import notice_c_cover_index as index
 from cifereca.core import notice_c_initial_group_publication as initial
 from cifereca.core import notice_c_origin_link_producer as origin
+from cifereca.core import notice_c_group_batch_publication as batch
 from cifereca.core import search_orchestration as search
 from cifereca.core.notice_cover_repository import evict_notice_cover
 from cifereca.task_admission import SharedTaskAdmission
@@ -66,7 +67,7 @@ def test_missing_group_live_failure_is_recovered(tmp_path, monkeypatch):
         def fail(*args, **kwargs):
             raise OSError("simulated initial group writer failure")
         with monkeypatch.context() as patch:
-            patch.setattr(origin, "persist_origin_linked_public_cover_group", fail)
+            patch.setattr(batch, "_persist_origin_linked_public_cover_group_txn", fail)
             pairs = search._ingest_public_search_c(
                 core.library, rows, identity_id="alice", now=100,
                 require_public_cover_witness=True,
