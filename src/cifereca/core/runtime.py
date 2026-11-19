@@ -83,6 +83,7 @@ class CiferecaCore:
         if notice_work is not None:
             # Private Core worker port, not a plugin broker.
             library._notice_work_recover_search = notice_work.recover_search_sources
+            library._notice_work_search_committed = notice_work.request_tick
         llm = optional_llm_service(config)
         plugins = PluginManager(
             builtin_ui=builtin_ui,

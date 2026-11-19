@@ -55,25 +55,9 @@ def publish_search_groups_txn(db, currents, *, now):
     if (type(currents) is not tuple or len(currents) > 128
             or not journal._integer(now)):
         raise ValueError("notice_work_invalid_group_batch")
-    current_by_coords = {}
-    for source in currents:
-        coord = _public_source_coordinates(source)
-        if coord is not None:
-            current_by_coords[coord] = source
-    if not current_by_coords:
-        return {}, ()
-    from .library_projection import _read_provider_origin_coordinates
-    verified = _read_provider_origin_coordinates(db, identity_id=None, with_kind=True)
-    if not verified or len(verified) > _MAX_ORIGINS:
-        return {}, ()
-    wanted = _purchase_coordinates(verified)
-    if not (wanted & current_by_coords.keys()):
-        return {}, ()
-    public = _admitted_public_sources_txn(db, wanted)
-    current_by_coords = {coord: source for coord, source in current_by_coords.items()
-                         if public.get(coord) == source}
+    groups, current_by_coords = _search_groups_txn(db, currents)
     linked, requests = {}, []
-    for ordered, sources in _eligible_origin_groups(verified, public, current_by_coords):
+    for ordered, sources in groups:
         try:
             target, refs, proof = _resolve_origin_linked_public_group_txn(db, sources=sources)
         except (ValueError, TypeError):
@@ -101,7 +85,7 @@ def publish_search_groups_txn(db, currents, *, now):
         if complete is not None:
             for coord in ordered:
                 if coord in current_by_coords:
-                    linked[public[coord].document.source_key] = complete
+                    linked[current_by_coords[coord].document.source_key] = complete
             continue
         # The entire eligible group has been rolled back; select initial,
         # strict extension or exact recomputation, never an invented target.
@@ -114,3 +98,58 @@ def publish_search_groups_txn(db, currents, *, now):
         if request is not None:
             requests.append(request)
     return linked, tuple(requests)
+
+
+def _search_groups_txn(db, currents):
+    """One relation discovery shared by the writer and read-only rebinding."""
+    current_by_coords = {}
+    for source in currents:
+        coord = _public_source_coordinates(source)
+        if coord is not None:
+            current_by_coords[coord] = source
+    if not current_by_coords:
+        return (), {}
+    from .library_projection import _read_provider_origin_coordinates
+    verified = _read_provider_origin_coordinates(db, identity_id=None, with_kind=True)
+    if not verified or len(verified) > _MAX_ORIGINS:
+        return (), {}
+    wanted = _purchase_coordinates(verified)
+    if not (wanted & current_by_coords.keys()):
+        return (), {}
+    public = _admitted_public_sources_txn(db, wanted)
+    current_by_coords = {coord: source for coord, source in current_by_coords.items()
+                         if public.get(coord) == source}
+    return _eligible_origin_groups(verified, public, current_by_coords), current_by_coords
+
+
+def read_committed_search_groups(storage, currents):
+    """Rebind accepted sources to exact current groups without another writer."""
+    if type(currents) is not tuple or not 1 <= len(currents) <= 256:
+        return {}
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN")
+        groups, current_by_coords = _search_groups_txn(db, currents)
+        linked = {}
+        for ordered, sources in groups:
+            try:
+                target, refs, proof = _resolve_origin_linked_public_group_txn(
+                    db, sources=sources,
+                )
+                document = canonical_cover_document_ref(target)
+                row = db.execute("SELECT value FROM metadata WHERE key=?",
+                                 (_db_key(document),)).fetchone()
+                if row is None:
+                    continue
+                complete = _decode(row[0], document)
+                if (complete.document != document
+                        or {m.source_ref: m.source_epoch for m in complete.sources}
+                        != {s.document.source_key: s.epoch for s in sources}
+                        or any(m.visibility != "public" or m.relation_proof_id != proof
+                               or m.public_bibliography is None for m in complete.sources)):
+                    continue
+            except (ValueError, TypeError):
+                continue
+            for coord in ordered:
+                if coord in current_by_coords:
+                    linked[current_by_coords[coord].document.source_key] = complete
+        return linked

@@ -1994,9 +1994,11 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             if len({pair[0].source_provider for pair in pairs}) > 1:
                 try:
                     recover = getattr(self, "_notice_work_recover_search", None)
-                    failed_c = [] if callable(recover) else None
+                    committed = getattr(self, "_notice_work_search_committed", None)
+                    failed_c = [] if callable(recover) and not callable(committed) else None
                     _reconcile_progressive_public_c(
                         self.storage, pairs, restore_own=True, failed_sources=failed_c,
+                        read_only=callable(committed),
                     )
                     if failed_c:
                         recover(tuple(failed_c), now=int(time.time()))
@@ -2657,7 +2659,10 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
         if observations:
             try:
                 recover = getattr(self, "_notice_work_recover_search", None)
+                committed = getattr(self, "_notice_work_search_committed", None)
+                atomic_groups = callable(recover) and callable(committed)
                 atomic_c = {}
+                pending_positions = set()
 
                 def publish_or_request(db, source, position):
                     # The opt-in runtime owns durable recovery. Publish C on
@@ -2678,13 +2683,29 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                     finally:
                         db.execute("RELEASE SAVEPOINT notice_c_search_publication")
                     if canonical is None:
-                        affected = request_affected_public_recompute_txn(db, source, now=now)
+                        affected = request_affected_public_recompute_txn(
+                            db, source, now=now, _include_groups=not atomic_groups,
+                        )
                         if affected.refused or affected.overflow:
                             raise ValueError("notice_work_search_repair_refused")
-                        request_initial_publication_txn(db, source, now=now)
+                        initial = request_initial_publication_txn(db, source, now=now)
+                        if affected.refs or initial is not None:
+                            pending_positions.add(position)
                     atomic_c[position] = canonical
 
+                def publish_groups(db, accepted):
+                    from .notice_c_group_batch_publication import publish_search_groups_txn
+                    public = tuple((position, source) for position, source in accepted
+                                   if position in atomic_c)
+                    _, requests = publish_search_groups_txn(
+                        db, tuple(source for _, source in public), now=now,
+                    )
+                    if requests:
+                        pending_positions.update(position for position, _ in public)
+
                 options = {"_after_persist": publish_or_request} if callable(recover) else {}
+                if atomic_groups:
+                    options["_before_chunk_commit"] = publish_groups
                 persisted_batch = persist_notice_cover_many(
                     self.storage, observations,
                     field_path=("search_result", "thumbnail_url"),
@@ -2736,11 +2757,18 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                             stamp_persisted_c_revision(row, canonical)
                         pairs.append((row, persisted, canonical))
                 _reconcile_progressive_public_c(
-                    self.storage, pairs, failed_sources=failed_c if callable(recover) else None,
+                    self.storage, pairs,
+                    failed_sources=failed_c if callable(recover) and not atomic_groups else None,
+                    read_only=atomic_groups,
                 )
-                # Successful live C writes remain the sole normal path.
-                # Recover only still-dirty existing documents.
-                if failed_c and callable(recover):
+                if atomic_groups:
+                    # A hint is only a wake, never a second producer.
+                    # An interrupted producer leaves its durable request for
+                    # the next heartbeat. No dispatch during stack unwinding.
+                    if any(persisted_batch[position] is not None
+                           for position in pending_positions):
+                        committed()
+                if failed_c and callable(recover) and not atomic_groups:
                     recover(tuple(failed_c), now=now)
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # Catalogue mirror remains independent. A broken source
@@ -2751,7 +2779,8 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
     return pairs
 
 
-def _reconcile_progressive_public_c(storage, pairs, *, restore_own=False, failed_sources=None):
+def _reconcile_progressive_public_c(storage, pairs, *, restore_own=False,
+                                    failed_sources=None, read_only=False):
     """Restamp only currently verified persisted editions, never reobserve."""
     from .notice_c_origin_link_producer import (
         reconcile_origin_linked_public_batch, _CORE_ORIGIN_LINK_C_WITNESS,
@@ -2774,10 +2803,16 @@ def _reconcile_progressive_public_c(storage, pairs, *, restore_own=False, failed
                 row._core_notice_canonical_cover_document_epoch = own.epoch
                 stamp_persisted_c_revision(row, own)
     # Only one writer; late reconciliation reuses accepted source snapshots.
-    linked = reconcile_origin_linked_public_batch(
-        storage, [source for _row, source, _own in current],
-        **({"failed_sources": failed_sources} if failed_sources is not None else {}),
-    ) if current else {}
+    if read_only:
+        from .notice_c_group_batch_publication import read_committed_search_groups
+        linked = read_committed_search_groups(
+            storage, tuple(source for _row, source, _own in current),
+        )
+    else:
+        linked = reconcile_origin_linked_public_batch(
+            storage, [source for _row, source, _own in current],
+            **({"failed_sources": failed_sources} if failed_sources is not None else {}),
+        ) if current else {}
     for row, source, _own in current:
         shared = linked.get(source.document.source_key)
         if shared is None:

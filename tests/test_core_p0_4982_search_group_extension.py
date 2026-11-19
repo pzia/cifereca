@@ -3,7 +3,7 @@ from threading import Event
 
 from cifereca.core import notice_c_job_journal as journal
 from cifereca.core import notice_c_cover_index as index
-from cifereca.core import notice_c_origin_link_producer as producer
+from cifereca.core import notice_c_group_batch_publication as producer
 from cifereca.core import notice_c_origin_relink as relink
 from cifereca.core import notice_c_initial_group_publication as recovery
 from cifereca.core import search_orchestration as search
@@ -33,7 +33,7 @@ def test_failed_live_extension_reuses_existing_c_and_relink_port(tmp_path, monke
         def fail(*args, **kwargs):
             raise OSError("simulated failed live group extension")
         with monkeypatch.context() as patch:
-            patch.setattr(producer, "persist_origin_linked_public_cover_group", fail)
+            patch.setattr(producer, "_persist_origin_linked_public_cover_group_txn", fail)
             pairs = search._ingest_public_search_c(
                 core.library, [row], identity_id="A", now=101,
                 require_public_cover_witness=True,

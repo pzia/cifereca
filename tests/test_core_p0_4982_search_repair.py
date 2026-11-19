@@ -71,11 +71,12 @@ def test_existing_c_repaired_after_failed_live_search_publication(tmp_path, monk
 def test_default_core_does_not_install_automatic_search_recovery(tmp_path):
     with open_core(tmp_path) as core:
         assert not hasattr(core.library, "_notice_work_recover_search")
+        assert not hasattr(core.library, "_notice_work_search_committed")
 
 
 
 def test_existing_group_repaired_when_only_live_group_publication_fails(tmp_path, monkeypatch):
-    from cifereca.core import notice_c_origin_link_producer as origin
+    from cifereca.core import notice_c_group_batch_publication as origin
     from tests.test_core_p0_6366_library_recent_public_c import _real_origins, A_URL, B_URL
 
     with open_core(tmp_path, notice_work_admission=SharedTaskAdmission(
@@ -106,7 +107,7 @@ def test_existing_group_repaired_when_only_live_group_publication_fails(tmp_path
         def fail_group(*args, **kwargs):
             raise OSError("simulated group-only commit failure")
         with monkeypatch.context() as patch:
-            patch.setattr(origin, "persist_origin_linked_public_cover_group", fail_group)
+            patch.setattr(origin, "_persist_origin_linked_public_cover_group_txn", fail_group)
             changed = ingest("Nouveau résumé", 101)
         # The independent exact self publication has already succeeded.
         assert changed[0][2].document != group_document

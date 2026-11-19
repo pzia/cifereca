@@ -478,7 +478,7 @@ def persist_notice_cover_many(
     storage: Any, observations: list[NoticeSourceObservation], *,
     field_path: tuple[str, ...],
     cover_inventory_complete: bool,
-    _after_persist=None,
+    _after_persist=None, _before_chunk_commit=None,
 ) -> list[PersistedNoticeCover | None]:
     """Persist an already parsed Core batch, preserving each source's CAS.
 
@@ -486,6 +486,9 @@ def persist_notice_cover_many(
     row must not suppress another *independent* admitted source. Each entry
     has a SAVEPOINT so the old single-source rejection semantics survive,
     while only one BEGIN/commit and SQLite connection is used per 128 rows.
+    The private chunk callback receives only accepted row snapshots, before
+    commit. If its publication/repair fails, roll back that chunk, return no
+    receipts for it and continue independent later chunks.
     Source keys and bytes are never logged. An absent image is still UNKNOWN.
     This never grants rights, downloads images, or copies N3 media.
     """
@@ -513,28 +516,41 @@ def persist_notice_cover_many(
         chunk = prepared[offset:offset + _BATCH_LIMIT]
         if not any(item is not None for item in chunk):
             continue
-        with storage._lock, storage._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            for position, item in enumerate(chunk, offset):
-                if item is None:
-                    continue
-                observation, attribute, key = item
-                db.execute("SAVEPOINT notice_c_batch_row")
-                try:
-                    published = _persist_notice_cover_txn(
-                        db, observation, attribute, key, field_path,
-                        cover_inventory_complete, None,
-                    )
-                    # Private Core composition hook: canonical publication or
-                    # its durable repair must commit with the admitted source.
-                    if published is not None and _after_persist is not None:
-                        _after_persist(db, published, position)
-                    results[position] = published
-                except (ValueError, TypeError, UnicodeError, OverflowError,
-                        RecursionError, sqlite3.Error):
-                    db.execute("ROLLBACK TO SAVEPOINT notice_c_batch_row")
-                finally:
-                    db.execute("RELEASE SAVEPOINT notice_c_batch_row")
+        try:
+            with storage._lock, storage._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                for position, item in enumerate(chunk, offset):
+                    if item is None:
+                        continue
+                    observation, attribute, key = item
+                    db.execute("SAVEPOINT notice_c_batch_row")
+                    try:
+                        published = _persist_notice_cover_txn(
+                            db, observation, attribute, key, field_path,
+                            cover_inventory_complete, None,
+                        )
+                        # Private Core composition hook: canonical publication or
+                        # its durable repair must commit with the admitted source.
+                        if published is not None and _after_persist is not None:
+                            _after_persist(db, published, position)
+                        results[position] = published
+                    except (ValueError, TypeError, UnicodeError, OverflowError,
+                            RecursionError, sqlite3.Error):
+                        db.execute("ROLLBACK TO SAVEPOINT notice_c_batch_row")
+                    finally:
+                        db.execute("RELEASE SAVEPOINT notice_c_batch_row")
+                if _before_chunk_commit is not None:
+                    accepted = tuple((position, results[position])
+                                     for position in range(offset, offset + len(chunk))
+                                     if results[position] is not None)
+                    _before_chunk_commit(db, accepted)
+        except (ValueError, TypeError, UnicodeError, OverflowError,
+                RecursionError, OSError, sqlite3.Error):
+            if _before_chunk_commit is None:
+                raise
+            # The connection context has rolled back source rows, fences,
+            # canonical writes and journal generations together.
+            results[offset:offset + len(chunk)] = [None] * len(chunk)
     return results
 
 
