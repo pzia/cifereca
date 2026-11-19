@@ -1,6 +1,7 @@
 """#6936: no timing threshold or optimization authority in CI."""
 from pathlib import Path
 import runpy
+import json
 
 import pytest
 
@@ -60,3 +61,31 @@ def test_readers_reject_replaced_bytes_and_pinned_ancestor_symlink(tmp_path):
     path.write_bytes(b"x" * size)
     with pytest.raises(RuntimeError, match="benchmark_hash_mismatch"):
         ns["_read"](job, "catalog")
+
+
+@pytest.mark.parametrize("files,size_mib,passes", [(32, 1, 7), (128, 4, 5)])
+def test_reception_corpus_real_core_readers(files, size_mib, passes, capsys):
+    """Full small/large synthetic benchmark on the actual checkout.
+
+    Timing is evidence, never a pass/fail threshold. Only counts and guards
+    are asserted; emit aggregate metrics in the scoped CI job log so the
+    reception can cite measured results rather than a recreated function.
+    """
+    result = benchmark(files=files, size_mib=size_mib, passes=passes)
+    assert result["production_optimization_applied"] is False
+    assert result["rights_or_placement_authorized"] is False
+    expected = files * passes * size_mib * 1024 * 1024
+    for case in result["baseline"] + result["candidates"]:
+        assert case["logical_bytes_hashed"] == expected
+        assert case["files_checked"] == files * passes
+        assert case["file_latency"]["count"] == files * passes
+        assert case["batch_latency"]["count"] == passes
+        for key in ("file_latency", "batch_latency"):
+            distribution = case[key]
+            assert 0 <= distribution["p50_ms"] <= distribution["p95_ms"] <= distribution["max_ms"]
+        assert case["cpu_ms"] >= 0 and case["wall_ms"] >= 0
+        assert case["process_peak_rss_kib_cumulative"] > 0
+        if case["proc_io_delta"] is not None:
+            assert case["proc_io_delta"]["rchar"] >= expected
+    with capsys.disabled():
+        print("PHYSICAL_SHA_RECEPTION " + json.dumps(result, sort_keys=True), flush=True)
