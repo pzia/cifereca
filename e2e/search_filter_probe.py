@@ -954,6 +954,16 @@ def main() -> int:
     resilience_deadline = [0.0]
     resilience_started = [0.0]
     resilience_calls = []
+    # Only the synthetic transport/envelope changes; the existing real Core
+    # federation, GTK controller, store and XTEST path remain in use.
+    verdict_mode = ["503"]
+    verdict_cases = (
+        ("401", "Resilience", "authentication_required", "live", 1),
+        ("403", "Resilience", "access_denied", "live", 1),
+        ("partial", "Partiel", "partial", "live", 1),
+        ("zero", "Zerocatalogue", "live", "live", 0),
+        ("429", "Ratelimit", "unavailable", "live", 1),
+    )
 
     def begin_resilience():
         import httpx
@@ -974,7 +984,8 @@ def main() -> int:
         def make_session(provider, failure):
             def transport(request):
                 resilience_calls.append((provider, request.url.params["q"]))
-                return httpx.Response(503 if failure else 200, json={})
+                mode = verdict_mode[0]
+                return httpx.Response(int(mode) if failure and mode.isdigit() else 200, json={})
             client = httpx.Client(transport=httpx.MockTransport(transport),
                                   trust_env=False)
             credential = "fixture-" + provider
@@ -982,6 +993,8 @@ def main() -> int:
                 response = client.get("https://catalogue.invalid/search",
                                       params={"q": query})
                 response.raise_for_status()
+                if verdict_mode[0] == "zero" or (failure and verdict_mode[0] == "partial"):
+                    return []
                 return [SearchResult(
                     id=provider + ":live", record_id="live-edition",
                     docbase="TEST", medium="digital", title=query + " en ligne",
@@ -993,7 +1006,8 @@ def main() -> int:
                     downloadable=False, download_url=None,
                 )]
             def facets(query, scope, **options):
-                return ProviderSearchResponse(search(query, scope, **options))
+                return ProviderSearchResponse(search(query, scope, **options),
+                    partial=failure and verdict_mode[0] == "partial")
             service.storage.provider_connection_put({
                 "identity_id": owner, "provider_id": provider,
                 "credential_id": credential, "label": provider,
@@ -1063,12 +1077,56 @@ def main() -> int:
         if known:
             later(100, lambda: run_resilience("Introuvable", False))
             return
-        for provider, session in resilience.items():
-            core.library._sessions.pop(provider, None)
-            session.close()
         result["checks"]["P0_1916_gtk_resilience"] = True
-        result["p0_4673_stage"] = "fixture_setup"
-        begin_paris_profiles()
+        later(100, lambda: run_federated_verdict(0))
+
+    def run_federated_verdict(index):
+        if index == len(verdict_cases):
+            for provider, session in resilience.items():
+                core.library._sessions.pop(provider, None)
+                session.close()
+            result["checks"]["P0_1917_federated_verdicts"] = True
+            result["p0_4673_stage"] = "fixture_setup"
+            begin_paris_profiles()
+            return
+        from cifereca.gui.query_model import QueryState
+        mode, query, _, _, _ = verdict_cases[index]
+        verdict_mode[0] = mode
+        resilience_calls.clear()
+        window.search_controls.set_state(QueryState(text=query), notify=False)
+        resilience_deadline[0] = monotonic() + 6
+        device.click_widget(window.search_global_button)
+        later(100, lambda: check_federated_verdict(index))
+
+    def check_federated_verdict(index):
+        mode, query, bad, good, count = verdict_cases[index]
+        expected = {"synthetic-outage": bad, "synthetic-healthy": good}
+        if (not window.search_global_button.get_sensitive()
+                or dict(window._online_source_statuses) != expected):
+            if monotonic() < resilience_deadline[0]:
+                later(100, lambda: check_federated_verdict(index))
+                return
+            raise AssertionError("Federated verdict GTK: " + mode)
+        rows = list(window._remote_search_results)
+        assert len(rows) == count
+        assert window.search_page.store.get_n_items() == count
+        assert all(row.source_provider == "synthetic-healthy" and not row.owned
+                   and not row.downloadable and row.download_url is None for row in rows)
+        expected_calls = sorted((provider, query) for provider in expected)
+        assert sorted(resilience_calls) == expected_calls, mode
+        label = window.search_page.count_label.get_label()
+        tooltip = window.search_page.count_label.get_tooltip_text() or ""
+        text = label + " " + tooltip
+        captions = {"authentication_required": "authentification requise",
+                    "access_denied": "accès refusé", "partial": "résultats partiels",
+                    "unavailable": "indisponible", "live": "en ligne"}
+        assert captions[bad] in text and "en ligne" in text
+        assert "catalogue.invalid" not in text and "secours local" not in text
+        assert not any(row.metadata.get("search_provenance") == "known_catalog_stale" for row in rows)
+        result.setdefault("federated_1917", {})[mode] = {
+            "statuses": expected, "count": count, "requests": len(resilience_calls)}
+        capture_stage("07d-federated-" + mode)
+        later(100, lambda: run_federated_verdict(index + 1))
 
     # P0 #4673: real GTK Search + Core session routing with two owned Paris
     # accounts. UI clicks and selection are native; all provider I/O is fake.
@@ -1305,7 +1363,7 @@ def main() -> int:
             encoding="utf-8",
         )
 
-    GLib.timeout_add_seconds(50, lambda: (fail("timeout GTK P0 (50s)"), False)[1] if rc[0] else False)
+    GLib.timeout_add_seconds(65, lambda: (fail("timeout GTK P0 (65s)"), False)[1] if rc[0] else False)
     app.run([sys.argv[0]])
     if not (output / "screen.json").is_file():
         result["status"] = "FAIL"
