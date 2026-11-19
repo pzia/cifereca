@@ -20,7 +20,7 @@ from .notice_cover_projection import project_notice_cover_attribute
 from .notice_source_observation import NoticeSourceObservation, _id
 from .notice_c_public_search import _public_observation
 from .notice_c_cover_index import _exact_public_search_evidence
-from .notice_c_work_requests import request_affected_public_recompute_txn
+from .notice_c_work_requests import request_source_worker_dependents_txn
 from .notice_c_initial_publication import request_initial_publication_txn
 from .notice_c_work_bridge import PreparedSource, RetryableNoticeWork, UnavailableNoticeWork
 
@@ -172,7 +172,7 @@ def prepare_public_reparse(storage, registry, spec, control, *, clock):
         _exact_public_search_evidence(persisted)
         # No source change is visible without its dirty-C requests. A
         # capacity/ambiguity refusal rolls back the entire attempt.
-        dirty = request_affected_public_recompute_txn(db, persisted, now=now)
+        dirty = request_source_worker_dependents_txn(db, persisted, now=now)
         if dirty.overflow or dirty.refused:
             raise RetryableNoticeWork("notice_reparse_dependents_deferred")
         # Dirty recompute only discovers existing canonical documents.
