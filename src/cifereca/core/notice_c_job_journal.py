@@ -339,6 +339,9 @@ def claim_job(storage, ref, *, now, lease_seconds):
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         job = _get(db, ref)
+        if job.spec.implementation_digest == _PURCHASE_INTENT_DIGEST:
+            # Inert until a qualified private-to-public dispatch port exists.
+            return None
         status = _dependency_status(db, job.spec)
         if status == "stale":
             _save(db, replace(job, state="stale", reason="dependency_changed",
