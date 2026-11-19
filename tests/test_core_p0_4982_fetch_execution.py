@@ -163,12 +163,12 @@ def test_dirty_request_refusal_rolls_back_fresh_source_and_does_not_retry(tmp_pa
     try:
         source, canonical, authority, ref, transport, execution = setup(db, "changed")
         saved = []
-        original = publication.request_affected_public_recompute_txn
+        original = publication.request_source_worker_dependents_txn
         def refuse(sql, published, *, now):
             requests = original(sql, published, now=now)
             saved.extend(requests.refs)
             return SourceChangeRequests(requests.refs, requests.examined, 1)
-        monkeypatch.setattr(publication, "request_affected_public_recompute_txn", refuse)
+        monkeypatch.setattr(publication, "request_source_worker_dependents_txn", refuse)
         pump = PublicNoticeWorkPump(db, tasks, clock=lambda: 100, fetch_execution=execution)
         handle, = pump.tick().handles
         assert handle.result(timeout=10) == "error"
