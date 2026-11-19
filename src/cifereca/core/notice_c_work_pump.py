@@ -14,6 +14,7 @@ import time
 from . import notice_c_job_journal as journal
 from . import notice_c_exact_recompute as exact
 from . import notice_c_initial_publication as initial
+from . import notice_c_initial_group_publication as initial_group
 from . import notice_c_origin_recompute as origin
 from . import notice_c_origin_relink as relink
 from .notice_c_work_bridge import AggregateWorkBridge, PreparedAggregate
@@ -26,6 +27,7 @@ _SUPPORTED = (
     ("recompute_aggregate", initial.IMPLEMENTATION_DIGEST),
     ("recompute_aggregate", origin.IMPLEMENTATION_DIGEST),
     ("relink_notices", relink.IMPLEMENTATION_DIGEST),
+    ("relink_notices", initial_group.IMPLEMENTATION_DIGEST),
 )
 
 
@@ -90,7 +92,10 @@ class PublicNoticeWorkPump:
                 self._storage, self._replay_registry, spec, control, clock=self._clock,
             )
         if spec.kind == "relink_notices":
-            publish = relink.prepare_origin_public_relink(self._storage, spec)
+            if spec.implementation_digest == initial_group.IMPLEMENTATION_DIGEST:
+                publish = initial_group.prepare_initial_group_publication(self._storage, spec)
+            else:
+                publish = relink.prepare_origin_public_relink(self._storage, spec)
             control.check_cancelled()
             return PreparedAggregate(publish)
         if spec.kind != "recompute_aggregate":
