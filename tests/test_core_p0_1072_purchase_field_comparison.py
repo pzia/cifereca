@@ -5,7 +5,7 @@ import pytest
 
 from cifereca.core import notice_c_job_journal as journal
 from cifereca.core.canonical_sync_stage import persist_attested_source_references
-from cifereca.core.notice_c_purchase_field_comparison import compare_exact_purchase_fields
+from cifereca.core.notice_c_purchase_field_delta import compare_exact_purchase_fields
 from cifereca.core.notice_c_purchase_publication import publish_purchase_public_txn
 from cifereca.core.notice_cover_projection import notice_cover_document_ref
 from cifereca.core.notice_cover_repository import persist_notice_cover, read_notice_cover
