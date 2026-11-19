@@ -36,6 +36,33 @@ class MaintenanceCancelledError(RuntimeError):
     """A user explicitly stopped a cancellable maintenance operation."""
 
 
+class CleanupReviewGuard:
+    """Private GTK host witness, not a field controlled by a plugin plan."""
+
+    def __init__(self, current_config: Callable[[], Any]):
+        self._current_config = current_config
+        self._config = None
+        self._epoch = None
+
+    def capture(self):
+        from ..core.destructive_cleanup_policy import cleanup_review_epoch
+
+        self._config = self._current_config()
+        self._epoch = cleanup_review_epoch(self._config)
+        self.require_current(require_enabled=False)
+
+    def require_current(self, *, require_enabled=True):
+        from ..core.destructive_cleanup_policy import (
+            cleanup_review_epoch, destructive_cleanup_enabled,
+        )
+
+        cfg = self._current_config()
+        if (self._epoch is None or cfg is not self._config
+                or cleanup_review_epoch(cfg) != self._epoch
+                or (require_enabled and not destructive_cleanup_enabled(cfg))):
+            raise MaintenancePlanChangedError(CHANGED_MESSAGE)
+
+
 class MaintenanceCancelControl:
     """Thread-safe cancellation bridge; no GTK widgets enter worker code."""
 
@@ -85,7 +112,7 @@ def _compute_preview_plan(tool: Any, context: Any, control: Any):
 
 def preview_maintenance_tool(
     tool: Any, context: Any, *, destructive: bool,
-    control: Any = None,
+    control: Any = None, review_guard: CleanupReviewGuard | None = None,
 ) -> Any:
     """Compute off GTK; never publish a plan cancelled before/after scanning."""
     if control is not None:
@@ -99,7 +126,11 @@ def preview_maintenance_tool(
                     control.check_cancelled()
                 # Keep the user's exact preview snapshot and same lock. An
                 # actual mutation still replans under lock with plan(context).
+                if review_guard is not None:
+                    review_guard.capture()
                 result = deepcopy(_compute_preview_plan(tool, context, control))
+                if review_guard is not None:
+                    review_guard.require_current(require_enabled=False)
         except LockBusyError as exc:
             raise MaintenanceBusyError(BUSY_MESSAGE) from exc
     if control is not None:
@@ -107,7 +138,8 @@ def preview_maintenance_tool(
     return result
 
 
-def execute_maintenance_tool(tool: Any, context: Any, preview: Any, control: Any, *, destructive: bool) -> Any:
+def execute_maintenance_tool(tool: Any, context: Any, preview: Any, control: Any, *,
+                             destructive: bool, review_guard: CleanupReviewGuard | None = None) -> Any:
     """Replan atomically with the mutation lock; never replay a stale delete."""
     if not destructive:
         control.check_cancelled()
@@ -119,6 +151,8 @@ def execute_maintenance_tool(tool: Any, context: Any, preview: Any, control: Any
             # the eventual mutation. Never issue an additional inventory
             # request merely to animate the bar; legacy plan(context) keeps
             # working and the confirmed preview is still compared fieldwise.
+            if review_guard is not None:
+                review_guard.require_current()
             updated = _compute_preview_plan(tool, context, control)
             # Match the user-reviewed action, not only an opaque plugin ID.
             if (
@@ -132,6 +166,8 @@ def execute_maintenance_tool(tool: Any, context: Any, preview: Any, control: Any
             if updated.facts.get("read_failures"):
                 raise MaintenancePlanChangedError(CHANGED_MESSAGE)
             control.check_cancelled()
+            if review_guard is not None:
+                review_guard.require_current()
             return tool.run(updated, control)
     except LockBusyError as exc:
         raise MaintenanceBusyError(BUSY_MESSAGE) from exc

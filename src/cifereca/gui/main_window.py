@@ -807,6 +807,14 @@ class MainWindow(Adw.ApplicationWindow):
                 identity = self.service.current_identity
                 context = MaintenanceContext(scope=meta.scope, identity_id=identity.identity_id if identity else None)
                 destructive = meta.danger_level == "destructive"
+                # Keep the reviewed Core config separate from opaque plugin facts.
+                # Recovery tools have their own durable tombstone authorization.
+                review_options = {}
+                if destructive and getattr(meta, "id", None) == "library.duplicates.cleanup":
+                    from cifereca.gui.maintenance_tools import CleanupReviewGuard
+                    review_options["review_guard"] = CleanupReviewGuard(
+                        lambda: getattr(self.service, "config", None),
+                    )
                 # Each enabled line owns safe, literal error wording. Never
                 # display provider exceptions, which may contain private paths.
                 preview_error = {
@@ -1063,6 +1071,7 @@ class MainWindow(Adw.ApplicationWindow):
                             lambda: maintenance_worker(
                                 lambda: execute_maintenance_tool(
                                     service, context, plan, worker_control, destructive=destructive,
+                                    **review_options,
                                 ),
                                 execution_error, worker_control,
                             ),
@@ -1097,6 +1106,7 @@ class MainWindow(Adw.ApplicationWindow):
                     lambda: maintenance_worker(
                         lambda: preview_maintenance_tool(
                             service, context, destructive=destructive, control=planning_control,
+                            **review_options,
                         ),
                         preview_error, planning_control,
                     ),

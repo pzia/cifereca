@@ -272,3 +272,36 @@ def test_uncancelled_preview_requires_second_explicit_run(tmp_path, monkeypatch)
     Dialog.shown[0].handlers["response"](Dialog.shown[0], "cancel")
     assert tool.runs == 0
     assert len(jobs) == 1
+
+
+def test_real_duplicate_line_revokes_old_dialog_after_config_aba(tmp_path, monkeypatch):
+    from cifereca.config import Config
+    from cifereca.core.destructive_cleanup_policy import DESTRUCTIVE_CLEANUP_KEY as KEY
+    monkeypatch.setattr(guard, "acquisition_lock_file", lambda: tmp_path / "lock")
+    host, tool, jobs, errors, _preview, _cancel = _mounted()
+    cfg = Config(tmp_path / "config.json")
+    cfg.set(KEY, True)
+    host.service.config = cfg
+    base_describe = tool.describe
+
+    def describe():
+        info = base_describe()
+        info.id = "library.duplicates.cleanup"
+        return info
+
+    tool.describe = describe
+    _method()(host)
+    run = host._tools_box.children[0].children[0].children[0]
+    run.click()
+    args, _ = jobs[0]
+    plan = args[1]()
+    args[2](plan)
+    assert len(Dialog.shown) == 1
+    cfg.set(KEY, False)
+    cfg.set(KEY, True)
+    Dialog.shown[0].handlers["response"](Dialog.shown[0], "run")
+    assert len(jobs) == 2
+    with pytest.raises(guard.MaintenancePlanChangedError):
+        jobs[1][0][1]()
+    assert tool.plans == 1
+    assert tool.runs == 0
