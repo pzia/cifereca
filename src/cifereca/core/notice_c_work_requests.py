@@ -137,6 +137,55 @@ def request_affected_public_recompute_txn(db, source, *, now, _include_groups=Tr
     return SourceChangeRequests(tuple(refs), len(rows), refused)
 
 
+def request_source_worker_dependents_txn(db, source, *, now):
+    """Compose all qualified documentary repair intents for a source worker.
+
+    Fetch and cache-only replay already hold their exact input/lease guards.
+    This port only records work; no inline canonical publication, transport,
+    or scheduler. No eligible live group means the original dependent scan
+    retains its refusal semantics for dirty, unqualified retained groups.
+    """
+    if (not db.in_transaction or not journal._integer(now)
+            or type(source) is not PersistedNoticeCover):
+        raise ValueError("notice_work_invalid_source_worker")
+    from .notice_c_initial_group_publication import (
+        _group_inputs, request_search_group_repair_txn,
+    )
+    from .notice_c_group_batch_publication import _request_existing_group
+
+    if source.observation.key.visibility != "public":
+        raise ValueError("notice_work_public_source_required")
+    inputs = _group_inputs(db, source.document.source_key)
+    if inputs is None:
+        return request_affected_public_recompute_txn(db, source, now=now)
+    document, sources, _anchor, _proof, _digest = inputs
+    if source not in sources:
+        raise ValueError("notice_work_source_changed")
+    # The group resolver above already checked every competing C overlap.
+    # Keep the exact self-C scan and capacity/ambiguity accounting, but do
+    # not demand an exact-membership recompute for a strict extension.
+    dirty = request_affected_public_recompute_txn(
+        db, source, now=now, _include_groups=False,
+    )
+    if dirty.refused or dirty.overflow:
+        return dirty
+    row = db.execute("SELECT value FROM metadata WHERE key=?", (_db_key(document),)).fetchone()
+    refs = {member.document.source_key for member in sources}
+    if row is None or {member.source_ref for member in _decode(row[0], document).sources} < refs:
+        group = request_search_group_repair_txn(db, source, now=now)
+        if group is None:
+            raise ValueError("notice_work_group_repair_refused")
+    else:
+        # The full group, not just the changed member, is dirty or current.
+        # This also renews its vector after a freshness-only source update
+        # while another member still awaits a documentary recomposition.
+        group = _request_existing_group(db, document, sources, now=now)
+    return SourceChangeRequests(
+        dirty.refs + (() if group is None else (group,)),
+        dirty.examined, dirty.refused, dirty.overflow,
+    )
+
+
 def request_affected_public_recompute(storage, source, *, now):
     """Explicit worker reconciliation; no producer or pump auto-activation."""
     with storage._lock, storage._connect() as db:
