@@ -1937,6 +1937,11 @@ class LibraryNamingBrokerImpl:
         return f"{safe}.{ext}"
 
 
+    def audit_placements(self, *, identity_id: str, control=None):
+        from .core.library_physical_naming_audit import audit_physical_names
+        return audit_physical_names(self.service, identity_id=identity_id, control=control)
+
+
 def build_public_brokers(service: Any, *, task_admission=None) -> dict[str, object]:
     from .http_trace import HTTPX_TRANSPORT
     from .core.release_update_read import ReleaseUpdateReadBrokerImpl
