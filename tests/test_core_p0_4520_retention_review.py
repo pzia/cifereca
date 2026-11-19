@@ -92,3 +92,20 @@ def test_corrupt_or_foreign_scope_does_not_claim_an_empty_inventory(tmp_path):
         assert db.metadata_get(reservation.key) == "invalid"
     finally:
         db.close()
+
+
+def test_nested_snapshot_never_commits_caller_transaction(tmp_path):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    sql = db._connect()
+    try:
+        sql.execute("BEGIN IMMEDIATE")
+        sql.execute("INSERT INTO metadata(key,value) VALUES(?,?)", ("test.retention.uncommitted", "private"))
+        assert _review(db)["status"] == "unavailable"
+        assert sql.in_transaction
+        sql.rollback()
+        assert db.metadata_get("test.retention.uncommitted") is None
+    finally:
+        if sql.in_transaction:
+            sql.rollback()
+        db.close()
