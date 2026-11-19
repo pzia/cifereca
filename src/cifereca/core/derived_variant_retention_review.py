@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 
 from .derived_variant_journal import (
-    DerivedJournalConflict, _COMMITTED, _PREFIX, _decode, _measure,
+    DerivedJournalConflict, _COMMITTED, _decode, _measure,
     _require_canonical_proof,
 )
 
@@ -82,44 +82,46 @@ def review_derived_receipt_retention(storage, *, identity_id, explicitly_request
             or any(ord(c) < 32 or ord(c) == 127 for c in identity_id)):
         return _report("unavailable")
     try:
-        with storage._lock, storage._connect() as db:
+        with storage._lock:
+            db = storage._connect()
             if db.in_transaction:
                 return _report("unavailable")
-            db.execute("BEGIN")
-            _directory(db, identity_id)
-            rows, _total = _measure(db)
-            records = {}
-            path_refs = {}
-            for key, _size in rows:
-                raw = db.execute(
-                    "SELECT value FROM metadata WHERE key=?", (key,),
-                ).fetchone()[0]
-                intent = _decode(key, raw)
-                records[key] = intent
-                for path in (intent.parent_path, intent.staged_path, intent.candidate_path):
-                    path_refs.setdefault(path, set()).add(key)
-            counts = dict.fromkeys((
-                "canonical_sql_witness", "dependent_receipt_or_staging_placement",
-                "canonical_unverified",
-            ), 0)
-            for key, intent in records.items():
-                if not key.startswith(_COMMITTED) or intent.identity_id != identity_id:
-                    continue
-                try:
-                    _canonical(storage, db, intent)
-                except DerivedJournalConflict:
-                    counts["canonical_unverified"] += 1
-                    continue
-                if (any(path_refs[path] != {key} for path in (
-                        intent.staged_path, intent.candidate_path))
-                        or db.execute(
-                            "SELECT 1 FROM placements WHERE path=? LIMIT 1",
-                            (intent.staged_path,),
-                        ).fetchone() is not None):
-                    counts["dependent_receipt_or_staging_placement"] += 1
-                else:
-                    counts["canonical_sql_witness"] += 1
-            return _report("observed_sql_only", counts)
+            with db:
+                db.execute("BEGIN")
+                _directory(db, identity_id)
+                rows, _total = _measure(db)
+                records = {}
+                path_refs = {}
+                for key, _size in rows:
+                    raw = db.execute(
+                        "SELECT value FROM metadata WHERE key=?", (key,),
+                    ).fetchone()[0]
+                    intent = _decode(key, raw)
+                    records[key] = intent
+                    for path in (intent.parent_path, intent.staged_path, intent.candidate_path):
+                        path_refs.setdefault(path, set()).add(key)
+                counts = dict.fromkeys((
+                    "canonical_sql_witness", "dependent_receipt_or_staging_placement",
+                    "canonical_unverified",
+                ), 0)
+                for key, intent in records.items():
+                    if not key.startswith(_COMMITTED) or intent.identity_id != identity_id:
+                        continue
+                    try:
+                        _canonical(storage, db, intent)
+                    except DerivedJournalConflict:
+                        counts["canonical_unverified"] += 1
+                        continue
+                    if (any(path_refs[path] != {key} for path in (
+                            intent.staged_path, intent.candidate_path))
+                            or db.execute(
+                                "SELECT 1 FROM placements WHERE path=? LIMIT 1",
+                                (intent.staged_path,),
+                            ).fetchone() is not None):
+                        counts["dependent_receipt_or_staging_placement"] += 1
+                    else:
+                        counts["canonical_sql_witness"] += 1
+                return _report("observed_sql_only", counts)
     except (DerivedJournalConflict, sqlite3.Error, TypeError, ValueError,
             KeyError, RuntimeError, RecursionError):
         return _report("unavailable")
