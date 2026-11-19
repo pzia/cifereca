@@ -221,7 +221,7 @@ def reattest_exact_origin_group_txn(db, sources):
 
 
 def reconcile_origin_linked_public_batch(
-    storage, currents: list[PersistedNoticeCover],
+    storage, currents: list[PersistedNoticeCover], *, failed_sources=None,
 ) -> dict[str, object]:
     """Reconcile one bounded live Search batch using one OriginLink snapshot.
 
@@ -283,6 +283,17 @@ def reconcile_origin_linked_public_batch(
         except (sqlite3.Error, ValueError, TypeError, OSError):
             # A concurrently replaced source or conflicted index does not
             # create a public relation or poison its own-source C.
+            # The opt-in caller may retry established dirty groups only.
+            # Keep the same bounded batch budget as self-C recovery.
+            if failed_sources is not None:
+                for coord in ordered:
+                    if len(failed_sources) >= 32:
+                        break
+                    if coord not in current_by_coords:
+                        continue
+                    source = current_by_coords[coord]
+                    if not any(prior.document == source.document for prior in failed_sources):
+                        failed_sources.append(source)
             continue
     return outcomes
 

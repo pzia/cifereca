@@ -1993,7 +1993,13 @@ def search_progressive(self, query: str, scope: str='all', force: bool=False, *,
             pairs = [pair for pair in progressive_c_pairs if id(pair[0]) in keep]
             if len({pair[0].source_provider for pair in pairs}) > 1:
                 try:
-                    _reconcile_progressive_public_c(self.storage, pairs, restore_own=True)
+                    recover = getattr(self, "_notice_work_recover_search", None)
+                    failed_c = [] if callable(recover) else None
+                    _reconcile_progressive_public_c(
+                        self.storage, pairs, restore_own=True, failed_sources=failed_c,
+                    )
+                    if failed_c:
+                        recover(tuple(failed_c), now=int(time.time()))
                 except Exception:
                     logger.warning("TRACE notice c progressive code=late_reconciliation_failed")
     cancelled = cancelled or request_cancelled()
@@ -2694,10 +2700,12 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                             from .notice_c_live_revision import stamp_persisted_c_revision
                             stamp_persisted_c_revision(row, canonical)
                         pairs.append((row, persisted, canonical))
-                _reconcile_progressive_public_c(self.storage, pairs)
+                recover = getattr(self, "_notice_work_recover_search", None)
+                _reconcile_progressive_public_c(
+                    self.storage, pairs, failed_sources=failed_c if callable(recover) else None,
+                )
                 # Successful live C writes remain the sole normal path.
                 # Recover only still-dirty existing documents.
-                recover = getattr(self, "_notice_work_recover_search", None)
                 if failed_c and callable(recover):
                     recover(tuple(failed_c), now=now)
             except (ValueError, TypeError, OSError, sqlite3.Error):
@@ -2709,7 +2717,7 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
     return pairs
 
 
-def _reconcile_progressive_public_c(storage, pairs, *, restore_own=False):
+def _reconcile_progressive_public_c(storage, pairs, *, restore_own=False, failed_sources=None):
     """Restamp only currently verified persisted editions, never reobserve."""
     from .notice_c_origin_link_producer import (
         reconcile_origin_linked_public_batch, _CORE_ORIGIN_LINK_C_WITNESS,
@@ -2734,6 +2742,7 @@ def _reconcile_progressive_public_c(storage, pairs, *, restore_own=False):
     # Only one writer; late reconciliation reuses accepted source snapshots.
     linked = reconcile_origin_linked_public_batch(
         storage, [source for _row, source, _own in current],
+        **({"failed_sources": failed_sources} if failed_sources is not None else {}),
     ) if current else {}
     for row, source, _own in current:
         shared = linked.get(source.document.source_key)
