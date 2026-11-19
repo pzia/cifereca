@@ -63,3 +63,80 @@ def test_same_c_retains_new_and_conflicting_fields_across_restart_and_recompute(
         assert persist_exact_public_search_cover(db, old) == latest
     finally:
         db.close()
+
+
+def test_detail_additions_reach_purchase_view_but_conflicts_are_not_selected(tmp_path):
+    from contextlib import nullcontext
+    from cifereca.core.notice_c_purchase_execution import PurchaseIntentExecution
+    from cifereca.core.notice_c_purchase_association import record_purchase_association_txn
+    from cifereca.core.notice_c_purchase_descriptive_read import read_purchase_descriptive_notice
+    from cifereca.core.notice_c_purchase_library_projection import (
+        project_purchase_library_notices, purchase_library_notice,
+    )
+    from cifereca.core.search import filter_loaded_results
+    from cifereca.gui.local_book_detail_sections import local_book_detail_sections
+
+    path = tmp_path / "detail-view.sqlite"
+    db = Storage(path)
+    execution = PurchaseIntentExecution(db, clock=lambda: 104)
+    try:
+        snapshot, candidate = prepare(db)
+        persist_attested_source_references(db, snapshot)
+        set_policy(db, "true")
+        prior = modified(observation(candidate, at=99, cover=URL), author="Ancien", description=None)
+        detail = modified(observation(candidate, at=101), author="Contradictoire",
+                          description="Archipel violet")
+        old = persist_notice_cover(db, prior, field_path=("search_result", "thumbnail_url"),
+                                   cover_inventory_complete=True)
+        persist_exact_public_search_cover(db, old)
+        ref, = request(db, snapshot, candidate, now=104)
+        assert execution.attest(ref, snapshot, candidate, hold_context=lambda: nullcontext(True),
+                                execute=lambda *_: None, ttl_seconds=30)
+        lease = execution.claim(ref, now=104, lease_seconds=30)
+        assert lease is not None
+        spec = journal.read_job(db, ref).spec
+        with db._lock, db._connect() as sql:
+            sql.execute("BEGIN IMMEDIATE")
+            publication = publish_purchase_public_txn(sql, spec, snapshot, candidate, detail, now=104)
+            record_purchase_association_txn(sql, lease, snapshot, candidate, publication,
+                                            observed_at=101, now=104)
+            journal._complete_job_txn(sql, lease, now=104)
+    finally:
+        execution.close()
+        db.close()
+
+    db = Storage(path)
+    try:
+        source = candidate.source
+        result = read_purchase_descriptive_notice(db, source, identity_id=source.scope.identity_id)
+        facts = {fact.field: fact for fact in result.facts}
+        alternative, = result.alternatives
+        assert facts["author"].value == "Ancien" and facts["author"].observed_at == 99
+        assert facts["description"].value == "Archipel violet" and facts["description"].observed_at == 101
+        assert alternative.field == "author" and alternative.value == "Contradictoire"
+        assert alternative.source_revision == detail.source_revision
+        assert read_purchase_descriptive_notice(db, source, identity_id="B") is None
+        scope = source.scope
+        row = {"key": "card", "identity_id": scope.identity_id, "provider_id": scope.provider_id,
+               "item_id": source.edition_id, "source": "private_catalog_observation",
+               "state": "remote_catalog", "local": False, "title": "Titre natif",
+               "source_refs": [{"identity_id": scope.identity_id, "provider_id": scope.provider_id,
+                                "credential_id": scope.credential_id, "account_id": scope.account_id,
+                                "item_id": source.edition_id, "kind": "observation"}]}
+        project_purchase_library_notices(db, [row], identity_id=scope.identity_id)
+        packet = purchase_library_notice(row)
+        assert packet.notice == result
+        assert filter_loaded_results([row], "archipel violet") == [row]
+        assert not filter_loaded_results([row], "Contradictoire", field="author")
+        sections = dict(local_book_detail_sections(
+            row, provider_display_name=str, availability_label=lambda _: "",
+            identity_by_id=lambda _: None, sync_status_label=str,
+            language_label=lambda _: "", purchase_notice=packet,
+        ))
+        assert ("Résumé", "Archipel violet") in sections["Fiche du catalogue public"]
+        label, value = sections["Valeurs publiques contradictoires (non arbitrées)"][0]
+        assert label == "Auteur" and "Contradictoire" in value and "00:01:41 UTC" in value
+        assert not result.authorizes_acquisition and not result.proves_acquired_edition
+        assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
+    finally:
+        db.close()
