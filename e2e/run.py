@@ -536,6 +536,14 @@ def main() -> int:
     for name, scenario in select(args.scenario, args.plugin):
         with tempfile.TemporaryDirectory(prefix="cifereca-e2e-") as tmp:
             fixture_env = materialize_fixture(scenario["fixture"], Path(tmp))
+            if scenario.get("runner") == "gtk-maintenance":
+                # #4496: real opt-in only in this temporary XDG fixture.
+                # The GTK probe uses a simulated writer; never modify the
+                # developer's config or the shared startup fixture.
+                target = Path(fixture_env["XDG_CONFIG_HOME"]) / "cifereca" / "config.json"
+                config = json.loads(target.read_text(encoding="utf-8"))
+                config.setdefault("maintenance", {})["destructive_cleanup_enabled"] = True
+                target.write_text(json.dumps(config, ensure_ascii=False) + "\n", encoding="utf-8")
             env = os.environ.copy()
             env.update(fixture_env)
             env.update({
