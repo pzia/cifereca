@@ -90,7 +90,7 @@ def retain_purchase_detail_fields_txn(db, source, detail, candidate, comparison,
     )
     from .notice_cover_repository import _checked_source_state, _opaque_key
     from .notice_c_purchase_publication import _association
-    from .notice_c_purchase_field_comparison import compare_exact_purchase_fields
+    from .notice_c_purchase_field_delta import compare_exact_purchase_fields
     if (not db.in_transaction or type(now) is not int or detail.observed_at > now
             or source.observation.key != detail.key
             or comparison != compare_exact_purchase_fields(source.observation, detail, candidate)):
