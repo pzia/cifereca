@@ -113,6 +113,17 @@ class PurchaseIntentExecution:
                 self._live[ref] = entry
                 return True
 
+    def ready_refs(self):
+        """Opaque, bounded scheduling hints only; never a lease or callback."""
+        with self._lock:
+            self._prune(self._now())
+            if self._closed:
+                return ()
+            return tuple(sorted(
+                (ref for ref, entry in self._live.items() if entry.lease is None),
+                key=lambda ref: (ref.key, ref.generation),
+            ))
+
     def revoke(self, ref):
         with self._lock:
             self._live.pop(ref, None)
