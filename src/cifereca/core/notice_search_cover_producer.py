@@ -131,6 +131,7 @@ def admit_public_search_catalogue(
     from .public_search_projection import (
         _public_bibliographic_text, declared_public_series_relation,
         declared_public_language_observation,
+        declared_public_classification,
     )
     import re
 
@@ -187,6 +188,9 @@ def admit_public_search_catalogue(
     )
     if language is not None:
         fields["language_observation"] = language.wire()
+    classification = declared_public_classification(row.metadata)
+    if classification is not None:
+        fields["classification"] = classification.wire()
     result = {"thumbnail_url": public_cover_url, "public_bibliography": fields}
     # An independently witnessed positive link is not a cover claim.
     # The omitted image stays pending. The existing source writer retains

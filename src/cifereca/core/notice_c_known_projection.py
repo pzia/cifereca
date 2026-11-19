@@ -53,7 +53,8 @@ def _public_mirror_key(row: dict[str, Any], *, identity_id: str) -> tuple | None
 
 
 def _series_metadata(hit: PublicNoticeCHit) -> dict[str, Any]:
-    metadata, proofs = {}, {}
+    metadata = hit.classification.wire() if hit.classification is not None else {}
+    proofs = {}
     if hit.series_relation is not None:
         proof = asdict(hit.series_relation)
         metadata["series"] = [proof.pop("label")]

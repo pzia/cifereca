@@ -26,13 +26,15 @@ from .notice_source_observation import NoticeSourceKey
 from .public_search_projection import (
     _public_bibliographic_text, PublicSeriesRelation, decode_public_series_relation,
     PublicLanguageObservation, decode_public_language_observation,
+    PublicClassification, decode_public_classification,
+    _MAX_BIBLIOGRAPHY_BYTES,
 )
 from .search import filter_loaded_results, local_search_evidence
 
 _MAX_SCAN = 10000
 _MAX_MATCHES = 50
 _STALE_AFTER = 86400
-_FIELDS = frozenset(("all", "title", "author", "publisher"))
+_FIELDS = frozenset(("all", "title", "author", "publisher", "subject"))
 _SCOPES = frozenset(("all", "digital", "physical", "unknown"))
 _BIBLIO_FIELDS = frozenset((
     "schema", "record_id", "docbase", "scenario", "source_collection",
@@ -66,6 +68,7 @@ class PublicNoticeCHit:
     published_at: str | None = None
     series_relation: PublicSeriesRelation | None = None
     language_observation: PublicLanguageObservation | None = None
+    classification: PublicClassification | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,7 +123,7 @@ def _public_observation(
             return None
         bio = parsed.get("public_bibliography")
         if (type(bio) is not dict or not _BIBLIO_FIELDS <= set(bio)
-                or set(bio) - _BIBLIO_FIELDS - {"series_relation", "language_observation"}
+                or set(bio) - _BIBLIO_FIELDS - {"series_relation", "language_observation", "classification"}
                 or type(bio["schema"]) is not int or bio["schema"] != 1
                 or bio["source_collection"] != "public_catalog"
                 or bio["medium"] not in ("digital", "physical", "unknown")):
@@ -174,6 +177,11 @@ def _public_observation(
             )
             if language is None:
                 return None
+        classification = None
+        if "classification" in bio:
+            classification = decode_public_classification(bio["classification"])
+            if classification is None:
+                return None
         last_seen = payload.get("last_seen_at", persisted.observation.observed_at)
         if (type(last_seen) is not int
                 or last_seen < persisted.observation.observed_at
@@ -193,14 +201,16 @@ def _public_observation(
             edition_id=key.edition_id,
             published_at=bio["published_at"], series_relation=relation,
             language_observation=language,
+            classification=classification,
         )
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError,
             UnicodeError, RecursionError):
         return None
 
 
-def _public_text_score(query, field, title, author, publisher, description):
-    """Same local relevance for the four C fields, without cross-source joins."""
+def _public_text_score(query, field, title, author, publisher, description,
+                       classification=None):
+    """Same local relevance for C fields and source labels, without joins."""
     texts = (title, author, publisher, description)
     # SQLite prefilter may see corrupt unadmitted JSON. Bound text before
     # scoring and never stringify non-text payloads.
@@ -211,15 +221,20 @@ def _public_text_score(query, field, title, author, publisher, description):
         score, _ = local_search_evidence({
             "title": title, "author": author, "publisher": publisher,
             "description": description,
+            "metadata": classification.wire() if classification is not None else {},
         }, query)
         return score
+    if field == "subject":
+        return int(bool(classification is not None and filter_loaded_results(
+            [{"metadata": classification.wire()}], query, field="subject",
+        )))
     selected = {"title": title, "author": author, "publisher": publisher}[field]
     return int(bool(selected) and _fold(query) in _fold(selected))
 
 
 def _hit_score(record, *, field, query):
     return _public_text_score(query, field, record.title, record.author,
-                              record.publisher, record.description)
+                              record.publisher, record.description, record.classification)
 
 
 def _matches_c_format(medium, media_format, content_types):
@@ -260,13 +275,25 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
     columns = ", ".join(
         f"json_extract({raw}, '$.public_bibliography.{name}')"
         for name in ("title", "author", "publisher", "description",
-                     "medium", "media_format")
+                     "medium", "media_format", "classification")
     )
-    def score(title, author, publisher, description, medium, media_format):
+    def score(title, author, publisher, description, medium, media_format, raw_classification):
         if not _matches_c_format(medium, media_format, content_types):
             return 0
-        return _public_text_score(needle, field, title, author, publisher, description)
-    db.create_function("cifereca_c_search_match", 6, score, deterministic=True)
+        classification = None
+        if raw_classification is not None:
+            if (type(raw_classification) is not str
+                    or len(raw_classification) > _MAX_BIBLIOGRAPHY_BYTES):
+                return 0
+            try:
+                classification = decode_public_classification(json.loads(raw_classification))
+            except (ValueError, TypeError, RecursionError):
+                return 0
+            if classification is None:
+                return 0
+        return _public_text_score(needle, field, title, author, publisher, description,
+                                  classification)
+    db.create_function("cifereca_c_search_match", 7, score, deterministic=True)
     try:
         rows = db.execute(
             "SELECT DISTINCT src.key FROM metadata AS m, "
@@ -283,7 +310,7 @@ def _canonical_candidate_refs(db, *, prefix, wanted, scope, field, needle, limit
              json.dumps(sorted(wanted)), limit + 1),
         ).fetchall()
     finally:
-        db.create_function("cifereca_c_search_match", 6, None)
+        db.create_function("cifereca_c_search_match", 7, None)
     return {row[0] for row in rows[:limit]}, len(rows) > limit
 
 
@@ -498,6 +525,7 @@ def search_public_notice_c(
                 edition_id=bib.edition_id,
                 published_at=bib.published_at, series_relation=bib.series_relation,
                 language_observation=bib.language_observation,
+                classification=bib.classification,
             )
             if _matches_public_c(
                 hit, wanted=wanted, scope=scope,
@@ -536,7 +564,8 @@ def search_public_notice_c(
                         and bib.title == hit.title
                         and bib.author == hit.author
                         and bib.series_relation == hit.series_relation
-                        and bib.language_observation == hit.language_observation):
+                        and bib.language_observation == hit.language_observation
+                        and bib.classification == hit.classification):
                     hit = replace(
                         hit, document=ref, epoch=epoch,
                         cover_state=cover_state,
