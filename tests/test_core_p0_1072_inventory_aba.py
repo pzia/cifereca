@@ -115,3 +115,69 @@ def test_inventory_aba_revokes_same_read_admission(rig, monkeypatch, mode):
     finally:
         runtime.close()
         tasks.close()
+
+
+@pytest.mark.parametrize("mode", ("qualified", "inventory_aba", "policy_aba", "session_revoked"))
+def test_omission_handoff_uses_original_runtime_fence_after_a_commit(rig, monkeypatch, mode):
+    from cifereca.core.canonical_sync_stage import observe_canonical_rights_in_sync
+    from cifereca.core.notice_c_purchase_omissions import _PREFIX
+    from cifereca.core.notice_c_purchase_settings import read_purchase_policy, change_purchase_policy
+    from cifereca.plugin_api import (
+        PurchaseEnrichmentObservation, PurchaseEnrichmentOmission, from_legacy_rights_snapshot,
+    )
+    service, db, root = rig
+    service._source_context_lock = RLock()
+    public_id = "seller-a-catalog"
+    service._provider_enabled_for_identity = lambda provider, owner: provider == public_id and owner == "A"
+    service.session.purchase_enrichment_public_provider_id = public_id
+    live = [True]
+    @contextmanager
+    def source_guard():
+        yield live[0]
+    service.session.capture_purchase_enrichment_guard = lambda account: source_guard
+    inventory = from_legacy_rights_snapshot(service.snapshot)
+    resource, = inventory.resources
+    omission = PurchaseEnrichmentOmission(resource.source, resource.observed_at,
+                                         "direct_locator_unattested")
+    service.session.purchase_enrichment_observation = lambda account: PurchaseEnrichmentObservation(
+        inventory, omissions=(omission,))
+    calls = []
+    def no_get(*args, **kwargs):
+        calls.append("forbidden")
+        raise AssertionError("unexpected GET")
+    public = SimpleNamespace(
+        provider_id=public_id, credential_id="__public__", credentials={},
+        _accounts=[], connected=True, purchase_enrichment_source_provider_id="seller-a",
+        purchase_enrichment_public_response=no_get,
+    )
+    service._sessions[service._session_key(public_id, "__public__")] = public
+    tasks = TaskBrokerImpl(object(), max_workers=3, shared_admission=
+                            SharedTaskAdmission(max_inflight=4, reserve_user_slots=1))
+    runtime = NoticeWorkRuntime(db, tasks)
+    monkeypatch.setattr(runtime, "request_tick", lambda: calls.append("wake"))
+    try:
+        executor = install_purchase_runtime(service, runtime)
+        def after_commit(_snapshot):
+            assert len(refs(db)[0]) == 1
+            if mode == "inventory_aba":
+                scope = scope_for_account(service.account)
+                db.metadata_set_with_revision(source_enablement_key(scope), "0", inventory_epoch_key(scope))
+                db.metadata_set_with_revision(source_enablement_key(scope), "1", inventory_epoch_key(scope))
+            elif mode == "policy_aba":
+                before = read_purchase_policy(db)
+                off = change_purchase_policy(service, expected_storage=db, expected=before, enabled=False)
+                change_purchase_policy(service, expected_storage=db, expected=off, enabled=True)
+            elif mode == "session_revoked":
+                live[0] = False
+        result = observe_canonical_rights_in_sync(service, service.account, snapshot_sink=after_commit)
+        assert result["source_references_changed"] == 1
+        with db._lock, db._connect() as sql:
+            count, = sql.execute("SELECT count(*) FROM metadata WHERE key>=? AND key<?",
+                                 (_PREFIX, _PREFIX + "\uffff")).fetchone()
+        assert count == int(mode == "qualified")
+        assert calls == [] and executor.ready_refs() == ()
+        assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
+        assert not root.exists()
+    finally:
+        runtime.close()
+        tasks.close()
