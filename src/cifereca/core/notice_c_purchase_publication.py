@@ -137,7 +137,7 @@ def publish_purchase_public_txn(db, spec, snapshot, candidate, observation, *, n
     edition, _proof = _exact_public_search_evidence(source)
     reconciliation = ()
     if not created and source.observation != observation:
-        from .notice_c_purchase_field_comparison import compare_exact_purchase_fields
+        from .notice_c_purchase_field_delta import compare_exact_purchase_fields
         reconciliation = compare_exact_purchase_fields(source.observation, observation, candidate)
     if created:
         changed = request_source_worker_dependents_txn(db, source, now=now)
