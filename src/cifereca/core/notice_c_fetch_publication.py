@@ -19,6 +19,7 @@ from .notice_cover_repository import _opaque_key, _checked_source_state, _persis
 from .notice_c_public_search import _public_observation
 from .notice_c_cover_index import _exact_public_search_evidence
 from .notice_c_work_requests import request_affected_public_recompute_txn
+from .notice_c_initial_publication import request_initial_publication_txn
 
 
 def prepare_public_fetch_publication(storage, authority, permit, result, *, clock):
@@ -122,6 +123,11 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
             # Do not publish a half-reconciled source. Unlike CPU reparse,
             # another attempt cannot use the already consumed GET permit.
             raise UnavailableNoticeWork("notice_fetch_dependents_refused")
+        # Dirty recompute only discovers existing canonical documents.
+        # A source may have been committed with a still-pending first C
+        # intention; its old vector must not survive this source revision.
+        # The exact initial writer does nothing if self-C already exists.
+        request_initial_publication_txn(db, published, now=now)
         # The guard is still held. Recheck the deadline after the dirty-C
         # scan as well; never commit work already expired during calculation.
         if authority._lookup(permit.lease.ref).permit is not permit:
