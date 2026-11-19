@@ -16,13 +16,15 @@ from .derived_variant_journal import (
 from .derived_variant_publication import DerivedPublicationConflict
 from .derived_variant_retention_review import _canonical, _directory
 from .derived_variant_retention_physical import _directory_stamp, _observe
+from .derived_variant_stage_dependencies import scan_stage_references
 from .library_inventory import _open_root
 
 _LIMIT = 4
 _MAX_BYTES = 1024 ** 3
 _SECONDS = 3
 _CATEGORIES = (
-    "canonical_sql_unverified", "known_dependency", "physical_unverified",
+    "canonical_sql_unverified", "known_dependency", "external_dependency_unverified",
+    "physical_unverified",
     "linked_pair_observed", "stage_absent_target_verified",
     "additional_links_observed",
 )
@@ -72,6 +74,18 @@ def _snapshot(storage, identity_id):
                                       (intent.staged_path,)).fetchone() is not None
                     ) else "canonical")
                 owned.append((key, digest, intent, verdict))
+            selected = {intent.staged_path: key
+                        for key, _digest, intent, verdict in owned[:_LIMIT]
+                        if verdict == "canonical"}
+            if selected:
+                stages = scan_stage_references(db, selected)
+                owned = [(key, digest, intent, (
+                    "known_dependency" if stages.get(intent.staged_path) == "referenced"
+                    else "external_dependency_unverified"
+                    if stages.get(intent.staged_path) == "unverified"
+                    else verdict
+                ) if verdict == "canonical" and intent.staged_path in selected else verdict)
+                         for key, digest, intent, verdict in owned]
             return directory, tuple((key, digest) for key, digest, _ in records), tuple(owned)
 
 
