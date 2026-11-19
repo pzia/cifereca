@@ -131,6 +131,12 @@ class _Scripts(HTMLParser):
                 break
 
 
+def _reject_json_constant(_value):
+    # Python accepts NaN/Infinity by default, although JSON does not.
+    # A malformed script is not a valid documentary witness.
+    raise PublicDetailError("invalid_jsonld")
+
+
 def _unique_json_object(pairs):
     """Reject ambiguous declarations before dict conversion loses evidence."""
     result = {}
@@ -206,7 +212,10 @@ def parse_public_detail_jsonld(html, product_url):
     matches = []
     for script in reader.scripts:
         try:
-            parsed = json.loads(script, object_pairs_hook=_unique_json_object)
+            parsed = json.loads(
+                script, object_pairs_hook=_unique_json_object,
+                parse_constant=_reject_json_constant,
+            )
         except PublicDetailError:
             raise
         except (ValueError, TypeError, RecursionError):
