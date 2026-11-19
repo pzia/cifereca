@@ -194,6 +194,26 @@ class NumilogPublicSession(ProviderSession):
 
         return detail, observed_at, hold_publication
 
+    def _purchase_enrichment_response(self, product_url, expected_title, *,
+                                      check_authority, control):
+        """Qualified producer port for Core's same-read enrichment sink.
+
+        The public result is made exclusively from parsed public facts.
+        The private comparison title is NOT passed into the projector.
+        No discovery, fallback, second GET or private session is involved.
+        """
+        from cifereca_numilog_public_detail import purchase_public_detail_response
+
+        control.check_cancelled()
+        detail, observed_at, hold_publication = self._guarded_purchase_detail(
+            product_url, expected_title, check_authority=check_authority,
+        )
+        response = purchase_public_detail_response(detail, product_url=product_url)
+        control.check_cancelled()
+        if check_authority() is not True:
+            raise ProviderCapabilityError("Numilog public : purchase_authority_revoked")
+        return response, observed_at, hold_publication
+
     def enrich_loaded_page_product(self, page, record_id):
         """Explicitly enrich ONE public search card, retaining page provenance.
 
