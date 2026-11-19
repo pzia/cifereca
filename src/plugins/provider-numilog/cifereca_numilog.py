@@ -610,6 +610,41 @@ class NumilogSession(ProviderSession):
     def rights_observation_snapshot(self, account):
         return self._observe_purchase_inventory(account)
 
+    purchase_enrichment_public_provider_id = "numilog-catalog"
+
+    def capture_purchase_enrichment_guard(self, account):
+        """Capture the exact already bound account, without provider I/O."""
+        from contextlib import contextmanager
+
+        if not self.lock.acquire(blocking=False):
+            return None
+        try:
+            roster = self._accounts
+            coords = (account.identity_id, account.provider_id,
+                      account.credential_id, account.unique_id)
+            if (not self.connected or len(roster) != 1 or roster[0] is not account
+                    or coords[1:] != (self.provider_id, self.credential_id,
+                                     "numilog:" + self.scope)):
+                return None
+        finally:
+            self.lock.release()
+
+        @contextmanager
+        def hold():
+            if not self.lock.acquire(blocking=False):
+                yield False
+                return
+            try:
+                yield (self.connected is True and self._accounts is roster
+                       and len(roster) == 1 and roster[0] is account
+                       and (account.identity_id, account.provider_id,
+                            account.credential_id, account.unique_id) == coords
+                       and self.provider_id == coords[1] and self.credential_id == coords[2])
+            finally:
+                self.lock.release()
+
+        return hold
+
     def purchase_enrichment_observation(self, account):
         """Optional #1072 same-read A inventory and C candidate associations.
 

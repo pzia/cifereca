@@ -56,6 +56,8 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
             or type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 300):
         raise ValueError("notice_purchase_invalid_composition")
 
+    public_provider_id = public_session.provider_id
+
     def sink(snapshot, candidates):
         if (type(snapshot) is not ProviderRightsSnapshot
                 or snapshot.scope.provider_id != private_provider_id
@@ -131,14 +133,14 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                 continue
 
             def execute(selected, check_authority, control, *, spec=spec):
-                if not _anonymous_session(public_session, getattr(public_session, "provider_id", None)):
+                if not _anonymous_session(public_session, public_provider_id):
                     raise UnavailableNoticeWork("notice_purchase_public_session_unavailable")
                 control.check_cancelled()
                 response, observed_at, guard = read_response(
                     selected.public_locator, selected.title,
                     check_authority=check_authority, control=control,
                 )
-                if not callable(guard) or not check_authority():
+                if not callable(guard) or check_authority() is not True:
                     raise UnavailableNoticeWork("notice_purchase_public_response_unavailable")
                 observation = prepare_purchase_public_observation(
                     response, public_session, selected, observed_at=observed_at,

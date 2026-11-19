@@ -313,10 +313,19 @@ def fetch_guarded_purchase_detail(cache, product_url, expected_title, *, check_a
         if check_authority() is not True:
             raise ProviderCapabilityError("Numilog : public_purchase_authority_revoked")
 
+    def before_get():
+        start = getattr(check_authority, "hold_transport_start", None)
+        if callable(start):
+            with start() as allowed:
+                if allowed is not True:
+                    raise ProviderCapabilityError("Numilog : public_purchase_authority_revoked")
+        else:
+            checked()
+
     checked()
     detail, observed_at = cache.get_observed(
         ("detail", product_url),
-        lambda: fetch_public_detail(product_url, _before_get=checked),
+        lambda: fetch_public_detail(product_url, _before_get=before_get),
     )
     checked()
     if (type(detail) is not dict or detail.get("product_url") != product_url
