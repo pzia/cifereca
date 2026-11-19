@@ -139,6 +139,10 @@ def publish_purchase_public_txn(db, spec, snapshot, candidate, observation, *, n
     if not created and source.observation != observation:
         from .notice_c_purchase_field_delta import compare_exact_purchase_fields
         reconciliation = compare_exact_purchase_fields(source.observation, observation, candidate)
+        from .notice_c_purchase_detail_fields import retain_purchase_detail_fields_txn
+        retain_purchase_detail_fields_txn(
+            db, source, observation, candidate, reconciliation, now=now,
+        )
     if created:
         changed = request_source_worker_dependents_txn(db, source, now=now)
         if changed.overflow or changed.refused:

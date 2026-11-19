@@ -139,6 +139,19 @@ def local_book_detail_sections(
                              f"{when} · {', '.join(fields)}"))
             rows.append(("Portée", "Fiche commerciale, pas une preuve de l’édition acquise"))
             sections.append(("Fiche du catalogue public", rows))
+            alternatives = []
+            for fact in purchase_notice.notice.alternatives:
+                if fact.field not in labels:
+                    continue
+                try:
+                    when = datetime.fromtimestamp(fact.observed_at, tz=timezone.utc).strftime(
+                        "%d/%m/%Y %H:%M:%S UTC")
+                except (OverflowError, OSError, ValueError, TypeError):
+                    when = "date non restituable"
+                alternatives.append((labels[fact.field], fact.value + " · "
+                    + provider_display_name(fact.provider_id) + " · " + when))
+            if alternatives:
+                sections.append(("Valeurs publiques contradictoires (non arbitrées)", alternatives))
     if purchase_status is not None:
         from ..core.notice_c_purchase_library_projection import purchase_library_status, purchase_status_label
         if purchase_library_status(item) == purchase_status:
