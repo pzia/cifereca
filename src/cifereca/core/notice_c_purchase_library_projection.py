@@ -38,7 +38,7 @@ class PurchaseLibraryStatus:
 
 _STATUS_LABELS = {
     "pending": "En attente d’enrichissement",
-    "running": "Enrichissement en cours",
+    "running": "Enrichissement réservé (bail actif)",
     "retry_wait": "Nouvelle tentative différée",
     "failed": "Enrichissement non abouti",
     "proof_unavailable": "Preuve documentaire à revalider",
@@ -80,7 +80,10 @@ def _status_txn(db, source, *, now):
     target = journal._PURCHASE_TARGET + ref.removeprefix("source:")
     spec = journal.JobSpec("fetch_source_notice", target, "0" * 64,
                            journal._PURCHASE_INTENT_DIGEST)
-    job = journal._load(db, journal._key(spec))
+    try:
+        job = journal._load(db, journal._key(spec))
+    except (ValueError, TypeError, KeyError, RecursionError):
+        return None
     if job is None or job.spec.target != target or job.spec.implementation_digest != spec.implementation_digest:
         return None
     if not _allowed_txn(db, source.scope):
