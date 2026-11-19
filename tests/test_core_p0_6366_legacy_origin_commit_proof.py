@@ -55,7 +55,7 @@ def test_revoke_origin_after_legacy_discovery_before_writer(tmp_path, monkeypatc
             assert index.read_consolidated_notice_cover(db, old.document) == old
         with db._lock, db._connect() as sql:
             count = sql.execute("SELECT count(*) FROM metadata WHERE key>=? AND key<?",
-                                (index._PREFIX, index._PREFIX + "\\uffff")).fetchone()[0]
+                                (index._PREFIX, index._PREFIX + "\uffff")).fetchone()[0]
         assert count == (3 if existing else 2)
         for source in (a, b):
             doc = index.canonical_cover_document_ref(source.observation.key.edition_id)
