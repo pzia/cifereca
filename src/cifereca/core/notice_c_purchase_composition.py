@@ -7,6 +7,7 @@ source context guard. This is NOT installed by default.
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 
 from . import notice_c_job_journal as journal
@@ -19,6 +20,7 @@ from .notice_c_purchase_publication import (
     prepare_purchase_public_observation, publish_purchase_public_txn,
 )
 from .notice_c_public_search_replay import _anonymous_session
+from .notice_c_purchase_public_detail_cache import read_public_detail_txn, remember_public_detail_txn
 from .notice_c_work_bridge import UnavailableNoticeWork
 from ..plugin_api.provider_rights_observation import ProviderRightsSnapshot
 from ..plugin_api.provider_purchase_enrichment import PurchaseEnrichmentCandidate
@@ -138,15 +140,26 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                 if not _anonymous_session(public_session, public_provider_id):
                     raise UnavailableNoticeWork("notice_purchase_public_session_unavailable")
                 control.check_cancelled()
-                response, observed_at, guard = read_response(
-                    selected.public_locator, selected.title,
-                    check_authority=check_authority, control=control,
-                )
+                # Reuse only independently committed public detail proof.
+                # The current private candidate still needs its own live admission.
+                with execution._storage._lock, execution._storage._connect() as db:
+                    db.execute("BEGIN")
+                    observation = read_public_detail_txn(
+                        db, public_provider_id, selected, now=execution._now(),
+                    )
+                reused = observation is not None
+                if reused:
+                    observed_at, guard = observation.observed_at, nullcontext
+                else:
+                    response, observed_at, guard = read_response(
+                        selected.public_locator, selected.title,
+                        check_authority=check_authority, control=control,
+                    )
+                    observation = prepare_purchase_public_observation(
+                        response, public_session, selected, observed_at=observed_at,
+                    )
                 if not callable(guard) or check_authority() is not True:
                     raise UnavailableNoticeWork("notice_purchase_public_response_unavailable")
-                observation = prepare_purchase_public_observation(
-                    response, public_session, selected, observed_at=observed_at,
-                )
                 if observed_at > execution._now():
                     raise ValueError("notice_purchase_invalid_observation_time")
 
@@ -154,12 +167,16 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                     if input_current_txn is not None and input_current_txn(db) is not True:
                         raise UnavailableNoticeWork("notice_purchase_context_changed")
                     now = execution._now()
+                    if reused and read_public_detail_txn(db, public_provider_id, selected, now=now) != observation:
+                        raise UnavailableNoticeWork("notice_purchase_public_detail_changed")
                     publication = publish_purchase_public_txn(
                         db, spec, snapshot, selected, observation, now=now,
                     )
                     record_purchase_association_txn(
                         db, lease, snapshot, selected, publication, observed_at=observed_at, now=now,
                     )
+                    if not reused:
+                        remember_public_detail_txn(db, public_provider_id, selected, publication, observation)
                     return True
 
                 return PreparedPurchaseSource(publish, guard)
