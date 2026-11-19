@@ -19,6 +19,33 @@ from cifereca.plugin_api import (
 )
 
 
+
+try:
+    # Optional additive public helper. Plugin-only updates may run on an
+    # older Core; keep the same lexical convention there, not a format proof.
+    from cifereca.plugin_api import split_filename_suffix
+except ImportError:
+    def split_filename_suffix(path):
+        name = path.name
+        for suffix in (".fxl.kepub.epub", ".kepub.epub"):
+            if len(name) > len(suffix) and name.lower().endswith(suffix):
+                return name[:-len(suffix)], name[-len(suffix):]
+        return path.stem, path.suffix
+
+
+def _naming_extension(current, fallback):
+    return split_filename_suffix(PurePath(current))[1].lstrip(".") or fallback
+
+
+def _keeps_epub_convention(current, proposed):
+    _, source = split_filename_suffix(PurePath(current))
+    _, target = split_filename_suffix(PurePath(proposed))
+    if (source.lower() in {".epub", ".kepub.epub", ".fxl.kepub.epub"}
+            or target.lower() in {".kepub.epub", ".fxl.kepub.epub"}):
+        return source == target
+    return True
+
+
 def _rows(value: Any) -> list[Mapping[str, Any]]:
     if not isinstance(value, Iterable) or isinstance(value, (str, bytes, Mapping)):
         return []
@@ -864,9 +891,8 @@ class NamingAuditTool(_ReadOnlyTool):
                 if not title or not current:
                     unavailable += 1
                     continue
-                extension = (
-                    PurePath(current).suffix.lstrip(".")
-                    or str(row.get("format") or "epub").lower()
+                extension = _naming_extension(
+                    current, str(row.get("format") or "epub").lower(),
                 )
                 expected = naming.preview(
                     title=title,
@@ -890,6 +916,8 @@ class NamingAuditTool(_ReadOnlyTool):
                     or any(ord(ch) < 32 or ord(ch) == 127 for ch in proposed)
                 ):
                     raise ValueError("invalid naming policy filename")
+                if not _keeps_epub_convention(current, proposed):
+                    raise ValueError("EPUB filename convention changed")
                 different = PurePath(current).name != proposed
             except Exception:
                 # Never include provider values, exception texts or dynamic
@@ -1427,7 +1455,7 @@ class NamingRepairTool(_ReadOnlyTool):
                     if not current:
                         skipped += 1
                         continue
-                    extension = PurePath(current).suffix.lstrip(".") or "epub"
+                    extension = _naming_extension(current, "epub")
                 except Exception:
                     skipped += 1
                     continue
@@ -1454,6 +1482,8 @@ class NamingRepairTool(_ReadOnlyTool):
                         or any(ord(ch) < 32 or ord(ch) == 127 for ch in expected)
                     ):
                         raise ValueError("invalid naming policy filename")
+                    if not _keeps_epub_convention(current, expected):
+                        raise ValueError("EPUB filename convention changed")
                     matches = PurePath(current).name == expected
                 except Exception:
                     # Untrusted proposed filenames may fail while converted,
@@ -1494,7 +1524,7 @@ class NamingRepairTool(_ReadOnlyTool):
         )
 
     def run(self, plan: MaintenancePlan, control) -> MaintenanceResult:
-        from cifereca.plugin_api import LibraryMutationRequest
+        from cifereca.plugin_api import LibraryMutationPlan, LibraryMutationRequest
 
         # Cached or caller-supplied plans can be stale or malformed. Mutation
         # identifiers must be plain opaque strings; never call str() on
@@ -1593,6 +1623,15 @@ class NamingRepairTool(_ReadOnlyTool):
             control.report(current=index - 1, total=total, message=f"Renormalisation {index}/{total}")
             try:
                 mutation = broker.plan(LibraryMutationRequest("normalize_filename", placement_id=placement_id))
+                # An older installed Core may still propose a lossy rename.
+                # Its public plan carries the actual before/after names.
+                if isinstance(mutation, LibraryMutationPlan):
+                    changes = mutation.changes
+                    if (type(changes) is not tuple or len(changes) != 2
+                            or any(type(name) is not str for name in changes)
+                            or mutation.facts.get("new_filename") != changes[1]
+                            or not _keeps_epub_convention(*changes)):
+                        raise ValueError("unverifiable filename convention")
                 result = broker.run(mutation, control)
                 # A changed counter is evidence of completed mutations, not
                 # an arbitrary provider value to coerce with int(). Refuse
