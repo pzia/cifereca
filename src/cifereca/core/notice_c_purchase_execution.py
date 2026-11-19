@@ -52,11 +52,15 @@ class PurchaseIntentExecution:
     arrange its own qualified transport start fence and never retry blindly.
     """
 
-    def __init__(self, storage, *, clock):
+    def __init__(self, storage, *, clock, attestation_capacity=_MAX_LIVE):
+        if (type(attestation_capacity) is not int
+                or not _MAX_LIVE <= attestation_capacity <= journal._MAX_JOBS):
+            raise ValueError("notice_purchase_invalid_capacity")
         if not callable(clock):
             raise ValueError("notice_purchase_invalid_clock")
         self._storage = storage
         self._clock = clock
+        self._capacity = attestation_capacity
         self._lock = RLock()
         self._live = {}
         self._closed = False
@@ -105,7 +109,7 @@ class PurchaseIntentExecution:
                 if ref in self._live:
                     # A live admission is never replaced/extended in place.
                     return False
-                if len(self._live) >= _MAX_LIVE:
+                if len(self._live) >= self._capacity:
                     raise ValueError("notice_purchase_admission_capacity")
                 with self._storage._lock, self._storage._connect() as db:
                     db.execute("BEGIN")
@@ -121,15 +125,31 @@ class PurchaseIntentExecution:
                 return True
 
     def ready_refs(self):
-        """Opaque, bounded scheduling hints only; never a lease or callback."""
+        """Compatibility bounded hints; the pump uses its own keyset cursor."""
+        return self.ready_page_refs(after=None, limit=_MAX_LIVE)
+
+    def ready_page_refs(self, *, after, limit):
+        """Bounded private authority hints, not a queue or a due-time index.
+
+        Registry order is irrelevant. Only the journal decides readiness;
+        this is a bounded exact-key filter for the existing rotation. Older
+        generations of a key cannot shadow a newer unclaimed observation.
+        No deadline is extended during the scan.
+        """
+        if ((after is not None and not journal._digest(after))
+                or type(limit) is not int or not 1 <= limit <= _MAX_LIVE):
+            raise ValueError("notice_purchase_invalid_page")
         with self._lock:
             self._prune(self._now())
             if self._closed:
                 return ()
-            return tuple(sorted(
-                (ref for ref, entry in self._live.items() if entry.lease is None),
-                key=lambda ref: (ref.key, ref.generation),
-            ))
+            latest = {}
+            for ref, entry in self._live.items():
+                if entry.lease is None and (after is None or ref.key > after):
+                    old = latest.get(ref.key)
+                    if old is None or old.generation < ref.generation:
+                        latest[ref.key] = ref
+            return tuple(latest[key] for key in sorted(latest)[:limit])
 
     def revoke(self, ref):
         with self._lock:
@@ -159,8 +179,17 @@ class PurchaseIntentExecution:
                     raise ValueError("notice_purchase_invalid_clock")
                 with self._storage._lock, self._storage._connect() as db:
                     db.execute("BEGIN IMMEDIATE")
-                    job = journal._get(db, ref)
-                    self._verify(db, job, entry)
+                    try:
+                        job = journal._get(db, ref)
+                        self._verify(db, job, entry)
+                    except ValueError:
+                        # Exact proof or generation changed; do not repeat
+                        # futile broker attempts until this admission expires.
+                        self._live.pop(ref, None)
+                        return None
+                    if job.state != "pending":
+                        self._live.pop(ref, None)
+                        return None
                     lease = journal._claim_ready_txn(
                         db, job, now=actual, lease_seconds=lease_seconds,
                     )
