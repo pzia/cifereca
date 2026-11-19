@@ -76,9 +76,12 @@ def scan_stage_references(db, selected):
     queries.extend((table, "NULL", col, True) for table, col in _JSON_COLUMNS)
     for table, key_col, column, strict in queries:
         size = f"length(CAST({column} AS BLOB))"
+        if key_col != "NULL":
+            size += f"+length(CAST({key_col} AS BLOB))"
         for key, length, raw in db.execute(
-            f"SELECT {key_col}, {size}, CASE WHEN {size}<=? THEN {column} END "
-            f"FROM {table} LIMIT ?", (_MAX_ROW_BYTES, _MAX_ROWS - rows + 1),
+            f"SELECT CASE WHEN {size}<=? THEN {key_col} END, {size}, "
+            f"CASE WHEN {size}<=? THEN {column} END FROM {table} LIMIT ?",
+            (_MAX_ROW_BYTES, _MAX_ROW_BYTES, _MAX_ROWS - rows + 1),
         ):
             rows += 1
             if (rows > _MAX_ROWS or type(length) is not int
@@ -92,9 +95,14 @@ def scan_stage_references(db, selected):
             if not candidates:
                 continue
             for path in candidates:
-                if path in raw:
+                if path in raw or (type(key) is str and path in key):
                     status[path] = "referenced"
             try:
+                if type(key) is str and (key.lstrip().startswith(("{", "[", '"')) or chr(92) in key):
+                    for text in _strings(json.loads(key, object_pairs_hook=_unique_pairs)):
+                        for path in candidates:
+                            if path in text:
+                                status[path] = "referenced"
                 if strict or raw.lstrip().startswith(("{", "[", '"')) or chr(92) in raw:
                     parsed = json.loads(raw, object_pairs_hook=_unique_pairs)
                     if strict and type(parsed) is not dict:

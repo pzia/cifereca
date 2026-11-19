@@ -97,3 +97,33 @@ def test_stage_dependency_added_during_physical_observation_discards_page(tmp_pa
         assert not any(report["counts"].values())
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("escaped", [False, True])
+def test_stage_reference_in_metadata_key_is_not_clear(tmp_path, escaped):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        key = "test.external:" + intent.staged_path
+        if escaped:
+            key = json.dumps({"path": intent.staged_path}).replace("/", chr(92) + "u002f")
+        db.metadata_set(key, "value")
+        result = _review(db, tmp_path)
+        assert result["counts"]["known_dependency"] == 1
+        assert result["counts"]["linked_pair_observed"] == 0
+        assert not result["retention_authorized"]
+    finally:
+        db.close()
+
+
+def test_metadata_key_bytes_count_against_scan_budget(tmp_path, monkeypatch):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        db.metadata_set("x" * 4096, "v")
+        monkeypatch.setattr(dependencies, "_MAX_ROW_BYTES", 4096)
+        assert _review(db, tmp_path)["counts"]["external_dependency_unverified"] == 1
+    finally:
+        db.close()
