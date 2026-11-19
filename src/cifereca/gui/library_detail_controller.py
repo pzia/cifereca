@@ -97,21 +97,6 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
     documentary = purchase_library_notice(item) if not foreign else None
     if documentary != getattr(row, "_purchase_library_notice", None):
         documentary = None
-    sections = local_book_detail_sections(
-        item,
-        provider_display_name=window.service.provider_display_name,
-        availability_label=window._library_availability_label,
-        identity_by_id=window.service.identity_by_id,
-        sync_status_label=window._kobo_backup_status_label,
-        language_label=detail_language,
-    )
-    if documentary is not None:
-        labels = {"title": "Titre", "author": "Auteur", "publisher": "Éditeur",
-                  "description": "Résumé", "published_at": "Parution"}
-        sections = [*sections, ("Fiche du catalogue public", [
-            (labels[fact.field], fact.value) for fact in documentary.notice.facts
-            if fact.field in labels
-        ])]
     trace = current_detail_trace()
     projection_started = trace.clock() if trace else None
     presentation = book_detail_presentation(
@@ -125,7 +110,15 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
                    and item.get("_public_canonical_cover_link") is None
                    else None),
         badges=[],
-        section_rows=sections,
+        section_rows=local_book_detail_sections(
+            item,
+            provider_display_name=window.service.provider_display_name,
+            availability_label=window._library_availability_label,
+            identity_by_id=window.service.identity_by_id,
+            sync_status_label=window._kobo_backup_status_label,
+            language_label=detail_language,
+            purchase_notice=documentary,
+        ),
         links=() if foreign else document_links(item),
         metadata=item.get('metadata'),
     )
