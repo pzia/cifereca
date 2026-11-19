@@ -130,3 +130,23 @@ def review_recovery_choice(service, page, choice, *, explicitly_requested=False)
         return ReviewedRecoveryChoice(choice, review)
     except Exception:
         return None
+
+
+def preview_confirmed_recovery_choice(service, page, reviewed, *, confirmed=False):
+    """Recheck a reviewed choice after explicit consent, without any writer.
+
+    This is a dry-run only. Neither a positive result nor a prior review
+    authorizes a production recovery. Do not return the fresh private handle.
+    """
+    if (confirmed is not True or type(page) is not RecoveryChoicePage
+            or type(reviewed) is not ReviewedRecoveryChoice
+            or type(reviewed.choice) is not RecoveryChoice
+            or type(reviewed.review) is not RecoveryReview
+            or page.scope.service is not service
+            or reviewed.review.scope != page.scope
+            or reviewed.review.reservation != reviewed.choice.reservation):
+        return "review_required"
+    fresh = review_recovery_choice(
+        service, page, reviewed.choice, explicitly_requested=True,
+    )
+    return "verified_no_write" if fresh is not None else "review_required"

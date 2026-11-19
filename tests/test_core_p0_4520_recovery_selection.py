@@ -89,3 +89,25 @@ def test_private_cursor_stays_with_original_scope(tmp_path):
         assert _choices(service, previous=page, limit=1) is None
     finally:
         db.close()
+
+
+def test_confirmed_dry_run_never_publishes_and_rechecks_scope(tmp_path):
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        page = _choices(service)
+        result = selection.review_recovery_choice(
+            service, page, page.choices[0], explicitly_requested=True,
+        )
+        assert result is not None
+        before = db.metadata_get(reservation.key)
+        preview = selection.preview_confirmed_recovery_choice
+        assert preview(service, page, result) == "review_required"
+        assert preview(service, page, result, confirmed=True) == "verified_no_write"
+        assert db.metadata_get(reservation.key) == before
+        assert len(db.placements()) == 1
+        service._account_context_epoch += 2
+        assert preview(service, page, result, confirmed=True) == "review_required"
+        assert db.metadata_get(reservation.key) == before
+    finally:
+        db.close()
