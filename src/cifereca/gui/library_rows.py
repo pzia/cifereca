@@ -12,7 +12,7 @@ from typing import Any
 from ..core.search import local_match_explanation
 from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 from ..core.notice_c_local_origin_projection import valid_local_public_c_link
-from ..core.notice_c_purchase_library_projection import purchase_library_notice
+from ..core.notice_c_purchase_library_projection import purchase_library_notice, purchase_library_status, purchase_status_label
 
 
 def _received_local_file_label(item: dict[str, Any]) -> str | None:
@@ -180,6 +180,9 @@ def project_library_rows(
             if public_author:
                 author = public_author
                 meta_parts.append("Auteur : catalogue public")
+        status = purchase_library_status(item) if key not in ambiguous_keys else None
+        if status is not None:
+            meta_parts.append(purchase_status_label(status))
         meta = " · ".join(part for part in meta_parts if part)
         # A rejected Core packet cannot silently downgrade to the
         # descriptive old URL. Only an unassociated legacy row may retain
@@ -218,6 +221,9 @@ def project_library_rows(
                 item.get("identity_id"), item.get("_library_view_owner"),
                 item.get("provider_id"), item.get("item_id"),
             )
+            if status is not None:
+                row._purchase_library_status = status
+                row._public_row_content += (status,)
             if documentary is not None:
                 row._purchase_library_notice = documentary
                 row._public_row_content += (documentary,)
