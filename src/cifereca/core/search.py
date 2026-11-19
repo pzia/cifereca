@@ -89,7 +89,10 @@ def _purchase_catalogue_values(row: Mapping[str, Any], field: str) -> list[str]:
     packet = purchase_library_notice(row)
     if packet is None:
         return []
-    values = [fact.value for fact in packet.notice.facts if fact.field == field]
+    selected = ({"subject", "subjects", "genres", "genre", "tags", "keywords", "themes"}
+                if field == "subject" else {field})
+    values = [fact.value for fact in packet.notice.facts
+              if fact.field in selected and type(fact.value) is str]
     return _attested_author_names(values) if field == "author" else values
 
 
@@ -115,13 +118,16 @@ def _field_values(row: Mapping[str, Any], field: str) -> list[str]:
             + _values(meta.get("themes")) + _values(meta.get("keywords"))
             + _values(meta.get("tags")) + _values(meta.get("genres")) + _values(meta.get("genre"))
             + _values(meta.get("categories")) + _values(search.get("subjects"))
-            + _bundle_member_values(row, field)
+            + _bundle_member_values(row, field) + _purchase_catalogue_values(row, "subject")
         )
     if field == "series":
-        return _values(meta.get("series")) + _bundle_member_values(row, field)
+        return (_values(meta.get("series")) + _bundle_member_values(row, field)
+                + _purchase_catalogue_values(row, "series"))
     if field == "collection":
         return _values(meta.get("collection")) + _bundle_member_values(row, field)
     if field == "language":
+        # A commercial product declaration is searchable text, not a
+        # qualified language facet of the acquired manifestation.
         from cifereca.language import normalize_language_tag
         raw = _values(meta.get("languages")) + _values(meta.get("language"))
         return [tag for value in raw if (tag := normalize_language_tag(value))]
@@ -200,7 +206,9 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
          + _values(meta.get("isbn")) + _values(meta.get("isbns"))),
         ("language", 5, _values(meta.get("languages")) + _values(meta.get("language"))),
         *((f"public_purchase_{name}", weight, _purchase_catalogue_values(row, name))
-          for name, weight in (("title", 90), ("author", 60), ("description", 25), ("publisher", 15), ("published_at", 5))),
+          for name, weight in (("title", 90), ("author", 60), ("description", 25),
+                               ("publisher", 15), ("published_at", 5), ("series", 65),
+                               ("subject", 40), ("languages", 4))),
     )
     scored = [(name, weight, tuple(" ".join(_words(value)) for value in values
                                      if type(value) is str and value))
@@ -237,6 +245,9 @@ _LOCAL_MATCH_LABELS = {
     "public_purchase_description": "Résumé (catalogue public)",
     "public_purchase_publisher": "Éditeur (catalogue public)",
     "public_purchase_published_at": "Parution (catalogue public)",
+    "public_purchase_series": "Série (catalogue public)",
+    "public_purchase_subject": "Sujet (catalogue public)",
+    "public_purchase_languages": "Langues déclarées (catalogue public)",
 }
 
 
