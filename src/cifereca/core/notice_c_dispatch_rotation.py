@@ -1,7 +1,7 @@
 """#4982 bounded public class rotation policy (not a dispatcher or queue).
 
 The future pump owns synchronization, journal page reads and submissions to
-its existing broker. This policy owns only four opaque cursors and a rotor.
+its existing broker. This policy owns only bounded opaque lane cursors and a rotor.
 Pages and accepted handles are tick-local; no pending work is retained.
 There is no Storage write, claim, timer, transport, pool or private scope.
 """
@@ -11,7 +11,8 @@ from dataclasses import dataclass
 
 from . import notice_c_job_journal as journal
 
-_ORDER = tuple(journal._KINDS)
+_PURCHASE_LANE = "purchase_attested"
+_ORDER = tuple(journal._KINDS) + (_PURCHASE_LANE,)
 _SCAN_BUDGET = 32
 _SUBMIT_BUDGET = 2
 
