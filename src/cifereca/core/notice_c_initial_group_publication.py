@@ -8,6 +8,7 @@ remain the recomputation port's responsibility.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 import json
 
@@ -137,6 +138,55 @@ def _request_group_txn(db, source, *, now, allow_extension):
     )
 
 
+class InitialGroupSuperseded(ValueError):
+    """A different, fully attested target has durable successor evidence."""
+
+
+def _superseding_group_txn(db, spec, inputs):
+    if inputs is None:
+        return False
+    document, sources, anchor, proof, digest = inputs
+    if document.source_key == spec.target:
+        return False
+    # Only positive successor evidence qualifies. Absence, graph conflicts,
+    # and a changed vector for the same target retain normal failure policy.
+    row = db.execute("SELECT value FROM metadata WHERE key=?", (_db_key(document),)).fetchone()
+    if row is not None:
+        canonical = _decode(row[0], document)
+        return (
+            {m.source_ref: m.source_epoch for m in canonical.sources}
+            == {s.document.source_key: s.epoch for s in sources}
+            and all(m.visibility == "public" and m.public_bibliography is not None
+                    and m.relation_proof_id == proof for m in canonical.sources)
+        )
+    successor = journal.public_job_spec(
+        "relink_notices", document, input_digest=digest,
+        implementation_digest=IMPLEMENTATION_DIGEST, source_ref=anchor,
+    )
+    pending = journal._load(db, journal._key(successor))
+    return (pending is not None and pending.spec == successor
+            and pending.state == "pending" and pending.attempts < journal._MAX_ATTEMPTS)
+
+
+def mark_initial_group_superseded(storage, lease, *, now):
+    """Recheck the positive successor and exact old lease in one writer txn."""
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        job = journal._held(db, lease, now)
+        if job.spec.implementation_digest != IMPLEMENTATION_DIGEST:
+            return False
+        try:
+            inputs = _group_inputs(db, job.spec.source_ref)
+            qualifies = _superseding_group_txn(db, job.spec, inputs)
+        except (ValueError, TypeError):
+            return False
+        if not qualifies:
+            return False
+        journal._save(db, replace(job, state="stale", reason="input_superseded",
+                                  lease_until=0))
+        return True
+
+
 def prepare_initial_group_publication(storage, spec):
     journal._check_spec(spec)
     if spec.implementation_digest != IMPLEMENTATION_DIGEST:
@@ -149,6 +199,8 @@ def prepare_initial_group_publication(storage, spec):
         document, sources, anchor, proof, digest = inputs
         if (document.source_key != spec.target or anchor != spec.source_ref
                 or digest != spec.input_digest):
+            if _superseding_group_txn(db, spec, inputs):
+                raise InitialGroupSuperseded("notice_work_initial_group_superseded")
             raise ValueError("notice_work_initial_group_changed")
         return document, sources, proof
 
