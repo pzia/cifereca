@@ -2655,6 +2655,7 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                     field_path=("search_result", "thumbnail_url"),
                     cover_inventory_complete=True,
                 )
+                failed_c = []
                 for row, persisted in zip(producing_rows, persisted_batch):
                     if persisted is None:
                         logging.getLogger("cifereca").warning(
@@ -2681,6 +2682,8 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                             logging.getLogger("cifereca").warning(
                                 "TRACE notice c public search code=canonical_source_failed"
                             )
+                            if len(failed_c) < 32:
+                                failed_c.append(persisted)
                         else:
                             row._core_notice_canonical_cover_document_ref = (
                                 canonical.document
@@ -2692,6 +2695,11 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                             stamp_persisted_c_revision(row, canonical)
                         pairs.append((row, persisted, canonical))
                 _reconcile_progressive_public_c(self.storage, pairs)
+                # Successful live C writes remain the sole normal path.
+                # Recover only still-dirty existing documents.
+                recover = getattr(self, "_notice_work_recover_search", None)
+                if failed_c and callable(recover):
+                    recover(tuple(failed_c), now=now)
             except (ValueError, TypeError, OSError, sqlite3.Error):
                 # Catalogue mirror remains independent. A broken source
                 # index cannot invent a cover or leak provider bytes/paths.
