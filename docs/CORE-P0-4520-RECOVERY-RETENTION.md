@@ -10,8 +10,8 @@ de l'exposer en production. Aucun appel au writer depuis Sync, startup,
 plugin ou simple affichage Maintenance. La confirmation à blanc (#6858,
 à réceptionner séparément) n'est pas un consentement à une écriture réelle.
 
-Le maintien du gel destructif #4496 est indépendant de la reprise.
-Ni ce document ni une recette réussie ne lève ce gel.
+La préférence Core #4496 (défaut false) est indépendante de la reprise.
+Ni ce document ni une recette réussie n'autorise la rétention destructive.
 
 ## Comptabilité et rétention
 
@@ -104,3 +104,5 @@ aucun nom ni chemin et n'affirme toujours pas une preuve exhaustive :
 les alias, systèmes externes, plugins et usages hors SQL restent à
 qualifier. La cible publiée demeure protégée, même si le stage est
 absent. Pas de writer de rétention ni remboursement de quota.
+
+Les clés de metadata sont également inspectées (texte et JSON encodé) ; leurs octets sont inclus dans les limites de matérialisation et de scan. Les alias non représentés dans ces valeurs restent hors preuve.
