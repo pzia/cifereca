@@ -41,8 +41,9 @@ _RETIRED_YOUTH_SOURCE_PACKAGES = frozenset({
 # default, this cannot be overridden by saved plugin state or --force-plugin.
 # Keep recovery of already-pending canonical dedup tombstones available:
 # its separate Core supervisor requires explicit confirmation and revalidation.
-# The hold applies only to these seven audited plugin IDs; other services and
-# future independent maintenance tools are unaffected.
+# The hold applies only to these seven audited plugin IDs. Repaired documentary
+# package versions may qualify through _maintenance_safety_issue; all other
+# services and future independent maintenance tools are unaffected.
 _MAINTENANCE_SAFETY_HOLDS = {
     "maintenance.audit.covers": "#3995",
     "maintenance.audit.languages": "#3995",
@@ -51,6 +52,13 @@ _MAINTENANCE_SAFETY_HOLDS = {
     "maintenance.repair.naming": "#3185",
     "maintenance.cleanup.duplicates": "#3185",
     "core.maintenance.cache": "#3996",
+}
+# Versioned compatibility policy, evaluated by the generic admission below.
+_MAINTENANCE_REPAIRED_TOOLS = {
+    "org.cifereca.maintenance.library-audit": {
+        "maintenance.audit.covers": (">=0.2.11,<0.3", "library_cover_audit"),
+        "maintenance.audit.languages": (">=0.2.11,<0.3", "library_language_audit"),
+    },
 }
 from .requirements import check_system_requirements
 from .python_dependencies import PythonDependencyManager, PythonDependencyTransaction
@@ -144,6 +152,23 @@ class PluginManager:
             except Exception:
                 pass
 
+    def _maintenance_safety_issue(self, descriptor, package):
+        """Keep historical packages held; admit only repaired documentary tools."""
+        if descriptor.type != "maintenance.tool":
+            return None
+        issue = _MAINTENANCE_SAFETY_HOLDS.get(descriptor.id)
+        qualification = _MAINTENANCE_REPAIRED_TOOLS.get(
+            package.manifest.package.id, {},
+        ).get(descriptor.id)
+        if qualification is None:
+            return issue
+        versions, port = qualification
+        if (contract_version_matches(package.manifest.package.version, versions)
+                and contract_version_matches(descriptor.version, versions)
+                and callable(getattr(self._brokers.get("catalog"), port, None))):
+            return None
+        return issue
+
     def refresh(self) -> list[PluginStatus]:
         # Preserve already-active instances when their package, descriptor and
         # dependency graph are unchanged.  The previous implementation tore down
@@ -184,10 +209,7 @@ class PluginManager:
                     continue
                 override = self.state.enabled_override(descriptor.id)
                 configured_enabled = descriptor.enabled_by_default if override is None else override
-                safety_issue = (
-                    _MAINTENANCE_SAFETY_HOLDS.get(descriptor.id)
-                    if descriptor.type == "maintenance.tool" else None
-                )
+                safety_issue = self._maintenance_safety_issue(descriptor, package)
                 # Presentation entrypoints are not a business dependency of
                 # a headless Core. Keep their installed manifest visible,
                 # but never probe/import/activate them (even when forced).
@@ -878,9 +900,8 @@ class PluginManager:
         if plugin_id not in self._records:
             raise KeyError(plugin_id)
         record = self._records[plugin_id]
-        if (enabled and record.descriptor.type == "maintenance.tool"
-                and plugin_id in _MAINTENANCE_SAFETY_HOLDS):
-            issue = _MAINTENANCE_SAFETY_HOLDS[plugin_id]
+        issue = self._maintenance_safety_issue(record.descriptor, record.package)
+        if enabled and issue is not None:
             raise ValueError(f"maintenance tool temporarily disabled for safety ({issue})")
         if not enabled:
             self._deactivate_plugin_and_dependents(plugin_id)
