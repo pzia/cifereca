@@ -127,3 +127,50 @@ def test_metadata_key_bytes_count_against_scan_budget(tmp_path, monkeypatch):
         assert _review(db, tmp_path)["counts"]["external_dependency_unverified"] == 1
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("alias_kind", ["dot", "dotdot", "double_slash", "uri", "relative", "relative_components"])
+@pytest.mark.parametrize("source", ["metadata", "backup"])
+def test_lexical_stage_alias_blocks_without_filesystem_resolution(tmp_path, alias_kind, source):
+    from urllib.parse import quote
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        stage = Path(intent.staged_path)
+        aliases = {
+            "dot": str(stage.parent) + "/./" + stage.name,
+            "dotdot": str(stage.parent) + "/unobserved/../" + stage.name,
+            "double_slash": "//" + str(stage).lstrip("/"),
+            "uri": "file://localhost" + quote(str(stage), safe="/").replace("staged", "%73taged"),
+            "relative": ".cifereca-staging/variants/" + stage.name,
+            "relative_components": "./.cifereca-staging//variants/./" + stage.name,
+        }
+        alias = aliases[alias_kind]
+        if source == "metadata":
+            db.metadata_set("test.alias", json.dumps({"path": alias}))
+        else:
+            with db._lock, db._connect() as sql:
+                sql.execute(
+                    "INSERT INTO backup_items(provider_id,credential_id,item_id,title,local_path,status,updated_at) "
+                    "VALUES(?,?,?,?,?,?,?)", ("synthetic", "card", "item", "fixture", alias, "complete", 1),
+                )
+        result = _review(db, tmp_path)
+        assert result["counts"]["known_dependency"] == 1
+        assert result["counts"]["linked_pair_observed"] == 0
+        assert not result["all_dependencies_verified"]
+        assert Path(intent.staged_path).samefile(intent.candidate_path)
+    finally:
+        db.close()
+
+
+def test_distinct_absolute_stage_name_is_not_a_relative_alias(tmp_path):
+    service, intent, reservation = _prepared_publication(tmp_path)
+    db = service.storage
+    try:
+        _publish_reserved(db, intent, reservation)
+        other = tmp_path / "other" / ".cifereca-staging" / "variants" / Path(intent.staged_path).name
+        db.metadata_set("test.distinct", json.dumps({"path": str(other)}))
+        assert _review(db, tmp_path)["counts"]["linked_pair_observed"] == 1
+    finally:
+        db.close()

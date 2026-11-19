@@ -7,6 +7,8 @@ Only each stage's own committed receipt is exempt from the scan.
 from __future__ import annotations
 
 import json
+import posixpath
+from urllib.parse import unquote, urlsplit
 
 from .derived_variant_journal import _unique_pairs
 
@@ -37,6 +39,34 @@ def _strings(value, depth=0):
     elif type(value) is list:
         for item in value:
             yield from _strings(item, depth + 1)
+
+
+def _matches_stage(text, stage):
+    """Conservative lexical match, never resolve symlinks or access a URI.
+
+    Relative paths with the known staging suffix are ambiguous across owners:
+    block every selected matching suffix rather than guessing a base directory.
+    This is not an exhaustive alias or external-consumer proof.
+    """
+    if stage in text:
+        return True
+    value = text.strip()
+    if value.lower().startswith("file:"):
+        uri = urlsplit(value)
+        value = unquote(uri.path, errors="strict")
+        # A non-local authority is not evidence of a different file.
+    if not value or "\x00" in value:
+        return False
+    suffix = ".cifereca-staging/variants/" + posixpath.basename(stage)
+    if not value.startswith("/") and posixpath.basename(stage) not in value:
+        return False
+    normalized = posixpath.normpath(value)
+    if normalized.startswith("//"):
+        normalized = "/" + normalized.lstrip("/")
+    if normalized == stage:
+        return True
+    return (not normalized.startswith("/") and
+            (normalized == suffix or normalized.endswith("/" + suffix)))
 
 
 def scan_stage_references(db, selected):
@@ -72,15 +102,20 @@ def scan_stage_references(db, selected):
 
     # Each CASE protects Python payload materialization before checking the
     # remaining global budget. A bound miss is never an absence witness.
-    queries = [("metadata", "key", "value", False)]
-    queries.extend((table, "NULL", col, True) for table, col in _JSON_COLUMNS)
-    for table, key_col, column, strict in queries:
+    queries = [("metadata", "key", "value", "metadata")]
+    queries.extend((table, "NULL", col, "json") for table, col in _JSON_COLUMNS)
+    queries.extend((table, "NULL", col, "path") for table, col in (
+        ("placements", "path"), ("backup_items", "local_path"),
+        ("device_placements", "target_relative_path"),
+    ))
+    for table, key_col, column, kind in queries:
         size = f"length(CAST({column} AS BLOB))"
         if key_col != "NULL":
             size += f"+length(CAST({key_col} AS BLOB))"
+        where = f"WHERE {column} IS NOT NULL" if kind == "path" else ""
         for key, length, raw in db.execute(
             f"SELECT CASE WHEN {size}<=? THEN {key_col} END, {size}, "
-            f"CASE WHEN {size}<=? THEN {column} END FROM {table} LIMIT ?",
+            f"CASE WHEN {size}<=? THEN {column} END FROM {table} {where} LIMIT ?",
             (_MAX_ROW_BYTES, _MAX_ROW_BYTES, _MAX_ROWS - rows + 1),
         ):
             rows += 1
@@ -94,22 +129,24 @@ def scan_stage_references(db, selected):
                                if selected[path] != key and status[path] != "referenced")
             if not candidates:
                 continue
-            for path in candidates:
-                if path in raw or (type(key) is str and path in key):
-                    status[path] = "referenced"
             try:
+                for path in candidates:
+                    if (_matches_stage(raw, path)
+                            or (type(key) is str and _matches_stage(key, path))):
+                        status[path] = "referenced"
                 if type(key) is str and (key.lstrip().startswith(("{", "[", '"')) or chr(92) in key):
                     for text in _strings(json.loads(key, object_pairs_hook=_unique_pairs)):
                         for path in candidates:
-                            if path in text:
+                            if _matches_stage(text, path):
                                 status[path] = "referenced"
-                if strict or raw.lstrip().startswith(("{", "[", '"')) or chr(92) in raw:
+                if kind == "json" or (kind == "metadata" and (
+                        raw.lstrip().startswith(("{", "[", '"')) or chr(92) in raw)):
                     parsed = json.loads(raw, object_pairs_hook=_unique_pairs)
-                    if strict and type(parsed) is not dict:
+                    if kind == "json" and type(parsed) is not dict:
                         return unknown()
                     for text in _strings(parsed):
                         for path in candidates:
-                            if path in text:
+                            if _matches_stage(text, path):
                                 status[path] = "referenced"
             except (TypeError, ValueError, RecursionError):
                 return unknown()

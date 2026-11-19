@@ -106,3 +106,5 @@ qualifier. La cible publiée demeure protégée, même si le stage est
 absent. Pas de writer de rétention ni remboursement de quota.
 
 Les clés de metadata sont également inspectées (texte et JSON encodé) ; leurs octets sont inclus dans les limites de matérialisation et de scan. Les alias non représentés dans ces valeurs restent hors preuve.
+
+La détection lexicale couvre également les composants `.`/`..`, séparateurs multiples, URI `file:` et suffixes de staging relatifs dans les champs de chemins explicites et les valeurs/clés inspectées. Une ambiguïté de base relative bloque sans attribution à un profil. Aucune résolution symlink, accès URI ou inspection de consommateurs externes ; une non-match lexicale ne prouve jamais leur absence.
