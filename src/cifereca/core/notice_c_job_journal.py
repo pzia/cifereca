@@ -25,6 +25,7 @@ _MAX_DEPS = 8
 _MAX_ATTEMPTS = 3
 _MAX_LEASE = 300
 _INITIAL_PUBLIC_C_DIGEST = sha256(b"core.initial-public-c-publication.v1").hexdigest()
+_INITIAL_GROUP_C_DIGEST = sha256(b"core.initial-origin-group-publication.v1").hexdigest()
 _KINDS = {
     "fetch_source_notice": 0,
     "reparse_cached_input": 1,
@@ -118,8 +119,12 @@ def _check_spec(spec):
               else "notice-c:v1:")
     if not spec.target.startswith(prefix) or not _digest(spec.target[len(prefix):]):
         raise ValueError("notice_work_invalid_target")
-    if spec.implementation_digest == _INITIAL_PUBLIC_C_DIGEST:
-        if (spec.kind != "recompute_aggregate" or spec.dependencies
+    initial_kind = {
+        _INITIAL_PUBLIC_C_DIGEST: "recompute_aggregate",
+        _INITIAL_GROUP_C_DIGEST: "relink_notices",
+    }.get(spec.implementation_digest)
+    if initial_kind is not None:
+        if (spec.kind != initial_kind or spec.dependencies
                 or type(spec.source_ref) is not str
                 or not spec.source_ref.startswith("notice-c:v1:")
                 or not _digest(spec.source_ref[len("notice-c:v1:"):])):
