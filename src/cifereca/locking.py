@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import sys
 from pathlib import Path
 from threading import get_ident, local
@@ -25,6 +26,33 @@ class _HeldLock:
         self.references = 1
 
 
+def _open_existing_regular_lock(path: Path):
+    """POSIX no-follow read-only open, all ancestors, no mkdir or truncate."""
+    if os.name != "posix" or path.anchor != "/" or not path.name or ".." in path.parts:
+        raise LockBusyError("strict_lock_path_unavailable")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    directory = os.open("/", flags)
+    fd = None
+    try:
+        for name in path.parent.parts[1:]:
+            child = os.open(name, flags, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW |
+                     os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory)
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or info.st_uid != os.geteuid() or info.st_mode & 0o022):
+            raise LockBusyError("strict_lock_file_unavailable")
+        handle = os.fdopen(fd, "r", encoding="utf-8")
+        fd = None
+        return handle
+    finally:
+        if fd is not None:
+            os.close(fd)
+        os.close(directory)
+
+
 class InterProcessLock:
     """Small non-blocking process lock backed by an application state file.
 
@@ -37,11 +65,15 @@ class InterProcessLock:
     # A default nested acquire remains busy, exactly as before.
     _thread = local()
 
-    def __init__(self, path: Path, *, reentrant: bool = False):
+    def __init__(self, path: Path, *, reentrant: bool = False,
+                 existing_nofollow: bool = False):
         self.path = Path(path)
         self._handle: IO[str] | None = None
         self._lease: _HeldLock | None = None
         self._reentrant = reentrant
+        self._existing_nofollow = existing_nofollow
+        if existing_nofollow and reentrant:
+            raise ValueError("strict_lock_not_reentrant")
 
     @classmethod
     def _registry(cls) -> dict[str, _HeldLock]:
@@ -81,8 +113,11 @@ class InterProcessLock:
             self._lease = held
             self._handle = held.handle
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        handle = self.path.open("a+", encoding="utf-8")
+        if self._existing_nofollow:
+            handle = _open_existing_regular_lock(self.path)
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            handle = self.path.open("a+", encoding="utf-8")
         try:
             if sys.platform == "win32":
                 import msvcrt
@@ -97,20 +132,40 @@ class InterProcessLock:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError as exc:
                     raise LockBusyError(str(self.path)) from exc
-            handle.seek(0)
-            handle.truncate(0)
-            handle.write(f"pid={os.getpid()}\n")
-            handle.flush()
-            try:
-                os.fchmod(handle.fileno(), 0o600)
-            except OSError:
-                pass
+            if self._existing_nofollow:
+                with _open_existing_regular_lock(self.path) as named:
+                    before, current = os.fstat(handle.fileno()), os.fstat(named.fileno())
+                    if (before.st_dev, before.st_ino) != (current.st_dev, current.st_ino):
+                        raise LockBusyError("strict_lock_name_changed")
+            else:
+                handle.seek(0)
+                handle.truncate(0)
+                handle.write(f"pid={os.getpid()}\n")
+                handle.flush()
+                try:
+                    os.fchmod(handle.fileno(), 0o600)
+                except OSError:
+                    pass
             self._lease = _HeldLock(handle, path=key)
             registry[key] = self._lease
             self._handle = handle
         except Exception:
             handle.close()
             raise
+
+    def strict_current(self) -> bool:
+        """Recheck the current strict lease without touching lock-file bytes."""
+        held = self._lease
+        if (not self._existing_nofollow or held is None or held.handle.closed
+                or held.pid != os.getpid() or held.thread_id != get_ident()):
+            return False
+        try:
+            with _open_existing_regular_lock(self.path) as named:
+                actual, observed = os.fstat(held.handle.fileno()), os.fstat(named.fileno())
+                return ((actual.st_dev, actual.st_ino) == (observed.st_dev, observed.st_ino)
+                        == (held.device, held.inode))
+        except (OSError, RuntimeError, AttributeError, ValueError):
+            return False
 
     def release(self) -> None:
         held = self._lease

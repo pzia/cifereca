@@ -76,5 +76,5 @@ def downloads_dir() -> Path:
     return _ensure(data_dir() / "downloads")
 
 
-def acquisition_lock_file() -> Path:
-    return state_dir() / "local-acquisition.lock"
+def acquisition_lock_file(*, create: bool = True) -> Path:
+    return state_dir(create=create) / "local-acquisition.lock"
