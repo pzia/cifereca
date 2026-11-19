@@ -4359,8 +4359,17 @@ class Storage:
             )
             return cur.rowcount
 
-    def acquisition_put(self, item: dict[str, Any], *, insert_only: bool = False) -> str:
+    def acquisition_put(self, item: dict[str, Any], *, insert_only: bool = False,
+                        completion_lease=None) -> str:
         row = dict(item)
+        if completion_lease is not None:
+            from .core.loan_completion_epoch import (
+                CompletionEpochRevoked, require_completion_epoch,
+                validate_completion_receipt,
+            )
+            if insert_only is not False:
+                raise CompletionEpochRevoked("loan_completion_source_changed")
+            validate_completion_receipt(row, completion_lease)
         # SQLite's TEXT affinity silently coerces int/bool account markers
         # to digit strings. After that conversion the reader cannot tell
         # an untrusted numeric value from a legitimate borrower barcode.
@@ -4400,6 +4409,12 @@ class Storage:
             "OR acquisition_ledger.entitlement_id=excluded.entitlement_id)"
         )
         with self._lock, self._connect() as db:
+            if completion_lease is not None:
+                # Serialize against connection generation writers in every
+                # process. Re-check within the very transaction committing
+                # this receipt, not a previous read snapshot.
+                db.execute("BEGIN IMMEDIATE")
+                require_completion_epoch(db, completion_lease)
             cursor = db.execute(
                 "INSERT INTO acquisition_ledger(acquisition_id,entitlement_id,provider_id,credential_id,account_id,item_id,title,status,"
                 "strategy,executor,candidate_id,artifact_id,attempt_count,last_attempt_at,error_code,error_message,attention_code,"
@@ -4438,6 +4453,8 @@ class Storage:
                 ).fetchone()
                 if existing is None:
                     raise ValueError("acquisition_source_scope_conflict")
+            if completion_lease is not None:
+                require_completion_epoch(db, completion_lease)
         return acquisition_id
 
     def acquisition_get(self, acquisition_id: str) -> dict[str, Any] | None:
