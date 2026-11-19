@@ -1,6 +1,7 @@
 """A public detail proof is reusable; rights and receipts remain private."""
 from contextlib import contextmanager, nullcontext
 import json
+import pytest
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -21,9 +22,11 @@ from tests.test_core_p0_4982_fetch_execution import broker
 from tests.test_core_p0_6366_real_search_notice_c_ingestion import public_row
 
 
-def test_reuse_public_detail_across_restart_and_exact_accounts(tmp_path, monkeypatch):
-    monkeypatch.setattr(cache, '_MAX', 1)
-    now = 7 * 86400 + 100
+@pytest.mark.parametrize('pressure', (False, True))
+def test_reuse_public_detail_across_restart_and_exact_accounts(tmp_path, monkeypatch, pressure):
+    if pressure:
+        monkeypatch.setattr(cache, '_MAX', 1)
+    now = 7 * 86400 + 100 if pressure else 100
     expired_key = _PREFIX + 'f' * 64
     path = tmp_path / "reuse.sqlite"
     calls = []
@@ -45,7 +48,7 @@ def test_reuse_public_detail_across_restart_and_exact_accounts(tmp_path, monkeyp
     source_document = None
     for owner, credential, account in (("A", "card-a", "buyer-a"), ("B", "card-b", "buyer-b")):
         db = Storage(path)
-        if owner == 'A':
+        if pressure and owner == 'A':
             with db._lock, db._connect() as sql:
                 sql.execute('INSERT INTO metadata(key,value) VALUES(?,?)',
                             (expired_key, json.dumps({'observed_at': 1})))
@@ -58,7 +61,7 @@ def test_reuse_public_detail_across_restart_and_exact_accounts(tmp_path, monkeyp
             sink = make_purchase_enrichment_sink(execution, private_provider_id="seller-a",
                 public_session=session, read_response=read, hold_context=context, wake=lambda: None)
             assert sink(snapshot, (candidate,)).admitted == 1
-            ref, = request(db, snapshot, candidate)
+            ref, = request(db, snapshot, candidate, now=now)
             bridge = AggregateWorkBridge(db, tasks, lambda *_: None, clock=lambda: now,
                 claim_purchase=execution.claim, prepare_purchase=execution.prepare)
             assert bridge.submit(ref).result(timeout=10) == "current"
