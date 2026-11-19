@@ -185,6 +185,7 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                 if execution.attest(
                     ref, snapshot, candidate, hold_context=hold_context,
                     execute=execute, ttl_seconds=ttl_seconds,
+                    public_provider_id=public_provider_id,
                 ):
                     admitted += 1
                 else:
