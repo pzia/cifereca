@@ -1258,6 +1258,21 @@ class ArtifactExecutionBrokerImpl:
                 return cached
 
         current()
+        if self._durable_variant_publication:
+            from .core.derived_variant_journal import (
+                DerivedJournalConflict, require_no_pending_derived_recipe,
+            )
+            try:
+                require_no_pending_derived_recipe(
+                    self.service.storage, identity_id=identity_id,
+                    placement_id=source_lease.source_placement_id,
+                    transformer_id=plugin_id, profile_id=request.profile_plugin_id or "",
+                    options_fingerprint=fingerprint,
+                )
+            except DerivedJournalConflict as exc:
+                raise _VariantConflict("Publication interrompue à examiner", code=str(exc)) from None
+            current()
+            control.check_cancelled()
         plan = transformer.plan(request, source_lease, control)
         current()
         output_lease = self.output_lease if admission is None else self._output_lease
