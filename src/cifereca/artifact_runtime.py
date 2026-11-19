@@ -1577,6 +1577,19 @@ def _variant_deletion_scope_safe(storage: Any, variant: dict[str, Any]) -> bool:
     return True
 
 
+def _require_epub_filename_convention(old: Path, new: Path) -> None:
+    """A rename preserves EPUB filename convention, never selects a reader engine."""
+    from .filename_suffixes import split_filename_suffix
+
+    _, source_suffix = split_filename_suffix(old)
+    _, target_suffix = split_filename_suffix(new)
+    epub_suffixes = {".epub", ".kepub.epub", ".fxl.kepub.epub"}
+    if (source_suffix.lower() in epub_suffixes
+            or target_suffix.lower() in {".kepub.epub", ".fxl.kepub.epub"}):
+        if source_suffix != target_suffix:
+            raise _LibraryFilenameConflict("Convention de suffixe EPUB modifiée")
+
+
 @dataclass(slots=True)
 class LibraryMaintenanceBrokerImpl:
     service: Any
@@ -1644,8 +1657,15 @@ class LibraryMaintenanceBrokerImpl:
             if row is None: raise NotFound("Placement inconnu", code="placement_not_found")
             entries=[e for e in self.service.storage.catalog_entries() if str(e.get("placement_id") or "") == request.placement_id]
             entry=entries[0] if entries else {}
-            old=Path(str(row.get("path") or "")); ext=old.suffix.lstrip(".") or str(entry.get("media_format") or "epub")
-            new_name=self.service.preview_library_filename(title=str(entry.get("title") or old.stem), author=str(entry.get("author") or ""), extension=ext)
+            from .filename_suffixes import split_filename_suffix
+            old = Path(str(row.get("path") or ""))
+            stem, suffix = split_filename_suffix(old)
+            ext = suffix.lstrip(".") or str(entry.get("media_format") or "epub")
+            new_name = self.service.preview_library_filename(
+                title=str(entry.get("title") or stem),
+                author=str(entry.get("author") or ""), extension=ext,
+            )
+            _require_epub_filename_convention(old, Path(new_name))
             return LibraryMutationPlan(op, f"Renommer {old.name} en {new_name}", request, changes=(old.name,new_name), facts={"new_filename":new_name})
         if op == "move_placement":
             if not request.target_identity_id: raise ValueError("target_identity_id required")
@@ -1932,6 +1952,8 @@ class LibraryMaintenanceBrokerImpl:
             except (OSError, RuntimeError):
                 raise _LibraryFilenameConflict("Source locale non vérifiable") from None
             new=old.with_name(str(plan.facts.get("new_filename") or old.name))
+            # Old/restored plans must not change the reader filename convention.
+            _require_epub_filename_convention(old, new)
             if new != old:
                 # A stored artifact_id is not evidence that the bytes on
                 # disk are still those of the indexed book. Rehash the actual
