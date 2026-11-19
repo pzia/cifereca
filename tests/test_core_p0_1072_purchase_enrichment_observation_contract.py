@@ -6,7 +6,7 @@ import pytest
 from cifereca.plugin_api import (
     ProviderRightsScope, SourceReference, DownloadCapability,
     OptionalRightMetadata, ResourceObservation, ResourceSnapshot,
-    PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation,
+    PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation, PurchaseEnrichmentOmission,
 )
 
 AT = "2026-11-19T08:00:00+00:00"
@@ -73,3 +73,22 @@ def test_scope_timestamp_duplicate_and_unattested_purchase_are_refused():
     with pytest.raises(ValueError, match="unattested_purchase_enrichment_candidate"):
         PurchaseEnrichmentObservation(inactive, (candidate,))
     assert PurchaseEnrichmentObservation(inactive).candidates == ()
+
+
+def test_omission_requires_exact_positive_same_read_and_no_candidate_overlap():
+    snapshot, source = inventory()
+    omitted = PurchaseEnrichmentOmission(source, AT, "direct_locator_unattested")
+    report = PurchaseEnrichmentObservation(snapshot, omissions=(omitted,))
+    assert report.omissions == (omitted,) and report.candidates == ()
+    assert not omitted.authorizes_fetch and not report.authorizes_fetch
+    assert "credential" not in repr(omitted)
+    candidate = PurchaseEnrichmentCandidate(source, "https://catalog.example.org/book", "Title", AT)
+    for items in ((omitted, omitted),
+                  (replace(omitted, source=replace(source, edition_id="foreign")),),
+                  (replace(omitted, observed_at="2026-11-19T09:00:00+00:00"),)):
+        with pytest.raises(ValueError, match="unattested_purchase_enrichment_omission"):
+            PurchaseEnrichmentObservation(snapshot, omissions=items)
+    with pytest.raises(ValueError, match="unattested_purchase_enrichment_omission"):
+        PurchaseEnrichmentObservation(snapshot, (candidate,), omissions=(omitted,))
+    with pytest.raises(ValueError, match="invalid_purchase_enrichment_omission"):
+        replace(omitted, reason="https://private.example/?token=secret")
