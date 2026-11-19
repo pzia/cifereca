@@ -5,7 +5,7 @@ import pytest
 
 import cifereca_numilog_public_client as client
 from cifereca.plugin_api import ProviderError
-from cifereca.plugin_api.provider_purchase_enrichment import PurchaseEnrichmentDeferred
+from cifereca.plugin_api import PurchaseEnrichmentDeferred
 from tests.test_public_detail_transport_p0 import URL, AnonymousClient
 from tests.test_p0_1072_public_detail_freshness import session
 
