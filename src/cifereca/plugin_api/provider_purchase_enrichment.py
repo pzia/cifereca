@@ -15,6 +15,7 @@ from .provider_rights_observation import _timestamp
 
 PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT = "cifereca.provider.purchase-enrichment-observation/1"
 _MAX_CANDIDATES = 10_000
+_OMISSION_REASONS = frozenset(("direct_locator_unattested", "comparison_title_unattested", "candidate_unqualified"))
 MAX_PURCHASE_RETRY_SECONDS = 30 * 24 * 3600
 
 
@@ -83,6 +84,28 @@ class PurchaseEnrichmentCandidate:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class PurchaseEnrichmentOmission:
+    """Positive A was observed, but no qualified public candidate was emitted.
+
+    A closed reason, not a negative catalogue result, fetch grant or error.
+    No locator, title, tracking link or provider diagnostic is carried.
+    """
+    source: SourceReference
+    observed_at: str
+    reason: str
+
+    def __post_init__(self):
+        if (type(self.source) is not SourceReference or self.source.kind != "purchase"
+                or not _timestamp(self.observed_at) or type(self.reason) is not str
+                or self.reason not in _OMISSION_REASONS):
+            raise ValueError("invalid_purchase_enrichment_omission")
+
+    @property
+    def authorizes_fetch(self) -> bool:
+        return False
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class PurchaseEnrichmentObservation:
     """Independent candidates attached to exactly one native inventory report.
 
@@ -95,14 +118,17 @@ class PurchaseEnrichmentObservation:
     inventory: ResourceSnapshot
     candidates: tuple[PurchaseEnrichmentCandidate, ...] = ()
     schema_version: str = PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT
+    omissions: tuple[PurchaseEnrichmentOmission, ...] = ()
 
     def __post_init__(self):
         if (type(self.inventory) is not ResourceSnapshot
                 or self.schema_version != PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT
                 or type(self.candidates) is not tuple
-                or len(self.candidates) > _MAX_CANDIDATES
+                or type(self.omissions) is not tuple
+                or len(self.candidates) + len(self.omissions) > _MAX_CANDIDATES
                 or any(type(item) is not PurchaseEnrichmentCandidate for item in self.candidates)
-                or (self.candidates and self.inventory.status not in ("success", "partial"))):
+                or any(type(item) is not PurchaseEnrichmentOmission for item in self.omissions)
+                or ((self.candidates or self.omissions) and self.inventory.status not in ("success", "partial"))):
             raise ValueError("invalid_purchase_enrichment_observation")
         accepted = {}
         for resource in self.inventory.resources:
@@ -116,6 +142,11 @@ class PurchaseEnrichmentObservation:
                     or accepted.get(candidate.source) != candidate.observed_at):
                 raise ValueError("unattested_purchase_enrichment_candidate")
             seen.add(candidate.source)
+        for omission in self.omissions:
+            if (omission.source in seen
+                    or accepted.get(omission.source) != omission.observed_at):
+                raise ValueError("unattested_purchase_enrichment_omission")
+            seen.add(omission.source)
 
     @property
     def authorizes_fetch(self) -> bool:
@@ -124,6 +155,6 @@ class PurchaseEnrichmentObservation:
 
 __all__ = [
     "PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT",
-    "PurchaseEnrichmentCandidate", "PurchaseEnrichmentObservation",
+    "PurchaseEnrichmentCandidate", "PurchaseEnrichmentObservation", "PurchaseEnrichmentOmission",
     "PurchaseEnrichmentDeferred", "MAX_PURCHASE_RETRY_SECONDS",
 ]
