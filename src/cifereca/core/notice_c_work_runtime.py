@@ -99,11 +99,12 @@ class NoticeWorkRuntime:
     def recover_search_sources(self, sources, *, now):
         """Recover failed live C publication on the existing Search worker.
 
-        Normal publication and reconciliation run first. Only established,
-        still-dirty relations qualify; no GET or extra queue.
+        Normal publication and reconciliation run first. Established dirty
+        relations or a missing exact self-C qualify; no GET or extra queue.
         """
         from sqlite3 import Error as SQLiteError
         from .notice_c_work_requests import request_affected_public_recompute
+        from .notice_c_initial_publication import request_initial_publication
 
         if type(sources) is not tuple or not 1 <= len(sources) <= 32:
             raise ValueError("notice_work_invalid_repair_batch")
@@ -119,6 +120,11 @@ class NoticeWorkRuntime:
             except (ValueError, TypeError, OSError, SQLiteError):
                 continue
             requested += len(result.refs)
+            try:
+                first = request_initial_publication(self._storage, source, now=now)
+            except (ValueError, TypeError, OSError, SQLiteError):
+                continue
+            requested += int(first is not None)
         if requested:
             self.request_tick()
         return requested

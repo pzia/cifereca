@@ -13,6 +13,7 @@ import time
 
 from . import notice_c_job_journal as journal
 from . import notice_c_exact_recompute as exact
+from . import notice_c_initial_publication as initial
 from . import notice_c_origin_recompute as origin
 from . import notice_c_origin_relink as relink
 from .notice_c_work_bridge import AggregateWorkBridge, PreparedAggregate
@@ -22,6 +23,7 @@ from .notice_c_dispatch_rotation import PublicDispatchRotation, RotationPage
 
 _SUPPORTED = (
     ("recompute_aggregate", exact.IMPLEMENTATION_DIGEST),
+    ("recompute_aggregate", initial.IMPLEMENTATION_DIGEST),
     ("recompute_aggregate", origin.IMPLEMENTATION_DIGEST),
     ("relink_notices", relink.IMPLEMENTATION_DIGEST),
 )
@@ -95,6 +97,8 @@ class PublicNoticeWorkPump:
             raise ValueError("notice_recompute_unsupported_spec")
         if spec.implementation_digest == exact.IMPLEMENTATION_DIGEST:
             publish = exact.prepare_exact_public_recompute(self._storage, spec)
+        elif spec.implementation_digest == initial.IMPLEMENTATION_DIGEST:
+            publish = initial.prepare_initial_publication(self._storage, spec)
         elif spec.implementation_digest == origin.IMPLEMENTATION_DIGEST:
             publish = origin.prepare_origin_public_recompute(self._storage, spec)
         else:
