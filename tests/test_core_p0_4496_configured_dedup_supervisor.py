@@ -87,3 +87,26 @@ def test_revocation_after_durable_tombstone_leaves_explicit_recovery(rig, tmp_pa
     assert resumed.status == "retired" and resumed.removed_file
     assert paths[0].read_bytes() == paths[2].read_bytes() == BYTES
     assert not paths[1].exists()
+
+
+def test_revocation_between_reference_classes_stops_next_relink(rig, tmp_path, monkeypatch):
+    from cifereca.core import canonical_dedup_prepare as prepare
+    storage, _root, paths, pubs, _lock = rig
+    config = _config(tmp_path, True)
+    calls = []
+
+    def catalogue(*args, **kwargs):
+        calls.append("catalogue")
+        config.set(KEY, False)
+        return 0
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("later reference class invoked after revocation")
+
+    monkeypatch.setattr(prepare, "relink_canonical_duplicate_catalogue", catalogue)
+    monkeypatch.setattr(prepare, "relink_canonical_duplicate_backup_paths", forbidden)
+    monkeypatch.setattr(prepare, "relink_completed_delivery_checkpoints", forbidden)
+    assert _run(rig, config).reason == "ordinary_cleanup_suspended"
+    assert calls == ["catalogue"]
+    assert all(path.read_bytes() == BYTES for path in paths)
+    assert rows(storage) == (1, 3, 3, 3)
