@@ -12,12 +12,19 @@ from tests import test_core_ui_1358_maintenance_preview_cancellation as harness
 from tests.test_maintenance_cache_row_callbacks import execute, flush, mounted
 
 
-def duplicates():
-    return mounted("library.duplicates.cleanup", danger_level="destructive")
+def duplicates(tmp_path):
+    from cifereca.config import Config
+    from cifereca.core.destructive_cleanup_policy import DESTRUCTIVE_CLEANUP_KEY as KEY
+    result = mounted("library.duplicates.cleanup", danger_level="destructive")
+    config = Config(tmp_path / "duplicate-progress-config.json")
+    config.set(KEY, True)
+    config.save()
+    result.host.service.config = config
+    return result
 
 
-def test_duplicate_scan_is_indeterminate_and_requires_explicit_confirmation():
-    m = duplicates()
+def test_duplicate_scan_is_indeterminate_and_requires_explicit_confirmation(tmp_path):
+    m = duplicates(tmp_path)
     m.preview.click()
     flush(m)
     label, bars = m.status.children
@@ -33,8 +40,8 @@ def test_duplicate_scan_is_indeterminate_and_requires_explicit_confirmation():
     assert len(m.jobs) == 1
 
 
-def test_duplicate_run_reports_real_pairs_and_never_premature_100_percent():
-    m = duplicates()
+def test_duplicate_run_reports_real_pairs_and_never_premature_100_percent(tmp_path):
+    m = duplicates(tmp_path)
     args = execute(m)
     flush(m)
     label, bars = m.status.children
@@ -60,8 +67,8 @@ def test_duplicate_run_reports_real_pairs_and_never_premature_100_percent():
 @pytest.mark.parametrize("current,total", [
     (None, None), (0, 0), (True, 2), (-1, 2), (3, 2), (2, -2),
 ])
-def test_duplicate_scan_does_not_invent_counters(current, total):
-    m = duplicates()
+def test_duplicate_scan_does_not_invent_counters(current, total, tmp_path):
+    m = duplicates(tmp_path)
     execute(m)
     control = m.host._maintenance_line_rows[0][1]["control"]
     control.report(current=current, total=total, message="/PRIVATE")
@@ -72,8 +79,8 @@ def test_duplicate_scan_does_not_invent_counters(current, total):
     assert spinner.visible and not bar.visible
 
 
-def test_duplicate_partial_failure_is_persistent_not_false_success():
-    m = duplicates()
+def test_duplicate_partial_failure_is_persistent_not_false_success(tmp_path):
+    m = duplicates(tmp_path)
     args = execute(m)
     control = m.host._maintenance_line_rows[0][1]["control"]
     control.report(current=2, total=2)
@@ -87,8 +94,8 @@ def test_duplicate_partial_failure_is_persistent_not_false_success():
     assert m.activity[-1][1]["persistent"] is True
 
 
-def test_duplicate_cancel_never_launders_late_worker_success():
-    m = duplicates()
+def test_duplicate_cancel_never_launders_late_worker_success(tmp_path):
+    m = duplicates(tmp_path)
     args = execute(m)
     m.cancel.click()
     args[2](NS(ok=True, summary="stale"))
@@ -97,8 +104,8 @@ def test_duplicate_cancel_never_launders_late_worker_success():
     assert m.activity == []
 
 
-def test_duplicate_refresh_disposes_line_and_cancels_old_worker():
-    m = duplicates()
+def test_duplicate_refresh_disposes_line_and_cancels_old_worker(tmp_path):
+    m = duplicates(tmp_path)
     args = execute(m)
     control = m.host._maintenance_line_rows[0][1]["control"]
     m.refresh()
@@ -109,9 +116,9 @@ def test_duplicate_refresh_disposes_line_and_cancels_old_worker():
     assert m.errors == []
 
 
-def test_duplicate_changed_identity_or_closed_window_never_reopens_dialog():
+def test_duplicate_changed_identity_or_closed_window_never_reopens_dialog(tmp_path):
     for variant in ("identity", "close"):
-        m = duplicates()
+        m = duplicates(tmp_path)
         m.preview.click()
         args = m.jobs[-1][0]
         plan = args[1]()
@@ -127,8 +134,8 @@ def test_duplicate_changed_identity_or_closed_window_never_reopens_dialog():
     ("preview", "Analyse des doublons impossible."),
     ("run", "Nettoyage des doublons impossible."),
 ])
-def test_duplicate_worker_redacts_private_errors_at_task_boundary(stage, expected):
-    m = duplicates()
+def test_duplicate_worker_redacts_private_errors_at_task_boundary(stage, expected, tmp_path):
+    m = duplicates(tmp_path)
     def poisoned(*_args):
         raise ValueError("https://private.invalid/?token=SECRET private-placement")
     if stage == "preview":
@@ -145,8 +152,8 @@ def test_duplicate_worker_redacts_private_errors_at_task_boundary(stage, expecte
     assert "SECRET" not in str(error.value)
 
 
-def test_duplicate_busy_lock_is_reported_without_private_backend_details():
-    m = duplicates()
+def test_duplicate_busy_lock_is_reported_without_private_backend_details(tmp_path):
+    m = duplicates(tmp_path)
     m.preview.click()
     args = m.jobs[-1][0]
     args[3](guard.MaintenanceBusyError("/PRIVATE/lock/path"))

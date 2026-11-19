@@ -221,3 +221,36 @@ def test_preview_non_cancelled_still_returns_original_plan(tmp_path, monkeypatch
         assert plan == tool.preview
         if destructive:
             assert plan is not tool.preview
+
+
+def test_cleanup_confirmation_cannot_survive_false_true_aba(tmp_path, monkeypatch):
+    from cifereca.config import Config
+    from cifereca.core.destructive_cleanup_policy import DESTRUCTIVE_CLEANUP_KEY as KEY
+    monkeypatch.setattr(guard, "acquisition_lock_file", lambda: tmp_path / "guard.lock")
+    cfg = Config(tmp_path / "config.json")
+    cfg.set(KEY, True)
+    tool = Tool()
+    review = guard.CleanupReviewGuard(lambda: cfg)
+    plan = guard.preview_maintenance_tool(tool, object(), destructive=True, review_guard=review)
+    cfg.set(KEY, False)
+    cfg.set(KEY, True)
+    with pytest.raises(guard.MaintenancePlanChangedError):
+        guard.execute_maintenance_tool(tool, object(), plan, Control(), destructive=True, review_guard=review)
+    assert tool.plan_calls == 1
+    assert tool.run_calls == 0
+    fresh = guard.CleanupReviewGuard(lambda: cfg)
+    plan = guard.preview_maintenance_tool(tool, object(), destructive=True, review_guard=fresh)
+    assert guard.execute_maintenance_tool(tool, object(), plan, Control(), destructive=True, review_guard=fresh)["ok"]
+
+
+def test_cleanup_preview_while_disabled_stays_read_only(tmp_path, monkeypatch):
+    from cifereca.config import Config
+    monkeypatch.setattr(guard, "acquisition_lock_file", lambda: tmp_path / "guard.lock")
+    cfg = Config(tmp_path / "config.json")
+    tool = Tool()
+    review = guard.CleanupReviewGuard(lambda: cfg)
+    plan = guard.preview_maintenance_tool(tool, object(), destructive=True, review_guard=review)
+    assert tool.plan_calls == 1
+    with pytest.raises(guard.MaintenancePlanChangedError):
+        guard.execute_maintenance_tool(tool, object(), plan, Control(), destructive=True, review_guard=review)
+    assert tool.run_calls == 0
