@@ -79,6 +79,7 @@ def local_book_detail_sections(
     sync_status_label: Callable[[str], str],
     language_label: Callable[[object], str],
     offline_if_local: bool = False,
+    purchase_notice=None,
 ) -> list[tuple[str, list[tuple[str, str]]]]:
     """Return the same ordered, source-attested facts for Search and Library.
 
@@ -96,7 +97,7 @@ def local_book_detail_sections(
     if sync_label == "À jour":
         sync_label = ""
 
-    return [
+    sections = [
         ("Essentiel", [
             ("Source", provider_display_name(provider)),
             ("Format", str(item.get("media_format") or "").upper()),
@@ -108,3 +109,13 @@ def local_book_detail_sections(
             identity_by_id=identity_by_id, sync_label=sync_label,
         )),
     ]
+    if purchase_notice is not None:
+        from ..core.notice_c_purchase_library_projection import purchase_library_notice
+        if purchase_library_notice(item) == purchase_notice:
+            labels = {"title": "Titre", "author": "Auteur", "publisher": "Éditeur",
+                      "description": "Résumé", "published_at": "Parution"}
+            sections.append(("Fiche du catalogue public", [
+                (labels[fact.field], fact.value) for fact in purchase_notice.notice.facts
+                if fact.field in labels
+            ]))
+    return sections
