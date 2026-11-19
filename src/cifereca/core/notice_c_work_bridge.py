@@ -15,6 +15,7 @@ import sqlite3
 import time
 
 from cifereca.plugin_api import Cancelled
+from ..plugin_api.provider_purchase_enrichment import PurchaseEnrichmentDeferred
 from ..task_runtime import TaskBrokerImpl
 from ..task_queue import TaskPriority
 from ..task_admission import SharedTaskAdmission
@@ -135,10 +136,11 @@ class AggregateWorkBridge:
         with self._lock:
             self._inflight.discard(ref)
 
-    def _fail(self, lease, *, transient):
+    def _fail(self, lease, *, transient, retry_after_seconds=None):
         try:
             receipt = journal.fail_job(
                 self._storage, lease, now=self._clock(), transient=transient,
+                **({"retry_after_seconds": retry_after_seconds} if retry_after_seconds is not None else {}),
             )
         except ValueError:
             # Replaced generation, lost lease or dependency: never mutate
@@ -216,6 +218,17 @@ class AggregateWorkBridge:
                 return "current"
             self._fail(lease, transient=not fetch)
             raise
+        except PurchaseEnrichmentDeferred as exc:
+            if committed:
+                return "current"
+            if purchase and type(exc) is PurchaseEnrichmentDeferred:
+                # Reconstruct to validate even a mutated plugin exception.
+                try:
+                    deferred = PurchaseEnrichmentDeferred(exc.reason, exc.retry_after_seconds)
+                except (AttributeError, ValueError):
+                    return self._fail(lease, transient=False)
+                return self._fail(lease, transient=True, retry_after_seconds=deferred.retry_after_seconds)
+            return self._fail(lease, transient=False)
         except UnavailableNoticeWork:
             return "current" if committed else self._fail(lease, transient=False)
         except (RetryableNoticeWork, sqlite3.OperationalError):
