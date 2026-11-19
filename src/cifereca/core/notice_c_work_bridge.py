@@ -62,7 +62,8 @@ class AggregateWorkBridge:
     """
 
     def __init__(self, storage, broker, prepare, *, clock=None, on_committed=None,
-                 allow_reparse=False, allow_relink=False, prepare_fetch=None):
+                 allow_reparse=False, allow_relink=False, prepare_fetch=None,
+                 claim_purchase=None, prepare_purchase=None):
         if (type(broker) is not TaskBrokerImpl
                 or not isinstance(broker.shared_admission, SharedTaskAdmission)
                 or broker.shared_admission.reserve_user_slots < 1):
@@ -75,6 +76,12 @@ class AggregateWorkBridge:
             raise ValueError("notice_work_invalid_port")
         if prepare_fetch is not None and not callable(prepare_fetch):
             raise ValueError("notice_work_invalid_port")
+        if ((claim_purchase is None) != (prepare_purchase is None)
+                or (claim_purchase is not None and (
+                    not callable(claim_purchase) or not callable(prepare_purchase)))):
+            raise ValueError("notice_work_invalid_purchase_port")
+        self._claim_purchase = claim_purchase
+        self._prepare_purchase = prepare_purchase
         self._prepare_fetch = prepare_fetch
         self._allow_reparse = allow_reparse
         self._allow_relink = allow_relink
@@ -145,7 +152,10 @@ class AggregateWorkBridge:
         control.check_cancelled()
         try:
             job = journal.read_job(self._storage, ref)
-            if (job.spec.kind != "recompute_aggregate"
+            purchase = job.spec.implementation_digest == journal._PURCHASE_INTENT_DIGEST
+            if purchase and self._claim_purchase is None:
+                return "unsupported"
+            if (not purchase and job.spec.kind != "recompute_aggregate"
                     and not (self._allow_reparse and job.spec.kind == "reparse_cached_input")
                     and not (self._allow_relink and job.spec.kind == "relink_notices")
                     and not (self._prepare_fetch is not None
@@ -153,9 +163,10 @@ class AggregateWorkBridge:
                 return "unsupported"
             if job.state != "pending":
                 return "not_ready"
-            lease = journal.claim_job(
-                self._storage, ref, now=self._clock(), lease_seconds=_LEASE_SECONDS,
-            )
+            lease = (self._claim_purchase(ref, now=self._clock(), lease_seconds=_LEASE_SECONDS)
+                     if purchase else journal.claim_job(
+                         self._storage, ref, now=self._clock(), lease_seconds=_LEASE_SECONDS,
+                     ))
         except ValueError:
             return "obsolete"
         if lease is None:
@@ -164,8 +175,11 @@ class AggregateWorkBridge:
         fetch = job.spec.kind == "fetch_source_notice"
         try:
             control.check_cancelled()
-            prepared = (self._prepare_fetch(job.spec, lease, control) if fetch
-                        else self._prepare(job.spec, control))
+            if purchase:
+                prepared = self._prepare_purchase(job.spec, lease, control)
+            else:
+                prepared = (self._prepare_fetch(job.spec, lease, control) if fetch
+                            else self._prepare(job.spec, control))
             aggregate = job.spec.kind in ("recompute_aggregate", "relink_notices")
             expected = PreparedAggregate if aggregate else PreparedSource
             if (type(prepared) is not expected or not callable(prepared.publish)
