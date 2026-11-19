@@ -40,7 +40,10 @@ def _text(value: object, *, required: bool = False, limit: int = 8192) -> bool:
 _PRIVATE_BIBLIOGRAPHIC_PATTERN = re.compile(
     r"(?i)(?:https?://|(?<!\w)(?:bearer|basic)\s+\S+|"
     r"(?<!\w)(?:token|auth|cookie|signature|access_token|refresh_token)\s*=|"
-    r"[^\s@]+@[^\s@]+\.[^\s@]+)"
+    # An email candidate starts at its whitespace/@ token boundary. Without
+    # it, each position retries the long local part: quadratic on labels
+    # containing no @, or an incomplete address. Rejection stays identical.
+    r"(?<![^\s@])[^\s@]+@[^\s@]+\.[^\s@]+)"
 )
 
 

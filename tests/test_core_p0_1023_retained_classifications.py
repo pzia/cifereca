@@ -116,6 +116,21 @@ def test_closed_classification_shape_rejects_rights_and_untyped_wire_values():
     assert proof.wire() == {"subjects": ["Roman"]}
 
 
+@pytest.mark.parametrize("value,accepted", [
+    ("x" * 7000, True), ("x" * 7000 + "@", True),
+    ("x" * 7000 + "@domain", True),
+    ("x" * 7000 + "@example.test", False),
+    ("Sujet author@example.test suite", False),
+    ("Sujet (author@example.test)", False),
+    ("other@author@example.test", False),
+    ("@domain.test", True), ("author@domain.", True),
+    ("Roman documentaire", True),
+])
+def test_long_scalar_admission_keeps_existing_token_boundary_policy(value, accepted):
+    from cifereca.core.public_search_projection import _public_bibliographic_text
+    assert _public_bibliographic_text(value) is accepted
+
+
 def test_corrupt_retained_classification_is_refused_not_relabelled(tmp_path):
     db = Storage(tmp_path / "corrupt.sqlite")
     try:
