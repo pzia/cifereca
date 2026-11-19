@@ -5201,6 +5201,19 @@ class LibraryService:
                         trace_ref=trace_ref, expected_loan_id=expected_loan_id,
                         raw_code="adept_borrower_ambiguous", _TRACE_LOG=_TRACE_LOG,
                     )
+            def completion_scope_refusal():
+                # Preserve the old transaction's ACSM attention fence and all
+                # local bytes; no new grant and no cleanup on revocation.
+                if retained_acsm is not None:
+                    return loan_adept_profile_guard.refuse_staged_source(
+                        self, ledger_base=ledger_base, previous_meta=previous_meta,
+                        retained_acsm=retained_acsm, trace_ref=trace_ref,
+                        expected_loan_id=expected_loan_id,
+                        raw_code="adept_borrower_ambiguous", _TRACE_LOG=_TRACE_LOG,
+                    )
+                return source_epoch_refusal()
+            if not source_lease.current(self.storage, loan):
+                return completion_scope_refusal()
             final_inspection, scan = loan_provider_delivery.index_local_loan_artifact(
                 self, loan, identity, final_path,
                 time=time, _TRACE_LOG=_TRACE_LOG,
@@ -5209,18 +5222,25 @@ class LibraryService:
             )
             # Receipt payload is now a pure projection; retain the storage
             # write, cleanup, diagnostics and response in the original order.
-            self.storage.acquisition_put(
-                loan_completion_receipt.completed_receipt(
-                    ledger_base=ledger_base, scan=scan,
-                    acquisition_kind=acquisition.kind, final_path=final_path,
-                    loan=loan, force_refresh=force_refresh, decision=decision,
-                    previous_path=previous_path,
-                    adept_binding=adept_binding if acquisition.kind == "acsm" else None,
-                    artifact_drm=artifact_drm, artifact_format=artifact_format,
-                    artifact_protected=artifact_protected,
-                    hook_info=hook_info, final_inspection=final_inspection,
-                )
+            if not source_lease.current(self.storage, loan):
+                return completion_scope_refusal()
+            receipt = loan_completion_receipt.completed_receipt(
+                ledger_base=ledger_base, scan=scan,
+                acquisition_kind=acquisition.kind, final_path=final_path,
+                loan=loan, force_refresh=force_refresh, decision=decision,
+                previous_path=previous_path,
+                adept_binding=adept_binding if acquisition.kind == "acsm" else None,
+                artifact_drm=artifact_drm, artifact_format=artifact_format,
+                artifact_protected=artifact_protected,
+                hook_info=hook_info, final_inspection=final_inspection,
             )
+            if not source_lease.current(self.storage, loan):
+                return completion_scope_refusal()
+            self.storage.acquisition_put(receipt)
+            if not source_lease.current(self.storage, loan):
+                # The historical write may already have committed. Do not
+                # report success or cleanup after detecting revoked scope.
+                return completion_scope_refusal()
             if acquisition.kind == "acsm":
                 # The repaired previous artifact is still needed when
                 # indexing or the completed SQLite ledger write fails.
