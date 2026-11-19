@@ -53,6 +53,38 @@ def read_public_detail_txn(db, provider, candidate, *, now):
         return None
 
 
+def _reclaim_expired_public_details_txn(db, *, now):
+    """Free only expired public receipt slots, never a C/source or association.
+
+    Called only under capacity pressure inside the existing write transaction.
+    A malformed or future-dated receipt is not evidence of expiration.
+    """
+    reclaimed = 0
+    rows = db.execute(
+        "SELECT key,value FROM metadata WHERE key>=? AND key<? ORDER BY key LIMIT ?",
+        (_PREFIX, _PREFIX + "\uffff", _MAX),
+    ).fetchall()
+    for key, raw in rows:
+        if not journal._digest(key.removeprefix(_PREFIX)):
+            continue
+        try:
+            if type(raw) is not str or len(raw) > 1024:
+                continue
+            value = json.loads(raw, object_pairs_hook=journal._unique)
+            observed_at = value["observed_at"]
+            if (type(value) is not dict
+                    or not journal._integer(observed_at, minimum=1)
+                    or now - observed_at < _DETAIL_TTL_SECONDS):
+                continue
+        except (ValueError, TypeError, KeyError, RecursionError):
+            continue
+        db.execute("DELETE FROM metadata WHERE key=? AND value=?", (key, raw))
+        reclaimed += 1
+        if reclaimed >= 64:
+            break
+    return reclaimed
+
+
 def remember_public_detail_txn(db, provider, candidate, publication, observation):
     # Only an actual qualified detail observation identical to the retained
     # source can be reused. A richer/different retained listing is not proof
@@ -67,7 +99,11 @@ def remember_public_detail_txn(db, provider, candidate, publication, observation
         count = db.execute("SELECT count(*) FROM metadata WHERE key>=? AND key<?",
                            (_PREFIX, _PREFIX + "\uffff")).fetchone()[0]
         if count >= _MAX:
-            return
+            reclaimed = _reclaim_expired_public_details_txn(
+                db, now=observation.observed_at,
+            )
+            if count - reclaimed >= _MAX:
+                return
     value = {"source": publication.source.document.source_key.removeprefix("notice-c:v1:"),
              "epoch": publication.source.epoch, "revision": observation.source_revision,
              "observed_at": observation.observed_at}
