@@ -3,7 +3,8 @@
 Only trusted Core producers may request work. A digest is a coordinate,
 not an access grant. No provider calls, parser, GTK, timer or worker here.
 Use the existing Storage transaction for the eventual canonical publication.
-Private/session-bound work is deliberately not admitted in this first slice.
+Private purchase-enrichment intents have a reserved opaque target and no
+execution authority. They are not public source targets or dependencies.
 """
 from __future__ import annotations
 
@@ -26,6 +27,8 @@ _MAX_ATTEMPTS = 3
 _MAX_LEASE = 300
 _INITIAL_PUBLIC_C_DIGEST = sha256(b"core.initial-public-c-publication.v1").hexdigest()
 _INITIAL_GROUP_C_DIGEST = sha256(b"core.initial-origin-group-publication.v1").hexdigest()
+_PURCHASE_INTENT_DIGEST = sha256(b"core.purchase-enrichment-intent.v1").hexdigest()
+_PURCHASE_TARGET = "notice-c:purchase-enrichment:v1:"
 _KINDS = {
     "fetch_source_notice": 0,
     "reparse_cached_input": 1,
@@ -114,6 +117,13 @@ def _check_spec(spec):
             or type(spec.dependencies) is not tuple
             or len(spec.dependencies) > _MAX_DEPS):
         raise ValueError("notice_work_invalid_spec")
+    if spec.implementation_digest == _PURCHASE_INTENT_DIGEST:
+        if (spec.kind != "fetch_source_notice" or spec.dependencies
+                or spec.source_ref is not None
+                or not spec.target.startswith(_PURCHASE_TARGET)
+                or not _digest(spec.target[len(_PURCHASE_TARGET):])):
+            raise ValueError("notice_work_invalid_purchase_intent")
+        return
     prefix = ("notice-c:canonical-cover:v1:"
               if spec.kind in ("relink_notices", "recompute_aggregate")
               else "notice-c:v1:")
@@ -237,6 +247,7 @@ def _dependency_status(db, spec, *, memo=None):
             memo[ref] = _load(db, ref.key)
         dep = memo[ref]
         if (dep is None or dep.ref != ref
+                or dep.spec.implementation_digest == _PURCHASE_INTENT_DIGEST
                 or _KINDS[dep.spec.kind] >= _KINDS[spec.kind]
                 or dep.state in ("stale", "error")):
             return "stale"
@@ -328,6 +339,9 @@ def claim_job(storage, ref, *, now, lease_seconds):
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         job = _get(db, ref)
+        if job.spec.implementation_digest == _PURCHASE_INTENT_DIGEST:
+            # Inert until a qualified private-to-public dispatch port exists.
+            return None
         status = _dependency_status(db, job.spec)
         if status == "stale":
             _save(db, replace(job, state="stale", reason="dependency_changed",
@@ -461,6 +475,9 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
             try:
                 job = _load(db, key)
                 if job is None:
+                    continue
+                if (supported is None and job.spec.implementation_digest == _PURCHASE_INTENT_DIGEST):
+                    # No generic discovery of private intent as public work.
                     continue
                 if (supported is not None and
                         (job.spec.kind, job.spec.implementation_digest) not in supported):
