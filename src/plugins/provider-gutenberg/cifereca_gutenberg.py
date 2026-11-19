@@ -381,6 +381,25 @@ class GutenbergSession(ProviderSession):
             entry_published = _attested_atom_timestamp(self._text(entry.find(f"{{{ATOM}}}published")))
             entry_updated = _attested_atom_timestamp(self._text(entry.find(f"{{{ATOM}}}updated")))
             language = normalize_language_tag(self._text(entry.find(f"{{{DCTERMS}}}language")))
+            # Preserve the legacy scalar for existing local filters. Strong
+            # evidence requires the entire selected entry declaration.
+            language_nodes = entry.findall(f"{{{DCTERMS}}}language")
+            language_proof = None
+            if 1 <= len(language_nodes) <= 16:
+                raw_tags = [(node.text or "").strip() for node in language_nodes]
+                if all(not len(node) and not node.attrib
+                       and len(tag) <= 128
+                       and re.fullmatch(r"[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,8}", tag)
+                       and normalize_language_tag(tag)
+                       for node, tag in zip(language_nodes, raw_tags)):
+                    language_proof = {
+                        "languages": list(dict.fromkeys(normalize_language_tag(tag) for tag in raw_tags)),
+                        "bibliography_evidence": {"languages": {
+                            "raw_tags": raw_tags, "source": self.provider_id + ".opds",
+                            "source_field": "dcterms.language", "scope": "OPDS",
+                            "confidence": "explicit_record_field", "freshness": "search_response",
+                        }},
+                    }
             rights = self._text(entry.find(f"{{{ATOM}}}rights"))
             categories = [
                 (html.unescape(str(category.attrib.get("term") or "").strip()), str(category.attrib.get("scheme") or ""))
@@ -465,6 +484,7 @@ class GutenbergSession(ProviderSession):
                 "opds_entry_published": entry_published,
                 "opds_entry_updated": entry_updated,
                 "language": language,
+                "language_proof": language_proof,
                 "rights": rights,
                 "subjects": subjects,
                 "bookshelves": bookshelves,
@@ -518,6 +538,9 @@ class GutenbergSession(ProviderSession):
                 downloadable=True,
                 metadata={
                     "language": row["language"],
+                    # Never borrow language evidence from a sibling edition
+                    # (including the sibling used for a missing thumbnail).
+                    **(row["language_proof"] or {}),
                     "rights": row["rights"],
                     # Keep provenance distinct and never fabricate a print
                     # edition's year from the Atom feed update timestamp.
