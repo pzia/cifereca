@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from copy import deepcopy
 from types import SimpleNamespace
+import pytest
 from cifereca.core.notice_c_purchase_library_projection import project_purchase_library_notices, purchase_library_notice
 from cifereca.gui.library_rows import project_library_rows
 from cifereca.gui.local_book_detail_sections import local_book_detail_sections
@@ -23,7 +24,8 @@ def allowed():
     yield True
 
 
-def test_public_descriptive_facts_keep_source_provenance_not_association_time(tmp_path):
+@pytest.mark.parametrize("extended", (False, True))
+def test_public_descriptive_facts_keep_source_provenance_not_association_time(tmp_path, extended):
     path = tmp_path / "description.sqlite"
     db = Storage(path)
     execution = PurchaseIntentExecution(db, clock=lambda: 100)
@@ -37,10 +39,23 @@ def test_public_descriptive_facts_keep_source_provenance_not_association_time(tm
         lease = execution.claim(ref, now=100, lease_seconds=30)
         assert lease is not None
         spec = journal.read_job(db, ref).spec
+        metadata = None
+        if extended:
+            metadata = {"languages": ["fr"], "genres": ["Policier"],
+                        "keywords": ["enquête, mer"], "series": ["Série attestée"],
+                        "bibliography_evidence": {
+                            "languages": {"raw_tags": ["fra"], "source": "seller-a.fixture",
+                                          "source_field": "dc.language", "scope": "search",
+                                          "confidence": "explicit_record_field", "freshness": "search_response"},
+                            "series": {"source": "seller-a.fixture", "source_field": "Search.series",
+                                       "scope": "search", "confidence": "linked_search_relation",
+                                       "freshness": "search_response"},
+                        }}
         with db._lock, db._connect() as sql:
             sql.execute("BEGIN IMMEDIATE")
             published = publish_purchase_public_txn(
-                sql, spec, snapshot, candidate, observation(candidate, at=98), now=100,
+                sql, spec, snapshot, candidate,
+                observation(candidate, at=98, bibliography_metadata=metadata), now=100,
             )
             record_purchase_association_txn(
                 sql, lease, snapshot, candidate, published, observed_at=99, now=100,
@@ -61,7 +76,11 @@ def test_public_descriptive_facts_keep_source_provenance_not_association_time(tm
         assert not result.proves_acquired_edition and not result.authorizes_acquisition
         facts = {f.field: f.value for f in result.facts}
         assert facts["title"] == candidate.title and facts["description"] == "Résumé public"
-        assert set(facts) <= {"title", "author", "publisher", "description", "published_at"}
+        basic = {"title", "author", "publisher", "description", "published_at"}
+        additions = {"languages": "fr", "genres": "Policier", "keywords": "enquête, mer",
+                     "series": "Série attestée"} if extended else {}
+        assert set(facts) - basic == set(additions)
+        assert all(facts[key] == value for key, value in additions.items())
         assert all(f.observed_at == 98 and f.provider_id == "seller-a"
                    and f.source_ref == published.source.document.source_key
                    and f.source_revision == published.source.observation.source_revision
@@ -105,6 +124,11 @@ def test_public_descriptive_facts_keep_source_provenance_not_association_time(tm
         name, values = detail(packet)[-1]
         assert name == "Fiche du catalogue public"
         assert ("Résumé", "Résumé public") in values
+        if extended:
+            assert ("Langues déclarées", "fr") in values
+            assert ("Genres", "Policier") in values
+            assert ("Mots-clés", "enquête, mer") in values
+            assert ("Série", "Série attestée") in values
         provenance, = [value for label, value in values if label == "Provenance"]
         assert "seller-a · 01/01/1970 00:01:38 UTC" in provenance
         assert "Résumé" in provenance and "Titre" in provenance
