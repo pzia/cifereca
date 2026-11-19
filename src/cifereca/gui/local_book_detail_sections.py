@@ -80,6 +80,7 @@ def local_book_detail_sections(
     language_label: Callable[[object], str],
     offline_if_local: bool = False,
     purchase_notice=None,
+    purchase_status=None,
 ) -> list[tuple[str, list[tuple[str, str]]]]:
     """Return the same ordered, source-attested facts for Search and Library.
 
@@ -118,4 +119,8 @@ def local_book_detail_sections(
                 (labels[fact.field], fact.value) for fact in purchase_notice.notice.facts
                 if fact.field in labels
             ]))
+    if purchase_status is not None:
+        from ..core.notice_c_purchase_library_projection import purchase_library_status, purchase_status_label
+        if purchase_library_status(item) == purchase_status:
+            sections.append(("Enrichissement documentaire", [("État", purchase_status_label(purchase_status))]))
     return sections
