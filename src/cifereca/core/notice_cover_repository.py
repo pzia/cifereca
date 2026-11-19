@@ -474,6 +474,12 @@ def persist_notice_cover(
 _BATCH_LIMIT = 128
 
 
+class _ChunkSourcesRefused(ValueError):
+    def __init__(self, retry_positions):
+        super().__init__("notice_c_chunk_sources_refused")
+        self.retry_positions = retry_positions
+
+
 def persist_notice_cover_many(
     storage: Any, observations: list[NoticeSourceObservation], *,
     field_path: tuple[str, ...],
@@ -487,8 +493,10 @@ def persist_notice_cover_many(
     has a SAVEPOINT so the old single-source rejection semantics survive,
     while only one BEGIN/commit and SQLite connection is used per 128 rows.
     The private chunk callback receives only accepted row snapshots, before
-    commit. If its publication/repair fails, roll back that chunk, return no
-    receipts for it and continue independent later chunks.
+    commit. A closed list of refused accepted row positions permits one
+    rollback and local replay of only the other accepted rows; generic
+    failures roll back the chunk without salvage. Return receipts only
+    after commit, and continue independent later chunks.
     Source keys and bytes are never logged. An absent image is still UNKNOWN.
     This never grants rights, downloads images, or copies N3 media.
     """
@@ -511,46 +519,64 @@ def persist_notice_cover_many(
                 RecursionError):
             prepared.append(None)
 
+    def write_chunk(positions):
+        accepted = {}
+        with storage._lock, storage._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for position in positions:
+                observation, attribute, key = prepared[position]
+                db.execute("SAVEPOINT notice_c_batch_row")
+                try:
+                    published = _persist_notice_cover_txn(
+                        db, observation, attribute, key, field_path,
+                        cover_inventory_complete, None,
+                    )
+                    if published is not None and _after_persist is not None:
+                        _after_persist(db, published, position)
+                    if published is not None:
+                        accepted[position] = published
+                except (ValueError, TypeError, UnicodeError, OverflowError,
+                        RecursionError, sqlite3.Error):
+                    db.execute("ROLLBACK TO SAVEPOINT notice_c_batch_row")
+                finally:
+                    db.execute("RELEASE SAVEPOINT notice_c_batch_row")
+            if _before_chunk_commit is not None:
+                rejected = _before_chunk_commit(db, tuple(accepted.items()))
+                if rejected is not None:
+                    if (type(rejected) is not tuple
+                            or any(type(p) is not int or p not in accepted for p in rejected)
+                            or len(set(rejected)) != len(rejected)):
+                        raise ValueError("notice_c_chunk_invalid_refusal")
+                    if rejected:
+                        raise _ChunkSourcesRefused(
+                            tuple(p for p in accepted if p not in rejected),
+                        )
+        return accepted
+
     results: list[PersistedNoticeCover | None] = [None] * len(prepared)
     for offset in range(0, len(prepared), _BATCH_LIMIT):
-        chunk = prepared[offset:offset + _BATCH_LIMIT]
-        if not any(item is not None for item in chunk):
+        positions = tuple(p for p in range(offset, min(offset + _BATCH_LIMIT, len(prepared)))
+                          if prepared[p] is not None)
+        if not positions:
             continue
-        try:
-            with storage._lock, storage._connect() as db:
-                db.execute("BEGIN IMMEDIATE")
-                for position, item in enumerate(chunk, offset):
-                    if item is None:
-                        continue
-                    observation, attribute, key = item
-                    db.execute("SAVEPOINT notice_c_batch_row")
-                    try:
-                        published = _persist_notice_cover_txn(
-                            db, observation, attribute, key, field_path,
-                            cover_inventory_complete, None,
-                        )
-                        # Private Core composition hook: canonical publication or
-                        # its durable repair must commit with the admitted source.
-                        if published is not None and _after_persist is not None:
-                            _after_persist(db, published, position)
-                        results[position] = published
-                    except (ValueError, TypeError, UnicodeError, OverflowError,
-                            RecursionError, sqlite3.Error):
-                        db.execute("ROLLBACK TO SAVEPOINT notice_c_batch_row")
-                    finally:
-                        db.execute("RELEASE SAVEPOINT notice_c_batch_row")
-                if _before_chunk_commit is not None:
-                    accepted = tuple((position, results[position])
-                                     for position in range(offset, offset + len(chunk))
-                                     if results[position] is not None)
-                    _before_chunk_commit(db, accepted)
-        except (ValueError, TypeError, UnicodeError, OverflowError,
-                RecursionError, OSError, sqlite3.Error):
-            if _before_chunk_commit is None:
-                raise
-            # The connection context has rolled back source rows, fences,
-            # canonical writes and journal generations together.
-            results[offset:offset + len(chunk)] = [None] * len(chunk)
+        # At most two local write attempts, both with a complete new SQLite
+        # snapshot; never split an admitted group or publish a partial intent.
+        for attempt in range(2):
+            try:
+                accepted = write_chunk(positions)
+            except _ChunkSourcesRefused as refused:
+                if attempt or not refused.retry_positions:
+                    break
+                positions = refused.retry_positions
+                continue
+            except (ValueError, TypeError, UnicodeError, OverflowError,
+                    RecursionError, OSError, sqlite3.Error):
+                if _before_chunk_commit is None:
+                    raise
+                break
+            for position, published in accepted.items():
+                results[position] = published
+            break
     return results
 
 
