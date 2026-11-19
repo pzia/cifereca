@@ -82,6 +82,10 @@ def prepare_exact_public_recompute(storage, spec):
             db, document, expected_digest=spec.input_digest,
         )
         source = _exact_member(current)
+        from .notice_c_origin_relink import (
+            capture_pending_self_relink_txn, refresh_pending_self_relink_txn,
+        )
+        pending_relink = capture_pending_self_relink_txn(db, source)
         published = _persist_exact_public_search_cover_txn(
             db, source, expected_epoch=current.canonical.epoch,
         )
@@ -89,6 +93,7 @@ def prepare_exact_public_recompute(storage, spec):
                 or published.sources[0].source_epoch != source.epoch
                 or published.sources[0].public_bibliography is None):
             raise ValueError("notice_recompute_invalid_publication")
+        refresh_pending_self_relink_txn(db, pending_relink)
         return True
 
     return publish
