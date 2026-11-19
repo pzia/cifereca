@@ -72,12 +72,19 @@ def prepare_purchase_public_observation(response, session, candidate, *, observe
     return observation
 
 
-def _association(source, candidate):
-    fields = source.observation.fields_copy()["search_result"]
+def _association(observation, candidate):
+    from .search_orchestration import _is_public_web_evidence, _public_catalog_url
+    fields = observation.fields_copy()["search_result"]
     bio = fields["public_bibliography"]
     links = fields.get("public_web_references", {}).get("links", ())
-    return (_title_key(bio["title"]) == _title_key(candidate.title)
-            and any(link.get("url") == candidate.public_locator for link in links))
+    provider = observation.key.provider_id
+    return (_title_key(bio["title"]) is not None
+            and _title_key(bio["title"]) == _title_key(candidate.title)
+            and any(link.get("url") == candidate.public_locator
+                    and _is_public_web_evidence(link.get("evidence"), provider)
+                    and _public_catalog_url(link["url"], evidence=link["evidence"],
+                                            provider_id=provider) == link["url"]
+                    for link in links))
 
 
 def publish_purchase_public_txn(db, spec, snapshot, candidate, observation, *, now):
@@ -98,7 +105,8 @@ def publish_purchase_public_txn(db, spec, snapshot, candidate, observation, *, n
             or _spec_txn(db, snapshot, candidate) != spec
             or observation.key.visibility != "public"
             or observation.parser_id != "core.search.public-cover"
-            or observation.parser_version != "2"):
+            or observation.parser_version != "2"
+            or not _association(observation, candidate)):
         raise ValueError("notice_purchase_publication_changed")
     field = ("search_result", "thumbnail_url")
     attr = project_notice_cover_attribute(
@@ -122,7 +130,7 @@ def publish_purchase_public_txn(db, spec, snapshot, candidate, observation, *, n
     # and exact coordinates before any repair request is recorded.
     raw, live, _fence = _checked_source_state(db, attr.document, key)
     if (live != source or _public_observation(raw[0], key_string=key, now=now) is None
-            or not _association(source, candidate)):
+            or not _association(source.observation, candidate)):
         raise ValueError("notice_purchase_public_association_changed")
     edition, _proof = _exact_public_search_evidence(source)
     if created:
