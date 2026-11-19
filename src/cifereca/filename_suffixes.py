@@ -1,8 +1,8 @@
 """Pure filename convention helpers; no format, layout or rights inference."""
-from pathlib import Path
+from pathlib import PurePath
 
 
-def split_filename_suffix(path: Path) -> tuple[str, str]:
+def split_filename_suffix(path: PurePath) -> tuple[str, str]:
     """Split the longest known Kobo suffix, preserving the source spelling.
 
     Other extensions retain pathlib's existing single-suffix semantics.
