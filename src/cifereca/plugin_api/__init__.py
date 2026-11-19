@@ -36,6 +36,7 @@ from .downloadable_resources import (
 from .provider_purchase_enrichment import (
     PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT,
     PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation,
+    PurchaseEnrichmentDeferred, MAX_PURCHASE_RETRY_SECONDS,
 )
 from .loan_inventory import (INVENTORY_CONTRACT, LoanInventoryScope, LoanBranchCoverage, LoanInventorySnapshot, legacy_loan_inventory, read_loan_inventory)
 from .lending_borrower_eligibility import (
@@ -138,6 +139,7 @@ __all__ = [
     "RIGHTS_OBSERVATION_CONTRACT", "ProviderRightsScope", "ProviderRightObservation", "ProviderRightsSnapshot",
     "PURCHASE_ENRICHMENT_OBSERVATION_CONTRACT",
     "PurchaseEnrichmentCandidate", "PurchaseEnrichmentObservation",
+    "PurchaseEnrichmentDeferred", "MAX_PURCHASE_RETRY_SECONDS",
     "DOWNLOADABLE_RESOURCE_CONTRACT", "SourceReference", "DownloadCapability",
     "OptionalRightMetadata", "ResourceObservation", "ResourceSnapshot",
     "DeliveryCandidate", "from_legacy_rights_snapshot", "as_legacy_rights_snapshot",

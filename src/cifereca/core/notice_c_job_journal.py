@@ -407,15 +407,20 @@ def release_unsubmitted_job(storage, lease, *, now):
                           lease_until=0, due=now, reason="none"))
 
 
-def fail_job(storage, lease, *, now, transient):
+def fail_job(storage, lease, *, now, transient, retry_after_seconds=None):
     """Return the immutable failure receipt only after its durable commit."""
-    if type(transient) is not bool:
+    from ..plugin_api.provider_purchase_enrichment import MAX_PURCHASE_RETRY_SECONDS
+    if (type(transient) is not bool or (retry_after_seconds is not None and (
+            not transient or type(retry_after_seconds) is not int
+            or not 1 <= retry_after_seconds <= MAX_PURCHASE_RETRY_SECONDS))):
         raise ValueError("notice_work_invalid_failure")
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
         job = _held(db, lease, now)
+        if retry_after_seconds is not None and job.spec.implementation_digest != _PURCHASE_INTENT_DIGEST:
+            raise ValueError("notice_work_invalid_failure")
         if transient and job.attempts < _MAX_ATTEMPTS:
-            delay = (1, 4, 16)[job.attempts - 1]
+            delay = max((1, 4, 16)[job.attempts - 1], retry_after_seconds or 0)
             if now > _MAX - delay:
                 raise ValueError("notice_work_clock_overflow")
             updated = replace(job, lease_until=0, due=now + delay,

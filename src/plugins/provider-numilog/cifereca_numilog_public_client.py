@@ -47,6 +47,10 @@ class PublicRateLimitError(ProviderError):
         self.retry_after_seconds = _retry_after_seconds(retry_after)
 
 
+class PublicServiceUnavailableError(PublicRateLimitError):
+    """HTTP 503 only: same bounded Retry-After parser, no implicit retry."""
+
+
 def _retry_after_seconds(value, *, now=None):
     """Read delay-seconds or HTTP-date without retaining untrusted text."""
     if type(value) is not str or len(value) > 128:
@@ -250,6 +254,9 @@ def fetch_public_detail(product_url: str, *, timeout: float = 15.0, _before_get=
                                                response.headers.get("retry-after"))
                 if status in (301, 302, 303, 307, 308):
                     raise ProviderError("Numilog : public_detail_redirect_unverified")
+                if status == 503:
+                    raise PublicServiceUnavailableError("Numilog : public_detail_unavailable",
+                                                        response.headers.get("retry-after"))
                 if status != 200:
                     raise ProviderError("Numilog : public_detail_unavailable")
                 mime = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
