@@ -77,3 +77,23 @@ def test_line_is_explicit_and_never_offers_recovery(tmp_path, stale):
         assert service.storage.metadata_get(reservation.key) is not None
     finally:
         service.storage.close()
+
+
+def test_main_window_keeps_existing_tool_order_and_appends_independent_review():
+    """The Core diagnostic is not the first plugin progress/confirmation row."""
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    owner = next(node for node in tree.body
+                 if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
+    method = next(node for node in owner.body
+                  if isinstance(node, ast.FunctionDef) and node.name == "_refresh_tools_page")
+    loop = next(node for node in method.body
+                if isinstance(node, ast.For) and isinstance(node.iter, ast.Name)
+                and node.iter.id == "services")
+    calls = [node for node in method.body if isinstance(node, ast.Expr)
+             and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
+             and node.value.func.id == "add_derived_variant_maintenance_line"]
+    assert len(calls) == 1 and calls[0].lineno > loop.end_lineno

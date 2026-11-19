@@ -319,7 +319,12 @@ def main():
     detached_label = [None]
 
     def line_widgets():
-        row = next(w for w in walk(window[0]._tools_box) if isinstance(w, Adw.ActionRow))
+        # The Core-owned review line has no legacy tool progress relay.
+        # Target the exact currently installed dummy tool, never row position.
+        matches = [w for w in walk(window[0]._tools_box)
+                   if isinstance(w, Adw.ActionRow) and w.get_title() == tool.describe().title]
+        assert len(matches) == 1, "Expected one exact fixture maintenance row"
+        row = matches[0]
         label = next(w for w in walk(row) if isinstance(w, Gtk.Label)
                      and w.get_tooltip_text() == "État de l’opération")
         spinner = next(w for w in walk(row) if isinstance(w, Gtk.Spinner))
@@ -471,6 +476,13 @@ def main():
             w._visit_route("tools")
         assert w.view_stack.get_visible_child_name() == "tools", "Outils page not visible"
         w._refresh_tools_page()
+        review_rows = [node for node in walk(w._tools_box)
+                       if isinstance(node, Adw.ActionRow)
+                       and node.get_title() == "Publications dérivées interrompues"]
+        assert len(review_rows) == 1
+        assert "lecture seule" in review_rows[0].get_subtitle()
+        assert not any(isinstance(node, Gtk.ProgressBar) for node in walk(review_rows[0]))
+        report["checks"]["P0_4520_independent_read_only_review_row"] = True
         preview_button[0] = next((
             b for b in walk(w._tools_box)
             if isinstance(b, Gtk.Button)
