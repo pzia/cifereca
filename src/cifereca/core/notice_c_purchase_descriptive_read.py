@@ -31,6 +31,7 @@ class PurchaseDescriptiveNotice:
     canonical_epoch: int
     association_observed_at: int
     facts: tuple[PurchaseDescriptiveFact, ...]
+    alternatives: tuple[PurchaseDescriptiveFact, ...] = ()
 
     @property
     def proves_acquired_edition(self):
@@ -101,10 +102,25 @@ def _read_descriptive_txn(db, source):
                 field, value, member.provider_id, member.source_ref,
                 member.source_revision, member.observed_at,
             ))
+        primary = {fact.field: fact for fact in facts}
+        alternatives = []
+        for detail in member.public_detail_facts:
+            value = detail.value if type(detail.value) is str else " ; ".join(
+                part for part in detail.value if part.strip())
+            if not value.strip():
+                continue
+            fact = PurchaseDescriptiveFact(
+                detail.field, value, detail.provider_id, detail.source_ref,
+                detail.source_revision, detail.observed_at,
+            )
+            if detail.field not in primary:
+                facts.append(fact)
+            elif primary[detail.field].value != value:
+                alternatives.append(fact)
         if not facts:
             return None
         return PurchaseDescriptiveNotice(
-            link.document, notice.epoch, link.observed_at, tuple(facts),
+            link.document, notice.epoch, link.observed_at, tuple(facts), tuple(alternatives),
         )
     except (ValueError, TypeError, KeyError, AttributeError, UnicodeError, RecursionError):
         return None
