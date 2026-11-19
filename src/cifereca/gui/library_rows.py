@@ -12,6 +12,7 @@ from typing import Any
 from ..core.search import local_match_explanation
 from ..core.local_cover_evidence import VerifiedLocalCoverEvidence
 from ..core.notice_c_local_origin_projection import valid_local_public_c_link
+from ..core.notice_c_purchase_library_projection import purchase_library_notice
 
 
 def _received_local_file_label(item: dict[str, Any]) -> str | None:
@@ -172,6 +173,13 @@ def project_library_rows(
                 meta_parts.append("Appareil à synchroniser")
         title = str(item.get("title") or "Sans titre")
         author = str(item.get("author") or "")
+        documentary = (purchase_library_notice(item) if key not in ambiguous_keys else None)
+        if documentary is not None and not author.strip():
+            public_author = next((fact.value for fact in documentary.notice.facts
+                                  if fact.field == "author"), "")
+            if public_author:
+                author = public_author
+                meta_parts.append("Auteur : catalogue public")
         meta = " · ".join(part for part in meta_parts if part)
         # A rejected Core packet cannot silently downgrade to the
         # descriptive old URL. Only an unassociated legacy row may retain
@@ -210,6 +218,9 @@ def project_library_rows(
                 item.get("identity_id"), item.get("_library_view_owner"),
                 item.get("provider_id"), item.get("item_id"),
             )
+            if documentary is not None:
+                row._purchase_library_notice = documentary
+                row._public_row_content += (documentary,)
             if key in ambiguous_keys:
                 # Force a GTK rebind even when the visible fields are equal
                 # to an earlier, once-unique selected row.

@@ -1831,5 +1831,7 @@ def library_entries(self, *, identity_id: str, scan: bool=False, logger) -> list
     project_local_origin_public_c(
         self.storage, result, identity_id=identity_id,
     )
+    from .notice_c_purchase_library_projection import project_purchase_library_notices
+    project_purchase_library_notices(self.storage, result, identity_id=identity_id)
     logger.info("TRACE library-entries end identity=%s count=%s dt=%.3fs", identity_id, len(result), time.monotonic()-_lib_started)
     return result

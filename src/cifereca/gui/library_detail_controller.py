@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from ..core.notice_c_local_origin_projection import valid_local_public_c_link
+from ..core.notice_c_purchase_library_projection import purchase_library_notice
 
 from .local_book_detail_sections import local_book_detail_sections
 from .detail_selection_perf import current_detail_trace
@@ -93,6 +94,9 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
 
     detail = window.library_page.detail
     description = window._book_description(item)
+    documentary = purchase_library_notice(item) if not foreign else None
+    if documentary != getattr(row, "_purchase_library_notice", None):
+        documentary = None
     trace = current_detail_trace()
     projection_started = trace.clock() if trace else None
     presentation = book_detail_presentation(
@@ -113,6 +117,7 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
             identity_by_id=window.service.identity_by_id,
             sync_status_label=window._kobo_backup_status_label,
             language_label=detail_language,
+            purchase_notice=documentary,
         ),
         links=() if foreign else document_links(item),
         metadata=item.get('metadata'),

@@ -1,5 +1,10 @@
 """Read only qualified descriptive metadata, not a purchased edition proof."""
 from contextlib import contextmanager
+from copy import deepcopy
+from types import SimpleNamespace
+from cifereca.core.notice_c_purchase_library_projection import project_purchase_library_notices, purchase_library_notice
+from cifereca.gui.library_rows import project_library_rows
+from cifereca.gui.local_book_detail_sections import local_book_detail_sections
 
 from cifereca.core import notice_c_job_journal as journal
 from cifereca.core.notice_c_purchase_execution import PurchaseIntentExecution
@@ -61,10 +66,59 @@ def test_public_descriptive_facts_keep_source_provenance_not_association_time(tm
                    and f.source_ref == published.source.document.source_key
                    and f.source_revision == published.source.observation.source_revision
                    for f in result.facts)
+        source = candidate.source
+        scope = source.scope
+        card = {
+            "key": "observation:fixture", "identity_id": scope.identity_id,
+            "provider_id": scope.provider_id, "item_id": source.edition_id,
+            "source": "private_catalog_observation", "state": "remote_catalog",
+            "local": False, "title": "Titre natif", "author": "",
+            "source_refs": [{
+                "identity_id": scope.identity_id, "provider_id": scope.provider_id,
+                "credential_id": scope.credential_id, "account_id": scope.account_id,
+                "item_id": source.edition_id, "kind": "observation",
+            }], "metadata": {"description": "Résumé local"}, "possessions": [],
+        }
+        original = deepcopy(card)
+        foreign = deepcopy(card)
+        foreign["identity_id"] = "B"
+        foreign["key"] = "observation:foreign"
+        project_purchase_library_notices(db, [card, foreign], identity_id="A")
+        packet = purchase_library_notice(card)
+        assert packet is not None and packet.notice == result
+        assert purchase_library_notice(foreign) is None
+        assert {k: v for k, v in card.items() if k != "_purchase_library_notice"} == original
+        rows, objects = project_library_rows(
+            [card], row_factory=lambda *args: SimpleNamespace(values=args),
+            provider_display_name=str, availability_label=lambda _: "",
+            backup_status_label=str, format_date=str,
+        )
+        assert rows[0]._purchase_library_notice == packet
+        assert rows[0].values[1] == "Titre natif" and objects[card["key"]] is card
+        def detail(selected):
+            return local_book_detail_sections(
+                card, provider_display_name=str, availability_label=lambda _: "",
+                identity_by_id=lambda _: None, sync_status_label=str,
+                language_label=lambda _: "", purchase_notice=selected,
+            )
+        assert [name for name, _ in detail(None)] == ["Essentiel", "Bibliothèques et accès"]
+        name, values = detail(packet)[-1]
+        assert name == "Fiche du catalogue public"
+        assert ("Résumé", "Résumé public") in values
+        assert card["metadata"]["description"] == "Résumé local"
+
+        # Duplicate key cannot claim the other row's proof.
+        duplicate = deepcopy(card)
+        project_purchase_library_notices(db, [card, duplicate], identity_id="A")
+        assert purchase_library_notice(card) is None and purchase_library_notice(duplicate) is None
+        project_purchase_library_notices(db, [card], identity_id="A")
+        assert purchase_library_notice(card) == packet
         assert read_purchase_descriptive_notice(db, candidate.source, identity_id="B") is None
         with db._lock, db._connect() as sql:
             sql.execute("UPDATE provider_connections SET enabled=0 WHERE credential_id='card-a'")
         assert read_purchase_descriptive_notice(db, candidate.source, identity_id="A") is None
+        project_purchase_library_notices(db, [card], identity_id="A")
+        assert purchase_library_notice(card) is None and card == original
         assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
     finally:
         db.close()
