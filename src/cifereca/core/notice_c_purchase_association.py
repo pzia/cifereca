@@ -172,6 +172,31 @@ def _store_receipt(db, ref, value):
         raise ValueError("notice_purchase_association_changed")
 
 
+def _exact_receipt_source_txn(db, value, candidate):
+    """Revalidate the retained public proof without loading a new product."""
+    from .notice_cover_repository import _PREFIX as source_prefix
+    from .notice_source_observation import NoticeSourceKey
+    from .notice_cover_projection import notice_cover_document_ref
+    raw = db.execute("SELECT value FROM metadata WHERE key=?",
+                     (source_prefix + value["source"][len(_SOURCE_PREFIX):],)).fetchone()
+    if raw is None:
+        return False
+    parsed = json.loads(raw[0], object_pairs_hook=journal._unique)
+    document = notice_cover_document_ref(NoticeSourceKey(**parsed["key"]))
+    key = _opaque_key(document)
+    if document.source_key != value["source"] or key is None:
+        raise ValueError("notice_purchase_association_changed")
+    _, live, _ = _checked_source_state(db, document, key)
+    if (live is None or live.epoch != value["source_epoch"]
+            or live.observation.source_revision != value["source_revision"]
+            or not _association(live.observation, candidate)):
+        return False
+    edition, _ = _exact_public_search_evidence(live)
+    if canonical_cover_document_ref(edition).source_key != value["canonical"]:
+        raise ValueError("notice_purchase_association_changed")
+    return True
+
+
 def reattest_current_purchase_association(storage, job_ref, snapshot, candidate, *, now):
     """Rebind identical same-read association to fresh A, without a GET.
 
@@ -180,6 +205,8 @@ def reattest_current_purchase_association(storage, job_ref, snapshot, candidate,
     new generation; no old lease is reopened. On TTL expiry only, an exact
     compatible successor may coexist with the prior descriptive receipt:
     no metadata is withdrawn merely because refresh is pending or failed.
+    A subsequent positive A can rebind that exact successor as well, without
+    changing its due time, attempts, generation or public observation time.
     A corrupt receipt is a refusal, not authority for another GET.
     The caller pins the same live context as the original request.
     """
@@ -190,45 +217,33 @@ def reattest_current_purchase_association(storage, job_ref, snapshot, candidate,
         if not _allowed_txn(db, snapshot.scope):
             raise ValueError("notice_purchase_association_changed")
         job = journal._get(db, job_ref)
-        if job.state != "current" or _spec_txn(db, snapshot, candidate) != job.spec:
+        if job.state not in ("current", "pending", "error") or _spec_txn(db, snapshot, candidate) != job.spec:
             raise ValueError("notice_purchase_association_changed")
         ref, proof = _current_a(db, candidate.source)
         if proof is None:
             raise ValueError("notice_purchase_association_changed")
         value = _receipt(db, ref)
-        if value is not None and _matches_job(value, job, ref):
+        if value is not None and (_matches_job(value, job, ref) or _matches_refresh(value, job, ref)):
             if value["observed_at"] > now:
                 raise ValueError("notice_purchase_association_changed")
-            # Look up the exact source using a bounded opaque key. The stored
-            # observation's public provider is then checked by the ordinary decoder.
-            from .notice_cover_repository import _PREFIX as source_prefix
-            from .notice_source_observation import NoticeSourceKey
-            from .notice_cover_projection import notice_cover_document_ref
-            raw = db.execute("SELECT value FROM metadata WHERE key=?",
-                             (source_prefix + value["source"][len(_SOURCE_PREFIX):],)).fetchone()
-            if raw is not None:
-                parsed = json.loads(raw[0], object_pairs_hook=journal._unique)
-                document = notice_cover_document_ref(NoticeSourceKey(**parsed["key"]))
-                key = _opaque_key(document)
-                if document.source_key != value["source"] or key is None:
-                    raise ValueError("notice_purchase_association_changed")
-                _, live, _ = _checked_source_state(db, document, key)
-                if live is not None and live.epoch == value["source_epoch"] and (
-                        live.observation.source_revision == value["source_revision"]
-                        and _association(live.observation, candidate)):
-                    edition, _ = _exact_public_search_evidence(live)
-                    if canonical_cover_document_ref(edition).source_key != value["canonical"]:
-                        raise ValueError("notice_purchase_association_changed")
-                    if now - value["observed_at"] >= _DETAIL_TTL_SECONDS:
-                        successor = journal._renew_purchase_current_txn(db, job, now=now)
-                        value["refresh_generation"] = successor.generation
-                        value["a"] = proof
-                        _store_receipt(db, ref, value)
-                        return successor
+            if _exact_receipt_source_txn(db, value, candidate):
+                if _matches_refresh(value, job, ref):
                     if value["a"] != proof:
                         value["a"] = proof
                         _store_receipt(db, ref, value)
                     return job.ref
+                if now - value["observed_at"] >= _DETAIL_TTL_SECONDS:
+                    successor = journal._renew_purchase_current_txn(db, job, now=now)
+                    value["refresh_generation"] = successor.generation
+                    value["a"] = proof
+                    _store_receipt(db, ref, value)
+                    return successor
+                if value["a"] != proof:
+                    value["a"] = proof
+                    _store_receipt(db, ref, value)
+                return job.ref
+        if job.state != "current":
+            return job.ref
         return journal._renew_purchase_current_txn(db, job, now=now)
 
 

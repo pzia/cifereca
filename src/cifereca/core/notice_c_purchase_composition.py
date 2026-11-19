@@ -114,7 +114,7 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
         for ref, candidate in zip(refs, candidates):
             try:
                 job = journal.read_job(execution._storage, ref)
-                if job.state == "current":
+                if job.state in ("current", "pending", "error"):
                     with hold_context() as allowed:
                         if allowed is not True:
                             deferred += 1
