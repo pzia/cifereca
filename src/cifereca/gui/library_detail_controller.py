@@ -176,6 +176,9 @@ def library_selected(window, row, *, Gtk, unique_library_loan, book_detail_prese
         )
     window._add_local_book_actions(detail,item)
     if not foreign:
+        from .local_origin_suggestion_action import add_local_origin_suggestion_action
+        add_local_origin_suggestion_action(window, detail, row, item, token=web_token)
+    if not foreign:
         # Preserve original action ordering for current-profile details.
         window._add_book_recommendation_action(detail, item)
     window._add_facets(window.library_page.detail, item, window.library_controls)
