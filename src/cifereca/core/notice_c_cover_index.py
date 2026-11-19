@@ -8,7 +8,7 @@ N2 derives its decisions from this record; N3 owns image bytes/previews.
 """
 from __future__ import annotations
 
-from .public_search_projection import PublicSeriesRelation, PublicLanguageObservation
+from .public_search_projection import PublicSeriesRelation, PublicLanguageObservation, PublicClassification
 
 from dataclasses import asdict, dataclass
 from hashlib import sha256
@@ -53,6 +53,7 @@ class ConsolidatedPublicBibliography:
     published_at: str | None = None
     series_relation: PublicSeriesRelation | None = None
     language_observation: PublicLanguageObservation | None = None
+    classification: PublicClassification | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,10 +175,11 @@ def _decode_public_bibliography(
     from .public_search_projection import (
         _public_bibliographic_text, decode_public_series_relation,
         decode_public_language_observation,
+        decode_public_classification,
     )
 
     if (type(raw) is not dict or not _BIB_KEYS <= set(raw)
-            or set(raw) - _BIB_KEYS - {"published_at", "series_relation", "language_observation"}):
+            or set(raw) - _BIB_KEYS - {"published_at", "series_relation", "language_observation", "classification"}):
         raise ValueError("corrupt_canonical_cover")
     def coord(value, *, optional=False):
         return (value is None and optional) or (
@@ -239,6 +241,11 @@ def _decode_public_bibliography(
         if language is None:
             raise ValueError("corrupt_canonical_cover")
         values["language_observation"] = language
+    if "classification" in values:
+        classification = decode_public_classification(values["classification"])
+        if classification is None:
+            raise ValueError("corrupt_canonical_cover")
+        values["classification"] = classification
     return ConsolidatedPublicBibliography(**values)
 
 
@@ -473,6 +480,8 @@ def _persist_consolidated_cover_source_txn(
                 incoming["public_bibliography"]["series_relation"] = asdict(hit.series_relation)
             if hit.language_observation is not None:
                 incoming["public_bibliography"]["language_observation"] = hit.language_observation.wire()
+            if hit.classification is not None:
+                incoming["public_bibliography"]["classification"] = hit.classification.wire()
     # The extension belongs to this exact validated public source, not
     # the per-profile mirror or a different member of the canonical group.
     source_fields = source.observation.fields_copy().get("search_result")

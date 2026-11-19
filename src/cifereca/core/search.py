@@ -101,7 +101,7 @@ def _field_values(row: Mapping[str, Any], field: str) -> list[str]:
         return (
             _values(meta.get("subjects")) + _values(meta.get("subject"))
             + _values(meta.get("themes")) + _values(meta.get("keywords"))
-            + _values(meta.get("tags")) + _values(meta.get("genres"))
+            + _values(meta.get("tags")) + _values(meta.get("genres")) + _values(meta.get("genre"))
             + _values(meta.get("categories")) + _values(search.get("subjects"))
             + _bundle_member_values(row, field)
         )
@@ -174,7 +174,7 @@ def local_search_evidence(row: Mapping[str, Any], query: str) -> tuple[int, tupl
          + _bundle_member_values(row, "author")),
         ("subject", 50, _values(meta.get("subjects")) + _values(meta.get("subject"))
          + _values(meta.get("themes")) + _values(meta.get("keywords"))
-         + _values(meta.get("tags")) + _values(meta.get("genres"))
+         + _values(meta.get("tags")) + _values(meta.get("genres")) + _values(meta.get("genre"))
          + _values(meta.get("categories")) + _values(search.get("subjects"))
          + _bundle_member_values(row, "subject")),
         ("award", 45, _values(meta.get("awards")) + _values(meta.get("prizes"))

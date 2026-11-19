@@ -40,7 +40,10 @@ def _text(value: object, *, required: bool = False, limit: int = 8192) -> bool:
 _PRIVATE_BIBLIOGRAPHIC_PATTERN = re.compile(
     r"(?i)(?:https?://|(?<!\w)(?:bearer|basic)\s+\S+|"
     r"(?<!\w)(?:token|auth|cookie|signature|access_token|refresh_token)\s*=|"
-    r"[^\s@]+@[^\s@]+\.[^\s@]+)"
+    # An email candidate starts at its whitespace/@ token boundary. Without
+    # it, each position retries the long local part: quadratic on labels
+    # containing no @, or an incomplete address. Rejection stays identical.
+    r"(?<![^\s@])[^\s@]+@[^\s@]+\.[^\s@]+)"
 )
 
 
@@ -102,6 +105,44 @@ def _public_bibliographic_metadata(raw: object) -> dict | None:
             return None
         projected[name] = copied
     return projected
+
+
+_CLASSIFICATION_FIELDS = frozenset((
+    "subjects", "subject", "genres", "genre", "tags", "keywords", "themes",
+))
+
+
+@dataclass(frozen=True, slots=True)
+class PublicClassification:
+    """Immutable source-declared labels; no derived genre, age or relation."""
+
+    entries: tuple[tuple[str, str | tuple[str, ...]], ...]
+
+    def wire(self) -> dict:
+        return {name: value if type(value) is str else list(value)
+                for name, value in self.entries}
+
+
+def decode_public_classification(raw: object) -> PublicClassification | None:
+    if (type(raw) is not dict or not raw
+            or set(raw) - _CLASSIFICATION_FIELDS):
+        return None
+    projected = _public_bibliographic_metadata(raw)
+    if projected is None or projected != raw:
+        return None
+    return PublicClassification(tuple(
+        (name, value if type(value) is str else tuple(value))
+        for name, value in sorted(projected.items())
+    ))
+
+
+def declared_public_classification(metadata: object) -> PublicClassification | None:
+    if type(metadata) is not dict or len(metadata) > 256:
+        return None
+    selected = _public_bibliographic_metadata({
+        name: metadata[name] for name in _CLASSIFICATION_FIELDS if name in metadata
+    })
+    return decode_public_classification(selected)
 
 
 
