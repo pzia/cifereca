@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .source_context import source_context_epoch
 
+from dataclasses import replace
 from inspect import getattr_static
 import logging
 
@@ -18,7 +19,10 @@ from cifereca.plugin_api.provider_rights_observation import (
     ProviderRightsScope, ProviderRightsSnapshot,
 )
 from cifereca.plugin_api.downloadable_resources import (
-    ResourceSnapshot, as_legacy_rights_snapshot,
+    ResourceSnapshot, as_legacy_rights_snapshot, from_legacy_rights_snapshot,
+)
+from cifereca.plugin_api.provider_purchase_enrichment import (
+    PurchaseEnrichmentCandidate, PurchaseEnrichmentObservation,
 )
 
 _LOG = logging.getLogger("cifereca")
@@ -28,7 +32,8 @@ _MAX_INVENTORY_PAGES = 128
 
 
 def read_account_rights_snapshot(service, account: Account, *,
-                                 cancelled=lambda: False) -> ProviderRightsSnapshot:
+                                 cancelled=lambda: False,
+                                 purchase_candidates_sink=None) -> ProviderRightsSnapshot:
     """Explicit opt-in account I/O, never invoked by a passive Core projection.
 
     The caller owns source enablement, task cancellation and exclusive sync
@@ -36,7 +41,8 @@ def read_account_rights_snapshot(service, account: Account, *,
     the currently registered, connected provider+credential for this account.
     A missing optional reader is not replaced by library(), loans() or GET.
     """
-    if type(account) is not Account or not callable(cancelled):
+    if (type(account) is not Account or not callable(cancelled)
+            or (purchase_candidates_sink is not None and not callable(purchase_candidates_sink))):
         raise ValueError("invalid_rights_reader_request")
     scope = ProviderRightsScope(
         account.identity_id, account.provider_id,
@@ -184,8 +190,16 @@ def read_account_rights_snapshot(service, account: Account, *,
             same_cycle_inventory is not None
             and getattr_static(session, shared_reader, None) is not None
         )
+        # Optional C candidate observer replaces one A read, never follows
+        # it. A same-cycle loan inventory retains its existing priority.
+        purchase_reader = "purchase_enrichment_observation"
+        capture_purchase = (
+            not share and purchase_candidates_sink is not None
+            and callable(getattr_static(session, purchase_reader, None))
+        )
         reader_name = (
             shared_reader if share else
+            purchase_reader if capture_purchase else
             "downloadable_resource_snapshot"
             if getattr_static(session, "downloadable_resource_snapshot", None) is not None
             else "rights_observation_snapshot"
@@ -213,14 +227,50 @@ def read_account_rights_snapshot(service, account: Account, *,
                 raise ValueError("invalid_rights_snapshot_scope")
             return raw
 
-        result = validated(
-            reader(account, loan_inventory=same_cycle_inventory)
-            if share else reader(account)
-        )
+        raw = (reader(account, loan_inventory=same_cycle_inventory)
+               if share else reader(account))
+        candidates = ()
+        if capture_purchase:
+            if (type(raw) is not PurchaseEnrichmentObservation
+                    or type(raw.inventory) is not ResourceSnapshot):
+                raise ValueError("invalid_purchase_enrichment_observation")
+            # A and C are independently validated. If only the optional C
+            # claims are malformed, the positive native A snapshot survives.
+            result = validated(raw.inventory)
+            try:
+                if type(raw.candidates) is not tuple or len(raw.candidates) > _MAX_INVENTORY_ROWS:
+                    raise ValueError("invalid_purchase_enrichment_candidates")
+                copied = []
+                for item in raw.candidates:
+                    if type(item) is not PurchaseEnrichmentCandidate:
+                        raise ValueError("invalid_purchase_enrichment_candidate")
+                    copied.append(replace(item, source=replace(
+                        item.source, scope=replace(item.source.scope),
+                    )))
+                observed = PurchaseEnrichmentObservation(
+                    from_legacy_rights_snapshot(result), tuple(copied),
+                    schema_version=raw.schema_version,
+                )
+                candidates = observed.candidates
+            except (ValueError, TypeError, AttributeError, OverflowError):
+                _LOG.warning("TRACE purchase enrichment code=invalid_candidates")
+        else:
+            result = validated(raw)
         if cancelled():
             return unavailable("cancelled")
         if not still_bound():
             return unavailable()
+        if capture_purchase:
+            # v1 candidate observation is a single response, not a paged
+            # reader contract. Retain positive A if the producer returned
+            # a continuation; do not dispatch another request or hand off
+            # a potentially ambiguous candidate from an unfinished chain.
+            if candidates and not result.resume_cursor:
+                try:
+                    purchase_candidates_sink(candidates)
+                except Exception:
+                    _LOG.warning("TRACE purchase enrichment code=candidate_sink_failed")
+            return result
         if not result.resume_cursor:
             # Unpaged providers preserve the original Core result contract.
             return result
