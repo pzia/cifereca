@@ -414,7 +414,7 @@ class CoverAuditTool(_ReadOnlyTool):
     info = MaintenanceToolInfo(
         id="covers.audit",
         title="Vérifier les couvertures",
-        description="Compte les notices sans couverture et les références de couverture manifestement invalides.",
+        description="Distingue les couvertures attestées, leurs liaisons et les images déjà en cache.",
         icon_name="image-x-generic-symbolic",
         scope="library",
         danger_level="read-only",
@@ -628,7 +628,7 @@ class LanguageAuditTool(_ReadOnlyTool):
     info = MaintenanceToolInfo(
         id="languages.audit",
         title="Vérifier les langues",
-        description="Détecte les tags de langue invalides ou non canoniques dans les notices disponibles.",
+        description="Distingue la syntaxe des langues déclarées et leur provenance par source.",
         icon_name="preferences-desktop-locale-symbolic",
         scope="library",
         danger_level="read-only",
