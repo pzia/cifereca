@@ -442,7 +442,7 @@ class ReadyPage:
 
 
 def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
-                    supported=None):
+                    supported=None, purchase_refs=None):
     """Bounded, read-only keyset scan of the existing durable public journal.
 
     Keep next_after across ticks, restarting at None at the end of a sweep.
@@ -467,6 +467,12 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
                        or not _digest(pair[1]) for pair in supported)
                 or len(set(supported)) != len(supported)):
             raise ValueError("notice_work_invalid_scan_filter")
+    if purchase_refs is not None:
+        if type(purchase_refs) is not tuple or len(purchase_refs) > 32:
+            raise ValueError("notice_work_invalid_purchase_filter")
+        for ref in purchase_refs:
+            _check_ref(ref)
+        purchase_refs = frozenset(purchase_refs)
     lower = _PREFIX + after if after is not None else _PREFIX
     refs = []
     corrupt = 0
@@ -474,7 +480,16 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
         db.execute("BEGIN")
         # Only actual opaque logical keys can be returned as cursor tokens.
         # A malformed metadata key cannot become a source/account identifier.
-        keys = db.execute(
+        # With only the purchase implementation enabled, visit the bounded
+        # exact admitted keys directly instead of spending the TTL on inert
+        # rows. Mixed public fetch mode retains the ordinary cursor/budget.
+        purchase_only = supported == (("fetch_source_notice", _PURCHASE_INTENT_DIGEST),)
+        if purchase_only and purchase_refs is not None:
+            selected = sorted({ref.key for ref in purchase_refs
+                               if after is None or ref.key > after})[:limit]
+            keys = [(_PREFIX + key,) for key in selected]
+        else:
+            keys = db.execute(
             "SELECT key FROM metadata WHERE key>? AND key<? "
             "AND length(key)=? AND substr(key,?) NOT GLOB '*[^0-9a-f]*' "
             "ORDER BY key LIMIT ?",
@@ -486,6 +501,10 @@ def read_ready_page(storage, *, now, after=None, limit=_MAX_SCAN,
             try:
                 job = _load(db, key)
                 if job is None:
+                    continue
+                if (purchase_refs is not None
+                        and job.spec.implementation_digest == _PURCHASE_INTENT_DIGEST
+                        and job.ref not in purchase_refs):
                     continue
                 if (supported is None and job.spec.implementation_digest == _PURCHASE_INTENT_DIGEST):
                     # No generic discovery of private intent as public work.
