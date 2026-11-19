@@ -35,7 +35,7 @@ class SourceChangeRequests:
     overflow: bool = False
 
 
-def request_affected_public_recompute_txn(db, source, *, now):
+def request_affected_public_recompute_txn(db, source, *, now, _include_groups=True):
     """Queue only dirty, currently reattested exact-source dependents.
 
     The supplied source must still be the actual admitted SQLite row.
@@ -86,6 +86,9 @@ def request_affected_public_recompute_txn(db, source, *, now):
             member, = (m for m in canonical.sources
                        if m.source_ref == source.document.source_key)
             is_multi = len(canonical.sources) > 1
+            if is_multi and not _include_groups:
+                # The chunk group writer owns relation repair in this mode.
+                continue
             multi += int(is_multi)
             if (member.provider_id != source.observation.key.provider_id
                     or member.visibility != "public"):
