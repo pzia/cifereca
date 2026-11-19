@@ -81,3 +81,43 @@ def test_foreign_item_never_offers_action(store, tmp_path):
     item["identity_id"] = "B"
     assert not action.add_local_origin_suggestion_action(host, panel, row, item, token=token)
     assert not buttons and not tasks and not groups
+
+
+def test_next_page_requires_new_click_and_delivers_only_once(store, tmp_path):
+    from tests.test_core_p0_4030_suggestion_operator import _more_public
+    host, panel, row, item, token, tasks, buttons, groups, _ = _host(store, tmp_path)
+    _more_public(store, 21)
+    assert action.add_local_origin_suggestion_action(host, panel, row, item, token=token)
+    button, = buttons
+    button.callback(button)
+    first_work, first_done, _ = tasks[0]
+    result = first_work()
+    assert result["suggestions"].has_more
+    first_done(result)
+    first_done(result)
+    assert len(groups) == len(tasks) == 1
+    assert ("Page", "1") in groups[0][1]
+    assert "page suivante" in repr(groups[0])
+    button.callback(button)
+    button.callback(button)
+    assert len(tasks) == 2
+    work, done, _ = tasks[1]
+    done(work())
+    assert len(groups) == 2 and ("Page", "2") in groups[1][1]
+    button.callback(button)
+    assert len(tasks) == 2
+
+
+def test_next_page_not_queued_after_origin_context_revocation(store, tmp_path):
+    from tests.test_core_p0_4030_suggestion_operator import _more_public
+    host, panel, row, item, token, tasks, buttons, groups, toasts = _host(store, tmp_path)
+    _more_public(store, 21)
+    assert action.add_local_origin_suggestion_action(host, panel, row, item, token=token)
+    button, = buttons
+    button.callback(button)
+    work, done, _ = tasks[0]
+    done(work())
+    host.service._source_context_epoch += 1
+    button.callback(button)
+    assert len(tasks) == len(groups) == 1
+    assert toasts and "Contexte modifié" in toasts[-1]
