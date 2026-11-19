@@ -205,9 +205,30 @@ class NumilogPublicSession(ProviderSession):
         from cifereca_numilog_public_detail import purchase_public_detail_response
 
         control.check_cancelled()
-        detail, observed_at, hold_publication = self._guarded_purchase_detail(
-            product_url, expected_title, check_authority=check_authority,
-        )
+        from cifereca.plugin_api.provider_purchase_enrichment import PurchaseEnrichmentDeferred
+        from cifereca_numilog_public_client import PublicRateLimitError, PublicServiceUnavailableError
+        try:
+            detail, observed_at, hold_publication = self._guarded_purchase_detail(
+                product_url, expected_title, check_authority=check_authority,
+            )
+        except ProviderError as exc:
+            if type(exc) is PublicServiceUnavailableError:
+                reason = "unavailable"
+            elif type(exc) is PublicRateLimitError or str(exc) == "Numilog : public_catalog_rate_limited":
+                reason = "rate_limited"
+            elif str(exc) in ("Numilog : public_catalog_request_in_progress",
+                               "Numilog : public_catalog_request_budget_exhausted"):
+                reason = "budget_busy"
+            elif str(exc) == "Numilog : public_detail_network_unavailable":
+                reason = "unavailable"
+            else:
+                raise
+            if check_authority() is not True:
+                raise ProviderCapabilityError("Numilog public : purchase_authority_revoked") from None
+            delay = self._public_cache.purchase_retry_delay()
+            if reason == "unavailable":
+                delay = max(60, delay)
+            raise PurchaseEnrichmentDeferred(reason, delay) from None
         response = purchase_public_detail_response(detail, product_url=product_url)
         control.check_cancelled()
         if check_authority() is not True:
