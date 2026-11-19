@@ -205,7 +205,7 @@ class NumilogPublicSession(ProviderSession):
         from cifereca_numilog_public_detail import purchase_public_detail_response
 
         control.check_cancelled()
-        from cifereca.plugin_api.provider_purchase_enrichment import PurchaseEnrichmentDeferred
+        from cifereca.plugin_api import PurchaseEnrichmentDeferred
         from cifereca_numilog_public_client import PublicRateLimitError, PublicServiceUnavailableError
         try:
             detail, observed_at, hold_publication = self._guarded_purchase_detail(
