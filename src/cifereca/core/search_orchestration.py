@@ -2756,19 +2756,18 @@ def _ingest_public_search_c(self, rows, *, identity_id, now,
                             from .notice_c_live_revision import stamp_persisted_c_revision
                             stamp_persisted_c_revision(row, canonical)
                         pairs.append((row, persisted, canonical))
-                try:
-                    _reconcile_progressive_public_c(
-                        self.storage, pairs,
-                        failed_sources=failed_c if callable(recover) and not atomic_groups else None,
-                        read_only=atomic_groups,
-                    )
-                finally:
-                    if atomic_groups:
-                        # A hint is only a wake, never a second producer.
-                        # Rolled-back chunks have no persisted receipts.
-                        if any(persisted_batch[position] is not None
-                               for position in pending_positions):
-                            committed()
+                _reconcile_progressive_public_c(
+                    self.storage, pairs,
+                    failed_sources=failed_c if callable(recover) and not atomic_groups else None,
+                    read_only=atomic_groups,
+                )
+                if atomic_groups:
+                    # A hint is only a wake, never a second producer.
+                    # An interrupted producer leaves its durable request for
+                    # the next heartbeat. No dispatch during stack unwinding.
+                    if any(persisted_batch[position] is not None
+                           for position in pending_positions):
+                        committed()
                 if failed_c and callable(recover) and not atomic_groups:
                     recover(tuple(failed_c), now=now)
             except (ValueError, TypeError, OSError, sqlite3.Error):
