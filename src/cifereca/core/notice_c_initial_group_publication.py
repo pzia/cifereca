@@ -61,7 +61,20 @@ def _group_inputs(db, source_ref):
 
 
 def request_initial_group_publication(storage, source, *, now):
-    """Call on the Search worker only after the normal group writer failed."""
+    """Request initial creation only, never replace an existing group."""
+    return _request_group(storage, source, now=now, allow_extension=False)
+
+
+def request_search_group_repair(storage, source, *, now):
+    """After failed live Search consolidation, select initial or strict relink.
+
+    No new job class: existing relink revalidates the same graph/vector.
+    A complete existing membership belongs to ordinary recomputation only.
+    """
+    return _request_group(storage, source, now=now, allow_extension=True)
+
+
+def _request_group(storage, source, *, now, allow_extension):
     if type(source) is not PersistedNoticeCover or not journal._integer(now):
         raise ValueError("notice_work_invalid_initial_source")
     if _public_source_coordinates(source) is None:
@@ -74,13 +87,34 @@ def request_initial_group_publication(storage, source, *, now):
         inputs = _group_inputs(db, source.document.source_key)
         if inputs is None:
             return None
-        document, _sources, anchor, _proof, digest = inputs
-        if db.execute("SELECT 1 FROM metadata WHERE key=?", (_db_key(document),)).fetchone():
-            return None
-        spec = journal.public_job_spec(
-            "relink_notices", document, input_digest=digest,
-            implementation_digest=IMPLEMENTATION_DIGEST, source_ref=anchor,
-        )
+        document, sources, anchor, _proof, digest = inputs
+        row = db.execute("SELECT value FROM metadata WHERE key=?", (_db_key(document),)).fetchone()
+        if row is None:
+            spec = journal.public_job_spec(
+                "relink_notices", document, input_digest=digest,
+                implementation_digest=IMPLEMENTATION_DIGEST, source_ref=anchor,
+            )
+        else:
+            if not allow_extension:
+                return None
+            previous_c = _decode(row[0], document)
+            existing_refs = {member.source_ref for member in previous_c.sources}
+            wanted_refs = {member.document.source_key for member in sources}
+            if not existing_refs < wanted_refs:
+                return None
+            from .notice_c_origin_relink import (
+                _resolve_extension_txn, IMPLEMENTATION_DIGEST as RELINK_DIGEST,
+            )
+            # Reuse the exact strict-superset port, including the source and
+            # overlap vector. A newly discovered member cannot authorize a
+            # competing canonical target or a shrink/split.
+            vector, current_sources, _proof = _resolve_extension_txn(db, document)
+            if {member.document.source_key for member in current_sources} != wanted_refs:
+                raise ValueError("notice_relink_inputs_changed")
+            spec = journal.public_job_spec(
+                "relink_notices", document, input_digest=vector.input_digest,
+                implementation_digest=RELINK_DIGEST,
+            )
         previous = journal._load(db, journal._key(spec))
         return journal._request_job_txn(
             db, spec, now=now, expected_generation=previous.ref.generation if previous else 0,
