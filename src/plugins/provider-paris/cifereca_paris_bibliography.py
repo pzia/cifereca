@@ -118,14 +118,37 @@ class _SeriesAnchorParser(HTMLParser):
         self._count = 0
         self._values: list[str] = []
         self._rejected = False
-        self._active = None
+        self._elements: list[tuple[str, bool]] = []
+        self._hidden_depth = 0
+
+    _VOID = frozenset(("area", "base", "br", "col", "embed", "hr", "img", "input",
+                       "link", "meta", "param", "source", "track", "wbr"))
+    _INERT = frozenset(("script", "style", "template", "noscript", "textarea",
+                        "iframe", "svg"))
+
+    @classmethod
+    def _hidden(cls, tag, attrs):
+        if tag in cls._INERT or any(key == "hidden" for key, _ in attrs):
+            return True
+        for key, value in attrs:
+            if key == "aria-hidden" and type(value) is str and value.strip().casefold() == "true":
+                return True
+            if key == "style" and type(value) is str:
+                compact = "".join(value.casefold().split())
+                if "display:none" in compact or "visibility:hidden" in compact:
+                    return True
+        return False
 
     def handle_starttag(self, tag, attrs):
-        if tag in {"script", "style", "template", "noscript", "textarea"}:
-            if self._inside:
-                self._invalid = True
-            if self._active is None:
-                self._active = tag
+        hidden = self._hidden(tag, attrs)
+        if tag not in self._VOID:
+            if len(self._elements) >= 256:
+                raise ValueError("series_html_depth")
+            self._elements.append((tag, hidden))
+            self._hidden_depth += int(hidden)
+        if tag != "a" and self._inside and (hidden or self._hidden_depth):
+            self._invalid = True
+        if tag in self._INERT:
             return
         if tag == "a":
             self._count += 1
@@ -137,7 +160,7 @@ class _SeriesAnchorParser(HTMLParser):
             self._parts = []
             self._size = 0
             self._invalid = (declared and (
-                self._active is not None
+                self._hidden_depth != 0
                 or len(hrefs) != 1 or not _safe_series_search_href(hrefs[0])
             ))
         elif self._inside and tag not in {"span", "b", "i", "em", "strong"}:
@@ -152,8 +175,13 @@ class _SeriesAnchorParser(HTMLParser):
                 self._parts.append(data)
 
     def handle_endtag(self, tag):
-        if tag == self._active:
-            self._active = None
+        # Unmatched closing tags cannot clear inert ancestry. A matched
+        # close unwinds its own complete subtree, including malformed HTML.
+        for index in range(len(self._elements) - 1, -1, -1):
+            if self._elements[index][0] == tag:
+                self._hidden_depth -= sum(hidden for _, hidden in self._elements[index:])
+                del self._elements[index:]
+                break
         if tag == "a":
             if self._inside:
                 label = None if self._invalid else _clean_text("".join(self._parts))
