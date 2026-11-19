@@ -99,6 +99,23 @@ def _walk(profile, stages, *, deadline):
         os.close(fd)
 
 
+def _receipt_alias_verdict(witness, stage):
+    """A lexical match to this receipt blocks; every other symlink is unknown.
+
+    The witness is private and never a reusable authority. In particular,
+    a direct match to another receipt is not proof of absence for this one.
+    """
+    unresolved = False
+    for name, (_info, link) in witness[1].items():
+        if link is None:
+            continue
+        target = _lexical_target(Path(name).parent, link)
+        if stage == target or stage.startswith(target.rstrip("/") + "/"):
+            return "known_symlink_dependency"
+        unresolved = True
+    return "symlink_dependency_unverified" if unresolved else "no_local_symlink_observed"
+
+
 def review_stage_symlinks(storage, *, library_root, identity_id,
                           explicitly_requested=False):
     """Observe up to four committed staging coordinates against local symlinks.
