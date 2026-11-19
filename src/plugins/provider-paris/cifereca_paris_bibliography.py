@@ -167,6 +167,13 @@ class _SeriesAnchorParser(HTMLParser):
             self._invalid = True
 
     def handle_data(self, data):
+        # Python HTMLParser delivers iframe fallback markup as raw text
+        # (rather than start/end anchor events). A series token there is
+        # rejected evidence, not an absent relation that another fragment
+        # may silently replace. Never parse or follow that fallback link.
+        if (self._elements and self._elements[-1][0] == "iframe"
+                and _series_link_declared(data)):
+            self._rejected = True
         if self._inside:
             self._size += len(data)
             if self._size > 1024:
