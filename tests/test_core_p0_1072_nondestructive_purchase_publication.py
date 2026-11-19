@@ -21,12 +21,14 @@ from tests.test_core_p0_1072_durable_purchase_intent import prepare, set_policy,
 from tests.test_core_p0_6366_real_search_notice_c_ingestion import public_row, URL
 
 
-def observation(candidate, *, at=100, cover=None, title=None, product=None, owner="__public__"):
+def observation(candidate, *, at=100, cover=None, title=None, product=None, owner="__public__",
+                bibliography_metadata=None):
     row = public_row(
         source_provider="seller-a", source_credential=owner,
         title=title or candidate.title, friendly_url=product or candidate.public_locator,
         thumbnail_url=cover, description="Résumé public",
-        metadata={"public_url_evidence": "seller-a.public_search_product_card"},
+        metadata={"public_url_evidence": "seller-a.public_search_product_card",
+                  **(bibliography_metadata or {})},
     )
     session = SimpleNamespace(provider_id="seller-a", credential_id=owner,
                               connected=True, credentials={}, _accounts=[])
