@@ -489,6 +489,12 @@ def main():
         assert len(historical_rows) == 1
         assert "sans accès fournisseur" in historical_rows[0].get_subtitle()
         report["checks"]["P0_976_historical_local_review_row"] = True
+        organizer_rows = [node for node in walk(w._tools_box)
+                          if isinstance(node, Adw.ActionRow)
+                          and node.get_title() == "Organiser la bibliothèque"]
+        assert len(organizer_rows) == 1
+        assert "Lecture seule" in organizer_rows[0].get_subtitle()
+        report["checks"]["P0_3176_organizer_read_only_row"] = True
         preview_button[0] = next((
             b for b in walk(w._tools_box)
             if isinstance(b, Gtk.Button)
