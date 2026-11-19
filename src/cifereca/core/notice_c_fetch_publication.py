@@ -18,7 +18,7 @@ from .notice_cover_projection import project_notice_cover_attribute
 from .notice_cover_repository import _opaque_key, _checked_source_state, _persist_notice_cover_txn
 from .notice_c_public_search import _public_observation
 from .notice_c_cover_index import _exact_public_search_evidence
-from .notice_c_work_requests import request_affected_public_recompute_txn
+from .notice_c_work_requests import request_source_worker_dependents_txn
 from .notice_c_initial_publication import request_initial_publication_txn
 
 
@@ -118,7 +118,7 @@ def prepare_public_fetch_publication(storage, authority, permit, result, *, cloc
                 or fence is None or fence["last_seen_at"] < result.observed_at):
             raise UnavailableNoticeWork("notice_fetch_invalid_publication")
         _exact_public_search_evidence(published)
-        dirty = request_affected_public_recompute_txn(db, published, now=now)
+        dirty = request_source_worker_dependents_txn(db, published, now=now)
         if dirty.overflow or dirty.refused:
             # Do not publish a half-reconciled source. Unlike CPU reparse,
             # another attempt cannot use the already consumed GET permit.
