@@ -57,6 +57,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "acquisition": {"acsm_retention_days": 7},
     "library": {"directory": "~/EBooks"},
+    # #4496: ordinary destructive maintenance requires explicit opt-in.
+    "maintenance": {"destructive_cleanup_enabled": False},
     # Retired global Kobo backup settings are intentionally absent from new
     # configurations. Config.load() still retains legacy user-supplied keys
     # verbatim for bounded rollback; no old flag grants source consent.
