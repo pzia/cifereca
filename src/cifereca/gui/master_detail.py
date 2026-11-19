@@ -121,6 +121,13 @@ class MasterDetailPage(Gtk.Box):
         self.header_actions.set_halign(Gtk.Align.END); self.header_actions.set_valign(Gtk.Align.START)
         header.append(self.header_actions)
         self.append(header)
+        self._documentary_summary = Gtk.Label(label="", xalign=0)
+        self._documentary_summary.set_wrap(True)
+        self._documentary_summary.set_margin_start(18)
+        self._documentary_summary.set_margin_end(18)
+        add_css(self._documentary_summary, "caption", "dim-label")
+        self._documentary_summary.set_visible(False)
+        self.append(self._documentary_summary)
 
         self.toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.toolbar.set_margin_top(10)
@@ -359,11 +366,17 @@ class MasterDetailPage(Gtk.Box):
             while self.store.get_n_items() > 0:
                 self.store.remove(self.store.get_n_items() - 1)
         self.count_label.set_label("")
+        if hasattr(self, "_documentary_summary"):
+            self.set_documentary_summary("")
         self._total_count = 0
         # Never keep stale metadata from a row that belonged to the previous
         # account/provider/filter. This is especially visible when switching
         # to an anonymous catalogue account with no selected loan.
         self.detail.empty("Aucun document sélectionné", "Sélectionnez un document dans la liste.")
+
+    def set_documentary_summary(self, text: str) -> None:
+        self._documentary_summary.set_label(text)
+        self._documentary_summary.set_visible(bool(text))
 
     def set_total_only_count(self, enabled: bool = True) -> None:
         self._count_total_only = bool(enabled)

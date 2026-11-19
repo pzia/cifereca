@@ -141,6 +141,13 @@ def render_library(window, entries: list[dict[str, Any]] | None = None, *, perf_
             window.library_page.show_rows(rows, total_count=len(entries))
     else:
         window.library_page.show_rows(rows, total_count=len(entries))
+    # Same identity-scoped snapshot as the list, before text/facet filters.
+    # No GTK storage read, no additional refresh loop or historical Sync count.
+    set_summary = getattr(window.library_page, "set_documentary_summary", None)
+    if callable(set_summary):
+        from ..core.notice_c_purchase_summary import projected_purchase_counts
+        from .library_documentary_summary import documentary_summary
+        set_summary(documentary_summary(projected_purchase_counts(entries, identity_id=identity_id)))
     if phase is not None:
         phase("model_update")  # includes synchronous GTK ListStore signals
     restored_pending = window._select_pending_library_item()
