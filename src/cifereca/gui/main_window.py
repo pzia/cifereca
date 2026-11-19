@@ -710,11 +710,13 @@ class MainWindow(Adw.ApplicationWindow):
         if box is None: return
         self._dispose_maintenance_lines()
         clear_box(box)
-
+        from cifereca.gui.derived_variant_maintenance_line import add_derived_variant_maintenance_line
         services = self.plugin_manager.services("maintenance.tool") if self.plugin_manager else ()
         if not services:
             label = Gtk.Label(label="Aucun outil de maintenance additionnel n’est installé.", xalign=0)
-            add_css(label, "dim-label"); box.append(label); return
+            add_css(label, "dim-label"); box.append(label)
+            add_derived_variant_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
+            return
         for resolved in services:
             tool = resolved.service
             try: info = tool.describe()
@@ -1105,6 +1107,9 @@ class MainWindow(Adw.ApplicationWindow):
                     kind="maintenance-plan",
                 )
             run.connect("clicked", prepare)
+        # Keep existing plugin tools in their original order and above the
+        # independent Core diagnostics, including on narrow displays.
+        add_derived_variant_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
 
     def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
         return sync_controller.run_opening_sync(self, control, deep=deep)
