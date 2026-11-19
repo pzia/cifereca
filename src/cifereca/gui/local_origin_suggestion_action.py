@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from ..core.local_origin_suggestion_operator import (
-    admit_local_origin_suggestion, run_local_origin_suggestion,
+    admit_local_origin_suggestion, continue_local_origin_suggestion,
+    run_local_origin_suggestion,
 )
 from ..core.local_origin_documentary_suggestions import DocumentarySuggestionPage
 from ..storage import Storage
@@ -62,54 +63,80 @@ def add_local_origin_suggestion_action(window, detail, row, item, *, token):
         "Comparer ce fichier aux notices publiques déjà connues ; ni recherche réseau, ni attribution d'origine."
     )
     busy = False
-    displayed = False
+    finished = False
+    next_request = None
+    captured_route = None
 
     def active():
         return current() and not getattr(button, "_cifereca_action_context_revoked", False)
 
     def clicked(_button):
-        nonlocal busy
-        if busy or displayed or not active():
+        nonlocal busy, finished, next_request, captured_route
+        if busy or finished or not active():
             return
         mapped = getattr(button, "get_mapped", None)
         if callable(mapped) and not mapped():
             return
         route = getattr(window, "_route_display_token", None)
-        request = admit_local_origin_suggestion(
-            core, identity_id=owner, placement_id=placement, confirmed=True,
-        )
+        if next_request is None:
+            request = admit_local_origin_suggestion(
+                core, identity_id=owner, placement_id=placement, confirmed=True,
+            )
+            captured_route = route
+        else:
+            request = next_request
+            if route is not captured_route or not request.current():
+                finished = True
+                window.toast("Contexte modifié. Rouvrir la fiche pour une nouvelle revue.")
+                return
         if request is None or not active():
             if active():
                 window.toast("Vérification de provenance indisponible pour ce profil.")
             return
         busy = True
+        delivered = False
 
         def deliverable():
             return (active() and getattr(window, "_route_display_token", None) is route
                     and request.current())
 
         def failed(_exc):
-            nonlocal busy
+            nonlocal busy, delivered
+            if delivered:
+                return
+            delivered = True
             busy = False
             if deliverable():
                 window.toast("Vérification de provenance indisponible.")
 
         def done(result):
-            nonlocal busy, displayed
+            nonlocal busy, finished, next_request, delivered
+            if delivered:
+                return
+            delivered = True
             busy = False
             if not deliverable():
                 return
             page = result.get("suggestions") if type(result) is dict else None
-            if type(page) is not DocumentarySuggestionPage:
-                window.toast("Aucun candidat vérifié pour cette recherche documentaire.")
+            if (type(page) is not DocumentarySuggestionPage or page.page != request.page
+                    or page.page_size != request.page_size):
+                if request.page:
+                    finished = True
+                    window.toast("Preuves modifiées ou indisponibles. Rouvrir la fiche pour relancer la revue.")
+                else:
+                    window.toast("Aucun candidat vérifié pour cette recherche documentaire.")
                 return
+            following = continue_local_origin_suggestion(core, request, result)
             lines = [
                 ("Portée", "Notices publiques connues uniquement. Correspondances documentaires, aucune origine ni droit attestés."),
-                ("Couverture", "Partielle ; recherche non exhaustive."),
+                ("Couverture", "Partielle ; recherche non exhaustive. Les pages sont relues indépendamment et les résultats peuvent évoluer."),
+                ("Page", str(page.page + 1)),
                 ("Résultats connus", str(page.known_matches)),
             ]
-            if page.has_more:
-                lines.append(("Limite", "Première page seulement ; d’autres résultats peuvent exister."))
+            if following is not None:
+                lines.append(("Suite", "Cliquer de nouveau sur Suggestions de provenance pour la page suivante."))
+            elif page.has_more:
+                lines.append(("Limite", "Limite de revue atteinte ; d’autres résultats peuvent exister."))
             for entry in page.suggestions:
                 hit = entry.hit
                 text = " · ".join(part for part in (
@@ -122,7 +149,10 @@ def add_local_origin_suggestion_action(window, detail, row, item, *, token):
                 lines.append(("Résultat", "Aucune correspondance connue ; absence non prouvée."))
             if deliverable():
                 detail.add_group("Suggestions de provenance — lecture seule", lines)
-                displayed = True
+                next_request = following
+                finished = following is None
+                if following is not None:
+                    button.set_tooltip_text("Afficher la page suivante des correspondances documentaires connues.")
 
         try:
             window.runner.submit(
