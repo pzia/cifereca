@@ -81,10 +81,11 @@ def test_existing_group_repaired_when_only_live_group_publication_fails(tmp_path
     with open_core(tmp_path, notice_work_admission=SharedTaskAdmission(
             max_inflight=4, reserve_user_slots=1)) as core:
         _real_origins(core.storage, tmp_path)
-        def ingest(title, now):
+        def ingest(description, now):
             rows = [
-                _admitted(title, "edition-a", source_provider="seller-a", thumbnail_url=A_URL),
-                _admitted("Autre source", "edition-b", source_provider="seller-b", thumbnail_url=B_URL),
+                _admitted("Même titre", "edition-a", source_provider="seller-a",
+                          thumbnail_url=A_URL, description=description),
+                _admitted("Même titre", "edition-b", source_provider="seller-b", thumbnail_url=B_URL),
             ]
             pairs = search._ingest_public_search_c(
                 core.library, rows, identity_id="alice", now=now,
@@ -92,7 +93,7 @@ def test_existing_group_repaired_when_only_live_group_publication_fails(tmp_path
             )
             assert len(pairs) == 2 and all(own is not None for _, _, own in pairs)
             return pairs
-        initial = ingest("Ancien titre", 100)
+        initial = ingest("Ancien résumé", 100)
         group_document = initial[0][0]._core_notice_canonical_cover_document_ref
         old = index.read_consolidated_notice_cover(core.storage, group_document)
         assert len(old.sources) == 2
@@ -106,15 +107,16 @@ def test_existing_group_repaired_when_only_live_group_publication_fails(tmp_path
             raise OSError("simulated group-only commit failure")
         with monkeypatch.context() as patch:
             patch.setattr(origin, "persist_origin_linked_public_cover_group", fail_group)
-            changed = ingest("Nouveau titre", 101)
+            changed = ingest("Nouveau résumé", 101)
         # The independent exact self publication has already succeeded.
         assert changed[0][2].document != group_document
-        assert changed[0][2].sources[0].public_bibliography.title == "Nouveau titre"
+        assert changed[0][2].sources[0].public_bibliography.description == "Nouveau résumé"
         assert committed.wait(10)
         latest = index.read_consolidated_notice_cover(core.storage, group_document)
         assert latest.epoch == old.epoch + 1
-        assert {s.public_bibliography.title for s in latest.sources} == {
-            "Nouveau titre", "Autre source",
+        assert {s.public_bibliography.title for s in latest.sources} == {"Même titre"}
+        assert {s.provider_id: s.public_bibliography.description for s in latest.sources} == {
+            "seller-a": "Nouveau résumé", "seller-b": None,
         }
         assert events == [(group_document, latest.epoch)]
         assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
