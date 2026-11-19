@@ -105,6 +105,13 @@ def test_public_descriptive_facts_keep_source_provenance_not_association_time(tm
         name, values = detail(packet)[-1]
         assert name == "Fiche du catalogue public"
         assert ("Résumé", "Résumé public") in values
+        provenance, = [value for label, value in values if label == "Provenance"]
+        assert "seller-a · 01/01/1970 00:01:38 UTC" in provenance
+        assert "Résumé" in provenance and "Titre" in provenance
+        assert "00:01:39" not in provenance  # private association time
+        assert packet.notice.facts[0].source_ref not in provenance
+        assert packet.notice.facts[0].source_revision not in provenance
+        assert ("Portée", "Fiche commerciale, pas une preuve de l’édition acquise") in values
         assert card["metadata"]["description"] == "Résumé local"
 
         # Duplicate key cannot claim the other row's proof.
