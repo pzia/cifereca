@@ -72,6 +72,7 @@ def test_runtime_selects_same_read_and_dispatches_only_after_a_commit(rig, monke
             db.metadata_set(_POLICY, "false")
         executor = install_purchase_runtime(service, runtime)
         assert calls == [] and reads == []
+        assert runtime.documentary_revision() == 0
         result = synchronize_account_source(service, service.account)["canonical_rights"]
         assert len(refs(db)[0]) == 1 and refs(db)[1] == 0
         if mode in ("policy_off", "public_off"):
@@ -106,6 +107,9 @@ def test_runtime_selects_same_read_and_dispatches_only_after_a_commit(rig, monke
                 assert calls == ["wake", "get_admitted", "public"]
             else:
                 assert not hits and calls == ["wake"]
+        # A committed lease and its terminal receipt both invalidate views,
+        # including a failed transport fence. Refusal before claim does not.
+        assert runtime.documentary_revision() == (2 if mode in ("qualified", "late_revoke") else 0)
         assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
         assert not root.exists()
     finally:

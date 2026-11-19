@@ -386,10 +386,9 @@ class SynchronizationBrokerImpl:
         Absent counters mean unattested, not zero. Malformed nested metadata
         cannot leak supplier text or fabrications into the read-only view.
         """
-        if type(value) is not dict or set(value) not in (
-            {"schema", "status", "attempted_at", "mode"},
-            {"schema", "status", "attempted_at", "mode", "canonical_execution"},
-        ):
+        mandatory = {"schema", "status", "attempted_at", "mode"}
+        if (type(value) is not dict or not mandatory <= set(value)
+                or set(value) - mandatory - {"canonical_execution", "purchase_enrichment"}):
             return None
         if (type(value["schema"]) is not int or value["schema"] != 1
                 or type(value["status"]) is not str
@@ -416,6 +415,11 @@ class SynchronizationBrokerImpl:
             safe["canonical_execution"] = {
                 name: counts[name] for name in CANONICAL_EXECUTION_STATUSES
             }
+        if "purchase_enrichment" in value:
+            from .core.notice_c_purchase_summary import closed_handoff_counts
+            counts = closed_handoff_counts(value["purchase_enrichment"])
+            if counts is not None:
+                safe["purchase_enrichment"] = counts
         return safe
 
     def _set_state(self, source_id: str, value: dict[str, Any]) -> None:
@@ -619,6 +623,8 @@ class SynchronizationBrokerImpl:
                     tuple(last_cycle["canonical_execution"].items())
                     if "canonical_execution" in last_cycle else None
                 ),
+                purchase_enrichment=(tuple(last_cycle["purchase_enrichment"].items())
+                                     if "purchase_enrichment" in last_cycle else None),
             ) if last_cycle is not None else None
         )
         if receipt is not None:
@@ -1015,7 +1021,7 @@ class SynchronizationBrokerImpl:
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         state = self._state(source_id)
 
-        def terminal_cycle(status: str, execution: object = None) -> None:
+        def terminal_cycle(status: str, execution: object = None, enrichment: object = None) -> None:
             """Publish with source status in the *same* SQLite metadata write.
 
             Only the already-validated complete Core execution envelope can
@@ -1028,6 +1034,8 @@ class SynchronizationBrokerImpl:
             }
             if type(execution) is dict:
                 payload["canonical_execution"] = dict(execution)
+            if type(enrichment) is dict:
+                payload["purchase_enrichment"] = dict(enrichment)
             state["last_cycle"] = payload
 
         # Keep the previous private-inventory evidence when a provider
@@ -1110,6 +1118,12 @@ class SynchronizationBrokerImpl:
                 facts["canonical_execution"] = {
                     name: execution[name] for name in CANONICAL_EXECUTION_STATUSES
                 }
+            from .core.notice_c_purchase_summary import closed_handoff_counts
+            rights = result.get("canonical_rights")
+            if type(rights) is dict and rights.get("status") in ("success", "partial"):
+                enrichment = closed_handoff_counts(rights.get("purchase_enrichment"))
+                if enrichment is not None:
+                    facts["purchase_enrichment"] = enrichment
             # Review-required books are NOT modifications and must not
             # inflate SyncResult.changed. Expose only a bounded aggregate,
             # never candidate paths, titles, loan IDs or personal metadata.
@@ -1137,6 +1151,7 @@ class SynchronizationBrokerImpl:
                 terminal_cycle(
                     "failed" if outcome in {"failed", "error"} else "partial",
                     None if invalid_status else facts.get("canonical_execution"),
+                    None if invalid_status else facts.get("purchase_enrichment"),
                 )
                 facts["reason"] = "invalid_response" if invalid_status else "source_partial"
                 state.update(status="partial", error="Synchronisation partielle")
@@ -1146,7 +1161,7 @@ class SynchronizationBrokerImpl:
                 return SyncResult(ok=False, changed=changed,
                                   warnings=("synchronisation partielle",), facts=facts)
             success_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            terminal_cycle("success", facts.get("canonical_execution"))
+            terminal_cycle("success", facts.get("canonical_execution"), facts.get("purchase_enrichment"))
             state.update(last_success=success_at, status="ok", error="")
             if refreshes_private_inventory:
                 state.update(

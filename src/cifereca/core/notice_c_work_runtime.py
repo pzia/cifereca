@@ -49,9 +49,11 @@ class NoticeWorkRuntime:
         self._scan = None
         self._hint_pending = False
         self._observer = None
+        self._documentary_revision = 0
         self._pump = PublicNoticeWorkPump(
             storage, broker, clock=clock, on_committed=self._notify,
             replay_registry=replay_registry,
+            on_purchase_committed=self._notify_purchase,
         )
 
     def install_fetch_execution(self, execution):
@@ -74,6 +76,7 @@ class NoticeWorkRuntime:
                 self._storage, self._broker, clock=self._clock,
                 on_committed=self._notify, replay_registry=self._replay_registry,
                 fetch_execution=execution, purchase_execution=self._purchase_execution,
+                on_purchase_committed=self._notify_purchase,
             )
             self._fetch_execution = execution
             self._fetch_authority = execution._authority
@@ -91,6 +94,7 @@ class NoticeWorkRuntime:
                 self._storage, self._broker, clock=self._clock,
                 on_committed=self._notify, replay_registry=self._replay_registry,
                 fetch_execution=self._fetch_execution, purchase_execution=execution,
+                on_purchase_committed=self._notify_purchase,
             )
             self._purchase_execution = execution
             return True
@@ -110,8 +114,20 @@ class NoticeWorkRuntime:
             self._observer = observer
             return True
 
+    def documentary_revision(self):
+        """Cheap in-memory invalidation watermark; never a source credential."""
+        with self._lock:
+            return None if self._closed else self._documentary_revision
+
+    def _notify_purchase(self):
+        with self._lock:
+            if not self._closed:
+                self._documentary_revision += 1
+
     def _notify(self, document, epoch):
         with self._lock:
+            if not self._closed:
+                self._documentary_revision += 1
             observer = None if self._closed else self._observer
         if observer is not None:
             observer(document, epoch)

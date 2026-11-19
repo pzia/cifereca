@@ -64,7 +64,7 @@ class AggregateWorkBridge:
 
     def __init__(self, storage, broker, prepare, *, clock=None, on_committed=None,
                  allow_reparse=False, allow_relink=False, prepare_fetch=None,
-                 claim_purchase=None, prepare_purchase=None):
+                 claim_purchase=None, prepare_purchase=None, on_purchase_committed=None):
         if (type(broker) is not TaskBrokerImpl
                 or not isinstance(broker.shared_admission, SharedTaskAdmission)
                 or broker.shared_admission.reserve_user_slots < 1):
@@ -81,6 +81,9 @@ class AggregateWorkBridge:
                 or (claim_purchase is not None and (
                     not callable(claim_purchase) or not callable(prepare_purchase)))):
             raise ValueError("notice_work_invalid_purchase_port")
+        if on_purchase_committed is not None and not callable(on_purchase_committed):
+            raise ValueError("notice_work_invalid_observer")
+        self._on_purchase_committed = on_purchase_committed
         self._claim_purchase = claim_purchase
         self._prepare_purchase = prepare_purchase
         self._prepare_fetch = prepare_fetch
@@ -136,6 +139,15 @@ class AggregateWorkBridge:
         with self._lock:
             self._inflight.discard(ref)
 
+    def _purchase_transition(self):
+        # Invalidation is advisory, not part of durable success. No GUI
+        # callback, payload or second work queue on this worker.
+        if self._on_purchase_committed is not None:
+            try:
+                self._on_purchase_committed()
+            except Exception:
+                pass
+
     def _fail(self, lease, *, transient, retry_after_seconds=None):
         try:
             receipt = journal.fail_job(
@@ -148,6 +160,8 @@ class AggregateWorkBridge:
             return "obsolete"
         # A transient cause can exhaust the attempt budget. Use the
         # committed receipt, not the cause or a second racy journal read.
+        if receipt.spec.implementation_digest == journal._PURCHASE_INTENT_DIGEST:
+            self._purchase_transition()
         return "transient_failure" if receipt.state == "pending" else "error"
 
     def _run(self, ref, control):
@@ -173,6 +187,8 @@ class AggregateWorkBridge:
             return "obsolete"
         if lease is None:
             return "not_ready"
+        if purchase:
+            self._purchase_transition()
         committed = False
         fetch = job.spec.kind == "fetch_source_notice"
         try:
@@ -259,6 +275,8 @@ class AggregateWorkBridge:
                 self._on_committed(*event)
             except Exception:
                 pass
+        if purchase:
+            self._purchase_transition()
         return "current"
 
 
