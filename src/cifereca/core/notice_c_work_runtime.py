@@ -14,6 +14,7 @@ from ..task_queue import TaskPriority
 from ..task_runtime import TaskBrokerImpl
 from .notice_c_work_pump import PublicNoticeWorkPump
 from .notice_c_fetch_execution import PublicFetchExecution
+from .notice_c_purchase_execution import PurchaseIntentExecution
 
 
 def validate_notice_work_admission(admission):
@@ -40,6 +41,8 @@ class NoticeWorkRuntime:
         self._clock = clock
         self._replay_registry = replay_registry
         self._fetch_authority = None
+        self._fetch_execution = None
+        self._purchase_execution = None
         self._dispatch_requested = False
         self._lock = RLock()
         self._closed = False
@@ -70,9 +73,26 @@ class NoticeWorkRuntime:
             self._pump = PublicNoticeWorkPump(
                 self._storage, self._broker, clock=self._clock,
                 on_committed=self._notify, replay_registry=self._replay_registry,
-                fetch_execution=execution,
+                fetch_execution=execution, purchase_execution=self._purchase_execution,
             )
+            self._fetch_execution = execution
             self._fetch_authority = execution._authority
+            return True
+
+    def install_purchase_execution(self, execution):
+        """Explicit Core composition before the first heartbeat; same pump."""
+        with self._lock:
+            if self._closed or self._dispatch_requested or self._purchase_execution is not None:
+                return False
+            if (type(execution) is not PurchaseIntentExecution
+                    or execution._storage is not self._storage):
+                raise ValueError("notice_purchase_invalid_registry")
+            self._pump = PublicNoticeWorkPump(
+                self._storage, self._broker, clock=self._clock,
+                on_committed=self._notify, replay_registry=self._replay_registry,
+                fetch_execution=self._fetch_execution, purchase_execution=execution,
+            )
+            self._purchase_execution = execution
             return True
 
     def bind_committed_observer(self, observer):
@@ -198,7 +218,12 @@ class NoticeWorkRuntime:
             self._observer = None
             authority = self._fetch_authority
             self._fetch_authority = None
+            self._fetch_execution = None
+            purchase = self._purchase_execution
+            self._purchase_execution = None
         if handle is not None:
             handle.cancel()
         if authority is not None:
             authority.close()
+        if purchase is not None:
+            purchase.close()
