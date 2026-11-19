@@ -112,7 +112,7 @@ def _verified_postcheck(
 def supervise_canonical_duplicate(
     storage, *, library_root: Path, candidate_placement_id: str,
     keeper_placement_id: str, action: Action = "preview",
-    shared_lock=None, confirmed: bool = False, config=None,
+    shared_lock=None, confirmed: bool = False, config=None, config_current=None,
 ) -> SupervisedCanonicalDedup:
     """Run the exact Core preview→prepare→validate→commit→postcheck pipeline.
 
@@ -172,6 +172,8 @@ def supervise_canonical_duplicate(
     # Preview and recovery of a pre-existing tombstone retain separate guards.
     # No config/plan value is snapshotted as lasting authorization.
     def cleanup_current():
+        if config_current is not None and config_current() is not True:
+            return False
         return (_ordinary_cleanup_enabled() if config is None
                 else _ordinary_cleanup_enabled(config))
 

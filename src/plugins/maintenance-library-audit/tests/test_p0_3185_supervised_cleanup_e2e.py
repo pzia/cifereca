@@ -8,20 +8,8 @@ from types import SimpleNamespace
 import hashlib
 
 import pytest
-@pytest.fixture(autouse=True)
-def _enable_legacy_dedup_test_path(monkeypatch):
-    """Retain synthetic tests of the OLD Core retirement engine only.
-
-    Production is suspended by #4496. This file exercises pre-existing
-    SQLite/FS crash-recovery invariants under an explicit test-only monkeypatch.
-    New acceptance tests of the default safety hold never use this fixture.
-    """
-    from cifereca.core import canonical_dedup_supervisor
-    monkeypatch.setattr(canonical_dedup_supervisor, "_ordinary_cleanup_enabled",
-                        lambda: True)
-
-
-
+from cifereca.config import Config
+from cifereca.core.destructive_cleanup_policy import DESTRUCTIVE_CLEANUP_KEY as KEY
 from cifereca.artifact_runtime import LibraryMaintenanceBrokerImpl
 from cifereca.core.canonical_publication import publish_completed_acquisition
 from cifereca.core.source_convergence import SourceKey
@@ -131,16 +119,14 @@ class _Context:
         return self._broker
 
 
-def _setup(rig, monkeypatch):
+def _setup(rig, monkeypatch, *, enabled=True):
     storage, root, _paths, pubs, lock_path = rig
     monkeypatch.setattr("cifereca.paths.acquisition_lock_file", lambda: lock_path)
-    service = SimpleNamespace(
-        storage=storage, config=SimpleNamespace(
-            get=lambda key, default=None: (
-                str(root) if key == "library.directory" else default
-            ),
-        ),
-    )
+    config = Config(root.parent / "plugin-maintenance-config.json")
+    config.set("library.directory", str(root))
+    config.set(KEY, enabled)
+    config.save()
+    service = SimpleNamespace(storage=storage, config=config)
     broker = LibraryMaintenanceBrokerImpl(service)
     tool = DuplicateCleanupTool().activate(_Context(broker))
     plan = MaintenancePlan(
@@ -205,3 +191,23 @@ def test_tool_reports_pending_without_automatic_recovery_after_fs_denial(
     assert recovery.ok and recovery.facts["status"] == "retired"
     assert not paths[1].exists()
     assert rows(storage) == (1, 2, 3, 3)
+
+
+def test_confirmed_plugin_plan_cannot_override_false_config(rig, monkeypatch):
+    storage, _root, paths, _pubs, _lock = rig
+    broker, tool, plan = _setup(rig, monkeypatch, enabled=False)
+    result = tool.run(plan, _Control())
+    assert not result.ok and result.changed == 0
+    assert result.facts["failures"] == 1
+    assert rows(storage) == (1, 3, 3, 3)
+    assert all(path.read_bytes() == BYTES for path in paths)
+
+
+def test_confirmed_plugin_plan_revoked_before_run(rig, monkeypatch):
+    storage, _root, paths, _pubs, _lock = rig
+    broker, tool, plan = _setup(rig, monkeypatch, enabled=True)
+    broker.service.config.set(KEY, False)
+    result = tool.run(plan, _Control())
+    assert not result.ok and result.changed == 0
+    assert rows(storage) == (1, 3, 3, 3)
+    assert all(path.read_bytes() == BYTES for path in paths)
