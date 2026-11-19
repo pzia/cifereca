@@ -156,6 +156,7 @@ def observe_canonical_rights_in_sync(
     service: Any, account: Account, *,
     cancelled: Callable[[], bool] = lambda: False,
     snapshot_sink: Callable[[ProviderRightsSnapshot], None] | None = None,
+    purchase_enrichment_sink: Callable | None = None,
 ) -> dict[str, Any] | None:
     """Opt-in rights phase of the *existing* source Sync, no additional loop.
 
@@ -163,7 +164,8 @@ def observe_canonical_rights_in_sync(
     incremental step all delivery offers remain proposals; automatic
     execution is wired only when Core has a proven delivery & consent route.
     """
-    if type(account) is not Account or not callable(cancelled):
+    if (type(account) is not Account or not callable(cancelled)
+            or (purchase_enrichment_sink is not None and not callable(purchase_enrichment_sink))):
         raise ValueError("invalid_canonical_rights_request")
     # Inspect only the already registered session. Resolving through the
     # legacy service method may throw for synthetic/local sources without a
@@ -174,10 +176,10 @@ def observe_canonical_rights_in_sync(
         )
     except (AttributeError, KeyError, ValueError, TypeError):
         return None
-    if session is None or all(
-        getattr_static(session, name, None) is None
-        for name in ("downloadable_resource_snapshot", "rights_observation_snapshot")
-    ):
+    names = ("downloadable_resource_snapshot", "rights_observation_snapshot")
+    if purchase_enrichment_sink is not None:
+        names += ("purchase_enrichment_observation",)
+    if session is None or all(getattr_static(session, name, None) is None for name in names):
         return None
     if service.sync_source_enabled(account) is not True:
         raise ValueError("canonical_rights_source_disabled")
@@ -185,7 +187,12 @@ def observe_canonical_rights_in_sync(
     registered_accounts = service.accounts
     registered_sessions = service._sessions
     original_storage = service.storage
-    snapshot = read_account_rights_snapshot(service, account, cancelled=cancelled)
+    candidate_batch = []
+    snapshot = read_account_rights_snapshot(
+        service, account, cancelled=cancelled,
+        **({"purchase_candidates_sink": candidate_batch.extend}
+           if purchase_enrichment_sink is not None else {}),
+    )
     if snapshot.status == "cancelled" or cancelled():
         raise Cancelled("canonical_rights_sync_cancelled")
 
@@ -317,6 +324,16 @@ def observe_canonical_rights_in_sync(
         # Only Core's existing source Sync receives this in-memory lease.
         # No raw A payload or private delivery URL is stored in Sync facts.
         snapshot_sink(snapshot)
+    # Metadata observation belongs to a separate Core lifecycle. Hand off
+    # only after the actual positive A transaction and presence checks.
+    # No locator, account or candidate is placed into Sync facts. A C sink
+    # failure cannot retroactively change the already successful A result.
+    if candidate_batch and not cancelled():
+        try:
+            if current_context() and service.sync_source_enabled(account) is True:
+                purchase_enrichment_sink(snapshot, tuple(candidate_batch))
+        except Exception:
+            _LOG.warning("TRACE purchase enrichment code=handoff_failed")
     return {
         "status": snapshot.status, "observed": len(snapshot.rights),
         "attested_active": admitted,
