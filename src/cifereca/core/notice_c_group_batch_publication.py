@@ -115,29 +115,40 @@ def publish_search_groups_txn(db, currents, *, now, _refused_refs=None):
 
 def _search_groups_txn(db, currents):
     """One relation discovery shared by the writer and read-only rebinding."""
-    current_by_coords = {}
-    for source in currents:
-        coord = _public_source_coordinates(source)
-        if coord is not None:
-            current_by_coords[coord] = source
-    if not current_by_coords:
+    # Inputs are already accepted Core snapshots, not external bodies.
+    # A large federated result may contain many unrelated catalogue rows.
+    # Keep only coordinates first; match the actual current source after
+    # inspecting the bounded relation graph, not the last duplicate row.
+    coordinates = {coord for source in currents
+                   if (coord := _public_source_coordinates(source)) is not None}
+    if not coordinates:
         return (), {}
     from .library_projection import _read_provider_origin_coordinates
     verified = _read_provider_origin_coordinates(db, identity_id=None, with_kind=True)
     if not verified or len(verified) > _MAX_ORIGINS:
         return (), {}
     wanted = _purchase_coordinates(verified)
-    if not (wanted & current_by_coords.keys()):
+    if not (wanted & coordinates):
         return (), {}
     public = _admitted_public_sources_txn(db, wanted)
-    current_by_coords = {coord: source for coord, source in current_by_coords.items()
-                         if public.get(coord) == source}
+    # The resulting map is bounded by the existing origin graph ceiling;
+    # an older duplicate cannot hide a later/earlier exact current receipt.
+    current_by_coords = {
+        coord: source for source in currents
+        if (coord := _public_source_coordinates(source)) in public
+        and public[coord] == source
+    }
     return _eligible_origin_groups(verified, public, current_by_coords), current_by_coords
 
 
 def read_committed_search_groups(storage, currents):
-    """Rebind accepted sources to exact current groups without another writer."""
-    if type(currents) is not tuple or not 1 <= len(currents) <= 256:
+    """Rebind already accepted Search snapshots in one read transaction.
+
+    Search can commit multiple writer chunks of 128 observations. The old
+    live writer's 256-row limit is not a bound on this read-only projection:
+    the relation scan and admitted group sizes remain independently bounded.
+    """
+    if type(currents) is not tuple or not currents:
         return {}
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN")
