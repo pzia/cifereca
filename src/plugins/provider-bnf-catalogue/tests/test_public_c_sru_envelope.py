@@ -251,6 +251,12 @@ def test_sru_skipped_query_does_not_mint_coverage(monkeypatch):
     (b"<dc:language>fra</dc:language>", True),
     (b"", False),
     (b"<dc:language>fra</dc:language><dc:language>not a tag</dc:language>", False),
+    (b"<dc:language>fra</dc:language><dc:language/>", False),
+    (b"<dc:language>fra</dc:language><dc:language> </dc:language>", False),
+    (b"<dc:language><b>fra</b></dc:language>", False),
+    (b'<dc:language xml:lang="fr">fra</dc:language>', False),
+    (b"<dc:language>fra</dc:language>" + b"<dc:language/>" * 16, False),
+    (b"<dc:language>" + b"a" * 129 + b"</dc:language>", False),
 ])
 def test_language_proof_only_for_entire_explicit_record_declaration(monkeypatch, raw, expected):
     from cifereca.core.search_orchestration import _public_rows_from_response

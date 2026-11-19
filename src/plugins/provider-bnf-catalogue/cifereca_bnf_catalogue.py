@@ -379,12 +379,17 @@ class BnfCatalogueSession(ProviderSession):
             # Retain the exact record's raw DC tags only when the entire
             # bounded declaration normalizes. Mixed invalid input must not
             # masquerade as a complete, attested set of languages.
-            raw_tags = values.get("language", [])
+            # Inspect every raw declaration: the display-oriented values map
+            # drops empties and flattens nested XML, so it cannot prove that
+            # the whole record's language set was understood.
+            language_nodes = list(data.iter(f"{{{DC}}}language"))
+            raw_tags = [(node.text or "").strip() for node in language_nodes]
             language_proof = {}
             if (languages and 1 <= len(raw_tags) <= 16
-                    and all(re.fullmatch(r"[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,8}", tag)
+                    and all(not len(node) and not node.attrib
+                            and re.fullmatch(r"[A-Za-z]{2,3}(?:[-_][A-Za-z0-9]{1,8}){0,8}", tag)
                             and len(tag) <= 128 and normalize_language_tag(tag)
-                            for tag in raw_tags)):
+                            for node, tag in zip(language_nodes, raw_tags))):
                 language_proof = {"bibliography_evidence": {"languages": {
                     "raw_tags": raw_tags, "source": self.provider_id + ".sru",
                     "source_field": "dc.language", "scope": "SRU-DUBLINCORE",
