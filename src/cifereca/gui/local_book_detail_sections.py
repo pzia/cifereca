@@ -7,6 +7,7 @@ their respective callers and the existing canonical DetailPanel renderer.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -115,10 +116,25 @@ def local_book_detail_sections(
         if purchase_library_notice(item) == purchase_notice:
             labels = {"title": "Titre", "author": "Auteur", "publisher": "Éditeur",
                       "description": "Résumé", "published_at": "Parution"}
-            sections.append(("Fiche du catalogue public", [
-                (labels[fact.field], fact.value) for fact in purchase_notice.notice.facts
-                if fact.field in labels
-            ]))
+            facts = [fact for fact in purchase_notice.notice.facts if fact.field in labels]
+            rows = [(labels[fact.field], fact.value) for fact in facts]
+            origins = {}
+            for fact in facts:
+                # The observation is public and scoped by the exact packet.
+                # Never display the private association time or raw identifiers.
+                coordinate = (fact.provider_id, fact.source_ref,
+                              fact.source_revision, fact.observed_at)
+                origins.setdefault(coordinate, []).append(labels[fact.field])
+            for (provider_id, _, _, observed_at), fields in origins.items():
+                try:
+                    date = datetime.fromtimestamp(observed_at, tz=timezone.utc)
+                    when = date.strftime("%d/%m/%Y %H:%M:%S UTC")
+                except (OverflowError, OSError, ValueError, TypeError):
+                    when = "date non restituable"
+                rows.append(("Provenance", f"{provider_display_name(provider_id)} · "
+                             f"{when} · {', '.join(fields)}"))
+            rows.append(("Portée", "Fiche commerciale, pas une preuve de l’édition acquise"))
+            sections.append(("Fiche du catalogue public", rows))
     if purchase_status is not None:
         from ..core.notice_c_purchase_library_projection import purchase_library_status, purchase_status_label
         if purchase_library_status(item) == purchase_status:
