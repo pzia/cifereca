@@ -28,9 +28,16 @@ def unavailable_naming_audit():
 
 def audit_physical_names(service, *, identity_id, control=None):
     """Exact active identity; no private coordinates leave the Core broker."""
+    cancelled = False
+
     def check():
+        nonlocal cancelled
         if control is not None:
-            control.check_cancelled()
+            try:
+                control.check_cancelled()
+            except Exception:
+                cancelled = True
+                raise
 
     def progress(current, total):
         check()
@@ -119,5 +126,7 @@ def audit_physical_names(service, *, identity_id, control=None):
     except Exception:
         # Cancellation must propagate through the task runner instead of
         # being converted into a plausible empty audit.
+        if cancelled:
+            raise
         check()
         return unavailable_naming_audit()
