@@ -51,7 +51,16 @@ def test_new_group_target_supersedes_old_job_without_retry(tmp_path, published):
         assert bridge.submit(old_ref).result(timeout=10) == "not_ready"
         if not published:
             assert bridge.submit(new_ref).result(timeout=10) == "current"
-        group = origin.reconcile_origin_linked_public_c(core.storage, third)
+            new_job = journal.read_job(core.storage, new_ref)
+            assert new_job.state == "current"
+        # Verify the worker's durable output without invoking a live writer.
+        with core.storage._lock, core.storage._connect() as db:
+            db.execute("BEGIN")
+            inputs = initial._group_inputs(db, third.document.source_key)
+            document, *_ = inputs
+            assert db.execute("SELECT 1 FROM metadata WHERE key=?",
+                              (index._db_key(document),)).fetchone() is not None
+        group = index.read_consolidated_notice_cover(core.storage, document)
         assert group is not None and group.document.source_key != old.spec.target
         assert {m.source_ref for m in group.sources} == {s.document.source_key for s in (*pair, third)}
         assert core.storage.entitlements() == [] and core.storage.acquisitions() == []
