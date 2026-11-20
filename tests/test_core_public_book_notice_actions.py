@@ -316,6 +316,7 @@ def test_valid_book_shape_retained_at_render_boundary(url):
     "/book/42?session_id=synthetic", "/book/42?%2574icket=synthetic",
     "/book/42?X_Amz_Signature=synthetic", "/book/42#refresh-token=synthetic",
     "/book/42?credential=synthetic", "/book/42?expires=123",
+    "/book/42?key-pair-id=synthetic", "/book/42#session-id=synthetic",
 ])
 def test_delivery_and_authority_cannot_cross_generic_detail_boundary(path):
     url = "https://books.example" + path
