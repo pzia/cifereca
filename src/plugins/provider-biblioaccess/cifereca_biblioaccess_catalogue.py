@@ -24,7 +24,7 @@ DESCRIPTOR = ProviderDescriptor(
     capabilities=ProviderCapabilities(search=True, holdings=True),
     search_capabilities=ProviderSearchCapabilities(
         fields=("all",),
-        scopes=("all", "digital"),
+        scopes=("all", "digital", "catalog"),
         pagination="page", max_pages=MAX_PAGE_INDEX + 1,
         notes=(
             "Recherche plein texte côté BiblioAccess, notices du tenant 1409 uniquement.",
@@ -68,7 +68,7 @@ class LaRochelleCatalogueSession(ProviderSession):
             raise ProviderError("biblioaccess_catalogue_not_connected")
         if type(field) is not str or field != "all":
             raise ProviderCapabilityError("biblioaccess_catalogue_field_unsupported")
-        if type(scope) is not str or scope not in ("all", "digital"):
+        if type(scope) is not str or scope not in ("all", "digital", "catalog"):
             raise ProviderCapabilityError("biblioaccess_catalogue_scope_unsupported")
         if type(page) is not int or not 0 <= page <= MAX_PAGE_INDEX:
             raise ProviderCapabilityError("biblioaccess_catalogue_page_invalid")
@@ -108,6 +108,50 @@ class LaRochelleCatalogueSession(ProviderSession):
             )
             for book_id in observation.book_ids
         ]
+
+    def search_with_response_facets(
+        self, query: str, scope: str = "all", *, field: str = "all",
+        content_types: tuple[str, ...] = (),
+    ):
+        """Same-call public declarations; a page window is not a global zero.
+
+        The legacy list may display an ID-derived fallback when the anchor
+        has no visible label. Such a row is not a positive bibliography
+        observation and must never become a durable C title.
+        """
+        from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
+        from biblioaccess_observations import book_id_from_url
+
+        rows = self.search(query, scope, field=field)
+        anonymous = (
+            self.credential_id == "__public__"
+            and type(self.credentials) is dict and not self.credentials
+            and type(self._accounts) is list and not self._accounts
+        )
+        declarations = []
+        if anonymous:
+            for row in rows:
+                if (row.metadata.get("bibliographic_evidence") != "search_link_text"
+                        or book_id_from_url(row.friendly_url) != row.record_id):
+                    continue
+                # The Core still independently validates the anonymous
+                # coordinates, public text and exact link. No URL is built
+                # from the record ID, and no private session is imported.
+                row.metadata["public_url_evidence"] = (
+                    self.provider_id + ".public_search_record_identifier"
+                )
+                declarations.append(PublicSearchNotice(row))
+        partial = len(declarations) != len(rows)
+        # Keep the warning for list-only callers; the typed response expresses
+        # a bounded page independently of a missing bibliographic observation.
+        self.last_search_warnings = (
+            ["Résultats publics partiels : notices sans preuve bibliographique."]
+            if partial else []
+        )
+        return ProviderSearchResponse(
+            results=rows, public_notices=tuple(declarations),
+            partial=partial, catalogue_complete=False if query.strip() else None,
+        )
 
     def holdings(self, item: SearchResult, search_terms: str = "") -> ItemDetail:
         if not self.connected or self._catalogue is None:
