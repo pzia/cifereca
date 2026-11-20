@@ -107,6 +107,12 @@ def discover_profiles(context: Any) -> dict[str, DeviceProfile]:
     return found
 
 
+EPUB_RENDERING_WARNING = (
+    "Optimisation d’images EPUB : rendu, viewport et compatibilité KEPUB/FXL "
+    "non vérifiés. Aucune conversion de moteur Kobo."
+)
+
+
 def default_output_path(input_path: str | Path, profile: DeviceProfile) -> Path:
     """Name an optimized EPUB, not an asserted Kobo-engine conversion.
 
