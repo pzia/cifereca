@@ -204,3 +204,20 @@ def test_hidden_detail_does_not_receive_lender_summary():
     assert append(panel, w.notice)
     deliver(panel)
     group.assert_not_called()
+
+
+@pytest.mark.parametrize("mutation", ["record", "account", "primary"])
+def test_mutated_exact_object_does_not_publish_possible_lender_summary(mutation):
+    w, candidate, service, panel, group, read = view()
+    assert append(panel, w.notice)
+    work, done, _ = panel.pending.pop(0)
+    rows = work()
+    if mutation == "record":
+        w.notice.record_id += "-other"
+    elif mutation == "account":
+        candidate._account.unique_id += "-other"
+    else:
+        candidate._account.is_primary = False
+    done(rows)
+    group.assert_not_called()
+    service.execute_cross_profile_borrow.assert_not_called()
