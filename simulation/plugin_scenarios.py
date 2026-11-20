@@ -7,18 +7,26 @@ Les fixtures sont isolées sous --out ; aucun fichier du profil réel n'est touc
 from __future__ import annotations
 
 import argparse
-import io
-import zipfile
 from hashlib import sha256
 import io
 import json
+import struct
 import zipfile
+import zlib
 from pathlib import Path
 
 from common.fake_books import FakeBookFactory, epub_bytes
 
 SEED = 20261008
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+FIXTURE_NAMES = frozenset({
+    "youth.json", "criticism.json", "criticism.jsonfeed.json", "constellations.json",
+    "youth-discovery.json", "youth-enrichment.json", "adept-profiles.json",
+    "criticism.rss.xml", "optimizer-valid.epub", "optimizer-corrupt.epub",
+    "optimizer-protected.epub", "optimizer-compact.epub",
+    "publication-text.pdf", "publication-scan.pdf", "publication-corrupt.pdf",
+    "publication-cases.json",
+})
 ISBN_A = "9780306406157"
 ISBN_B = "9780140328721"
 ISBN_C = "9780553386790"
@@ -323,6 +331,30 @@ def reproducible_epub(payload: bytes) -> bytes:
     return output.getvalue()
 
 
+
+def minimal_gray_png() -> bytes:
+    """A one-pixel grayscale PNG: no ancillary data or compressible padding."""
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff))
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"\x00\x80", 9))
+            + chunk(b"IEND", b""))
+
+
+def synthetic_protection_marker(payload: bytes) -> bytes:
+    """Negative fixture only: no ciphertext, credentials, licences or keys."""
+    stream = io.BytesIO(payload)
+    with zipfile.ZipFile(stream, "a") as archive:
+        entry = zipfile.ZipInfo("META-INF/encryption.xml", (1980, 1, 1, 0, 0, 0))
+        archive.writestr(entry, (
+            '<encryption><EncryptedData><EncryptionMethod Algorithm="synthetic-unsupported"/>'
+            '</EncryptedData></encryption>'
+        ))
+    return reproducible_epub(stream.getvalue())
+
+
 def synthetic_pdf(*, scan: bool = False) -> bytes:
     """Tiny PDF 1.4; no dependencies, metadata or personal content."""
     def stream(data: bytes, attributes: bytes = b"") -> bytes:
@@ -446,7 +478,12 @@ def create(out: Path, *, seed: int = SEED) -> dict:
     for name, payload in contents.items():
         (out / name).write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     (out / "criticism.rss.xml").write_text(criticism_rss(), encoding="utf-8")
-    (out / "optimizer-valid.epub").write_bytes(reproducible_epub(epub_bytes(fake)))
+    valid = reproducible_epub(epub_bytes(fake))
+    (out / "optimizer-valid.epub").write_bytes(valid)
+    (out / "optimizer-protected.epub").write_bytes(synthetic_protection_marker(valid))
+    (out / "optimizer-compact.epub").write_bytes(
+        reproducible_epub(epub_bytes(fake, cover=minimal_gray_png())),
+    )
     (out / "optimizer-corrupt.epub").write_bytes(b"this is not a valid EPUB file\n")
     (out / "publication-text.pdf").write_bytes(synthetic_pdf())
     (out / "publication-scan.pdf").write_bytes(synthetic_pdf(scan=True))
@@ -455,7 +492,7 @@ def create(out: Path, *, seed: int = SEED) -> dict:
         json.dumps(publication_cases(out), ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
-    paths = sorted(p for p in out.iterdir() if p.is_file() and p.name != "manifest.json")
+    paths = [out / name for name in sorted(FIXTURE_NAMES)]
     manifest = {"version": SCHEMA_VERSION, "synthetic": True, "seed": seed,
                 "scope": ["jeunesse", "critique-litteraire", "constellations", "epub-optimizer",
                           "youth-discovery", "youth-detail-enrichment", "runtime-kobo-adept", "publication-pdf", "publication-maintenance"],

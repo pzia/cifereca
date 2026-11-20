@@ -420,7 +420,7 @@ def generate_specialized_data(profile: dict, *, rebuild: bool = False) -> Path |
             valid = (manifest.get("version") == plugin_scenarios.SCHEMA_VERSION
                 and manifest.get("seed") == seed
                 and isinstance(manifest.get("files"), dict)
-                and bool(manifest["files"])
+                and set(manifest["files"]) == plugin_scenarios.FIXTURE_NAMES
                 and all(
                     (target / name).is_file()
                     and hashlib.sha256((target / name).read_bytes()).hexdigest() == digest
@@ -914,7 +914,7 @@ def specialized_status(profile: dict) -> dict:
         result["complete"] = (
             manifest.get("version") == plugin_scenarios.SCHEMA_VERSION
             and manifest.get("seed") == int(config.get("seed", 20261008))
-            and isinstance(files, dict) and bool(files)
+            and isinstance(files, dict) and set(files) == plugin_scenarios.FIXTURE_NAMES
             and all(
                 (target / name).is_file()
                 and hashlib.sha256((target / name).read_bytes()).hexdigest() == digest

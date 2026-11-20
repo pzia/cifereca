@@ -104,18 +104,32 @@ def test_cancellation_keeps_original_and_existing_destination(documents, tmp_pat
 
 
 def test_synthetic_protection_marker_refused_without_decryption(documents, tmp_path):
-    root, _ = documents
-    original = root / "optimizer-valid.epub"
-    source = tmp_path / "marked.epub"
-    source.write_bytes(original.read_bytes())
-    # A refusal witness only: no encrypted payload, key, license or decryption.
-    with ZipFile(source, "a") as archive:
-        archive.writestr("META-INF/encryption.xml", (
-            '<encryption><EncryptedData><EncryptionMethod Algorithm="synthetic-unsupported"/>'
-            '</EncryptedData></encryption>'
-        ))
+    root, manifest = documents
+    source = root / "optimizer-protected.epub"
     before = source.read_bytes()
+    assert sha256(before).hexdigest() == manifest["files"][source.name]
+    # Refusal witness only: the generated archive has no encrypted payload,
+    # key, license or decryption.
+    with ZipFile(source) as archive:
+        assert b"synthetic-unsupported" in archive.read("META-INF/encryption.xml")
     target = tmp_path / "out.epub"
     with pytest.raises(DrmProtectedError):
         optimize_epub(source, target, profile=builtin_profile("generic-eink"))
     assert source.read_bytes() == before and not target.exists()
+
+
+def test_compact_grayscale_fixture_keeps_compatible_noncompressible_image(documents, tmp_path):
+    root, manifest = documents
+    source = root / "optimizer-compact.epub"
+    original = source.read_bytes()
+    target = tmp_path / "compact-out.epub"
+    report = optimize_epub(source, target, profile=builtin_profile("generic-eink"))
+    assert report.source_sha256 == manifest["files"][source.name]
+    assert report.output_sha256 == sha256(target.read_bytes()).hexdigest()
+    assert (report.images_seen, report.images_optimized, report.images_kept) == (1, 0, 1)
+    with ZipFile(source) as before, ZipFile(target) as after:
+        assert after.testzip() is None
+        assert before.read("OEBPS/cover.png") == after.read("OEBPS/cover.png")
+        assert set(before.namelist()) == set(after.namelist())
+        assert all(before.read(name) == after.read(name) for name in before.namelist())
+    assert source.read_bytes() == original

@@ -72,10 +72,14 @@ Le générateur crée des données **fictives et déterministes** :
   séries, accès et deux identités ;
 - `optimizer-valid.epub`, `optimizer-corrupt.epub` : première paire
   succès/erreur technique ;
+- `optimizer-protected.epub` : marqueur de protection fictif (aucun chiffrement
+  ni secret), refus attendu ; `optimizer-compact.epub` : PNG gris 1×1 déjà
+  minimal, conservation sous profil générique attendue ;
 - `publication-text.pdf` (deux pages texte), `publication-scan.pdf` (une page
   image synthétique sans couche texte), `publication-corrupt.pdf` (tronqué) :
   PDF déterministes sans métadonnées ni DRM, inventoriés par SHA-256.
 
+Le manifeste exige les 16 noms du corpus V6 et leurs SHA-256.
 Les fichiers sont produits dans `--out`, **pas versionnés**, et n'installent
 aucun abonnement, réseau, identité utilisateur ou compte externe.
 
@@ -113,7 +117,7 @@ plugin Baen dans Cifereca et ne prouve pas un parcours GUI.
 
 ## Découverte et enrichissement Jeunesse — fixtures conservées, plugins retirés
 
-Le manifeste des JDD spécialisés est en **version 5** ; les profils
+Le manifeste des JDD spécialisés est en **version 6** ; les profils
 `ux-small`, `ux-all`, `ux-errors` peuvent régénérer les fixtures
 `youth-discovery.json` et `youth-enrichment.json`, proposées par le service
 éditorial local (`GET /youth/discovery.json` et `GET /youth/enrichment.json`).
