@@ -38,13 +38,18 @@ def _display(result, selected=0):
     advice = result["keeper_advice"]
     lines = [
         f"Page {result['page']} · {result['placement_count']} placements SQL · {result['group_count']} groupes",
-        "Aperçu partiel des fichiers et avis de nommage ; aucun classement documentaire attesté.",
+        "Aperçu partiel du nommage et des catégories déclarées dans l’OPF ; aucun classement exécuté.",
         "Les dossiers actuels sont conservés. Aucun déplacement ni retrait.",
         f"{len(advice.eligible)} avis keeper présélectionnables sur cette page · {selected} sélectionnés",
     ]
     for number, group in enumerate(result["groups"], 1):
         lines.extend(("", f"Groupe {number} · {group['copies']} copie(s) · "
                       + _REASONS.get(group["reason"], "Revue nécessaire")))
+        if group.get("category_evidence") == "verified_opf_type_claim":
+            lines.append("Catégorie proposée (type déclaré dans l’OPF vérifié) : "
+                         + group["category_advice"])
+        else:
+            lines.append("Catégorie proposée : Non classés (preuve insuffisante)")
         for file in group["files"]:
             lines.append(file["current"] or "Chemin exclu")
             if file["proposed_name"]:

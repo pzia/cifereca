@@ -42,7 +42,38 @@ def _isbn13(value):
     return None
 
 
-def read_epub_bibliography(stream):
+# Explicit controlled URI claims only; generic Text, genre and filename
+# do not distinguish a book, comic or document. Audio is a separate bundle.
+_DOCUMENTARY_TYPES = {
+    "Book": "Livres",
+    "ComicStory": "BD-Manga",
+    "ComicIssue": "BD-Manga",
+    "DigitalDocument": "Documents",
+}
+
+
+def _documentary_nature(metadata, dc):
+    nodes = metadata.findall(dc + "type")
+    if not 1 <= len(nodes) <= 16:
+        return None
+    categories = set()
+    for node in nodes:
+        value = (node.text or "").strip()
+        if len(node) or len(value) > 128:
+            return None
+        for prefix in ("https://schema.org/", "http://schema.org/"):
+            if value.startswith(prefix):
+                category = _DOCUMENTARY_TYPES.get(value[len(prefix):])
+                break
+        else:
+            category = None
+        if category is None:
+            return None
+        categories.add(category)
+    return next(iter(categories)) if len(categories) == 1 else None
+
+
+def _read_epub_details(stream):
     """Pure bounded metadata read; restore caller position, do not close.
 
     ISBN is a descriptive claim in this file, not verified external origin.
@@ -101,7 +132,7 @@ def read_epub_bibliography(stream):
                     value = _isbn13(raw)
                     if value is not None:
                         isbns.add(value)
-            return title, authors, tuple(sorted(isbns))
+            return title, authors, tuple(sorted(isbns)), _documentary_nature(metadata[0], dc)
     except (OSError, ValueError, TypeError, AttributeError, EOFError, KeyError,
             RuntimeError, NotImplementedError, zipfile.BadZipFile,
             zlib.error, ElementTree.ParseError):
@@ -114,13 +145,18 @@ def read_epub_bibliography(stream):
                 pass
 
 
+def read_epub_bibliography(stream):
+    value = _read_epub_details(stream)
+    return value[:3] if value is not None else None
+
+
 def read_epub_description(stream):
     """Compatibility title/creator projection used by the organizer."""
     value = read_epub_bibliography(stream)
     return value[:2] if value is not None else None
 
 
-def read_verified_epub_bibliography(path: Path, expected_signature):
+def read_verified_epub_details(path: Path, expected_signature):
     """Open only the inode already hashed by the outer candidate review.
 
     The original pinned file and outer name recheck remain live until
@@ -135,7 +171,7 @@ def read_verified_epub_bibliography(path: Path, expected_signature):
             return None
         with os.fdopen(file_fd, "rb") as stream:
             file_fd = None
-            value = read_epub_bibliography(stream)
+            value = _read_epub_details(stream)
             if _file_signature(os.fstat(stream.fileno())) != expected_signature:
                 return None
             return value
@@ -146,6 +182,11 @@ def read_verified_epub_bibliography(path: Path, expected_signature):
             os.close(file_fd)
         if directory_fd is not None:
             os.close(directory_fd)
+
+
+def read_verified_epub_bibliography(path: Path, expected_signature):
+    value = read_verified_epub_details(path, expected_signature)
+    return value[:3] if value is not None else None
 
 
 def read_verified_epub_description(path: Path, expected_signature):

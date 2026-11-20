@@ -1,8 +1,8 @@
 """#3176: one private, paginated organizer review, never an executable plan.
 
 Reuse Core's inventory, naming policy and keeper reviewer. Classification
-cannot be inferred from suffix or a folder; this first view intentionally
-keeps the current directory and identifies unverified documentary nature.
+cannot be inferred from suffix or a folder. Verified OPF type claims are
+advice only; the current directory remains unchanged.
 Audio bundles are held as units and never expanded into rename suggestions.
 """
 from __future__ import annotations
@@ -174,7 +174,7 @@ def _destination_occupied(scope, target):
         os.close(fd)
 
 
-def _naming(scope, path, signature, description):
+def _naming(scope, path, signature, description, *, opf=None):
     """Use the existing policy, not a second naming engine or a new right."""
     stem, suffix = split_filename_suffix(path)
     if suffix.casefold() not in _SUPPORTED_SUFFIX:
@@ -186,8 +186,6 @@ def _naming(scope, path, signature, description):
     title, author = description
     if suffix.casefold() != ".pdf":
         # Filename/catalogue fallback is not proof of OPF title/author.
-        from .local_origin_epub_evidence import read_verified_epub_description
-        opf = read_verified_epub_description(path, signature)
         if (opf is None or opf[0] != title
                 or (opf[1][0] if len(opf[1]) == 1 else None) != (author or None)
                 or len(opf[1]) > 1):
@@ -219,9 +217,10 @@ def review_organizer_file(scope, artifact_id, row, description):
     pid, raw, state, digest, size, media_format = row
     path = _ordinary_path(scope, raw)
 
-    def result(current, name, reason, verified_path=None):
+    def result(current, name, reason, verified_path=None, category=None):
         return ({"placement": pid, "current": current, "proposed_name": name,
-                 "reason": reason}, verified_path)
+                 "reason": reason, "category_advice": category,
+                 "category_evidence": "verified_opf_type_claim" if category else None}, verified_path)
 
     if path is None:
         return result(None, None, "excluded_or_unverified_path")
@@ -234,9 +233,15 @@ def review_organizer_file(scope, artifact_id, row, description):
     try:
         with _verified_variant_file(path, digest, expected_size=size) as recheck:
             signature = recheck()
-            name, reason = _naming(scope, path, signature, description)
+            details = None
+            if media_format in ("epub", "kepub"):
+                from .local_origin_epub_evidence import read_verified_epub_details
+                details = read_verified_epub_details(path, signature)
+            name, reason = _naming(scope, path, signature, description,
+                                   opf=details[:2] if details is not None else None)
             recheck()
-        return result(relative, name, reason, path)
+        return result(relative, name, reason, path,
+                      details[3] if details is not None else None)
     except (OSError, ValueError, TypeError, RuntimeError):
         return result(relative, None, "physical_unverified")
 
@@ -245,7 +250,8 @@ def _group(scope, group):
     """Classify one inventory group; blocked groups never become a safe batch."""
     report = {"status": group.status, "reason": group.reason,
               "copies": len(group.placements), "files": (), "keeper": None,
-              "documentary_nature": "unverified", "relocation_proposed": False}
+              "documentary_nature": "unverified", "category_advice": "Non classés",
+              "category_evidence": None, "relocation_proposed": False}
     if (group.status not in ("unique", "candidate_review")
             or not 1 <= len(group.placements) <= _MAX_COPIES):
         return report, None
@@ -266,6 +272,10 @@ def _group(scope, group):
             named[row[0]] = verified_path
     if _placement_facts(scope, group) != snapshot:
         return {**report, "status": "blocked", "reason": "scope_changed"}, None
+    categories = {file["category_advice"] for file in files}
+    if len(categories) == 1 and None not in categories and len(named) == len(rows):
+        report["category_advice"] = next(iter(categories))
+        report["category_evidence"] = "verified_opf_type_claim"
     review = None
     if group.status == "candidate_review" and len(named) == len(rows):
         review = review_canonical_keeper(
