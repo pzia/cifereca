@@ -125,3 +125,34 @@ def test_guided_mount_owns_lease_no_fallback(mode):
     ordinary = ResolvedPluginService("fixture.ordinary", "1", "fixture", "1",
                                      "maintenance.tool", object(), registry_generation=2)
     assert not mount_guided_tool(window, box, ordinary, Gtk=Gtk)
+
+
+def test_guided_mount_uses_page_lifecycle_not_duplicate_route_token():
+    window, events = rig()
+    leases = []
+    live = [True]
+
+    class Tool:
+        def build_guided(self, lease):
+            leases.append(lease)
+            return GuidedMaintenanceView(Widget(), lambda: events.append("disposed"))
+
+    tool = Tool()
+    window.plugin_manager = NS(_registry_generation=2, service=lambda _: tool)
+    window.runner.submit = lambda *args, **kw: events.append(args)
+    resolved = ResolvedPluginService("fixture.tool", "1", "fixture", "1",
+                                     "maintenance.tool", tool, registry_generation=2)
+    assert mount_guided_tool(window, Widget(), resolved, Gtk=Gtk,
+                             view_current=lambda: live[0])
+    lease, = leases
+    window._route_display_token = object()  # repeat show("tools"), not a departure
+    assert lease.is_current()
+    received = []
+    assert lease.submit("attempt", lambda: "read-only result", received.append)
+    args = events[-1]
+    result = args[1]()
+    live[0] = False  # actual PageLifecycle transition
+    args[2](result)
+    assert not received and not lease.is_current()
+    window._dispose_maintenance_lines()
+    assert events.count("disposed") == 1
