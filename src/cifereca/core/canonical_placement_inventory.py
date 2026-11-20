@@ -72,100 +72,110 @@ def read_canonical_placement_inventory(
     if not _valid_id(identity_id):
         return CanonicalPlacementInventory("unavailable")
     try:
-        if storage.schema_version() < 14:
-            return CanonicalPlacementInventory("unavailable")
-        with storage._lock, storage._connect() as db:
-            db.execute("BEGIN")
-            # The inventory is bounded by profile. Do not materialize every
-            # unrelated identity to prove directory isolation: this check
-            # belongs to the SAME SQLite snapshot as the Placement query.
-            owner = db.execute(
-                "SELECT directory_name FROM identities WHERE identity_id=?",
-                (identity_id,),
-            ).fetchone()
-            if owner is None or type(owner[0]) is not str or not owner[0]:
+        with storage._lock:
+            db = storage._connect()
+            if db.in_transaction:
                 return CanonicalPlacementInventory("unavailable")
-            if db.execute(
-                "SELECT 1 FROM identities "
-                "WHERE directory_name=? AND identity_id<>? LIMIT 1",
-                (owner[0], identity_id),
-            ).fetchone() is not None:
-                # Shared physical roots forbid cross-profile dedup previews.
+            # schema_version also owns a connection context, so the above
+            # refusal must precede even that read.
+            if storage.schema_version() < 14:
                 return CanonicalPlacementInventory("unavailable")
-            rows = db.execute(
-                "SELECT p.placement_id,p.artifact_id,p.state,"
-                "p.provider_id,p.source_item_id,a.sha256,a.size,"
-                "(SELECT count(*) FROM catalog_entries c WHERE c.placement_id=p.placement_id),"
-                "(SELECT count(*) FROM catalog_entries c WHERE c.placement_id=p.placement_id "
-                "AND c.artifact_id=p.artifact_id AND c.identity_id=p.identity_id) "
-                "FROM placements p LEFT JOIN artifacts a ON a.artifact_id=p.artifact_id "
-                "WHERE p.identity_id=? ORDER BY p.artifact_id,p.placement_id LIMIT ?",
-                (identity_id, _MAX_PLACEMENTS + 1),
-            ).fetchall()
-            if len(rows) > _MAX_PLACEMENTS:
-                return CanonicalPlacementInventory("over_budget")
-            grouped = {}
-            for pid, artifact, state, provider, edition, sha, size, ncat, nmatched in rows:
-                # Orphan Placements cannot be grouped into a fictitious SHA pair.
-                group_key = artifact if _valid_id(artifact) else ("orphan", pid)
-                grouped.setdefault(group_key, []).append(
-                    (pid, artifact, state, provider, edition, sha,
-                     size, ncat, nmatched)
-                )
-            groups = []
-            for records in grouped.values():
-                artifact = records[0][1]
-                well_formed_artifact = (
-                    type(artifact) is str
-                    and len(artifact) == 71 and artifact.startswith("sha256:")
-                    and all(ch in "0123456789abcdef" for ch in artifact[7:])
-                )
-                entries = []
-                malformed = not well_formed_artifact
-                legacy = False
-                catalogue_mismatch = False
-                present = 0
-                for pid, art, state, provider, edition, sha, size, ncat, nmatched in records:
-                    valid_artifact = (well_formed_artifact and art == artifact
-                                      and sha == artifact[7:]
-                                      and type(size) is int and size > 0)
-                    if (not _valid_id(pid) or not valid_artifact
-                            or state not in _ALLOWED_STATES):
-                        malformed = True
-                    if state == "present":
-                        present += 1
-                    bound = provider is not None or edition is not None
-                    legacy = legacy or bound
-                    catalogue_mismatch = catalogue_mismatch or ncat != nmatched
-                    entries.append(CanonicalPlacementInventoryRow(
-                        pid if _valid_id(pid) else "",
-                        state if state in _ALLOWED_STATES else "unknown",
-                        bool(ncat and ncat == nmatched),
-                        bound,
-                    ))
-                if malformed:
-                    status, reason = "blocked", "placement_or_artifact_unverified"
-                elif catalogue_mismatch:
-                    status, reason = "blocked", "catalogue_scope_mismatch"
-                elif present != len(entries):
-                    status, reason = "blocked", "placement_recovery_required"
-                elif legacy:
-                    status, reason = "blocked", "legacy_source_scope_unbound"
-                elif present >= 2:
-                    status, reason = "candidate_review", "physical_and_reference_review_required"
-                else:
-                    status, reason = "unique", "single_registered_placement"
-                groups.append(CanonicalPlacementInventoryGroup(
-                    artifact if well_formed_artifact else "",
-                    tuple(entries), status, reason,
-                ))
-            return CanonicalPlacementInventory(
-                "partial" if any(g.status == "blocked" for g in groups)
-                else "reviewed",
-                tuple(groups), len(rows),
-            )
+            return _read_inventory(db, identity_id)
     except (sqlite3.Error, OSError, ValueError, TypeError, RuntimeError):
         return CanonicalPlacementInventory("unavailable")
+
+
+def _read_inventory(db, identity_id):
+    with db:
+        db.execute("BEGIN")
+        # The inventory is bounded by profile. Do not materialize every
+        # unrelated identity to prove directory isolation: this check
+        # belongs to the SAME SQLite snapshot as the Placement query.
+        owner = db.execute(
+            "SELECT directory_name FROM identities WHERE identity_id=?",
+            (identity_id,),
+        ).fetchone()
+        if owner is None or type(owner[0]) is not str or not owner[0]:
+            return CanonicalPlacementInventory("unavailable")
+        if db.execute(
+            "SELECT 1 FROM identities "
+            "WHERE directory_name=? AND identity_id<>? LIMIT 1",
+            (owner[0], identity_id),
+        ).fetchone() is not None:
+            # Shared physical roots forbid cross-profile dedup previews.
+            return CanonicalPlacementInventory("unavailable")
+        rows = db.execute(
+            "SELECT p.placement_id,p.artifact_id,p.state,"
+            "p.provider_id,p.source_item_id,a.sha256,a.size,"
+            "(SELECT count(*) FROM catalog_entries c WHERE c.placement_id=p.placement_id),"
+            "(SELECT count(*) FROM catalog_entries c WHERE c.placement_id=p.placement_id "
+            "AND c.artifact_id=p.artifact_id AND c.identity_id=p.identity_id) "
+            "FROM placements p LEFT JOIN artifacts a ON a.artifact_id=p.artifact_id "
+            "WHERE p.identity_id=? ORDER BY p.artifact_id,p.placement_id LIMIT ?",
+            (identity_id, _MAX_PLACEMENTS + 1),
+        ).fetchall()
+        if len(rows) > _MAX_PLACEMENTS:
+            return CanonicalPlacementInventory("over_budget")
+        grouped = {}
+        for pid, artifact, state, provider, edition, sha, size, ncat, nmatched in rows:
+            # Orphan Placements cannot be grouped into a fictitious SHA pair.
+            group_key = artifact if _valid_id(artifact) else ("orphan", pid)
+            grouped.setdefault(group_key, []).append(
+                (pid, artifact, state, provider, edition, sha,
+                 size, ncat, nmatched)
+            )
+        groups = []
+        for records in grouped.values():
+            artifact = records[0][1]
+            well_formed_artifact = (
+                type(artifact) is str
+                and len(artifact) == 71 and artifact.startswith("sha256:")
+                and all(ch in "0123456789abcdef" for ch in artifact[7:])
+            )
+            entries = []
+            malformed = not well_formed_artifact
+            legacy = False
+            catalogue_mismatch = False
+            present = 0
+            for pid, art, state, provider, edition, sha, size, ncat, nmatched in records:
+                valid_artifact = (well_formed_artifact and art == artifact
+                                  and sha == artifact[7:]
+                                  and type(size) is int and size > 0)
+                if (not _valid_id(pid) or not valid_artifact
+                        or state not in _ALLOWED_STATES):
+                    malformed = True
+                if state == "present":
+                    present += 1
+                bound = provider is not None or edition is not None
+                legacy = legacy or bound
+                catalogue_mismatch = catalogue_mismatch or ncat != nmatched
+                entries.append(CanonicalPlacementInventoryRow(
+                    pid if _valid_id(pid) else "",
+                    state if state in _ALLOWED_STATES else "unknown",
+                    bool(ncat and ncat == nmatched),
+                    bound,
+                ))
+            if malformed:
+                status, reason = "blocked", "placement_or_artifact_unverified"
+            elif catalogue_mismatch:
+                status, reason = "blocked", "catalogue_scope_mismatch"
+            elif present != len(entries):
+                status, reason = "blocked", "placement_recovery_required"
+            elif legacy:
+                status, reason = "blocked", "legacy_source_scope_unbound"
+            elif present >= 2:
+                status, reason = "candidate_review", "physical_and_reference_review_required"
+            else:
+                status, reason = "unique", "single_registered_placement"
+            groups.append(CanonicalPlacementInventoryGroup(
+                artifact if well_formed_artifact else "",
+                tuple(entries), status, reason,
+            ))
+        return CanonicalPlacementInventory(
+            "partial" if any(g.status == "blocked" for g in groups)
+            else "reviewed",
+            tuple(groups), len(rows),
+        )
 
 
 __all__ = [
