@@ -207,8 +207,11 @@ def filter_loaded_with_documentary_proofs(
     """
     from cifereca.core.search import filter_loaded_results
 
+    from .notice_c_loaded_filter import expand_filter_sources, collapse_filter_sources
+
+    expanded, originals = expand_filter_sources(rows, scope=scope)
     base = filter_loaded_results(
-        rows, query, providers=providers, languages=languages,
+        expanded, query, providers=providers, languages=languages,
         content_types=(), scope="all", field=field,
     )
     wanted = str(scope or "all").casefold()
@@ -240,4 +243,4 @@ def filter_loaded_with_documentary_proofs(
         ):
             continue
         out.append(row)
-    return out
+    return collapse_filter_sources(out, originals)
