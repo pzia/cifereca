@@ -16,7 +16,7 @@ OWNER = ROOT / "shell_page_controller.py"
 
 ROUTES = (
     "dashboard", "loans", "search", "history", "library",
-    "readers", "recent", "sync", "tools", "settings",
+    "readers", "recent", "sync", "settings",
 )
 
 
@@ -161,3 +161,12 @@ def test_dispatch_never_invokes_other_page_builders_or_network_service():
     ))
     _dispatch(host, "dashboard")
     assert calls == [("build", "dashboard")]
+
+
+def test_optional_maintenance_route_has_no_standard_builder():
+    host, _, calls = _host()
+    # Even an older plugin cannot revive the removed native route.
+    host._build_tools_page = lambda: pytest.fail("native fallback")
+    with pytest.raises(KeyError):
+        _dispatch(host, "tools")
+    assert not calls and not hasattr(host, "tools_page")
