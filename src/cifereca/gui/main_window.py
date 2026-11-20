@@ -733,7 +733,6 @@ class MainWindow(Adw.ApplicationWindow):
             add_local_origin_suggestion_batch_line(self, box, Gtk=Gtk, Adw=Adw)
             return
         manager = self.plugin_manager
-        route_token = getattr(self, "_route_display_token", None)
         for resolved in services:
             tool = resolved.service
 
@@ -743,7 +742,6 @@ class MainWindow(Adw.ApplicationWindow):
                 return (
                     not self._closed and self._tools_box is box
                     and _page_context.is_current()
-                    and getattr(self, "_route_display_token", None) is route_token
                     and self.plugin_manager is manager
                     and manager.registry_generation == r.registry_generation
                     and manager.service(r.plugin_id) is r.service
@@ -753,7 +751,7 @@ class MainWindow(Adw.ApplicationWindow):
                 continue
             if _page_context is not None:
                 from .maintenance_page_mount import mount_guided_tool
-                if mount_guided_tool(self, box, resolved, Gtk=Gtk):
+                if mount_guided_tool(self, box, resolved, Gtk=Gtk, view_current=tool_current):
                     continue
             try: info = tool.describe()
             except Exception:
