@@ -2,7 +2,8 @@
 
 Only known Core tables are inspected; no plugin/database/filesystem inventory
 claim. The caller owns a read transaction and has validated the exact receipts.
-Only each stage's own committed receipt is exempt from the scan.
+Only each stage's own committed receipt and its byte-exact, still-backed
+compact shadow are exempt from the scan.
 """
 from __future__ import annotations
 
@@ -10,6 +11,7 @@ import json
 import posixpath
 from urllib.parse import unquote, urlsplit
 
+from . import derived_variant_compact_receipt as compact
 from .derived_variant_journal import _unique_pairs
 
 _MAX_ROWS = 32768
@@ -130,6 +132,20 @@ def scan_stage_references(db, selected):
             if not candidates:
                 continue
             try:
+                if kind == "metadata" and type(key) is str and key.startswith(compact._PREFIX):
+                    # A shadow is historical receipt data, not a second consumer,
+                    # but only while its exact authoritative original still exists.
+                    # Never exempt a namespace, an orphan or another stage's proof.
+                    original_key, original = compact.decode_committed_witness(key, raw)
+                    backing = db.execute(
+                        "SELECT value FROM metadata WHERE key=? AND "
+                        "length(CAST(value AS BLOB)) BETWEEN 1 AND ?",
+                        (original_key, compact._MAX_PROOF_BYTES),
+                    ).fetchone()
+                    if backing != (original,):
+                        return unknown()
+                    candidates = tuple(path for path in candidates
+                                       if selected[path] != original_key)
                 for path in candidates:
                     if (_matches_stage(raw, path)
                             or (type(key) is str and _matches_stage(key, path))):
