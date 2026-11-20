@@ -1088,3 +1088,65 @@ def test_bnf_borrower_c_checkpoints_are_closed_and_failure_only():
         source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
         report.write_text(json.dumps({"last_stage": "borrower_c_complete"}))
         assert "bnf_covers_last_stage" not in module.safe_summary(source)["results"][0]
+
+
+def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
+    module = _module()
+    import copy
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        scenario = "book-detail-1366"
+        report = root / scenario / scenario / "screen.json"
+        report.parent.mkdir(parents=True)
+        source = root / "summary.json"
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        def phase(cold):
+            return {"schema": "cifereca.cover-six-views/1",
+                    "fixture": "one_c_six_views_mock_transport",
+                    "image_gets_total": 1,
+                    "route_to_observed_texture_ms": {route: 3.125 for route in module._COVER_ROUTES},
+                    "n1": {"n1_selected_count": 1, "n1_PRIVATE": 123},
+                    "n2": {"n2_hit": 11},
+                    "n3": {"download_ok": int(cold), "download_failed": 0},
+                    "n4": {"ui_applied": 12, "ui_failed": 0, "ui_decode_recent_count": 12,
+                           "ui_decode_recent_p95_ms": 1.234, "ui_decode_PRIVATE": "secret"},
+                    "url": "PRIVATE"}
+        data = {"local_c_stage": "complete",
+                "checks": {"P0_4980_same_c_six_physical_views_restart_offline": True},
+                "notice_c_cover_metrics_cold": phase(True),
+                "notice_c_cover_metrics_offline": phase(False),
+                "path": "/home/PRIVATE"}
+        def read(value):
+            report.write_text(json.dumps(value))
+            return module.safe_summary(source)["results"][0]
+        result = read(data)
+        safe = result["notice_c_cover_metrics"]
+        assert len(safe["cold"]["route_to_observed_texture_ms"]) == 12
+        assert safe["cold"]["n3"]["download_ok"] == 1
+        assert safe["offline"]["n3"]["download_ok"] == 0
+        assert safe["cold"]["n4"]["ui_decode_recent_p95_ms"] == 1.23
+        assert "PRIVATE" not in repr(result)
+        for field, value in (("ui_applied", True), ("ui_decode_recent_p95_ms", float("nan")),
+                             ("ui_failed", 1), ("ui_decode_recent_count", -1)):
+            bad = copy.deepcopy(data)
+            bad["notice_c_cover_metrics_cold"]["n4"][field] = value
+            assert "notice_c_cover_metrics" not in read(bad)
+        for change in ("stage", "check", "route", "offline"):
+            bad = copy.deepcopy(data)
+            if change == "stage":
+                bad["local_c_stage"] = "cold_library_list"
+            elif change == "check":
+                bad["checks"]["P0_4980_same_c_six_physical_views_restart_offline"] = 1
+            elif change == "route":
+                bad["notice_c_cover_metrics_cold"]["route_to_observed_texture_ms"]["PRIVATE"] = 1
+            else:
+                del bad["notice_c_cover_metrics_offline"]
+            assert "notice_c_cover_metrics" not in read(bad)
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+        assert "notice_c_cover_metrics" not in read(data)
+        source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+        read(data)
+        other = root / "private.json"
+        report.rename(other)
+        report.symlink_to(other)
+        assert "notice_c_cover_metrics" not in module.safe_summary(source)["results"][0]
