@@ -561,6 +561,45 @@ class KoboAdeptRuntime:
             value = value.get(key)
         return value is True or (isinstance(value, dict) and value.get('available') is True)
 
+    def preflight_acsm_profile(self, profile):
+        """Fresh, read-only CLI capability check before any ACSM execution.
+
+        This does not authorize or consume a loan. Core may use it before
+        recording a one-use attempt; the actual download repeats the check
+        immediately before entering the mutating CLI command.
+        """
+        if (type(profile) is not str or not profile or profile != profile.strip()
+                or profile.startswith('-') or len(profile) > 128
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in profile)):
+            raise AttentionRequired('Nom explicite du profil ADEPT requis.',
+                                    code='adept_profile_required')
+        if self.contract_version is None:
+            self.contract()
+        fresh = self.capabilities()  # always CLI read; never trust cached readiness
+        if type(fresh) is not dict:
+            raise KoboAdeptError('Capabilities Kobo-Adept invalides.',
+                                 code='kobo_adept_invalid_response')
+        if not self._available('download', 'acsm'):
+            raise AttentionRequired('Capability de téléchargement indisponible.',
+                                    code='unsupported_format')
+        adept = self._caps().get('adept')
+        ready = adept.get('fetch_capable_profiles') if type(adept) is dict else None
+        if (type(ready) is not list or len(ready) > 2048
+                or any(type(name) is not str or not name
+                       or name != name.strip() or name.startswith('-')
+                       or len(name) > 128
+                       or any(ord(char) < 32 or ord(char) == 127 for char in name)
+                       for name in ready)
+                or len(ready) != len(set(ready))):
+            raise KoboAdeptError('Liste des profils ADEPT invalides.',
+                                 code='kobo_adept_invalid_response')
+        if profile not in ready:
+            raise AttentionRequired(
+                'Le profil ADEPT choisi ne permet pas le fulfillment ACSM.',
+                code='adept_profile_required',
+            )
+        return True
+
     def _require_download(self, payload):
         source = payload.get('source')
         if not isinstance(source, dict) or source.get('type') not in {'http', 'acsm', 'kobo'}:
@@ -691,6 +730,9 @@ class KoboAdeptRuntime:
         payload = dict(request)
         # Core 0.9.5 emits compatible schema-1 recipes; the v2 fields are identical here.
         payload['schema_version'] = 2
+        if (type(payload.get('source')) is dict
+                and payload['source'].get('type') == 'acsm'):
+            self.preflight_acsm_profile(payload.get('profile'))
         self._require_download(payload)
         value = self.run_json(['download','request','-','--json'],payload=payload,
             timeout=int(self.config.get('download_timeout_seconds') or 900))
