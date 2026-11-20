@@ -11,7 +11,75 @@ from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
 from cifereca.core.notice_c_public_search import search_public_notice_c
 from cifereca.storage import Storage
 
-from test_opds_calibre_1084 import BOOK, NO_EPUB, HOST, route
+from urllib.parse import parse_qs
+
+# Same wire shapes as the legacy fixture; self-contained under pytest importlib mode.
+HOST = "https://opds2.ebooksgratuits.org"
+FEED = HOST + "/index.php/feed"
+ROOT = """<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+<title>Bibliothèque Calibre</title>
+<link rel="search" type="application/opensearchdescription+xml"
+ href="/index.php/opensearch.xml" />
+<entry><id>urn:all</id><title>All books</title>
+<link rel="subsection" type="application/atom+xml;profile=opds-catalog"
+ href="/index.php/feed/all" /></entry>
+<entry><id>urn:recent</id><title>Recent additions</title>
+<link rel="subsection" type="application/atom+xml;profile=opds-catalog"
+ href="/index.php/feed/recent" /></entry>
+</feed>"""
+OSD = """<?xml version="1.0"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+<Url type="application/atom+xml;profile=opds-catalog"
+ template="https://opds2.ebooksgratuits.org/index.php/feed/search?q={searchTerms}" />
+</OpenSearchDescription>"""
+BOOK = """<entry xmlns="http://www.w3.org/2005/Atom"
+xmlns:dc="http://purl.org/dc/terms/">
+<id>urn:uuid:42</id><title>Livre d'essai</title>
+<author><name>Auteur Exemple</name></author>
+<dc:publisher>Partenaire BEQ</dc:publisher>
+<summary>Une histoire pour les jeunes</summary>
+<updated>2026-10-18T09:00:00Z</updated>
+<category term="Jeunesse" label="Jeunesse" />
+<category term="Roman" label="Roman" scheme="https://example.org/genres" />
+<link rel="alternate" type="text/html" href="/index.php/book/42"/>
+<link rel="http://opds-spec.org/image/thumbnail" type="image/jpeg" href="/index.php/cover/42"/>
+<link rel="http://opds-spec.org/acquisition/open-access"
+ type="application/epub+zip" href="/index.php/fetch/42.epub"/>
+</entry>"""
+NO_EPUB = """<entry xmlns="http://www.w3.org/2005/Atom">
+<id>urn:uuid:43</id><title>Notice sans EPUB</title>
+<author><name>Autrice B</name></author>
+<link rel="alternate" type="text/html" href="/index.php/book/43" />
+<link rel="http://opds-spec.org/acquisition/open-access"
+ type="application/pdf" href="/index.php/fetch/43.pdf"/>
+</entry>"""
+
+
+def page(entries=BOOK, next_link=""):
+    return ('<feed xmlns="http://www.w3.org/2005/Atom">' + entries
+            + (f'<link rel="next" href="{next_link}"/>' if next_link else '')
+            + '</feed>')
+
+
+def response(req, status=200, body=ROOT, headers=None):
+    return httpx.Response(status, text=body, headers=headers, request=req)
+
+
+def route(req, *, entries=BOOK, search=True, navigation=True, next_page=False):
+    path = req.url.path
+    if path == "/index.php/feed":
+        return response(req,body=ROOT)
+    if path == "/index.php/opensearch.xml":
+        return response(req,body=OSD)
+    if path == "/index.php/feed/all":
+        return response(req,body=page(entries))
+    if path == "/index.php/feed/search":
+        n = parse_qs(req.url.query.decode()).get('p', ['0'])[0]
+        if n == "1":
+            return response(req,body=page(NO_EPUB))
+        return response(req,body=page(entries,'/index.php/feed/search?q=livre&amp;p=1' if next_page else ''))
+    raise AssertionError("Unexpected request route " + path)
 
 
 def make_session(entries=BOOK, *, credential="__public__", credentials=None, options=None):
