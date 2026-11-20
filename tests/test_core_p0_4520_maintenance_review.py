@@ -79,10 +79,9 @@ def test_line_is_explicit_and_never_offers_recovery(tmp_path, stale):
         service.storage.close()
 
 
-def test_main_window_keeps_existing_tool_order_and_appends_independent_review():
-    """The Core diagnostic is not the first plugin progress/confirmation row."""
+def test_main_window_mounts_derived_review_only_as_optional_guided_contribution():
+    """After #7100, the independent review must not reappear as a native fallback."""
     import ast
-    from pathlib import Path
 
     source = Path(__file__).resolve().parents[1] / "src/cifereca/gui/main_window.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
@@ -90,10 +89,16 @@ def test_main_window_keeps_existing_tool_order_and_appends_independent_review():
                  if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
     method = next(node for node in owner.body
                   if isinstance(node, ast.FunctionDef) and node.name == "_refresh_tools_page")
+    assert not any(isinstance(node, ast.Name) and node.id in {
+        "add_derived_variant_maintenance_line", "add_library_organizer_line",
+        "add_local_origin_suggestion_batch_line",
+    } for node in ast.walk(method))
     loop = next(node for node in method.body
                 if isinstance(node, ast.For) and isinstance(node.iter, ast.Name)
                 and node.iter.id == "services")
+    assert any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+               and node.func.id == "mount_guided_tool" for node in ast.walk(loop))
     calls = [node for node in method.body if isinstance(node, ast.Expr)
              and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
-             and node.value.func.id == "add_derived_variant_maintenance_line"]
+             and node.value.func.id == "add_adept_historical_maintenance_line"]
     assert len(calls) == 1 and calls[0].lineno > loop.end_lineno
