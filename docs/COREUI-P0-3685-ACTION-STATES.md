@@ -14,6 +14,12 @@ Le producteur évalue cet état et publie une nouvelle présentation pour le
 modifier. Les adaptateurs `PublicBookMasterDetailView.show_detail` et
 `DetailPanel.update_cached_book_details` appliquent le même helper. Les deux
 collecteurs de cache préservent l'état et bornent le motif à 280 caractères.
+Un descripteur natif `unavailable` ou `busy` sans cible (URI vide et
+callback `None`) reste visible dans un cache même si sa contribution ne
+contient aucune section. Le bouton est insensible et aucun signal
+d'activation n'est connecté. Une action disponible sans cible, un état
+inconnu sans cible ou une URI invalide ne sont pas admis par les collecteurs.
+
 Le titre accessible et le bouton restent ceux de l'action, y compris lorsque
 `AdaptiveActionBar` déplace ce bouton dans son menu de débordement.
 
