@@ -1,4 +1,5 @@
 """Normal lender choice requires distinct consent and a current UI scope."""
+from dataclasses import replace
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
@@ -27,7 +28,7 @@ class Dialog:
         self.callback(self, key)
 
 
-def setup():
+def setup(*, multiple=True):
     w, candidate, service, panel, _, _ = view()
     window = panel.window
     dialogs = []
@@ -45,7 +46,12 @@ def setup():
         dialogs.append(dialog)
         return dialog
 
-    args = dict(item=w.notice, rows=(candidate,), current=current,
+    rows = (candidate,)
+    if multiple:
+        second_account = replace(candidate._account, identity_id="carol", unique_id="carol-account")
+        rows += (replace(candidate, label="Carol", lender_identity_id="carol",
+                         _account=second_account),)
+    args = dict(item=w.notice, rows=rows, current=current,
                 service=service, identity=service.current_identity, identity_id="bob",
                 account_epoch=3, source_epoch=5, Adw=NS(MessageDialog=NS(new=new)),
                 TaskPriority=NS(USER_ACTION="user"))
@@ -57,8 +63,10 @@ def test_choice_and_confirmation_are_separate_and_submit_only_once():
     window = panel.window
     assert present_normal_lender_choice(panel, **args)
     assert not present_normal_lender_choice(panel, **args)
-    assert dialogs[0].responses == {"cancel": "Annuler", "choice-0": "Alice"}
-    dialogs[0].respond("choice-0")
+    assert dialogs[0].responses == {
+        "cancel": "Annuler", "choice-0": "Alice", "choice-1": "Carol",
+    }
+    dialogs[0].respond("choice-1")
     assert "Aucune copie" in dialogs[1].body
     window.runner.submit.assert_not_called()
     dialogs[1].respond("borrow")
@@ -68,7 +76,7 @@ def test_choice_and_confirmation_are_separate_and_submit_only_once():
     result = work()
     execute = args["service"].execute_normal_lender_borrow_for_current_identity
     execute.assert_called_once_with(
-        captured_candidate=args["rows"][0], exact_notice=args["item"],
+        captured_candidate=args["rows"][1], exact_notice=args["item"],
         expected_requesting_identity_id="bob", expected_requesting_identity=args["identity"],
         expected_context_epoch=3, expected_source_epoch=5, confirmed=True,
     )
@@ -76,6 +84,33 @@ def test_choice_and_confirmation_are_separate_and_submit_only_once():
     done(result)
     window._activity_result.assert_called_once()
     assert "aucune copie" in window._activity_result.call_args.args[0]
+    assert window._cross_profile_borrow_pending is None
+
+
+@pytest.mark.parametrize("decision", ["borrow", "cancel", "obsolete"])
+def test_single_lender_opens_confirmation_directly_and_still_requires_consent(decision):
+    panel, args, dialogs = setup(multiple=False)
+    window = panel.window
+    execute = args["service"].execute_normal_lender_borrow_for_current_identity
+
+    assert present_normal_lender_choice(panel, **args)
+    assert len(dialogs) == 1
+    assert dialogs[0].responses == {"cancel": "Annuler", "borrow": "Emprunter sur ce profil"}
+    assert "Alice" in dialogs[0].body
+    window.runner.submit.assert_not_called()
+    execute.assert_not_called()
+
+    if decision == "obsolete":
+        args["item"].record_id += "-other"
+    dialogs[0].respond("cancel" if decision == "cancel" else "borrow")
+    if decision == "borrow":
+        window.runner.submit.assert_called_once()
+        _, work, done, _ = window.runner.submit.call_args.args
+        done(work())
+        assert execute.call_args.kwargs["captured_candidate"] is args["rows"][0]
+    else:
+        window.runner.submit.assert_not_called()
+        execute.assert_not_called()
     assert window._cross_profile_borrow_pending is None
 
 
