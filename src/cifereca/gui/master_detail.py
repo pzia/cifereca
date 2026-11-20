@@ -223,7 +223,7 @@ class MasterDetailPage(Gtk.Box):
         self.paned.set_start_child(self.list_stack)
         self.detail = DetailPanel(window)
         self.paned.set_end_child(self.detail)
-        self.listview.connect("activate", lambda _view, _position: self.detail.child_focus(Gtk.DirectionType.TAB_FORWARD))
+        self.listview.connect("activate", self._activate_row)
         keys = Gtk.EventControllerKey()
         def key_pressed(_controller, keyval, _keycode, state):
             if keyval == Gdk.KEY_Escape:
@@ -306,6 +306,29 @@ class MasterDetailPage(Gtk.Box):
                         operation_id=trace.operation_id,
                         selection_started=trace.started,
                     )
+
+    def _activate_row(self, _view, position: int) -> None:
+        """Reopen the selected detail on an explicit list activation.
+
+        Returning to the narrow list preserves selection; activating that
+        same row does not emit notify::selected-item a second time.
+        """
+        if position < 0 or position >= self.store.get_n_items():
+            return
+        row = self.store.get_item(position)
+        if not isinstance(row, BookListItem):
+            return
+        if self.selection.get_selected_item() is not row:
+            self.selection.set_selected(position)
+        # Do not focus or open an unrelated row if selection was rejected
+        # or a synchronous selection callback replaced the model.
+        if self.selection.get_selected_item() is not row:
+            return
+        if self._narrow_master_detail:
+            if not self._narrow_detail_visible:
+                self._show_narrow_detail()
+        else:
+            self.detail.child_focus(Gtk.DirectionType.TAB_FORWARD)
 
     def select_key(self, key: str) -> bool:
         """Select a visible row by stable key and reveal it without changing filters."""
