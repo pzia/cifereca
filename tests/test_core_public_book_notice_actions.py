@@ -305,3 +305,38 @@ def test_valid_book_shape_retained_at_render_boundary(url):
            "metadata": {"product_url": url}}
     assert catalogue_notice_url(row) == url
     assert [link.url for link in document_links(row)] == [url]
+
+
+@pytest.mark.parametrize("path", [
+    "/book/42.lcpl", "/book/42.zip", "/book/42.LCPL/",
+    "/book/42%252elcpl", "/book/42.epub;view=html",
+    "/book/42%2epdf/", "/catalog/borrow/42", "/catalog/loans/42",
+    "/catalog/acquisition/42", "/catalog%252fborrow%252f42",
+    "/book/%2e%2e/42", "/book/%255c42", "/book/%250042",
+    "/book/42?session_id=synthetic", "/book/42?%2574icket=synthetic",
+    "/book/42?X_Amz_Signature=synthetic", "/book/42#refresh-token=synthetic",
+    "/book/42?credential=synthetic", "/book/42?expires=123",
+])
+def test_delivery_and_authority_cannot_cross_generic_detail_boundary(path):
+    url = "https://books.example" + path
+    row = {"provider_id": "other", "friendly_url": url,
+           "metadata": {"document_links": [{"relation": "related", "url": url}]}}
+    assert catalogue_notice_url(row) is None
+    assert document_links(row) == ()
+    assert safe_document_link_url(url, relation="notice") is None
+    assert safe_document_link_url(url, relation="related") is None
+    assert _target(_service_host(), row) == ("catalogue", "https://books.example/")
+
+
+@pytest.mark.parametrize("url", [
+    "https://books.example/book/l%C3%A9t%C3%A9",
+    "https://books.example/book/42?ref=library",
+    "https://books.example/book/42?title=Un%20titre#detail",
+    "https://books.example/ark:/12148/cb42",
+])
+def test_public_book_reference_remains_exact_with_stricter_delivery_guard(url):
+    row = {"friendly_url": "https://books.example/book/42.lcpl",
+           "metadata": {"product_url": url}}
+    assert catalogue_notice_url(row) == url
+    assert safe_document_link_url(url, relation="notice") == url
+    assert [link.url for link in document_links(row)] == [url]
