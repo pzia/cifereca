@@ -163,3 +163,47 @@ def test_nested_transaction_not_touched(setup):
         assert not _region(intent).exists()
     finally:
         sql.rollback()
+
+
+@pytest.mark.parametrize("phase", ["parent", "parent_reopen", "region", "marker"])
+def test_same_device_distinct_mount_refuses_without_adoption(setup, monkeypatch, phase):
+    db, intent, options = setup
+    directory = _region(intent)
+    key = region._key("id1")
+    if phase in ("region", "marker"):
+        # Exercise a previously durable binding rather than leaving a
+        # newly allocated but unregistered directory on this synthetic fault.
+        region.ensure_private_derived_region(db, **options, provision=True)
+    before = db.metadata_get(key)
+    original = region._mount_id
+    parent = Path(intent.parent_path)
+    target = {"parent": parent, "parent_reopen": parent,
+              "region": directory, "marker": directory / region._MARKER}[phase]
+    seen = []
+
+    def distinct_mount(fd):
+        value = original(fd)
+        path = Path(os.readlink(f"/proc/self/fd/{fd}"))
+        if path == target:
+            seen.append(path)
+            if phase != "parent_reopen" or len(seen) >= 2:
+                return value + 1000000
+        return value
+
+    monkeypatch.setattr(region, "_mount_id", distinct_mount)
+    with pytest.raises(DerivedJournalConflict, match="filesystem_mismatch|scope_changed"):
+        region.ensure_private_derived_region(db, **options, provision=True)
+    assert seen and db.metadata_get(key) == before
+    assert directory.exists() == (before is not None)
+    assert Path(intent.staged_path).samefile(intent.candidate_path)
+
+
+def test_missing_mount_information_refuses_before_creation(setup, monkeypatch):
+    db, intent, options = setup
+    def missing(fd):
+        raise DerivedJournalConflict("derived_region_mount_unverified")
+    monkeypatch.setattr(region, "_mount_id", missing)
+    with pytest.raises(DerivedJournalConflict, match="mount_unverified"):
+        region.ensure_private_derived_region(db, **options, provision=True)
+    assert not _region(intent).exists()
+    assert db.metadata_get(region._key("id1")) is None
