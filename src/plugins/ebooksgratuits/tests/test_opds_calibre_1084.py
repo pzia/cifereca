@@ -231,28 +231,54 @@ def test_failures_are_bounded_without_leaking_provider_body(status,code):
         session.close()
 
 
-def test_cops_search_navigation_enters_books_scope_before_pagination():
-    """The real COPS renderer returns scope navigation from OpenSearch."""
+@pytest.mark.parametrize(
+    ("books", "expected_titles"),
+    [(BOOK, ["Livre d'essai"]), ("", [])],
+    ids=["book-found", "selected-branch-empty"],
+)
+def test_cops_general_search_marks_selected_branch_as_partial(books, expected_titles):
     navigation = """<feed xmlns="http://www.w3.org/2005/Atom">
     <entry><id>cops:author</id><title>Authors</title>
     <link rel="subsection" type="application/atom+xml" href="/index.php/feed/authors"/></entry>
     <entry><id>cops:books</id><title>Books</title>
     <link rel="subsection" type="application/atom+xml" href="/index.php/feed/books"/></entry>
     </feed>"""
-    calls=[]
+    calls = []
+
     def handle(req):
         calls.append(req.url.path)
-        if req.url.path=="/index.php/feed/search":
-            return response(req,body=navigation)
-        if req.url.path=="/index.php/feed/books":
-            return response(req,body=page(BOOK))
+        if req.url.path == "/index.php/feed/search":
+            return response(req, body=navigation)
+        if req.url.path == "/index.php/feed/books":
+            return response(req, body=page(books))
         return route(req)
-    session=make_session(handle)
+
+    session = make_session(handle)
     try:
-        rows=session.search("livre",field="all")
-        assert [r.title for r in rows]==["Livre d'essai"]
-        assert calls==["/index.php/feed","/index.php/opensearch.xml",
-                       "/index.php/feed/search","/index.php/feed/books"]
+        rows = session.search("livre", field="all")
+        assert [r.title for r in rows] == expected_titles
+        assert len(session.last_search_warnings) == 1
+        assert session.last_search_warnings[0].startswith("partial_results")
+        assert calls == ["/index.php/feed", "/index.php/opensearch.xml",
+                         "/index.php/feed/search", "/index.php/feed/books"]
+    finally:
+        session.close()
+
+
+def test_cops_general_search_can_return_a_true_zero():
+    calls = []
+
+    def handle(req):
+        calls.append(req.url.path)
+        if req.url.path == "/index.php/feed/search":
+            return response(req, body=page(""))
+        return route(req)
+
+    session = make_session(handle)
+    try:
+        assert session.search("introuvable", field="all") == []
+        assert session.last_search_warnings == []
+        assert calls == ["/index.php/feed", "/index.php/opensearch.xml", "/index.php/feed/search"]
     finally:
         session.close()
 
