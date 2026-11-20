@@ -29,6 +29,21 @@ _SCHEMA = "canonical.completed-delivery.v1"
 _STAGED = "canonical_receipt_staged"
 
 
+def _require_idle_connection(storage):
+    # Storage's worker-local connection is not a nested transaction API.
+    # Check before helpers that own the non-reentrant storage lock.
+    if storage._connect().in_transaction:
+        raise ValueError("canonical_intake_nested_transaction")
+
+
+def _checkpoint(db, record_id):
+    return db.execute(
+        "SELECT provider_id,credential_id,account_id,item_id,identity_id,"
+        "status,artifact_id,metadata_json FROM acquisition_ledger "
+        "WHERE acquisition_id=?", (record_id,),
+    ).fetchone()
+
+
 def _unique_checkpoint_fields(pairs):
     """Never turn ambiguous persisted JSON into a completed-delivery receipt."""
     result = {}
@@ -146,6 +161,7 @@ def record_completed_delivery_for_recovery(
                 offer_id, completed.receipt_ref, completed.adept_receipt_ref,
             ))):
         raise ValueError("canonical_intake_completed_offer_required")
+    _require_idle_connection(storage)
     actual = _path_verified(
         storage, root=library_root, source=source,
         path=completed.path, final_sha256=completed.final_sha256,
@@ -162,6 +178,8 @@ def record_completed_delivery_for_recovery(
     data = json.dumps(stage, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     now = int(time.time())
     with storage._lock, storage._connect() as db:
+        if db.in_transaction:
+            raise ValueError("canonical_intake_nested_transaction")
         db.execute("BEGIN IMMEDIATE")
         if not _exact_borrower_bound_in_db(db, scope):
             raise ValueError("canonical_intake_account_rebound")
@@ -227,15 +245,12 @@ def recover_completed_delivery(
             or type(offer_id) is not str or not offer_id
             or len(offer_id) > 1024):
         return None
+    _require_idle_connection(storage)
     record_id = _stage_id(source, offer_id)
     scope = source.scope
     with storage._lock, storage._connect() as db:
-        row = db.execute(
-            "SELECT provider_id,credential_id,account_id,item_id,identity_id,"
-            "status,artifact_id,metadata_json FROM acquisition_ledger "
-            "WHERE acquisition_id=?",
-            (record_id,),
-        ).fetchone()
+        db.execute("BEGIN")
+        row = _checkpoint(db, record_id)
         if row is None or row[:5] != (
             scope.provider_id, scope.credential_id, scope.account_id,
             source.edition_id, scope.identity_id,
@@ -287,6 +302,15 @@ def recover_completed_delivery(
         )
     except (ValueError, OSError, RuntimeError):
         return None
+    # Physical verification ran without the SQL lock. A concurrent writer
+    # may have changed this exact receipt or its account. Do not reuse stale
+    # evidence OR interpret this racing transaction as absence/GET consent.
+    _require_idle_connection(storage)
+    with storage._lock, storage._connect() as db:
+        db.execute("BEGIN")
+        if (not _lock_ok(shared_lock) or _checkpoint(db, record_id) != row
+                or not _exact_borrower_bound_in_db(db, scope)):
+            raise ValueError("canonical_intake_checkpoint_changed")
     return completed
 
 
@@ -305,19 +329,31 @@ def mark_completed_delivery_published(
             or not offer_id or len(offer_id) > 1024
             or any(c in offer_id for c in "\x00\r\n")):
         raise ValueError("canonical_intake_invalid_published_transition")
+    _require_idle_connection(storage)
     now = int(time.time())
     with storage._lock, storage._connect() as db:
         db.execute("BEGIN IMMEDIATE")
-        row = db.execute(
-            "SELECT status,artifact_id FROM acquisition_ledger "
-            "WHERE acquisition_id=?", (_stage_id(source, offer_id),),
-        ).fetchone()
-        if row is None or row[0] not in (_STAGED, "complete"):
+        row = _checkpoint(db, _stage_id(source, offer_id))
+        scope = source.scope
+        if row is None or row[5] not in (_STAGED, "complete"):
             raise ValueError("canonical_intake_checkpoint_missing")
-        if row[0] == "complete":
-            if row[1] != artifact_id:
+        if (row[:5] != (scope.provider_id, scope.credential_id, scope.account_id,
+                        source.edition_id, scope.identity_id)
+                or not _exact_borrower_bound_in_db(db, scope)
+                or type(row[7]) is not str or len(row[7]) > 65536):
+            raise ValueError("canonical_intake_checkpoint_conflict")
+        data = json.loads(row[7], object_pairs_hook=_unique_checkpoint_fields)
+        if (type(data) is not dict or data.get("schema") != _SCHEMA
+                or data.get("source") != _scope(source)
+                or data.get("offer_id") != offer_id
+                or data.get("sha256") != artifact_id[7:]):
+            raise ValueError("canonical_intake_checkpoint_conflict")
+        if row[5] == "complete":
+            if row[6] != artifact_id:
                 raise ValueError("canonical_intake_checkpoint_conflict")
             return
+        if row[6] is not None:
+            raise ValueError("canonical_intake_checkpoint_conflict")
         db.execute(
             "UPDATE acquisition_ledger SET status='complete',artifact_id=?,"
             "updated_at=? WHERE acquisition_id=? AND status=?",

@@ -5,14 +5,15 @@ import pytest
 
 from cifereca.core import canonical_recovery as recovery
 from cifereca.storage import Storage
-from tests.test_core_p0_3171_atomic_publication_v14 import new_source
+from cifereca.core.convergence_execution import CompletedDelivery
+from tests.test_core_p0_3171_atomic_publication_v14 import new_source, register, target, SHA
 
 
 def test_completed_delivery_transition_is_atomic_and_idempotent(tmp_path, monkeypatch):
     storage = Storage(tmp_path / "canonical.sqlite")
     key, _snapshot = new_source()
     offer = "synthetic-offer"
-    artifact = "sha256:" + "a" * 64
+    artifact = "sha256:" + SHA
     monkeypatch.setattr(recovery, "_lock_ok", lambda lock: True)
     try:
         with pytest.raises(ValueError, match="checkpoint_missing"):
@@ -30,6 +31,24 @@ def test_completed_delivery_transition_is_atomic_and_idempotent(tmp_path, monkey
                  key.scope.credential_id, key.scope.account_id, key.edition_id,
                  key.scope.identity_id, recovery._STAGED, "{}", 1, 1),
             )
+        with pytest.raises(ValueError, match="checkpoint_conflict"):
+            recovery.mark_completed_delivery_published(
+                storage, source=key, offer_id=offer, artifact_id=artifact,
+                shared_lock=object(),
+            )
+        with storage._lock, storage._connect() as db:
+            assert db.execute(
+                "SELECT status,artifact_id FROM acquisition_ledger WHERE acquisition_id=?",
+                (recovery._stage_id(key, offer),),
+            ).fetchone() == (recovery._STAGED, None)
+        register(storage, key.scope.identity_id, key.scope.provider_id,
+                 key.scope.credential_id, account=key.scope.account_id)
+        path = target(tmp_path, key.scope.identity_id)
+        recovery.record_completed_delivery_for_recovery(
+            storage, source=key, offer_id=offer,
+            completed=CompletedDelivery(key, offer, path, SHA, "synthetic-receipt"),
+            library_root=tmp_path / "EBooks", shared_lock=object(),
+        )
         recovery.mark_completed_delivery_published(
             storage, source=key, offer_id=offer, artifact_id=artifact,
             shared_lock=object(),
