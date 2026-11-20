@@ -83,6 +83,33 @@ def test_similar_unobserved_search_fields_never_mint_series(field_name):
     assert "series" not in item.metadata
 
 
+@pytest.mark.parametrize("href", (
+    "/SeriesTitle_idx",
+    "/Search?label=SeriesTitle_idx",
+    "/Search?field=Author_idx&query=Texte%20SeriesTitle_exact",
+    "/Search?query=Texte%20SeriesTitle_idx%3ASaga",
+    "/Search?field=Author_idx&field=SeriesTitle_idx",
+    "/Search?label=Texte%26field%3DSeriesTitle_idx",
+    "/Search?query=SeriesTitle_idx%3A",
+))
+def test_series_requires_an_unambiguous_search_selector(href):
+    item = _record("CATALOGUE", CustomResult=(
+        '<a href="' + href.replace("&", "&amp;") + '">Libellé visible</a>'
+    ))
+    assert "series" not in item.metadata
+    assert "series" not in item.metadata["bibliography_evidence"]
+    assert item.metadata["subjects"] == ["Nature"]
+
+
+def test_qualified_query_in_search_aspx_preserves_the_per_notice_series():
+    item = _record("EBOOKS", CompactResult=(
+        '<a href="/search.aspx?SC=EBOOKS&amp;QUERY=SeriesTitle_exact%3ACycle">'
+        'Cycle des astres</a>'
+    ))
+    assert item.metadata["series"] == ["Cycle des astres"]
+    assert item.metadata["bibliography_evidence"]["series"]["scope"] == "EBOOKS"
+
+
 
 def test_same_link_in_both_display_fields_is_one_relation_not_two():
     item = _record("CATALOGUE", CustomResult=SERIES_LINK, CompactResult=SERIES_LINK)
