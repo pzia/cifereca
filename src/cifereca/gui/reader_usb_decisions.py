@@ -129,6 +129,49 @@ def _unverified(identity_id: str, device_id: str) -> ReaderUsbDecisionDetails:
     )
 
 
+_LAYOUT_LABELS = {
+    "fixed": "Mise en page fixe déclarée (OPF)",
+    "reflowable": "Mise en page adaptable déclarée (OPF)",
+    "unknown": "Mise en page non déterminée",
+}
+_EPUB_REASONS = {
+    "epub_drm_and_transfer_rights_unverified": ("epub",),
+    "kepub_semantics_drm_and_transfer_rights_unverified": ("kepub", "fxl.kepub"),
+}
+
+
+def _layout_convention_label(row: UsbPreviewRow, book: ReaderLibraryBook) -> str:
+    """Present observed layout separately from an existing USB suffix.
+
+    Kobo-specific wording is explicitly conditional on a Kobo eInk reader.
+    This is explanatory text, not engine selection, a compatible-device
+    assertion, a KEPUB conversion, or new execution eligibility.
+    """
+    if (row.action != "upload_candidate" or row.desired != "keep"
+            or row.observed != "missing"
+            or type(row.declared_layout) is not str
+            or row.declared_layout not in _LAYOUT_LABELS
+            or type(book.target_format) is not str
+            or book.target_format not in _EPUB_REASONS.get(row.reason, ())):
+        return ""
+    fmt, layout = book.target_format, row.declared_layout
+    parts = [_LAYOUT_LABELS[layout]]
+    if fmt == "epub":
+        parts.append("Sur Kobo eInk, .epub sélectionne le moteur ADE par défaut.")
+    elif fmt == "kepub":
+        parts.append("Sur Kobo eInk, .kepub.epub sélectionne le moteur Kobo WebKit.")
+    else:
+        parts.append("Sur Kobo eInk, .fxl.kepub.epub sélectionne le moteur Kobo WebKit pour le fixe.")
+    if fmt != "epub":
+        parts.append("En chargement USB Kobo, notes et marque-pages peuvent être désactivés.")
+        parts.append("Spécificités KEPUB non attestées.")
+    if (fmt == "fxl.kepub" and layout != "fixed"
+            or fmt == "kepub" and layout == "fixed"):
+        parts.append("Convention et layout à vérifier ; aucun renommage automatique.")
+    parts.append("Rendu et compatibilité non vérifiés.")
+    return " ".join(parts)
+
+
 def project_reader_usb_decisions(
     *, report: UsbDryRun, library: ReaderLibrarySnapshot,
     now: int | None = None,
@@ -224,6 +267,9 @@ def project_reader_usb_decisions(
             return fail()
         if row.action == "skip" and row.observed == "unknown":
             return fail()
+        convention = _layout_convention_label(row, book)
+        if convention:
+            reason += " · " + convention
         label = _ACTION_LABELS[row.action]
         entries.append(ReaderUsbDecision(
             book_key=book.key,
