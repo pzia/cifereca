@@ -3,6 +3,7 @@ import importlib.util
 import ast
 import json
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -76,6 +77,60 @@ def test_maintenance_checkpoint_missing_symlink_or_other_scenario_is_safe(tmp_pa
     source.write_text(json.dumps([{"scenario": "startup", "returncode": 1}]))
     row = exporter.safe_summary(source)["results"][0]
     assert "maintenance_last_safe_checkpoint" not in row
+
+
+@pytest.mark.parametrize(("marker", "expected"), [
+    ("gtk_heartbeat_during_slow_scan", "maintenance_heartbeat"),
+    ("initial_maintenance_plan_ready", "maintenance_plan_ready"),
+    ("initial_maintenance_dialog_mapped", "maintenance_dialog_mapped"),
+    ("initial_maintenance_confirmation_visible", "maintenance_confirmation_visible"),
+])
+def test_initial_preview_reports_safe_progress_only(tmp_path, marker, expected):
+    scenario = "maintenance-tools-1600"
+    source = tmp_path / "summary.json"
+    source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+    report = tmp_path / scenario / scenario / "screen.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(json.dumps({"checks": {
+        "slow_worker_started_without_mutation": True, marker: "PRIVATE_NOT_BOOLEAN",
+    }}))
+    row = exporter.safe_summary(source)["results"][0]
+    assert row["maintenance_last_safe_checkpoint"] == "maintenance_slow_worker"
+    report.write_text(json.dumps({"checks": {marker: True}}))
+    row = exporter.safe_summary(source)["results"][0]
+    assert row["maintenance_last_safe_checkpoint"] == expected
+    assert "PRIVATE" not in repr(row)
+
+
+def test_initial_preview_waits_for_heartbeat_before_releasing_the_scan():
+    probe = ROOT / "e2e/maintenance_tools_probe.py"
+    method = next(node for node in ast.walk(ast.parse(probe.read_text()))
+                  if isinstance(node, ast.FunctionDef) and node.name == "preview_pending")
+    gate = Event()
+    heartbeat = [10]
+    checks = {}
+    polls = []
+    namespace = {
+        "gtk_phase_2027": lambda _phase: None,
+        "modal": lambda: None,
+        "assert_line": lambda *_args, **_kwargs: None,
+        "heartbeat": heartbeat,
+        "report": {"checks": checks},
+        "tool": SimpleNamespace(run_calls=0, release_plan=gate),
+        "until": lambda predicate, callback: polls.append((predicate, callback)),
+        "preview_allocated": lambda: False,
+        "first_dialog": lambda: None,
+    }
+    exec(compile(ast.Module(body=[method], type_ignores=[]), str(probe), "exec"), namespace)
+    namespace["preview_pending"]()
+    predicate, release = polls.pop()
+    heartbeat[0] += 3
+    assert not predicate() and not gate.is_set()
+    heartbeat[0] += 1
+    assert predicate() and not gate.is_set()
+    release()
+    assert gate.is_set() and checks["gtk_heartbeat_during_slow_scan"] is True
+    assert polls == [(namespace["preview_allocated"], namespace["first_dialog"])]
 
 
 def test_narrow_920_and_1024_expose_same_closed_fixture_checkpoint(tmp_path):

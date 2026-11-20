@@ -68,6 +68,7 @@ class DummyTool:
         self.tool_id = "core.cache.cleanup"
         self.result_ok = True
         self.plan_started = threading.Event()
+        self.plan_ready = threading.Event()
         self.release_plan = threading.Event()
         self.release_plan.set()
         self.version = 0
@@ -93,11 +94,12 @@ class DummyTool:
 
     def plan(self, context):
         self.plan_calls += 1
+        self.plan_ready.clear()
         self.plan_started.set()
         time.sleep(self.delay)  # an intentionally slow scan, never on GTK
         if not self.release_plan.wait(8):
             raise TimeoutError("GTK did not acknowledge simulated analysis")
-        return SimpleNamespace(
+        plan = SimpleNamespace(
             tool_id=self.tool_id,
             summary="Aucune suppression réelle",
             changes=tuple(
@@ -107,6 +109,8 @@ class DummyTool:
             warnings=("Protection des artefacts Kobo",),
             facts={"version": self.version, "read_failures": 0},
         )
+        self.plan_ready.set()
+        return plan
 
     def run(self, plan, control):
         control.check_cancelled()
@@ -551,6 +555,7 @@ def main():
         lock[0] = None
         errors.clear()
         tool.plan_started.clear()
+        tool.release_plan.clear()
         physical(preview_button[0])
         # The worker event is raised off-thread before GLib has necessarily
         # delivered the row's queued "Analyse…" state. Wait for both
@@ -572,15 +577,21 @@ def main():
         report["checks"]["analysis_indeterminate_on_tool_row"] = True
         before = heartbeat[0]
         report["checks"]["slow_worker_started_without_mutation"] = True
-        def after():
-            assert heartbeat[0] > before + 3, "GTK main loop blocked by scanning"
+        def release_preview():
+            assert modal() is None and tool.run_calls == 0
+            report["checks"]["gtk_heartbeat_during_slow_scan"] = True
+            tool.release_plan.set()
             until(preview_allocated, first_dialog)
-        later(after, 260)
+        # Keep the worker blocked until GTK proves it can process heartbeats.
+        until(lambda: heartbeat[0] > before + 3, release_preview)
 
     def preview_allocated():
+        if tool.plan_ready.is_set():
+            report["checks"]["initial_maintenance_plan_ready"] = True
         dialog = modal()
         if dialog is None:
             return False
+        report["checks"]["initial_maintenance_dialog_mapped"] = True
         preview_scroll = dialog.get_extra_child()
         if not isinstance(preview_scroll, Gtk.ScrolledWindow):
             return True  # first_dialog reports the actual layout violation.
@@ -603,7 +614,10 @@ def main():
         # Modal mapping and the idle-delivered row state may arrive in
         # different main-loop turns. Wait for both; first_dialog still
         # validates the exact label, spinner, and layout independently.
-        return line_is("Confirmation attendue") and all(geometry[key] > 0 for key in (
+        confirmation_visible = line_is("Confirmation attendue")
+        if confirmation_visible:
+            report["checks"]["initial_maintenance_confirmation_visible"] = True
+        return confirmation_visible and all(geometry[key] > 0 for key in (
             "width", "height", "content_width", "content_height", "page_size",
         ))
 
@@ -641,7 +655,6 @@ def main():
         report["checks"]["scrollable_preview_with_visible_actions_20_items"] = True
         assert tool.run_calls == 0, "Acquisition executed without confirmation"
         report["checks"]["real_multiline_confirmation_after_async_scan"] = True
-        report["checks"]["gtk_heartbeat_during_slow_scan"] = heartbeat[0] > 5
         capture("01-async-preview")
         respond(dialog, "Annuler", lambda: later(after_cancel, 190))
 
