@@ -76,9 +76,9 @@ def read_canonical_placement_inventory(
             db = storage._connect()
             if db.in_transaction:
                 return CanonicalPlacementInventory("unavailable")
-            # schema_version also owns a connection context, so the above
-            # refusal must precede even that read.
-            if storage.schema_version() < 14:
+            # Use the already locked connection; schema_version() would
+            # acquire Storage's non-reentrant lock a second time.
+            if storage._read_schema_version(db) < 14:
                 return CanonicalPlacementInventory("unavailable")
             return _read_inventory(db, identity_id)
     except (sqlite3.Error, OSError, ValueError, TypeError, RuntimeError):
