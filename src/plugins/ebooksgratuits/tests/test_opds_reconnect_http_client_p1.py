@@ -27,10 +27,10 @@ BOOKS = """<feed xmlns="http://www.w3.org/2005/Atom">
 </entry></feed>"""
 
 
-def make_session(monkeypatch, *, backend="opds", refuse=False):
+def make_session(monkeypatch, *, backend="opds", refuse=False, credential="__public__"):
     requests, created = [], []
     result = EbooksSession(
-        credential_id="__public__", label="EbooksGratuits",
+        credential_id=credential, label="EbooksGratuits",
         credentials={}, options={"acquisition_backend": backend},
         config={}, diagnostics=None, transport=None,
     )
@@ -64,11 +64,12 @@ def make_session(monkeypatch, *, backend="opds", refuse=False):
     return result, requests, created
 
 
-def test_reconnect_restores_search_without_http_during_connect(monkeypatch):
-    session, requests, created = make_session(monkeypatch)
+@pytest.mark.parametrize("credential,account_count", [("__public__", 0), ("legacy-public", 1)])
+def test_reconnect_restores_search_without_http_during_connect(monkeypatch, credential, account_count):
+    session, requests, created = make_session(monkeypatch, credential=credential)
     try:
         accounts = session.connect()
-        assert len(accounts) == 1
+        assert len(accounts) == account_count
         assert session.connected is True and not session.client.is_closed
         assert requests == []  # Local registration does NOT test OPDS.
         first_client = session.client
@@ -84,7 +85,7 @@ def test_reconnect_restores_search_without_http_during_connect(monkeypatch):
         assert session._accounts == []
 
         accounts = session.connect()
-        assert len(accounts) == 1 and len(created) == 2
+        assert len(accounts) == account_count and len(created) == 2
         assert session.client is not first_client
         assert first_client.is_closed and not session.client.is_closed
         assert len(requests) == 3  # Still no HTTP just because reconnect.

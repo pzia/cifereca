@@ -1304,19 +1304,41 @@ class LibraryService:
         identity_profile = self.storage.adept_profile_binding_get("identity", identity.identity_id)
         try:
             profiles = self.kobo_profiles()
-        except Exception:
-            profiles = []
+        except Exception as exc:
+            # A failed inventory is not an empty, successfully read inventory.
+            # In particular never pass a stable UUID as a CLI name on failure.
+            raise AdeptProfileResolutionError(
+                "Inventaire des profils ADEPT indisponible.",
+                code="adept_profile_lookup_failed",
+            ) from exc
         resolution = AdeptProfileResolver().resolve(
             explicit_profile=explicit_profile,
             identity_profile=identity_profile,
             profiles=profiles,
         )
         resolved_row = self._adept_profile_row(resolution.profile_id, profiles)
-        if resolution.source == "identity" and identity_profile and resolved_row:
+        if type(resolved_row) is not dict:
+            # A persisted stable ID is not a CLI profile name. A stale binding
+            # must not silently select another, uniquely capable Adobe profile.
+            raise AdeptProfileResolutionError(
+                "Profil ADEPT lié absent de l’inventaire actuel.",
+                code="adept_profile_binding_unresolved",
+            )
+        profile_name = resolved_row.get("name")
+        if (type(profile_name) is not str or not profile_name
+                or profile_name != profile_name.strip()
+                or profile_name.startswith("-") or len(profile_name) > 128
+                or any(ord(char) < 32 or ord(char) == 127 for char in profile_name)
+                or sum(type(row) is dict and row.get("name") == profile_name
+                       for row in profiles) != 1):
+            raise AdeptProfileResolutionError(
+                "Nom CLI ADEPT absent ou ambigu.",
+                code="adept_profile_binding_unresolved",
+            )
+        if resolution.source == "identity" and identity_profile:
             stable_id = self._adept_profile_ref(resolved_row)
             if stable_id and stable_id != identity_profile:
                 self.storage.adept_profile_binding_set("identity", identity.identity_id, stable_id)
-        profile_name = self._adept_profile_name(resolved_row) if resolved_row else resolution.profile_id
         return profile_name, resolution.source
 
     def resolve_adept_profile(
@@ -3483,9 +3505,21 @@ class LibraryService:
         return state
 
     def kobo_profiles(self) -> list[dict[str, Any]]:
-        payload = self._kobo_adapter().profiles()
-        rows = payload.get("profiles") if isinstance(payload, dict) else None
-        return [dict(x) for x in rows if isinstance(x, dict)] if isinstance(rows, list) else []
+        # The historical adapter was removed in the provider cutover. Resolve
+        # the same installed runtime service as the public ADEPT profile broker.
+        manager = self._plugin_manager
+        generation = getattr(manager, "registry_generation", None)
+        runtime = self._required_plugin_service("runtime.kobo-adept")
+        payload = runtime.profiles()
+        if (self._plugin_manager is not manager
+                or getattr(manager, "registry_generation", None) != generation
+                or self._required_plugin_service("runtime.kobo-adept") is not runtime):
+            raise AttentionRequired("Inventaire ADEPT révoqué.", code="adept_profile_lookup_failed")
+        rows = payload.get("profiles") if type(payload) is dict else None
+        if (type(rows) is not list or len(rows) > 2048
+                or any(type(row) is not dict for row in rows)):
+            raise AttentionRequired("Inventaire ADEPT invalide.", code="adept_profile_lookup_failed")
+        return [dict(row) for row in rows]
 
     def adept_profiles_for_identity(
         self, identity_id: str, *, profile_name: str,
