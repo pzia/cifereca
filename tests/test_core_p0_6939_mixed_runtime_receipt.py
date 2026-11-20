@@ -148,7 +148,47 @@ def test_shared_runtime_drains_both_lanes_after_admission_pressure(rig, public_c
         assert len(search_public_notice_c(db, "synthétique").hits) == 1
         assert executor.ready_refs() == ()
 
-        # Identical same-read input may not re-open transport or churn C.
+        # The purchase worker commits the exact source, association and
+        # separate durable initial-publication intent in one transaction.
+        # Source-search visibility alone does NOT mean canonical C exists.
+        ready = journal.read_ready_page(
+            db, now=int(time()),
+            supported=(("recompute_aggregate", journal._INITIAL_PUBLIC_C_DIGEST),),
+        )
+        initial_ref, = ready.refs
+        initial_job = journal.read_job(db, initial_ref)
+        assert initial_job.state == "pending" and initial_job.attempts == 0
+        assert initial_job.spec.source_ref
+        for _ in range(16):
+            tick = runtime.request_tick().result(timeout=10)
+            assert tick.examined <= 32 and len(tick.handles) <= 2
+            for handle in tick.handles:
+                assert handle.result(timeout=10) == "current"
+                handles_seen += 1
+            idle()
+            if journal.read_job(db, initial_ref).state == "current":
+                break
+        initial_job = journal.read_job(db, initial_ref)
+        assert initial_job.state == "current" and initial_job.attempts == 1
+        assert handles_seen == public_count + 2
+        purchase_hit, = search_public_notice_c(db, "synthétique").hits
+        assert purchase_hit.document.source_key == initial_job.spec.target
+        canonical = read_consolidated_notice_cover(db, purchase_hit.document)
+        assert canonical is not None and len(canonical.sources) == 1
+        assert canonical.sources[0].source_ref == initial_job.spec.source_ref
+        assert set(events) == ({(old.document, old.epoch + 1, old.epoch + 1)
+                                for _, old in public_jobs}
+                               | {(canonical.document, canonical.epoch, canonical.epoch)})
+        assert len(events) == public_count + 1
+        assert transfers == ["https://catalog.example.org/product/123"]
+        from cifereca.core.notice_c_purchase_association import read_purchase_notice_association
+        from cifereca.plugin_api import from_legacy_rights_snapshot
+        resource, = from_legacy_rights_snapshot(service.snapshot).resources
+        association = read_purchase_notice_association(db, resource.source, identity_id="A")
+        assert association is not None and association.document == canonical.document
+
+        # Only after both lanes AND the dependent C publication have drained
+        # may an identical same-read inventory claim a silent replay.
         before = runtime.documentary_revision()
         synchronize_account_source(service, service.account)
         assert reads == ["same-read", "same-read"]
@@ -156,7 +196,9 @@ def test_shared_runtime_drains_both_lanes_after_admission_pressure(rig, public_c
         assert runtime.request_tick().result(timeout=10).handles == ()
         idle()
         assert runtime.documentary_revision() == before
-        assert len(transfers) == 1 and len(events) == public_count
+        assert len(transfers) == 1 and len(events) == public_count + 1
+        assert journal.read_job(db, initial_ref) == initial_job
+        assert read_consolidated_notice_cover(db, canonical.document) == canonical
         assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
         assert len(refs(db)[0]) == 1 and refs(db)[1] == 0 and not root.exists()
     finally:
