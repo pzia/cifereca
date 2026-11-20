@@ -144,11 +144,15 @@ def _capture_sink(service, runtime, executor, account, private):
         with hold_context() as held:
             if held is not True:
                 raise ValueError("purchase_omission_context_changed")
-            record_purchase_omissions(
+            changed = record_purchase_omissions(
                 storage, snapshot, omissions, candidates,
                 context_current=context_current,
                 permission_current_txn=permission_current_txn,
             )
+        if changed:
+            # Same existing in-memory documentary revision as job transitions.
+            # Omissions can change presentation even without any queued job.
+            runtime._notify_purchase()
 
     sink.record_omissions = record_omissions
     return sink
