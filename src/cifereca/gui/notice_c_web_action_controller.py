@@ -49,35 +49,39 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
                 or not menu.choices):
             return
         root = None
-        busy = False
+        pending_click = None
 
         def root_current():
             return (active() and root is not None
                     and not getattr(root, "_cifereca_action_context_revoked", False))
 
         def choose(_button, choice):
-            nonlocal busy
-            if busy or not root_current():
+            nonlocal pending_click
+            if pending_click is not None or not root_current():
                 return
-            busy = True
+            token = object()
+            pending_click = token
             clicked_route = route_token()
 
             def click_current():
                 return root_current() and route_token() is clicked_route
 
+            def consume():
+                nonlocal pending_click
+                if pending_click is not token:
+                    return False
+                pending_click = None
+                return True
+
             def failed(_exc):
-                nonlocal busy
-                busy = False
-                if click_current():
+                if consume() and click_current():
                     host.toast("Fiche web indisponible ; actualisez la notice.")
 
             def resolved(uri):
-                nonlocal busy
-                busy = False
-                # A → B → A navigation can retain the selected object and
-                # detail panel. A fresh deliberate click is allowed, but
-                # never complete the earlier asynchronous browser launch.
-                if not click_current():
+                # Only the one currently pending click can consume its
+                # completion. A duplicate/late callback cannot clear a
+                # newer click or launch the browser a second time.
+                if not consume() or not click_current():
                     return
                 if not uri:
                     host.toast("Fiche web modifiée ; actualisez la notice.")
@@ -87,15 +91,18 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
                 except Exception:
                     host.toast("Ouverture de la fiche web indisponible.")
 
-            runner.submit(
-                "Vérification de la fiche web…",
-                lambda: resolve_public_web_choice(
-                    storage, document, expected_epoch=menu.epoch,
-                    choice_id=choice.choice_id,
-                ),
-                resolved, failed, priority=TaskPriority.METADATA,
-                kind="detail-cache", origin="user",
-            )
+            try:
+                runner.submit(
+                    "Vérification de la fiche web…",
+                    lambda: resolve_public_web_choice(
+                        storage, document, expected_epoch=menu.epoch,
+                        choice_id=choice.choice_id,
+                    ),
+                    resolved, failed, priority=TaskPriority.METADATA,
+                    kind="detail-cache", origin="user",
+                )
+            except Exception:
+                failed(None)
 
         if len(menu.choices) == 1:
             root = Gtk.Button(label="Ouvrir la fiche web")
@@ -120,10 +127,13 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
         root._cifereca_action_priority = 30
         panel.add_actions([root])
 
-    runner.submit(
-        "Lecture des fiches web en cache…",
-        lambda: read_public_web_choices(storage, document),
-        loaded, lambda _exc: None, priority=TaskPriority.METADATA,
-        kind="detail-cache", origin="automatic",
-    )
+    try:
+        runner.submit(
+            "Lecture des fiches web en cache…",
+            lambda: read_public_web_choices(storage, document),
+            loaded, lambda _exc: None, priority=TaskPriority.METADATA,
+            kind="detail-cache", origin="automatic",
+        )
+    except Exception:
+        return False
     return True
