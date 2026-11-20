@@ -7,6 +7,7 @@ The existing "Envoyer à" executor still verifies physical bytes and provenance.
 from __future__ import annotations
 
 from .borrow_for_identity_copy_admission import navigation_epoch_current
+from .borrow_for_identity_delivery_binding import lender_delivery_binding
 
 from dataclasses import dataclass
 
@@ -77,11 +78,13 @@ def preflight_cross_profile_loan_transfer(
                 or service._source_context_epoch != source_epoch
                 or type(placement) is not dict
                 or placement.get("identity_id") != borrowing_account.identity_id
-                or placement.get("provider_id") != borrowing_account.provider_id
-                or placement.get("source_item_id") != exact_notice.record_id
                 or placement.get("state") != "present"
                 or type(placement.get("artifact_id")) is not str
-                or not placement["artifact_id"]):
+                or not placement["artifact_id"]
+                or not lender_delivery_binding(service, borrowing_account, exact_notice, placement)
+                or scope_current() is not True
+                or not navigation_epoch_current(service, reader_epoch, scope_current)
+                or service._source_context_epoch != source_epoch):
             return CrossProfileTransferPreflight(
                 "confirmed", "unavailable", "blocked",
                 "lender_delivery_unverified",
