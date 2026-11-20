@@ -400,10 +400,11 @@ def _failed_plugin_scroll_checkpoint(source: Path, scenario: str) -> dict:
 
 
 def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
-    """Share *only* a constant reached step from the synthetic GTK recipe.
+    """Share closed reached steps and a source-validated probe line only.
 
     Raw screenshots, widget text, exception messages and private credentials
     remain in the private CI workspace and are never published.
+    A probe line indicates an assertion or call site, not a root cause.
     """
     if scenario not in {
         # Identical fully synthetic probe: allow narrow layouts to publish
@@ -429,6 +430,15 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
         # No dynamic or unreviewed values: output is one literal enum.
         milestones = (
             ("real_tools_route_and_action", "maintenance_route"),
+            ("cache_progress_attached_to_real_tool_row", "maintenance_progress_row"),
+            ("busy_sync_refuses_preview_before_scan_or_delete", "maintenance_busy_guard"),
+            ("analysis_indeterminate_on_tool_row", "maintenance_analysis"),
+            ("slow_worker_started_without_mutation", "maintenance_slow_worker"),
+            ("confirmation_on_tool_row_without_percentage", "maintenance_confirmation"),
+            ("physical_cancel_never_runs_destructive_tool", "maintenance_cancel"),
+            ("stale_plan_rejected_under_lock_without_delete", "maintenance_stale_plan"),
+            ("only_explicit_confirmed_safe_simulation_executes", "maintenance_execution"),
+            ("refresh_cancels_worker_and_discards_late_progress", "maintenance_refresh"),
             ("P1_1498-duplicates_cancelled_terminal_on_own_line", "maintenance_p1_done"),
             ("inspection_setup_entered", "inspection_setup"),
             ("inspection_fixture_created", "inspection_fixture"),
@@ -497,7 +507,22 @@ def _failed_maintenance_checkpoint(source: Path, scenario: str) -> dict:
         for field, label in milestones:
             if checks.get(field) is True:
                 reached = label
-        return {"maintenance_last_safe_checkpoint": reached}
+        result = {"maintenance_last_safe_checkpoint": reached}
+        # The report contains no public stack text. Only a native integer
+        # matching an assertion, raise or call site in this exact, checked-in
+        # synthetic probe may cross the export boundary.
+        line = data.get("maintenance_failure_line")
+        if type(line) is int:
+            try:
+                probe = ast.parse((ROOT / "e2e/maintenance_tools_probe.py").read_text(
+                    encoding="utf-8"))
+                allowed_lines = {node.lineno for node in ast.walk(probe)
+                                 if isinstance(node, (ast.Assert, ast.Raise, ast.Call))}
+                if line in allowed_lines:
+                    result["maintenance_failure_line"] = line
+            except (OSError, UnicodeError, SyntaxError, ValueError, RecursionError):
+                pass
+        return result
     except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
         return {}
 
