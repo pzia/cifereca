@@ -3,6 +3,8 @@ import html
 from cifereca_gallica_audio import download_bundle
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from dataclasses import replace
+from collections import Counter
 import re
 from unicodedata import category
 from pathlib import Path
@@ -19,6 +21,7 @@ from cifereca.plugin_api import (
 
 from cifereca.plugin_api import (
     Account, ItemDetail, SearchResult, AcquisitionOffer,
+    ProviderSearchResponse, PublicSearchNotice,
     BundleAcquisitionRecipe,
 )
 from cifereca.plugin_api import (
@@ -218,6 +221,9 @@ class GallicaSession(ProviderSession):
 
     def connect(self) -> list[Account]:
         self.connected = True
+        if self.credential_id == "__public__" and type(self.credentials) is dict and not self.credentials:
+            self._accounts = []
+            return self.accounts
         self._accounts = [
             Account(
                 display_name="Catalogue public",
@@ -321,9 +327,12 @@ class GallicaSession(ProviderSession):
             raise _UnsafeOPDS("Gallica OPDS : flux Atom attendu")
         raise _UnsafeOPDS("Gallica OPDS : invalid_opds_feed")
 
-    def _parse_feed(self, content: bytes, base_url: str) -> list[SearchResult]:
+    def _parse_feed(self, content: bytes, base_url: str, *, documentary=False) -> list[SearchResult]:
         feed = self._opds_atom(content)
         rows: list[SearchResult] = []
+        occurrences = Counter()
+        if documentary and catalogue_url_origin(base_url) != catalogue_url_origin(EPUB_SEARCH):
+            raise _UnsafeOPDS("Gallica OPDS : unverified_navigation")
         for entry in feed.entries:
             title = self._text(entry.find(f"{{{ATOM}}}title")) or "Sans titre"
             author_names = [self._text(author.find(f"{{{ATOM}}}name")) for author in entry.findall(f"{{{ATOM}}}author")]
@@ -380,6 +389,30 @@ class GallicaSession(ProviderSession):
                     friendly = f"https://gallica.bnf.fr/{ark}"
             else:
                 ark = self._extract_ark(entry_id, friendly, acquisition, fallback_link)
+            if documentary:
+                # The occurrence needs its own single explicit Atom ID and
+                # title, not an alternate, acquisition or generated label.
+                ids = entry.findall(f"{{{ATOM}}}id")
+                titles = entry.findall(f"{{{ATOM}}}title")
+                own = (self._document_ark(self._text(ids[0]))
+                       if len(ids) == 1 and not len(ids[0]) else None)
+                if own:
+                    occurrences[own] += 1
+                if (not own or ark != own or len(titles) != 1
+                        or len(titles[0]) or not self._text(titles[0])):
+                    continue
+                # Narrow witnessed formats only. Never infer another
+                # manifestation from a foreign or alternate delivery URL.
+                qualified = {
+                    (href, mime) for href, mime in acquisitions
+                    if (href, mime) in {
+                        (f"https://gallica.bnf.fr/{ark}.epub", "application/epub+zip"),
+                        (f"https://gallica.bnf.fr/{ark}.pdf", "application/pdf"),
+                    }
+                }
+                if len(qualified) != 1 or qualified != set(acquisitions):
+                    continue
+                acquisition, acquisition_type = next(iter(qualified))
             if not ark or not acquisition:
                 continue
 
@@ -419,6 +452,25 @@ class GallicaSession(ProviderSession):
                     },
                 )
             )
+        if documentary:
+            output = []
+            for row in rows:
+                if occurrences[row.record_id] != 1:
+                    continue
+                # Keep only the bounded explicit language declaration.
+                # No inferred cover, delivery locator, rights or raw summary.
+                metadata = {
+                    "public_url_evidence": "gallica.public_search_record_identifier",
+                }
+                if row.metadata.get("bibliography_evidence"):
+                    metadata["bibliography_evidence"] = row.metadata["bibliography_evidence"]
+                    metadata["languages"] = row.metadata["languages"]
+                output.append(replace(
+                    row, source_collection="public_catalog", owned=False,
+                    downloadable=False, download_url=None, thumbnail_url=None,
+                    description=None, metadata=metadata,
+                ))
+            rows = output
         # A real empty Atom page is distinct from a nonempty page whose
         # entries did not satisfy the existing exact ID/acquisition guards.
         return _PartialOPDSRows(rows) if len(rows) != len(feed.entries) else rows
@@ -536,7 +588,7 @@ class GallicaSession(ProviderSession):
                   .replace('%7BsearchTerms%7D', '{searchTerms}')
                 + '&startRecord={startIndex}&maximumRecords=50')
 
-    def _search_ebooks(self, query: str, page: int, field: str) -> list[SearchResult]:
+    def _search_ebooks(self, query: str, page: int, field: str, *, documentary=False) -> list[SearchResult]:
         if field == "all":
             try:
                 template = self._discover_search_template()
@@ -557,7 +609,7 @@ class GallicaSession(ProviderSession):
                 "query": f'({index} all {_cql_literal(query)}) and {EBOOK_FORMAT_CQL}',
                 "startRecord": str(max(0, page) * 50 + 1), "maximumRecords": "50",
             })
-        return self._parse_feed(body, response_url)
+        return self._parse_feed(body, response_url, documentary=True) if documentary else self._parse_feed(body, response_url)
 
     @staticmethod
     def _render_search_url(template: str, query: str, page: int) -> str:
@@ -781,7 +833,27 @@ class GallicaSession(ProviderSession):
             })
             raise
 
-    def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all", content_types: tuple[str, ...] = ()) -> list[SearchResult]:
+    def search_with_response_facets(
+        self, query: str, scope: str = "all", *, field: str = "all",
+        content_types: tuple[str, ...] = (),
+    ) -> ProviderSearchResponse:
+        """Anonymous OPDS facts only: no legacy acquisition or audio authority."""
+        if not (self.connected and self.credential_id == "__public__"
+                and type(self.credentials) is dict and not self.credentials
+                and type(self._accounts) is list and not self._accounts
+                and self.opds_url == "https://gallica.bnf.fr/opds"
+                and self.epub_search_url == EPUB_SEARCH):
+            return ProviderSearchResponse([], partial=True, catalogue_complete=False)
+        rows = self.search(
+            query, "all" if scope == "catalog" else scope, field=field,
+            content_types=content_types, _documentary=True,
+        )
+        return ProviderSearchResponse(
+            rows, partial=bool(self.last_search_warnings), catalogue_complete=False,
+            public_notices=tuple(PublicSearchNotice(row) for row in rows),
+        )
+
+    def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all", content_types: tuple[str, ...] = (), *, _documentary=False) -> list[SearchResult]:
         self.last_search_warnings = []
         # Validate before any network or short-query zero: unsupported field
         # and physical catalogue are not evidence of missing public books.
@@ -811,15 +883,19 @@ class GallicaSession(ProviderSession):
         requested = {value.casefold() for value in content_types}
         # Core passes file formats; legacy media categories remain supported.
         audio_formats = {"audiobook", "mp3", "m4a", "ogg", "opus", "flac", "wav"}
-        ebook_formats = {"ebook", "epub", "pdf", "kepub"}
+        ebook_formats = {"ebook", "epub", "pdf"} if _documentary else {"ebook", "epub", "pdf", "kepub"}
         skipped_unknown = bool(requested - audio_formats - ebook_formats)
         audio_explicit = bool(requested & audio_formats)
         skipped_audio = audio_explicit and not self.include_audio
         ebooks = not requested or bool(requested & ebook_formats)
         audio = self.include_audio and (not requested or audio_explicit)
+        documentary_audio_omitted = _documentary and audio
+        if _documentary:
+            audio = False
         branches = []
         if ebooks:
-            branches.append(("OPDS", "catalogue livres numériques temporairement indisponible", self._search_ebooks))
+            fn = (lambda q, p, f: self._search_ebooks(q, p, f, documentary=True)) if _documentary else self._search_ebooks
+            branches.append(("OPDS", "catalogue livres numériques temporairement indisponible", fn))
         if audio:
             branches.append(("audio", "recherche audio temporairement indisponible", self._search_audio))
         if not branches:
@@ -870,6 +946,10 @@ class GallicaSession(ProviderSession):
             ("partial_results : " if successful_branches else "") + "Gallica : " + message
             for message in errors
         ]
+        if documentary_audio_omitted:
+            self.last_search_warnings.append(
+                "partial_results : Gallica : branche audio non qualifiée pour Notice C"
+            )
         if partial_opds:
             self.last_search_warnings.append(
                 "partial_results : Gallica : certaines entrées OPDS non qualifiées"
@@ -909,6 +989,10 @@ class GallicaSession(ProviderSession):
                 del by_id[item.id]
                 conflicts.add(item.id)
         rows = list(by_id.values())
+        if _documentary and requested and "ebook" not in requested:
+            # Exact media-format filters operate only on this loaded page.
+            supported = requested & {"epub", "pdf"}
+            rows = [row for row in rows if row.format.casefold() in supported]
         if conflicts:
             self.last_search_warnings.append(
                 "partial_results : Gallica : occurrences de notice contradictoires"
