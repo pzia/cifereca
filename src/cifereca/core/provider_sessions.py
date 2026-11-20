@@ -538,7 +538,7 @@ def close(self) -> None:
         except Exception:
             pass
     try:
-        self.storage.close()
+        self.storage.close(final=True)
     except Exception:
         pass
 
