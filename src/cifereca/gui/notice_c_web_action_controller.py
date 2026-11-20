@@ -34,11 +34,23 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
         return getattr(host, "_route_display_token", None)
 
     requested_route = route_token()
+    account_epoch = getattr(core, "_account_context_epoch", None)
+    source_epoch = getattr(core, "_source_context_epoch", None)
+
+    def worker_current(route):
+        # Only plain context coordinates here. current(), get_mapped()
+        # and widget state belong to GTK and must never run in this worker.
+        return (not getattr(host, "_closed", False)
+                and getattr(host, "service", None) is core
+                and getattr(core, "storage", None) is storage
+                and getattr(core, "_account_context_epoch", None) == account_epoch
+                and getattr(core, "_source_context_epoch", None) == source_epoch
+                and route_token() is route)
+
     mapped = getattr(panel, "get_mapped", None)
 
     def active():
-        return (not getattr(host, "_closed", False)
-                and getattr(host, "service", None) is core
+        return (worker_current(route_token())
                 and (not callable(mapped) or mapped())
                 and current())
 
@@ -105,13 +117,18 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
                 except Exception:
                     host.toast("Ouverture de la fiche web indisponible.")
 
+            def work():
+                if pending_click is not token or not worker_current(clicked_route):
+                    return None
+                return resolve_public_web_choice(
+                    storage, document, expected_epoch=menu.epoch,
+                    choice_id=choice.choice_id,
+                )
+
             try:
                 runner.submit(
                     "Vérification de la fiche web…",
-                    lambda: resolve_public_web_choice(
-                        storage, document, expected_epoch=menu.epoch,
-                        choice_id=choice.choice_id,
-                    ),
+                    work,
                     resolved, failed, priority=TaskPriority.METADATA,
                     kind="detail-cache", origin="user",
                 )
@@ -141,10 +158,15 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
         root._cifereca_action_priority = 30
         panel.add_actions([root])
 
+    def read_menu():
+        if not initial_pending or not worker_current(requested_route):
+            return None
+        return read_public_web_choices(storage, document)
+
     try:
         runner.submit(
             "Lecture des fiches web en cache…",
-            lambda: read_public_web_choices(storage, document),
+            read_menu,
             loaded, load_failed, priority=TaskPriority.METADATA,
             kind="detail-cache", origin="automatic",
         )
