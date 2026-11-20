@@ -55,8 +55,9 @@ _FIELDS = (
     ("pages", "Pages"),
     ("page_count", "Pages"),
     ("number_of_pages", "Pages"),
-    ("rights", "Droits"),
-    ("license", "Licence"),
+    # Source text describes a notice, never the reader's current entitlement.
+    ("rights", "Mention de droits (notice)"),
+    ("license", "Licence déclarée (notice)"),
     ("isbn", "ISBN déclaré"),
     ("isbns", "ISBN déclaré"),
     ("isbn13", "ISBN déclaré"),
@@ -80,7 +81,8 @@ _FIELD_KIND = {
 }
 _COPY_ONLY = {"pages", "page_count", "number_of_pages", "publication_year",
               "dates", "published_at", "publication_date", "price",
-              "series_index", "collection_index", "description", "summary", "synopsis"}
+              "series_index", "collection_index", "description", "summary", "synopsis",
+              "rights", "license"}
 
 
 def canonical_book_isbn(value: object) -> str:
