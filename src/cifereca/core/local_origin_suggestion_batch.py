@@ -9,11 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
 
-from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
 from .derived_variant_maintenance_review import admit_maintenance_review
 from .library_sqlite_freshness import sqlite_source_stamp
 from .local_origin_suggestion_operator import _root
-from .local_origin_suggestion_preview import suggest_local_placement_documents
+from .local_origin_suggestion_preview import (
+    ordinary_suggestion_path, suggest_local_placement_documents,
+)
 
 _PAGE = 4
 _MAX_PAGES = 200
@@ -131,18 +132,13 @@ def run_origin_batch(service, scope, *, cursor=None, cancelled=None):
         for pid, raw, size in candidates[:_PAGE]:
             if not active() or sqlite_source_stamp(scope.database) != stamp:
                 return None
-            path = Path(raw) if _token(raw) else None
+            path = ordinary_suggestion_path(
+                raw, library_root=scope.root, identity_id=owner, directory=scope.directory,
+            )
             label = "Fichier non vérifié"
             result = None
             reason = "excluded_path"
-            if (path is not None and str(path) == raw
-                    and path.is_relative_to(scope.root / scope.directory)
-                    and path != scope.root / scope.directory
-                    and not any(part.startswith(".") for part in
-                                path.relative_to(scope.root / scope.directory).parts)
-                    and not ordinary_dedup_path_excluded(
-                        path, library_root=scope.root, identity_id=owner,
-                        owner_directory=scope.directory)):
+            if path is not None:
                 label = path.name[:255]
                 reason = "review_budget"
                 # Existing per-file verifier may rehash during rechecks:
