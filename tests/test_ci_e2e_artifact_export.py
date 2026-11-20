@@ -31,6 +31,32 @@ class SafeE2EExportTests(unittest.TestCase):
     def write(self, rows):
         self.source.write_text(json.dumps(rows), encoding="utf-8")
 
+    def test_book_detail_checkpoint_contract_matches_real_probe(self):
+        # This unittest runs in E2E Smoke before GTK installation, including
+        # exporter-only changes for which the Core test scope is empty.
+        import ast
+        probe = ast.parse((ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8"))
+        definitions = {node.name for node in ast.walk(probe)
+                       if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        assignments = [node for node in probe.body if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name)
+                               and target.id == "_PUBLIC_STAGE_CODES"
+                               for target in node.targets)]
+        self.assertEqual(len(assignments), 1)
+        expression = assignments[0].value
+        self.assertIsInstance(expression, ast.Call)
+        self.assertIsInstance(expression.func, ast.Name)
+        self.assertEqual(expression.func.id, "frozenset")
+        self.assertEqual(len(expression.args), 1)
+        self.assertFalse(expression.keywords)
+        literal = ast.literal_eval(expression.args[0])
+        self.assertIs(type(literal), list)
+        self.assertTrue(all(type(value) is str for value in literal))
+        self.assertLessEqual(len(literal), 64)
+        self.assertEqual(len(literal), len(set(literal)))
+        self.assertEqual(set(literal), self.module._BOOK_DETAIL_STAGES)
+        self.assertLessEqual(set(literal) - {"activation", "callback_other"}, definitions)
+
     def test_success_and_failure_only_export_allowlisted_fields(self):
         secret = "PRIVATE-BEARER-TOKEN-HOME-USER-ACSM-URL"
         self.write([
