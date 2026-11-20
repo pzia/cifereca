@@ -1306,13 +1306,16 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
     except ValueError:
         return
 
-    def opening_scope_current():
+    def opening_epoch_current():
         try:
-            return (not getattr(self, "_closed", False)
-                    and self.service is opening_service
-                    and source_context_epoch(opening_service) == opening_epoch)
+            return source_context_epoch(opening_service) == opening_epoch
         except (TypeError, ValueError):
             return False
+
+    def opening_scope_current():
+        return (not getattr(self, "_closed", False)
+                and self.service is opening_service
+                and opening_epoch_current())
 
     def progress(event: dict[str, Any], report) -> None:
         if not opening_scope_current():
@@ -1326,7 +1329,10 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             label = f"Synchronisation · {identity_label or 'une identité'}…"
             report(label)
     def work(report):
-        if not opening_scope_current():
+        # Preserve the already admitted Core even if the window displays a
+        # replacement service. Only revocation of that Core's own epoch (or
+        # teardown) cancels its operation; delivery still needs the UI scope.
+        if getattr(self, "_closed", False) or not opening_epoch_current():
             raise Cancelled("opening_sync_scope_changed")
         try:
             return opening_service.opening_sync(
