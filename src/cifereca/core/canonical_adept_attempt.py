@@ -46,6 +46,48 @@ def pending_loan_adept_attempt(storage, source: SourceKey) -> bool:
         return True
 
 
+def describe_loan_adept_attempt(storage, source: SourceKey, *, offer_id: str) -> dict[str, object]:
+    """Read-only negative evidence for ONE exact loan, never replay authority.
+
+    A legacy v1 marker records the offer digest and operation identity, not
+    whether a DRM subprocess was actually started. Even a same-offer marker
+    MUST NOT become a token-consumption or reset permit (#7161).
+    """
+    def result(state: str) -> dict[str, object]:
+        return {"state": state, "unlock_authorized": False}
+
+    if type(source) is not SourceKey or source.kind != "loan":
+        return result("invalid_source")
+    if type(offer_id) is not str or not offer_id or len(offer_id) > 2048:
+        return result("invalid_offer")
+    try:
+        raw = storage.metadata_get(_key(source))
+    except Exception:
+        return result("unreadable")
+    if raw is None:
+        return result("none")
+    # No raw marker, operation ID, token or source coordinates in the report.
+    if type(raw) is not str or not 0 < len(raw) <= 8192:
+        return result("held_invalid")
+    try:
+        saved = json.loads(raw)
+    except (ValueError, TypeError, RecursionError):
+        return result("held_invalid")
+    if (type(saved) is not dict or set(saved) != {
+            "schema", "offer_digest", "operation_id"}
+            or type(saved["schema"]) is not int or saved["schema"] != 1
+            or type(saved["offer_digest"]) is not str
+            or len(saved["offer_digest"]) != 64
+            or any(c not in "0123456789abcdef" for c in saved["offer_digest"])
+            or type(saved["operation_id"]) is not str
+            or len(saved["operation_id"]) != 32
+            or any(c not in "0123456789abcdef" for c in saved["operation_id"])):
+        return result("held_invalid")
+    digest = hashlib.sha256(offer_id.encode()).hexdigest()
+    return result("held_same_offer" if saved["offer_digest"] == digest
+                  else "held_other_offer")
+
+
 def begin_loan_adept_attempt(storage, *, source: SourceKey, offer_id: str,
                               shared_lock) -> str:
     from .canonical_recovery import _exact_borrower_bound_in_db, _lock_ok
