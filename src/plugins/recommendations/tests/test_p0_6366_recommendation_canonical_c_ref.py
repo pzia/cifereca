@@ -327,6 +327,29 @@ def test_real_reopened_c_candidates_rank_and_render_without_supplier(tmp_path, m
         assert any(field.label == "Publication" and field.value == "2025"
                    for section in details[-1].sections for field in section.fields)
         assert not ranked.notices[0].has_source_coordinates
+
+        # Exercise the optional renderer port on the actual selection path.
+        # This is a synthetic field receipt, not another documentary source.
+        from cifereca.plugin_api import DetailField, Provenance
+        field = DetailField("alternate", "Source 2 · bnf · Série", "Témoin",
+                            provenance=Provenance("fixture", provider_id="bnf"))
+        calls = []
+        def project(candidate, **kwargs):
+            calls.append((candidate, kwargs))
+            return (field,)
+        view.host.public_notice_alternative_fields = project
+        view._selected_row(row)
+        assert calls == [(ranked.item, {
+            "identity_id": view.selected_identity_id(), "document": ref,
+            "receipt": opaque, "catalogue_sources": view._selected_catalogue_sources(),
+        })]
+        alternatives, = [part for part in details[-1].sections
+                         if part.id == "known-public-alternatives"]
+        assert alternatives.fields == (field,)
+        view.host.public_notice_alternative_fields = lambda *a, **kw: ()
+        view._selected_row(row)
+        assert not any(part.id == "known-public-alternatives"
+                       for part in details[-1].sections)
         ranked.item.published_at = "2024"
         assert known_public_c_binding_facts(ranked.item) is None
         assert restored.entitlements() == []
