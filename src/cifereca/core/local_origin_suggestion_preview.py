@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
 
+from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
+
 from .derived_variant_publication import (
     DerivedPublicationConflict, _verified_variant_file,
 )
@@ -20,6 +22,30 @@ _MAX_BYTES = 1024 ** 3
 def _text(value, limit=1024):
     return (type(value) is str and 0 < len(value) <= limit
             and not any(ord(ch) < 32 or ord(ch) == 127 for ch in value))
+
+
+def ordinary_suggestion_path(raw, *, library_root, identity_id, directory):
+    """Same candidate-path policy for individual and batch reviews.
+
+    Path admissibility is only a veto. The subsequent pinned SHA and SQL
+    observations still own physical and documentary admission.
+    """
+    if (not _text(raw, 4096) or not isinstance(library_root, Path)
+            or not library_root.is_absolute() or library_root == Path("/")
+            or ".." in library_root.parts or not _text(identity_id, 256)
+            or not _text(directory, 256) or directory in (".", "..")
+            or "/" in directory or chr(92) in directory):
+        return None
+    path = Path(raw)
+    owner = library_root / directory
+    if (not path.is_absolute() or str(path) != raw or ".." in path.parts
+            or path == owner or not path.is_relative_to(owner)
+            or any(part.startswith(".") for part in path.relative_to(owner).parts)
+            or ordinary_dedup_path_excluded(
+                path, library_root=library_root, identity_id=identity_id,
+                owner_directory=directory)):
+        return None
+    return path
 
 
 def _snapshot(storage, identity, placement_id, *, catalogue=False):
@@ -123,10 +149,10 @@ def _verified_candidate(storage, *, library_root, identity_id, placement_id,
     if row is None:
         raise _CandidateRejected(status)
     _, raw, _, digest, size, directory = row[:6]
-    path = Path(raw)
-    scope = library_root / directory
-    if (not path.is_absolute() or ".." in path.parts or str(path) != raw
-            or path == scope or not path.is_relative_to(scope)):
+    path = ordinary_suggestion_path(
+        raw, library_root=library_root, identity_id=identity_id, directory=directory,
+    )
+    if path is None:
         raise _CandidateRejected("scope_unverified")
     if size > _MAX_BYTES:
         raise _CandidateRejected("review_budget_exceeded")
