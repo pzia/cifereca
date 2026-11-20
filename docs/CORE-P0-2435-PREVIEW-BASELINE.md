@@ -58,3 +58,32 @@ l'installation APT ; merge dee4fb1c48b10483567098373774bdc157b3a2bb.
 Ajoute mesures worker preview sans nouveau pool, avec exclusion queue,
 admission overflow et annulation. Le raccordement des nouveaux percentiles
 à la recette GTK et à l'export fermé est explicitement testé dans la suite.
+
+
+### Réception GdkPixbuf six vues après #6964
+
+HEAD 0a1e8bcfc223da9482176d12181fa282b4e9ff41, PR CI 44659139557 et E2E
+44659139600 SUCCESS, merge ef590f5e42eec070f74acfe83fa00fc0e80e0109.
+Artefact public 14595182382 lu : 51/51 PASS, cinq reçus (960 à 1600).
+Worker création 3.75–3.92 ms (n=1 par résolution), HIT froid p95
+0.79–1.50 ms (n=11), HIT offline p95 0.51–0.67 ms (n=12),
+aucune création offline ni fallback ; N4 p95 froid 0.75–0.85 ms
+et offline 0.74–0.80 ms. Ces valeurs ne sont pas un SLA.
+
+### Budget et choix de non-optimisation
+
+Inventaire de production : CoverLoader max_workers=6 par défaut et limites
+HTTPX par client identiques, 2 threads preview, 2 EPUB physique ; preview
+singleflight sur source/dimensions et maximum 64 jobs. Pas de nouveau pool.
+HTTPX_TRANSPORT construit des clients à pools/cookies indépendants ;
+aucun quota global transversal ou par hôte n'est garanti par ce seul port.
+L'étude conclut à ne pas introduire de quota local présenté comme global.
+La gouvernance transverse reste #2431 (ouverte), l'observabilité globale
+#1741 ; contrats #6168 et preuves SHA physique #6936 séparés. Aucun
+délai de queue confondu avec temps worker ni suppression du cache N2.
+
+Le benchmark natif réutilise strictement le corpus 16/256 et les assertions
+de #6962 dans le venv GTK existant, sans installer de dépendance ni admettre
+de fallback Pillow. La mesure I/O reste celle du processus Linux, pas
+celle d'un disque physique. La recette complète GTK demeure indépendante
+du benchmark de conversion, sans modifier le paint ou le choix N1.
