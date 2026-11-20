@@ -1776,6 +1776,69 @@ def main():
         )
 
     def complete():
+        # #3685: exercise the installed public action ABI in the real shared
+        # GTK renderer and overflow bar, after the existing recommendation
+        # assertions. All actions are synthetic; no external link is opened.
+        from cifereca.plugin_api import UiBookDetailAction, UiBookDetailPresentation
+        calls = []
+        state["detail_state_calls"] = calls
+        master = state["view"]._master
+        master.show_detail(UiBookDetailPresentation(
+            title="États des actions", actions=(
+                UiBookDetailAction("state-ready", "Consulter", callback=lambda: calls.append("ready")),
+                UiBookDetailAction("state-off", "Emprunter", callback=lambda: calls.append("off"),
+                                   state="unavailable", unavailable_reason="Compte à reconnecter"),
+                UiBookDetailAction("state-busy", "Actualiser", callback=lambda: calls.append("busy"),
+                                   state="busy", unavailable_reason="Traitement en cours"),
+                UiBookDetailAction("state-link", "Fiche fournisseur", uri="https://catalogue.example/book/42",
+                                   state="unavailable", unavailable_reason="Source déconnectée"),
+            ),
+        ))
+        later(120, verify_declared_action_states)
+
+    def verify_declared_action_states():
+        panel = state["view"]._master._page.detail
+        buttons = {button._cifereca_action_id: button for button in panel._action_buttons}
+        assert set(buttons) == {"state-ready", "state-off", "state-busy", "state-link"}
+        bar = panel.action_scroll
+        # Move the same real buttons into overflow; state must travel with
+        # them rather than be copied into newly enabled menu proxies.
+        bar._layout_overflow(140)
+        for key, reason in (("state-off", "Compte à reconnecter"),
+                            ("state-busy", "Traitement en cours"),
+                            ("state-link", "Source déconnectée")):
+            button = buttons[key]
+            assert not button.get_sensitive()
+            assert reason in button.get_tooltip_text()
+            assert button.get_parent() is bar.overflow_box
+        assert "En cours" in buttons["state-busy"].get_tooltip_text()
+        buttons["state-off"].emit("clicked")
+        buttons["state-busy"].emit("clicked")
+        assert buttons["state-link"].emit("activate-link") is True
+        assert state["detail_state_calls"] == []
+        ready = buttons["state-ready"]
+        assert ready.get_sensitive() and ready.get_mapped()
+        assert ready.grab_focus() is not False
+        state["detail_state_old"] = ready
+        state["device"].key("Return", True)
+        state["device"].key("Return", False)
+        later(120, finish_declared_action_states)
+
+    def finish_declared_action_states():
+        from cifereca.plugin_api import UiBookDetailAction, UiBookDetailPresentation
+        assert state["detail_state_calls"] == ["ready"]
+        master = state["view"]._master
+        master.show_detail(UiBookDetailPresentation(
+            title="États des actions", actions=(UiBookDetailAction(
+                "state-ready", "Consulter", state="busy",
+                callback=lambda: state["detail_state_calls"].append("replaced"),
+            ),),
+        ))
+        state["detail_state_old"].emit("clicked")
+        master._page.detail._action_buttons[0].emit("clicked")
+        assert state["detail_state_calls"] == ["ready"]
+        report["checks"]["P0_3685_declared_action_states_overflow_keyboard_gtk"] = True
+        report["checks"]["P0_3685_disabled_link_and_retired_callback_inert_gtk"] = True
         state["plugin"].deactivate()
         report["status"] = "PASS"
         save()

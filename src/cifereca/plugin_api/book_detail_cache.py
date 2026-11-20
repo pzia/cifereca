@@ -72,6 +72,7 @@ def _sanitize(detail: object, book: BookRef, identity_id: str, plugin_id: str) -
         actions.append(replace(
             action, id=_small_text(action.id, 80),
             title=_small_text(action.title, 100), uri=uri or "",
+            unavailable_reason=_small_text(action.unavailable_reason, 280),
         ))
     if not sections and not actions:
         return None

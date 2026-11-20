@@ -399,11 +399,18 @@ class UiBookListEntry:
 
 @dataclass(frozen=True, slots=True)
 class UiBookDetailAction:
+    """Already evaluated action; render state never grants business authority.
+
+    Publish a new presentation to change state. Callbacks must still revalidate
+    their exact current source/account/permission at explicit activation.
+    """
     id: str
     title: str
     icon_name: str = "view-more-symbolic"
     uri: str = ""
     callback: Callable[[], object] | None = None
+    state: str = "available"  # available / unavailable / busy
+    unavailable_reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)

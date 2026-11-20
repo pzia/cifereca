@@ -85,6 +85,8 @@ def _valid_result(
             id=f"{plugin_id}:{_text(action.id, 64)}",
             title=title, icon_name=_text(action.icon_name, 64) or "view-more-symbolic",
             uri=uri, callback=callback,
+            state=action.state,
+            unavailable_reason=_text(action.unavailable_reason, 280),
         ))
     if not sections and not actions:
         return None
