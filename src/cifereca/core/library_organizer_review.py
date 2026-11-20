@@ -66,7 +66,10 @@ class OrganizerScope:
             return False
 
     def bound(self):
+        # The connection is worker-local. The binding API takes its own
+        # non-reentrant lock, so do not hold it across that call.
         return (self.current()
+                and not self.storage._connect().in_transaction
                 and self.storage.exact_profile_directory_binding(self.identity)
                 == (self.directory, True))
 
@@ -102,32 +105,36 @@ def admit_organizer_review(service):
 
 def _placement_facts(scope, group):
     """Only exact group paths and bounded local descriptions, no metadata dumps."""
-    with scope.storage._lock, scope.storage._connect() as db:
-        db.execute("BEGIN")
-        rows = db.execute(
-            "SELECT p.placement_id,p.path,p.state,a.sha256,a.size,a.media_format "
-            "FROM placements p JOIN artifacts a ON a.artifact_id=p.artifact_id "
-            "WHERE p.identity_id=? AND p.artifact_id=? ORDER BY p.placement_id LIMIT ?",
-            (scope.identity, group.artifact_id, _MAX_COPIES+1),
-        ).fetchall()
-        if tuple(row[0] for row in rows) != tuple(p.placement_id for p in group.placements):
+    with scope.storage._lock:
+        db = scope.storage._connect()
+        if db.in_transaction:
             return None
-        descriptions = {}
-        for pid, *_ in rows:
-            values = db.execute(
-                "SELECT artifact_id,identity_id,local_state,"
-                "CASE WHEN length(CAST(title AS BLOB))<=2048 THEN title END,"
-                "CASE WHEN length(CAST(author AS BLOB))<=2048 THEN author END "
-                "FROM catalog_entries WHERE placement_id=? ORDER BY catalog_entry_id LIMIT 9",
-                (pid,),
+        with db:
+            db.execute("BEGIN")
+            rows = db.execute(
+                "SELECT p.placement_id,p.path,p.state,a.sha256,a.size,a.media_format "
+                "FROM placements p JOIN artifacts a ON a.artifact_id=p.artifact_id "
+                "WHERE p.identity_id=? AND p.artifact_id=? ORDER BY p.placement_id LIMIT ?",
+                (scope.identity, group.artifact_id, _MAX_COPIES+1),
             ).fetchall()
-            if (len(values) > 8 or any(v[:3] != (
-                    group.artifact_id, scope.identity, "local") for v in values)):
-                descriptions[pid] = None
-            else:
-                choices = {(v[3], v[4]) for v in values}
-                descriptions[pid] = next(iter(choices)) if len(choices) == 1 else None
-        return tuple(rows), descriptions
+            if tuple(row[0] for row in rows) != tuple(p.placement_id for p in group.placements):
+                return None
+            descriptions = {}
+            for pid, *_ in rows:
+                values = db.execute(
+                    "SELECT artifact_id,identity_id,local_state,"
+                    "CASE WHEN length(CAST(title AS BLOB))<=2048 THEN title END,"
+                    "CASE WHEN length(CAST(author AS BLOB))<=2048 THEN author END "
+                    "FROM catalog_entries WHERE placement_id=? ORDER BY catalog_entry_id LIMIT 9",
+                    (pid,),
+                ).fetchall()
+                if (len(values) > 8 or any(v[:3] != (
+                        group.artifact_id, scope.identity, "local") for v in values)):
+                    descriptions[pid] = None
+                else:
+                    choices = {(v[3], v[4]) for v in values}
+                    descriptions[pid] = next(iter(choices)) if len(choices) == 1 else None
+            return tuple(rows), descriptions
 
 
 def _ordinary_path(scope, raw):
@@ -148,10 +155,14 @@ def _ordinary_path(scope, raw):
 
 def _destination_occupied(scope, target):
     # Never treat same bytes as permission to replace another Placement.
-    with scope.storage._lock, scope.storage._connect() as db:
-        if db.execute("SELECT 1 FROM placements WHERE path=? LIMIT 1",
-                      (str(target),)).fetchone() is not None:
+    with scope.storage._lock:
+        db = scope.storage._connect()
+        if db.in_transaction:
             return True
+        with db:
+            if db.execute("SELECT 1 FROM placements WHERE path=? LIMIT 1",
+                          (str(target),)).fetchone() is not None:
+                return True
     fd = _open_root(target.parent)
     try:
         try:
