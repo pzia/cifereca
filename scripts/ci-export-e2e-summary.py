@@ -569,6 +569,124 @@ def _native_abort_diagnosis(source: Path, scenario: str, code: int) -> dict:
     return result
 
 
+# Numeric receipt for the completed synthetic six-view probe only (#2435).
+# Closed metric keys: no prefix acceptance of arbitrary diagnostic labels.
+_COVER_ROUTES = frozenset(
+    route + "/" + variant
+    for route in ("library", "recent", "search", "loans", "history", "recommendations")
+    for variant in ("list", "detail")
+)
+_COVER_METRICS = {
+    "n1": frozenset(
+        "n1_" + state + "_" + suffix
+        for state in ("selected", "pending", "missing", "ambiguous")
+        for suffix in ("count", "recent_count", "recent_p50_ms", "recent_p95_ms")
+    ),
+    "n2": frozenset({
+        "n2_hit", "n2_miss", "n2_source_unknown", "n2_resolution_miss",
+        "n2_register_new", "n2_register_changed", "n2_register_reused",
+        "n2_source_refresh_scheduled", "n2_registered_documents", "n2_source_flights",
+    }) | frozenset(
+        "n2_" + state + "_" + suffix
+        for state in ("hit", "source_unknown", "below_floor", "resolution_miss")
+        for suffix in ("recent_count", "recent_p50_ms", "recent_p95_ms")
+    ),
+    "n3": frozenset({
+        "preview_created", "preview_hit", "preview_fallback", "cache_hit_valid",
+        "download_ok", "download_failed", "n3_url_published_bytes",
+        "n3_epub_hit", "n3_epub_miss", "n3_epub_singleflight",
+        "n3_epub_failed", "n3_epub_cooldown", "n3_epub_overflow",
+    }) | frozenset(
+        "n3_url_" + state + "_" + suffix
+        for state in ("ok", "failed")
+        for suffix in ("avg_ms", "max_ms", "recent_count", "recent_p50_ms", "recent_p95_ms")
+    ) | frozenset(
+        "n3_epub_" + state + "_" + suffix
+        for state in ("ok", "failed")
+        for suffix in ("recent_count", "recent_p50_ms", "recent_p95_ms")
+    ),
+    "n4": frozenset({
+        "ui_applied", "ui_failed", "ui_stale", "ui_decode_count",
+        "ui_decode_slow", "ui_decode_avg_ms", "ui_decode_max_ms",
+        "ui_decode_recent_count", "ui_decode_recent_p50_ms", "ui_decode_recent_p95_ms",
+    }),
+}
+
+
+def _cover_number(value, *, duration):
+    if duration:
+        return (type(value) in (int, float) and 0 <= value <= 600000
+                and math.isfinite(value))
+    return type(value) is int and 0 <= value <= 1000000000
+
+
+def _completed_cover_metrics(source: Path, scenario: str) -> dict:
+    if scenario not in {
+        "book-detail-960", "book-detail-1280", "book-detail-1300",
+        "book-detail-1366", "book-detail-1600", "book-detail-1700",
+    }:
+        return {}
+    root = source.parent / scenario
+    nested = root / scenario
+    report = nested / "screen.json"
+    try:
+        if any(path.is_symlink() for path in (root, nested, report)):
+            return {}
+        if not report.is_file() or report.stat().st_size > MAX_BYTES:
+            return {}
+        with report.open("rb") as handle:
+            raw = handle.read(MAX_BYTES + 1)
+        if len(raw) > MAX_BYTES:
+            return {}
+        data = json.loads(raw)
+        if (type(data) is not dict or data.get("local_c_stage") != "complete"
+                or type(data.get("checks")) is not dict
+                or data["checks"].get("P0_4980_same_c_six_physical_views_restart_offline") is not True):
+            return {}
+        result = {}
+        for phase in ("cold", "offline"):
+            receipt = data.get("notice_c_cover_metrics_" + phase)
+            if (type(receipt) is not dict
+                    or receipt.get("schema") != "cifereca.cover-six-views/1"
+                    or receipt.get("fixture") != "one_c_six_views_mock_transport"
+                    or type(receipt.get("image_gets_total")) is not int
+                    or receipt["image_gets_total"] != 1):
+                return {}
+            timing = receipt.get("route_to_observed_texture_ms")
+            if (type(timing) is not dict or set(timing) != _COVER_ROUTES
+                    or not all(_cover_number(v, duration=True) for v in timing.values())):
+                return {}
+            safe = {"image_gets_total": 1,
+                    "route_to_observed_texture_ms": {k: round(v, 2) for k, v in timing.items()}}
+            for level, keys in _COVER_METRICS.items():
+                values = receipt.get(level)
+                if type(values) is not dict:
+                    return {}
+                selected = {}
+                for key in keys & values.keys():
+                    value = values[key]
+                    if not _cover_number(value, duration=key.endswith("_ms")):
+                        return {}
+                    selected[key] = round(value, 2) if key.endswith("_ms") else value
+                safe[level] = selected
+            if (safe["n1"].get("n1_selected_count", 0) < 1
+                    or safe["n2"].get("n2_hit", 0) < 1
+                    or safe["n3"].get("download_ok") != (1 if phase == "cold" else 0)
+                    or safe["n3"].get("download_failed") != 0
+                    or safe["n4"].get("ui_applied", 0) < 12
+                    or safe["n4"].get("ui_failed") != 0
+                    or safe["n4"].get("ui_decode_recent_count", 0) < 1):
+                return {}
+            result[phase] = safe
+        return {"notice_c_cover_metrics": {
+            "schema": "cifereca.cover-six-views/1",
+            "fixture": "one_c_six_views_mock_transport",
+            **result,
+        }}
+    except (OSError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
+        return {}
+
+
 def safe_summary(source: Path) -> dict:
     # Fail closed for symlinks, invalid JSON, unreasonable sizes or fields.
     if source.is_symlink() or not source.is_file() or source.stat().st_size > MAX_BYTES:
@@ -644,6 +762,8 @@ def safe_summary(source: Path) -> dict:
             row.update(_failed_plugin_scroll_checkpoint(source, scenario))
             row.update(_failed_maintenance_checkpoint(source, scenario))
             row.update(_native_abort_diagnosis(source, scenario, code))
+        else:
+            row.update(_completed_cover_metrics(source, scenario))
         rows.append(row)
     return {"schema": "cifereca-e2e-public-verdict/v1", "results": rows}
 
