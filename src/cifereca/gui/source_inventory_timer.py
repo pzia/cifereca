@@ -344,15 +344,18 @@ def configure(
         def work():
             failures = 0
             completed = 0
+            interrupted = False
             # No unbounded refresh batch and no user-selected-account fallback.
             for identity_id in ids:
                 # Opening may have been submitted after the GTK tick but
                 # before this queued worker began. Do not enter the broker.
                 if _automatic_opening_in_flight(window):
+                    interrupted = True
                     break
                 if not scope_current():
                     # A queued task must not reanimate a replaced plugin
                     # manager/broker after the GTK tick checked its scope.
+                    interrupted = True
                     break
                 try:
                     receipt = broker.synchronize_scheduled_inventory(identity_id, "periodic")
@@ -369,6 +372,9 @@ def configure(
             # TaskRunner treats a bare None as an unexecuted/invalidated
             # source-sync. Carry an explicit positive receipt only after a
             # broker-attested attempt; a skipped batch remains unproven.
+            if interrupted and completed:
+                return SyncResult(ok=False, facts={"status": "partial",
+                                                   "completed": completed})
             return SyncResult(ok=True) if completed else None
 
         try:
