@@ -137,6 +137,8 @@ class CoverLoader:
         self._ui_decode_recent: deque[float] = deque(maxlen=_UI_DECODE_WINDOW)
         self._n3_url_recent = {outcome: deque(maxlen=_N3_URL_WINDOW)
                                for outcome in ("ok", "failed")}
+        self._preview_recent = {outcome: deque(maxlen=1024)
+                                for outcome in ("hit", "created", "fallback")}
         self._stats = {
             "preview_created":0,"preview_hit":0,"preview_fallback":0,
             "requested": 0,
@@ -216,6 +218,15 @@ class CoverLoader:
                 if recent:
                     stats[f"{prefix}_recent_p50_ms"] = round(recent[(len(recent) * 50 + 99) // 100 - 1], 2)
                     stats[f"{prefix}_recent_p95_ms"] = round(recent[(len(recent) * 95 + 99) // 100 - 1], 2)
+            # Preview worker samples exclude queue delay, URL/EPUB retrieval
+            # and GTK decode. Admission overflow is not a worker fallback.
+            for outcome, window in self._preview_recent.items():
+                prefix = f"preview_worker_{outcome}"
+                recent = sorted(window)
+                stats[f"{prefix}_recent_count"] = count = len(recent)
+                if count:
+                    stats[f"{prefix}_recent_p50_ms"] = round(recent[(count * 50 + 99) // 100 - 1], 2)
+                    stats[f"{prefix}_recent_p95_ms"] = round(recent[(count * 95 + 99) // 100 - 1], 2)
             return {
                 **stats,
                 "queue": self._queue.qsize(),
@@ -626,6 +637,13 @@ class CoverLoader:
         future.add_done_callback(physical_ready)
         return request
 
+    def _record_preview_worker(self, outcome, started):
+        elapsed = (time.perf_counter() - started) * 1000
+        with self._lock:
+            self._stats["preview_" + outcome] += 1
+            if math.isfinite(elapsed) and elapsed >= 0:
+                self._preview_recent[outcome].append(elapsed)
+
     def load_preview(self, url, callback, *, width, height, priority=10, force=False):
         holder = _Callback(callback)
         request = CoverRequest(holder)
@@ -656,19 +674,17 @@ class CoverLoader:
                     )
                 if not needed or self._stop.is_set():
                     return None
+                started = time.perf_counter()
                 try:
                     dest = preview_path(source, self.preview_root, width, height)
                     if not force and self._valid_cache_file(dest):
-                        with self._lock:
-                            self._stats['preview_hit'] += 1
+                        self._record_preview_worker("hit", started)
                         return dest
                     create_preview(source, dest, width, height)
-                    with self._lock:
-                        self._stats['preview_created'] += 1
+                    self._record_preview_worker("created", started)
                     return dest
                 except Exception as exc:
-                    with self._lock:
-                        self._stats['preview_fallback'] += 1
+                    self._record_preview_worker("fallback", started)
                     _TRACE_LOG.debug(
                         'TRACE cover preview fallback error=%s',
                         type(exc).__name__,
