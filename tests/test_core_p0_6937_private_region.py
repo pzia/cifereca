@@ -207,3 +207,37 @@ def test_missing_mount_information_refuses_before_creation(setup, monkeypatch):
         region.ensure_private_derived_region(db, **options, provision=True)
     assert not _region(intent).exists()
     assert db.metadata_get(region._key("id1")) is None
+
+
+@pytest.mark.parametrize("registered", [False, True])
+@pytest.mark.parametrize("change", ["same_size", "size", "sql_digest", "sql_size"])
+def test_parent_artifact_must_match_pinned_bytes_and_sql(setup, registered, change):
+    db, intent, options = setup
+    directory = _region(intent)
+    key = region._key("id1")
+    if registered:
+        region.ensure_private_derived_region(db, **options, provision=True)
+    prior = db.metadata_get(key)
+    parent = Path(intent.parent_path)
+    before = parent.stat()
+    original = parent.read_bytes()
+    if change == "same_size":
+        parent.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+        os.utime(parent, ns=(before.st_atime_ns, before.st_mtime_ns))
+    elif change == "size":
+        parent.write_bytes(original + b"x")
+    elif change == "sql_digest":
+        with db._lock, db._connect() as sql:
+            sql.execute("UPDATE artifacts SET sha256=? WHERE artifact_id=?",
+                        ("0" * 64, "sha256:" + intent.parent_sha256))
+    else:
+        with db._lock, db._connect() as sql:
+            sql.execute("UPDATE artifacts SET size=size+1 WHERE artifact_id=?",
+                        ("sha256:" + intent.parent_sha256,))
+    retained = parent.read_bytes()
+    with pytest.raises(DerivedJournalConflict, match="parent_unverified"):
+        region.ensure_private_derived_region(db, **options, provision=True)
+    assert db.metadata_get(key) == prior
+    assert directory.exists() is registered
+    assert parent.read_bytes() == retained
+    assert Path(intent.staged_path).samefile(intent.candidate_path)
