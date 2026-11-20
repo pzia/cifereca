@@ -13,7 +13,8 @@ def _sensitive_parameters(text):
             if decoded == key:
                 break
             key = decoded
-        if any(marker in key for marker in ('%', '&', ';', '=', '\\x00')):
+        if (any(marker in key for marker in ('%', '&', ';', '=', '\\x00'))
+                or any(ord(char) < 32 or ord(char) == 127 for char in key)):
             return True
         keys.add(key.casefold())
     if keys & {'token', 'signature', 'sig', 'access_token', 'auth', 'key', 'download', 'authorization'}:
