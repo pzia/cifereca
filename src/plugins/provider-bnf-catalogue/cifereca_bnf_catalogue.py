@@ -339,6 +339,11 @@ class BnfCatalogueSession(ProviderSession):
             for element in root.findall(f"{{{SRU}}}nextRecordPosition")
         )
         rows = {}
+        # SRU can return the same ARK in multiple record positions. A later
+        # record must not silently replace the first and become the sole
+        # public same-call occurrence of this edition. Quarantine the ARK
+        # for the whole page, including any third occurrence.
+        ambiguous_arks: set[str] = set()
         for data in data_nodes:
             values: dict[str, list[str]] = {}
             for node in data.iter():
@@ -358,6 +363,12 @@ class BnfCatalogueSession(ProviderSession):
             if not arks:
                 continue
             ark = next(iter(arks))
+            if ark in ambiguous_arks:
+                continue
+            if ark in rows:
+                del rows[ark]
+                ambiguous_arks.add(ark)
+                continue
             formats = values.get("format", [])
             kinds = values.get("type", [])
             links = list(dict.fromkeys(link for value in values.get("relation", []) + identifiers if (link := _gallica_link(value))))
