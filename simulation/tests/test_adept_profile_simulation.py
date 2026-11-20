@@ -111,7 +111,7 @@ class AdeptProfileSimulationTests(unittest.TestCase):
             self.assertEqual(a, b)
             self.assertEqual(a["version"], plugin_scenarios.SCHEMA_VERSION)
             self.assertIn("adept-profiles.json", a["files"])
-            self.assertEqual(len(a["files"]), 13)
+            self.assertEqual(len(a["files"]), 14)
 
 
 if __name__ == "__main__":

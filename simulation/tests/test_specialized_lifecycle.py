@@ -47,11 +47,11 @@ class SpecializedLifecycleTests(unittest.TestCase):
             self.assertEqual(first["env"]["CIFERECA_UX_SPECIALIZED_DATA"], str(root))
             self.assertTrue(datasetctl.summary_payload(profile, catalog)["specialized"]["complete"])
             manifest = json.loads((root / "manifest.json").read_text())
-            self.assertEqual(len(manifest["files"]), 13)
+            self.assertEqual(len(manifest["files"]), 14)
             self.assertEqual(manifest["version"], plugin_scenarios.SCHEMA_VERSION)
 
             # Older manifests must not hide newly introduced fixtures.
-            for previous_version in (1, 2, 3):
+            for previous_version in (1, 2, 3, 4):
                 old_manifest = dict(manifest, version=previous_version)
                 (root / "manifest.json").write_text(json.dumps(old_manifest), encoding="utf-8")
                 self.assertFalse(datasetctl.specialized_status(profile)["complete"])
@@ -75,6 +75,11 @@ class SpecializedLifecycleTests(unittest.TestCase):
             self.assertEqual(json.loads((root / "manifest.json").read_text()), manifest)
             self.assertEqual((root / "publication-scan.pdf").read_bytes(),
                              plugin_scenarios.synthetic_pdf(scan=True))
+
+            (root / "publication-cases.json").unlink()
+            self.assertFalse(datasetctl.specialized_status(profile)["complete"])
+            datasetctl.prepare(profile, catalog)
+            self.assertEqual(json.loads((root / "manifest.json").read_text()), manifest)
 
             new_seed_profile = self.profile(seed=20261009)
             datasetctl.prepare(new_seed_profile, catalog)

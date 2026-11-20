@@ -18,7 +18,7 @@ from pathlib import Path
 from common.fake_books import FakeBookFactory, epub_bytes
 
 SEED = 20261008
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 ISBN_A = "9780306406157"
 ISBN_B = "9780140328721"
 ISBN_C = "9780553386790"
@@ -366,6 +366,69 @@ def synthetic_pdf(*, scan: bool = False) -> bytes:
     return bytes(out)
 
 
+def publication_cases(out: Path) -> dict:
+    """Declarative UX fixture, not a database import or executable maintenance plan."""
+    def payload(name):
+        return {"fixture": name, "sha256": sha256((out / name).read_bytes()).hexdigest()}
+
+    epub = payload("optimizer-valid.epub")
+    pdf = payload("publication-text.pdf")
+    scan = payload("publication-scan.pdf")
+    def placement(key, identity, path, content, **extra):
+        return {"id": key, "identity": identity, "relative_path": path,
+                **content, **extra}
+
+    return {
+        "version": 1, "synthetic": True, "mode": "descriptive-only",
+        "identities": ["A", "B", "C"],
+        "chains": {
+            "purchase_transfer_purchase_transfer": {
+                "payload": pdf,
+                "steps": ["purchase_A_adept", "transfer_A_B",
+                          "independent_purchase_B_adept", "transfer_B_C"],
+                "placements": [
+                    placement("a", "A", "A/Acquisitions/Book.pdf", pdf),
+                    placement("b", "B", "B/Acquisitions/Book.pdf", pdf),
+                    placement("c", "C", "C/Acquisitions/Book.pdf", pdf),
+                ],
+                "expected": {"artifacts": 1, "placements": 3, "origin_links": 8,
+                             "independent_rights": ["A", "B"],
+                             "restore_after_missing": {"A": True, "B": True, "C": False},
+                             "replay_additional_links": 0},
+            },
+        },
+        "maintenance": {
+            "placements": [
+                placement("keeper", "A", "A/Livres/Auteur/Auteur - Livre.epub", epub),
+                placement("duplicate", "A", "A/Acquisitions/opaque.epub", epub),
+                placement("other_profile", "B", "B/Acquisitions/opaque.epub", epub),
+                placement("excluded", "A", "A/Outbox/Reader/opaque.epub", epub),
+                placement("missing", "A", "A/Acquisitions/missing.pdf", pdf, present=False),
+                placement("collision", "A", "A/Livres/Auteur/Auteur - Livre.pdf", scan),
+            ],
+            "excluded_roots": ["A/Outbox"],
+            "expected": {
+                "same_sha_same_identity_keeper": "keeper",
+                "candidate_only": ["duplicate"],
+                "never_remove": ["keeper", "other_profile", "excluded", "collision"],
+                "missing_requires_review": ["missing"],
+                "collision_never_overwrite": True,
+                "physical_removal_enabled": False,
+            },
+            "negative_cases": ["stale_plan", "sha_changed", "scope_changed",
+                               "symlink_escape", "cancel_before_confirmation",
+                               "crash_before_commit", "replay_after_commit"],
+        },
+        "transformation": {
+            "source": pdf, "different_bytes_example": scan,
+            "expected": {"distinct_artifacts": True, "original_preserved": True,
+                         "new_provider_right": False},
+            "warning": "Different-byte sample only; not actual converter output or derived proof.",
+        },
+        "warning": "Expected outcomes, no rights, no DB import, no real paths or mutation.",
+    }
+
+
 def create(out: Path, *, seed: int = SEED) -> dict:
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
@@ -388,10 +451,14 @@ def create(out: Path, *, seed: int = SEED) -> dict:
     (out / "publication-text.pdf").write_bytes(synthetic_pdf())
     (out / "publication-scan.pdf").write_bytes(synthetic_pdf(scan=True))
     (out / "publication-corrupt.pdf").write_bytes(b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog\n")
+    (out / "publication-cases.json").write_text(
+        json.dumps(publication_cases(out), ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
     paths = sorted(p for p in out.iterdir() if p.is_file() and p.name != "manifest.json")
     manifest = {"version": SCHEMA_VERSION, "synthetic": True, "seed": seed,
                 "scope": ["jeunesse", "critique-litteraire", "constellations", "epub-optimizer",
-                          "youth-discovery", "youth-detail-enrichment", "runtime-kobo-adept", "publication-pdf"],
+                          "youth-discovery", "youth-detail-enrichment", "runtime-kobo-adept", "publication-pdf", "publication-maintenance"],
                 "files": {p.name: sha256(p.read_bytes()).hexdigest() for p in paths},
                 "warning": "JDD de contrat isolés ; activation explicite, aucun E2E GTK prouvé."}
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
