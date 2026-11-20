@@ -76,6 +76,10 @@ def expand_filter_sources(rows, *, scope):
     return expanded, originals
 
 
+def is_expanded_source(row):
+    return _MARKER in row
+
+
 def collapse_filter_sources(rows, originals):
     """Preserve best independent match ordering; no union or primary rewrite."""
     out, groups = [], {}
@@ -94,3 +98,11 @@ def collapse_filter_sources(rows, originals):
         if provider not in primary["_notice_c_matched_providers"]:
             primary["_notice_c_matched_providers"] += (provider,)
     return out
+
+def matching_source_label(row):
+    # This metadata is produced by collapse only; labels are descriptive.
+    providers = row.get("_notice_c_matched_providers")
+    if (type(providers) is not tuple or not providers
+            or providers == (row.get("provider_id"),)):
+        return ""
+    return " · Correspondance : " + ", ".join(providers)
