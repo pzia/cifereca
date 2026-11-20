@@ -15,7 +15,6 @@ class Pages:
             ("loans", "Emprunts", "folder-documents-symbolic", "usage"),
             ("history", "Historique", "document-open-recent-symbolic", "usage"),
             ("sync", "Synchronisation", "emblem-synchronizing-symbolic", "configuration"),
-            ("tools", "Outils", "applications-system-symbolic", "configuration"),
             ("plugins", "Plugins", "application-x-addon-symbolic", "configuration"),
             ("settings", "Paramètres", "preferences-system-symbolic", "configuration"),
         ]
@@ -24,7 +23,7 @@ class Pages:
                 route,
                 title,
                 icon,
-                index,
+                index if index < 8 else index + 1,
                 lambda host, r=route: host.build_standard_page(r),
                 group,
                 (
