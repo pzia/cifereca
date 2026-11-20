@@ -20,7 +20,9 @@ import unicodedata
 
 from .book_cover_projection import CoverDocumentScope
 from .notice_cover_projection import notice_cover_document_ref
-from .notice_cover_repository import _PREFIX, _decode
+from .notice_cover_repository import (
+    _PREFIX, _decode, _check_live_source_fence, _read_source_fence,
+)
 from .notice_search_cover_producer import _coordinate_digest
 from .notice_source_observation import NoticeSourceKey
 from .public_search_projection import (
@@ -94,7 +96,7 @@ def _fold(value: str) -> str:
 
 
 def _public_observation(
-    raw: object, *, key_string: object, now: int, source_proofs=None,
+    raw: object, *, key_string: object, now: int, source_proofs=None, db=None,
 ) -> PublicNoticeCHit | None:
     if type(raw) is not str or type(key_string) is not str:
         return None
@@ -118,6 +120,8 @@ def _public_observation(
         if (key_string != _PREFIX + document.source_key[len("notice-c:v1:"):]):
             return None
         persisted = _decode(raw, document)
+        if db is not None:
+            _check_live_source_fence(persisted, payload, _read_source_fence(db, key_string))
         parsed = persisted.observation.fields_copy().get("search_result")
         if type(parsed) is not dict:
             return None
@@ -381,7 +385,9 @@ def search_public_notice_c(
     needle = query.strip()
     wanted = set(provider_ids)
     matches: list[PublicNoticeCHit] = []
-    seen_source_refs: set[str] = set()
+    # Presence, not successful decoding, suppresses retained older facts.
+    # These opaque keys do not expose any private row or invalid payload.
+    present_source_refs: set[str] = set()
     source_proofs = {}
     # Exact source ref -> unique admitted canonical index relation. This is
     # read-only, identity-scoped by the source itself, never viewer/profile.
@@ -407,13 +413,13 @@ def search_public_notice_c(
                 exceeded = True
                 break
             scanned += 1
+            present_source_refs.add('notice-c:v1:' + key_string[len(_PREFIX):])
             record = _public_observation(raw, key_string=key_string, now=now,
-                                         source_proofs=source_proofs)
+                                         source_proofs=source_proofs, db=db)
             if record is None:
                 # Older cover-only sources are expected; no false 'missing'.
                 unindexed += 1
                 continue
-            seen_source_refs.add(record.document.source_key)
             if _matches_public_c(
                 record, wanted=wanted, scope=scope,
                 field=field, needle=needle, content_types=content_types,
@@ -479,7 +485,7 @@ def search_public_notice_c(
         # A live observation outside the initial source budget still wins
         # over its retained older bibliography. Look it up by the *exact*
         # opaque source key inside the same read; no text-based join.
-        remaining = sorted(set(staged) - seen_source_refs)
+        remaining = sorted(set(staged) - present_source_refs)
         if remaining:
             keys = [_PREFIX + ref[len("notice-c:v1:"):] for ref in remaining
                     if ref.startswith("notice-c:v1:")]
@@ -489,11 +495,12 @@ def search_public_notice_c(
                 (json.dumps(keys),),
             )
             for key_string, raw in cursor:
+                present_source_refs.add('notice-c:v1:' + key_string[len(_PREFIX):])
                 current = _public_observation(raw, key_string=key_string, now=now,
-                                              source_proofs=source_proofs)
+                                              source_proofs=source_proofs, db=db)
                 if current is None:
+                    unindexed += 1
                     continue
-                seen_source_refs.add(current.document.source_key)
                 if _matches_public_c(current, wanted=wanted, scope=scope,
                                      field=field, needle=needle,
                                      content_types=content_types):
@@ -540,10 +547,10 @@ def search_public_notice_c(
             canonical_routes[source_ref] = (
                 ref, consolidated.epoch, source, aggregate_cover,
             )
-            if source_ref in seen_source_refs:
-                # A live source observation is more current than the
-                # retained canonical bibliography. Rebind its N2
-                # only if its exact epoch and facts still match.
+            if source_ref in present_source_refs:
+                # A live row, even rejected, is not retention eviction.
+                # Never substitute older canonical text for it. Rebind
+                # admitted live N2 only if its exact proof still matches.
                 continue
             hit = PublicNoticeCHit(
                 document=ref, provider_id=source.provider_id,
