@@ -1,5 +1,6 @@
 """Public Numilog refinement and detail share the same anonymous exact row."""
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
@@ -7,7 +8,17 @@ import pytest
 from cifereca.plugin_api import ProviderCapabilityError
 from cifereca_numilog_public_detail import validate_public_detail_item
 from cifereca_numilog_public_local_filter import refine_loaded_public_page
-from test_numilog_public_local_refinement_integrity_p0 import page
+from cifereca_numilog_public import parse_public_search
+
+
+def page():
+    html = (Path(__file__).parent / "fixtures" /
+            "public_search_jefferson_20261016.html").read_text()
+    url = "https://www.numilog.com/Pages/Recherche/ResultatRecherche.aspx?mode=brSimple&query=jefferson"
+    parsed = parse_public_search(html, url)
+    return replace(parsed, items=tuple(
+        replace(row, source_provider="numilog-catalog") for row in parsed.items
+    ))
 
 
 @pytest.mark.parametrize("changes", [
