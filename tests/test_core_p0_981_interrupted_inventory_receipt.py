@@ -4,9 +4,17 @@ from types import SimpleNamespace as NS
 import pytest
 
 from cifereca.gui import source_inventory_startup as startup
-from cifereca.gui.task_runner import TaskRunner
+from tests.test_core_p0_981_redacted_task_traces import _runner
 from cifereca.plugin_api import SyncResult
 from tests.test_core_p0_1346_kobo_on_start_inventory_gui import _rig, _phase
+
+
+def _outcome(result):
+    runner, _displayed, _flush, _logger = _runner()
+    try:
+        return runner._source_sync_outcome(result, "source-sync")
+    finally:
+        runner.close()
 
 
 def _queue(trigger, count):
@@ -45,7 +53,7 @@ def test_interruption_after_first_or_only_receipt_is_partial(trigger, count, cha
     result = r.jobs[0].work()
     assert calls == [("alice", trigger)]
     assert result.ok is False and result.facts == {"status": "partial", "completed": 1}
-    assert TaskRunner._source_sync_outcome(result, "source-sync") == "partial"
+    assert _outcome(result) == "partial"
     assert "DO_NOT_ECHO" not in repr(result)
 
 
@@ -62,7 +70,7 @@ def test_no_interruption_keeps_attested_success_or_noop(trigger, attempted):
     r.broker.synchronize_scheduled_inventory = dispatch
     result = r.jobs[0].work()
     assert calls == [("alice", trigger), ("bob", trigger)]
-    assert TaskRunner._source_sync_outcome(result, "source-sync") == (
+    assert _outcome(result) == (
         "success" if attempted else "cancelled")
 
 
