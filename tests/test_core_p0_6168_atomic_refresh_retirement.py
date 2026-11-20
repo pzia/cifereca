@@ -3,6 +3,7 @@ from contextlib import closing
 from dataclasses import replace
 from types import SimpleNamespace as NS
 
+from cifereca.core import search_orchestration
 from cifereca.core.notice_cover_repository import is_notice_cover_document
 from cifereca.gui.cover_loader import CoverLoader
 from cifereca.gui.document_cover_service import DocumentCoverService
@@ -46,6 +47,8 @@ def test_producer_at_retirement_owns_a_new_flight_not_erased_by_old_finally(
     tmp_path, monkeypatch,
 ):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "images"))
+    clock = [200]
+    monkeypatch.setattr(search_orchestration.time, "time", lambda: clock[0])
     with closing(Storage(tmp_path / "retirement.sqlite")) as db:
         loader = CoverLoader(max_workers=2)
         reads, network, submitted = [], [], []
@@ -71,6 +74,7 @@ def test_producer_at_retirement_owns_a_new_flight_not_erased_by_old_finally(
             assert mirror(db, first) == 1
             document = first._core_notice_cover_document_ref
             covers.register(reader(document))
+            clock[0] = 201
             second = replace(first, thumbnail_url=NEW_COVER)
             assert mirror(db, second) == 1
             assert second._core_notice_cover_document_epoch == 2
@@ -78,6 +82,7 @@ def test_producer_at_retirement_owns_a_new_flight_not_erased_by_old_finally(
             assert len(pool.pending) == 1
 
             def commit_third():
+                clock[0] = 202
                 third = replace(first, thumbnail_url=THIRD_COVER)
                 assert mirror(db, third) == 1
                 assert third._core_notice_cover_document_epoch == 3
