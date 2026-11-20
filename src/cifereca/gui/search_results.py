@@ -534,9 +534,10 @@ def _render_search_results(self) -> int:
         override = getattr(self, "_search_detail_cover_by_key", {})
         retained = override.get(key) if type(override) is dict else None
         cover_url = item.thumbnail_url
-        if (type(retained) is tuple and len(retained) == 6
+        if (type(retained) is tuple and len(retained) == 7
                 and retained[0] is item
                 and retained[2:] == (
+                    item.medium,
                     getattr(self, "_identity_context_generation", None),
                     getattr(self, "_search_generation", None),
                     getattr(self.service, "_account_context_epoch", None),
@@ -545,7 +546,7 @@ def _render_search_results(self) -> int:
             cover_url = retained[1]
         # N2: retain a *same-source* holdings cover when the row object is
         # rebuilt after metadata enrichment or filter changes. Scope includes
-        # provider, credential, record, docbase, source/account/revision and
+        # provider, credential, record, docbase, medium, source/account/revision and
         # all four current query/identity/source generations. A title or ISBN
         # never joins two Search entries; no provider requests are issued.
         bridge = getattr(self, "_search_cover_bridge", None)

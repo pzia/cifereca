@@ -49,6 +49,8 @@ def test_core_scope_is_identical_to_legacy_exact_search_n2_scope():
 @pytest.mark.parametrize("change", [
     {"record_id": "another-edition"},
     {"docbase": "another-base"},
+    {"medium": "physical"},
+    {"medium": "unknown"},
     {"source_provider": "another-provider"},
     {"source_credential": "other-credential"},
     {"source_account_id": "borrower-B"},
@@ -78,6 +80,8 @@ def test_profile_separation_is_documentary_not_physical():
     {"source_credential": None},
     {"record_id": None},
     {"docbase": ""},
+    {"medium": None},
+    {"medium": "unsupported"},
     {"source_account_id": "\x00"},
     {"source_collection": "\n"},
     {"revision_id": "r" * 513},

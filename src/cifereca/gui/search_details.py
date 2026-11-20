@@ -365,19 +365,19 @@ def _publish_search_detail_cover(
         )
         if (qualified is None or (
             qualified.id, qualified.source_provider, qualified.source_credential,
-            qualified.record_id, qualified.docbase,
+            qualified.record_id, qualified.docbase, qualified.medium,
             qualified.source_collection, qualified.source_account_id,
             qualified.revision_id,
         ) != (
             item.id, item.source_provider, item.source_credential,
-            item.record_id, item.docbase,
+            item.record_id, item.docbase, item.medium,
             item.source_collection, item.source_account_id,
             item.revision_id,
         )):
             return
     # Exactly scoped to the current row object and Core search/account epochs.
     record = (
-        item, cover.url,
+        item, cover.url, item.medium,
         getattr(self, "_identity_context_generation", None),
         getattr(self, "_search_generation", None),
         getattr(self.service, "_account_context_epoch", None),

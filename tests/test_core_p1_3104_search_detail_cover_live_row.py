@@ -92,8 +92,37 @@ def test_current_exact_detail_paints_existing_row_without_reselection_or_busines
     assert source.thumbnail_url is None
     assert window.search_objects[row.key] is source
     record = window._search_detail_cover_by_key[row.key]
-    assert record == (source, COVER, 9, 3, 7, 4)
+    assert record == (source, COVER, "digital", 9, 3, 7, 4)
     assert window.search_page.selection.get_selected_item() is row
+
+
+def test_live_row_override_expires_when_medium_changes_on_the_same_object(monkeypatch):
+    from tests.test_search_results_view import Row as ViewRow, _host
+
+    class CaptureRow(ViewRow):
+        def __init__(self, key, title, author, meta, source, thumbnail, **options):
+            super().__init__(key, title, author, meta, source, thumbnail, **options)
+            self.thumbnail_url = thumbnail
+
+    source = item()
+    publisher_host, publisher_row = host(source)
+    publisher_row.key = f"{source.source_provider}:{source.id}"
+    publisher_host.search_objects = {publisher_row.key: source}
+    publisher()(publisher_host, source, detail(source))
+    view = _host()
+    view._remote_search_results = [source]
+    view._search_detail_cover_by_key = publisher_host._search_detail_cover_by_key
+    view._identity_context_generation, view._search_generation = 9, 3
+    view.service._account_context_epoch, view.service._source_context_epoch = 7, 4
+    monkeypatch.setitem(view._render_search_results.__func__.__globals__,
+                        "BookListItem", CaptureRow)
+
+    view._populate_search([source], announce=False)
+    assert view.search_page.show_rows.call_args.args[0][0].thumbnail_url == COVER
+
+    source.medium = "physical"
+    view._populate_search([source], announce=False)
+    assert view.search_page.show_rows.call_args.args[0][0].thumbnail_url is None
 
 
 @pytest.mark.parametrize("change", [

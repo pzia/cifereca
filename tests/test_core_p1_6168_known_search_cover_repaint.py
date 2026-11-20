@@ -87,6 +87,7 @@ def test_foreign_known_row_cannot_acquire_detail_cover(change):
 @pytest.mark.parametrize("change", [
     {"source_credential": "card-b"},
     {"docbase": "OTHER"},
+    {"medium": "physical"},
     {"source_collection": "other-library"},
     {"catalogue_scope_version": None},
     {"search_provenance": "known_catalog_stale"},

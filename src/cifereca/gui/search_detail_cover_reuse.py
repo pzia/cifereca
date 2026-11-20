@@ -55,12 +55,12 @@ def cached_exact_selected_search_cover(window: Any, item: SearchResult) -> str |
         qualified = known_catalog_search_result(raw, identity_id=identity_id)
         if (qualified is None or (
             qualified.id, qualified.source_provider, qualified.source_credential,
-            qualified.record_id, qualified.docbase,
+            qualified.record_id, qualified.docbase, qualified.medium,
             qualified.source_collection, qualified.source_account_id,
             qualified.revision_id,
         ) != (
             item.id, item.source_provider, item.source_credential,
-            item.record_id, item.docbase,
+            item.record_id, item.docbase, item.medium,
             item.source_collection, item.source_account_id,
             item.revision_id,
         )):
