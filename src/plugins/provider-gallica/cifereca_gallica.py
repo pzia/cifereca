@@ -883,7 +883,7 @@ class GallicaSession(ProviderSession):
         requested = {value.casefold() for value in content_types}
         # Core passes file formats; legacy media categories remain supported.
         audio_formats = {"audiobook", "mp3", "m4a", "ogg", "opus", "flac", "wav"}
-        ebook_formats = {"ebook", "epub", "pdf", "kepub"}
+        ebook_formats = {"ebook", "epub", "pdf"} if _documentary else {"ebook", "epub", "pdf", "kepub"}
         skipped_unknown = bool(requested - audio_formats - ebook_formats)
         audio_explicit = bool(requested & audio_formats)
         skipped_audio = audio_explicit and not self.include_audio
