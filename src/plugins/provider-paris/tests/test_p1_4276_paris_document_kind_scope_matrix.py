@@ -237,3 +237,72 @@ def test_catalogue_only_unknown_support_remains_browsable_in_all_scope():
     rows = client.search("synthetic", scope="all")
     assert len(rows) == 1 and rows[0].medium == "unknown"
     assert client.search("synthetic", scope="physical") == []
+
+
+def _series_row(scenario, label, *, record_id="same", conflicting_medium=False):
+    data = {
+        "Resource": {
+            "RscId": record_id, "RscBase": "DILICOM",
+            "Type": "Film" if conflicting_medium else "Livre numérique",
+            "Frmt": "AUVI" if conflicting_medium else "MONE",
+            "Ttl": "Titre de recette", "Subj": ["Nature"],
+        },
+    }
+    if label is not None:
+        data["CustomResult"] = (
+            '<a href="/Search?field=SeriesTitle_idx">' + label + '</a>'
+        )
+    return normalize_search_result(data, scenario)
+
+
+@pytest.mark.parametrize("first,second,expected", [
+    ("Cycle A", "Cycle A", ["Cycle A"]),
+    ("Cycle A", "Cycle B", None),
+    ("Cycle B", "Cycle A", None),
+    ("Cycle A", None, None),
+    (None, "Cycle A", None),
+    (None, None, None),
+])
+def test_duplicate_search_routes_require_concordant_series(first, second, expected):
+    from copy import deepcopy
+    from cifereca_paris_bibliography import public_search_series_metadata
+
+    a = _series_row("CATALOGUE", first)
+    b = _series_row("EBOOKS", second)
+    before = deepcopy((a.metadata, b.metadata))
+    client = client_with_rows({"CATALOGUE": [a], "EBOOKS": [b]})
+    row, = client.search("synthetic", scope="all")
+    assert row.metadata.get("series") == expected
+    declaration = public_search_series_metadata(row.metadata, row.scenario)
+    if expected is not None:
+        assert declaration["series"] == expected
+        assert declaration["bibliography_evidence"]["series"]["scope"] == row.scenario
+    else:
+        assert declaration == {}
+        assert "series" not in row.metadata.get("bibliography_evidence", {})
+    assert row.metadata["subjects"] == ["Nature"]
+    assert set(row.metadata["search_scenarios"]) == {"CATALOGUE", "EBOOKS"}
+    assert (a.metadata, b.metadata) == before
+    assert row.download_url is None and row.owned is None
+
+
+def test_duplicate_support_conflict_refuses_even_concordant_series():
+    a = _series_row("CATALOGUE", "Cycle A")
+    b = _series_row("EBOOKS", "Cycle A", conflicting_medium=True)
+    client = client_with_rows({"CATALOGUE": [a], "EBOOKS": [b]})
+    row, = client.search("synthetic", scope="all")
+    assert row.medium == "unknown"
+    assert "series" not in row.metadata
+    assert "series" not in row.metadata.get("bibliography_evidence", {})
+
+
+def test_later_duplicate_cannot_restore_refused_series_and_distinct_records_keep_own():
+    a = _series_row("CATALOGUE", "Cycle A")
+    b = _series_row("EBOOKS", "Cycle B")
+    c = _series_row("EBOOKS", "Cycle A")
+    d = _series_row("EBOOKS", "Cycle D", record_id="distinct")
+    client = client_with_rows({"CATALOGUE": [a], "EBOOKS": [b, c, d]})
+    row, other = client.search("synthetic", scope="all")
+    assert "series" not in row.metadata
+    assert other.metadata["series"] == ["Cycle D"]
+    assert other.metadata["bibliography_evidence"]["series"]["scope"] == "EBOOKS"
