@@ -72,3 +72,51 @@ def test_no_catalogue_fallback_for_ambiguous_epub(store, tmp_path):
     )
     assert report["reason"] == "epub_description_unverified"
     assert report["suggestions"] is None
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("urn:isbn:0-306-40615-2", ("9780306406157",)),
+    ("urn:isbn:978-0-306-40615-7", ("9780306406157",)),
+    ("urn:isbn:0-8044-2957-X", ("9780804429573",)),
+    ("urn:isbn:9780306406158", ()),
+    ("urn:isbn:1234567890128", ()),
+    ("9780306406157", ()),
+    ("https://private.invalid/9780306406157", ()),
+])
+def test_only_typed_checksum_valid_isbn_claims_are_exposed(value, expected):
+    from cifereca.core.local_origin_epub_evidence import read_epub_bibliography
+    stream = _book(META + '<dc:identifier xmlns:dc="http://purl.org/dc/elements/1.1/">' +
+                   value + '</dc:identifier>')
+    before = stream.getvalue()
+    assert read_epub_bibliography(stream) == ("Roman commun", ("Autrice",), expected)
+    assert stream.tell() == 3 and stream.getvalue() == before
+
+
+def test_epub_isbn_claims_deduplicated_but_distinct_editions_preserved(store, tmp_path):
+    def identifier(value, attributes=""):
+        return ('<dc:identifier xmlns:dc="http://purl.org/dc/elements/1.1/" '
+                + attributes + '>' + value + '</dc:identifier>')
+    metadata = (META + identifier("urn:isbn:0-306-40615-2")
+                + identifier("urn:isbn:9780306406157")
+                + identifier("9780140328721", 'xmlns:opf="http://www.idpf.org/2007/opf" opf:scheme="ISBN"')
+                + identifier("9780804429573")
+                + identifier("urn:isbn:9780306406158"))
+    root, path, pid = _local_epub(store, tmp_path, metadata)
+    before = path.read_bytes()
+    result = preview.suggest_local_placement_documents(
+        store, library_root=root, identity_id="A", placement_id=pid,
+        explicitly_requested=True,
+    )
+    assert result["local_isbns"] == ("9780140328721", "9780306406157")
+    assert result["isbn_catalogue_comparison_performed"] is False
+    assert result["association_authorized"] is False
+    hit, = result["suggestions"].suggestions
+    assert hit.comparison == "title_author_concordant"
+    assert path.read_bytes() == before
+
+
+def test_isbn_overflow_does_not_choose_arbitrary_subset():
+    from cifereca.core.local_origin_epub_evidence import read_epub_bibliography
+    stream = _book(META + '<dc:identifier xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                   'urn:isbn:9780306406157</dc:identifier>' * 33)
+    assert read_epub_bibliography(stream) == ("Roman commun", ("Autrice",), ())

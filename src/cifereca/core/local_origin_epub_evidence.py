@@ -17,8 +17,37 @@ from .library_inventory import _open_root
 from .public_search_projection import _public_bibliographic_text
 
 
-def read_epub_description(stream):
-    """Pure bounded metadata read; restore caller position, do not close."""
+def _isbn13(value):
+    """Normalize an explicitly typed ISBN; reject arbitrary identifier text."""
+    if type(value) is not str or len(value) > 64:
+        return None
+    raw = value.strip()
+    if raw.casefold().startswith("urn:isbn:"):
+        raw = raw[9:]
+    number = raw.replace("-", "").replace(" ", "").upper()
+    if (len(number) == 10 and all(c in "0123456789" for c in number[:9])
+            and number[-1] in "0123456789X"):
+        digits = [int(c) for c in number[:9]] + [10 if number[-1] == "X" else int(number[-1])]
+        if sum((10 - i) * digit for i, digit in enumerate(digits)) % 11:
+            return None
+        prefix = "978" + number[:9]
+        check = (-sum((1 if i % 2 == 0 else 3) * int(c)
+                      for i, c in enumerate(prefix))) % 10
+        return prefix + str(check)
+    if (len(number) == 13 and number.startswith(("978", "979"))
+            and all(c in "0123456789" for c in number)
+            and sum((1 if i % 2 == 0 else 3) * int(c)
+                    for i, c in enumerate(number)) % 10 == 0):
+        return number
+    return None
+
+
+def read_epub_bibliography(stream):
+    """Pure bounded metadata read; restore caller position, do not close.
+
+    ISBN is a descriptive claim in this file, not verified external origin.
+    Preserve multiple valid values instead of choosing an edition.
+    """
     ocf = "{urn:oasis:names:tc:opendocument:xmlns:container}"
     opf = "{http://www.idpf.org/2007/opf}"
     dc = "{http://purl.org/dc/elements/1.1/}"
@@ -60,7 +89,19 @@ def read_epub_description(stream):
                     or any(not _public_bibliographic_text(a, required=True, limit=512)
                            for a in authors)):
                 return None
-            return title, authors
+            identifiers = metadata[0].findall(dc + "identifier")
+            isbns = set()
+            if len(identifiers) <= 32:
+                for node in identifiers:
+                    raw = node.text or ""
+                    scheme = node.get(opf + "scheme", "")
+                    if (len(node) or not (scheme.casefold() == "isbn"
+                            or raw.strip().casefold().startswith("urn:isbn:"))):
+                        continue
+                    value = _isbn13(raw)
+                    if value is not None:
+                        isbns.add(value)
+            return title, authors, tuple(sorted(isbns))
     except (OSError, ValueError, TypeError, AttributeError, EOFError, KeyError,
             RuntimeError, NotImplementedError, zipfile.BadZipFile,
             zlib.error, ElementTree.ParseError):
@@ -73,7 +114,13 @@ def read_epub_description(stream):
                 pass
 
 
-def read_verified_epub_description(path: Path, expected_signature):
+def read_epub_description(stream):
+    """Compatibility title/creator projection used by the organizer."""
+    value = read_epub_bibliography(stream)
+    return value[:2] if value is not None else None
+
+
+def read_verified_epub_bibliography(path: Path, expected_signature):
     """Open only the inode already hashed by the outer candidate review.
 
     The original pinned file and outer name recheck remain live until
@@ -88,7 +135,7 @@ def read_verified_epub_description(path: Path, expected_signature):
             return None
         with os.fdopen(file_fd, "rb") as stream:
             file_fd = None
-            value = read_epub_description(stream)
+            value = read_epub_bibliography(stream)
             if _file_signature(os.fstat(stream.fileno())) != expected_signature:
                 return None
             return value
@@ -99,3 +146,9 @@ def read_verified_epub_description(path: Path, expected_signature):
             os.close(file_fd)
         if directory_fd is not None:
             os.close(directory_fd)
+
+
+def read_verified_epub_description(path: Path, expected_signature):
+    """Preserve the existing title/creator contract for other callers."""
+    value = read_verified_epub_bibliography(path, expected_signature)
+    return value[:2] if value is not None else None
