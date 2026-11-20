@@ -1298,10 +1298,27 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
     # Opening Sync spans every configured identity. Its Core is bound at
     # admission, independently from later account/window navigation.
     opening_service = self.service
+    from cifereca.core.source_context import source_context_epoch
+    from cifereca.plugin_api import Cancelled
+
+    try:
+        opening_epoch = source_context_epoch(opening_service)
+    except ValueError:
+        return
+
+    def opening_epoch_current():
+        try:
+            return source_context_epoch(opening_service) == opening_epoch
+        except (TypeError, ValueError):
+            return False
+
+    def opening_scope_current():
+        return (not getattr(self, "_closed", False)
+                and self.service is opening_service
+                and opening_epoch_current())
 
     def progress(event: dict[str, Any], report) -> None:
-        if (getattr(self, "_closed", False)
-                or self.service is not opening_service):
+        if not opening_scope_current():
             return
         kind = str(event.get("event") or "")
         if kind == "identity_begin":
@@ -1312,6 +1329,11 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             label = f"Synchronisation · {identity_label or 'une identité'}…"
             report(label)
     def work(report):
+        # Preserve the already admitted Core even if the window displays a
+        # replacement service. Only revocation of that Core's own epoch (or
+        # teardown) cancels its operation; delivery still needs the UI scope.
+        if getattr(self, "_closed", False) or not opening_epoch_current():
+            raise Cancelled("opening_sync_scope_changed")
         try:
             return opening_service.opening_sync(
                 progress=lambda event: progress(event, report), deep=deep,
@@ -1323,8 +1345,7 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             raise RuntimeError("Synchronisation des bibliothèques indisponible") from None
 
     def ok(summary: dict[str, Any]) -> None:
-        if (getattr(self, "_closed", False)
-                or self.service is not opening_service):
+        if not opening_scope_current():
             return
         from time import perf_counter
 
@@ -1384,8 +1405,7 @@ def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = Fa
             from .source_inventory_startup import dispatch_after_opening
             dispatch_after_opening(self)
     def err(exc: BaseException) -> None:
-        if (getattr(self, "_closed", False)
-                or self.service is not opening_service):
+        if not opening_scope_current():
             return
         self.diagnostics.add("SYNC", "opening sync", "error", detail={"reason": "opening_sync_failed"})
         self._render_dashboard()
