@@ -11,7 +11,7 @@ from time import monotonic
 
 from .derived_variant_maintenance_review import admit_maintenance_review
 from .library_sqlite_freshness import sqlite_source_stamp
-from .local_origin_suggestion_operator import _root
+from .local_origin_suggestion_operator import _binding_current, _root
 from .local_origin_suggestion_preview import (
     ordinary_suggestion_path, suggest_local_placement_documents,
 )
@@ -40,8 +40,7 @@ class BatchScope:
 
     def bound(self):
         r = self.request
-        return (self.current() and r.storage.exact_profile_directory_binding(r.identity_id)
-                == (self.directory, True))
+        return (self.current() and _binding_current(r.storage, r.identity_id, self.directory))
 
 
 @dataclass(frozen=True, slots=True, repr=False)
