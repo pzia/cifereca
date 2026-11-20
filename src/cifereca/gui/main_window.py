@@ -713,6 +713,7 @@ class MainWindow(Adw.ApplicationWindow):
         from cifereca.gui.derived_variant_maintenance_line import add_derived_variant_maintenance_line
         from cifereca.gui.adept_historical_maintenance_line import add_adept_historical_maintenance_line
         from cifereca.gui.library_organizer_line import add_library_organizer_line
+        from cifereca.gui.local_origin_suggestion_batch_line import add_local_origin_suggestion_batch_line
         services = self.plugin_manager.services("maintenance.tool") if self.plugin_manager else ()
         if not services:
             label = Gtk.Label(label="Aucun outil de maintenance additionnel n’est installé.", xalign=0)
@@ -720,6 +721,7 @@ class MainWindow(Adw.ApplicationWindow):
             add_derived_variant_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
             add_adept_historical_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
             add_library_organizer_line(self, box, Gtk=Gtk, Adw=Adw)
+            add_local_origin_suggestion_batch_line(self, box, Gtk=Gtk, Adw=Adw)
             return
         for resolved in services:
             tool = resolved.service
@@ -1126,6 +1128,7 @@ class MainWindow(Adw.ApplicationWindow):
         add_derived_variant_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
         add_adept_historical_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
         add_library_organizer_line(self, box, Gtk=Gtk, Adw=Adw)
+        add_local_origin_suggestion_batch_line(self, box, Gtk=Gtk, Adw=Adw)
 
     def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
         return sync_controller.run_opening_sync(self, control, deep=deep)
