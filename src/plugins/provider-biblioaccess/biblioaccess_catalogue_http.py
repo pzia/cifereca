@@ -8,7 +8,6 @@ catalogue assertion. No session or profile is implicitly shared.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 from threading import Lock
 from urllib.parse import parse_qs, urljoin, urlsplit
 
@@ -16,12 +15,11 @@ import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 from biblioaccess_metadata import BibliographicNotice, parse_book_metadata
 from biblioaccess_observations import (
-    MAX_HTML_BYTES, _SEARCH_PATH, _SUMMARY_PATH, _ALLOWED_SEARCH_PARAMS,
-    _parts, classify_search_response, extract_catalogue_links, search_summary_url,
+    MAX_HTML_BYTES, MAX_PAGE_INDEX, _SUMMARY_PATH, _parts, _search_coordinates,
+    classify_search_response, extract_catalogue_links, search_summary_url,
 )
 
 MAX_PAGES = 3  # Legacy bounded multi-page diagnostic.
-MAX_PAGE_INDEX = 100  # Public UI page requests, zero-indexed.
 
 
 class CatalogueHTTPError(ValueError):
@@ -41,20 +39,13 @@ class CatalogueSearchObservation:
 
 
 def _checked_search_url(url: str, query: str, *, page: int | None = None) -> None:
-    u = _parts(url)
-    if u is None or u.path != _SEARCH_PATH or len(url) > 8192:
+    coordinates = _search_coordinates(url)
+    if coordinates is None:
         raise CatalogueHTTPError("catalogue_url_refused")
-    try:
-        params = parse_qs(u.query, keep_blank_values=True, max_num_fields=16)
-    except ValueError:
-        raise CatalogueHTTPError("catalogue_url_refused") from None
-    if (not set(params) <= _ALLOWED_SEARCH_PARAMS or
-            any(len(v) != 1 or len(v[0]) > 512 for v in params.values()) or
-            params.get("query") != [query] or
-            not re.fullmatch(r"[0-9]{1,3}", params.get("pageindex", ["0"])[0]) or
-            int(params.get("pageindex", ["0"])[0]) > 100):
+    params, actual_page = coordinates
+    if params["query"] != [query]:
         raise CatalogueHTTPError("catalogue_url_refused")
-    if page is not None and int(params.get("pageindex", ["0"])[0]) != page:
+    if page is not None and actual_page != page:
         raise CatalogueHTTPError("catalogue_pagination_refused")
 
 

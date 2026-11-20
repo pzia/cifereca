@@ -16,6 +16,7 @@ BOOK_HOST = "www.biblioaccess.com"
 TENANT = "1409"
 MAX_HTML_BYTES = 2_000_000
 MAX_ACSM_BYTES = 128_000
+MAX_PAGE_INDEX = 100
 _BOOK_PATH = re.compile(r"^/1409/Catalog/Book/([0-9]{1,18})(?:/[^/?#]*)?/?$")
 _SEARCH_PATH = "/1409/Catalog/Search"
 _SUMMARY_PATH = "/1409/Catalog/SearchResultSummary"
@@ -51,6 +52,26 @@ def search_summary_url(query: str) -> str:
             + "?" + urlencode({"query": query.strip()}))
 
 
+def _search_coordinates(url: str) -> tuple[dict[str, list[str]], int] | None:
+    """Validate the same catalogue page for redirects, anchors and HTTP."""
+    parts = _parts(url)
+    if parts is None or parts.path != _SEARCH_PATH or len(url) > 8192:
+        return None
+    try:
+        params = parse_qs(parts.query, keep_blank_values=True, max_num_fields=16)
+    except ValueError:
+        return None
+    if (not set(params) <= _ALLOWED_SEARCH_PARAMS
+            or any(len(values) != 1 or len(values[0]) > 512 for values in params.values())
+            or not params.get("query", [""])[0]):
+        return None
+    page_token = params.get("pageindex", ["0"])[0]
+    if not re.fullmatch(r"[0-9]{1,3}", page_token):
+        return None
+    page = int(page_token)
+    return (params, page) if page <= MAX_PAGE_INDEX else None
+
+
 def classify_search_response(*, request_url: str, status: int,
                              location: str = "") -> str:
     """HTTP statuses are not result counts or evidence of a complete listing."""
@@ -64,21 +85,16 @@ def classify_search_response(*, request_url: str, status: int,
     if status >= 500:
         return "remote_error"
     if status == 302 and parts.path == _SUMMARY_PATH:
-        target = _parts(urljoin(request_url, location))
-        if target is None or target.path != _SEARCH_PATH:
+        target = _search_coordinates(urljoin(request_url, location))
+        if target is None:
             return "untrusted_redirect"
         source_params = parse_qs(parts.query, keep_blank_values=True)
-        target_params = parse_qs(target.query, keep_blank_values=True)
+        target_params, page = target
         if (set(source_params) != {"query"}
                 or len(source_params["query"]) != 1
                 or not source_params["query"][0]
-                or not set(target_params) <= _ALLOWED_SEARCH_PARAMS
                 or target_params.get("query") != source_params["query"]
-                or any(len(v) != 1 or len(v[0]) > 512
-                       for v in target_params.values())):
-            return "untrusted_redirect"
-        page = target_params.get("pageindex", ["0"])[0]
-        if not re.fullmatch(r"[0-9]{1,3}", page) or int(page) != 0:
+                or page != 0):
             return "untrusted_redirect"
         return "search_redirect"
     if status == 200:
@@ -127,11 +143,8 @@ class _Links(HTMLParser):
     def __init__(self, page_url: str):
         super().__init__(convert_charrefs=True)
         self.page_url = page_url
-        current = parse_qs(urlsplit(page_url).query, keep_blank_values=True)
-        self.current_query = current.get("query") if len(current.get("query", [])) == 1 else None
+        current, self.current_page = _search_coordinates(page_url) or ({}, None)
         self.current_scope = {key: value for key, value in current.items() if key != "pageindex"}
-        page = current.get("pageindex", ["0"])
-        self.current_page = int(page[0]) if (len(page) == 1 and re.fullmatch(r"[0-9]{1,5}", page[0])) else -1
         self.book_ids = []
         self.book_urls = {}
         self.book_titles = {}
@@ -188,22 +201,12 @@ class _Links(HTMLParser):
             self.book_urls[ident] = link
         if ident in self.book_urls:
             self._book_anchor = (ident, link)
-        parts = _parts(link)
+        coordinates = _search_coordinates(link)
         self._candidate = None
-        if parts and parts.path == _SEARCH_PATH:
-            params = parse_qs(parts.query, keep_blank_values=True)
-            if (params.keys() <= _ALLOWED_SEARCH_PARAMS
-                    and all(len(values) == 1 and len(values[0]) <= 512
-                            for values in params.values())
-                    and "pageindex" in params
-                    and len(params["pageindex"]) == 1
-                    and re.fullmatch(r"[0-9]{1,5}", params["pageindex"][0])
-                    and self.current_query is not None
-                    and params.get("query") == self.current_query
-                    and {key: value for key, value in params.items() if key != "pageindex"} == self.current_scope
-                    and self.current_page >= 0
-                    and int(params["pageindex"][0]) == self.current_page + 1
-                    and int(params["pageindex"][0]) <= 100):
+        if coordinates is not None and self.current_page is not None:
+            params, page = coordinates
+            scope = {key: value for key, value in params.items() if key != "pageindex"}
+            if page == self.current_page + 1 and scope == self.current_scope:
                 self._candidate = link
                 self._anchor_text = []
                 if "next" in str(values.get("rel") or "").lower().split():
