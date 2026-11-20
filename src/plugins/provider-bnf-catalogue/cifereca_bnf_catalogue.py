@@ -344,7 +344,14 @@ class BnfCatalogueSession(ProviderSession):
         # public same-call occurrence of this edition. Quarantine the ARK
         # for the whole page, including any third occurrence.
         ambiguous_arks: set[str] = set()
-        for data in data_nodes:
+        # Only direct SRU record/recordData children attest an occurrence.
+        # A nested/orphan recordData still makes coverage partial, but must
+        # never mint a public record or poison a valid sibling's identity.
+        for record in records:
+            own_data = record.findall(f"{{{SRU}}}recordData")
+            if len(own_data) != 1:
+                continue
+            data = own_data[0]
             values: dict[str, list[str]] = {}
             for node in data.iter():
                 if node.tag.startswith("{" + DC + "}"):
