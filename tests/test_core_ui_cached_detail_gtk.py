@@ -174,7 +174,7 @@ def test_subscription_and_shutdown_do_not_leak_plugin_callbacks():
 
 def test_rendering_keeps_provenance_freshness_and_validated_links():
     method = _source("update_cached_book_details", class_name="DetailPanel")
-    assert "self._group(f'{section.title} · {plugin_id}', rows)" in method
+    assert "self._group(f'{section.title} · {plugin_id}', rows, fields=section.fields, field_actions=False)" in method
     assert "'Cache ancien' if cached.stale else 'Cache local'" in method
     assert "safe_document_link_url(action.uri, relation='related')" in method
     assert "Gtk.LinkButton(uri=uri, label=str(action.title))" in method

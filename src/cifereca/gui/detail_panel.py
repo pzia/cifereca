@@ -350,7 +350,9 @@ class DetailPanel(Gtk.Box):
         widget.connect("map", mapped)
         widget.connect("unmap", unmapped)
 
-    def _group(self, title: str, rows: list[tuple[str, str]], *, fields=(), parent=None):
+    def _group(self, title: str, rows: list[tuple[str, str]], *, fields=(), parent=None, field_actions=True):
+        from cifereca.gui.detail_field_provenance import annotate_detail_field
+        description_property = getattr(getattr(Gtk, "AccessibleProperty", None), "DESCRIPTION", None)
         if title == "Bibliothèques et accès":
             # #4682 / mockup #566: the projection already groups exact
             # placements, source references and rights by profile. Present
@@ -418,9 +420,11 @@ class DetailPanel(Gtk.Box):
                 row.set_title(label)
                 row.set_subtitle(display_value)
                 row.set_subtitle_lines(0)
-                row.set_tooltip_text(label + " : " + full_value)
+                annotate_detail_field(row, label, full_value, field,
+                                      description_property=description_property)
 
-                self._add_metadata_actions(row, label, safe_value, kind)
+                if field_actions:
+                    self._add_metadata_actions(row, label, safe_value, kind)
                 row.set_size_request(210, -1)
                 grid.insert(row, -1)
                 visible_count += 1
@@ -458,7 +462,7 @@ class DetailPanel(Gtk.Box):
             row = Adw.ActionRow()
             row.set_use_markup(False)
             field = fields[index] if index < len(fields) else None
-            if field is not None and field.kind != "text":
+            if field_actions and field is not None and field.kind != "text":
                 safe_value = safe_detail_value(value)
                 if not safe_value:
                     continue
@@ -467,7 +471,8 @@ class DetailPanel(Gtk.Box):
             display_value, tooltip_value = detail_display_value(label, value)
             row.set_title(label); row.set_subtitle(display_value)
             row.set_subtitle_lines(detail_subtitle_lines(title, display_value) if grid is not None else 0)
-            row.set_tooltip_text(label+' : '+tooltip_value)
+            annotate_detail_field(row, label, tooltip_value, field,
+                                  description_property=description_property)
             if grid is not None:
                 row.set_size_request(185 if title == "Essentiel" else 160, -1)
                 if title == "Essentiel":
@@ -764,7 +769,7 @@ class DetailPanel(Gtk.Box):
                 if section.title == "Détail" or section.title == "Catalogue":
                     self._group(section.title, rows, fields=section.fields)
                 else:
-                    self._group(section.title, rows)
+                    self._group(section.title, rows, fields=section.fields, field_actions=False)
         if trace is not None:
             trace.record("sections", sections_started)
         link_buttons = []
@@ -844,7 +849,8 @@ class DetailPanel(Gtk.Box):
             for section in cached.sections:
                 rows = [(str(field.label), str(field.value)) for field in section.fields]
                 rows.append(("Provenance", f"{source} · {freshness} · {updated}"))
-                self._group(f"{section.title} · {plugin_id}", rows)
+                self._group(f"{section.title} · {plugin_id}", rows,
+                            fields=section.fields, field_actions=False)
                 self._cached_section_widgets.append(self.content.get_last_child())
             for action in cached.actions:
                 if action.uri:

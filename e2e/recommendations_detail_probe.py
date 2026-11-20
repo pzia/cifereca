@@ -1850,6 +1850,67 @@ def main():
         assert state["detail_state_calls"] == ["ready"]
         report["checks"]["P0_3685_declared_action_states_overflow_keyboard_gtk"] = True
         report["checks"]["P0_3685_disabled_link_and_retired_callback_inert_gtk"] = True
+        show_field_provenance()
+
+    def show_field_provenance():
+        from cifereca.plugin_api import (
+            CachedBookDetail, CachedBookDetailContribution, DetailField,
+            DetailSection, Provenance, UiBookDetailPresentation,
+        )
+        first = Provenance("Source A", "fixture", "edition-a", "2026-11-19T10:00:00Z")
+        second = Provenance("Source B", "fixture", "edition-b", "2026-11-20T11:00:00Z")
+        state["provenance_searches"] = list(state["searches"])
+        state["provenance_images"] = len(image_requests)
+        master = state["view"]._master
+        master.show_detail(UiBookDetailPresentation(
+            title="Provenance des champs", sections=(
+                DetailSection("essential", "Essentiel", (
+                    DetailField("language", "Langue", "Français", "language", first),
+                )),
+                DetailSection("detail", "Détail", (
+                    DetailField("author-a", "Auteur", "Valeur identique", "author", first),
+                    DetailField("author-b", "Auteur", "Valeur identique", "author", second),
+                )),
+                DetailSection("context", "Contexte", (
+                    DetailField("context", "Contexte déclaré", "Lecture seule", "author", first),
+                )),
+            ),
+        ))
+        panel = master._page.detail
+        panel.update_cached_book_details((CachedBookDetailContribution(
+            "fixture-cache", CachedBookDetail("book", "alice", sections=(
+                DetailSection("cached", "Avis", (
+                    DetailField("cached-source", "Champ du cache", "Valeur du cache", "author", second),
+                )),
+            )),
+        ),))
+        for child in walk(panel.content):
+            if isinstance(child, Adw.ExpanderRow) and child.get_title() == "Détail":
+                child.set_expanded(True)
+        later(160, verify_field_provenance)
+
+    def verify_field_provenance():
+        panel = state["view"]._master._page.detail
+        rows = [child for child in walk(panel.content)
+                if isinstance(child, Adw.ActionRow) and child.get_mapped()]
+        authors = [row for row in rows if row.get_title() == "Auteur"]
+        assert len(authors) == 2
+        assert [row.get_subtitle() for row in authors] == ["Valeur identique"] * 2
+        for row, source, edition in zip(authors, ("Source A", "Source B"), ("edition-a", "edition-b")):
+            assert "Source du champ : " + source in row.get_tooltip_text()
+            assert "Référence déclarée : " + edition in row.get_tooltip_text()
+            assert "Observation déclarée : " in row.get_tooltip_text()
+            assert sum(isinstance(child, Gtk.Button) for child in walk(row)) == 2
+        for label, source in (("Contexte déclaré", "Source A"), ("Champ du cache", "Source B")):
+            row, = [row for row in rows if row.get_title() == label]
+            assert "Source du champ : " + source in row.get_tooltip_text()
+            assert not any(isinstance(child, Gtk.Button) for child in walk(row))
+        language, = [row for row in rows if row.get_title() == "Langue"]
+        assert "Source du champ : Source A" in language.get_tooltip_text()
+        assert state["searches"] == state["provenance_searches"]
+        assert len(image_requests) == state["provenance_images"]
+        report["checks"]["P0_3688_field_provenance_shared_detail_gtk"] = True
+        report["checks"]["P0_3688_passive_context_and_cached_field_provenance_gtk"] = True
         state["plugin"].deactivate()
         report["status"] = "PASS"
         save()

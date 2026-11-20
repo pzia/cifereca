@@ -28,7 +28,7 @@ def test_shared_presentation_inserts_summary_after_essential():
 
     essential = source.index("essential=essential")
     summary = source.index("self._show_description(description)")
-    sections = source.index("self._group(section.title, rows)")
+    sections = source.index("self._group(section.title, rows,")
     assert essential < summary < sections
 
 
