@@ -31,7 +31,7 @@ def dist(samples):
 
 
 @pytest.mark.parametrize("size", (16, 256))
-def test_documentary_and_media_cache_baseline(tmp_path, monkeypatch, size):
+def test_documentary_and_media_cache_baseline(tmp_path, monkeypatch, capsys, size):
     monkeypatch.setattr(cover_loader, "cache_dir", lambda: tmp_path)
     urls = [f"https://cover.example.test/{i}.png" for i in range(size)]
     allowed = set(urls)
@@ -120,7 +120,109 @@ def test_documentary_and_media_cache_baseline(tmp_path, monkeypatch, size):
         report["n1_n2_recent"] = service.stats()
         report["n3_recent"] = loader.stats()
         assert len(transport) == 2 * size
-        print("COVER_CACHE_BASELINE " + json.dumps(report, sort_keys=True))
+        with capsys.disabled():
+            print("COVER_CACHE_BASELINE " + json.dumps(report, sort_keys=True), flush=True)
     finally:
         service.close()
+        loader.close()
+
+
+def _png(index):
+    # A genuinely decodable, distinct 1x1 RGB PNG, no external asset.
+    import struct
+    import zlib
+    def chunk(name, body):
+        return (struct.pack(">I", len(body)) + name + body
+                + struct.pack(">I", zlib.crc32(name + body) & 0xffffffff))
+    head = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", head)
+            + chunk(b"IDAT", zlib.compress(bytes((0, index >> 8, index & 255, 0))))
+            + chunk(b"IEND", b""))
+
+
+@pytest.mark.parametrize("size", (16, 256))
+def test_epub_physical_cache_baseline(tmp_path, monkeypatch, capsys, size):
+    import hashlib
+    import zipfile
+    from cifereca import epub_metadata
+    from cifereca.core.epub_cover_materialization import (
+        EpubCoverPhysicalCache, ExactEpubCoverResource,
+    )
+    from tests import test_epub_cover_contract as fixture
+
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    corpus = []
+    for i in range(size):
+        book = tmp_path / f"book-{i}.epub"
+        image = _png(i)
+        monkeypatch.setattr(fixture, "PNG", image)
+        fixture._write_epub(book, epub3=True)
+        # Distinct synthetic non-cover ZIP body: exercise the full physical
+        # digest, not just the miniature. Stored, rather than compressed.
+        with zipfile.ZipFile(book, "a", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr("OPS/synthetic-padding.bin", b"z" * 65536)
+        metadata = epub_metadata.inspect_epub(book)
+        assert metadata["epub_cover_status"] == "extracted"
+        digest = hashlib.sha256(book.read_bytes()).hexdigest()
+        ref = ExactEpubCoverResource(
+            scope=CoverDocumentScope(
+                kind="placement", identity_id="fixture",
+                source_key="artifact:sha256:" + digest,
+                artifact_id="sha256:" + digest, placement_id=f"place:{i}",
+            ),
+            source_revision=1, artifact_sha256=digest,
+            member=metadata["epub_cover"]["member"],
+            cache_name=metadata["epub_cover"]["cache_name"],
+        )
+        target = epub_metadata.cover_cache_dir() / ref.cache_name
+        assert target.read_bytes() == image
+        corpus.append((book, ref, target, image))
+    assert len({x[2] for x in corpus}) == size
+    loader = EpubCoverPhysicalCache(max_workers=2)
+    restores = []
+    actual = loader._restore
+    def counted(ref, path):
+        restores.append(path)
+        return actual(ref, path)
+    monkeypatch.setattr(loader, "_restore", counted)
+    report = {"documents": size, "workers": 2, "phases": {},
+              "physical_io_measured": False, "gtk_paint_measured": False,
+              "archive_corpus_bytes": sum(book.stat().st_size for book, *_ in corpus)}
+    try:
+        for _, _, target, _ in corpus:
+            target.unlink()
+
+        def phase(name, cold):
+            start_wall, start_cpu = perf_counter_ns(), process_time_ns()
+            initial = loader.stats()
+            initial_reads = len(restores)
+            durations = []
+            for book, ref, target, image in corpus:
+                started = perf_counter_ns()
+                assert loader.request(ref, source_path=book).result(timeout=5) == target.resolve().as_uri()
+                durations.append((perf_counter_ns() - started) / 1e6)
+                assert target.read_bytes() == image
+            final = loader.stats()
+            assert final["n3_epub_miss"] - initial["n3_epub_miss"] == (size if cold else 0)
+            assert final["n3_epub_hit"] - initial["n3_epub_hit"] == (0 if cold else size)
+            assert len(restores) - initial_reads == (size if cold else 0)
+            assert final["n3_epub_failed"] == final["n3_epub_overflow"] == 0
+            report["phases"][name] = {
+                "request_latency_until_result": dist(durations),
+                "wall_ms": round((perf_counter_ns() - start_wall) / 1e6, 3),
+                "process_cpu_ms": round((process_time_ns() - start_cpu) / 1e6, 3),
+                "rss_highwater_kib_linux": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+                "restore_calls": len(restores) - initial_reads,
+                "n3_epub_hits": final["n3_epub_hit"] - initial["n3_epub_hit"],
+                "logical_archive_bytes_hashed": report["archive_corpus_bytes"] if cold else 0,
+                "cache_file_bytes": sum(target.stat().st_size for _, _, target, _ in corpus),
+            }
+
+        phase("epub_n3_cold", True)
+        phase("epub_n3_warm", False)
+        report["n3_epub_recent"] = loader.stats()
+        assert report["n3_epub_recent"]["n3_epub_ok_recent_count"] == size
+        with capsys.disabled():
+            print("COVER_EPUB_BASELINE " + json.dumps(report, sort_keys=True), flush=True)
+    finally:
         loader.close()
