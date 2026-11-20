@@ -10,7 +10,7 @@ import html
 import re
 from collections.abc import Mapping
 from html.parser import HTMLParser
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 from unicodedata import category
 
 _MAX_VALUES = 12
@@ -76,6 +76,22 @@ def _series_link_declared(href: object) -> bool:
             and bool(_SERIES_TOKEN.search(unquote(html.unescape(href)))))
 
 
+def _series_query_selects_index(query: str) -> bool:
+    # Split the original query before decoding its values. A name or text
+    # that happens to mention an index cannot select it.
+    params = parse_qsl(query, keep_blank_values=True)
+    fields = [value for name, value in params if name.casefold() == "field"]
+    queries = [value for name, value in params if name.casefold() == "query"]
+    if len(fields) > 1 or len(queries) > 1:
+        return False
+    if fields:
+        return _SERIES_TOKEN.fullmatch(fields[0]) is not None
+    if not queries:
+        return False
+    index, separator, term = queries[0].partition(":")
+    return bool(separator and term.strip() and _SERIES_TOKEN.fullmatch(index))
+
+
 def _safe_series_search_href(href: object) -> bool:
     """Require the existing internal-link shape; never follow the link."""
     if type(href) is not str or not 1 <= len(href) <= 2048:
@@ -90,8 +106,8 @@ def _safe_series_search_href(href: object) -> bool:
     try:
         # Recheck the decoded representation as well: percent-encoded
         # authority separators, fragments and credentials cannot qualify.
-        for value in (href, decoded):
-            parsed = urlsplit(value)
+        raw_url = urlsplit(href)
+        for parsed in (raw_url, urlsplit(decoded)):
             if parsed.scheme:
                 if (parsed.scheme != "https" or parsed.hostname not in _SERIES_ALLOWED_HOSTS
                         or parsed.username is not None or parsed.password is not None
@@ -103,7 +119,7 @@ def _safe_series_search_href(href: object) -> bool:
                 return False
     except (ValueError, UnicodeError):
         return False
-    return True
+    return _series_query_selects_index(raw_url.query)
 
 
 def _safe_series_label(value):
