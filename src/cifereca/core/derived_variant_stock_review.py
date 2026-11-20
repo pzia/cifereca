@@ -21,28 +21,34 @@ _MAX_SECONDS = 3
 
 
 def _snapshot(storage, identity_id):
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN")
-        owner = db.execute(
-            "SELECT directory_name FROM identities WHERE identity_id=? LIMIT 2",
-            (identity_id,),
-        ).fetchall()
-        directory = owner[0][0] if len(owner) == 1 else None
-        if (type(directory) is not str or not directory or directory in (".", "..")
-                or "/" in directory or chr(92) in directory or chr(0) in directory
-                or db.execute(
-                    "SELECT identity_id FROM identities WHERE directory_name=? LIMIT 2",
-                    (directory,),
-                ).fetchall() != [(identity_id,)]):
-            raise DerivedJournalConflict("derived_stock_scope_unverified")
-        rows, _ = _measure(db)
-        records = []
-        for key, _ in rows:
-            raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
-            intent = _decode(key, raw)
-            if intent.identity_id == identity_id:
-                records.append((key, _receipt_digest(raw), intent))
-        return directory, tuple(records)
+    with storage._lock:
+        db = storage._connect()
+        # A borrowed connection may already own a caller transaction. Never
+        # enter its context manager (which could commit/rollback that work).
+        if db.in_transaction:
+            raise DerivedJournalConflict("derived_stock_nested_transaction")
+        with db:
+            db.execute("BEGIN")
+            owner = db.execute(
+                "SELECT directory_name FROM identities WHERE identity_id=? LIMIT 2",
+                (identity_id,),
+            ).fetchall()
+            directory = owner[0][0] if len(owner) == 1 else None
+            if (type(directory) is not str or not directory or directory in (".", "..")
+                    or "/" in directory or chr(92) in directory or chr(0) in directory
+                    or db.execute(
+                        "SELECT identity_id FROM identities WHERE directory_name=? LIMIT 2",
+                        (directory,),
+                    ).fetchall() != [(identity_id,)]):
+                raise DerivedJournalConflict("derived_stock_scope_unverified")
+            rows, _ = _measure(db)
+            records = []
+            for key, _ in rows:
+                raw = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()[0]
+                intent = _decode(key, raw)
+                if intent.identity_id == identity_id:
+                    records.append((key, _receipt_digest(raw), intent))
+            return directory, tuple(records)
 
 
 def _named_info(path):
