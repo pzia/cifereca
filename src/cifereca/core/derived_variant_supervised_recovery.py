@@ -134,16 +134,22 @@ def recover_linked_derived_publication(
     def live(db):
         return _lock_current(shared_lock) and scope_current(db) is True
 
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN")
-        if not live(db):
-            raise DerivedJournalConflict("derived_recovery_scope_changed")
-        _raw, intent = _read_pending_reservation(db, reservation)
-        if not _exact_scope(db, identity_id=identity_id, root=library_root, intent=intent):
-            raise DerivedJournalConflict("derived_recovery_scope_changed")
-        if db.execute("SELECT 1 FROM placements WHERE path=? LIMIT 1",
-                      (intent.candidate_path,)).fetchone():
-            raise DerivedJournalConflict("derived_recovery_target_claimed")
+    with storage._lock:
+        db = storage._connect()
+        # Neither an unsuccessful BEGIN nor a read-only guard may settle
+        # a transaction belonging to the caller.
+        if db.in_transaction:
+            raise DerivedJournalConflict("derived_recovery_nested_transaction")
+        with db:
+            db.execute("BEGIN")
+            if not live(db):
+                raise DerivedJournalConflict("derived_recovery_scope_changed")
+            _raw, intent = _read_pending_reservation(db, reservation)
+            if not _exact_scope(db, identity_id=identity_id, root=library_root, intent=intent):
+                raise DerivedJournalConflict("derived_recovery_scope_changed")
+            if db.execute("SELECT 1 FROM placements WHERE path=? LIMIT 1",
+                          (intent.candidate_path,)).fetchone():
+                raise DerivedJournalConflict("derived_recovery_target_claimed")
     if intent.parent_stamp[2] + intent.output_size > _MAX_BYTES:
         raise DerivedJournalConflict("derived_recovery_budget_exceeded")
 
