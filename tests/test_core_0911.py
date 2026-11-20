@@ -99,7 +99,13 @@ class Core0911(unittest.TestCase):
         loan=self._loan_with_proven_borrower();self.core.storage.adept_profile_binding_set('identity','default','hb')
         acsm=self.root/'loan.acsm';acsm.write_text('<fulfillmentToken><format>application/epub+zip</format></fulfillmentToken>')
         self.service.acquire_digital_loan=Mock(return_value=Acquisition(provider_id='paris',credential_id='test',account_id='primary',item_id='123',loan_id='loan',kind='acsm',source_url='https://example.invalid/acsm',local_path=acsm,mime_type='application/vnd.adobe.adept+xml',drm='adept',acsm_path=acsm,target_dir=self.root))
-        self.service.kobo_profiles=Mock(return_value=[])
+        # Runtime-JSON failure tests must reach the execution boundary. A
+        # missing inventory now refuses early, correctly, under #7161.
+        self.service.kobo_profiles=Mock(return_value=[{
+            "profile_id": "hb", "name": "hb", "complete": True,
+            "fetch_capable": True,
+            "provisioning": {"acsm_fetch_ready": True},
+        }])
         self.service.runtime_diagnostic=Mock(return_value={'returncode':0,'duration_ms':166206,'stdout_bytes':0,'stderr_bytes':82,'stdin':'secret-key','stdout':'secret-key','operation':'secret-key'})
         def fail(request):
             if artifact:Path(request['destination']).write_bytes(b'output-not-yet-validated')

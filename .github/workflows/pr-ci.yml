@@ -422,6 +422,9 @@ jobs:
       - name: Validate plugin packaging
         if: steps.scope.outputs.packaging == 'true'
         run: |
+          # A packaging-only PR selects this step without Core/plugin deps.
+          # Keep its bootstrap self-contained to avoid false red CI.
+          python -m pip install --disable-pip-version-check "packaging>=24,<26"
           python scripts/verify-packaging.py
           python -m unittest scripts.test_plugin_packaging scripts.test_partial_plugin_release
 

@@ -154,23 +154,6 @@
       "reachability": "unproven"
     },
     {
-      "id": "site-e2bee4d7c10ce6d0c39e85f5",
-      "classification": "false_positive",
-      "journey": "Technical ADEPT profile enumeration",
-      "productive_caller": "LibraryService.kobo_profiles -> _kobo_adapter().profiles",
-      "effect": "Lists DRM profiles for local resolution, without accessing Kobo bookstore inventory or assigning an ADEPT borrower grant.",
-      "authority": "Installed DRM profile adapter; a matching profile is not evidence of ownership, consent or an entitlement.",
-      "replacement_contract": "Preserve exact borrower grant checks and runtime profile enumeration; a neutral DRM profile inventory API may later replace this call.",
-      "tests": [
-        "tests/test_core_p1_1063_adept_runtime_check.py",
-        "tests/test_kobo_adept_state.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Kobo-ADEPT is the technical DRM runtime. The AST anchor does not implement Kobo provider routing.",
-      "decision_group_id": "adept.runtime-profile-enumeration",
-      "reachability": "unproven"
-    },
-    {
       "id": "site-9ecded54fd870f959d2c8fb3",
       "classification": "false_positive",
       "journey": "Resolve the locally persisted ADEPT profile of an explicit identity",

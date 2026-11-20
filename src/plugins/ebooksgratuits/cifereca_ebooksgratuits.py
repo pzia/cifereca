@@ -1,6 +1,8 @@
 from __future__ import annotations
 import hashlib, html, re, unicodedata, logging
 from datetime import datetime
+from collections import Counter
+from dataclasses import replace
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, quote_plus, quote, urlsplit, parse_qsl
@@ -8,6 +10,7 @@ import httpx
 from cifereca.plugin_api import HTTPX_TRANSPORT
 from cifereca.plugin_api import (
     CatalogueXMLParseError, parse_bounded_catalogue_xml,
+    ProviderSearchResponse, PublicSearchNotice,
     MAX_XML_BYTES, MAX_XML_DEPTH, MAX_XML_ELEMENTS, catalogue_next,
 )
 from cifereca.plugin_api import Account, ItemDetail, SearchResult, ProviderCapabilities, ProviderSearchCapabilities, ProviderCapabilityError, ProviderDescriptor, ProviderError, ProviderPlugin, ProviderSession, TemporaryUnavailable, UnsupportedOperation, Conflict, Cancelled
@@ -377,6 +380,9 @@ class EbooksSession(ProviderSession):
                 ) from None
         # This is a local session registration, NOT a successful OPDS probe.
         self.connected=True
+        if self.credential_id == "__public__" and type(self.credentials) is dict and not self.credentials:
+            self._accounts=[]
+            return self.accounts
         self._accounts=[Account(
             display_name='Catalogue public',unique_id='ebooksgratuits',
             provider_id='ebooksgratuits',credential_id=self.credential_id,
@@ -394,6 +400,30 @@ class EbooksSession(ProviderSession):
     @staticmethod
     def _search_payload(query,page,page_size=50):
         return {'titre':str(query or '').strip(),'offset':str(page*page_size),'Submit':'Rechercher'}
+    def search_with_response_facets(self, query, scope='all', *, field='all', content_types=()):
+        """Declare only anonymous, exact OPDS occurrences; not delivery offers."""
+        if not (self.connected and self.credential_id == "__public__"
+                and type(self.credentials) is dict and not self.credentials
+                and type(self._accounts) is list and not self._accounts
+                and self.acquisition_backend == "opds" and self.opds_feed_url == OPDS_FEED):
+            return ProviderSearchResponse([], partial=True, catalogue_complete=False)
+        if (type(content_types) not in (tuple, list, set, frozenset)
+                or any(type(value) is not str or not 0 < len(value) <= 80 for value in content_types)):
+            raise ProviderCapabilityError("Ebooks libres et gratuits : unsupported_content_type")
+        requested = {value.casefold() for value in content_types}
+        supported = {"ebook", "epub"}
+        if requested and not requested & supported:
+            self.last_search_warnings = ["partial_results : format non qualifié"]
+            return ProviderSearchResponse([], partial=True, catalogue_complete=False)
+        rows = _opds_search(self, query, scope="all" if scope == "catalog" else scope,
+                            page=0, field=field, documentary=True)
+        if requested - supported:
+            self.last_search_warnings.append("partial_results : formats non qualifiés")
+        return ProviderSearchResponse(
+            rows, partial=bool(self.last_search_warnings), catalogue_complete=False,
+            public_notices=tuple(PublicSearchNotice(row) for row in rows),
+        )
+
     def search(self,query,scope='all',page=0,field='all'):
         self.last_search_warnings = []
         query = _validated_public_query(query)
@@ -993,10 +1023,16 @@ def _opds_author_match(query, names):
     return False
 
 
-def _opds_items(session,feed,feed_url,*,warnings=None):
+def _opds_items(session,feed,feed_url,*,warnings=None,documentary=False):
     items=[]
     unqualified=False
-    for entry in feed.findall(ATOM+'entry'):
+    entries=feed.findall(ATOM+'entry')
+    # Count even rejected siblings, so an incomplete or malformed duplicate
+    # cannot leave a deceptively unique durable occurrence.
+    occurrences=Counter(
+        (node.text or "").strip().casefold() for entry in entries for node in entry.findall(ATOM+'id')
+    ) if documentary else None
+    for entry in entries:
         # OPDS search responses may mix navigational scopes with acquisition
         # entries. Never publish a subsection as an undownloadable "book".
         if not _opds_entry_is_book(session,entry,feed_url):
@@ -1014,20 +1050,38 @@ def _opds_items(session,feed,feed_url,*,warnings=None):
         if not title or not entry_id:
             unqualified=True
             continue
+        if documentary:
+            ids=entry.findall(ATOM+'id')
+            titles=entry.findall(ATOM+'title')
+            # Bounded opaque Atom record IDs. Do not accept arbitrary URLs
+            # or strings carrying query parameters/credentials.
+            if (len(ids)!=1 or len(ids[0]) or ids[0].attrib
+                    or len(titles)!=1 or len(titles[0])
+                    or not re.fullmatch(
+                        r"urn:uuid:(?:[0-9]{1,20}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+                        entry_id)
+                    or occurrences[entry_id.casefold()]!=1):
+                unqualified=True
+                continue
         epub=None; alternate=None; thumbnail=None; formats=set()
         epub_links=set(); html_links=set()
+        bad_documentary_link=False
         for rel,mime,raw,_ in _opds_links(entry,feed_url):
             checked=(_opds_source_link(session,feed_url,raw,'download')
                      if mime.split(';',1)[0].strip()=='application/epub+zip'
                      else None)
             if checked and ('/acquisition' in rel or rel=='alternate'):
                 epub_links.add(checked); formats.add('EPUB')
+            elif documentary and mime.split(';',1)[0].strip()=='application/epub+zip' and (
+                    '/acquisition' in rel or rel=='alternate'):
+                bad_documentary_link=True
             # Only a declared HTML alternative can become "Voir en ligne".
             if rel=='alternate' and mime.split(';',1)[0].strip() in {
                 'text/html', 'application/xhtml+xml'
             }:
                 html_link=_opds_public_html_link(feed_url,raw)
                 if html_link: html_links.add(html_link)
+                elif documentary: bad_documentary_link=True
             if 'image/thumbnail' in rel or rel.endswith('/thumbnail'):
                 thumbnail=thumbnail or _opds_source_link(session,feed_url,raw,'detail')
         # A page entry is not a proof that two different targets are
@@ -1041,6 +1095,18 @@ def _opds_items(session,feed,feed_url,*,warnings=None):
             alternate=next(iter(html_links))
         elif html_links:
             unqualified=True
+        if documentary and (bad_documentary_link or not epub or len(html_links)>1):
+            unqualified=True
+            continue
+        if documentary:
+            # Narrow the declared COPS paths to one exact book coordinate.
+            # No signed/parameterized route, no generated web link.
+            target=re.fullmatch(r"/index\.php/fetch/([0-9]{1,20})\.epub", urlsplit(epub).path)
+            if (not target or urlsplit(epub).query
+                    or (entry_id[9:].isdigit() and target.group(1)!=entry_id[9:])
+                    or (alternate and urlsplit(alternate).path!=f"/index.php/book/{target.group(1)}")):
+                unqualified=True
+                continue
         author_nodes=entry.findall(ATOM+'author')
         authors=[_opds_text(n,ATOM+'name') for n in author_nodes]
         author=', '.join(n for n in authors if n) or None
@@ -1230,7 +1296,7 @@ def _opds_load_acquisition(session,initial,field,needle,*,initial_feed=None):
     raise ProviderError('Ebooks libres et gratuits : navigation_limit')
 
 
-def _opds_search(session,query,scope='all',page=0,field='all'):
+def _opds_search(session,query,scope='all',page=0,field='all',*,documentary=False):
     session.last_search_warnings=[]
     if not isinstance(field,str) or field.strip().lower() not in DESCRIPTOR.search_capabilities.fields:
         raise ProviderCapabilityError('Ebooks libres et gratuits : unsupported_field')
@@ -1275,7 +1341,8 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
                 session.last_search_warnings.append(
                     'partial_results : pagination OPDS non vérifiée'
                 )
-            rows=_opds_items(session,feed,current,warnings=session.last_search_warnings)
+            rows=_opds_items(session,feed,current,warnings=session.last_search_warnings,
+                             documentary=documentary)
             if field=='title':
                 rows=[row for row in rows if _fold(needle) in _fold(row.title)]
             elif field=='author':
@@ -1302,7 +1369,18 @@ def _opds_search(session,query,scope='all',page=0,field='all'):
                     'partial_results : page OPDS tronquée par la limite locale ; '
                     'des notices de cette page ne sont pas affichées'
                 )
-            return rows[:session.page_size]
+            rows=rows[:session.page_size]
+            if documentary:
+                # Filter the same parsed page first, then remove delivery
+                # authority and all metadata not independently attested.
+                rows=[replace(row, source_collection="public_catalog",
+                              owned=False, downloadable=False, download_url=None,
+                              thumbnail_url=None, description=None,
+                              metadata=({"public_url_evidence":
+                                         "ebooksgratuits.public_search_record_identifier"}
+                                        if row.friendly_url else {}))
+                      for row in rows]
+            return rows
         url,_,_=_opds_find_link(feed,current,'next')
         if not url:
             return []
