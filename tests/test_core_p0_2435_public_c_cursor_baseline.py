@@ -60,6 +60,10 @@ def test_public_c_cursor_cost_live_mixed_retained(tmp_path, capsys, size):
         finally:
             connection.set_trace_callback(None)
         assert trace["mutations"] == 0
+        # At most the primary and exact remaining-source lookup per page,
+        # independently of the number of valid live observations.
+        pages = (size // 2 + 49) // 50
+        assert pages <= trace["fence_reads"] <= 2 * pages
         io_before = _process_io()
         cpu = process_time_ns()
         durations = []
