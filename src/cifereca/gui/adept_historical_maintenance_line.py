@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ..core.adept_historical_maintenance import admit_historical_review, run_historical_review
+from ..core.adept_historical_inventory_operator import admit_inventory_comparison
 from ..storage import Storage
 from ..task_queue import TaskPriority
 
@@ -60,7 +61,15 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
     next_page.set_sensitive(False)
     actions.append(verify)
     actions.append(next_page)
+    selection = Gtk.ComboBoxText()
+    selection.set_sensitive(False)
+    compare = Gtk.Button(label="Comparer l’inventaire ADEPT local")
+    compare.set_sensitive(False)
+    inventory_actions = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    inventory_actions.append(selection)
+    inventory_actions.append(compare)
     box.append(actions)
+    box.append(inventory_actions)
     detail = Gtk.Label(xalign=0)
     detail.set_wrap(True)
     detail.set_selectable(True)
@@ -70,9 +79,28 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
     cursor = ""
     following = None
     last_request = None
+    selected_rows = ()
+    last_text = ""
+    last_route = None
+    last_generation = None
+
+    def selection_changed(_control):
+        compare.set_sensitive(
+            not busy and 0 <= selection.get_active() < len(selected_rows)
+            and last_request is not None and last_request.current()
+            and getattr(window, "_route_display_token", None) is last_route
+            and getattr(window, "_identity_context_generation", None) == last_generation
+        )
+
+    def reset_selection():
+        nonlocal selected_rows
+        selected_rows = ()
+        selection.remove_all()
+        selection.set_sensitive(False)
+        compare.set_sensitive(False)
 
     def run(button, *, restart=False, advance=False, hash_files=False):
-        nonlocal busy, cursor, following, last_request
+        nonlocal busy, cursor, following, last_request, selected_rows, last_text, last_route, last_generation
         if busy or getattr(window, "_closed", False) or button.get_root() is None:
             return
         if restart:
@@ -91,6 +119,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
         generation = getattr(window, "_identity_context_generation", None)
         route = getattr(window, "_route_display_token", None)
         busy = True
+        reset_selection()
         last_request = request
         cursor = proposed
         following = None
@@ -106,7 +135,7 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
                     and getattr(window, "_route_display_token", None) is route)
 
         def done(value):
-            nonlocal busy, following
+            nonlocal busy, following, selected_rows, last_text, last_route, last_generation
             busy = False
             if not current():
                 if start.get_root() is not None:
@@ -116,7 +145,22 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
                 return
             valid = type(value) is dict and type(value.get("rows")) is tuple
             following = value.get("next_cursor") if valid else None
-            detail.set_text(_display(value))
+            last_text = _display(value)
+            last_route, last_generation = route, generation
+            detail.set_text(last_text)
+            selected_rows = tuple(
+                item for item in value["rows"]
+                if item.get("ledger_status") == "complete"
+                and item.get("canonical_status") == "unique_source_record"
+                and item.get("recorded_adept_profile_id")
+                and item.get("recorded_adept_loan_id")
+            ) if valid else ()
+            for index, item in enumerate(selected_rows, 1):
+                selection.append_text(
+                    f"{index}. Acquisition {item['acquisition_id']} — profil {item['recorded_adept_profile_id']}"
+                )
+            selection.set_active(-1)
+            selection.set_sensitive(bool(selected_rows))
             start.set_sensitive(True)
             verify.set_sensitive(valid and bool(value["rows"]))
             next_page.set_sensitive(following is not None)
@@ -132,6 +176,80 @@ def add_adept_historical_maintenance_line(window, box, *, Gtk, Adw):
         except Exception:
             done(None)
 
+    def compare_clicked(button):
+        nonlocal busy
+        index = selection.get_active()
+        if (busy or not 0 <= index < len(selected_rows)
+                or last_request is None or not last_request.current()
+                or getattr(window, "_closed", False) or button.get_root() is None
+                or window.service is not service
+                or getattr(window, "_route_display_token", None) is not last_route
+                or getattr(window, "_identity_context_generation", None) != last_generation):
+            return
+        request, route, generation = last_request, last_route, last_generation
+        operation = admit_inventory_comparison(
+            service, request, selected_rows[index], explicitly_requested=True,
+        )
+        if operation is None:
+            detail.set_text(last_text + "\n\nInventaire local indisponible.")
+            return
+        busy = True
+        for widget in (start, verify, next_page, selection, compare):
+            widget.set_sensitive(False)
+        detail.set_text(last_text + "\n\nComparaison locale du prêt sélectionné…")
+        delivered = False
+
+        def done(value):
+            nonlocal busy, delivered
+            if delivered:
+                return
+            delivered = True
+            busy = False
+            if (getattr(window, "_closed", False) or button.get_root() is None
+                    or window.service is not service or not request.current()
+                    or getattr(window, "_route_display_token", None) is not route
+                    or getattr(window, "_identity_context_generation", None) != generation):
+                if button.get_root() is not None:
+                    detail.set_text("")
+                    detail.set_visible(False)
+                    reset_selection()
+                    start.set_sensitive(True)
+                return
+            summary = "Inventaire local indisponible ou preuves modifiées. Aucun constat d’absence."
+            if type(value) is dict:
+                comparison = {
+                    "exact_profile_and_loan_reported": "Prêt exact rapporté dans le profil historique.",
+                    "not_found_in_supplied_inventory": "Prêt non retrouvé dans cet inventaire local.",
+                    "ambiguous_loan": "Prêt ambigu dans l’inventaire.",
+                    "inventory_unverified": "Inventaire non vérifiable.",
+                }.get(value.get("inventory_comparison"), "Comparaison indéterminée.")
+                state = {
+                    "returned_reported": "Restitué selon le registre local.",
+                    "expired_reported": "Expiré selon le registre local.",
+                    "active_reported": "Actif selon le registre local.",
+                    "contradictory_report": "Indications contradictoires.",
+                    "state_unverified": "État non vérifié.",
+                }.get(value.get("adept_license_state_reported"), "")
+                summary = comparison + (" " + state if state else "")
+            detail.set_text(last_text + "\n\n" + summary +
+                            "\nAucune preuve fournisseur, activation ou autorisation de retour.")
+            start.set_sensitive(True)
+            verify.set_sensitive(True)
+            next_page.set_sensitive(following is not None)
+            selection.set_sensitive(bool(selected_rows))
+            selection_changed(selection)
+
+        try:
+            window.runner.submit(
+                "Comparaison de l’inventaire ADEPT local…", operation,
+                done, lambda _exc: done(None), control=compare,
+                priority=TaskPriority.MAINTENANCE, kind="maintenance-plan", origin="user",
+            )
+        except Exception:
+            done(None)
+
+    selection.connect("changed", selection_changed)
+    compare.connect("clicked", compare_clicked)
     start.connect("clicked", lambda b: run(b, restart=True))
     verify.connect("clicked", lambda b: run(b, hash_files=True))
     next_page.connect("clicked", lambda b: run(b, advance=True))

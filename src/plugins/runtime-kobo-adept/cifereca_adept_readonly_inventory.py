@@ -22,6 +22,7 @@ class ReadOnlyInventory:
     profile_reference: str | None = None
     profile_name: str | None = None
     loans: tuple = ()
+    stable_profile_observed: bool = False
 
     def redacted(self):
         result={'schema':1,'read_only':True,'status':self.status,'reason':self.reason,
@@ -146,10 +147,43 @@ def _name(value):
             and not value.startswith('-') and all(ord(c)>=32 and ord(c)!=127 for c in value))
 
 
-def read_inventory(runtime,reference,*,consented=False,control=None):
+def _stable_profile(rows, reference):
+    """Require one stable ID and one coherent, unique CLI name.
+
+    A historical ID is not an alias. Reject conflicting coordinates instead
+    of disclosing another profile's inventory through a same-name match.
+    """
+    if type(rows) is not list or len(rows)>128:
+        raise _Stopped('read_invalid_response')
+    identities=set()
+    names=set()
+    matches=[]
+    for row in rows:
+        if type(row) is not dict:
+            raise _Stopped('read_invalid_response')
+        ids=[row[k] for k in ('profile_id','id') if k in row]
+        labels=[row[k] for k in ('name','profile') if k in row]
+        if (not ids or not labels or not all(_name(x) for x in ids+labels)
+                or len(set(ids))!=1 or len(set(labels))!=1):
+            raise _Stopped('profile_unavailable')
+        stable,name=ids[0],labels[0]
+        if stable in identities or name in names:
+            raise _Stopped('profile_ambiguous')
+        identities.add(stable)
+        names.add(name)
+        if stable==reference:
+            matches.append(name)
+        elif name==reference:
+            raise _Stopped('profile_ambiguous')
+    if len(matches)!=1:
+        raise _Stopped('profile_unavailable')
+    return matches[0]
+
+
+def read_inventory(runtime,reference,*,consented=False,control=None,stable_id_only=False):
     if consented is not True:
         return ReadOnlyInventory('unavailable','consent_required')
-    if not _name(reference):
+    if type(stable_id_only) is not bool or not _name(reference):
         return ReadOnlyInventory('unavailable','profile_required')
     deadline=time.monotonic()+30
     try:
@@ -190,18 +224,26 @@ def read_inventory(runtime,reference,*,consented=False,control=None):
         rows=payload.get('profiles')
         if type(rows) is not list or len(rows)>128:
             raise _Stopped('read_invalid_response')
-        matches=[row for row in rows if type(row) is dict
-                 and any(row.get(key)==reference for key in ('profile_id','id','name','profile'))]
-        if len(matches)!=1:
-            raise _Stopped('profile_ambiguous' if matches else 'profile_unavailable')
-        name=matches[0].get('name')
-        if not _name(name):raise _Stopped('profile_unavailable')
+        if stable_id_only:
+            name=_stable_profile(rows,reference)
+        else:
+            matches=[row for row in rows if type(row) is dict
+                     and any(row.get(key)==reference for key in ('profile_id','id','name','profile'))]
+            if len(matches)!=1:
+                raise _Stopped('profile_ambiguous' if matches else 'profile_unavailable')
+            name=matches[0].get('name')
+            if not _name(name):raise _Stopped('profile_unavailable')
         reader.allowed_profile=name
         # Reuse the existing strict contract and per-loan projection. No
         # inventory reconciliation facade, binding setter or diagnostics sink.
         result=reader.loans(name)
         _check(control,deadline)
-        return ReadOnlyInventory('complete',profile_reference=reference,profile_name=name,loans=tuple(result['loans']))
+        if stable_id_only:
+            if _stable_profile(reader.profiles().get('profiles'),reference)!=name:
+                raise _Stopped('profile_ambiguous')
+            _check(control,deadline)
+        return ReadOnlyInventory('complete',profile_reference=reference,profile_name=name,
+            loans=tuple(result['loans']),stable_profile_observed=stable_id_only)
     except _Stopped as exc:
         reason=exc.args[0] if exc.args else None
         return ReadOnlyInventory('unavailable',reason if type(reason) is str and reason in _REASONS else 'read_failed')
