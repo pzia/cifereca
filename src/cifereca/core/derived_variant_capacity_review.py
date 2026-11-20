@@ -12,6 +12,7 @@ from . import derived_variant_journal as journal
 from .derived_variant_maintenance_review import MaintenanceReviewRequest
 from .derived_variant_recovery_operator import _capture
 from .derived_variant_stock_review import review_derived_staging_stock
+from .derived_variant_region_review import review_derived_private_region
 from .library_sqlite_freshness import sqlite_source_stamp
 
 
@@ -98,6 +99,10 @@ def read_capacity_review(service, request):
         stock = review_derived_staging_stock(
             scope.storage, library_root=scope.root, identity_id=scope.identity_id,
         )
+        region = review_derived_private_region(
+            scope.storage, library_root=scope.root, identity_id=scope.identity_id,
+            explicitly_requested=True,
+        )
         if (_snapshot(scope) != snapshot or not scope.current()
                 or not request.current() or sqlite_source_stamp(scope.database) != stamp):
             return None
@@ -111,13 +116,14 @@ def read_capacity_review(service, request):
                       "unknown" if counts["unreadable"] else "below_limits")
         return {
             "status": "partial" if counts["unreadable"] or counts["unbound"]
-                       or stock["status"] != "journal_entries_observed" else "observed",
+                       or stock["status"] != "journal_entries_observed"
+                       or region["status"] != "observed" else "observed",
             "counts": counts, "record_count": count, "payload_bytes": payload,
             "known_output_bytes": known,
             "output_bytes_complete": counts["unreadable"] == 0,
             "active_payload_bytes": active_payload, "active_output_bytes": active_bytes,
             "capacity": capacity, "saturation": saturation,
-            "stock": stock,
+            "stock": stock, "region": region,
             "admission_authorized": False, "recovery_authorized": False,
             "quota_refund_authorized": False, "destructive_cleanup_allowed": False,
         }
