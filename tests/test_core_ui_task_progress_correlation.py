@@ -237,3 +237,70 @@ def test_manual_and_deep_opening_stay_independent_of_auto_request(host):
     assert host.calls.count(True) == 1
     host.gates[1].set()
     host.gates[2].set()
+
+
+@pytest.mark.parametrize("rebind", ["epoch", "replacement", "invalid_epoch"])
+def test_stale_opening_result_never_refreshes_new_source_context(host, rebind):
+    w = host.window
+    w.service._source_context_epoch = 7
+    rendered = []
+    w._render_dashboard = lambda: rendered.append("dashboard")
+    w.refresh_library = lambda force: rendered.append("library")
+    w.refresh_recent = lambda: rendered.append("recent")
+    host.start(w)
+    host.dispatch_until(lambda: w.busy_label.text.endswith("Synchronisation · Camille…"))
+    task_id = next(iter(w._active_tasks))
+    if rebind == "epoch":
+        w.service._source_context_epoch += 1
+    elif rebind == "replacement":
+        w.service = NS(opening_sync=w.service.opening_sync, last_loans=[],
+                       _source_context_epoch=7)
+    else:
+        w.service._source_context_epoch = None
+    before = w.busy_label.text
+    host.callbacks[0]({"event": "identity_begin", "label": "Retard obsolète"})
+    host.dispatch_remaining()
+    assert w.busy_label.text == before
+    host.gates[0].set()
+    host.dispatch_until(lambda: task_id in w._finished_task_ids)
+    assert rendered == []
+    assert w.runner._count == 0
+
+
+def test_queued_obsolete_opening_refuses_before_calling_core(host):
+    from cifereca.plugin_api import Cancelled
+
+    w = host.window
+    w.service._source_context_epoch = 7
+    captured = []
+    original = w.runner.submit
+    try:
+        w.runner.submit = lambda *args, **kwargs: captured.append((args, kwargs))
+        host.start(w)
+    finally:
+        w.runner.submit = original
+    args, options = captured[0]
+    work, ok, err = args[1:4]
+    assert options["kind"] == "opening-sync"
+    w.service._source_context_epoch += 1
+    with pytest.raises(Cancelled):
+        work(lambda _: pytest.fail("obsolete progress"))
+    assert host.calls == []
+    w._render_dashboard = lambda: pytest.fail("obsolete render")
+    ok({"identities": []})
+    err(RuntimeError("obsolete"))
+
+
+def test_identity_navigation_without_source_revocation_keeps_opening_delivery(host):
+    w = host.window
+    w.service._source_context_epoch = 7
+    w.service.current_identity = NS(identity_id="A")
+    rendered = []
+    w.refresh_library = lambda force: rendered.append(force)
+    host.start(w)
+    host.dispatch_until(lambda: w.busy_label.text.endswith("Synchronisation · Camille…"))
+    task_id = next(iter(w._active_tasks))
+    w.service.current_identity = NS(identity_id="B")
+    host.gates[0].set()
+    host.dispatch_until(lambda: task_id in w._finished_task_ids)
+    assert rendered == [False]
