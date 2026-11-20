@@ -29,6 +29,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
     is temporarily mounted in the fixture MainWindow, not registered.
     No provider call or rights action is performed.
     """
+    report["local_c_stage"] = "setup"
     from concurrent.futures import ThreadPoolExecutor
     from io import BytesIO
     from tempfile import TemporaryDirectory
