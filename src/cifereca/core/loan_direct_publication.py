@@ -1,17 +1,17 @@
-"""P1 #5225: no-clobber publication of a staged direct digital loan.
+"""#5225: durable no-clobber publication of a staged direct digital loan.
 
-This is a narrow safety bridge for the historical loan-auto path, NOT the
-full canonical-delivery transaction. The caller still owns the loan ledger,
-Core indexing, and source/identity admission; never infer a provider right
-from a physical path or from matching file bytes.
+This remains a safety bridge for the historical path, NOT the canonical
+FS/SQLite receipt transaction. The caller owns source admission and indexing.
 """
 from __future__ import annotations
 
 import hashlib
 import os
 from pathlib import Path
+import secrets
 import stat
-import tempfile
+
+from .library_inventory import _open_root
 
 
 class DirectLoanPublicationRefused(ValueError):
@@ -20,159 +20,200 @@ class DirectLoanPublicationRefused(ValueError):
 
 def _bounded_stem(path: Path) -> str:
     stem = path.stem.encode("utf-8")[:120].decode("utf-8", "ignore")
-    stem = stem.strip(" .-_")
-    return stem or "livre"
+    return stem.strip(" .-_") or "livre"
+
+
+def _directory_stamp(fd):
+    info = os.fstat(fd)
+    return info.st_dev, info.st_ino
+
+
+def _current_directory(path, fd):
+    other = None
+    try:
+        other = _open_root(path)
+        return _directory_stamp(other) == _directory_stamp(fd)
+    except OSError:
+        return False
+    finally:
+        if other is not None:
+            os.close(other)
+
+
+def _create_directory(path):
+    """Create only missing components under pinned, no-follow parents."""
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open("/", flags)
+    try:
+        for component in path.parts[1:]:
+            try:
+                child = os.open(component, flags, dir_fd=fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(component, mode=0o700, dir_fd=fd)
+                except FileExistsError:
+                    pass
+                else:
+                    # The newly created directory entry itself must survive
+                    # restart before a final-name durability claim.
+                    os.fsync(fd)
+                child = os.open(component, flags, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        result, fd = fd, None
+        return result
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _stamp(info):
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+
+
+def _info(fd, name):
+    return os.stat(name, dir_fd=fd, follow_symlinks=False)
+
+
+def _owned(fd, name, expected):
+    try:
+        actual = _info(fd, name)
+        return stat.S_ISREG(actual.st_mode) and _stamp(actual) == _stamp(expected)
+    except OSError:
+        return False
+
+
+def _remove_own(fd, name, expected):
+    if _owned(fd, name, expected):
+        try:
+            os.unlink(name, dir_fd=fd)
+        except OSError:
+            pass
 
 
 def publish_direct_loan_candidate(
     staged_path: Path, *, work_dir: Path, library_target_dir: Path,
 ) -> Path:
-    """Copy a provider's staged file to a new library name without overwriting.
+    """Copy and fsync before an exclusive link on the destination filesystem.
 
-    A private, per-attempt temp is created on the *destination* filesystem.
-    Hardlinking it to the final name provides an atomic exclusive commit,
-    even across two independent loans with the same original filename.
-    A prior file is never replaced, unlinked, or adopted as an entitlement.
+    Retain the input on interruption and never follow or unlink a substituted
+    directory/entry. An ambiguous name is not authority to delete. Only after
+    the exact final entry is durable may the matching private input retire.
     """
-    if (not isinstance(staged_path, Path)
-            or not isinstance(work_dir, Path)
-            or not isinstance(library_target_dir, Path)
-            or not staged_path.name or staged_path.name in (".", "..")
-            or not staged_path.suffix or len(staged_path.name.encode("utf-8")) > 240):
+    paths = (staged_path, work_dir, library_target_dir)
+    if (not all(isinstance(path, Path) and path.is_absolute()
+                and ".." not in path.parts and path != Path("/") for path in paths)
+            or not staged_path.name or not staged_path.suffix
+            or len(staged_path.name.encode("utf-8")) > 240):
         raise DirectLoanPublicationRefused("loan_direct_candidate_invalid")
-    try:
-        if (staged_path.is_symlink() or work_dir.is_symlink()
-                or library_target_dir.is_symlink()
-                or library_target_dir.parent.is_symlink()
-                or staged_path.parent.resolve(strict=True)
-                   != work_dir.resolve(strict=True)):
-            raise DirectLoanPublicationRefused("loan_direct_stage_scope_invalid")
-        work_stat = staged_path.stat(follow_symlinks=False)
-        if (not stat.S_ISREG(work_stat.st_mode)
-                or work_stat.st_size <= 0 or work_stat.st_nlink != 1):
-            raise DirectLoanPublicationRefused("loan_direct_stage_invalid")
-    except OSError:
-        raise DirectLoanPublicationRefused("loan_direct_stage_unavailable") from None
+    if (staged_path.parent != work_dir or staged_path.is_symlink()
+            or any(path.is_symlink() for path in (
+                work_dir, *work_dir.parents, library_target_dir, *library_target_dir.parents,
+            ))):
+        raise DirectLoanPublicationRefused("loan_direct_stage_scope_invalid")
 
-    # The exact identity/provider directory comes from LibraryService; do
-    # not resolve a symlinked destination into a different profile.
-    library_target_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if (library_target_dir.is_symlink()
-            or library_target_dir.parent.is_symlink()):
-        raise DirectLoanPublicationRefused("loan_direct_target_scope_invalid")
-
-    temporary: Path | None = None
+    stage_fd = dest_fd = None
+    temporary = None
+    made = None
+    linked = None
     try:
-        src_fd = os.open(staged_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            stage_fd = _open_root(work_dir)
+            work_stat = _info(stage_fd, staged_path.name)
+            if (not stat.S_ISREG(work_stat.st_mode)
+                    or work_stat.st_size <= 0 or work_stat.st_nlink != 1):
+                raise DirectLoanPublicationRefused("loan_direct_stage_invalid")
+        except OSError:
+            raise DirectLoanPublicationRefused("loan_direct_stage_unavailable") from None
+
+        dest_fd = _create_directory(library_target_dir)
+        if not _current_directory(library_target_dir, dest_fd):
+            raise DirectLoanPublicationRefused("loan_direct_target_scope_invalid")
+        src_fd = os.open(staged_path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                         dir_fd=stage_fd)
         with os.fdopen(src_fd, "rb") as src:
             current = os.fstat(src.fileno())
             if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
-                    or (current.st_dev, current.st_ino, current.st_size,
-                        current.st_mtime_ns)
-                       != (work_stat.st_dev, work_stat.st_ino,
-                           work_stat.st_size, work_stat.st_mtime_ns)):
+                    or _stamp(current) != _stamp(work_stat)):
                 raise DirectLoanPublicationRefused("loan_direct_stage_changed")
-            fd, temp_name = tempfile.mkstemp(
-                prefix=".loan-publish-", dir=library_target_dir,
-            )
-            temporary = Path(temp_name)
+            temporary = ".loan-publish-" + secrets.token_hex(16)
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                         | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=dest_fd)
             digest = hashlib.sha256()
             with os.fdopen(fd, "wb") as out:
-                while True:
-                    part = src.read(1024 * 1024)
-                    if not part:
-                        break
-                    digest.update(part)
-                    out.write(part)
-                out.flush()
-                os.fsync(out.fileno())
-                published_inode = os.fstat(out.fileno())
-            after = os.fstat(src.fileno())
-            if ((after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-                    != (current.st_dev, current.st_ino, current.st_size,
-                        current.st_mtime_ns)):
+                # Track our inode even on partial write; cleanup may only
+                # withdraw the exact entry we created under the pinned fd.
+                made = os.fstat(out.fileno())
+                try:
+                    while True:
+                        part = src.read(1024 * 1024)
+                        if not part:
+                            break
+                        digest.update(part)
+                        out.write(part)
+                    out.flush()
+                    os.fsync(out.fileno())
+                finally:
+                    made = os.fstat(out.fileno())
+            if _stamp(os.fstat(src.fileno())) != _stamp(current):
                 raise DirectLoanPublicationRefused("loan_direct_stage_changed")
-        try:
-            stage_now = staged_path.stat(follow_symlinks=False)
-        except OSError:
-            raise DirectLoanPublicationRefused("loan_direct_stage_changed") from None
-        if (not stat.S_ISREG(stage_now.st_mode)
-                or (stage_now.st_dev, stage_now.st_ino, stage_now.st_size,
-                    stage_now.st_mtime_ns)
-                   != (work_stat.st_dev, work_stat.st_ino,
-                       work_stat.st_size, work_stat.st_mtime_ns)):
+        if (not _current_directory(work_dir, stage_fd)
+                or not _owned(stage_fd, staged_path.name, work_stat)):
             raise DirectLoanPublicationRefused("loan_direct_stage_changed")
 
         hashed = digest.hexdigest()
         stem, suffix = _bounded_stem(staged_path), staged_path.suffix
-        choices = (
-            staged_path.name,
-            f"{stem} - {hashed[:16]}{suffix}",
-            f"{stem} - {hashed}{suffix}",
-        )
-        # Every attempted link is exclusive. A same-name file is a collision,
-        # not evidence of the same provider right or permission to overwrite.
+        choices = (staged_path.name, f"{stem} - {hashed[:16]}{suffix}",
+                   f"{stem} - {hashed}{suffix}")
         for index in range(35):
             name = (choices[index] if index < len(choices)
                     else f"{stem} - {hashed[:16]}-{index - 2}{suffix}")
-            target = library_target_dir / name
-            # A private temp pathname can itself be replaced after its fd is
-            # closed. Verify the exact inode written above, not merely a
-            # plausible file with identical size or content.
-            temp_now = temporary.stat(follow_symlinks=False)
-            if (not stat.S_ISREG(temp_now.st_mode)
-                    or (temp_now.st_dev, temp_now.st_ino, temp_now.st_size)
-                       != (published_inode.st_dev, published_inode.st_ino,
-                           published_inode.st_size)):
+            if not _current_directory(library_target_dir, dest_fd):
+                raise DirectLoanPublicationRefused("loan_direct_target_scope_invalid")
+            if not _owned(dest_fd, temporary, made):
                 raise DirectLoanPublicationRefused("loan_direct_temp_changed")
             try:
-                os.link(temporary, target, follow_symlinks=False)
+                os.link(temporary, name, src_dir_fd=dest_fd, dst_dir_fd=dest_fd,
+                        follow_symlinks=False)
             except FileExistsError:
                 continue
-            else:
-                # Re-check the exclusive link before returning a completed
-                # path. A symlink swapped into the temp at link-time must
-                # never become a published loan.
-                published = target.stat(follow_symlinks=False)
-                if (not stat.S_ISREG(published.st_mode)
-                        or (published.st_dev, published.st_ino,
-                            published.st_size)
-                           != (published_inode.st_dev, published_inode.st_ino,
-                               published_inode.st_size)):
-                    # Only unlink a path that we just hardlinked, and never
-                    # overwrite or adopt an unrelated preexisting artifact.
-                    current_target = target.stat(follow_symlinks=False)
-                    if ((current_target.st_dev, current_target.st_ino)
-                            == (published.st_dev, published.st_ino)):
-                        target.unlink()
-                    raise DirectLoanPublicationRefused("loan_direct_temp_changed")
-                try:
-                    stage_now = staged_path.stat(follow_symlinks=False)
-                except OSError:
-                    stage_now = None
-                if (stage_now is not None
-                        and stat.S_ISREG(stage_now.st_mode)
-                        and (stage_now.st_dev, stage_now.st_ino,
-                             stage_now.st_size, stage_now.st_mtime_ns)
-                            == (work_stat.st_dev, work_stat.st_ino,
-                                work_stat.st_size, work_stat.st_mtime_ns)):
-                    try:
-                        staged_path.unlink()
-                    except OSError:
-                        # Post-publish staging cleanup is not a failed delivery.
-                        pass
-                return target
+            linked = name
+            if not _owned(dest_fd, name, made):
+                raise DirectLoanPublicationRefused("loan_direct_temp_changed")
+            if not _current_directory(library_target_dir, dest_fd):
+                raise DirectLoanPublicationRefused("loan_direct_target_scope_invalid")
+            # The final directory entry, not just the contents, is durable
+            # before reporting a path or retiring the only private input.
+            os.fsync(dest_fd)
+            if (not _current_directory(library_target_dir, dest_fd)
+                    or not _owned(dest_fd, name, made)):
+                raise DirectLoanPublicationRefused("loan_direct_target_scope_invalid")
+
+            if (_current_directory(work_dir, stage_fd)
+                    and _owned(stage_fd, staged_path.name, work_stat)):
+                _remove_own(stage_fd, staged_path.name, work_stat)
+            linked = None  # committed physical path; preserve on return
+            return library_target_dir / name
         raise DirectLoanPublicationRefused("loan_direct_destination_collisions")
     except DirectLoanPublicationRefused:
         raise
     except OSError:
         raise DirectLoanPublicationRefused("loan_direct_publication_failed") from None
     finally:
-        if temporary is not None:
-            try:
-                temporary.unlink(missing_ok=True)
-            except OSError:
-                pass
+        if dest_fd is not None:
+            if linked is not None and made is not None:
+                # Refused or interrupted publication: withdraw only the inode
+                # we wrote. Never delete a concurrent replacement.
+                _remove_own(dest_fd, linked, made)
+                try:
+                    os.fsync(dest_fd)
+                except OSError:
+                    pass
+            if temporary is not None and made is not None:
+                _remove_own(dest_fd, temporary, made)
+            os.close(dest_fd)
+        if stage_fd is not None:
+            os.close(stage_fd)
 
 
 __all__ = ["DirectLoanPublicationRefused", "publish_direct_loan_candidate"]
