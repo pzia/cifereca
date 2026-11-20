@@ -134,6 +134,7 @@ class _Links(HTMLParser):
         self.book_ids = []
         self.book_urls = {}
         self.book_titles = {}
+        self._conflicting_book_titles = set()
         self._book_anchor_id = None
         self._book_anchor_text = []
         self.next_page_url = None
@@ -199,8 +200,19 @@ class _Links(HTMLParser):
     def handle_endtag(self, tag):
         if tag == "a" and self._book_anchor_id is not None:
             title = " ".join("".join(self._book_anchor_text).split())
-            if title and len(title) <= 256 and self._book_anchor_id not in self.book_titles:
-                self.book_titles[self._book_anchor_id] = title
+            ident = self._book_anchor_id
+            # A visible generic call-to-action is not a title. Keep the
+            # book link for explicit detail, not a fabricated C observation.
+            if title and len(title) <= 256 and title.casefold() not in {
+                "voir", "voir la fiche", "consulter", "consulter la fiche",
+                "détails", "detail", "details", "en savoir plus",
+            } and ident not in self._conflicting_book_titles:
+                previous = self.book_titles.get(ident)
+                if previous is not None and previous != title:
+                    self.book_titles.pop(ident, None)
+                    self._conflicting_book_titles.add(ident)
+                else:
+                    self.book_titles[ident] = title
             self._book_anchor_id = None
             self._book_anchor_text = []
         if tag == "a" and self._candidate is not None:
