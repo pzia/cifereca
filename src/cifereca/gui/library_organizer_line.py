@@ -27,6 +27,11 @@ _REASONS = {
     "name_unchanged": "Nom conservé",
     "destination_occupied": "Destination occupée",
     "rename_advice_only": "Suggestion de renommage",
+    "classified_directory_missing": "Dossier inexistant ; aucune création",
+    "classified_layout_advice_only": "Disposition indicative ; références à qualifier",
+    "classified_target_occupied": "Destination de classement occupée",
+    "classified_target_unverified": "Destination de classement non vérifiée",
+    "classified_author_unverified": "Auteur non admissible comme dossier",
     "candidate_not_safe_for_retirement": "Dépendances ou preuves insuffisantes",
     "ambiguous_keeper_preference": "Copies de préférence équivalente",
 }
@@ -55,6 +60,13 @@ def _display(result, selected=0):
             if file["proposed_name"]:
                 lines.append("  Nom conseillé : " + file["proposed_name"])
             lines.append("  " + _REASONS.get(file["reason"], "Revue nécessaire"))
+            if file.get("classified_path_advice"):
+                lines.append("  Chemin de classement indicatif : " + file["classified_path_advice"])
+                lines.append("  " + _REASONS[file["classified_path_reason"]])
+            elif file.get("classified_path_reason") in (
+                    "classified_target_occupied", "classified_target_unverified",
+                    "classified_author_unverified"):
+                lines.append("  " + _REASONS[file["classified_path_reason"]])
         if group["keeper"]:
             lines.append("Copie recommandée à conserver : " + group["keeper"])
     if not result["groups"]:
