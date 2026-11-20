@@ -115,3 +115,38 @@ def test_empty_choices_never_open_dialog():
     args["rows"] = ()
     assert not present_normal_lender_choice(panel, **args)
     assert dialogs == []
+
+
+@pytest.mark.parametrize("phase", ["before_dialog", "before_choice", "before_confirmation", "queued"])
+def test_in_place_notice_change_revokes_lender_choice(phase):
+    panel, args, dialogs = setup()
+    window = panel.window
+    notice = args["item"]
+
+    def mutate():
+        notice.record_id += "-other"
+
+    if phase == "before_dialog":
+        mutate()
+        assert not present_normal_lender_choice(panel, **args)
+        assert dialogs == []
+    else:
+        assert present_normal_lender_choice(panel, **args)
+        if phase == "before_choice":
+            mutate()
+        dialogs[0].respond("choice-0")
+        if phase == "before_choice":
+            assert len(dialogs) == 1
+        else:
+            if phase == "before_confirmation":
+                mutate()
+            dialogs[1].respond("borrow")
+            if phase == "queued":
+                _, work, done, _ = window.runner.submit.call_args.args
+                mutate()
+                assert work() == {"status": "blocked"}
+                done({"status": "blocked"})
+        assert window._cross_profile_borrow_pending is None
+    if phase != "queued":
+        window.runner.submit.assert_not_called()
+    args["service"].execute_normal_lender_borrow_for_current_identity.assert_not_called()
