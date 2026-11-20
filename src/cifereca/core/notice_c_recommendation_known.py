@@ -104,8 +104,15 @@ def known_public_notice_candidates(
             row.metadata["notice_c_source_alternatives"] = alternatives
         # Exact object and full DTO snapshot, not a serialized proof. Sources
         # with missing covers are still descriptive candidates.
+        try:
+            snapshot = _snapshot(row)
+        except (ValueError, TypeError):
+            # One over-budget canonical group must not abort the entire
+            # partial page or weaken the receipt by dropping source facts.
+            # Other independently admitted documents remain usable.
+            continue
         row._core_known_public_c_projection = (
-            _TOKEN, id(row), hit.document, hit.epoch, _snapshot(row),
+            _TOKEN, id(row), hit.document, hit.epoch, snapshot,
         )
         rows.append(row)
     return rows
