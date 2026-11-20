@@ -75,7 +75,7 @@ class TaskRunner:
         self._task_ids = itertools.count(1)
         # Only explicitly marked, identical *automatic* work is coalesced.
         # Every key is scoped by task kind; user controls always bypass it.
-        self._coalesced: dict[tuple[str, str], int] = {}
+        self._coalesced: dict[tuple, int] = {}
 
     @staticmethod
     def _source_sync_outcome(value: Any, kind: str) -> str:
@@ -473,7 +473,9 @@ class TaskRunner:
         consent and does not release/replace the Core acquisition lock.
         """
         with self._lock:
-            return ("opening-sync", "opening:global:shallow") in self._coalesced
+            # Every generation remains active until its own GTK delivery.
+            return any(key[:2] == ("opening-sync", "opening:global:shallow")
+                       for key in self._coalesced)
 
     def close(self) -> None:
         with self._lock:
@@ -577,6 +579,17 @@ class TaskRunner:
             if coalesce_key is not None and control is None and origin != "user"
             else None
         )
+        # The task's kind/key describe the mission, not the source lease.
+        # A reconnected source (or replaced Core) must never inherit an old
+        # in-flight result merely because the automatic key is identical.
+        # These process-local coordinates are not emitted into TRACE.
+        if admission is not None and kind in {"opening-sync", "source-sync"}:
+            service = getattr(self.window, "service", None)
+            epoch = getattr(service, "_source_context_epoch", 0)
+            admission = (
+                (*admission, id(service), epoch)
+                if type(epoch) is int and epoch >= 0 else None
+            )
         # A detached Gtk widget must be checked before activity counters or
         # reservations are allocated, as with the original TaskRunner. User
         # controls cannot be coalesced, so this cannot touch a skipped task.
