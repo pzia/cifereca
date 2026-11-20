@@ -84,3 +84,48 @@ def known_public_alternative_section(metadata):
         "known-public-alternatives", "Autres descriptions de la même notice",
         tuple(fields), 900,
     )
+
+
+def with_known_public_field_provenance(presentation, item):
+    """Annotate only displayed values matching immutable validated C facts."""
+    from dataclasses import replace
+    from datetime import datetime, timezone
+    from ..core.notice_c_known_projection import known_public_primary_facts
+    from ..plugin_api import Provenance
+
+    hit = known_public_primary_facts(item)
+    if hit is None:
+        return presentation
+    metadata = item["metadata"]
+    try:
+        observed_at = datetime.fromtimestamp(hit.observed_at, timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError, TypeError):
+        return presentation
+    proven = {}
+    series = hit.series_relation
+    if series is not None and metadata.get("series") == [series.label]:
+        proven[("Série", series.label)] = series
+    language = hit.language_observation
+    if language is not None and metadata.get("languages") == list(language.languages):
+        for value in language.languages:
+            proven[("Langue", value)] = language
+    if not proven:
+        return presentation
+
+    def annotate(field):
+        if type(field.value) is not str or field.provenance is not None:
+            return field
+        proof = proven.get((field.label, field.value))
+        if proof is None:
+            return field
+        return replace(field, provenance=Provenance(
+            source=proof.source + " · " + proof.source_field,
+            provider_id=hit.provider_id,
+            source_id=hit.record_id,
+            observed_at=observed_at,
+        ))
+
+    return replace(presentation, sections=tuple(
+        replace(section, fields=tuple(annotate(field) for field in section.fields))
+        for section in presentation.sections
+    ))
