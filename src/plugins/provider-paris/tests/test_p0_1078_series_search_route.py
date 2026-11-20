@@ -68,3 +68,31 @@ def test_exact_qualified_search_route_still_attests_result_owned_series(href):
         "confidence": "linked_search_relation",
         "freshness": "search_response",
     }
+
+@pytest.mark.parametrize("query", (
+    "Author_idx%3AOther",
+    "SeriesTitle_exact%3ACycle",
+    "Subject_exact%3ACycle",
+    "SeriesTitle_idx%3A",
+    "Author_exact%3ASecret%20name",
+))
+def test_conflicting_explicit_query_index_rejects_series_evidence(query):
+    href = "/Search?field=SeriesTitle_idx&amp;query=" + query
+    bad = '<a href="' + href + '">Cycle des astres</a>'
+    assert project_attested_search_series({"CustomResult": bad}, "EBOOKS") == {}
+    assert project_attested_search_series({
+        "CustomResult": bad, "CompactResult": GOOD,
+    }, "EBOOKS") == {}
+
+
+@pytest.mark.parametrize("query", (
+    "plain%20title",
+    "Cycle%20A%3A%20tome%201",
+    "SeriesTitle_idx%3ACycle",
+    "seriesTITLE_IDX%3ACycle",
+))
+def test_compatible_explicit_query_or_free_text_remains_attested(query):
+    href = "/Search?field=SeriesTitle_idx&amp;query=" + query
+    row = _row('<a href="' + href + '">Cycle des astres</a>')
+    assert row is not None
+    assert row.metadata["series"] == ["Cycle des astres"]
