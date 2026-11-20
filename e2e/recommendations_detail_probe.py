@@ -1793,6 +1793,7 @@ def main():
                                    state="busy", unavailable_reason="Traitement en cours", priority=4),
                 UiBookDetailAction("state-link", "Fiche fournisseur", uri="https://catalogue.example/book/42",
                                    state="unavailable", unavailable_reason="Source déconnectée", priority=30),
+                UiBookDetailAction("state-missing", "Sans cible"),
             ),
         ))
         later(120, verify_declared_action_states)
@@ -1800,9 +1801,9 @@ def main():
     def verify_declared_action_states():
         panel = state["view"]._master._page.detail
         buttons = {button._cifereca_action_id: button for button in panel._action_buttons}
-        assert set(buttons) == {"state-ready", "state-off", "state-busy", "state-link"}
+        assert set(buttons) == {"state-ready", "state-off", "state-busy", "state-link", "state-missing"}
         assert [button._cifereca_action_id for button in panel._action_buttons] == [
-            "state-ready", "state-busy", "state-off", "state-link",
+            "state-ready", "state-busy", "state-off", "state-link", "state-missing",
         ]
         assert buttons["state-off"].has_css_class("destructive-action")
         assert not buttons["state-off"].has_css_class("suggested-action")
@@ -1812,7 +1813,8 @@ def main():
         bar._layout_overflow(140)
         for key, reason in (("state-off", "Compte à reconnecter"),
                             ("state-busy", "Traitement en cours"),
-                            ("state-link", "Source déconnectée")):
+                            ("state-link", "Source déconnectée"),
+                            ("state-missing", "Aucune action exécutable")):
             button = buttons[key]
             assert not button.get_sensitive()
             assert reason in button.get_tooltip_text()
@@ -1820,6 +1822,7 @@ def main():
         assert "En cours" in buttons["state-busy"].get_tooltip_text()
         assert buttons["state-off"].has_css_class("destructive-action")
         report["checks"]["P0_3685_declared_action_priority_and_destructive_style_gtk"] = True
+        report["checks"]["P0_3685_missing_target_stays_disabled_with_layout_gtk"] = True
         buttons["state-off"].emit("clicked")
         buttons["state-busy"].emit("clicked")
         assert buttons["state-link"].emit("activate-link") is True

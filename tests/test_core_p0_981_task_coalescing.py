@@ -456,3 +456,61 @@ def test_hostile_priority_hook_and_bad_coalescing_kind_are_never_executed(sessio
     s.drain_until(lambda: any(e[0] == "finished" for e in s.events))
     assert control.enabled == [False, True]
     assert s.runner._count == 0
+
+
+@pytest.mark.parametrize("rebind", ["epoch", "core", "invalid_epoch"])
+def test_automatic_sync_does_not_share_results_between_source_generations(session, rebind):
+    s = session
+    s.window.service = NS(_source_context_epoch=7)
+    first, entered_first, release_first, calls_first = s.work()
+    second, entered_second, release_second, calls_second = s.work()
+    completed = []
+    opts = dict(kind="opening-sync", coalesce_key="opening:global:shallow",
+                origin="automatic")
+    s.runner.submit("Opening 1", first, ok=lambda x: completed.append("first"), **opts)
+    assert entered_first.wait(3)
+    # Identical request under the exact same Core and epoch shares its result.
+    s.runner.submit("Duplicate 1", first, **opts)
+    assert s.runner._count == 1
+    if rebind == "epoch":
+        s.window.service._source_context_epoch += 1
+    elif rebind == "core":
+        old = s.window.service
+        s.window.service = NS(_source_context_epoch=old._source_context_epoch)
+    else:
+        s.window.service._source_context_epoch = "unknown"
+    s.runner.submit("Opening 2", second, ok=lambda x: completed.append("second"), **opts)
+    assert entered_second.wait(3)
+    assert calls_first == calls_second == ["started"]
+    assert s.runner._count == 2
+    if rebind != "invalid_epoch":
+        s.runner.submit("Duplicate 2", second, **opts)
+        assert s.runner._count == 2
+    assert s.runner.is_active_automatic_opening()
+    release_second.set()
+    s.drain_until(lambda: completed == ["second"])
+    # Completion of the newer generation cannot release the older reservation.
+    assert s.runner.is_active_automatic_opening()
+    release_first.set()
+    s.drain_until(lambda: completed == ["second", "first"])
+    assert not s.runner.is_active_automatic_opening()
+    assert not s.runner._coalesced and s.runner._count == 0
+
+
+def test_inventory_automatic_scope_is_core_epoch_bound_but_manual_never_coalesces(session):
+    s = session
+    s.window.service = NS(_source_context_epoch=1)
+    tasks = [s.work() for _ in range(3)]
+    opts = dict(kind="source-sync", coalesce_key="source:inventory:periodic")
+    s.runner.submit("First", tasks[0][0], origin="automatic", **opts)
+    assert tasks[0][1].wait(3)
+    s.window.service._source_context_epoch = 2
+    s.runner.submit("Current", tasks[1][0], origin="automatic", **opts)
+    assert tasks[1][1].wait(3)
+    s.runner.submit("User", tasks[2][0], origin="user", **opts)
+    assert tasks[2][1].wait(3)
+    assert s.runner._count == 3 and len(s.runner._coalesced) == 2
+    for _, _, release, _ in tasks:
+        release.set()
+    s.drain_until(lambda: s.runner._count == 0)
+    assert not s.runner._coalesced

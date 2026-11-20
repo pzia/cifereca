@@ -13,12 +13,16 @@ from threading import Event
 from time import perf_counter_ns, process_time_ns
 
 import httpx
-import pytest
+import statistics
 from PIL import Image, ImageDraw
 
 from cifereca.gui import cover_loader
 from cifereca.gui.cover_preview import create_preview
-from tests.test_core_p0_2435_cover_cache_baseline import dist
+def dist(samples):
+    ordered = sorted(samples)
+    return {"count": len(ordered), "p50_ms": round(statistics.median(ordered), 4),
+            "p95_ms": round(ordered[(len(ordered) * 95 + 99) // 100 - 1], 4),
+            "max_ms": round(ordered[-1], 4)}
 
 
 class PillowBackend:
@@ -57,13 +61,14 @@ def _process_io():
         return {}
 
 
-@pytest.mark.parametrize("size", (16, 256))
-def test_preview_cache_concurrency_baseline(tmp_path, monkeypatch, capsys, size):
+def run_preview_cache_concurrency_baseline(tmp_path, monkeypatch, size, *, require_gdk=False):
     try:
         import gi
         gi.require_version("GdkPixbuf", "2.0")
         from gi.repository import GdkPixbuf
     except (ImportError, ValueError):
+        if require_gdk:
+            raise RuntimeError("GdkPixbuf required for native preview baseline") from None
         backend = "pillow_adapter"
         monkeypatch.setattr(cover_loader, "create_preview",
                             lambda source, dest, w, h: create_preview(
@@ -160,7 +165,33 @@ def test_preview_cache_concurrency_baseline(tmp_path, monkeypatch, capsys, size)
         assert loader.stats()["preview_created"] == 2 * size
         assert loader.stats()["preview_hit"] == 2 * size
         assert not gets
-        with capsys.disabled():
-            print("COVER_PREVIEW_BASELINE " + json.dumps(report, sort_keys=True), flush=True)
+        return report
     finally:
         loader.close()
+
+
+if __name__ == "__main__":
+    # The existing GTK venv has real GI/Pillow/httpx but not necessarily
+    # pytest. Do not install another runtime or fall back to Pillow here.
+    from contextlib import ExitStack
+    from tempfile import TemporaryDirectory
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    for size in (16, 256):
+        with TemporaryDirectory(prefix="cifereca-preview-baseline-") as tmp, ExitStack() as stack:
+            monkeypatch = SimpleNamespace(
+                setattr=lambda obj, name, value: stack.enter_context(patch.object(obj, name, value))
+            )
+            report = run_preview_cache_concurrency_baseline(
+                Path(tmp), monkeypatch, size, require_gdk=True)
+            assert report["backend"] == "gdkpixbuf"
+            print("COVER_PREVIEW_BASELINE " + json.dumps(report, sort_keys=True), flush=True)
+else:
+    import pytest
+
+    @pytest.mark.parametrize("size", (16, 256))
+    def test_preview_cache_concurrency_baseline(tmp_path, monkeypatch, capsys, size):
+        report = run_preview_cache_concurrency_baseline(tmp_path, monkeypatch, size)
+        with capsys.disabled():
+            print("COVER_PREVIEW_BASELINE " + json.dumps(report, sort_keys=True), flush=True)

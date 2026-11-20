@@ -9,8 +9,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from hashlib import sha256
+import json
 from typing import Any, Callable
 
+from ..core.source_context import source_context_epoch
 from ..core.source_refresh_policy import (
     SourceRefreshSchedule, source_refresh_due,
 )
@@ -313,25 +316,46 @@ def configure(
         # write lock. Treat this as deferred work, not a failed source sync.
         if _automatic_opening_in_flight(window):
             return True
-        ids = periodic_identities_due(window, broker)
-        if not ids:
+        service = getattr(window, "service", None)
+        try:
+            epoch = source_context_epoch(service)
+        except ValueError:
             return True
+
+        def scope_current():
+            try:
+                return (not getattr(window, "_closed", False)
+                        and getattr(window, "service", None) is service
+                        and _broker(window) is broker
+                        and source_context_epoch(service) == epoch)
+            except (TypeError, ValueError):
+                return False
+
+        ids = periodic_identities_due(window, broker)
+        if not ids or not scope_current():
+            return True
+        # The broker is pinned by the worker closure. A changing set of due
+        # identities is a distinct mission even in the same source epoch.
+        # Keep the exact identity list and broker id out of task diagnostics.
+        batch = json.dumps([id(broker), epoch, sorted(ids)], ensure_ascii=True,
+                           separators=(",", ":")).encode("ascii")
+        key = "source:inventory:periodic:" + sha256(batch).hexdigest()
 
         def work():
             failures = 0
             completed = 0
+            interrupted = False
             # No unbounded refresh batch and no user-selected-account fallback.
             for identity_id in ids:
                 # Opening may have been submitted after the GTK tick but
                 # before this queued worker began. Do not enter the broker.
                 if _automatic_opening_in_flight(window):
+                    interrupted = True
                     break
-                if (
-                    getattr(window, "_closed", False)
-                    or _broker(window) is not broker
-                ):
+                if not scope_current():
                     # A queued task must not reanimate a replaced plugin
                     # manager/broker after the GTK tick checked its scope.
+                    interrupted = True
                     break
                 try:
                     receipt = broker.synchronize_scheduled_inventory(identity_id, "periodic")
@@ -348,6 +372,9 @@ def configure(
             # TaskRunner treats a bare None as an unexecuted/invalidated
             # source-sync. Carry an explicit positive receipt only after a
             # broker-attested attempt; a skipped batch remains unproven.
+            if interrupted and completed:
+                return SyncResult(ok=False, facts={"status": "partial",
+                                                   "completed": completed})
             return SyncResult(ok=True) if completed else None
 
         try:
@@ -355,7 +382,7 @@ def configure(
                 "Actualisation périodique des notices des comptes…",
                 work, priority=TaskPriority.PROVIDER_SYNC,
                 kind="source-sync", origin="automatic",
-                coalesce_key="source:inventory:periodic",
+                coalesce_key=key,
             )
         except Exception:
             # A torn-down runner or plugin replacement cannot crash GTK tick.

@@ -51,11 +51,12 @@ def _rig(tmp_path):
     session.observed = observed
     file = tmp_path / "book.epub"
     file.write_bytes(b"test-only-staged-by-core")
-    storage = NS(placements=lambda: [{
-        "identity_id": "reader", "provider_id": "fictional-books",
+    placement = {
+        "identity_id": "reader", "provider_id": None,
         "artifact_id": "sha256:fixture", "state": "present",
-        "source_item_id": "edition-1", "placement_id": "placement-A",
-    }])
+        "source_item_id": None, "placement_id": "placement-A", "path": str(file),
+    }
+    storage = NS(placement_get=lambda pid: placement.copy() if pid == "placement-A" else None)
     service = NS(
         accounts=[account],
         _sessions={("fictional-books", "credential-A"): session},
@@ -136,9 +137,20 @@ def test_exact_current_offer_uses_generic_publisher_without_entitlement(monkeypa
         key, = tuple(kw["persisted_consent"])
         assert kw["publication_guard"](None, key) is True
         assert kw["consent_still_current"](key) is True
-        return [NS(source=key, status="downloaded", artifact_id="sha256:fixture")]
+        return [NS(source=key, status="downloaded", artifact_id="sha256:fixture",
+                   placement_id="placement-A")]
 
     monkeypatch.setattr(canonical, "execute_admitted_convergence", execute)
+    from cifereca.core import convergence_verified_presence
+    from cifereca.core.source_convergence import ConvergenceDecision, ConvergencePlan, SourceKey
+    def verify(storage, snapshot, *, library_root):
+        assert storage is service.storage
+        assert library_root == tmp_path
+        key = SourceKey(snapshot.scope, "edition-1", "edition-1", "purchase", snapshot.branch)
+        return ConvergencePlan((ConvergenceDecision(
+            key, "present_attested", "exact_origin_verified_in_profile", ("placement-A",),
+        ),))
+    monkeypatch.setattr(convergence_verified_presence, "plan_existing_verified_presence", verify)
     result = canonical.obtain_explicit_owned(
         service, target,
         resolve=lambda _service, entitlement_id, identity, edition: (

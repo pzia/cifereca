@@ -83,9 +83,9 @@ def test_native_destructive_css_is_respected_without_a_plugin_marker():
 
 def test_default_abi_keeps_native_layout_and_reapplying_state_clears_destructive_style():
     button = FakeButton("Ouvrir")
-    apply_detail_action_state(button, UiBookDetailAction("open", "Ouvrir", destructive=True))
+    apply_detail_action_state(button, UiBookDetailAction("open", "Ouvrir", callback=lambda: None, destructive=True))
     assert button.classes == {"destructive-action"}
-    apply_detail_action_state(button, UiBookDetailAction("open", "Ouvrir"))
+    apply_detail_action_state(button, UiBookDetailAction("open", "Ouvrir", callback=lambda: None))
     assert button.classes == set()
     assert not hasattr(button, "_cifereca_action_priority")
     assert button.sensitive
