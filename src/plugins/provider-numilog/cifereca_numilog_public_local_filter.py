@@ -77,15 +77,11 @@ def _validate_page(page):
     source_url = None
     seen_ids = set()
     for row in page.items:
-        if (getattr(row, "source_provider", None) != "numilog-catalog"
-                or getattr(row, "source_credential", None) != "__public__"
-                or getattr(row, "source_collection", None) != "public_catalog"
-                or getattr(row, "scenario", None) != "NUMILOG_PUBLIC"
-                or getattr(row, "docbase", None) != "NUMILOG"
-                or getattr(row, "owned", None) is not False
-                or getattr(row, "downloadable", None) is not False
-                or getattr(row, "download_url", None) is not None):
-            raise ProviderCapabilityError("Numilog public : unverified_local_page")
+        from cifereca_numilog_public_detail import validate_public_detail_item
+        try:
+            validate_public_detail_item(row)
+        except ProviderCapabilityError:
+            raise ProviderCapabilityError(error) from None
         m = getattr(row, "metadata", None)
         if type(m) is not dict or type(m.get("source_url")) is not str:
             raise ProviderCapabilityError("Numilog public : unverified_local_page")
