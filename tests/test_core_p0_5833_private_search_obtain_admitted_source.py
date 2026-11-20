@@ -89,6 +89,8 @@ def test_captured_private_offer_survives_a_b_a_and_never_uses_navigation(
     assert LibraryService.obtain_admitted_private_search_offer(
         rig, target,
     ) == "completed-for-reader"
+    with pytest.raises(ValueError, match="confirmation_consumed"):
+        LibraryService.obtain_admitted_private_search_offer(rig, target)
     assert invoked == [("reader", "card")]
 
 
