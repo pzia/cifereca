@@ -87,6 +87,7 @@ def _valid_result(
             uri=uri, callback=callback,
             state=action.state,
             unavailable_reason=_text(action.unavailable_reason, 280),
+            priority=action.priority, destructive=action.destructive,
         ))
     if not sections and not actions:
         return None
