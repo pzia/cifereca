@@ -1,0 +1,34 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.maintenance.library-organizer",
+    "version": "0.1.0",
+    "name": "Cifereca Library Organizer",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.4,<2"
+  },
+  "plugins": [
+    {
+      "id": "maintenance.library.organizer",
+      "type": "maintenance.tool",
+      "entrypoint": "cifereca_library_organizer:PLUGIN",
+      "display_name": "Organiser la bibliothèque",
+      "description": "Revue locale du nommage, classement et copies. Lecture seule.",
+      "version": "0.1.0",
+      "priority": 44,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "help_text": "Prévisualisation par pages et sélection consultative de recommandations. Aucun fichier ni droit modifié.",
+      "capabilities": [
+        "maintenance.organizer"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "library.organizer.read"
+      ],
+      "requires_contracts": []
+    }
+  ]
+}
