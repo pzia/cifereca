@@ -42,6 +42,7 @@ URL_SEARCH = (
 
 def verify_notice_c_cover(window, later, capture, report, complete):
     """Asynchronous test fixture setup, then two mapped real GTK covers."""
+    report["notice_c_cover_stage"] = "setup"
     temp = TemporaryDirectory(prefix="cifereca-c-n4-")
     directory = Path(temp.name)
     filename = directory / "notices.sqlite"
@@ -119,6 +120,7 @@ def verify_notice_c_cover(window, later, capture, report, complete):
         finally:
             sys.path.remove(str(PLUGIN))
 
+    report["notice_c_cover_stage"] = "seed"
     seed_job = pool.submit(run_seed)
     deadline = monotonic() + 10
 
@@ -169,6 +171,7 @@ def verify_notice_c_cover(window, later, capture, report, complete):
         start_stage(False)
 
     def start_stage(offline):
+        report["notice_c_cover_stage"] = "offline_texture" if offline else "cold_texture"
         doc, epoch, url = state["document"], state["epoch"], state["url"]
         db = state["db"] = Storage(filename)
         loader = state["loader"] = CoverLoader(max_workers=2)
@@ -269,6 +272,7 @@ def verify_notice_c_cover(window, later, capture, report, complete):
 
 
     def verify_real_web_action(offline, db, done):
+        report["notice_c_cover_stage"] = "offline_web" if offline else "cold_web"
         from cifereca.gui.detail_panel import DetailPanel
         from cifereca.gui.notice_c_web_action_controller import request_public_web_actions
         doc, epoch = state["document"], state["epoch"]
@@ -332,6 +336,7 @@ def verify_notice_c_cover(window, later, capture, report, complete):
                 probe.destroy()
                 state["probe"] = None
                 window.present()
+                report["notice_c_cover_stage"] = "offline_web_choices" if offline else "cold_web_choices"
                 from notice_c_web_menu_contract import verify_multiple_web_choices
                 verify_multiple_web_choices(
                     window, db, state["multiple_web"], offline=offline,
@@ -345,6 +350,7 @@ def verify_notice_c_cover(window, later, capture, report, complete):
 
 
     def verify_mainwindow_search(offline, db, service, loader, reads):
+        report["notice_c_cover_stage"] = "offline_search_list" if offline else "cold_search_list"
         doc, epoch, url = state["document"], state["epoch"], state["url"]
         identity = window.service.current_identity.identity_id
         assert identity
@@ -420,6 +426,7 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             label = "offline" if offline else "cold"
             capture("00-notice-c-mainwindow-search-" + variant + "-" + label)
             if variant == "list":
+                report["notice_c_cover_stage"] = "offline_search_detail" if offline else "cold_search_detail"
                 page.selection.set_selected(0)
                 assert page.selection.get_selected_item() is row
                 later(40, guard(lambda: check(row, "detail", monotonic() + 8)))
@@ -443,6 +450,7 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             report["checks"]["P0_6397_real_gtk_web_action_retained_c"] = True
             cleanup()
             window.present()
+            report["notice_c_cover_stage"] = "complete"
             complete()
 
         later(40, guard(show))

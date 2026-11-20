@@ -31,6 +31,67 @@ class SafeE2EExportTests(unittest.TestCase):
     def write(self, rows):
         self.source.write_text(json.dumps(rows), encoding="utf-8")
 
+    def test_book_detail_checkpoint_contract_matches_real_probe(self):
+        # This unittest runs in E2E Smoke before GTK installation, including
+        # exporter-only changes for which the Core test scope is empty.
+        import ast
+        probe = ast.parse((ROOT / "e2e/book_detail_probe.py").read_text(encoding="utf-8"))
+        definitions = {node.name for node in ast.walk(probe)
+                       if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        assignments = [node for node in probe.body if isinstance(node, ast.Assign)
+                       and any(isinstance(target, ast.Name)
+                               and target.id == "_PUBLIC_STAGE_CODES"
+                               for target in node.targets)]
+        self.assertEqual(len(assignments), 1)
+        expression = assignments[0].value
+        self.assertIsInstance(expression, ast.Call)
+        self.assertIsInstance(expression.func, ast.Name)
+        self.assertEqual(expression.func.id, "frozenset")
+        self.assertEqual(len(expression.args), 1)
+        self.assertFalse(expression.keywords)
+        literal = ast.literal_eval(expression.args[0])
+        self.assertIs(type(literal), list)
+        self.assertTrue(all(type(value) is str for value in literal))
+        self.assertLessEqual(len(literal), 64)
+        self.assertEqual(len(literal), len(set(literal)))
+        self.assertEqual(set(literal), self.module._BOOK_DETAIL_STAGES)
+        self.assertLessEqual(set(literal) - {"activation", "callback_other"}, definitions)
+
+    def test_notice_c_cover_and_six_view_failure_checkpoints_are_closed(self):
+        scenario = "book-detail-1366"
+        private = self.root / scenario / scenario / "screen.json"
+        private.parent.mkdir(parents=True)
+        self.write([{"scenario": scenario, "returncode": 1}])
+        for cover, local in (
+            ("seed", "setup"),
+            ("cold_web_choices", "cold_search_detail"),
+            ("offline_search_list", "offline_recommendations_list"),
+            ("complete", "invalidated_n2_warm_n3"),
+        ):
+            with self.subTest(cover=cover, local=local):
+                private.write_text(json.dumps({
+                    "notice_c_cover_stage": cover, "local_c_stage": local,
+                    "error": "PRIVATE", "title": "PRIVATE",
+                }), encoding="utf-8")
+                result = self.module.safe_summary(self.source)["results"][0]
+                self.assertEqual(result["book_detail_notice_c_cover_stage"], cover)
+                self.assertEqual(result["book_detail_local_c_stage"], local)
+                self.assertNotIn("PRIVATE", repr(result))
+        for bad in ("PRIVATE", "cold_web_choices\\nPRIVATE", True, 17, None, {"a": "b"}):
+            private.write_text(json.dumps({
+                "notice_c_cover_stage": bad, "local_c_stage": bad,
+            }), encoding="utf-8")
+            result = self.module.safe_summary(self.source)["results"][0]
+            self.assertNotIn("book_detail_notice_c_cover_stage", result)
+            self.assertNotIn("book_detail_local_c_stage", result)
+        self.write([{"scenario": scenario, "returncode": 0}])
+        private.write_text(json.dumps({
+            "notice_c_cover_stage": "seed", "local_c_stage": "setup",
+        }), encoding="utf-8")
+        result = self.module.safe_summary(self.source)["results"][0]
+        self.assertNotIn("book_detail_notice_c_cover_stage", result)
+        self.assertNotIn("book_detail_local_c_stage", result)
+
     def test_success_and_failure_only_export_allowlisted_fields(self):
         secret = "PRIVATE-BEARER-TOKEN-HOME-USER-ACSM-URL"
         self.write([
