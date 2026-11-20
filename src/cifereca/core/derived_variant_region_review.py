@@ -56,9 +56,13 @@ def _classify(profile, records, entries, identity_id):
     counts = dict.fromkeys(_CATEGORIES, 0)
     stage_refs = {}
     coordinate_refs = {}
+    receipt_inodes = set()
+    output_refs = {}
     owned = {}
     for key, _digest, intent in records:
         stage_refs.setdefault(intent.staged_path, []).append((key, intent))
+        receipt_inodes.update((intent.parent_stamp[:2], intent.output_stamp[:2]))
+        output_refs.setdefault(intent.output_stamp[:2], set()).add(key)
         for name in (intent.parent_path, intent.staged_path, intent.candidate_path):
             coordinate_refs.setdefault(name, set()).add(key)
         if intent.identity_id == identity_id:
@@ -77,6 +81,15 @@ def _classify(profile, records, entries, identity_id):
             else:
                 counts["unverified_regions"] += 1
 
+    # An unregistered name can still be a hardlink to a parent, an output
+    # or another regular file in the observed profile. Never classify such
+    # an alias as an independent unrecorded file. These are conservative
+    # inode observations, not proof of identity (inode reuse is possible).
+    observed_names = {}
+    for name, (info, _link) in entries.items():
+        if stat.S_ISREG(info[2]):
+            observed_names.setdefault(info[:2], set()).add(name)
+
     matched = set()
     for name, (info, _link) in entries.items():
         path = Path(name)
@@ -87,7 +100,11 @@ def _classify(profile, records, entries, identity_id):
         if not stat.S_ISREG(info[2]):
             counts["ambiguous_entries"] += 1
         elif not refs:
-            category = "ambiguous_entries" if name in coordinate_refs else "unrecorded_regular"
+            inode = info[:2]
+            category = ("ambiguous_entries"
+                        if name in coordinate_refs or inode in receipt_inodes
+                        or len(observed_names.get(inode, ())) > 1
+                        else "unrecorded_regular")
             counts[category] += 1
         elif len(refs) != 1:
             counts["ambiguous_entries"] += 1
@@ -95,6 +112,7 @@ def _classify(profile, records, entries, identity_id):
             key, intent = refs[0]
             if (intent.identity_id != identity_id
                     or coordinate_refs[name] != {key}
+                    or output_refs.get(info[:2]) != {key}
                     or (info[0], info[1], info[3], info[4]) != intent.output_stamp
                     or not all(Path(value).is_relative_to(profile) and Path(value) != profile
                                for value in (intent.parent_path, intent.candidate_path))):
