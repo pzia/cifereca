@@ -75,6 +75,7 @@ def test_new_provider_cover_wins_without_overwriting_n1_decision():
     {"source_credential": "card-b"},
     {"record_id": "other-edition"},
     {"docbase": "other-catalogue"},
+    {"medium": "physical"},
     {"source_collection": "foreign-branch"},
     {"source_account_id": "foreign-account"},
     {"revision_id": "other-revision"},
@@ -133,6 +134,7 @@ def test_known_v2_local_entry_uses_same_credential_and_catalogue_proof():
     for altered in (
         {"catalogue_scope_version": None},
         {"source_credential": "card-b"},
+        {"medium": "physical"},
         {"search_provenance": "known_catalog_stale"},
     ):
         changed = dict(local)

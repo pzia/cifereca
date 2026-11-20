@@ -28,7 +28,7 @@ def _exact(value: object, *, allow_empty: bool = False) -> bool:
 def exact_search_cover_scope(
     item: SearchResult, identity_id: str,
 ) -> CoverDocumentScope | None:
-    """Stable exact edition+source+account coordinates, never a UI row ID.
+    """Stable edition, medium, source and account coordinates for Search N2.
 
     Matches the original SearchCoverBridge identity contract. The digest is
     only an opaque reference; it does NOT prove the existence of the book.
@@ -37,6 +37,8 @@ def exact_search_cover_scope(
             or not _exact(item.source_provider)
             or not _exact(item.record_id)
             or not _exact(item.docbase)
+            or type(item.medium) is not str
+            or item.medium not in ("digital", "physical", "unknown")
             or not _exact(item.source_credential, allow_empty=True)):
         return None
     extras = (
@@ -49,7 +51,7 @@ def exact_search_cover_scope(
         return None
     coordinates = (
         item.source_provider, item.source_credential, item.record_id,
-        item.docbase, *(value if value is not None else None for value in extras),
+        item.docbase, item.medium, *extras,
     )
     digest = sha256(
         json.dumps(coordinates, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
