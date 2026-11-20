@@ -14,6 +14,9 @@ from cifereca.core.notice_cover_repository import (
     read_notice_cover_write_epoch, persist_notice_cover, persist_notice_cover_many,
 )
 from cifereca.core.notice_search_cover_producer import admit_public_search_cover, admit_public_search_catalogue
+from cifereca.core.search_orchestration import (
+    _CORE_PUBLIC_COVER_WITNESS, _public_cover_witness_coordinates,
+)
 from cifereca.storage import Storage
 from tests.test_core_p0_6366_public_c_sqlite_source_search import persist, verified_public
 
@@ -61,6 +64,13 @@ def test_evicted_public_v2_refuses_v1_and_partial_without_losing_c(tmp_path, leg
                                     cover_inventory_complete=True, expected_epoch=token) is None
         assert fence(db, rich.document) == marker
         partial_row = verified_public(title=row.title, thumbnail_url=None)
+        # Public no-image admission needs both independent same-call witnesses.
+        assert admit_public_search_catalogue(
+            partial_row, identity_id="alice", observed_at=102, public_cover_url=None,
+        ) is None
+        partial_row._core_same_call_public_cover_witness = (
+            _CORE_PUBLIC_COVER_WITNESS, _public_cover_witness_coordinates(partial_row),
+        )
         partial = admit_public_search_catalogue(
             partial_row, identity_id="alice", observed_at=102, public_cover_url=None,
         )
