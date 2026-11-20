@@ -230,6 +230,8 @@ def _public_text_score(query, field, title, author, publisher, description,
         }, query)
         return score
     if field in {"subject", "series", "language"}:
+        if {"subject": classification, "series": series, "language": language}[field] is None:
+            return 0
         return int(bool(filter_loaded_results(
             [{"source": "notice_c_public", "metadata": metadata}], query, field=field,
         )))
