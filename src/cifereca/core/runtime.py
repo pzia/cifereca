@@ -77,6 +77,14 @@ class CiferecaCore:
         )
         brokers = (build_public_brokers(library) if notice_work_admission is None
                    else build_public_brokers(library, task_admission=notice_work_admission))
+        # All three tools are optional. Register read factories, not plugin
+        # instances, before the manager constructs its activation leases.
+        from .maintenance_read_ports import maintenance_read_ports
+        brokers.update(maintenance_read_ports(library))
+        if builtin_ui:
+            # Capability marker only. The actual page mount is the scoped UI
+            # host method; no window or execution authority lives in a broker.
+            brokers["maintenance.page.host"] = object()
         notice_work = (None if notice_work_admission is None else
                        NoticeWorkRuntime(storage, brokers["tasks"],
                                          replay_registry=notice_replay_registry))

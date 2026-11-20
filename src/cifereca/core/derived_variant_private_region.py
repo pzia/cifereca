@@ -113,12 +113,22 @@ def _ensure_region(db, *, storage, root, identity_id, placement_id, shared_lock,
     directory = _directory(db, identity_id)
     profile = root / directory
     region = profile / _REGION
-    row = db.execute(
-        "SELECT identity_id,path,state FROM placements WHERE placement_id=?",
-        (placement_id,),
-    ).fetchone()
+    def parent_row():
+        return db.execute(
+            "SELECT p.identity_id,p.path,p.state,p.artifact_id,a.sha256,a.size "
+            "FROM placements p LEFT JOIN artifacts a ON a.artifact_id=p.artifact_id "
+            "WHERE p.placement_id=?", (placement_id,),
+        ).fetchone()
+
+    row = parent_row()
     _require(row is not None and row[0] == identity_id and row[2] == "present"
              and type(row[1]) is str)
+    digest, expected_size = row[4], row[5]
+    _require(type(digest) is str and len(digest) == 64
+             and all(ch in "0123456789abcdef" for ch in digest)
+             and row[3] == "sha256:" + digest
+             and type(expected_size) is int and expected_size > 0,
+             "derived_region_parent_unverified")
     parent = Path(row[1])
     _require(str(parent) == row[1] and parent.is_absolute() and ".." not in parent.parts
              and parent.is_relative_to(profile) and parent != profile
@@ -148,12 +158,25 @@ def _ensure_region(db, *, storage, root, identity_id, placement_id, shared_lock,
         _require(profile_mount == parent_mount == _mount_id(parent_fd),
                  "derived_region_filesystem_mismatch")
         parent_stamp = _signature(parent_info)
+        # The name and identity alone do not attest the parent Artifact.
+        # Hash the very descriptor whose mount and inode were checked, bounded
+        # by the persisted size (not a second path-based open).
+        _require(parent_info.st_size == expected_size, "derived_region_parent_unverified")
+        checksum = hashlib.sha256()
+        remaining = expected_size
+        while remaining:
+            block = os.read(parent_fd, min(remaining, 1024 * 1024))
+            _require(bool(block), "derived_region_parent_unverified")
+            checksum.update(block)
+            remaining -= len(block)
+        _require(checksum.hexdigest() == digest
+                 and _signature(os.fstat(parent_fd)) == parent_stamp,
+                 "derived_region_parent_unverified")
 
         def scope_paths_current():
             live()
             _require(_directory(db, identity_id) == directory
-                     and db.execute("SELECT identity_id,path,state FROM placements WHERE placement_id=?",
-                                    (placement_id,)).fetchone() == row,
+                     and parent_row() == row,
                      "derived_region_scope_changed")
             for path, expected, expected_mount in (
                     (root, root_stamp, root_mount), (profile, profile_stamp, profile_mount),

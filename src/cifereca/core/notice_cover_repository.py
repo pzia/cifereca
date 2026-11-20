@@ -204,10 +204,14 @@ def _retained_public_search_v2(db, observation, document):
 def _read_source_fence(db, key):
     row = db.execute("SELECT value FROM metadata WHERE key=?",
                      (_fence_key(key),)).fetchone()
-    if row is None:
+    return _decode_source_fence(None if row is None else row[0])
+
+
+def _decode_source_fence(raw):
+    """Decode a fence selected by its exact key, including joined reads."""
+    if raw is None:
         return None
     try:
-        raw = row[0]
         if type(raw) is not str or len(raw) > 256:
             raise ValueError
         fence = json.loads(raw, object_pairs_hook=_unique_object)

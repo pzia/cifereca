@@ -169,7 +169,7 @@ class DerivedPlugin:
         outer.append(group)
         controls = []
         for title, subtitle, label, action in (
-            ("Publications dérivées interrompues", "Revue des reçus du profil actif.", "Examiner…", "overview"),
+            ("Publications dérivées interrompues", "Revue des reçus du profil actif, en lecture seule.", "Examiner…", "overview"),
             ("Capacité du journal des variantes", "Réservations et stock nommé distincts.", "Mesurer…", "capacity"),
             ("Sélection des publications interrompues", "Coordonnées non vérifiées ; aucune reprise.", "Lister…", "list"),
         ):

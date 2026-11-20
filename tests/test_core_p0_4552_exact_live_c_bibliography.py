@@ -145,3 +145,43 @@ def test_invalid_live_source_does_not_reappear_from_retained_c(tmp_path, damage,
     with closing(Storage(filename)) as db:
         assert search_public_notice_c(db, "loups", **query).hits == (hit,)
         assert db.entitlements() == [] and db.acquisitions() == []
+
+
+@pytest.mark.parametrize("damage", ["none", "legacy", "invalid_fence", "wrong_epoch"])
+def test_joined_exact_lookup_outside_source_budget_checks_own_fence(tmp_path, damage):
+    from cifereca.core.notice_cover_repository import _fence_key, _opaque_key
+
+    with closing(Storage(tmp_path / "budget-fence.sqlite")) as db:
+        a, b = sorted(
+            [persist(db, verified_public(record_id=record, title="Les loups"), at=100)
+             for record in ("first-record", "second-record")],
+            key=lambda source: source.document.source_key,
+        )
+        # Only the later source has a C candidate. Its live row is beyond
+        # the ordinary max_scan prefix; the second cursor must reattest it.
+        canonical = persist_exact_public_search_cover(db, b)
+        key = _fence_key(_opaque_key(b.document))
+        with db._lock, db._connect() as sql:
+            if damage == "legacy":
+                sql.execute("DELETE FROM metadata WHERE key=?", (key,))
+            elif damage == "invalid_fence":
+                sql.execute("UPDATE metadata SET value=? WHERE key=?", ("{}", key))
+            elif damage == "wrong_epoch":
+                fence = json.loads(sql.execute(
+                    "SELECT value FROM metadata WHERE key=?", (key,),
+                ).fetchone()[0])
+                fence["epoch"] += 1
+                sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                            (json.dumps(fence), key))
+        page = search_public_notice_c(db, "loups", now=100, max_scan=1,
+                                      group_by_document=True)
+        assert page.status == "budget_exceeded" and page.scanned_sources == 1
+        expected = {a.document}
+        if damage in ("none", "legacy"):
+            expected.add(canonical.document)
+            assert page.unindexed_sources == 0
+        else:
+            assert page.unindexed_sources >= 1
+        assert {hit.document for hit in page.hits} == expected
+        assert page.known_matches == len(expected)
+        assert db.entitlements() == [] and db.acquisitions() == []

@@ -21,7 +21,7 @@ import unicodedata
 from .book_cover_projection import CoverDocumentScope
 from .notice_cover_projection import notice_cover_document_ref
 from .notice_cover_repository import (
-    _PREFIX, _decode, _check_live_source_fence, _read_source_fence,
+    _PREFIX, _FENCE_PREFIX, _decode, _check_live_source_fence, _decode_source_fence,
 )
 from .notice_search_cover_producer import _coordinate_digest
 from .notice_source_observation import NoticeSourceKey
@@ -95,8 +95,12 @@ def _fold(value: str) -> str:
     return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
 
+_NO_FENCE_CHECK = object()
+
+
 def _public_observation(
-    raw: object, *, key_string: object, now: int, source_proofs=None, db=None,
+    raw: object, *, key_string: object, now: int, source_proofs=None,
+    fence_raw=_NO_FENCE_CHECK,
 ) -> PublicNoticeCHit | None:
     if type(raw) is not str or type(key_string) is not str:
         return None
@@ -120,8 +124,8 @@ def _public_observation(
         if (key_string != _PREFIX + document.source_key[len("notice-c:v1:"):]):
             return None
         persisted = _decode(raw, document)
-        if db is not None:
-            _check_live_source_fence(persisted, payload, _read_source_fence(db, key_string))
+        if fence_raw is not _NO_FENCE_CHECK:
+            _check_live_source_fence(persisted, payload, _decode_source_fence(fence_raw))
         parsed = persisted.observation.fields_copy().get("search_result")
         if type(parsed) is not dict:
             return None
@@ -401,21 +405,23 @@ def search_public_notice_c(
         # a separate Storage instance updates a source concurrently.
         db.execute("BEGIN")
         cursor = db.execute(
-            "SELECT key,value FROM metadata "
-            "WHERE key>=? AND key<? "
-            "AND CASE WHEN json_valid(value) THEN "
-            "json_extract(value, '$.key.visibility') ELSE NULL END='public' "
-            "ORDER BY key LIMIT ?",
-            (_PREFIX, _PREFIX + "\uffff", max_scan + 1),
+            "SELECT m.key,m.value,f.value FROM metadata AS m "
+            "LEFT JOIN metadata AS f ON f.key=? || substr(m.key,?) "
+            "WHERE m.key>=? AND m.key<? "
+            "AND CASE WHEN json_valid(m.value) THEN "
+            "json_extract(m.value, '$.key.visibility') ELSE NULL END='public' "
+            "ORDER BY m.key LIMIT ?",
+            (_FENCE_PREFIX, len(_PREFIX) + 1,
+             _PREFIX, _PREFIX + "\uffff", max_scan + 1),
         )
-        for key_string, raw in cursor:
+        for key_string, raw, fence_raw in cursor:
             if scanned >= max_scan:
                 exceeded = True
                 break
             scanned += 1
             present_source_refs.add('notice-c:v1:' + key_string[len(_PREFIX):])
             record = _public_observation(raw, key_string=key_string, now=now,
-                                         source_proofs=source_proofs, db=db)
+                                         source_proofs=source_proofs, fence_raw=fence_raw)
             if record is None:
                 # Older cover-only sources are expected; no false 'missing'.
                 unindexed += 1
@@ -490,14 +496,15 @@ def search_public_notice_c(
             keys = [_PREFIX + ref[len("notice-c:v1:"):] for ref in remaining
                     if ref.startswith("notice-c:v1:")]
             cursor = db.execute(
-                "SELECT m.key,m.value FROM json_each(?) AS requested "
-                "JOIN metadata AS m ON m.key=requested.value",
-                (json.dumps(keys),),
+                "SELECT m.key,m.value,f.value FROM json_each(?) AS requested "
+                "JOIN metadata AS m ON m.key=requested.value "
+                "LEFT JOIN metadata AS f ON f.key=? || substr(m.key,?)",
+                (json.dumps(keys), _FENCE_PREFIX, len(_PREFIX) + 1),
             )
-            for key_string, raw in cursor:
+            for key_string, raw, fence_raw in cursor:
                 present_source_refs.add('notice-c:v1:' + key_string[len(_PREFIX):])
                 current = _public_observation(raw, key_string=key_string, now=now,
-                                              source_proofs=source_proofs, db=db)
+                                              source_proofs=source_proofs, fence_raw=fence_raw)
                 if current is None:
                     unindexed += 1
                     continue

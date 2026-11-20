@@ -318,8 +318,47 @@ def main():
     parser.add_argument("--display-height", required=True, type=int, choices=(620, 768, 800, 895, 900, 1000))
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    from tempfile import TemporaryDirectory
+    from zipfile import ZipFile
+    from cifereca.plugins import PackageStore, PluginManager, PluginStateStore
+    from cifereca.plugin_api.models import ResolvedPluginService
+
     core = CiferecaCore.open(no_plugins=True, activate_plugins=False)
     tool = DummyTool()
+    # Install the real page and three independent guided tool packages into
+    # an isolated registry, with actual Core read ports and no providers.
+    # The dummy tool still exercises the generic confirmation/run lifecycle.
+    fixture = TemporaryDirectory(prefix="maintenance-page-fixture-")
+    fixture_root = Path(fixture.name)
+    manager = PluginManager(
+        builtin_ui=True, package_store=PackageStore(fixture_root / "packages"),
+        state_store=PluginStateStore(fixture_root / "state.json"),
+        brokers=core.brokers,
+    )
+    for folder in ("maintenance-page", "maintenance-library-organizer",
+                   "maintenance-local-origin", "maintenance-derived-variants"):
+        package = fixture_root / (folder + ".zip")
+        with ZipFile(package, "w") as archive:
+            for source in sorted((ROOT / "src/plugins" / folder).iterdir()):
+                if source.is_file() and source.suffix in (".py", ".json", ".md"):
+                    archive.write(source, source.name)
+        manager.install(package)
+    assert manager.service("ui.page.maintenance") is not None
+    for key in ("maintenance.library.organizer", "maintenance.library.local-origin",
+                "maintenance.library.derived-variants"):
+        assert manager.service(key) is not None
+    original_services, original_service = manager.services, manager.service
+    def fixture_services(category):
+        if category == "maintenance.tool":
+            return (ResolvedPluginService(
+                "e2e.maintenance", "1", "fixture", "1", "maintenance.tool", tool,
+                registry_generation=manager.registry_generation,
+            ),) + tuple(original_services(category))
+        return original_services(category)
+    def fixture_service(key):
+        return tool if key == "e2e.maintenance" else original_service(key)
+    manager.services, manager.service = fixture_services, fixture_service
+    core.library.attach_plugin_manager(manager)
     report = {
         "status": "RUNNING", "scenario": "maintenance-tools", "width": args.width,
         "scope": "real GTK MainWindow/XTEST; simulated tool with zero destructive IO",
@@ -475,6 +514,14 @@ def main():
 
         until(allocated, click_then_continue, timeout=6.0)
 
+    def refresh_tools():
+        page = window[0]._plugin_page_widgets["tools"]
+        button = next(node for node in walk(page)
+                      if isinstance(node, Gtk.Button) and node.get_name() == "maintenance-page-refresh")
+        assert button.get_label() == "Actualiser"
+        # Fixture redraw only; preview/confirmation/cancel retain real XTEST.
+        button.emit("clicked")
+
     def ready():
         gtk_phase_2027("maint_route")
         w = window[0]
@@ -498,7 +545,9 @@ def main():
         if w.view_stack.get_visible_child_name() != "tools":
             w._visit_route("tools")
         assert w.view_stack.get_visible_child_name() == "tools", "Outils page not visible"
-        w._refresh_tools_page()
+        assert w._page_lifecycle_dispatcher.handles("tools")
+        assert w._tools_box is not None
+        report["checks"]["P0_7100_real_installed_page_contribution"] = True
         review_rows = [node for node in walk(w._tools_box)
                        if isinstance(node, Adw.ActionRow)
                        and node.get_title() == "Publications dérivées interrompues"]
@@ -518,6 +567,16 @@ def main():
         assert len(organizer_rows) == 1
         assert "Lecture seule" in organizer_rows[0].get_subtitle()
         report["checks"]["P0_3176_organizer_read_only_row"] = True
+        origin_rows = [node for node in walk(w._tools_box)
+                       if isinstance(node, Adw.ActionRow)
+                       and node.get_title() == "Suggestions de provenance — par lots"]
+        assert len(origin_rows) == 1
+        assert "Lecture seule" in origin_rows[0].get_subtitle()
+        assert {resolved.plugin_id for resolved in original_services("maintenance.tool")} == {
+            "maintenance.library.organizer", "maintenance.library.local-origin",
+            "maintenance.library.derived-variants",
+        }
+        report["checks"]["P0_7100_three_real_guided_contributions"] = True
         preview_button[0] = next((
             b for b in walk(w._tools_box)
             if isinstance(b, Gtk.Button)
@@ -766,7 +825,7 @@ def main():
 
     def refresh_running():
         detached_label[0] = line_widgets()[1]
-        window[0]._refresh_tools_page()
+        refresh_tools()
         until(lambda: line_is("Au repos"), refresh_ready)
 
     def refresh_ready():
@@ -806,7 +865,7 @@ def main():
         p1_runs[0] = tool.run_calls
         p1_mode_index[0] = 0
         tool.delay = 0.65
-        window[0]._refresh_tools_page()
+        refresh_tools()
         later(verify_p1_allocation, 220)
 
     def verify_p1_allocation():
@@ -947,10 +1006,6 @@ def main():
                 gtk_phase_2027("maint_window_start")
                 w = MainWindow(self, core.config, core.library, core.diagnostics)
                 window[0] = w
-                w.plugin_manager = SimpleNamespace(services=lambda name: (
-                    [SimpleNamespace(plugin_id="e2e.maintenance", service=tool)]
-                    if name == "maintenance.tool" else ()
-                ))
                 w.show_error = lambda message, _title=None: errors.append(str(message))
                 # P0 #2712: test the actual Xvfb height, never a 900px
                 # display while claiming a shorter laptop/desktop geometry.
@@ -967,7 +1022,9 @@ def main():
         def do_shutdown(self):
             if device[0] is not None:
                 device[0].close()
+            manager.close()
             core.close()
+            fixture.cleanup()
             Gio.Application.do_shutdown(self)
 
     app = Application()

@@ -719,18 +719,12 @@ class MainWindow(Adw.ApplicationWindow):
         if box is None: return
         self._dispose_maintenance_lines()
         clear_box(box)
-        from cifereca.gui.derived_variant_maintenance_line import add_derived_variant_maintenance_line
         from cifereca.gui.adept_historical_maintenance_line import add_adept_historical_maintenance_line
-        from cifereca.gui.library_organizer_line import add_library_organizer_line
-        from cifereca.gui.local_origin_suggestion_batch_line import add_local_origin_suggestion_batch_line
         services = self.plugin_manager.services("maintenance.tool") if self.plugin_manager else ()
         if not services:
             label = Gtk.Label(label="Aucun outil de maintenance additionnel n’est installé.", xalign=0)
             add_css(label, "dim-label"); box.append(label)
-            add_derived_variant_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
             add_adept_historical_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
-            add_library_organizer_line(self, box, Gtk=Gtk, Adw=Adw)
-            add_local_origin_suggestion_batch_line(self, box, Gtk=Gtk, Adw=Adw)
             return
         manager = self.plugin_manager
         for resolved in services:
@@ -1165,12 +1159,9 @@ class MainWindow(Adw.ApplicationWindow):
             run.connect("clicked", prepare)
         if _page_context is not None and (not _page_context.is_current() or self._tools_box is not box):
             return
-        # Keep existing plugin tools in their original order and above the
-        # independent Core diagnostics, including on narrow displays.
-        add_derived_variant_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
+        # ADEPT remains a bounded transitional adapter (#6777).
+        # The other three tools are optional registry contributions only.
         add_adept_historical_maintenance_line(self, box, Gtk=Gtk, Adw=Adw)
-        add_library_organizer_line(self, box, Gtk=Gtk, Adw=Adw)
-        add_local_origin_suggestion_batch_line(self, box, Gtk=Gtk, Adw=Adw)
 
     def run_opening_sync(self, control: Gtk.Widget | None = None, *, deep: bool = False) -> None:
         return sync_controller.run_opening_sync(self, control, deep=deep)

@@ -171,7 +171,7 @@ def build_standard_page(window, route, *, Gtk, PluginManagerPage):
                 "library": window._build_library_page,
                 "readers": window._build_readers_page,
                 "recent": window._build_recent_page, "sync": window._build_sync_page,
-                "tools": window._build_tools_page, "settings": window._build_settings_page,
+                "settings": window._build_settings_page,
                 "plugins": lambda: PluginManagerPage(window, window.plugin_manager, window._plugins_changed)
                 if window.plugin_manager else Gtk.Label(label="Gestionnaire indisponible")}
     widget = builders[route]()

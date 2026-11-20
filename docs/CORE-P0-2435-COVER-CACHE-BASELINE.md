@@ -57,3 +57,34 @@ performance ni une réception de #7123). Comparer avec le même scénario
 après intégration de #7123 ; ne pas attribuer un écart au seul contrôle
 sans exécution comparable. Aucune revendication de bibliothèque réelle,
 de disque froid, de rendu GTK ni de SLA.
+
+
+## Reçu terrain N3 EPUB (opt-in, Linux)
+
+Sur deux échantillons locaux sélectionnés par le propriétaire, 16 et 256
+fichiers distincts, préparer deux manifestes JSON (tableaux de chemins absolus
+EPUB/KEPUB explicitement autorisés). **Ne pas joindre les manifestes au ticket.**
+Dans un processus séparé avec les dépendances Cifereca :
+
+```sh
+PYTHONPATH=src python3 scripts/benchmark-notice-cover-epub.py --size 16 --manifest /tmp/epub16.json
+PYTHONPATH=src python3 scripts/benchmark-notice-cover-epub.py --size 256 --manifest /tmp/epub256.json
+```
+
+Partager seulement les deux objets JSON agrégés et le commit exécuté, avec le
+type de disque et le contexte de charge si connus. Aucune ouverture de
+bibliothèque SQLite ou session réseau. Lecture seule des archives nommées,
+no-follow final et taille bornée (2 Gio par archive, 32 Gio cumulés) ;
+cache N3 temporaire supprimé en fin de processus ; pas de nettoyage du cache
+système ni de mutation des originaux (les lectures peuvent modifier atime).
+Les références sont des scopes d'expérience, non des preuves de Placement.
+Les refus/échecs sont comptés, jamais omis du dénominateur sélectionné ;
+un corpus comportant peu de couvertures qualifiées n'est pas représentatif.
+La préparation du reçu lit et hache l'archive : cache OS potentiellement chaud.
+Les deltas Linux read_bytes/write_bytes sont des compteurs du processus,
+pas une mesure directe des IOPS du matériel ; zéro read_bytes ne signifie
+pas zéro lecture logique. Latences froid/chaud N3, CPU/RSS et cache physique
+uniquement, pas GTK, ni comparaison de versions, ni SLA.
+Exécuter exactement les mêmes manifestes avant/après une optimisation
+sur un environnement comparable. Ce script ne suffit pas à recevoir
+le ticket sans mesures terrain effectives.

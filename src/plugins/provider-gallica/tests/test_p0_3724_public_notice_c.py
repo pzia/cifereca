@@ -115,3 +115,75 @@ def test_audio_remains_explicitly_unqualified_without_new_sru_get():
         assert not response.results and response.partial is True and len(calls) == 1
     finally:
         obj.close()
+
+
+@pytest.mark.parametrize("with_alternate", [True, False])
+def test_exact_ark_web_choice_survives_source_eviction_and_restart(tmp_path, with_alternate):
+    from contextlib import closing
+    from cifereca.core.notice_c_web_choices import (
+        read_public_web_choices, resolve_public_web_choice,
+    )
+    from cifereca.core.notice_c_known_projection import merge_public_notice_c_known_rows
+
+    entries = ENTRY if with_alternate else ENTRY.replace(
+        f'<link rel="alternate" type="text/html" href="{LINK}"/>', "",
+    )
+    obj, calls = session(entries)
+    filename = tmp_path / "gallica-web.sqlite"
+    try:
+        with closing(Storage(filename)) as db:
+            response = obj.search_with_response_facets("Notice exacte Gallica", "catalog",
+                                                      field="title", content_types=("epub",))
+            row, = _public_rows_from_response(response, obj)
+            assert _mirror_remote_results(SimpleNamespace(storage=db), [row],
+                                          identity_id="alice", require_public_cover_witness=True) == 1
+            canonical = row._core_notice_canonical_cover_document_ref
+            source = read_notice_cover(db, row._core_notice_cover_document_ref)
+            c = read_consolidated_notice_cover(db, canonical)
+            ref, = c.catalogue_web_references
+            assert (ref.provider_id, ref.record_id, ref.url) == (obj.provider_id, ARK, LINK)
+            assert ref.evidence == obj.provider_id + ".public_search_record_identifier"
+            assert ref.access_mode == "public"
+            menu = read_public_web_choices(db, canonical)
+            choice, = menu.choices
+            assert (choice.record_id, choice.provider_id) == (ARK, obj.provider_id)
+            assert resolve_public_web_choice(db, canonical, expected_epoch=menu.epoch,
+                                             choice_id=choice.choice_id) == LINK
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+            assert db.entitlements() == db.acquisitions() == []
+        with closing(Storage(filename)) as db:
+            known, = merge_public_notice_c_known_rows(
+                [], search_public_notice_c(db, "Notice exacte Gallica", group_by_document=True),
+                identity_id="bob",
+            )
+            assert known["_cover_document_ref"] == canonical
+            assert read_public_web_choices(db, canonical) == menu
+            assert resolve_public_web_choice(db, canonical, expected_epoch=menu.epoch,
+                                             choice_id=choice.choice_id) == LINK
+            assert resolve_public_web_choice(db, canonical, expected_epoch=menu.epoch + 1,
+                                             choice_id=choice.choice_id) is None
+            assert db.entitlements() == db.acquisitions() == []
+        assert len(calls) == 1
+    finally:
+        obj.close()
+
+
+def test_conflicting_ark_alternate_cannot_supply_a_web_choice(tmp_path):
+    from contextlib import closing
+
+    entries = ENTRY.replace("</entry>",
+        '<link rel="alternate" type="text/html" href="https://gallica.bnf.fr/ark:/12148/bpt6k1234"/></entry>')
+    obj, calls = session(entries)
+    try:
+        with closing(Storage(tmp_path / "refused.sqlite")) as db:
+            response = obj.search_with_response_facets("Notice exacte Gallica", "catalog", field="title")
+            assert response.partial is True and response.results == []
+            rows = _public_rows_from_response(response, obj)
+            assert rows == []
+            assert _mirror_remote_results(SimpleNamespace(storage=db), rows,
+                                          identity_id="alice", require_public_cover_witness=True) == 0
+            assert not search_public_notice_c(db, "Notice exacte Gallica").hits
+            assert db.entitlements() == db.acquisitions() == []
+        assert len(calls) == 1
+    finally:
+        obj.close()

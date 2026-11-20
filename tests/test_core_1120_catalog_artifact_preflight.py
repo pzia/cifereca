@@ -110,3 +110,67 @@ def test_nonlocal_rows_are_not_accidentally_resurrected(tmp_path):
     assert local_catalog_candidates(
         entries, identity_id="alice", source_provider="paris", item_id="book-a",
     ) == []
+
+
+@pytest.mark.parametrize("kind", ["file_alias", "parent_alias", "fifo", "directory"])
+def test_catalog_preflight_never_inspects_non_regular_or_aliased_path(tmp_path, kind):
+    import os
+
+    folder = tmp_path / "library"
+    folder.mkdir()
+    path = folder / "book.epub"
+    if kind == "file_alias":
+        target = tmp_path / "external.epub"
+        target.write_bytes(b"outside")
+        path.symlink_to(target)
+    elif kind == "parent_alias":
+        target = tmp_path / "outside"
+        target.mkdir()
+        (target / path.name).write_bytes(b"outside")
+        folder.rmdir()
+        folder.symlink_to(target, target_is_directory=True)
+    elif kind == "fifo":
+        os.mkfifo(path)
+    else:
+        path.mkdir()
+
+    def forbidden(_path):
+        pytest.fail("Invalid catalog path must not be inspected")
+
+    assert inspect_catalog_local_file(_entry(path), artifact_inspector=forbidden) == (False, path)
+
+
+@pytest.mark.parametrize("change", ["replace", "same_size", "parent_replace"])
+def test_catalog_preflight_refuses_changed_physical_witness(tmp_path, change):
+    import os
+
+    folder = tmp_path / "library"
+    folder.mkdir()
+    path = folder / "book.epub"
+    path.write_bytes(b"original")
+    original = path.stat()
+
+    def inspector(_path):
+        if change == "replace":
+            path.rename(folder / "previous.epub")
+            path.write_bytes(b"original")
+        elif change == "same_size":
+            path.write_bytes(b"modified")
+            os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns))
+        else:
+            folder.rename(tmp_path / "previous")
+            folder.mkdir()
+            path.write_bytes(b"original")
+        return SimpleNamespace(valid=True, protected=False)
+
+    assert inspect_catalog_local_file(_entry(path), artifact_inspector=inspector) == (False, path)
+    assert path.exists()
+
+
+def test_catalog_preflight_requires_boolean_validity(tmp_path):
+    path = tmp_path / "book.epub"
+    path.write_bytes(b"fixture")
+    assert inspect_catalog_local_file(
+        _entry(path),
+        artifact_inspector=lambda _: SimpleNamespace(valid="yes", protected=False),
+    ) == (False, path)

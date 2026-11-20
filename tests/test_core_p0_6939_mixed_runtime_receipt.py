@@ -17,6 +17,7 @@ from cifereca.core.notice_c_cover_index import (
 from cifereca.core.notice_c_exact_recompute import request_exact_public_recompute
 from cifereca.core.notice_c_public_search import search_public_notice_c
 from cifereca.core.notice_c_purchase_runtime import install_purchase_runtime
+from cifereca.core.notice_c_purchase_settings import read_purchase_policy, change_purchase_policy
 from cifereca.core.notice_c_work_runtime import NoticeWorkRuntime
 from cifereca.core.sync_coordination import synchronize_account_source
 from cifereca.plugin_api import ProviderSearchResponse, PublicSearchNotice
@@ -30,7 +31,8 @@ from tests.test_core_p0_6366_real_search_notice_c_ingestion import public_row
 
 
 @pytest.mark.parametrize("public_count", [0, 1, 3])
-def test_shared_runtime_drains_both_lanes_after_admission_pressure(rig, public_count):
+@pytest.mark.parametrize("start_disabled", [False, True])
+def test_shared_runtime_drains_both_lanes_after_admission_pressure(rig, public_count, start_disabled):
     service, db, root = rig
     service._source_context_lock = RLock()
     reads = install(service)
@@ -84,6 +86,11 @@ def test_shared_runtime_drains_both_lanes_after_admission_pressure(rig, public_c
 
     try:
         executor = install_purchase_runtime(service, runtime)
+        if start_disabled:
+            off = change_purchase_policy(
+                service, expected_storage=db, expected=read_purchase_policy(db), enabled=False,
+            )
+            assert not off.enabled
         public_jobs = []
         for i in range(public_count):
             def observed(title, at):
@@ -107,6 +114,21 @@ def test_shared_runtime_drains_both_lanes_after_admission_pressure(rig, public_c
         held = [budget.acquire(priority=int(TaskPriority.METADATA)) for _ in range(3)]
         try:
             assert all(lease is not None for lease in held)
+            if start_disabled:
+                # Consent OFF does not block the existing inventory commit
+                # or erase independently requested public recomputations.
+                disabled = synchronize_account_source(service, service.account)["canonical_rights"]
+                assert "purchase_enrichment" not in disabled
+                assert len(refs(db)[0]) == 1 and reads == [] and transfers == []
+                assert executor.ready_refs() == ()
+                assert all(journal.read_job(db, ref).attempts == 0 for ref, _ in public_jobs)
+                before_enable = runtime.documentary_revision()
+                on = change_purchase_policy(service, expected_storage=db, expected=off, enabled=True)
+                assert on.enabled and on.revision == off.revision + 1
+                # Consent does not itself call the provider or regenerate
+                # a grant. Only a new qualified same-read Sync can do so.
+                assert runtime.documentary_revision() == before_enable
+                assert executor.ready_refs() == () and transfers == [] and reads == []
             summary = synchronize_account_source(service, service.account)["canonical_rights"]
             assert summary["purchase_enrichment"] == {
                 "requested": 1, "admitted": 1, "deferred": 0, "unrequested": 0,

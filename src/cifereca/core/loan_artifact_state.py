@@ -146,8 +146,21 @@ def inspect_catalog_local_file(
     """
     path_text = str((entry.get("metadata") or {}).get("path") or "")
     path = Path(path_text) if path_text else None
-    if path is not None and path.is_file():
-        inspection = artifact_inspector(path)
-        if inspection.valid and inspection.protected is not True:
-            return True, path
+    if path is None:
+        return False, path
+
+    class _InvalidCatalogWitness(ValueError):
+        pass
+
+    # A descriptive catalog projection must not cause inspection of a
+    # symlink, FIFO or concurrently replaced file. Keep inspector exceptions
+    # distinct from physical witness failures (the caller owns invalidation).
+    try:
+        with _physical_witness(path, _InvalidCatalogWitness) as (_, current):
+            inspection = artifact_inspector(path)
+            current()
+            if inspection.valid is True and inspection.protected is not True:
+                return True, path
+    except _InvalidCatalogWitness:
+        pass
     return False, path
