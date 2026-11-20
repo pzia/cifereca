@@ -1850,6 +1850,35 @@ def main():
         assert state["detail_state_calls"] == ["ready"]
         report["checks"]["P0_3685_declared_action_states_overflow_keyboard_gtk"] = True
         report["checks"]["P0_3685_disabled_link_and_retired_callback_inert_gtk"] = True
+        from cifereca.plugin_api import CachedBookDetail, CachedBookDetailContribution
+        panel = master._page.detail
+        base = panel._action_buttons[0]
+        panel.update_cached_book_details((CachedBookDetailContribution(
+            "fixture-cache", CachedBookDetail("book", "alice", actions=(
+                UiBookDetailAction("pending", "Actualiser le cache", state="busy",
+                                   unavailable_reason="Lecture en cours", priority=100),
+                UiBookDetailAction("blocked", "Contenu externe", state="unavailable",
+                                   unavailable_reason="Source absente", priority=101),
+                UiBookDetailAction("missing", "Sans cible"),
+            )),
+        ),))
+        buttons = {button._cifereca_action_id: button for button in panel._action_buttons}
+        assert len(buttons) == 3 and base in buttons.values()
+        bar = panel.action_scroll
+        bar._layout_overflow(140)
+        cache_buttons = []
+        for key, reason in (("pending", "Lecture en cours"), ("blocked", "Source absente")):
+            button = buttons["book-cache:fixture-cache:" + key]
+            cache_buttons.append(button)
+            assert button.get_sensitive() is False
+            assert reason in button.get_tooltip_text()
+            assert button.get_parent() is bar.overflow_box
+            button.emit("clicked")
+        assert state["detail_state_calls"] == ["ready"]
+        panel.update_cached_book_details(())
+        assert panel._action_buttons == [base]
+        assert all(button._cifereca_action_context_revoked is True for button in cache_buttons)
+        report["checks"]["P0_3685_targetless_cache_states_overflow_gtk"] = True
         show_field_provenance()
 
     def show_field_provenance():
