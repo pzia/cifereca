@@ -203,7 +203,37 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 assert evict_notice_cover(db, source, expected_epoch=observation.epoch)
                 assert read_notice_cover(db, source) is None
             assert db.entitlements() == [] and db.acquisitions() == []
-            return doc, c.epoch, result.artifact_id, result.placement_id, book
+            # A third source deliberately shares only the image URL. It has
+            # neither a matching Origin nor a strong edition relation.
+            independent = SearchResult(
+                id="independent-c", record_id="independent-c", docbase="digital-books",
+                medium="digital", title="Atlas indépendant", author="Géographe",
+                type="book", format="PDF", publisher=None, published_at=None,
+                description=None, thumbnail_url=url, friendly_url=None,
+                scenario="search", source_provider="fixture-c-other",
+                source_credential="__public__", source_collection="public_catalog",
+                source_account_id=None, owned=False, downloadable=False,
+                download_url=None, metadata={},
+            )
+            separate = _public_rows_from_response(
+                ProviderSearchResponse(results=[independent],
+                    public_notices=(PublicSearchNotice(independent),)),
+                NS(provider_id="fixture-c-other", credential_id="__public__",
+                   credentials={}, _accounts=[]),
+            )
+            assert len(separate) == 1
+            assert _mirror_remote_results(NS(storage=db), separate, identity_id=owner,
+                                          require_public_cover_witness=True) == 1
+            other_doc = separate[0]._core_notice_canonical_cover_document_ref
+            other = read_consolidated_notice_cover(db, other_doc)
+            assert other_doc != doc and other is not None
+            assert len(other.sources) == 1 and {x.url for x in other.candidates} == {url}
+            assert len(read_consolidated_notice_cover(db, doc).sources) == 2
+            other_source = read_notice_cover(db, separate[0]._core_notice_cover_document_ref)
+            assert other_source is not None
+            assert evict_notice_cover(db, other_source.document, expected_epoch=other_source.epoch)
+            assert db.entitlements() == [] and db.acquisitions() == []
+            return doc, c.epoch, result.artifact_id, result.placement_id, book, other_doc, other.epoch
         finally:
             db.close()
 
@@ -277,7 +307,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
 
     def start_stage(offline):
         report["local_c_stage"] = "offline_project" if offline else "cold_project"
-        doc, epoch, artifact, placement, book = state["facts"]
+        doc, epoch, artifact, placement, book, other_doc, other_epoch = state["facts"]
         db = state["db"] = Storage(filename)
         loader = state["loader"] = CoverLoader(max_workers=2)
         loader.root = root / "images"
@@ -373,6 +403,8 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             ])
             with patch.object(recommendation_service, "build_queries",
                               return_value=("Notice", "témoin")):
+                # Keep the pre-existing six-view ranking corpus isolated:
+                # the extra Atlas fixture shares N3, not either query term.
                 ranking = recommendation_service.compute_recommendations(
                     library, OfflineCatalogue(), owner, exclude_owned=False, max_queries=2,
                 )
@@ -737,12 +769,60 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 report["checks"]["P0_4980_warm_n2_cold_n3_real_gtk"] = True
                 report["checks"]["P0_6366_mainwindow_library_recent_restart_offline"] = True
                 report["checks"]["P0_4980_same_c_six_physical_views_restart_offline"] = True
+                # The same URL bytes may serve two distinct C documents.
+                # Rebind only the list surface, keeping the original detail
+                # mapped, and require a new documentary read but no N3 GET.
+                verify_independent_c(matrix, list_cover, detail_cover)
+
+            later(40, guard(lambda: recovered(monotonic() + 8)))
+
+        def verify_independent_c(matrix, list_cover, detail_cover):
+            report["local_c_stage"] = "distinct_c_shared_n3"
+            before_n2 = n2.stats()
+            before_n3 = loader.stats()
+            old_request = list_cover._request
+            detail_request = detail_cover._request
+            list_cover.bind_document(n2, other_doc, variant="list",
+                                     minimum_revision=other_epoch)
+
+            def observed(deadline):
+                if (list_cover._request is old_request
+                        or not list_cover.get_mapped()
+                        or not isinstance(list_cover.picture.get_paintable(), Gdk.Texture)
+                        or list_cover.placeholder.get_visible()
+                        or list_cover.spinner.get_visible()
+                        or reads != [doc, other_doc]):
+                    assert monotonic() < deadline, "Independent C / shared N3 GTK timeout"
+                    later(40, guard(lambda: observed(deadline)))
+                    return
+                assert not old_request.active
+                assert list_cover._request.still_current
+                assert list_cover._request.source_uri == url
+                assert detail_cover._request is detail_request and detail_request.still_current
+                assert detail_cover.get_mapped()
+                for cover in (list_cover, detail_cover):
+                    texture = cover.picture.get_paintable()
+                    assert isinstance(texture, Gdk.Texture)
+                    with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
+                        assert image.convert("RGB").getpixel((0, 0)) == replacement_pixels
+                after_n2, after_n3 = n2.stats(), loader.stats()
+                assert gets == ["GET", "GET"]
+                assert after_n2["n2_register_new"] == before_n2["n2_register_new"] + 1
+                assert after_n2["n1_selected_count"] == before_n2["n1_selected_count"] + 1
+                assert after_n3["download_ok"] == before_n3["download_ok"]
+                assert after_n3["preview_created"] == before_n3["preview_created"]
+                assert after_n3["ui_applied"] >= before_n3["ui_applied"] + 1
+                assert after_n3["ui_failed"] == before_n3["ui_failed"]
+                assert window.service._account_context_epoch == account_epoch
+                assert window.service._source_context_epoch == source_epoch
+                capture("00-notice-c-distinct-c-shared-n3")
+                report["checks"]["P0_4980_distinct_c_shared_n3_real_gtk"] = True
                 report["local_c_stage"] = "complete"
                 cleanup()
                 window.present()
                 complete()
 
-            later(40, guard(lambda: recovered(monotonic() + 8)))
+            later(40, guard(lambda: observed(monotonic() + 8)))
 
         stamp_value = 1794900000
         future = pool.submit(project)
