@@ -11,6 +11,7 @@ from itertools import chain
 import re
 import math
 from .descriptions import description_text
+from .plugin_api.models import DetailField, Provenance, YouthAgeRange
 
 # These are *public bibliographic facts*, not provider-internal identities.
 _FIELDS = (
@@ -263,14 +264,20 @@ def _youth_age_items(raw: object):
         return
     for index, record in enumerate(raw):
         if index >= _MAX_COLLECTION_ENTRIES:
-            yield "Âge", "Liste longue : tranches supplémentaires non affichées", "copy"
+            yield "Âge", "Liste longue : tranches supplémentaires non affichées", "copy", None
             break
-        if not isinstance(record, Mapping):
+        provenance = None
+        if type(record) is YouthAgeRange:
+            kind, low, high = record.age_kind, record.age_min, record.age_max
+            if type(record.provenance) is Provenance:
+                provenance = record.provenance
+        elif isinstance(record, Mapping):
+            kind = record.get("age_kind")
+            low, high = record.get("age_min"), record.get("age_max")
+        else:
             continue
-        kind = record.get("age_kind")
         if type(kind) is not str or kind not in _AGE_KINDS:
             continue
-        low, high = record.get("age_min"), record.get("age_max")
         if low is not None and (type(low) is not int or not 0 <= low < 18):
             continue
         if high is not None and (type(high) is not int or not 0 <= high <= 18):
@@ -287,15 +294,15 @@ def _youth_age_items(raw: object):
             age = f"{low} ans"
         else:
             age = f"De {low} à {high} ans"
-        yield _AGE_KINDS[kind], age, "copy"
+        yield _AGE_KINDS[kind], age, "copy", provenance
 
 
-def detail_metadata_items(metadata: object) -> tuple[tuple[str, str, str], ...]:
+def detail_metadata_fields(metadata: object) -> tuple[DetailField, ...]:
     """Return explicit bibliographic facts only; no network, HTML or raw dict."""
     if not isinstance(metadata, Mapping):
         return ()
-    rows: list[tuple[str, str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    rows: list[DetailField] = []
+    seen: set[tuple] = set()
     omitted = 0
     for prefix, data, public_product in (
         ("", metadata, False),
@@ -308,12 +315,14 @@ def detail_metadata_items(metadata: object) -> tuple[tuple[str, str, str], ...]:
         known = (
             (label, value, "copy" if public_product else _FIELD_KIND.get(
                 key, "copy" if key in _COPY_ONLY else "all",
-            ))
+            ), None)
             for key, label in (_PUBLIC_PRODUCT_FIELDS if public_product else _FIELDS)
             for value in _values(data.get(key), key)
         )
-        for label, value, kind in chain(
-            known, () if public_product else _identifier_items(data.get("identifiers")),
+        for label, value, kind, provenance in chain(
+            known, () if public_product else (
+                (*item, None) for item in _identifier_items(data.get("identifiers"))
+            ),
             () if public_product else _youth_age_items(data.get("youth_age_ranges")),
         ):
             actual_label = prefix + label
@@ -323,18 +332,36 @@ def detail_metadata_items(metadata: object) -> tuple[tuple[str, str, str], ...]:
                     value = checked
                 else:
                     actual_label, kind = prefix + "Identifiant déclaré", "all"
-            row = (actual_label, value, kind)
-            key_for_dedup = (actual_label, value)
+            # Keep distinct source declarations on otherwise identical ages.
+            # Free-form proof.metadata is neither traversed nor displayed.
+            source_key = None if provenance is None else tuple(
+                part if type(part) is str else ""
+                for part in (provenance.source, provenance.provider_id,
+                             provenance.source_id, provenance.observed_at)
+            )
+            key_for_dedup = (actual_label, value, source_key)
             if key_for_dedup in seen:
                 continue
             seen.add(key_for_dedup)
             if len(rows) < _MAX_ROWS:
-                rows.append(row)
+                rows.append(DetailField(
+                    id=f"detail-{len(rows)}", label=actual_label, value=value,
+                    kind=kind, provenance=provenance,
+                ))
             else:
                 omitted += 1
     if omitted:
-        rows.append(("Métadonnées", f"{omitted} valeur(s) supplémentaires non affichées (limite de sécurité)", "copy"))
+        rows.append(DetailField(
+            id="detail-limit", label="Métadonnées",
+            value=f"{omitted} valeur(s) supplémentaires non affichées (limite de sécurité)", kind="copy",
+        ))
     return tuple(rows)
+
+
+def detail_metadata_items(metadata: object) -> tuple[tuple[str, str, str], ...]:
+    """Compatibility triples for existing consumers without typed fields."""
+    return tuple((field.label, field.value, field.kind)
+                 for field in detail_metadata_fields(metadata))
 
 
 def detail_metadata_rows(metadata: object) -> tuple[tuple[str, str], ...]:

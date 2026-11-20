@@ -1,11 +1,12 @@
 """Canonical neutral book-detail projection and pure display formatting."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 from ..language import language_label
-from ..book_detail_metadata import detail_metadata_items, safe_detail_value
+from ..book_detail_metadata import detail_metadata_fields, safe_detail_value
 from ..plugin_api import DetailField, DetailSection, DocumentLink, UiBookDetailPresentation
 from .book_notice_controller import book_cover_notice_rows
 
@@ -165,9 +166,9 @@ def _essential_fields(fields, details):
             break
         if label in shown:
             continue
-        for source_label, value, kind in details:
-            if source_label in (label, "EPUB · " + label, "Catalogue · " + label):
-                result.append(DetailField(f"essential-{len(result)}", source_label, value, kind))
+        for field in details:
+            if field.label in (label, "EPUB · " + label, "Catalogue · " + label):
+                result.append(replace(field, id=f"essential-{len(result)}"))
                 break
     return tuple(result)
 
@@ -186,10 +187,10 @@ def book_detail_presentation(
     cover_document_ref: object | None = None,
 ) -> UiBookDetailPresentation:
     """Build the neutral book-detail projection used by Core and plugin views."""
-    details = list(detail_metadata_items(metadata))
+    details = list(detail_metadata_fields(metadata))
     if isinstance(metadata, dict):
-        details.extend(("Image du livre · " + label, value, "copy")
-                       for label, value in book_cover_notice_rows(metadata))
+        details.extend(DetailField(f"cover-{index}", "Image du livre · " + label, value, "copy")
+                       for index, (label, value) in enumerate(book_cover_notice_rows(metadata)))
     sections_list: list[DetailSection] = []
     for order, (section_title, section_values) in enumerate(section_rows):
         compact_rows = compact_detail_rows(section_values)
@@ -214,14 +215,14 @@ def book_detail_presentation(
     # original shape: the generic helper must not fabricate a new section.
     if metadata is not None:
         primary_title = safe_detail_value(title)
-        if primary_title and not any(label == "Titre" and value == primary_title
-                                     for label, value, _kind in details):
-            details.insert(0, ("Titre", primary_title, "title"))
+        if primary_title and not any(field.label == "Titre" and field.value == primary_title
+                                     for field in details):
+            details.insert(0, DetailField("detail-title", "Titre", primary_title, "title"))
         # Avoid merging known individual authors into a synthetic author field.
-        if subtitle and not any(kind == "author" for _label, _value, kind in details):
+        if subtitle and not any(field.kind == "author" for field in details):
             single_author = safe_detail_value(subtitle)
             if single_author:
-                details.append(("Auteur", single_author, "author"))
+                details.append(DetailField("detail-author", "Auteur", single_author, "author"))
     if details:
         # A summary row has no per-value copy/search controls. Keep the
         # complete actionable value in the collapsed detail even if its
@@ -230,9 +231,9 @@ def book_detail_presentation(
                          for section in sections_list if section.title == "Détail"
                          for field in section.fields}
         extra = tuple(
-            DetailField(id=f"detail-{index}", label=label, value=value, kind=kind)
-            for index, (label, value, kind) in enumerate(details)
-            if (label, value) not in already_shown
+            replace(field, id=f"detail-{index}")
+            for index, field in enumerate(details)
+            if field.provenance is not None or (field.label, field.value) not in already_shown
         )
         if extra:
             sections_list.append(DetailSection(
