@@ -2105,10 +2105,16 @@ def filter_loaded_search_results(rows: list[dict[str, Any]], query: str='', *, f
     )
 
 
+def _valid_public_web_provider_id(provider_id):
+    """Allow bounded registry IDs, including exact dotted tenant namespaces."""
+    return (type(provider_id) is str and 0 < len(provider_id) <= 64
+            and re.fullmatch(r"[a-z][a-z0-9_-]*(?:\.[a-z0-9][a-z0-9_-]*)*",
+                             provider_id) is not None)
+
+
 def _is_public_web_evidence(evidence, provider_id):
     """Closed, provider-qualified public parser field types (not URL inference)."""
-    return (type(provider_id) is str
-            and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider_id) is not None
+    return (_valid_public_web_provider_id(provider_id)
             and type(evidence) is str
             and evidence in (
                 f"{provider_id}.public_search_product_card",
@@ -2175,8 +2181,7 @@ def _public_catalog_url(
             return None
         # No evidence inferred from the URL, a known provider, an owned
         # flag, or a catalogue row. The marker must match the producer exactly.
-        if (type(provider_id) is not str
-                or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider_id) is None
+        if (not _valid_public_web_provider_id(provider_id)
                 or not (evidence == f"{provider_id}.library_title_link"
                         or _is_public_web_evidence(evidence, provider_id))):
             return None
