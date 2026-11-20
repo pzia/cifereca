@@ -164,8 +164,12 @@ class _SeriesAnchorParser(HTMLParser):
 
     _VOID = frozenset(("area", "base", "br", "col", "embed", "hr", "img", "input",
                        "link", "meta", "param", "source", "track", "wbr"))
-    _INERT = frozenset(("script", "style", "template", "noscript", "textarea",
-                        "iframe", "svg"))
+    # HTMLParser normally tokenizes RCDATA/RAWTEXT other than script/style as
+    # ordinary markup. In this fragment those elements cannot attest a link,
+    # nor can a pseudo closing tag in their text unwind a hidden ancestor.
+    CDATA_CONTENT_ELEMENTS = ("script", "style", "textarea", "title", "xmp",
+                              "iframe", "noembed", "noframes", "noscript")
+    _INERT = frozenset((*CDATA_CONTENT_ELEMENTS, "template", "svg", "plaintext"))
 
     @classmethod
     def _hidden(cls, tag, attrs):
@@ -180,7 +184,19 @@ class _SeriesAnchorParser(HTMLParser):
                     return True
         return False
 
+    def handle_startendtag(self, tag, attrs):
+        # In HTML, a slash does not close a non-void hidden HTML element.
+        # A malformed inert boundary is not a reliable visible relation.
+        if tag not in self._VOID and self._hidden(tag, attrs):
+            self._rejected = True
+            return
+        super().handle_startendtag(tag, attrs)
+
     def handle_starttag(self, tag, attrs):
+        if tag == "plaintext":
+            # HTML plaintext consumes the rest of the document, irrespective
+            # of a later apparent closing tag. Refuse the ambiguous fragment.
+            self._rejected = True
         hidden = self._hidden(tag, attrs)
         if tag not in self._VOID:
             if len(self._elements) >= 256:
@@ -208,11 +224,10 @@ class _SeriesAnchorParser(HTMLParser):
             self._invalid = True
 
     def handle_data(self, data):
-        # Python HTMLParser delivers iframe fallback markup as raw text
-        # (rather than start/end anchor events). A series token there is
-        # rejected evidence, not an absent relation that another fragment
-        # may silently replace. Never parse or follow that fallback link.
-        if (self._elements and self._elements[-1][0] == "iframe"
+        # Raw/inert text is not a visible anchor. Keep rejection distinct
+        # from absence if it contains a potential series relation, including
+        # markup-like data that HTMLParser does not emit as anchor events.
+        if (self._elements and self._elements[-1][0] in self.CDATA_CONTENT_ELEMENTS
                 and _series_link_declared(data)):
             self._rejected = True
         if self._inside:
@@ -242,7 +257,9 @@ class _SeriesAnchorParser(HTMLParser):
             self._size = 0
 
     def result(self) -> tuple[str, str | None]:
-        if self._rejected or self._inside:
+        if (self._rejected or self._inside
+                or any(tag in self.CDATA_CONTENT_ELEMENTS for tag, _ in self._elements)):
+            # Unclosed raw text can conceal a relation from HTMLParser.
             return "rejected", None
         unique = {text.casefold(): text for text in self._values}
         if len(unique) > 1:
