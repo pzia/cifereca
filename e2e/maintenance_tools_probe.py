@@ -577,6 +577,39 @@ def main():
             "maintenance.library.derived-variants",
         }
         report["checks"]["P0_7100_three_real_guided_contributions"] = True
+        # Prove each installed contribution is individually optional in the
+        # *actual* GTK host, not merely in a detached PluginManager.
+        titles = {
+            "maintenance.library.organizer": "Organiser la bibliothèque",
+            "maintenance.library.local-origin": "Suggestions de provenance — par lots",
+            "maintenance.library.derived-variants": "Publications dérivées interrompues",
+        }
+        host_widget = w._plugin_page_widgets["tools"]
+
+        def action_titles():
+            return [row.get_title() for row in walk(w._tools_box)
+                    if isinstance(row, Adw.ActionRow)]
+
+        for key, title in titles.items():
+            assert action_titles().count(title) == 1
+            manager.set_enabled(key, False)
+            assert manager.service(key) is None
+            refresh_tools()
+            assert w._plugin_page_widgets["tools"] is host_widget
+            names = action_titles()
+            assert title not in names, "disabled plugin resurrected its native row"
+            assert all(names.count(other) == 1 for other_id, other in titles.items()
+                       if other_id != key), "disabled tool affected another plugin"
+            assert names.count("Provenances de prêts historiques") == 1
+            assert tool.plan_calls == tool.run_calls == 0
+            manager.set_enabled(key, True)
+            assert manager.service(key) is not None
+            refresh_tools()
+            names = action_titles()
+            assert all(names.count(other) == 1 for other in titles.values())
+            assert names.count("Provenances de prêts historiques") == 1
+            report["checks"]["P0_7100_gtk_optional_" + key.rsplit(".", 1)[-1]] = True
+
         preview_button[0] = next((
             b for b in walk(w._tools_box)
             if isinstance(b, Gtk.Button)
