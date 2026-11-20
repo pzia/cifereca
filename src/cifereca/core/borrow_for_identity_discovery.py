@@ -53,6 +53,31 @@ class PossibleBorrowLender:
         object.__setattr__(self, "_captured_fields", _fields(account, notice))
 
 
+
+def possible_lender_matches(candidate, notice, *, requesting_identity_id):
+    """Pure check of an already captured inert lender, never permission.
+
+    A notice or account can change in place while a discovery task is queued,
+    or while a chooser is open. An object reference alone is not a receipt.
+    """
+    if (type(candidate) is not PossibleBorrowLender
+            or type(notice) is not SearchResult
+            or candidate._notice is not notice
+            or candidate.executable is not False
+            or candidate.supplier_eligibility != "not_verified"
+            or type(requesting_identity_id) is not str or not requesting_identity_id):
+        return False
+    account = candidate._account
+    return (type(account) is Account
+            and account.is_primary is True
+            and type(candidate.lender_identity_id) is str
+            and candidate.lender_identity_id != requesting_identity_id
+            and candidate.lender_identity_id == account.identity_id
+            and borrow_claim_key(account, notice) is not None
+            and type(candidate._captured_fields) is tuple
+            and candidate._captured_fields == _fields(account, notice))
+
+
 def discover_possible_borrow_lenders(
     service: Any, *, requesting_identity_id: str,
     notices: tuple[SearchResult, ...],
@@ -262,4 +287,5 @@ def _label_lenders(result: list[PossibleBorrowLender]) -> tuple[PossibleBorrowLe
     return tuple(visible)
 
 
-__all__ = ["PossibleBorrowLender", "discover_possible_borrow_lenders"]
+__all__ = ["PossibleBorrowLender", "discover_possible_borrow_lenders",
+           "possible_lender_matches"]
