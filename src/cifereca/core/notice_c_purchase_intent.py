@@ -105,7 +105,7 @@ def _spec_txn(db, snapshot, candidate):
 
 
 def request_purchase_enrichment_intents(storage, snapshot, candidates, *, now,
-                                        context_current):
+                                        context_current, report_change=False):
     """Bounded atomic admission, after A. Pure in-memory context guard only.
 
     Refusal never changes committed A. A caller must split larger batches;
@@ -126,11 +126,14 @@ def request_purchase_enrichment_intents(storage, snapshot, candidates, *, now,
         if len({spec.target for spec in specs}) != len(specs):
             raise ValueError("notice_purchase_ambiguous_batch")
         refs = []
+        changed = False
         for spec in specs:
             old = journal._load(db, journal._key(spec))
-            refs.append(journal._request_job_txn(
+            ref = journal._request_job_txn(
                 db, spec, now=now, expected_generation=old.ref.generation if old else 0,
-            ))
+            )
+            changed |= old is None or old.ref != ref
+            refs.append(ref)
         if context_current() is not True:
             raise ValueError("notice_purchase_policy_or_context")
-        return tuple(refs)
+        return (tuple(refs), changed) if report_change else tuple(refs)
