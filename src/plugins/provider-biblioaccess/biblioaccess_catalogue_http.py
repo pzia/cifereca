@@ -8,6 +8,7 @@ catalogue assertion. No session or profile is implicitly shared.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from threading import Lock
 from urllib.parse import parse_qs, urljoin, urlsplit
 
@@ -50,7 +51,7 @@ def _checked_search_url(url: str, query: str, *, page: int | None = None) -> Non
     if (not set(params) <= _ALLOWED_SEARCH_PARAMS or
             any(len(v) != 1 or len(v[0]) > 512 for v in params.values()) or
             params.get("query") != [query] or
-            not (params.get("pageindex", ["0"])[0].isdigit()) or
+            not re.fullmatch(r"[0-9]{1,3}", params.get("pageindex", ["0"])[0]) or
             int(params.get("pageindex", ["0"])[0]) > 100):
         raise CatalogueHTTPError("catalogue_url_refused")
     if page is not None and int(params.get("pageindex", ["0"])[0]) != page:
@@ -161,7 +162,7 @@ class BiblioAccessCatalogueHTTP:
                         "remote_error": "catalogue_remote_failure",
                     }.get(status, "catalogue_redirect_refused"))
                 target = urljoin(summary, response.headers["location"])
-            _checked_search_url(target, query)
+            _checked_search_url(target, query, page=0)
             seen = set()
             book_urls = {}
             book_titles = {}
