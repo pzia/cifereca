@@ -45,12 +45,12 @@ def mount_page_content(window, context, *, Gtk):
         return None
 
 
-def mount_guided_tool(window, box, resolved, *, Gtk):
+def mount_guided_tool(window, box, resolved, *, Gtk, view_current=None):
     """Return True for guided tools, even on failure: never fallback to run()."""
     tool = resolved.service
     if not isinstance(tool, GuidedMaintenanceTool):
         return False
-    lease = admit_guided_maintenance_host(window, resolved)
+    lease = admit_guided_maintenance_host(window, resolved, view_current=view_current)
     view = None
     disposers = window._guided_maintenance_disposers
     try:
