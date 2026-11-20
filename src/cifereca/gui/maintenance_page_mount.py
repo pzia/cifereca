@@ -52,6 +52,7 @@ def mount_guided_tool(window, box, resolved, *, Gtk, view_current=None):
         return False
     lease = admit_guided_maintenance_host(window, resolved, view_current=view_current)
     view = None
+    mounting = False
     disposers = window._guided_maintenance_disposers
     try:
         if lease is None:
@@ -62,6 +63,9 @@ def mount_guided_tool(window, box, resolved, *, Gtk, view_current=None):
             raise ValueError("guided_view_unavailable")
         if window._guided_maintenance_disposers is not disposers:
             raise ValueError("guided_mount_replaced")
+        # GTK parenting may synchronously notify observers and retire the
+        # current mount before append returns.
+        mounting = True
         box.append(view.widget)
         if not lease.is_current() or window._guided_maintenance_disposers is not disposers:
             raise ValueError("guided_mount_replaced")
@@ -77,6 +81,11 @@ def mount_guided_tool(window, box, resolved, *, Gtk, view_current=None):
     except Exception:
         if lease is not None:
             lease.dispose()
+        if mounting:
+            # Do not leave a revoked/failed contribution attached. Only
+            # remove our own widget from this exact box, never a successor.
+            if view.widget.get_parent() is box:
+                box.remove(view.widget)
         if type(view) is GuidedMaintenanceView and callable(view.dispose):
             try:
                 view.dispose()
