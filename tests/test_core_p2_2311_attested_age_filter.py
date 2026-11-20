@@ -178,3 +178,28 @@ def test_exact_aliases_and_legacy_absent_aliases_remain_compatible():
     assert attested_age_status(row, 9) == "match"
     row.update(provider_id=None, item_id="")
     assert attested_age_status(row, 9) == "match"
+
+
+@pytest.mark.parametrize("proof", [
+    {"source": "bnf", "source_id": "paper-edition"},
+    {"source": "cnlj", "provider_id": "bnf", "source_id": "paper-edition"},
+    Provenance("bnf", source_id="paper-edition"),
+    Provenance("cnlj", provider_id="bnf", source_id="paper-edition"),
+    {"source": "bnf", "source_id": []},
+])
+@pytest.mark.parametrize("typed", [False, True])
+def test_nested_provenance_cannot_move_proof_to_another_edition(proof, typed):
+    age = (YouthAgeRange(8, 12, "publisher", provenance=proof) if typed
+           else {**statement(8, 12), "provenance": proof})
+    assert attested_age_status(book("ebook-edition", ages=[age]), 9) == "unknown"
+
+
+@pytest.mark.parametrize("proof", [
+    {"source": "bnf", "source_id": "edition"},
+    {"source": "cnlj", "provider_id": "bnf", "source_id": "edition"},
+    Provenance("éditeur", source_id="publisher-record"),
+    {"source": "éditeur", "source_id": "publisher-record"},
+])
+def test_nested_provenance_accepts_exact_edition_or_independent_authority(proof):
+    row = book("edition", ages=[{**statement(8, 12), "provenance": proof}])
+    assert attested_age_status(row, 9) == "match"
