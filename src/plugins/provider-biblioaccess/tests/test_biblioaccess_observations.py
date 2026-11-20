@@ -106,3 +106,46 @@ def test_acsm_structure_is_not_a_right_or_download():
 def test_acsm_fail_closed(data):
     with pytest.raises(ValueError):
         mod.inspect_acsm_structure(data)
+
+
+@pytest.mark.parametrize("slug", [
+    "%2e%2e", "%252e%252e", "title%2Fother", "title%5Cother",
+    "title%3Ftoken", "title%23fragment", "title%3Bparam", "title%00",
+    "title%0A", "title%FF", "title%2", "title.epub", "title%2Eacsm",
+    "title.lcpl", "title.pdf", "title.zip",
+])
+def test_book_link_cannot_change_route_or_be_an_acquisition(slug):
+    page = "https://www.biblioaccess.com/1409/Catalog/Search?query=test"
+    href = "/1409/Catalog/Book/123/" + slug
+    assert mod.book_id_from_url("https://www.biblioaccess.com" + href) is None
+    parsed = mod.extract_catalogue_links(
+        page, '<a href="' + href + '">Ambiguous</a>'
+              '<a href="/1409/Catalog/Book/456/valid">Valid</a>',
+    )
+    assert parsed.book_ids == ("456",)
+
+
+@pytest.mark.parametrize("href", [
+    "/1409/Catalog/Book/123/../456",
+    "/1409/Catalog/Book/123/ti\ttle",
+    "https://@www.biblioaccess.com/1409/Catalog/Book/123/title",
+    "https://[invalid/1409/Catalog/Book/123/title",
+])
+def test_invalid_raw_href_does_not_normalize_into_book_or_abort_page(href):
+    result = mod.extract_catalogue_links(
+        "https://www.biblioaccess.com/1409/Catalog/Search?query=test",
+        '<a href="' + href + '">Invalid</a>'
+        '<a href="/1409/Catalog/Book/789/title">Valid</a>',
+    )
+    assert result.book_ids == ("789",)
+
+
+@pytest.mark.parametrize("suffix", ["", "/", "/titre", "/l%C3%A9t%C3%A9", "/un%20titre"])
+def test_ordinary_book_slug_keeps_original_attested_url(suffix):
+    url = "https://www.biblioaccess.com/1409/Catalog/Book/123" + suffix
+    assert mod.book_id_from_url(url) == "123"
+    parsed = mod.extract_catalogue_links(
+        "https://www.biblioaccess.com/1409/Catalog/Search?query=test",
+        '<a href="' + url + '">Notice</a>',
+    )
+    assert parsed.book_urls == (("123", url),)
