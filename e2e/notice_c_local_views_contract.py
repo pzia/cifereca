@@ -584,6 +584,16 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 assert "Sujets : Cuisine" in subtitle and "Genre : Essai" in subtitle
                 assert "Astronomie" not in subtitle and "Roman" not in subtitle
                 assert not alternative.has_css_class("detail-metadata-actions")
+                # The alternative is an exact retained source summary, not
+                # a field-level parser proof or a reconciled canonical value.
+                alternative_tooltip = alternative.get_tooltip_text() or ""
+                proof_lines = [
+                    "Source du champ : Notice C · observation de source",
+                    "Fournisseur déclaré : fixture-c-b",
+                    "Référence déclarée : edition-b",
+                ]
+                assert alternative_tooltip.splitlines()[-4:-1] == proof_lines
+                assert alternative_tooltip.splitlines()[-1].startswith("Observation déclarée : ")
                 if route == "search":
                     # Check the native action rows made by the same selection
                     # whose DetailPanel and cover are mapped above.
@@ -604,11 +614,12 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                             "Référence déclarée : edition-a",
                         ], "C provenance differs from the primary source: " + field
                         assert "Observation déclarée : " in tooltip
-                    assert "Source du champ" not in (alternative.get_tooltip_text() or "")
+                    state["source_alternative_tooltip_" + label] = alternative_tooltip
                     report["checks"]["P0_3688_search_native_field_provenance_" + label] = True
                     state["source_alternative_" + label] = subtitle
                 else:
                     assert subtitle == state["source_alternative_" + label]
+                    assert alternative_tooltip == state["source_alternative_tooltip_" + label]
                     report["checks"]["P0_4761_same_source_alternative_search_recommendations_" + label] = True
             if route in narrow_context:
                 receipt = narrow_context[route]
