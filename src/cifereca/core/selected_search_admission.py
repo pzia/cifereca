@@ -60,6 +60,7 @@ def capture_admitted_selected_search_offer(
     # deferred provider worker. Source generation and exact binding persist.
     admitted = replace(
         target, selection_epoch=None, source_epoch=source_epoch,
+        _confirmed_use=_ConfirmedOfferUse(),
     )
     if (source_context_epoch(service) != source_epoch
             or _resolve(service, admitted)[0] is not admitted):
