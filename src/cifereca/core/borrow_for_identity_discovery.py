@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from ..models import Account, SearchResult
 from ..plugin_api.lending_capabilities import assess_lending_operation
-from .borrow_action_scope import _fields, borrow_claim_key
+from .borrow_action_scope import _fields, _valid_fields, borrow_claim_key
 from .borrow_for_identity_live import _lender_label
 from .borrow_for_identity_preview import _display_account_label
 from .loan_action_scope import _inert_session_accounts, _inert_session_state
@@ -68,14 +68,16 @@ def possible_lender_matches(candidate, notice, *, requesting_identity_id):
             or type(requesting_identity_id) is not str or not requesting_identity_id):
         return False
     account = candidate._account
-    return (type(account) is Account
-            and account.is_primary is True
-            and type(candidate.lender_identity_id) is str
-            and candidate.lender_identity_id != requesting_identity_id
-            and candidate.lender_identity_id == account.identity_id
-            and borrow_claim_key(account, notice) is not None
-            and type(candidate._captured_fields) is tuple
-            and candidate._captured_fields == _fields(account, notice))
+    if (type(account) is not Account or account.is_primary is not True
+            or type(candidate.lender_identity_id) is not str
+            or candidate.lender_identity_id == requesting_identity_id
+            or type(candidate._captured_fields) is not tuple
+            or not _valid_fields(candidate._captured_fields)):
+        return False
+    fields = _fields(account, notice)
+    return (_valid_fields(fields)
+            and candidate.lender_identity_id == fields[0]
+            and candidate._captured_fields == fields)
 
 
 def discover_possible_borrow_lenders(
