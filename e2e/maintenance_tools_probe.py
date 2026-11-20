@@ -511,7 +511,8 @@ def main():
     def refresh_tools():
         page = window[0]._plugin_page_widgets["tools"]
         button = next(node for node in walk(page)
-                      if isinstance(node, Gtk.Button) and node.get_label() == "Actualiser")
+                      if isinstance(node, Gtk.Button) and node.get_name() == "maintenance-page-refresh")
+        assert button.get_label() == "Actualiser"
         # Fixture redraw only; preview/confirmation/cancel retain real XTEST.
         button.emit("clicked")
 
