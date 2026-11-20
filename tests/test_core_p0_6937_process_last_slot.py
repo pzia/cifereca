@@ -1,7 +1,10 @@
 """#6937: independent processes share a single durable reservation budget."""
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
-import multiprocessing
+import json
+import selectors
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,27 +14,37 @@ from cifereca.storage import Storage
 from tests.test_core_p0_4520_derived_journal import _prepared_publication, _publish_reserved
 
 
-def _reserve_last_slot(database, intent, budget, ready, results):
-    """Spawned process, its own Storage/connection, no inherited locks."""
-    db = None
+# Independent interpreter avoids pytest/multiprocessing module import ambiguity.
+# Initialize each connection before releasing the two competitors.
+_WORKER = r"""
+import json
+from pathlib import Path
+import sys
+from cifereca.core import derived_variant_journal as journal
+from cifereca.storage import Storage
+
+db = Storage(Path(sys.argv[1]))
+try:
+    fields = json.loads(sys.argv[2])
+    fields["parent_stamp"] = tuple(fields["parent_stamp"])
+    fields["output_stamp"] = tuple(fields["output_stamp"])
+    intent = journal.DerivedIntent(**fields)
+    if sys.argv[3] == "records":
+        journal._MAX_RECORDS = 2
+    else:
+        journal._MAX_RESERVED_OUTPUT_BYTES = 18
+    print("ready", flush=True)
+    assert sys.stdin.readline().strip() == "reserve"
     try:
-        db = Storage(database)
-        if budget == "records":
-            journal._MAX_RECORDS = 2
-        else:
-            journal._MAX_RESERVED_OUTPUT_BYTES = 18
-        ready.wait(timeout=20)
-        try:
-            reservation = journal.reserve_derived_publication(db, intent)
-        except journal.DerivedJournalConflict as exc:
-            results.put(("refused", str(exc)))
-        else:
-            results.put(("reserved", reservation.key))
-    except Exception as exc:
-        results.put(("unexpected", type(exc).__name__))
-    finally:
-        if db is not None:
-            db.close()
+        reservation = journal.reserve_derived_publication(db, intent)
+    except journal.DerivedJournalConflict as exc:
+        result = ["refused", str(exc)]
+    else:
+        result = ["reserved", reservation.key]
+    print(json.dumps(result), flush=True)
+finally:
+    db.close()
+"""
 
 
 @pytest.mark.parametrize("budget,refusal", [
@@ -71,29 +84,38 @@ def test_last_slot_two_processes_preserves_committed_history_on_restart(
     finally:
         db.close()
 
-    context = multiprocessing.get_context("spawn")
-    ready = context.Barrier(3)
-    results = context.Queue()
-    processes = [context.Process(
-        target=_reserve_last_slot, args=(database, item, budget, ready, results),
-    ) for item in attempts]
-    started = []
+    processes = []
+    outcomes = []
     try:
+        for item in attempts:
+            process = subprocess.Popen(
+                [sys.executable, "-c", _WORKER, str(database),
+                 json.dumps(asdict(item)), budget],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True,
+            )
+            processes.append(process)
+            # Bounded startup; inspect child errors rather than masking them
+            # with a broken parent barrier.
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                assert selector.select(timeout=20), "reservation worker startup timeout"
+            assert process.stdout.readline().strip() == "ready", (
+                process.stderr.read() if process.poll() is not None else
+                "worker did not initialize"
+            )
         for process in processes:
-            process.start()
-            started.append(process)
-        ready.wait(timeout=20)
-        outcomes = [results.get(timeout=20), results.get(timeout=20)]
-        for process in started:
-            process.join(timeout=20)
-            assert process.exitcode == 0
+            process.stdin.write("reserve\n")
+            process.stdin.flush()
+        for process in processes:
+            stdout, stderr = process.communicate(timeout=20)
+            assert process.returncode == 0, stderr
+            outcomes.append(json.loads(stdout))
     finally:
-        for process in started:
-            if process.is_alive():
-                process.terminate()
-                process.join(timeout=10)
-        results.close()
-        results.join_thread()
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=10)
 
     winners = [value for status, value in outcomes if status == "reserved"]
     assert len(winners) == 1, outcomes
