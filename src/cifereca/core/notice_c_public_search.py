@@ -561,10 +561,18 @@ def search_public_notice_c(
                 matches.append(hit)
 
     # Pagination is over *known* source facts, not a confirmed total.
-    matches.sort(key=lambda item: (
-        -_hit_score(item, field=field, query=needle),
-        _fold(item.title), item.provider_id, item.document.source_key,
-    ))
+    # Rank by the exact source edition, not the current storage/N2
+    # document ref: after observation eviction the latter may become a
+    # canonical ref shared by several independently matching sources.
+    def source_order(hit):
+        return (
+            -_hit_score(hit, field=field, query=needle),
+            _fold(hit.title), hit.provider_id, hit.edition_id,
+            hit.record_id, hit.docbase, hit.medium, hit.source_revision or "",
+            hit.document.source_key,
+        )
+
+    matches.sort(key=source_order)
     offset = page * page_size
     # Resolve the exact document before choosing a page. In grouped mode
     # a C is the unit of pagination, not its individual provider facts.
@@ -609,12 +617,7 @@ def search_public_notice_c(
     if group_by_document:
         # Use a stable ordering of matching source facts, including edition
         # coordinates as the tie-breaker independent of source TTL and N2.
-        selected.sort(key=lambda hit: (
-            -_hit_score(hit, field=field, query=needle),
-            _fold(hit.title), hit.provider_id, hit.edition_id,
-            hit.record_id, hit.docbase, hit.medium, hit.source_revision or "",
-            hit.document.source_key,
-        ))
+        selected.sort(key=source_order)
         groups: dict[CoverDocumentScope, list[PublicNoticeCHit]] = {}
         for hit in selected:
             groups.setdefault(hit.document, []).append(hit)
