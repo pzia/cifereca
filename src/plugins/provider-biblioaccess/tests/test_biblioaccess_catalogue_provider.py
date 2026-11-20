@@ -318,3 +318,27 @@ def test_real_federated_biblioaccess_c_survives_eviction(tmp_path):
     finally:
         service.close()
         session.close()
+
+
+def test_encoded_slug_retains_description_but_not_public_c_web_authority():
+    from cifereca.core.search_orchestration import _public_rows_from_response
+    url = "https://www.biblioaccess.com/1409/Catalog/Book/123/un-roman-%C3%A9"
+    def handler(request):
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={
+                "location": "/1409/Catalog/Search?query=roman&pageindex=0"})
+        return httpx.Response(200, headers={"content-type": "text/html"},
+                              text='<a href="' + url + '">Roman attesté</a>')
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        response = session.search_with_response_facets("roman")
+        row, = response.results
+        assert row.friendly_url == url and row.title == "Roman attesté"
+        assert len(response.public_notices) == 1
+        projected, = _public_rows_from_response(response, session)
+        assert projected.title == row.title and projected.record_id == row.record_id
+        assert projected.friendly_url is None
+        assert "public_url_evidence" not in projected.metadata
+    finally:
+        session.close()
