@@ -9,7 +9,10 @@ from recommendations import _known_source_alternative_fields
 
 def item():
     return SearchResult(
-        id="known-c:synthetic", title="Titre principal", author="Auteur principal",
+        id="known-c:synthetic", record_id="main-record", docbase="TEST",
+        medium="digital", title="Titre principal", author="Auteur principal",
+        type="book", format=None, publisher=None, published_at=None,
+        description=None, thumbnail_url=None, friendly_url=None,
         source_provider="seller-a", source_credential="",
         source_collection="notice_c_public", scenario="notice_c_public",
         metadata={"notice_c_known": True, "notice_c_source_alternatives": [
