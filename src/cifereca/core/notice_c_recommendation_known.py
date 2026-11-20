@@ -40,7 +40,9 @@ def _snapshot(item):
     def freeze(value, depth=0):
         nonlocal remaining, characters
         remaining -= 1
-        if remaining < 0 or depth > 6:
+        # Alternative bibliography evidence nests raw language tags one
+        # level deeper than the primary metadata (DTO depth seven).
+        if remaining < 0 or depth > (7 if count else 6):
             raise ValueError("known_c_snapshot_budget")
         kind = type(value)
         if kind is str:
