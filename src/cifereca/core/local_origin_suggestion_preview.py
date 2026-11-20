@@ -23,76 +23,83 @@ def _text(value, limit=1024):
 
 
 def _snapshot(storage, identity, placement_id, *, catalogue=False):
-    with storage._lock, storage._connect() as db:
-        db.execute("BEGIN")
-        row = db.execute(
-            "SELECT p.artifact_id,p.path,p.state,a.sha256,a.size,i.directory_name,a.media_format "
-            "FROM placements p JOIN artifacts a ON a.artifact_id=p.artifact_id "
-            "JOIN identities i ON i.identity_id=p.identity_id "
-            "WHERE p.placement_id=? AND p.identity_id=?",
-            (placement_id, identity),
-        ).fetchone()
-        if row is None:
+    with storage._lock:
+        db = storage._connect()
+        # A consultation may be called from a borrowed connection. Refuse
+        # before entering its context manager: our read must never commit
+        # or roll back unrelated caller-owned work.
+        if db.in_transaction:
             return "scope_unverified", None
-        artifact, path, state, digest, size, directory, media_format = row
-        if (state != "present" or not _text(path, 4096)
-                or not _text(digest, 64) or len(digest) != 64
-                or any(ch not in "0123456789abcdef" for ch in digest)
-                or artifact != "sha256:" + digest
-                or type(size) is not int or size <= 0
-                or not _text(directory) or directory in (".", "..")
-                or "/" in directory or chr(92) in directory
-                or db.execute(
-                    "SELECT identity_id FROM identities WHERE directory_name=? LIMIT 2",
-                    (directory,),
-                ).fetchall() != [(identity,)]):
-            return "scope_unverified", None
-        # Do not use the empty return from a best-effort global projection
-        # as negative evidence. Query the same exact owner/Artifact, including
-        # malformed, historical or currently untrusted provider links.
-        if db.execute(
-            "SELECT 1 FROM origin_links WHERE identity_id=? AND artifact_id=? "
-            "AND origin_kind IN ('provider','adept') LIMIT 1",
-            (identity, artifact),
-        ).fetchone():
-            return "historical_origin_requires_preservation", None
-        if db.execute(
-            "SELECT 1 FROM acquisition_ledger WHERE identity_id=? AND artifact_id=? LIMIT 1",
-            (identity, artifact),
-        ).fetchone():
-            return "historical_receipt_requires_review", None
-        # Existing non-provider provenance can be displayed but never silently
-        # replaced. The default preview conservatively excludes it.
-        if db.execute(
-            "SELECT 1 FROM origin_links WHERE identity_id=? AND artifact_id=? LIMIT 1",
-            (identity, artifact),
-        ).fetchone():
-            return "other_origin_requires_review", None
-        if catalogue:
-            entries = db.execute(
-                "SELECT catalog_entry_id,artifact_id,identity_id,local_state,"
-                "CASE WHEN length(CAST(title AS BLOB))<=2048 THEN title ELSE NULL END,"
-                "CASE WHEN length(CAST(author AS BLOB))<=2048 THEN author ELSE NULL END "
-                "FROM catalog_entries WHERE placement_id=? ORDER BY catalog_entry_id LIMIT 33",
-                (placement_id,),
-            ).fetchall()
-            if len(entries) > 32 or (not entries and media_format not in ('epub', 'kepub')):
-                return "catalogue_evidence_unavailable", None
-            # All claims about this exact placement must agree. Do not pick
-            # a convenient title from an ambiguous or foreign catalogue row.
-            if any(entry[1:4] != (artifact, identity, "local") for entry in entries):
-                return "catalogue_evidence_unavailable", None
-            descriptions = {(entry[4], entry[5]) for entry in entries}
-            if len(descriptions) > 1:
-                return "catalogue_evidence_ambiguous", None
-            title, author = next(iter(descriptions)) if descriptions else (None, None)
-            if media_format not in ("epub", "kepub"):
-                if not _text(title, 160) or title.strip() == "Sans titre":
-                    return "catalogue_title_unavailable", None
-                if author is not None and not _text(author, 512):
+        with db:
+            db.execute("BEGIN")
+            row = db.execute(
+                "SELECT p.artifact_id,p.path,p.state,a.sha256,a.size,i.directory_name,a.media_format "
+                "FROM placements p JOIN artifacts a ON a.artifact_id=p.artifact_id "
+                "JOIN identities i ON i.identity_id=p.identity_id "
+                "WHERE p.placement_id=? AND p.identity_id=?",
+                (placement_id, identity),
+            ).fetchone()
+            if row is None:
+                return "scope_unverified", None
+            artifact, path, state, digest, size, directory, media_format = row
+            if (state != "present" or not _text(path, 4096)
+                    or not _text(digest, 64) or len(digest) != 64
+                    or any(ch not in "0123456789abcdef" for ch in digest)
+                    or artifact != "sha256:" + digest
+                    or type(size) is not int or size <= 0
+                    or not _text(directory) or directory in (".", "..")
+                    or "/" in directory or chr(92) in directory
+                    or db.execute(
+                        "SELECT identity_id FROM identities WHERE directory_name=? LIMIT 2",
+                        (directory,),
+                    ).fetchall() != [(identity,)]):
+                return "scope_unverified", None
+            # Do not use the empty return from a best-effort global projection
+            # as negative evidence. Query the same exact owner/Artifact, including
+            # malformed, historical or currently untrusted provider links.
+            if db.execute(
+                "SELECT 1 FROM origin_links WHERE identity_id=? AND artifact_id=? "
+                "AND origin_kind IN ('provider','adept') LIMIT 1",
+                (identity, artifact),
+            ).fetchone():
+                return "historical_origin_requires_preservation", None
+            if db.execute(
+                "SELECT 1 FROM acquisition_ledger WHERE identity_id=? AND artifact_id=? LIMIT 1",
+                (identity, artifact),
+            ).fetchone():
+                return "historical_receipt_requires_review", None
+            # Existing non-provider provenance can be displayed but never silently
+            # replaced. The default preview conservatively excludes it.
+            if db.execute(
+                "SELECT 1 FROM origin_links WHERE identity_id=? AND artifact_id=? LIMIT 1",
+                (identity, artifact),
+            ).fetchone():
+                return "other_origin_requires_review", None
+            if catalogue:
+                entries = db.execute(
+                    "SELECT catalog_entry_id,artifact_id,identity_id,local_state,"
+                    "CASE WHEN length(CAST(title AS BLOB))<=2048 THEN title ELSE NULL END,"
+                    "CASE WHEN length(CAST(author AS BLOB))<=2048 THEN author ELSE NULL END "
+                    "FROM catalog_entries WHERE placement_id=? ORDER BY catalog_entry_id LIMIT 33",
+                    (placement_id,),
+                ).fetchall()
+                if len(entries) > 32 or (not entries and media_format not in ('epub', 'kepub')):
                     return "catalogue_evidence_unavailable", None
-            row = (*row, tuple(entries), title, author)
-        return "unlinked_snapshot", row
+                # All claims about this exact placement must agree. Do not pick
+                # a convenient title from an ambiguous or foreign catalogue row.
+                if any(entry[1:4] != (artifact, identity, "local") for entry in entries):
+                    return "catalogue_evidence_unavailable", None
+                descriptions = {(entry[4], entry[5]) for entry in entries}
+                if len(descriptions) > 1:
+                    return "catalogue_evidence_ambiguous", None
+                title, author = next(iter(descriptions)) if descriptions else (None, None)
+                if media_format not in ("epub", "kepub"):
+                    if not _text(title, 160) or title.strip() == "Sans titre":
+                        return "catalogue_title_unavailable", None
+                    if author is not None and not _text(author, 512):
+                        return "catalogue_evidence_unavailable", None
+                row = (*row, tuple(entries), title, author)
+            return "unlinked_snapshot", row
 
 
 class _CandidateRejected(ValueError):
