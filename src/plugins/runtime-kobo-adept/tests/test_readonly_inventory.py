@@ -186,3 +186,44 @@ def test_empty_complete_history_is_distinct_from_unavailable(runtime):
     unavailable=r.loan_inventory_readonly('PRIVATE_ID',consented=False).redacted()
     assert unavailable['status']=='unavailable'
     assert 'historical_states' not in unavailable and 'token_present' not in unavailable
+
+
+def test_stable_historical_id_checked_on_both_sides_of_loan_read(runtime):
+    r,root,reports=runtime
+    report=r.loan_inventory_readonly('PRIVATE_ID',consented=True,stable_id_only=True)
+    assert report.status=='complete' and report.stable_profile_observed is True
+    assert calls(root)==[['profile','list','--json'],['contract','--json'],
+                         ['loans','list','--profile','PRIVATE_NAME','--json'],
+                         ['profile','list','--json']]
+    assert not reports
+
+
+@pytest.mark.parametrize('profiles',[
+    [{'id':'OTHER','name':'PRIVATE_ID'}],
+    [{'id':'PRIVATE_ID','profile_id':'OTHER','name':'PRIVATE_NAME'}],
+    [{'id':'PRIVATE_ID','name':'PRIVATE_NAME'},{'id':'OTHER','name':'PRIVATE_NAME'}],
+    [{'id':'PRIVATE_ID','name':'PRIVATE_NAME'},{'id':'OTHER','name':'PRIVATE_ID'}],
+])
+def test_strict_historical_id_never_falls_back_to_name_or_ambiguous_cli_target(runtime,profiles):
+    r,root,reports=runtime
+    (root/'profiles.json').write_text(json.dumps({'ok':True,'profiles':profiles}))
+    report=r.loan_inventory_readonly('PRIVATE_ID',consented=True,stable_id_only=True)
+    assert report.status=='unavailable' and not report.stable_profile_observed
+    assert calls(root)==[['profile','list','--json']] and not reports
+
+
+def test_stable_id_disappearance_after_read_withholds_inventory(runtime,monkeypatch):
+    import cifereca_adept_readonly_inventory as readonly
+    r,root,reports=runtime
+    transport=readonly._transport
+    def changed(command,args,**kwargs):
+        value=transport(command,args,**kwargs)
+        if args[:2]==['loans','list']:
+            (root/'profiles.json').write_text(json.dumps({
+                'ok':True,'profiles':[{'id':'REPLACEMENT','name':'PRIVATE_NAME'}],
+            }))
+        return value
+    monkeypatch.setattr(readonly,'_transport',changed)
+    report=r.loan_inventory_readonly('PRIVATE_ID',consented=True,stable_id_only=True)
+    assert report.status=='unavailable' and not report.loans
+    assert not report.stable_profile_observed and not reports
