@@ -137,3 +137,60 @@ def test_unqualified_session_does_not_search_under_public_contract(kwargs):
         assert response.partial is True and calls == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("extra", [
+    '<link rel="alternate" type="text/html" href="/ebooks/43"/>',
+    '<link rel="subsection" href="/ebooks/42.opds"/><link rel="subsection" href="/ebooks/43.opds"/>',
+])
+def test_secondary_coordinate_cannot_be_hidden_behind_first_link(extra):
+    for entries in (ENTRY.replace("</entry>", extra + "</entry>"),
+                    ENTRY.replace("<id>", extra + "<id>", 1)):
+        session, calls = make_session(entries)
+        try:
+            response = session.search_with_response_facets("Exact OPDS book", "catalog")
+            assert response.results == [] and response.public_notices == ()
+            assert response.partial is True
+            assert len(calls) == 1
+        finally:
+            session.close()
+
+
+@pytest.mark.parametrize("extra,expected", [
+    ("<dcterms:issued>2020</dcterms:issued>", "2020"),
+    ("<dcterms:issued>2021</dcterms:issued>", None),
+    ("<dcterms:issued>invalid</dcterms:issued>", None),
+    ("<dcterms:issued><other>2020</other></dcterms:issued>", None),
+])
+def test_publication_date_requires_consistent_explicit_issued_fields(extra, expected):
+    session, calls = make_session(ENTRY.replace("</entry>", extra + "</entry>"))
+    try:
+        response = session.search_with_response_facets("Exact OPDS book", "catalog")
+        row, = response.results
+        assert row.published_at == expected
+        assert response.public_notices[0].result is row
+        assert len(calls) == 1
+        # Legacy offer semantics are deliberately unchanged.
+        legacy, = session.search("Exact OPDS book")
+        assert legacy.published_at == "2020"
+        assert legacy.downloadable is True
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("extra,expected", [
+    ('<link rel="alternate" type="text/html" href="/ebooks/42"/>',
+     "https://www.gutenberg.org/ebooks/42"),
+    ('<link rel="alternate" type="text/html" href="https://example.test/other"/>', None),
+])
+def test_web_fact_requires_unique_direct_atom_alternate(extra, expected):
+    session, calls = make_session(ENTRY.replace("</entry>", extra + "</entry>"))
+    try:
+        response = session.search_with_response_facets("Exact OPDS book", "catalog")
+        row, = response.results
+        assert row.friendly_url == expected
+        assert ("public_url_evidence" in row.metadata) is (expected is not None)
+        assert row.download_url is None and row.downloadable is False
+        assert len(calls) == 1
+    finally:
+        session.close()
