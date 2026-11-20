@@ -200,6 +200,12 @@ def _artifact_ref(storage: Any, artifact_id: str, *, book_id: str | None = None,
 def _placement_ref(row: dict[str, Any]) -> ArtifactPlacementRef:
     metadata = dict(row.get("metadata") or {})
     kind = str(metadata.get("placement_kind") or ("storage" if metadata.get("storage_target_id") else "library"))
+    from .filename_suffixes import epub_filename_convention
+    path = Path(str(row.get("path") or ""))
+    facts = {k: v for k, v in metadata.items() if k not in {"path", "epub_filename_convention"}}
+    convention = epub_filename_convention(path)
+    if convention is not None and row.get("state") == "present" and metadata.get("artifact_kind") != "bundle":
+        facts["epub_filename_convention"] = convention
     return ArtifactPlacementRef(
         placement_id=str(row.get("placement_id") or ""),
         artifact_id=str(row.get("artifact_id") or ""),
@@ -211,7 +217,7 @@ def _placement_ref(row: dict[str, Any]) -> ArtifactPlacementRef:
         filename=Path(str(row.get("path") or "")).name,
         storage_target_id=str(metadata.get("storage_target_id")) if metadata.get("storage_target_id") else None,
         storage_plugin_id=str(metadata.get("storage_plugin_id")) if metadata.get("storage_plugin_id") else None,
-        facts={k: v for k, v in metadata.items() if k not in {"path"}},
+        facts=facts,
     )
 
 
