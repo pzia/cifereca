@@ -579,5 +579,7 @@ def test_periodic_checks_pinned_source_generation_before_each_identity(change):
                                   _source_context_epoch=7)
         return NS(ok=True)
     r.broker.synchronize_scheduled_inventory = dispatch
-    r.jobs[0].work()
+    receipt = r.jobs[0].work()
+    assert receipt.ok is False and receipt.facts["status"] == "partial"
+    assert receipt.facts["completed"] == 1
     assert seen == ["alice"]
