@@ -37,17 +37,31 @@ def view():
         ),
     )
     group = Mock()
+    pending = []
+
+    def submit(_label, work, done, fail, **kwargs):
+        pending.append((work, done, fail))
+
     panel = NS(
-        window=NS(service=service),
+        window=NS(service=service, runner=NS(submit=submit), _route_display_token=object()),
+        pending=pending,
         _rendered_search_detail=(w.notice, object()),
         _group=group,
     )
     return w, candidate, service, panel, group, read
 
 
+def deliver(panel):
+    work, done, _ = panel.pending.pop(0)
+    done(work())
+
+
 def test_shared_detail_shows_one_unverified_lender_without_action_or_permission():
     w, candidate, service, panel, group, read = view()
     assert append(panel, w.notice) is True
+    read.assert_not_called()
+    group.assert_not_called()
+    deliver(panel)
     read.assert_called_once_with(exact_notice=w.notice)
     assert group.call_count == 1
     title, rows = group.call_args.args
@@ -65,14 +79,16 @@ def test_shared_detail_shows_one_unverified_lender_without_action_or_permission(
 def test_zero_lenders_does_not_create_a_false_no_loan_statement():
     w, candidate, service, panel, group, read = view()
     read.return_value = ()
-    assert append(panel, w.notice) is False
+    assert append(panel, w.notice) is True
+    deliver(panel)
     group.assert_not_called()
 
 
 def test_untrusted_dto_blocks_the_entire_section():
     w, candidate, service, panel, group, read = view()
     object.__setattr__(candidate, "executable", True)
-    assert append(panel, w.notice) is False
+    assert append(panel, w.notice) is True
+    deliver(panel)
     group.assert_not_called()
 
 
@@ -92,7 +108,8 @@ def test_rebind_during_discovery_suppresses_old_detail(rebind):
         return (candidate,)
 
     read.side_effect = change
-    assert append(panel, w.notice) is False
+    assert append(panel, w.notice) is True
+    deliver(panel)
     group.assert_not_called()
 
 
@@ -105,9 +122,11 @@ def test_replaced_or_stale_exact_notice_never_reads_lender_state():
 def test_wrong_type_or_foreign_edition_never_renders():
     w, candidate, service, panel, group, read = view()
     read.return_value = [{"credential": "PRIVATE"}]
-    assert append(panel, w.notice) is False
+    assert append(panel, w.notice) is True
+    deliver(panel)
     read.return_value = (replace(candidate, _notice=replace(w.notice)),)
-    assert append(panel, w.notice) is False
+    assert append(panel, w.notice) is True
+    deliver(panel)
     group.assert_not_called()
 
 
@@ -142,3 +161,46 @@ def test_shared_detail_is_integrated_without_post_or_gtk_action():
     assert ".connect(" not in reader
     assert "borrow_search_item(" not in reader
     assert "execute_cross_profile_borrow(" not in reader
+
+
+@pytest.mark.parametrize("phase", ["queued", "delivery", "duplicate", "failure"])
+def test_async_discovery_is_fenced_and_consumed_once(phase):
+    w, candidate, service, panel, group, read = view()
+    assert append(panel, w.notice)
+    work, done, fail = panel.pending.pop(0)
+
+    def aba():
+        panel.window._route_display_token = object()
+        panel.window._route_display_token = object()
+
+    if phase == "queued":
+        aba()
+        assert work() == ()
+        read.assert_not_called()
+        done(())
+        group.assert_not_called()
+    else:
+        rows = work()
+        read.assert_called_once_with(exact_notice=w.notice)
+        if phase == "delivery":
+            aba()
+            done(rows)
+            group.assert_not_called()
+        elif phase == "failure":
+            fail(RuntimeError("read failed"))
+            done(rows)
+            group.assert_not_called()
+        else:
+            done(rows)
+            done(rows)
+            fail(RuntimeError("late failure"))
+            group.assert_called_once()
+    service.execute_cross_profile_borrow.assert_not_called()
+
+
+def test_hidden_detail_does_not_receive_lender_summary():
+    w, candidate, service, panel, group, read = view()
+    panel.get_mapped = lambda: False
+    assert append(panel, w.notice)
+    deliver(panel)
+    group.assert_not_called()
