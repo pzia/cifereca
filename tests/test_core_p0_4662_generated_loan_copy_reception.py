@@ -69,7 +69,8 @@ def test_confirmed_lender_claim_and_separate_canonical_copy(harness, tmp_path, m
     source, snapshot = new_source(
         lender.identity_id, provider=lender.provider_id, credential=lender.credential_id,
         account=lender.unique_id, branch=notice.docbase, edition=notice.record_id,
-        right=receipt["verified_loan_id"], kind="loan",
+        right="other-loan" if scenario == "wrong_right" else receipt["verified_loan_id"],
+        kind="purchase" if scenario == "wrong_kind" else "loan",
     )
     from cifereca.locking import InterProcessLock
     with InterProcessLock(tmp_path / "shared-acquisition.lock"):
@@ -84,8 +85,6 @@ def test_confirmed_lender_claim_and_separate_canonical_copy(harness, tmp_path, m
     before = rows(db)
     rights_before = db.entitlements()
     ledger_before = db.acquisitions()
-    again = service.resolve_cross_profile_lender_placement(**scope)
-    assert again.status == "present" and again._placement_id == published.placement_id
     exact = dict(lender_placement_id=published.placement_id, **scope)
     if scenario in {"wrong_right", "missing_origin", "wrong_kind"}:
         # Poison the legacy hints to appear exact: a typed reference still
@@ -96,12 +95,6 @@ def test_confirmed_lender_claim_and_separate_canonical_copy(harness, tmp_path, m
             if scenario == "missing_origin":
                 sql.execute("DELETE FROM origin_links WHERE source_reference_id=?",
                             (published.source_reference_id,))
-            elif scenario == "wrong_kind":
-                sql.execute("UPDATE source_references SET reference_kind='purchase' WHERE source_reference_id=?",
-                            (published.source_reference_id,))
-            else:
-                sql.execute("UPDATE source_references SET right_id='other-loan' WHERE source_reference_id=?",
-                            (published.source_reference_id,))
         assert service.resolve_cross_profile_lender_placement(**scope).status == "unavailable"
         assert service.preflight_cross_profile_loan_transfer(**exact).transfer == "blocked"
         denied = service.send_cross_profile_borrowed_placement(confirmed=True, **exact)
@@ -109,6 +102,9 @@ def test_confirmed_lender_claim_and_separate_canonical_copy(harness, tmp_path, m
         assert len(db.placements()) == 1 and db.loan_borrow_state(key) == receipt
         assert session.actions == 1 and src.read_bytes() == fixture.read_bytes() == payload
         return
+
+    again = service.resolve_cross_profile_lender_placement(**scope)
+    assert again.status == "present" and again._placement_id == published.placement_id
 
     def capture(confirmed=True):
         return service.capture_admitted_lender_local_copy(confirmed=confirmed, **exact)
@@ -191,6 +187,21 @@ def test_confirmed_lender_claim_and_separate_canonical_copy(harness, tmp_path, m
     assert after["source_references"] == 2 and after["origin_links"] == 3
     assert service.execute_admitted_lender_local_copy(capture())["status"] == "complete"
     assert rows(db) == after and db.loan_borrow_state(key) == receipt
-    assert db.entitlements() == rights_before and db.acquisitions() == ledger_before
+    assert db.entitlements() == rights_before
+    # The native copy deliberately retains a local-transfer checkpoint in
+    # acquisition_ledger. It must never turn into a supplier acquisition.
+    final_ledger = db.acquisitions()
+    old_ids = {row["acquisition_id"] for row in ledger_before}
+    assert [row for row in final_ledger if row["acquisition_id"] in old_ids] == ledger_before
+    checkpoint, = [row for row in final_ledger if row["acquisition_id"] not in old_ids]
+    assert (checkpoint["identity_id"], checkpoint["provider_id"], checkpoint["credential_id"],
+            checkpoint["account_id"], checkpoint["strategy"], checkpoint["status"],
+            checkpoint["entitlement_id"], checkpoint["artifact_id"], checkpoint["attempt_count"]) == (
+        reader.identity_id, "cifereca", "local", reader.identity_id, "local_transfer",
+        "local_transfer_published", None, None, 0,
+    )
+    assert checkpoint["metadata"]["destination"] == str(target)
+    assert checkpoint["metadata"]["scope"]["artifact_id"] == published.artifact_id
+    assert checkpoint["metadata"]["scope"]["from_placement_id"] == published.placement_id
     assert facade_execute(service, candidate, notice)["status"] == "blocked"
     assert session.actions == 1 and service.current_identity is reader
