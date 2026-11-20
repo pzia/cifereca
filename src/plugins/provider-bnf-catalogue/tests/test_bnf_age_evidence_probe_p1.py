@@ -294,6 +294,35 @@ def test_same_own_isbn_on_two_different_arks_is_ambiguous():
     assert probe.qualified_observed_age_fields(response(first, second), ISBN) == []
 
 
+@pytest.mark.parametrize("matching_first", [True, False])
+def test_same_ark_with_conflicting_own_isbns_keeps_raw_evidence_only(matching_first):
+    matching = _synthetic_cnlj_333()
+    other_edition = record(isbn="9782377315123", fmt="INTERMARC")
+    records = (matching, other_edition) if matching_first else (other_edition, matching)
+    data = response(*records)
+
+    assert probe.exact_edition_age_fields(data, ISBN) == (
+        probe.exact_edition_age_fields(response(matching), ISBN)
+    )
+    assert probe.qualified_observed_age_fields(data, ISBN) == []
+
+
+def test_consistent_duplicate_ark_and_unrelated_edition_preserve_qualification():
+    matching = _synthetic_cnlj_333()
+    other_format = record(fmt="INTERMARC").replace(
+        "</mxc:record>",
+        '<mxc:datafield tag="833"><mxc:subfield code="m">JAg1399</mxc:subfield>'
+        "</mxc:datafield></mxc:record>",
+    )
+    unrelated = record(isbn="9782377315123", ark="ark:/12148/cb465971481")
+    expected = probe.qualified_observed_age_fields(response(matching), ISBN)
+
+    assert len(expected) == 1
+    assert probe.qualified_observed_age_fields(
+        response(matching, other_format, unrelated), ISBN,
+    ) == expected
+
+
 def test_conflicting_ark_with_a_different_age_cannot_choose_first():
     first = _synthetic_cnlj_333()
     second = _synthetic_cnlj_333(

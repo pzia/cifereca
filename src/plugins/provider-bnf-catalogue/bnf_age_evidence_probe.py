@@ -114,6 +114,7 @@ def exact_edition_age_fields(
     if declared_total != len(records) or root.find(SRU + "nextRecordPosition") is not None:
         refuse("incomplete_page")
     output: list[dict[str, object]] = []
+    nonmatching_arks: set[str] = set()
     for wrapper in records:
         # BnF SRU specifies MARC records via recordSchema=marcxchange and
         # recordPacking=xml. Refuse missing/foreign wrappers, not just a
@@ -157,6 +158,7 @@ def exact_edition_age_fields(
         if set(own_isbns) != {key}:
             if key in own_isbns:
                 refuse("ambiguous_isbn")
+            nonmatching_arks.add(ark)
             continue
         # Exact ISBN records without age fields still create ambiguity.
         # This optional internal collector preserves the public raw API.
@@ -190,6 +192,10 @@ def exact_edition_age_fields(
                     "evidence_role": FIELD_ROLES[(fmt, tag)],
                     "age_status": "unqualified_raw_evidence",
                 })
+    # Duplicate representations may agree, but the same ARK cannot
+    # establish this edition if another copy declares a different ISBN.
+    if _matched_arks is not None and not _matched_arks.isdisjoint(nonmatching_arks):
+        refuse("conflicting_ark_isbn")
     return output
 
 
@@ -212,8 +218,9 @@ _OBSERVED_CNLJ_NOTES = {
 def qualified_observed_age_fields(xml: bytes, isbn: str) -> list[dict[str, object]]:
     """Qualify a single unambiguous own-ISBN BnF record, offline.
 
-    No numeric value escapes if two distinct ARKs claim the same ISBN, or
-    any audience field of the matched record is unknown or contradictory.
+    No numeric value escapes if two distinct ARKs claim the same ISBN,
+    the matched ARK has conflicting ISBNs, or any of its audience fields
+    are unknown or contradictory.
     Historical 329 critical reviews are not audience fields and do not veto
     a verified 333. No digital support or Core age range is inferred.
     """
