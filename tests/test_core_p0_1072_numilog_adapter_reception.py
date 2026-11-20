@@ -15,7 +15,13 @@ import httpx
 from cifereca.core.canonical_sync_stage import observe_canonical_rights_in_sync
 from cifereca.core.notice_c_purchase_runtime import install_purchase_runtime
 from cifereca.core.notice_c_purchase_descriptive_read import read_purchase_descriptive_notice
-from cifereca.core.notice_c_purchase_library_projection import _status_txn
+from cifereca.core.notice_c_purchase_library_projection import (
+    _status_txn, project_purchase_library_notices, purchase_library_notice,
+    purchase_library_status, purchase_status_label,
+)
+from cifereca.core.search import filter_loaded_results, local_match_explanation
+from cifereca.gui.library_rows import project_library_rows
+from cifereca.gui.local_book_detail_sections import local_book_detail_sections
 from cifereca.core.notice_c_work_runtime import NoticeWorkRuntime
 from cifereca.plugin_api import Account, from_legacy_rights_snapshot
 from cifereca.storage import Storage
@@ -161,5 +167,74 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
     try:
         assert read_purchase_descriptive_notice(reopened, chosen, identity_id=owner) == notice
         assert read_purchase_descriptive_notice(reopened, omitted, identity_id=owner) is None
+
+        def remote_row(source, key):
+            scope = source.scope
+            return {"key": key, "identity_id": scope.identity_id,
+                    "provider_id": scope.provider_id, "item_id": source.edition_id,
+                    "source": "private_catalog_observation", "state": "remote_catalog",
+                    "local": False, "title": TITLE, "author": "",
+                    "metadata": {}, "possessions": [],
+                    "source_refs": [{"identity_id": scope.identity_id,
+                                     "provider_id": scope.provider_id,
+                                     "credential_id": scope.credential_id,
+                                     "account_id": scope.account_id,
+                                     "item_id": source.edition_id, "kind": "observation"}]}
+
+        rows = [remote_row(chosen, "direct"), remote_row(omitted, "readzis")]
+        foreign = remote_row(chosen, "foreign")
+        foreign["identity_id"] = "B"
+        rows.append(foreign)
+        project_purchase_library_notices(reopened, rows, identity_id=owner)
+        direct, missing, outsider = rows
+        packet = purchase_library_notice(direct)
+        assert packet is not None and packet.notice == notice
+        assert purchase_library_status(direct) is None
+        assert purchase_library_notice(missing) is None
+        status = purchase_library_status(missing)
+        assert status is not None and status.state == "direct_locator_unattested"
+        assert purchase_library_notice(outsider) is None
+        assert purchase_library_status(outsider) is None
+        rendered, _ = project_library_rows(
+            rows[:2], row_factory=lambda *args: SimpleNamespace(values=args),
+            provider_display_name=str, availability_label=lambda _: "",
+            backup_status_label=str, format_date=str,
+        )
+        assert rendered[0].values[2] == "Auteur de recette"
+        assert "Auteur : catalogue public" in rendered[0].values[3]
+        assert rendered[1].values[2] == ""
+        assert purchase_status_label(status) in rendered[1].values[3]
+        assert rendered[0]._purchase_library_notice == packet
+        assert rendered[1]._purchase_library_status == status
+
+        def sections(item):
+            return dict(local_book_detail_sections(
+                item, provider_display_name=str, availability_label=lambda _: "",
+                identity_by_id=lambda _: None, sync_status_label=str,
+                language_label=lambda _: "",
+                purchase_notice=purchase_library_notice(item),
+                purchase_status=purchase_library_status(item),
+            ))
+
+        detail = sections(direct)["Fiche du catalogue public"]
+        for label, value in (("Auteur", "Auteur de recette"),
+                             ("Éditeur", "Editeur de recette"),
+                             ("Résumé", "Résumé de recette"),
+                             ("Série", "Cycle de recette"),
+                             ("Langues déclarées", "fr")):
+            assert (label, value) in detail
+        assert ("Portée", "Fiche commerciale, pas une preuve de l’édition acquise") in detail
+        assert "Fiche du catalogue public" not in sections(missing)
+        assert sections(missing)["Enrichissement documentaire"] == [
+            ("État", purchase_status_label(status))]
+        assert "Fiche du catalogue public" not in sections(outsider)
+        for term, field in (("Auteur de recette", "author"),
+                            ("Cycle de recette", "series"),
+                            ("Résumé de recette", "all")):
+            assert filter_loaded_results(rows, term, field=field) == [direct]
+            assert "catalogue public" in local_match_explanation(direct, term)
+        # No fresh network or change to rights/physical state at read time.
+        assert requests == ["inventory", "detail", "inventory"]
+        assert reopened.entitlements() == [] and reopened.acquisitions() == [] and reopened.placements() == []
     finally:
         reopened.close()
