@@ -164,10 +164,18 @@ def _ensure_region(db, *, storage, root, identity_id, placement_id, shared_lock,
                              "derived_region_scope_changed")
                 finally:
                     os.close(fd)
-            named = os.stat(parent.name, dir_fd=parent_dir, follow_symlinks=False)
-            _require(stat.S_ISREG(named.st_mode)
-                     and _signature(named) == _signature(os.fstat(parent_fd)) == parent_stamp,
-                     "derived_region_scope_changed")
+            # A bind mount of the same file can preserve stat identity.
+            # Reopen the name through the pinned parent directory to
+            # compare its current mount as well as its physical signature.
+            fresh_parent = os.open(parent.name, _FLAGS, dir_fd=parent_dir)
+            try:
+                named = os.fstat(fresh_parent)
+                _require(stat.S_ISREG(named.st_mode)
+                         and _signature(named) == _signature(os.fstat(parent_fd)) == parent_stamp
+                         and _mount_id(fresh_parent) == _mount_id(parent_fd) == parent_mount,
+                         "derived_region_scope_changed")
+            finally:
+                os.close(fresh_parent)
 
         scope_paths_current()
         created = raw is None
