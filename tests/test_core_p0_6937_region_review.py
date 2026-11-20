@@ -1,5 +1,6 @@
 """#6937: inspect stage regions without granting authority or following aliases."""
 from dataclasses import asdict, replace
+import os
 from pathlib import Path
 
 import pytest
@@ -132,5 +133,70 @@ def test_changed_or_incomplete_witness_discarded(tmp_path, monkeypatch, change):
         assert report["status"] in ("evidence_changed", "unavailable", "incomplete")
         assert not report["bounded_walk_complete"] and not any(report["counts"].values())
         _protected(report)
+    finally:
+        db.close()
+
+
+def test_unrecorded_names_of_known_or_shared_inodes_are_ambiguous(tmp_path):
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        stage, parent, target = map(Path, (
+            intent.staged_path, intent.parent_path, intent.candidate_path,
+        ))
+        outside = parent.with_name("unrelated.pdf")
+        outside.write_bytes(b"unrelated")
+        aliases = [
+            (stage, stage.with_name("different-stage-name.epub")),
+            (parent, stage.with_name("parent-alias.epub")),
+            (outside, stage.with_name("unrelated-alias.pdf")),
+        ]
+        for original, alias in aliases:
+            os.link(original, alias)
+        independent = stage.with_name("independent.epub")
+        independent.write_bytes(b"independent")
+        before = journal.summarize_derived_journal(db)
+        receipt = db.metadata_get(reservation.key)
+        result = _read(db, tmp_path)
+        assert result["status"] == "observed"
+        assert result["counts"] == {
+            "pending_named": 1, "committed_named": 0, "unrecorded_regular": 1,
+            "ambiguous_entries": 3, "unverified_regions": 0, "unobserved_receipts": 0,
+        }
+        _protected(result)
+        assert target.samefile(stage)
+        assert all(original.samefile(alias) for original, alias in aliases)
+        assert independent.read_bytes() == b"independent"
+        assert journal.summarize_derived_journal(db) == before
+        assert db.metadata_get(reservation.key) == receipt
+    finally:
+        db.close()
+
+
+def test_two_distinct_receipts_for_one_output_inode_are_ambiguous(tmp_path):
+    service, intent, reservation = _setup(tmp_path)
+    db = service.storage
+    try:
+        stage = Path(intent.staged_path)
+        alias = stage.with_name("second-stage.epub")
+        os.link(stage, alias)
+        other = replace(intent, parent_placement_id="different-placement",
+                        staged_path=str(alias),
+                        candidate_path=str(Path(intent.candidate_path).with_name("other.epub")))
+        key = journal._slot(other)
+        assert key != reservation.key
+        raw = journal._encode({
+            "schema": "derived.intent.v2", "nonce": "b" * 32, "intent": asdict(other),
+        })
+        db.metadata_set(key, raw)
+        result = _read(db, tmp_path)
+        assert result["status"] == "observed"
+        assert result["counts"]["ambiguous_entries"] == 2
+        assert result["counts"]["unrecorded_regular"] == 0
+        assert result["counts"]["pending_named"] == 0
+        assert result["counts"]["unobserved_receipts"] == 0
+        _protected(result)
+        assert stage.samefile(alias)
+        assert db.metadata_get(key) == raw
     finally:
         db.close()
