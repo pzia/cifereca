@@ -81,6 +81,41 @@ def test_budget_one_never_follows_second_page():
         c.close()
 
 
+@pytest.mark.parametrize("page_token,expected_ids", [
+    ("001", ("1", "2")),
+    ("0001", ("1",)),
+])
+def test_pagination_preserves_observed_rows_when_next_page_token_is_invalid(
+    page_token, expected_ids,
+):
+    pages = []
+
+    def handler(request):
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={"location":
+                "/1409/Catalog/Search?query=x&pageindex=0"})
+        page = request.url.params["pageindex"]
+        pages.append(page)
+        if page == "0":
+            return httpx.Response(200, headers={"content-type": "text/html"}, text=(
+                '<a href="/1409/Catalog/Book/1/">Première notice</a>'
+                f'<a href="/1409/Catalog/Search?query=x&pageindex={page_token}">Suivant</a>'
+            ))
+        assert page == "001"
+        return httpx.Response(200, headers={"content-type": "text/html"},
+                              text='<a href="/1409/Catalog/Book/2/">Deuxième notice</a>')
+
+    c = client(handler)
+    try:
+        result = c.search("x", max_pages=2)
+        assert result.book_ids == expected_ids
+        assert result.pages_observed == len(expected_ids)
+        assert result.completeness == "partial"
+        assert pages == (["0", "001"] if page_token == "001" else ["0"])
+    finally:
+        c.close()
+
+
 def test_summary_http_200_never_yields_false_zero_result():
     calls = []
     def handler(request):
