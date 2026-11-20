@@ -3082,10 +3082,24 @@ class UxRecommendationsView:
                 )
             )
 
-        alternative_fields = _known_source_alternative_fields(
-            item, admitted=row_cover_ref is not None,
-            catalogue_sources=catalogue_sources,
-        )
+        project_alternatives = getattr(self.host, "public_notice_alternative_fields", None)
+        if callable(project_alternatives):
+            # Only the CoreUI host can verify the opaque, originally
+            # published receipt. Never replace a refused receipt with the
+            # compatibility projection or mint a new one at selection.
+            alternative_fields = (
+                project_alternatives(
+                    item, identity_id=exact_identity, document=row_cover_ref,
+                    receipt=state["cover_document_receipt"],
+                    catalogue_sources=catalogue_sources,
+                )
+                if row_cover_ref is not None and _known_public_c_candidate(item) else ()
+            )
+        else:
+            alternative_fields = _known_source_alternative_fields(
+                item, admitted=row_cover_ref is not None,
+                catalogue_sources=catalogue_sources,
+            )
         if alternative_fields:
             sections.append(DetailSection(
                 "known-public-alternatives", "Autres descriptions de la même notice",
