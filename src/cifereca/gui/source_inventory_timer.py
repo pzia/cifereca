@@ -36,6 +36,24 @@ def _attested_scheduled_inventory(receipt: Any) -> bool:
     return True  # Legacy broker test doubles without an attempt counter.
 
 
+def _scheduled_inventory_progress(receipt: Any) -> tuple[bool, bool]:
+    """Return (positive progress, failed identity), without copying private facts.
+
+    A native mixed receipt already counts at least one successful source
+    within an identity. A failed or malformed result alone proves no progress.
+    """
+    if getattr(receipt, "ok", None) is True:
+        return _attested_scheduled_inventory(receipt), False
+    if type(receipt) is SyncResult and receipt.ok is False:
+        facts = receipt.facts
+        if isinstance(facts, Mapping):
+            attempted, failed = facts.get("attempted"), facts.get("failed")
+            if (type(attempted) is int and type(failed) is int
+                    and 0 < failed < attempted <= _MAX_SOURCES):
+                return True, True
+    return False, True
+
+
 def _broker(window: Any) -> Any:
     manager = getattr(window, "plugin_manager", None)
     try:
@@ -359,10 +377,9 @@ def configure(
                     break
                 try:
                     receipt = broker.synchronize_scheduled_inventory(identity_id, "periodic")
-                    if getattr(receipt, "ok", None) is not True:
-                        failures += 1
-                    elif _attested_scheduled_inventory(receipt):
-                        completed += 1
+                    progressed, failed = _scheduled_inventory_progress(receipt)
+                    completed += int(progressed)
+                    failures += int(failed)
                 except Exception:
                     # One failed account must not starve its eligible siblings.
                     # Keep private exception text out of TaskRunner feedback.
@@ -370,6 +387,10 @@ def configure(
                 if not scope_current():
                     interrupted = True
                     break
+            if completed and failures:
+                return SyncResult(ok=False, facts={"status": "partial",
+                                                   "completed": completed,
+                                                   "failed": failures})
             if failures:
                 raise RuntimeError("Actualisation des notices des comptes indisponible") from None
             # TaskRunner treats a bare None as an unexecuted/invalidated
