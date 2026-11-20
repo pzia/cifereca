@@ -137,3 +137,109 @@ def test_unqualified_session_does_not_search_under_public_contract(kwargs):
         assert response.partial is True and calls == []
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("extra", [
+    '<link rel="alternate" type="text/html" href="/ebooks/43"/>',
+    '<link rel="subsection" href="/ebooks/42.opds"/><link rel="subsection" href="/ebooks/43.opds"/>',
+])
+def test_secondary_coordinate_cannot_be_hidden_behind_first_link(extra):
+    for entries in (ENTRY.replace("</entry>", extra + "</entry>"),
+                    ENTRY.replace("<id>", extra + "<id>", 1)):
+        session, calls = make_session(entries)
+        try:
+            response = session.search_with_response_facets("Exact OPDS book", "catalog")
+            assert response.results == [] and response.public_notices == ()
+            assert response.partial is True
+            assert len(calls) == 1
+        finally:
+            session.close()
+
+
+@pytest.mark.parametrize("extra,expected", [
+    ("<dcterms:issued>2020</dcterms:issued>", "2020"),
+    ("<dcterms:issued>2021</dcterms:issued>", None),
+    ("<dcterms:issued>invalid</dcterms:issued>", None),
+    ("<dcterms:issued><other>2020</other></dcterms:issued>", None),
+])
+def test_publication_date_requires_consistent_explicit_issued_fields(extra, expected):
+    session, calls = make_session(ENTRY.replace("</entry>", extra + "</entry>"))
+    try:
+        response = session.search_with_response_facets("Exact OPDS book", "catalog")
+        row, = response.results
+        assert row.published_at == expected
+        assert response.public_notices[0].result is row
+        assert len(calls) == 1
+        # Legacy offer semantics are deliberately unchanged.
+        legacy, = session.search("Exact OPDS book")
+        assert legacy.published_at == "2020"
+        assert legacy.downloadable is True
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("extra,expected", [
+    ('<link rel="alternate" type="text/html" href="/ebooks/42"/>',
+     "https://www.gutenberg.org/ebooks/42"),
+    ('<link rel="alternate" type="text/html" href="https://example.test/other"/>', None),
+])
+def test_web_fact_requires_unique_direct_atom_alternate(extra, expected):
+    session, calls = make_session(ENTRY.replace("</entry>", extra + "</entry>"))
+    try:
+        response = session.search_with_response_facets("Exact OPDS book", "catalog")
+        row, = response.results
+        assert row.friendly_url == expected
+        assert ("public_url_evidence" in row.metadata) is (expected is not None)
+        assert row.download_url is None and row.downloadable is False
+        assert len(calls) == 1
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("types,count,partial", [
+    ((), 1, False),
+    (("epub",), 1, False),
+    (("EPUB",), 1, False),
+    (("ebook",), 1, False),
+    (("epub", "pdf"), 1, True),
+    (("pdf",), 0, True),
+    (("mp3",), 0, True),
+])
+def test_documentary_format_filter_accepts_core_ui_epub_family(types, count, partial):
+    session, calls = make_session()
+    try:
+        response = session.search_with_response_facets(
+            "Exact OPDS book", "catalog", content_types=types,
+        )
+        assert len(response.results) == len(response.public_notices) == count
+        assert response.partial is partial
+        assert response.catalogue_complete is False
+        assert len(calls) == count
+        assert bool(session.last_search_warnings) is partial
+        if count:
+            row, = response.results
+            assert row.format == "EPUB"
+            assert response.public_notices[0].result is row
+            assert row.downloadable is False and row.download_url is None
+        # A new supported call must not inherit earlier format warnings.
+        again = session.search_with_response_facets("Exact OPDS book", "catalog",
+                                                    content_types=("epub",))
+        assert len(again.results) == 1 and again.partial is False
+        assert session.last_search_warnings == []
+        assert len(calls) == count + 1
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("types", [None, "epub", (None,), ("x" * 81,)])
+def test_malformed_documentary_format_filter_does_not_query(types):
+    from cifereca.plugin_api import ProviderCapabilityError
+
+    session, calls = make_session()
+    try:
+        with pytest.raises(ProviderCapabilityError, match="unsupported_content_type"):
+            session.search_with_response_facets("Exact OPDS book", "catalog",
+                                                content_types=types)
+        assert calls == []
+    finally:
+        session.close()

@@ -386,6 +386,16 @@ class GutenbergSession(ProviderSession):
             # establishes the publication date of the described ebook.
             # Only an explicit dcterms:issued may populate published_at.
             issued = _attested_date(self._text(entry.find(f"{{{DCTERMS}}}issued")))
+            if documentary:
+                issued_nodes = entry.findall(f"{{{DCTERMS}}}issued")
+                issued_values = {
+                    _attested_date(self._text(node))
+                    if not len(node) and not node.attrib else None
+                    for node in issued_nodes
+                }
+                issued = (next(iter(issued_values))
+                          if len(issued_values) == 1 and None not in issued_values
+                          else None)
             entry_published = _attested_atom_timestamp(self._text(entry.find(f"{{{ATOM}}}published")))
             entry_updated = _attested_atom_timestamp(self._text(entry.find(f"{{{ATOM}}}updated")))
             language = normalize_language_tag(self._text(entry.find(f"{{{DCTERMS}}}language")))
@@ -423,6 +433,9 @@ class GutenbergSession(ProviderSession):
             detail_url: str | None = None
             epub_links: list[tuple[str, str]] = []
             link_shapes: list[tuple[str, str, str]] = []
+            coordinate_urls: list[str] = []
+            public_alternates: set[str] = set()
+            direct_atom_links = set(entry.findall(f"{{{ATOM}}}link"))
             # OPDS is Atom-based, but be tolerant of servers that serialize link
             # elements with a different/no namespace.  The semantic attributes
             # (rel/type/href) are what matter here.
@@ -445,6 +458,7 @@ class GutenbergSession(ProviderSession):
                 # an EPUB-looking URL only when the relation is acquisition-like.
                 if rel.casefold().startswith(_EPUB_REL) and (is_epub_mime or is_epub_href):
                     epub_links.append((href, link_title))
+                    coordinate_urls.append(href)
                 elif "thumbnail" in rel.casefold():
                     if urlsplit(href).scheme in {"http", "https"}:
                         thumbnail = thumbnail or href
@@ -453,8 +467,13 @@ class GutenbergSession(ProviderSession):
                         cover = cover or href
                 elif rel == "alternate" and typ in {"text/html", "application/xhtml+xml", ""}:
                     friendly = friendly or href
+                    coordinate_urls.append(href)
+                    # Only direct Atom declarations can attest a web link.
+                    if link in direct_atom_links:
+                        public_alternates.add(href)
                 elif rel == "subsection" and re.search(r"/ebooks/\d+\.opds(?:[/?]|$)", href, re.I):
                     detail_url = detail_url or href
+                    coordinate_urls.append(href)
 
             ebook_no = self._ebook_number(entry, friendly, detail_url, *(href for href, _ in epub_links))
             # Durable admission requires the record's own exact identifier.
@@ -471,9 +490,10 @@ class GutenbergSession(ProviderSession):
             own_coordinates = (
                 exact_id is not None and exact_id.group(1) == ebook_no
                 and len(title_nodes) == 1 and self._text(title_nodes[0]) is not None
+                and not len(title_nodes[0])
                 and all(m.group(1) == ebook_no
-                        for url in (friendly, detail_url, *(href for href, _ in epub_links))
-                        if url for m in _EBOOK_RE.finditer(url))
+                        for url in coordinate_urls
+                        for m in _EBOOK_RE.finditer(url))
             )
             if not epub_links and not detail_url:
                 stats["without_epub"] += 1
@@ -505,7 +525,9 @@ class GutenbergSession(ProviderSession):
             candidates.setdefault(ebook_no, []).append({
                 "title": title,
                 "public_coordinates": own_coordinates,
-                "observed_friendly": friendly,
+                "observed_friendly": (
+                    next(iter(public_alternates)) if len(public_alternates) == 1 else None
+                ),
                 "author": author,
                 "description": description,
                 "published": issued,
@@ -780,13 +802,26 @@ class GutenbergSession(ProviderSession):
                 and type(self._accounts) is list and not self._accounts
                 and self.opds_search_url == DEFAULT_OPDS_SEARCH_URL):
             return ProviderSearchResponse([], partial=True)
-        if content_types and "ebook" not in content_types:
-            return ProviderSearchResponse([], catalogue_complete=False)
+        warnings = []
+        self.last_search_warnings = warnings
+        # The CoreUI Format facet sends the file-format family "epub",
+        # not the legacy media category "ebook". Match either explicitly;
+        # unsupported requested formats are not an authoritative zero.
+        if (type(content_types) not in (tuple, list, set, frozenset)
+                or any(type(value) is not str or not 0 < len(value) <= 80
+                       for value in content_types)):
+            raise ProviderCapabilityError("Project Gutenberg : unsupported_content_type")
+        requested = {value.casefold() for value in content_types}
+        supported = {"epub", "ebook"}
+        if requested - supported:
+            warnings.append(
+                "partial_results : formats demandés non pris en charge par Gutenberg"
+            )
+        if requested and not requested & supported:
+            return ProviderSearchResponse([], partial=True, catalogue_complete=False)
         # Core uses the catalogue-only scope for ownerless sessions.
         if scope == "catalog":
             scope = "all"
-        warnings = []
-        self.last_search_warnings = warnings
         rows = self._search_page(query, scope, 0, field, warnings=warnings,
                                  documentary=True)
         return ProviderSearchResponse(

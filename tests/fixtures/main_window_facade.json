@@ -800,7 +800,7 @@
     "async": false
   },
   "MainWindow._refresh_tools_page": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[], kw_defaults=[], defaults=[])",
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self')], kwonlyargs=[arg(arg='_page_context')], kw_defaults=[Constant(value=None)], defaults=[])",
     "returns": "Constant(value=None)",
     "decorators": [],
     "async": false
