@@ -691,56 +691,55 @@ class DocumentCoverService:
             return
 
         def work() -> None:
-            try:
-                snapshot = reader(document)
-            except Exception:
-                # A failed or revoked producer read has no negative meaning.
-                # In particular, never log provider credentials or URLs.
-                snapshot = None
-            if (type(snapshot) is CoverSourceSnapshot
-                    and snapshot.scope == document):
+            # A positive producer hint can justify ONE extra read while the
+            # original MISS is still in flight. Keep its entire waiter set:
+            # the initiating GTK handle may have been recycled meanwhile.
+            for attempt in range(2):
                 try:
-                    # The presence CAS runs under lock, but registered GTK
-                    # observers are called only after that lock is released.
-                    self._register_snapshot(snapshot, only_if_absent=True)
-                except (ValueError, TypeError, RuntimeError):
-                    pass
-            with self._lock:
-                live = not self._closed and document in self._snapshots
-                waiters = self._read_waiters.pop(document, [])
-                self._read_active.discard(document)
-                if not live and not self._closed:
-                    self._read_cooldown[document] = self._clock() + 15.0
-                    self._read_cooldown.move_to_end(document)
-                    while len(self._read_cooldown) > self._max_documents:
-                        self._read_cooldown.popitem(last=False)
-                else:
-                    self._read_cooldown.pop(document, None)
-                # A later Core producer may have persisted a newer epoch
-                # while this first MISS worker was reading an old snapshot.
-                # Defer the *targeted* re-read until after its flight clears.
-                target = self._refresh_targets.get(document, 0)
-                current_snapshot = self._snapshots.get(document)
-                retry_newer = bool(
-                    target and current_snapshot is not None
-                    and current_snapshot.revision < target
-                )
-                retry_missing = bool(
-                    target and current_snapshot is None and handle.active
-                )
-                if target and not retry_newer:
-                    self._refresh_targets.pop(document, None)
-                if retry_missing:
-                    # The old MISS may have returned unknown just before C
-                    # was written. A positive producer epoch allows ONE
-                    # immediate retry, not a permanent negative cache.
-                    self._read_cooldown.pop(document, None)
+                    snapshot = reader(document)
+                except Exception:
+                    # A failed or revoked producer read has no negative meaning.
+                    # In particular, never log provider credentials or URLs.
+                    snapshot = None
+                if (type(snapshot) is CoverSourceSnapshot
+                        and snapshot.scope == document):
+                    try:
+                        self._register_snapshot(snapshot, only_if_absent=True)
+                    except (ValueError, TypeError, RuntimeError):
+                        pass
+                with self._lock:
+                    target = self._refresh_targets.get(document, 0)
+                    current_snapshot = self._snapshots.get(document)
+                    waiting = self._read_waiters.get(document, ())
+                    subscribers = self._source_subscriptions.get(document, {})
+                    if (attempt == 0 and target and not self._closed
+                            and current_snapshot is None
+                            and (handle.active
+                                 or any(h.active for h, _ in waiting)
+                                 or any(h.active for h, _ in subscribers.values()))):
+                        # Keep the revision floor through the bounded retry;
+                        # a new hint may raise it while the read is in flight.
+                        self._read_cooldown.pop(document, None)
+                        continue
+                    live = not self._closed and current_snapshot is not None
+                    waiters = self._read_waiters.pop(document, [])
+                    self._read_active.discard(document)
+                    if not live and not self._closed:
+                        self._read_cooldown[document] = self._clock() + 15.0
+                        self._read_cooldown.move_to_end(document)
+                        while len(self._read_cooldown) > self._max_documents:
+                            self._read_cooldown.popitem(last=False)
+                    else:
+                        self._read_cooldown.pop(document, None)
+                    retry_newer = bool(
+                        target and current_snapshot is not None
+                        and current_snapshot.revision < target
+                    )
+                    if target and not retry_newer:
+                        self._refresh_targets.pop(document, None)
+                    break
             if retry_newer:
                 self.refresh_cached_source_if_newer(document, target)
-            elif retry_missing:
-                self._read_source_on_n2_miss(
-                    document, handle, source_changed,
-                )
             if live:
                 for waiting_handle, callback in waiters:
                     if (not waiting_handle.active
