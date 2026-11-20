@@ -53,3 +53,19 @@ def test_recommendation_alternatives_obey_exact_provider_filter(tmp_path):
         assert "notice_c_source_alternatives" not in item.metadata
         assert known_public_c_binding_facts(item) == (canonical.document, canonical.epoch)
         assert catalogue.known_public_notices("deux sources", provider_ids=("unrelated",)) == []
+
+
+def test_budget_lookup_never_invokes_hostile_dict_key(tmp_path):
+    class CollidingKey:
+        def __hash__(self):
+            return hash("notice_c_source_alternatives")
+
+        def __eq__(self, other):
+            raise AssertionError("untrusted equality")
+
+    with closing(Storage(tmp_path / "hostile-key.sqlite")) as db:
+        first, second = sources(db)
+        shared(db, first, second)
+        item, = CatalogBrokerImpl(NS(storage=db)).known_public_notices("deux sources")
+        item.metadata = {CollidingKey(): []}
+        assert known_public_c_binding_facts(item) is None
