@@ -14,3 +14,15 @@ def split_filename_suffix(path: PurePath) -> tuple[str, str]:
         if len(name) > len(suffix) and name.lower().endswith(suffix):
             return name[:-len(suffix)], name[-len(suffix):]
     return path.stem, path.suffix
+
+
+def epub_filename_convention(path: PurePath) -> str | None:
+    """One descriptive name convention, not actual EPUB layout or format."""
+    stem, suffix = split_filename_suffix(path)
+    if not stem:
+        return None
+    return {
+        ".epub": "epub",
+        ".kepub.epub": "kepub",
+        ".fxl.kepub.epub": "fxl.kepub",
+    }.get(suffix.casefold())

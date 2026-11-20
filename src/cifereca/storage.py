@@ -4698,7 +4698,8 @@ class Storage:
             row = dict(zip(columns, record)); row["metadata"] = self._json_load(row.pop("metadata_json")); out.append(self._artifact_row_with_kind(row))
         return out
 
-    def artifact_put(self, artifact: Any) -> str:
+    def artifact_put(self, artifact: Any, *, catalog_epub_name_only: bool = False) -> str:
+        """Persist an artifact; a catalog filename must not rewrite an existing EPUB family format."""
         if isinstance(artifact, dict):
             row = dict(artifact)
         else:
@@ -4716,10 +4717,15 @@ class Storage:
         with self._lock, self._connect() as db:
             db.execute(
                 "INSERT INTO artifacts(artifact_id,sha256,size,media_format,mime_type,metadata_json,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO UPDATE SET size=excluded.size,media_format=excluded.media_format,"
+                "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(artifact_id) DO UPDATE SET size=excluded.size,"
+                "media_format=CASE WHEN ?=1 AND artifacts.sha256=excluded.sha256 "
+                "AND artifacts.size=excluded.size "
+                "AND artifacts.media_format IN ('epub','kepub','fxl.kepub') "
+                "AND excluded.media_format IN ('epub','kepub','fxl.kepub') "
+                "THEN artifacts.media_format ELSE excluded.media_format END,"
                 "mime_type=COALESCE(excluded.mime_type,artifacts.mime_type),metadata_json=excluded.metadata_json,updated_at=excluded.updated_at",
                 (artifact_id, str(row.get("sha256") or ""), int(row.get("size") or 0), str(row.get("media_format") or "unknown"),
-                 row.get("mime_type"), self._json_dump(metadata), now, now),
+                 row.get("mime_type"), self._json_dump(metadata), now, now, int(catalog_epub_name_only is True)),
             )
         return artifact_id
 
