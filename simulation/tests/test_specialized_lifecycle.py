@@ -47,12 +47,11 @@ class SpecializedLifecycleTests(unittest.TestCase):
             self.assertEqual(first["env"]["CIFERECA_UX_SPECIALIZED_DATA"], str(root))
             self.assertTrue(datasetctl.summary_payload(profile, catalog)["specialized"]["complete"])
             manifest = json.loads((root / "manifest.json").read_text())
-            self.assertEqual(len(manifest["files"]), 10)
+            self.assertEqual(len(manifest["files"]), 13)
             self.assertEqual(manifest["version"], plugin_scenarios.SCHEMA_VERSION)
 
-            # Both V1 and V2 were valid in older runtimes. Neither may
-            # silently hide the ADEPT dataset introduced by schema V3.
-            for previous_version in (1, 2):
+            # Older manifests must not hide newly introduced fixtures.
+            for previous_version in (1, 2, 3):
                 old_manifest = dict(manifest, version=previous_version)
                 (root / "manifest.json").write_text(json.dumps(old_manifest), encoding="utf-8")
                 self.assertFalse(datasetctl.specialized_status(profile)["complete"])
@@ -69,6 +68,13 @@ class SpecializedLifecycleTests(unittest.TestCase):
             datasetctl.prepare(profile, catalog)
             self.assertTrue(datasetctl.specialized_status(profile)["complete"])
             self.assertEqual(json.loads((root / "manifest.json").read_text()), manifest)
+
+            (root / "publication-scan.pdf").unlink()
+            self.assertFalse(datasetctl.specialized_status(profile)["complete"])
+            datasetctl.prepare(profile, catalog)
+            self.assertEqual(json.loads((root / "manifest.json").read_text()), manifest)
+            self.assertEqual((root / "publication-scan.pdf").read_bytes(),
+                             plugin_scenarios.synthetic_pdf(scan=True))
 
             new_seed_profile = self.profile(seed=20261009)
             datasetctl.prepare(new_seed_profile, catalog)
