@@ -17,12 +17,19 @@ def _sensitive_parameters(text):
                 or any(ord(char) < 32 or ord(char) == 127 for char in key)):
             return True
         keys.add(key.casefold())
-    if keys & {'token', 'signature', 'sig', 'access_token', 'auth', 'key', 'download', 'authorization'}:
+    normalized = {''.join(char for char in key if char.isalnum()) for key in keys}
+    if normalized & {
+        'token', 'signature', 'sig', 'accesstoken', 'auth', 'key',
+        'download', 'authorization', 'session', 'sessionid', 'sessionkey',
+        'ticket', 'credential', 'credentials', 'secret', 'password',
+        'apikey', 'expires', 'policy', 'keypairid', 'awsaccesskeyid',
+        'googleaccessid', 'jwt',
+    }:
         return True
     return any(
-        key.startswith(('x-amz-', 'x-goog-'))
+        key.startswith(('xamz', 'xgoog'))
         or 'token' in key or 'signature' in key
-        for key in keys
+        for key in normalized
     )
 
 
@@ -54,12 +61,19 @@ def catalogue_url(row):
         if port not in {None, 80, 443}:
             continue
         path = unquote(unquote(parts.path)).casefold()
-        if path.endswith(('.acsm', '.epub', '.pdf')):
+        # Validate the decoded path rather than treating a trailing slash,
+        # matrix parameter or encoded separator as a different document.
+        # A residual escape or control is ambiguous at the browser boundary.
+        if ('%' in path or '\\' in path or ';' in path
+                or any(ord(char) < 32 or ord(char) == 127 for char in path)):
             continue
-        if any(marker in path for marker in (
-            '/fulfillment/', '/assaredirect/', '/loan/',
-            '/download/', '/downloads/', '/pages/compte/',
-        )) or path.endswith(('/download', '/downloads', '/readbook.ashx')):
+        segments = set(path.split('/'))
+        if (segments & {'.', '..', 'fulfillment', 'assaredirect', 'loan',
+                         'loans', 'borrow', 'borrows', 'download', 'downloads',
+                         'acquisition', 'acquire', 'readbook.ashx'}
+                or '/pages/compte/' in path
+                or path.rstrip('/').endswith(('/pages/compte', '.acsm',
+                                               '.lcpl', '.epub', '.pdf', '.zip'))):
             continue
         if _sensitive_parameters(parts.query) or _sensitive_parameters(parts.fragment):
             continue
