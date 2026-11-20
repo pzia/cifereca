@@ -1074,6 +1074,7 @@ def main():
 
     def verify_catalogue_tie_cover_gtk():
         """#3680: real Gtk.Picture, offline image, no provider or network fetch."""
+        report["notice_c_cover_stage"] = "tie_setup"
         from types import SimpleNamespace
         from PIL import Image
         from cifereca.core.covers import CoverCandidate, resolve_cover
@@ -1127,6 +1128,7 @@ def main():
         image.bind_url(loader, chosen.url)
 
         def verify_first():
+            report["notice_c_cover_stage"] = "tie_first"
             assert image.get_mapped()
             assert image.picture.get_paintable() is not None
             assert not image.placeholder.get_visible()
@@ -1135,6 +1137,7 @@ def main():
             later(110, verify_second)
 
         def verify_second():
+            report["notice_c_cover_stage"] = "tie_second"
             assert image.picture.get_paintable() is not None
             assert not image.placeholder.get_visible()
             assert calls == [a, a]
