@@ -1,4 +1,4 @@
-"""Activation after a narrow-list return uses the current selection."""
+"""Selection and keyboard focus for the shared narrow master/detail page."""
 import ast
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -12,15 +12,19 @@ class Row:
     pass
 
 
-def activate_method():
+def page_method(name):
     tree = ast.parse(SOURCE.read_text(encoding="utf-8"))
     owner = next(n for n in tree.body
                  if isinstance(n, ast.ClassDef) and n.name == "MasterDetailPage")
     method = next(n for n in owner.body
-                  if isinstance(n, ast.FunctionDef) and n.name == "_activate_row")
+                  if isinstance(n, ast.FunctionDef) and n.name == name)
     ns = {"BookListItem": Row, "Gtk": NS(DirectionType=NS(TAB_FORWARD="tab"))}
     exec(compile(ast.Module(body=[method], type_ignores=[]), str(SOURCE), "exec"), ns)
-    return ns["_activate_row"]
+    return ns[name]
+
+
+def activate_method():
+    return page_method("_activate_row")
 
 
 def page_with_rows(*, narrow=True, selected=0, reject=False):
@@ -88,3 +92,32 @@ def test_rejected_selection_does_not_open_previous_row():
     assert page.selection.get_selected_item() is rows[0]
     assert events == [("select", 1)]
     assert not page._narrow_detail_visible
+
+
+@pytest.mark.parametrize("detail_accepts_focus", [True, False])
+def test_opening_narrow_detail_leaves_keyboard_focus_on_a_visible_target(detail_accepts_focus):
+    events = []
+
+    def focus_detail(direction):
+        events.append(("focus-detail", direction))
+        return detail_accepts_focus
+
+    page = NS(
+        _narrow_master_detail=True,
+        _narrow_detail_visible=False,
+        _set_narrow_detail_context=lambda active: events.append(("context", active)),
+        detail_back=NS(
+            set_visible=lambda visible: events.append(("show-back", visible)),
+            grab_focus=lambda: events.append(("focus-back",)),
+        ),
+        paned=NS(set_position=lambda position: events.append(("position", position))),
+        detail=NS(child_focus=focus_detail),
+    )
+
+    page_method("_show_narrow_detail")(page)
+
+    assert page._narrow_detail_visible
+    expected = [("context", True), ("show-back", True), ("position", 0), ("focus-detail", "tab")]
+    if not detail_accepts_focus:
+        expected.append(("focus-back",))
+    assert events == expected
