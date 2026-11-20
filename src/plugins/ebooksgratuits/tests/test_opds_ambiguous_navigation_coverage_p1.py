@@ -122,3 +122,29 @@ def test_second_search_clears_prior_partial_warning():
         assert obj.last_search_warnings == []
     finally:
         obj.close()
+
+
+@pytest.mark.parametrize("entries", [BOOK, ""])
+def test_general_query_reports_unsearched_author_scope_even_with_unique_books_branch(entries):
+    """Shape observed on COPS Hugo search 20/11/2026; payload is synthetic."""
+    navigation = f"""<feed xmlns="{ATOM}">
+    <entry><id>cops:books</id><title>Books</title>
+    <link rel="subsection" type="application/atom+xml" href="/index.php/feed/books"/></entry>
+    <entry><id>cops:authors</id><title>Authors</title>
+    <link rel="subsection" type="application/atom+xml" href="/index.php/feed/authors"/></entry>
+    </feed>"""
+    routes = {
+        "/index.php/feed": ROOT,
+        "/index.php/feed/search": navigation,
+        "/index.php/feed/books": f'<feed xmlns="{ATOM}">{entries}</feed>',
+    }
+    obj, seen = session_with_routes(routes)
+    try:
+        rows = obj.search("Hugo", field="all")
+        assert len(rows) == bool(entries)
+        assert obj.last_search_warnings == [WARNING]
+        assert seen == ["/index.php/feed", "/index.php/feed/search", "/index.php/feed/books"]
+        # Neither automatic expansion into authors nor a false global zero.
+        assert "/index.php/feed/authors" not in seen
+    finally:
+        obj.close()
