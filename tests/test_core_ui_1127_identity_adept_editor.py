@@ -151,5 +151,7 @@ def test_window_keeps_unique_identity_ids_exact_bindings_and_callback_ownership(
     assert "self._choose_identity_directory(" in body
     assert "self._choose_adept_profile(entry, button)" in body
     assert "mark_settings_dirty('accounts')" in body
+    # A local binding gate must report that the runtime check was skipped.
+    assert "Contrôle ADEPT non exécuté · " in body
     assert "SettingsCommitController(" in body
     assert "settings_committer.submit(" in body
