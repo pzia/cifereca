@@ -70,6 +70,8 @@ def test_kobo_exact_fxl_presence_or_authorized_epub_delivery(kobo, previous_deli
             db, library_root=root, path=fxl, source=service.source,
             snapshot=service.snapshot, final_sha256=digest,
             delivery_receipt_ref="synthetic-kobo-existing-delivery",
+            expected_source_policy_revision="a" * 32,
+            transaction_guard=lambda conn: consent_current_in_transaction(conn, service.source),
         )
     assert LocalCatalog(db, root).scan().cataloged == 1
     calls = []
