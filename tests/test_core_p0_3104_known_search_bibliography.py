@@ -137,6 +137,33 @@ def test_primary_field_provenance_survives_eviction_and_restart(tmp_path):
         assert "dc.language" in detail_field_provenance(language)
         assert series.provenance.observed_at == language.provenance.observed_at
         assert not present(item).actions
+
+        # Exercise the same fields through the actual mapped Search detail,
+        # not just the pure presentation decorator.
+        ui = _host()
+        ui._identity_context_generation = 2
+        ui._search_generation = 3
+        ui.service._account_context_epoch = 5
+        ui.service._source_context_epoch = 7
+        ui._populate_local_search([item])
+        mapped, = ui.search_page.show_rows.call_args.args[0]
+        panel = NS(show_presentation=Mock(), empty=Mock())
+        host = NS(
+            _closed=False, _search_detail_request_generation=0,
+            _cancel_cached_book_details=Mock(),
+            _search_local_objects={item["key"]: item}, _selected_search_id=None,
+            service=ui.service, _search_mode="local",
+            _identity_context_generation=2, _search_generation=3,
+            search_page=NS(detail=panel, selection=NS(get_selected_item=lambda: mapped)),
+        )
+        _detail_selected()(host, mapped)
+        panel.empty.assert_not_called()
+        visible = panel.show_presentation.call_args.args[0]
+        observed = {f.label: f.provenance for section in visible.sections
+                    for f in section.fields if f.label in {"Série", "Langue"}}
+        assert observed == {"Série": series.provenance, "Langue": language.provenance}
+        assert visible.cover_document_ref == item["_cover_document_ref"]
+        assert not visible.actions
         for forged in ({k: v for k, v in item.items() if k != "_core_notice_c_primary_facts"},
                        {**item, "item_id": "other"},
                        {**item, "identity_id": "bob"},
