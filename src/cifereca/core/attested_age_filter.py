@@ -32,6 +32,29 @@ def _native_identifier(row: Mapping[str, Any], names: tuple[str, ...]) -> str:
     return selected
 
 
+def _age_provenance_matches(proof: object, provider: str, edition: str) -> bool:
+    if proof is None:
+        return True
+    if type(proof) is Provenance:
+        source, provider_id, source_id = proof.source, proof.provider_id, proof.source_id
+    elif type(proof) is dict:
+        source = proof.get("source")
+        provider_id = proof.get("provider_id", "")
+        source_id = proof.get("source_id", "")
+    else:
+        return False
+    if (type(source) is not str or not source
+            or type(provider_id) is not str or type(source_id) is not str):
+        return False
+    if source == provider and provider_id and provider_id != provider:
+        return False
+    # An independent authority may have its own record ID. When either
+    # coordinate identifies this provider, its record must be this edition.
+    if source == provider or provider_id == provider:
+        return source_id in ("", edition)
+    return True
+
+
 def attested_age_ranges(row: Mapping[str, Any]) -> tuple[YouthAgeRange, ...]:
     """Only an edition-linked explicit structured age is usable as evidence.
 
@@ -58,15 +81,9 @@ def attested_age_ranges(row: Mapping[str, Any]) -> tuple[YouthAgeRange, ...]:
     for record in supplied:
         if type(record) is YouthAgeRange:
             provenance = record.provenance
-            if provenance is not None and (
-                type(provenance) is not Provenance
-                or type(provenance.source) is not str
-                or not provenance.source
-                # A provenance keyed to the same provider may not point at
-                # another edition. A distinct publisher/authority may carry
-                # its own source record ID and must retain that provenance.
-                or (provenance.source == provider and provenance.source_id
-                    and provenance.source_id != edition)
+            if (
+                (provenance is not None and type(provenance) is not Provenance)
+                or not _age_provenance_matches(provenance, provider, edition)
             ):
                 continue
             if record.age_kind in _AGE_KINDS and (
@@ -78,7 +95,7 @@ def attested_age_ranges(row: Mapping[str, Any]) -> tuple[YouthAgeRange, ...]:
             continue
         # Embedded source/edition provenance must never contradict the
         # surrounding already-identified bibliographic edition.
-        if any(
+        if not _age_provenance_matches(record.get("provenance"), provider, edition) or any(
             record.get(name) is not None
             and (type(record[name]) is not str or record[name] != expected)
             for names, expected in (
