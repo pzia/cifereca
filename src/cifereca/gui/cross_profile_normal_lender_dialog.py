@@ -20,6 +20,16 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
     token = object()
     window._cross_profile_borrow_pending = token
     stage = "choose"
+    route = getattr(window, "_route_display_token", None)
+
+    def route_current():
+        # This generation is plain owner state; no GTK read on the worker.
+        return (not getattr(window, "_closed", False)
+                and window.service is service
+                and getattr(window, "_route_display_token", None) is route)
+
+    def dialog_current():
+        return route_current() and current()
 
     def owns(expected):
         return stage == expected and getattr(window, "_cross_profile_borrow_pending", None) is token
@@ -34,7 +44,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         nonlocal stage
         if not owns("confirm"):
             return
-        if response != "borrow" or not current():
+        if type(response) is not str or response != "borrow" or not dialog_current():
             release()
             return
         stage = "submitted"
@@ -42,7 +52,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         def work():
             # No widget reads on the worker. Core revalidates exact candidate,
             # requester object, epochs, lender/session and at-most-once claim.
-            if getattr(window, "_closed", False) or window.service is not service:
+            if not route_current():
                 return {"status": "blocked"}
             return execute(
                 captured_candidate=candidate, exact_notice=item,
@@ -56,7 +66,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
             if not owns("submitted"):
                 return
             release()
-            if not current():
+            if not dialog_current():
                 return
             if (type(result) is dict and result.get("status") == "confirmed"
                     and result.get("provider_verified") is True
@@ -87,7 +97,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         nonlocal stage
         if not owns("choose"):
             return
-        if not current() or type(response) is not str:
+        if not dialog_current() or type(response) is not str:
             release()
             return
         choices = {f"choice-{i}": row for i, row in enumerate(rows)}
@@ -119,7 +129,7 @@ def present_normal_lender_choice(panel, *, item, rows, current, service,
         for i, row in enumerate(rows):
             menu.add_response(f"choice-{i}", row.label)
         menu.connect("response", selected)
-        if not current():
+        if not dialog_current():
             release()
             return False
         menu.present()
@@ -148,6 +158,7 @@ def append_normal_lender_action(panel, *, item, rows, visible, service,
     def current():
         try:
             return (not getattr(window, "_closed", False)
+                    and not getattr(button, "_cifereca_action_context_revoked", False)
                     and panel.get_mapped()
                     and panel._rendered_search_detail is visible
                     and window.service is service
