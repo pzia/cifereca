@@ -107,3 +107,50 @@ def test_choices_with_same_provider_record_across_editions_are_distinct(tmp_path
         for item in (a, b):
             assert evict_notice_cover(db, item.document, expected_epoch=item.epoch)
         assert read_public_web_choices(db, result.document) == menu
+
+
+def test_corrupt_source_fence_only_disqualifies_its_own_web_choices(tmp_path):
+    from cifereca.core.notice_cover_repository import _fence_key
+
+    filename = tmp_path / "corrupt-source.sqlite"
+    with closing(Storage(filename)) as db:
+        a = source(db, "seller-a", "a", [link("seller-a", URL)])
+        b = source(db, "seller-b", "b", [link("seller-b", OTHER)])
+        target = a.observation.key.edition_id
+        publish(db, target, a)
+        result = publish(db, target, b)
+        menu = read_public_web_choices(db, result.document)
+        by_provider = {option.provider_id: option for option in menu.choices}
+        assert choose(db, menu, by_provider["seller-a"]) == URL
+        assert choose(db, menu, by_provider["seller-b"]) == OTHER
+        with db._lock, db._connect() as sql:
+            sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                        ("{}", _fence_key(_opaque_key(a.document))))
+        reduced = read_public_web_choices(db, result.document)
+        assert reduced.epoch == menu.epoch
+        assert reduced.choices == (by_provider["seller-b"],)
+        assert choose(db, menu, by_provider["seller-a"]) is None
+        assert choose(db, menu, by_provider["seller-b"]) == OTHER
+        assert evict_notice_cover(db, b.document, expected_epoch=b.epoch)
+    with closing(Storage(filename)) as db:
+        assert read_public_web_choices(db, result.document) == reduced
+        assert choose(db, menu, by_provider["seller-a"]) is None
+        assert choose(db, menu, by_provider["seller-b"]) == OTHER
+        assert db.entitlements() == [] and db.acquisitions() == []
+
+
+def test_corrupt_canonical_row_is_not_suppressed_as_missing_source(tmp_path):
+    import pytest
+    from cifereca.core.notice_c_cover_index import _db_key
+
+    with closing(Storage(tmp_path / "corrupt-canonical.sqlite")) as db:
+        a = source(db, "seller-a", "a", [link("seller-a", URL)])
+        result = publish(db, a.observation.key.edition_id, a)
+        menu = read_public_web_choices(db, result.document)
+        with db._lock, db._connect() as sql:
+            sql.execute("UPDATE metadata SET value=? WHERE key=?",
+                        ("{}", _db_key(result.document)))
+        with pytest.raises(ValueError):
+            read_public_web_choices(db, result.document)
+        with pytest.raises(ValueError):
+            choose(db, menu, menu.choices[0])
