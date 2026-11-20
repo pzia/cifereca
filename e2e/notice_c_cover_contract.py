@@ -103,7 +103,9 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             page = search_public_notice_c(db, "loup")
             assert len(page.hits) == 1 and page.hits[0].document == doc
             assert fact.catalogue_web_references[0].url == row.friendly_url
-            return doc, fact.epoch, row.thumbnail_url, row.friendly_url
+            from notice_c_web_menu_contract import seed_multiple_web_choices
+            multi = seed_multiple_web_choices(db)
+            return doc, fact.epoch, row.thumbnail_url, row.friendly_url, multi
         finally:
             db.close()
             session.close()
@@ -162,7 +164,8 @@ def verify_notice_c_cover(window, later, capture, report, complete):
             assert monotonic() < deadline, "C seed worker timeout"
             later(40, guard(after_seed))
             return
-        state["document"], state["epoch"], state["url"], state["web_url"] = seed_job.result()
+        (state["document"], state["epoch"], state["url"], state["web_url"],
+         state["multiple_web"]) = seed_job.result()
         start_stage(False)
 
     def start_stage(offline):
@@ -329,7 +332,12 @@ def verify_notice_c_cover(window, later, capture, report, complete):
                 probe.destroy()
                 state["probe"] = None
                 window.present()
-                done()
+                from notice_c_web_menu_contract import verify_multiple_web_choices
+                verify_multiple_web_choices(
+                    window, db, state["multiple_web"], offline=offline,
+                    later=later, guard=guard, capture=capture, report=report,
+                    complete=done, state=state,
+                )
 
             later(40, guard(wait_launch))
 
