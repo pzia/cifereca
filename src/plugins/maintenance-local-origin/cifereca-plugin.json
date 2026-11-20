@@ -1,0 +1,34 @@
+{
+  "manifest": 1,
+  "package": {
+    "id": "org.cifereca.maintenance.local-origin",
+    "version": "0.1.0",
+    "name": "Cifereca Local Origin Review",
+    "publisher": "cifereca",
+    "plugin_api": ">=1.4,<2"
+  },
+  "plugins": [
+    {
+      "id": "maintenance.library.local-origin",
+      "type": "maintenance.tool",
+      "entrypoint": "cifereca_local_origin:PLUGIN",
+      "display_name": "Suggestions de provenance — par lots",
+      "description": "Comparaison documentaire locale avec les notices publiques en cache.",
+      "version": "0.1.0",
+      "priority": 43,
+      "instantiation": "singleton_public",
+      "enabled_by_default": true,
+      "help_text": "Revue paginée, partielle et annulable. Aucun accès fournisseur ni attribution d’origine.",
+      "capabilities": [
+        "maintenance.local-origin"
+      ],
+      "requires": [],
+      "recommends": [],
+      "system_requires": [],
+      "requires_brokers": [
+        "library.origin.read"
+      ],
+      "requires_contracts": []
+    }
+  ]
+}
