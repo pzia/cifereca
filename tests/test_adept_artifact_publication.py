@@ -146,8 +146,8 @@ def test_format_change_never_renames_over_intermediate_path(tmp_path, monkeypatc
         pytest.fail("a suffix correction must not replace a directory entry")
 
     def collide(source, target, **kwargs):
-        if Path(target) == destination.with_suffix(".pdf"):
-            Path(target).write_bytes(b"other publication")
+        if Path(target) == Path(destination.with_suffix(".pdf").name):
+            destination.with_suffix(".pdf").write_bytes(b"other publication")
         return real_link(source, target, **kwargs)
 
     monkeypatch.setattr(Path, "replace", no_replace)
