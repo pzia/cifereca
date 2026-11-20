@@ -47,11 +47,11 @@ class SpecializedLifecycleTests(unittest.TestCase):
             self.assertEqual(first["env"]["CIFERECA_UX_SPECIALIZED_DATA"], str(root))
             self.assertTrue(datasetctl.summary_payload(profile, catalog)["specialized"]["complete"])
             manifest = json.loads((root / "manifest.json").read_text())
-            self.assertEqual(len(manifest["files"]), 14)
+            self.assertEqual(len(manifest["files"]), 16)
             self.assertEqual(manifest["version"], plugin_scenarios.SCHEMA_VERSION)
 
             # Older manifests must not hide newly introduced fixtures.
-            for previous_version in (1, 2, 3, 4):
+            for previous_version in (1, 2, 3, 4, 5):
                 old_manifest = dict(manifest, version=previous_version)
                 (root / "manifest.json").write_text(json.dumps(old_manifest), encoding="utf-8")
                 self.assertFalse(datasetctl.specialized_status(profile)["complete"])
@@ -77,6 +77,20 @@ class SpecializedLifecycleTests(unittest.TestCase):
                              plugin_scenarios.synthetic_pdf(scan=True))
 
             (root / "publication-cases.json").unlink()
+            self.assertFalse(datasetctl.specialized_status(profile)["complete"])
+            datasetctl.prepare(profile, catalog)
+            self.assertEqual(json.loads((root / "manifest.json").read_text()), manifest)
+
+            # A current-version manifest omitting a known fixture is incomplete
+            # even if every remaining listed SHA is valid.
+            truncated = dict(manifest, files=dict(manifest["files"]))
+            del truncated["files"]["optimizer-compact.epub"]
+            (root / "manifest.json").write_text(json.dumps(truncated), encoding="utf-8")
+            self.assertFalse(datasetctl.specialized_status(profile)["complete"])
+            datasetctl.prepare(profile, catalog)
+            self.assertEqual(json.loads((root / "manifest.json").read_text()), manifest)
+
+            (root / "optimizer-protected.epub").unlink()
             self.assertFalse(datasetctl.specialized_status(profile)["complete"])
             datasetctl.prepare(profile, catalog)
             self.assertEqual(json.loads((root / "manifest.json").read_text()), manifest)
