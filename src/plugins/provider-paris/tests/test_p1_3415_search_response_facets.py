@@ -482,3 +482,79 @@ def test_public_notice_series_is_exact_per_result_and_not_a_page_facet(scenario,
                    for row in projected.values())
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("scenario,scope", [
+    ("CATALOGUE", "physical"), ("EBOOKS", "digital"),
+])
+def test_exact_anonymous_series_reaches_durable_c_from_paris_parser(
+    tmp_path, scenario, scope,
+):
+    """Synthetic HTTP, actual Paris parser and Core same-call/SQLite path."""
+    from types import SimpleNamespace
+    from cifereca.core.search_orchestration import (
+        _public_rows_from_response, _mirror_remote_results,
+    )
+    from cifereca.core.notice_cover_repository import read_notice_cover, evict_notice_cover
+    from cifereca.core.notice_c_cover_index import read_consolidated_notice_cover
+    from cifereca.core.notice_c_public_search import search_public_notice_c
+    from cifereca.core.notice_c_known_projection import merge_public_notice_c_known_rows
+    from cifereca.storage import Storage
+
+    payload = _response(scenario, _facet(field="SeriesTitle_exact", label="Série"))
+    record = payload["d"]["Results"][0]
+    record["CustomResult"] = '<a href="/Search?field=SeriesTitle_idx">Cycle astral</a>'
+    record["Resource"]["Desc"] = "token=not-for-publication"
+    calls = []
+    def respond(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json=payload)
+
+    session = ParisProviderSession(
+        credential_id="__public__", label="Paris", credentials={},
+        options={}, config={}, diagnostics=None,
+    )
+    session.client.close()
+    session.client = _client(respond)
+    path = tmp_path / "paris-notice.sqlite"
+    db = Storage(path)
+    try:
+        response = session.search_with_response_facets("Synthetic book", scope)
+        raw, = response.results
+        declaration, = response.public_notices
+        assert declaration.result is raw
+        assert raw.source_collection == "public_catalog"
+        assert raw.description is raw.thumbnail_url is raw.friendly_url is None
+        assert raw.metadata["series"] == ["Cycle astral"]
+        row, = _public_rows_from_response(response, session)
+        assert _mirror_remote_results(
+            SimpleNamespace(storage=db), [row], identity_id="alice",
+            require_public_cover_witness=True,
+        ) == 1
+        exact = row._core_notice_cover_document_ref
+        canonical = row._core_notice_canonical_cover_document_ref
+        source = read_notice_cover(db, exact)
+        assert source.attribute.state == "pending"
+        relation = read_consolidated_notice_cover(
+            db, canonical,
+        ).sources[0].public_bibliography.series_relation
+        assert relation.label == "Cycle astral"
+        assert relation.scope == scenario
+        assert relation.source_field == "Search.CustomResult"
+        assert evict_notice_cover(db, exact, expected_epoch=source.epoch)
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        session.close()
+        db.close()
+
+    db = Storage(path)
+    try:
+        page = search_public_notice_c(db, "Synthetic book", group_by_document=True)
+        known, = merge_public_notice_c_known_rows([], page, identity_id="bob")
+        assert known["metadata"]["series"] == ["Cycle astral"]
+        assert known["metadata"]["bibliography_evidence"]["series"]["scope"] == scenario
+        assert known["_cover_document_ref"] == canonical
+        assert db.entitlements() == [] and db.acquisitions() == []
+        assert len(calls) == 1
+    finally:
+        db.close()
