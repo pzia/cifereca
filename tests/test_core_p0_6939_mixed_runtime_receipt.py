@@ -160,5 +160,12 @@ def test_shared_runtime_drains_both_lanes_after_admission_pressure(rig, public_c
         assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
         assert len(refs(db)[0]) == 1 and refs(db)[1] == 0 and not root.exists()
     finally:
+        # TaskBrokerImpl.close is deliberately nonblocking. The borrowed rig
+        # closes SQLite during fixture teardown, even after an assertion fails.
+        # Capture the owned executor before close detaches it, then join every
+        # cancelled/active worker before returning the storage to the fixture.
+        pool = tasks._executor
         runtime.close()
         tasks.close()
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
