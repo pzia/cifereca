@@ -108,6 +108,16 @@ def _safe_series_search_href(href: object) -> bool:
         # authority separators, fragments and credentials cannot qualify.
         raw_url = urlsplit(href)
         for parsed in (raw_url, urlsplit(decoded)):
+            # A series selector on an unrelated local route (download,
+            # redirect, detail, etc.) is not a Syracuse Search relation.
+            # Only the two Search route shapes exercised by the existing
+            # result-owned evidence are qualified. Do not resolve or fetch.
+            if parsed.path.casefold() not in {
+                "/search", "/search.aspx",
+                "./search", "./search.aspx",
+                "../search", "../search.aspx",
+            }:
+                return False
             if parsed.scheme:
                 if (parsed.scheme != "https" or parsed.hostname not in _SERIES_ALLOWED_HOSTS
                         or parsed.username is not None or parsed.password is not None
