@@ -107,6 +107,11 @@ def discover_profiles(context: Any) -> dict[str, DeviceProfile]:
     return found
 
 
+def is_kobo_compound_output(path: str | Path) -> bool:
+    """A Kobo engine-requesting filename is not a generic EPUB output."""
+    return Path(path).name.casefold().endswith(".kepub.epub")
+
+
 def default_output_path(input_path: str | Path, profile: DeviceProfile) -> Path:
     """Name an optimized EPUB, not an asserted Kobo-engine conversion.
 
