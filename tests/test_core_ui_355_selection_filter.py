@@ -82,6 +82,8 @@ def _page(selected):
     page.clear_rows = lambda: page.store.rows.clear()
     page.window = NS()
     page.title = "Test"
+    page._replacing_rows = False
+    page._narrow_detail_visible = False
     return page
 
 
