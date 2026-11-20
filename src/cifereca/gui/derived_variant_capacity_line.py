@@ -43,6 +43,29 @@ def _subtitle(value):
             physical = (f"Stock nommé du profil (inodes observés, non hachés) : "
                         f"{logical:,} octets logiques, {allocated:,} octets alloués. "
                         "Inventaire physique non exhaustif.")
+        region_text = "Zone privée : observation indisponible ou incomplète."
+        region = value.get("region")
+        if type(region) is dict and region.get("status") == "observed":
+            if any(region.get(key) is not False for key in (
+                "exclusive_region_verified", "sha_verified", "external_dependencies_verified",
+                "complete_physical_inventory", "reclaimable_bytes_known",
+                "retention_authorized", "quota_refund_authorized", "destructive_cleanup_allowed",
+            )) or region.get("bounded_walk_complete") is not True:
+                return _FALLBACK
+            rc = region["counts"]
+            if (type(rc) is not dict
+                    or set(rc) != {"pending_named", "committed_named", "unrecorded_regular",
+                                  "ambiguous_entries", "unverified_regions", "unobserved_receipts"}
+                    or any(type(n) is not int or not 0 <= n <= 2**20 for n in rc.values())):
+                return _FALLBACK
+            region_text = (
+                f'Zone privée observée : {rc["pending_named"]} actifs, '
+                f'{rc["committed_named"]} terminés, {rc["unrecorded_regular"]} sans reçu, '
+                f'{rc["ambiguous_entries"]} entrées ambiguës, '
+                f'{rc["unverified_regions"]} zones non vérifiées, '
+                f'{rc["unobserved_receipts"]} reçus non observés. '
+                "Aucun orphelin supprimable attesté."
+            )
         prefix = "" if value["output_bytes_complete"] else "Au moins "
         return (
             f'Installation : {value["record_count"]}/{cap["records"]} reçus '
@@ -54,7 +77,7 @@ def _subtitle(value):
             f'{value["active_output_bytes"]:,} octets déclarés ; '
             f'{counts["unreadable"]} illisibles et {counts["unbound"]} non rattachables '
             'à l’installation.\n'
-            f'{physical} Aucun quota libéré, aucun octet récupérable attesté.'
+            f'{physical}\\n{region_text} Aucun quota libéré, aucun octet récupérable attesté.'
         )
     except (KeyError, TypeError, ValueError, AttributeError):
         return _FALLBACK
