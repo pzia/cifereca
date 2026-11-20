@@ -86,9 +86,13 @@ def attested_age_ranges(row: Mapping[str, Any]) -> tuple[YouthAgeRange, ...]:
                 or not _age_provenance_matches(provenance, provider, edition)
             ):
                 continue
-            if record.age_kind in _AGE_KINDS and (
-                record.age_min is not None or record.age_max is not None
-            ):
+            # The typed DTO validates bounds, not source_label. Apply
+            # the same native, bounded label contract as the dict wire:
+            # a malformed plugin-supplied value is not attested evidence.
+            if (record.age_kind in _AGE_KINDS
+                    and type(record.source_label) is str
+                    and len(record.source_label) <= 120
+                    and (record.age_min is not None or record.age_max is not None)):
                 out.append(record)
             continue
         if type(record) is not dict:
