@@ -761,6 +761,11 @@ def optimize_epub(
         raise EpubOptimizationError("cpu_workers doit valoir 1, 2 ou 4")
     source = Path(input_path).expanduser().resolve()
     target = Path(output_path).expanduser().resolve()
+    # The engine produces generic EPUB, not a Kobo conversion. Reject both
+    # the requested filename and a resolved alias before any output I/O.
+    from .profiles import is_kobo_compound_output
+    if is_kobo_compound_output(output_path) or is_kobo_compound_output(target):
+        raise EpubOptimizationError("Sortie KEPUB non supportée : choisissez un EPUB générique.")
 
     if source == target:
         raise EpubOptimizationError("la sortie doit être différente de l'EPUB original")
