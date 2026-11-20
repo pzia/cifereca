@@ -71,6 +71,21 @@ def _stamp(info):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
 
 
+def _source_stamp(info):
+    # Unlike the destination's hardlink stamp, a private input must retain
+    # its ctime and exact single-link ownership until promotion.
+    return (*_stamp(info), info.st_ctime_ns, info.st_nlink)
+
+
+def _source_current(fd, name, expected):
+    try:
+        actual = _info(fd, name)
+        return (stat.S_ISREG(actual.st_mode) and actual.st_nlink == 1
+                and _source_stamp(actual) == _source_stamp(expected))
+    except OSError:
+        return False
+
+
 def _info(fd, name):
     return os.stat(name, dir_fd=fd, follow_symlinks=False)
 
@@ -129,12 +144,13 @@ def publish_direct_loan_candidate(
         dest_fd = _create_directory(library_target_dir)
         if not _current_directory(library_target_dir, dest_fd):
             raise DirectLoanPublicationRefused("loan_direct_target_scope_invalid")
-        src_fd = os.open(staged_path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        src_fd = os.open(staged_path.name, os.O_RDONLY | os.O_NOFOLLOW |
+                         os.O_NONBLOCK | os.O_CLOEXEC,
                          dir_fd=stage_fd)
         with os.fdopen(src_fd, "rb") as src:
             current = os.fstat(src.fileno())
             if (not stat.S_ISREG(current.st_mode) or current.st_nlink != 1
-                    or _stamp(current) != _stamp(work_stat)):
+                    or _source_stamp(current) != _source_stamp(work_stat)):
                 raise DirectLoanPublicationRefused("loan_direct_stage_changed")
             temporary = ".loan-publish-" + secrets.token_hex(16)
             fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -155,10 +171,10 @@ def publish_direct_loan_candidate(
                     os.fsync(out.fileno())
                 finally:
                     made = os.fstat(out.fileno())
-            if _stamp(os.fstat(src.fileno())) != _stamp(current):
+            if _source_stamp(os.fstat(src.fileno())) != _source_stamp(current):
                 raise DirectLoanPublicationRefused("loan_direct_stage_changed")
         if (not _current_directory(work_dir, stage_fd)
-                or not _owned(stage_fd, staged_path.name, work_stat)):
+                or not _source_current(stage_fd, staged_path.name, work_stat)):
             raise DirectLoanPublicationRefused("loan_direct_stage_changed")
 
         hashed = digest.hexdigest()
@@ -170,6 +186,9 @@ def publish_direct_loan_candidate(
                     else f"{stem} - {hashed[:16]}-{index - 2}{suffix}")
             if not _current_directory(library_target_dir, dest_fd):
                 raise DirectLoanPublicationRefused("loan_direct_target_scope_invalid")
+            if (not _current_directory(work_dir, stage_fd)
+                    or not _source_current(stage_fd, staged_path.name, work_stat)):
+                raise DirectLoanPublicationRefused("loan_direct_stage_changed")
             if not _owned(dest_fd, temporary, made):
                 raise DirectLoanPublicationRefused("loan_direct_temp_changed")
             try:
@@ -190,7 +209,7 @@ def publish_direct_loan_candidate(
                 raise DirectLoanPublicationRefused("loan_direct_target_scope_invalid")
 
             if (_current_directory(work_dir, stage_fd)
-                    and _owned(stage_fd, staged_path.name, work_stat)):
+                    and _source_current(stage_fd, staged_path.name, work_stat)):
                 _remove_own(stage_fd, staged_path.name, work_stat)
             linked = None  # committed physical path; preserve on return
             return library_target_dir / name
