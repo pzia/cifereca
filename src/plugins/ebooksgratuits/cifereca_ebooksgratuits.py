@@ -1194,12 +1194,15 @@ def _opds_load_acquisition(session,initial,field,needle,*,initial_feed=None):
         links.sort()
         if links[0][0]>2:
             raise ProviderCapabilityError('Ebooks libres et gratuits : browse_route_unavailable')
-        # Distinct same-priority OPDS navigation feeds may each contain
-        # books for the requested field. Following the first is a bounded
-        # choice, not proof that the entire server catalogue was searched.
-        # Never request the other feeds implicitly or claim a corpus zero.
+        # An actual COPS general query can return separate Books, Authors,
+        # Series, Tags and Publishers branches. Selecting the Books branch
+        # is bounded, but the other server-issued scopes may have additional
+        # results. A lower selection rank is not proof of empty coverage.
+        # For specialized fields retain the existing same-priority check;
+        # browsing without a term is not a general text search.
         priority = links[0][0]
-        alternatives = {href for rank, href in links if rank == priority}
+        alternatives = {href for rank, href in links
+                        if (needle and field == 'all') or rank == priority}
         warning = (
             'partial_results : plusieurs branches OPDS possibles ; '
             'une seule interrogée'
