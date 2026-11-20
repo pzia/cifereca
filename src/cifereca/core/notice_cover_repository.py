@@ -248,24 +248,28 @@ def _write_source_fence(db, key, *, epoch, seen_at, proof, evicted=False,
 
 
 
+def _check_live_source_fence(previous, old_row, fence):
+    """One fence invariant for an already decoded live source and its wire row."""
+    if fence is None:
+        return  # Historical rows without a fence remain readable.
+    seen_at = old_row.get(_LAST_SEEN, previous.observation.observed_at)
+    proof = _source_fingerprint(
+        previous.observation, tuple(old_row["field_path"]),
+        old_row["cover_inventory_complete"],
+    )
+    if (fence.get("evicted") is True or fence["epoch"] != previous.epoch
+            or fence["last_seen_at"] != seen_at or fence["proof"] != proof
+            or (fence.get("public_search_v2") is True
+                and not _is_public_search_v2(previous.observation))):
+        raise ValueError("notice_c_source_fence_corrupt")
+
+
 def _checked_source_state(db, document, key):
     row = db.execute("SELECT value FROM metadata WHERE key=?", (key,)).fetchone()
     previous = _decode(row[0], document) if row is not None else None
     fence = _read_source_fence(db, key)
     if previous is not None:
-        old_row = json.loads(row[0])
-        seen_at = old_row.get(_LAST_SEEN, previous.observation.observed_at)
-        proof = _source_fingerprint(
-            previous.observation, tuple(old_row["field_path"]),
-            old_row["cover_inventory_complete"],
-        )
-        if fence is not None and (
-            fence.get("evicted") is True or fence["epoch"] != previous.epoch
-            or fence["last_seen_at"] != seen_at or fence["proof"] != proof
-            or (fence.get("public_search_v2") is True
-                and not _is_public_search_v2(previous.observation))
-        ):
-            raise ValueError("notice_c_source_fence_corrupt")
+        _check_live_source_fence(previous, json.loads(row[0]), fence)
     return row, previous, fence
 
 
