@@ -141,10 +141,14 @@ class LaRochelleCatalogueSession(ProviderSession):
                     self.provider_id + ".public_search_record_identifier"
                 )
                 declarations.append(PublicSearchNotice(row))
-        partial = len(declarations) != len(rows)
+        # No recognized record is not proof of an empty catalogue page.
+        # Explicit clearing of the query is not a search attempt.
+        partial = len(declarations) != len(rows) or (bool(query.strip()) and not rows)
         # Keep the warning for list-only callers; the typed response expresses
         # a bounded page independently of a missing bibliographic observation.
         self.last_search_warnings = (
+            ["Résultats publics partiels : aucune notice reconnue."]
+            if partial and not rows else
             ["Résultats publics partiels : notices sans preuve bibliographique."]
             if partial else []
         )
