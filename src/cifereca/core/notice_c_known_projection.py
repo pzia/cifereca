@@ -68,6 +68,21 @@ def _series_metadata(hit: PublicNoticeCHit) -> dict[str, Any]:
     return metadata
 
 
+def _source_alternative(hit: PublicNoticeCHit) -> dict[str, Any]:
+    """The same source-specific descriptive alternative in both known views."""
+    return {
+        "provider_id": hit.provider_id,
+        "record_id": hit.record_id,
+        "source_revision": hit.source_revision,
+        "title": hit.title,
+        "author": hit.author,
+        "publisher": hit.publisher,
+        "description": hit.description,
+        **({"published_at": hit.published_at} if hit.published_at is not None else {}),
+        **_series_metadata(hit),
+    }
+
+
 def merge_public_notice_c_known_rows(
     known: list[dict[str, Any]], page: PublicNoticeCPage,
     *, identity_id: str,
@@ -114,17 +129,7 @@ def merge_public_notice_c_known_rows(
             alternatives = prior["metadata"].setdefault(
                 "notice_c_source_alternatives", [],
             )
-            alternatives.append({
-                "provider_id": hit.provider_id,
-                "record_id": hit.record_id,
-                "source_revision": hit.source_revision,
-                "title": hit.title,
-                "author": hit.author,
-                "publisher": hit.publisher,
-                "description": hit.description,
-                **({"published_at": hit.published_at} if hit.published_at is not None else {}),
-                **_series_metadata(hit),
-            })
+            alternatives.append(_source_alternative(hit))
             continue
         rows.append({
             "key": "c-public:" + hit.document.source_key,
