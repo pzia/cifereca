@@ -305,7 +305,7 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
             result["book_detail_local_c_stage"] = stage
         # Only individually reviewed, synthetic stages from the C-cover helper.
         cover_stage = data.get("notice_c_cover_stage")
-        cover_stages = {"setup", "seed", "complete"} | {
+        cover_stages = {"tie_setup", "tie_first", "tie_second", "setup", "seed", "complete"} | {
             prefix + suffix for prefix in ("cold_", "offline_")
             for suffix in ("texture", "web", "web_choices", "search_list", "search_detail")
         }
