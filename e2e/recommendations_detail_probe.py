@@ -1785,7 +1785,7 @@ def main():
         master = state["view"]._master
         master.show_detail(UiBookDetailPresentation(
             title="États des actions", actions=(
-                UiBookDetailAction("state-ready", "Consulter", callback=lambda: calls.append("ready")),
+                UiBookDetailAction("state-ready", "Ouvrir", callback=lambda: calls.append("ready")),
                 UiBookDetailAction("state-off", "Emprunter", callback=lambda: calls.append("off"),
                                    state="unavailable", unavailable_reason="Compte à reconnecter"),
                 UiBookDetailAction("state-busy", "Actualiser", callback=lambda: calls.append("busy"),
@@ -1830,7 +1830,7 @@ def main():
         master = state["view"]._master
         master.show_detail(UiBookDetailPresentation(
             title="États des actions", actions=(UiBookDetailAction(
-                "state-ready", "Consulter", state="busy",
+                "state-ready", "Ouvrir", state="busy",
                 callback=lambda: state["detail_state_calls"].append("replaced"),
             ),),
         ))
