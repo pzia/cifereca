@@ -11,6 +11,8 @@ from time import monotonic
 from types import SimpleNamespace
 
 import httpx
+import pytest
+from contextlib import ExitStack
 
 from cifereca.core.canonical_sync_stage import observe_canonical_rights_in_sync
 from cifereca.core.notice_c_purchase_runtime import install_purchase_runtime
@@ -42,7 +44,8 @@ def card(lid, href):
             '</td></tr>')
 
 
-def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkeypatch):
+@pytest.mark.parametrize("restart_before_worker", (False, True))
+def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkeypatch, restart_before_worker):
     monkeypatch.syspath_prepend(str(PLUGIN))
     import cifereca_numilog as private_module
     import cifereca_numilog_public_client as public_client
@@ -89,38 +92,50 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
         SimpleNamespace(provider_id="numilog", account_id=account_id,
                         credential_id=credential, identity_id=owner, scope_version=2)
     ] if identity == owner else [])
-    private = private_module.NumilogSession(
-        credential_id=credential, label="Fixture", credentials={}, options={},
-        config={}, diagnostics=None, identity_broker=broker,
-    )
     account = Account(identity_id=owner, provider_id="numilog",
                       credential_id=credential, unique_id=account_id)
-    private.connected = True
-    private._accounts = [account]
-    public = NumilogPublicSession(credential_id="__public__", label="Public",
-                                  credentials={}, options={})
-    public.connect()
     path = tmp_path / "reception.sqlite"
-    db = Storage(path)
-    register(db, owner, "numilog", credential, account=account_id)
-    service = Service(db, tmp_path / "library")
-    service.account = account
-    service.accounts = [account]
-    service._source_context_lock = RLock()
-    service._sessions = {
-        service._session_key("numilog", credential): private,
-        service._session_key("numilog-catalog", "__public__"): public,
-    }
-    service._provider_enabled_for_identity = lambda provider, identity: (
-        provider == "numilog-catalog" and identity == owner)
-    tasks = TaskBrokerImpl(object(), max_workers=3, shared_admission=
-                           SharedTaskAdmission(max_inflight=4, reserve_user_slots=1))
-    runtime = NoticeWorkRuntime(db, tasks)
     wakes = []
-    monkeypatch.setattr(runtime, "request_tick", lambda: wakes.append(True))
     snapshots = []
-    try:
+    # Each lifecycle owns new sessions, Core service, storage and task broker.
+    # The same fixture account is reconnected, never an old session/callback.
+    def start_lifecycle(stack, *, initial=False):
+        db = Storage(path)
+        stack.callback(db.close)
+        if initial:
+            register(db, owner, "numilog", credential, account=account_id)
+        private = private_module.NumilogSession(
+            credential_id=credential, label="Fixture", credentials={}, options={},
+            config={}, diagnostics=None, identity_broker=broker,
+        )
+        stack.callback(private.close)
+        private.connected = True
+        private._accounts = [account]
+        public = NumilogPublicSession(credential_id="__public__", label="Public",
+                                      credentials={}, options={})
+        stack.callback(public.close)
+        public.connect()
+        service = Service(db, tmp_path / "library")
+        service.account = account
+        service.accounts = [account]
+        service._source_context_lock = RLock()
+        service._sessions = {
+            service._session_key("numilog", credential): private,
+            service._session_key("numilog-catalog", "__public__"): public,
+        }
+        service._provider_enabled_for_identity = lambda provider, identity: (
+            provider == "numilog-catalog" and identity == owner)
+        tasks = TaskBrokerImpl(object(), max_workers=3, shared_admission=
+                               SharedTaskAdmission(max_inflight=4, reserve_user_slots=1))
+        stack.callback(tasks.close)
+        runtime = NoticeWorkRuntime(db, tasks)
+        stack.callback(runtime.close)
+        monkeypatch.setattr(runtime, "request_tick", lambda: wakes.append(True))
         executor = install_purchase_runtime(service, runtime)
+        return db, service, runtime, executor
+
+    with ExitStack() as stack:
+        db, service, runtime, executor = start_lifecycle(stack, initial=True)
         result = observe_canonical_rights_in_sync(service, account,
                                                    snapshot_sink=snapshots.append)
         assert result["observed"] == 2 and result["attested_active"] == 2
@@ -131,6 +146,24 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
         chosen, omitted = (item.source for item in from_legacy_rights_snapshot(snapshot).resources)
         with db._lock, db._connect() as sql:
             assert _status_txn(sql, omitted, now=executor._now())[0] == "direct_locator_unattested"
+        if restart_before_worker:
+            assert read_purchase_descriptive_notice(db, chosen, identity_id=owner) is None
+            with db._lock, db._connect() as sql:
+                assert _status_txn(sql, chosen, now=executor._now()) == ("pending", 0)
+            stack.close()
+            db, service, runtime, executor = start_lifecycle(stack)
+            # A durable intent is not authority. No fetch or claim before
+            # the replacement runtime receives the fresh same-read inventory.
+            assert not executor.ready_refs()
+            assert not runtime._pump.tick().handles
+            assert requests == ["inventory"]
+            with db._lock, db._connect() as sql:
+                assert _status_txn(sql, chosen, now=executor._now()) == ("pending", 0)
+            recovered = observe_canonical_rights_in_sync(service, account)
+            assert recovered["purchase_enrichment"]["admitted"] == 1
+            assert requests == ["inventory", "inventory"]
+            assert executor.ready_refs()
+        prefix = ["inventory"] * (2 if restart_before_worker else 1)
         # The real runtime owns both the purchase work and follow-up aggregate.
         deadline = monotonic() + 10
         notice = None
@@ -142,7 +175,7 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
                 break
             Event().wait(.01)
         assert notice is not None
-        assert requests == ["inventory", "detail"]
+        assert requests == prefix + ["detail"]
         facts = {fact.field: fact.value for fact in notice.facts}
         assert facts["author"] == "Auteur de recette" and facts["publisher"] == "Editeur de recette"
         assert facts["description"] == "Résumé de recette"
@@ -153,16 +186,10 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
         assert read_purchase_descriptive_notice(db, chosen, identity_id="B") is None
         again = observe_canonical_rights_in_sync(service, account)
         assert again["purchase_enrichment"]["admitted"] == 0
-        assert requests == ["inventory", "detail", "inventory"]
+        assert requests == prefix + ["detail", "inventory"]
         assert read_purchase_descriptive_notice(db, chosen, identity_id=owner) == notice
         assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
         assert not service.root.exists()
-    finally:
-        runtime.close()
-        tasks.close()
-        private.close()
-        public.close()
-        db.close()
     reopened = Storage(path)
     try:
         assert read_purchase_descriptive_notice(reopened, chosen, identity_id=owner) == notice
@@ -234,7 +261,7 @@ def test_real_numilog_adapters_same_read_automatic_c_and_reopen(tmp_path, monkey
             assert filter_loaded_results(rows, term, field=field) == [direct]
             assert "catalogue public" in local_match_explanation(direct, term)
         # No fresh network or change to rights/physical state at read time.
-        assert requests == ["inventory", "detail", "inventory"]
+        assert requests == prefix + ["detail", "inventory"]
         assert reopened.entitlements() == [] and reopened.acquisitions() == [] and reopened.placements() == []
     finally:
         reopened.close()
