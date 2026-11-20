@@ -86,5 +86,15 @@ def test_source_excerpts_and_list_budget_are_bounded():
     ]
     field, = project(row)
     assert "Sujet 7" in field.value and "Sujet 8" not in field.value
-    assert field.value.endswith("x" * 512)
-    assert not field.value.endswith("x" * 513)
+    assert field.value.endswith("x" * 512 + "…")
+    assert "Sujet 7 ; …" in field.value
+    assert not field.value.endswith("x" * 513 + "…")
+
+
+def test_singular_classification_is_kept_in_passive_source_detail():
+    row = item()
+    row.metadata["notice_c_source_alternatives"] = [
+        {"provider_id": "seller-b", "subject": "Physique", "genre": "Essai"},
+    ]
+    field, = project(row)
+    assert field.value == "Sujet : Physique\nGenre : Essai"
