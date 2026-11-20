@@ -28,7 +28,7 @@ contract_tests = ["src/plugins/diagnostics-page/tests/test_contract_039.py"]
 failure_tests = ["src/plugins/diagnostics-page/tests/test_diagnostics_explorer_p0.py"]
 gtk_scenarios = ["e2e/diagnostics_page_probe.py"]
 data = ["local-library"]
-gap = "États diagnostics combinés manquants"
+gap = "États GTK propres ; corpus Publication non injecté dans Diagnostics, aucune latence terrain attestée"
 
 [package.ebooksgratuits]
 contract_tests = ["src/plugins/ebooksgratuits/tests/test_dataset_integration.py"]
@@ -37,11 +37,11 @@ data = ["ebooksgratuits"]
 gap = "ux-all configure le faux service ; activation et parcours GTK du plugin non attestés ; erreurs/pagination à enrichir"
 
 [package.epub_optimizer]
-contract_tests = ["src/plugins/epub_optimizer/tests/test_engine.py"]
+contract_tests = ["src/plugins/epub_optimizer/tests/test_engine.py", "src/plugins/epub_optimizer/tests/test_p0_773_generated_documents.py", "src/plugins/epub_optimizer/tests/test_p0_773_generated_device_profiles.py", "src/plugins/epub_optimizer/tests/test_p0_773_derived_publication.py"]
 failure_tests = ["src/plugins/epub_optimizer/tests/test_pdf_engine.py"]
 gtk_scenarios = ["e2e/optimizer_handoff_probe.py"]
 data = ["local-library", "specialized-seed"]
-gap = "PDF e-ink, profils matériels, transformations en erreur non couverts"
+gap = "Corpus EPUB/PDF et profils logiciels ; recette physique et moteur PDF natif GTK non attestés"
 
 [package.home-page]
 contract_tests = ["src/plugins/home-page/tests/test_contract_038.py"]
@@ -58,10 +58,10 @@ gap = "Flux RSS/JSON Feed servis en HTTP local ; abonnements, page GTK et autres
 
 [package.maintenance-library-audit]
 contract_tests = ["src/plugins/maintenance-library-audit/tests/test_contract_039.py"]
-failure_tests = ["src/plugins/maintenance-library-audit/tests/test_cover_audit_poisoned_rows_p1.py"]
+failure_tests = ["src/plugins/maintenance-library-audit/tests/test_cover_audit_poisoned_rows_p1.py", "tests/test_core_p0_773_maintenance_fixture_reception.py"]
 gtk_scenarios = ["e2e/maintenance_tools_probe.py"]
 data = ["local-library"]
-gap = "Fichiers manquants, couvertures, langues, doublons, chemins et actions négatives"
+gap = "Corpus B/keeper/chemins reçu ; audits documentaires et GUI restent des recettes distinctes, aucune mutation attestée"
 
 [package.provider-bnf-pret]
 contract_tests = ["src/plugins/provider-bnf-pret/tests/test_http_provider.py"]
@@ -120,9 +120,9 @@ gap = "États ADEPT factices et CLI subprocess v8 couverts ; pas de vrai provisi
 
 [package.transport-http]
 contract_tests = ["src/plugins/transport-http/tests/test_http_transport.py"]
-failure_tests = ["simulation/tests/test_http_negative_contracts.py"]
+failure_tests = ["simulation/tests/test_http_negative_contracts.py", "tests/test_core_p0_773_http_publication_recovery.py"]
 data = []
-gap = "Faux serveur HTTP 429/503, timeout, redirections, types MIME et tailles avec vrai transport ; pas de GTK ni annulation"
+gap = "Loopback 429/503, timeout, redirections, MIME et tailles ; annulation aux frontières Core, pas intra-stream ni GTK propre"
 
 
 
