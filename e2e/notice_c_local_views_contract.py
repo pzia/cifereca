@@ -817,12 +817,52 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 assert window.service._source_context_epoch == source_epoch
                 capture("00-notice-c-distinct-c-shared-n3")
                 report["checks"]["P0_4980_distinct_c_shared_n3_real_gtk"] = True
+                verify_invalidated_n2_warm_n3(list_cover, detail_cover)
+
+            later(40, guard(lambda: observed(monotonic() + 8)))
+
+        def verify_invalidated_n2_warm_n3(list_cover, detail_cover):
+            report["local_c_stage"] = "invalidated_n2_warm_n3"
+            previous = detail_cover._request
+            other = list_cover._request
+            before_n2, before_n3 = n2.stats(), loader.stats()
+
+            n2.decisions.invalidate(doc, cause="evidence_changed")
+            assert not previous.still_current
+            assert other.still_current
+            detail_cover.bind_document(n2, doc, variant="detail", minimum_revision=epoch)
+
+            def refreshed(deadline):
+                texture = detail_cover.picture.get_paintable()
+                if (not detail_cover.get_mapped()
+                        or not isinstance(texture, Gdk.Texture)
+                        or detail_cover.placeholder.get_visible()
+                        or detail_cover.spinner.get_visible()):
+                    assert monotonic() < deadline, "Invalidated N2 / warm N3 GTK timeout"
+                    later(40, guard(lambda: refreshed(deadline)))
+                    return
+                current = detail_cover._request
+                assert current is not previous and current.still_current
+                assert not previous.active and current.source_uri == url
+                assert list_cover._request is other and other.still_current
+                assert list_cover.get_mapped()
+                with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
+                    assert image.convert("RGB").getpixel((0, 0)) == replacement_pixels
+                after_n2, after_n3 = n2.stats(), loader.stats()
+                assert reads == [doc, other_doc] and gets == ["GET", "GET"]
+                assert after_n2["n1_selected_count"] == before_n2["n1_selected_count"] + 1
+                assert after_n2["n2_resolution_miss"] == before_n2["n2_resolution_miss"] + 1
+                assert after_n3["cache_hit_valid"] > before_n3["cache_hit_valid"]
+                assert after_n3["download_ok"] == before_n3["download_ok"]
+                assert after_n3["preview_created"] == before_n3["preview_created"]
+                assert after_n3["ui_failed"] == before_n3["ui_failed"]
+                report["checks"]["P0_4980_invalidated_n2_warm_n3_real_gtk"] = True
                 report["local_c_stage"] = "complete"
                 cleanup()
                 window.present()
                 complete()
 
-            later(40, guard(lambda: observed(monotonic() + 8)))
+            later(40, guard(lambda: refreshed(monotonic() + 8)))
 
         stamp_value = 1794900000
         future = pool.submit(project)
