@@ -24,7 +24,13 @@ def _snapshot(item):
     # The canonical reader bounds a document to 32 sources. Each
     # admitted alternative needs the same bounded receipt space as one
     # source; all native-container/depth/string checks remain in force.
-    alternatives = item.metadata.get("notice_c_source_alternatives") if type(item.metadata) is dict else None
+    metadata = item.metadata
+    # Inspect only native keys before dictionary lookup: an arbitrary key
+    # with a colliding hash could otherwise run its __eq__ during .get().
+    if (type(metadata) is not dict or len(metadata) > 64
+            or any(type(key) is not str or len(key) > 160 for key in metadata)):
+        raise ValueError("known_c_snapshot_non_native")
+    alternatives = metadata.get("notice_c_source_alternatives")
     count = len(alternatives) if type(alternatives) is list else 0
     if count >= _MAX_SOURCES:
         raise ValueError("known_c_snapshot_budget")
