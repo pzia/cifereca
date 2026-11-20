@@ -604,6 +604,10 @@ _COVER_METRICS = {
         "n3_epub_" + state + "_" + suffix
         for state in ("ok", "failed")
         for suffix in ("recent_count", "recent_p50_ms", "recent_p95_ms")
+    ) | frozenset(
+        "preview_worker_" + state + "_" + suffix
+        for state in ("hit", "created", "fallback")
+        for suffix in ("recent_count", "recent_p50_ms", "recent_p95_ms")
     ),
     "n4": frozenset({
         "ui_applied", "ui_failed", "ui_stale", "ui_decode_count",

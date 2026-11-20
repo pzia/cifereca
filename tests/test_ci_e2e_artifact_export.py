@@ -1107,7 +1107,12 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
                     "route_to_observed_texture_ms": {route: 3.125 for route in module._COVER_ROUTES},
                     "n1": {"n1_selected_count": 1, "n1_PRIVATE": 123},
                     "n2": {"n2_hit": 11},
-                    "n3": {"download_ok": int(cold), "download_failed": 0},
+                    "n3": {"download_ok": int(cold), "download_failed": 0,
+                           "preview_worker_created_recent_count": int(cold),
+                           "preview_worker_hit_recent_count": 11 + int(not cold),
+                           "preview_worker_fallback_recent_count": 0,
+                           "preview_worker_hit_recent_p95_ms": .123,
+                           "preview_worker_PRIVATE": "secret"},
                     "n4": {"ui_applied": 12, "ui_failed": 0, "ui_decode_recent_count": 12,
                            "ui_decode_recent_p95_ms": 1.234, "ui_decode_PRIVATE": "secret"},
                     "url": "PRIVATE"}
@@ -1125,6 +1130,12 @@ def test_completed_six_view_cover_receipt_exports_only_closed_numbers():
         assert safe["cold"]["n3"]["download_ok"] == 1
         assert safe["offline"]["n3"]["download_ok"] == 0
         assert safe["cold"]["n4"]["ui_decode_recent_p95_ms"] == 1.23
+        assert safe["cold"]["n3"]["preview_worker_created_recent_count"] == 1
+        assert safe["offline"]["n3"]["preview_worker_created_recent_count"] == 0
+        assert safe["offline"]["n3"]["preview_worker_hit_recent_p95_ms"] == .12
+        bad = copy.deepcopy(data)
+        bad["notice_c_cover_metrics_cold"]["n3"]["preview_worker_hit_recent_p95_ms"] = "PRIVATE"
+        assert "notice_c_cover_metrics" not in read(bad)
         assert "PRIVATE" not in repr(result)
         for field, value in (("ui_applied", True), ("ui_decode_recent_p95_ms", float("nan")),
                              ("ui_failed", 1), ("ui_decode_recent_count", -1)):
