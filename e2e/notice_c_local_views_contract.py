@@ -110,6 +110,10 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
     png = BytesIO()
     Image.new("RGB", (400, 600), pixels).save(png, format="PNG")
     body = png.getvalue()
+    replacement_pixels = (170, 45, 82)
+    replacement_png = BytesIO()
+    Image.new("RGB", (400, 600), replacement_pixels).save(replacement_png, format="PNG")
+    replacement_body = replacement_png.getvalue()
 
     def seed():
         assert get_ident() != gtk_thread
@@ -187,6 +191,12 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
             db.close()
 
     def cleanup_stage():
+        matrix = state.pop("matrix_widget", None)
+        if matrix is not None:
+            for child in walk(matrix):
+                if isinstance(child, CoverView):
+                    child.reset()
+            window.view_stack.remove(matrix)
         if state.pop("attached", False):
             # Revoke the fixture bindings before restoring the normal loader.
             plugin = state.pop("recommendations_plugin", None)
@@ -261,8 +271,9 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
 
         def serve(req):
             gets.append(str(req.method))
-            assert not offline and req.method == "GET" and str(req.url) == url
-            return httpx.Response(200, content=body,
+            recovery = state.get("recover_n3") is True
+            assert (not offline or recovery) and req.method == "GET" and str(req.url) == url
+            return httpx.Response(200, content=replacement_body if recovery else body,
                                   headers={"content-type": "image/png"}, request=req)
 
         loader.client.close()
@@ -556,16 +567,78 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 "same_epoch": True, "sqlite_reads": len(reads),
                 "image_gets_total": len(gets), "gtk_applied": stats["ui_applied"],
             }
-            cleanup_stage()
             if not offline:
+                cleanup_stage()
                 start_stage(True)
             else:
+                # Preserve the completed offline receipt above. The following
+                # independent, explicitly online mock phase deletes only N3
+                # in scratch space; the existing N2 token stays authoritative.
+                verify_warm_n2_cold_n3()
+
+        def verify_warm_n2_cold_n3():
+            report["local_c_stage"] = "warm_n2_cold_n3"
+            assert reads == [doc] and gets == ["GET"]
+            source = loader._path(url)
+            assert source.is_file()
+            before_n2 = n2.stats()
+            before_n3 = loader.stats()
+            loader.invalidate(source)
+            assert not source.exists()
+            state["recover_n3"] = True
+            # Two standard live GTK surfaces share the exact C.
+            # No hand-built resolution, no direct URL binding.
+            matrix = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            state["matrix_widget"] = matrix
+            list_cover = CoverView(60, 90)
+            detail_cover = CoverView(120, 180)
+            matrix.append(list_cover)
+            matrix.append(detail_cover)
+            window.view_stack.add_named(matrix, "notice-c-cache-matrix-fixture")
+            window.view_stack.set_visible_child_name("notice-c-cache-matrix-fixture")
+            for variant, cover in (("list", list_cover), ("detail", detail_cover)):
+                cover.bind_document(n2, doc, variant=variant, minimum_revision=epoch)
+
+            def recovered(deadline):
+                covers = (list_cover, detail_cover)
+                ready = all(
+                    cover.get_mapped()
+                    and isinstance(cover.picture.get_paintable(), Gdk.Texture)
+                    and not cover.placeholder.get_visible()
+                    and not cover.spinner.get_visible()
+                    for cover in covers
+                )
+                if not ready:
+                    assert monotonic() < deadline, "N2 warm / N3 cold GTK timeout"
+                    later(40, guard(lambda: recovered(deadline)))
+                    return
+                for cover in covers:
+                    assert cover._request.still_current and cover._request.source_uri == url
+                    texture = cover.picture.get_paintable()
+                    with Image.open(BytesIO(texture.save_to_png_bytes().get_data())) as image:
+                        assert image.convert("RGB").getpixel((0, 0)) == replacement_pixels
+                after_n2 = n2.stats()
+                after_n3 = loader.stats()
+                assert reads == [doc] and gets == ["GET", "GET"]
+                assert after_n2["n1_selected_count"] == before_n2["n1_selected_count"]
+                assert after_n2["n2_hit"] >= before_n2["n2_hit"] + 2
+                assert after_n3["download_ok"] == before_n3["download_ok"] + 1
+                assert after_n3["preview_created"] == before_n3["preview_created"] + 1
+                assert after_n3["ui_applied"] >= before_n3["ui_applied"] + 2
+                assert after_n3["ui_failed"] == before_n3["ui_failed"]
+                assert source.read_bytes() == replacement_body
+                assert window.service._account_context_epoch == account_epoch
+                assert window.service._source_context_epoch == source_epoch
+                capture("00-notice-c-warm-n2-cold-n3-recovered")
+                report["checks"]["P0_4980_warm_n2_cold_n3_real_gtk"] = True
                 report["checks"]["P0_6366_mainwindow_library_recent_restart_offline"] = True
                 report["checks"]["P0_4980_same_c_six_physical_views_restart_offline"] = True
                 report["local_c_stage"] = "complete"
                 cleanup()
                 window.present()
                 complete()
+
+            later(40, guard(lambda: recovered(monotonic() + 8)))
 
         stamp_value = 1794900000
         future = pool.submit(project)
