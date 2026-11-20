@@ -101,3 +101,68 @@ def test_shared_preview_remains_eligible_when_one_consumer_cancels(tmp_path, mon
         assert loader._preview_waiters == {}
     finally:
         loader.close()
+
+
+def test_preview_worker_metrics_are_per_conversion_not_subscriber(tmp_path, monkeypatch):
+    loader, pool, conversions = setup(tmp_path, monkeypatch)
+    clock = [10.0]
+    monkeypatch.setattr(mod.time, "perf_counter", lambda: clock[0])
+    original_create = mod.create_preview
+
+    def timed(*args):
+        clock[0] += .004
+        return original_create(*args)
+
+    monkeypatch.setattr(mod, "create_preview", timed)
+    try:
+        first = loader.load_preview("book", lambda _: None, width=60, height=90)
+        loader.load_preview("book", lambda _: None, width=60, height=90)
+        clock[0] += 100.0  # queued time not included
+        first.cancel()
+        pool.run(0)
+        stats = loader.stats()
+        assert stats["preview_created"] == 1
+        assert stats["preview_worker_created_recent_count"] == 1
+        assert stats["preview_worker_created_recent_p95_ms"] == 4
+        loader.load_preview("book", lambda _: None, width=60, height=90)
+        pool.run(1)
+        assert loader.stats()["preview_worker_hit_recent_count"] == 1
+        canceled = loader.load_preview("book", lambda _: None, width=70, height=90)
+        canceled.cancel()
+        pool.run(2)
+        assert loader.stats()["preview_worker_created_recent_count"] == 1
+
+        def fail(*args):
+            clock[0] += .007
+            raise ValueError("synthetic preview failure")
+
+        monkeypatch.setattr(mod, "create_preview", fail)
+        loader.load_preview("book", lambda _: None, width=80, height=90)
+        pool.run(3)
+        stats = loader.stats()
+        assert stats["preview_worker_fallback_recent_count"] == 1
+        assert stats["preview_worker_fallback_recent_p95_ms"] == 7
+        assert stats["preview_fallback"] == 1
+        assert stats["preview_worker_hit_recent_p95_ms"] == 0
+        assert len(conversions) == 1
+    finally:
+        loader.close()
+
+
+def test_preview_worker_recent_samples_bounded(tmp_path, monkeypatch):
+    loader, _, _ = setup(tmp_path, monkeypatch)
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "perf_counter", lambda: clock[0])
+    try:
+        for n in range(1025):
+            clock[0] = n / 1000
+            loader._record_preview_worker("created", 0.0)
+        stats = loader.stats()
+        assert stats["preview_created"] == 1025
+        assert stats["preview_worker_created_recent_count"] == 1024
+        assert stats["preview_worker_created_recent_p50_ms"] == 512
+        assert stats["preview_worker_created_recent_p95_ms"] == 973
+        assert stats["preview_worker_hit_recent_count"] == 0
+        assert "preview_worker_hit_recent_p95_ms" not in stats
+    finally:
+        loader.close()
