@@ -20,6 +20,31 @@ import pytest
 from cifereca.plugins import playwright_browser as browser
 
 
+def _linux_process_is_live(pid):
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1][0]
+    except (FileNotFoundError, ProcessLookupError):
+        # Linux can remove a task after open() but before read(). ESRCH
+        # is the same terminal observation as ENOENT, not a live worker.
+        return False
+    return state not in {"Z", "X", "x"}
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError, ProcessLookupError])
+def test_proc_stat_disappearance_is_terminal(monkeypatch, error):
+    def vanished(_path):
+        raise error("synthetic task exited")
+
+    monkeypatch.setattr(Path, "read_text", vanished)
+    assert _linux_process_is_live(123) is False
+
+
+@pytest.mark.parametrize("state, expected", [("S", True), ("R", True), ("Z", False), ("X", False)])
+def test_proc_stat_observation_preserves_live_worker_assertion(monkeypatch, state, expected):
+    monkeypatch.setattr(Path, "read_text", lambda path: f"123 (worker) test) {state} 0 0")
+    assert _linux_process_is_live(123) is expected
+
+
 @pytest.mark.parametrize(
     ("mode", "expected"),
     (
@@ -100,13 +125,6 @@ def test_real_linux_installer_group_stops_on_every_failure(
 
     monkeypatch.setattr(browser.subprocess, "Popen", spawn)
 
-    def is_live(pid):
-        try:
-            state = Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0]
-        except FileNotFoundError:
-            return False
-        return state not in {"Z", "X", "x"}
-
     def cancel_when_started():
         until = monotonic() + 6
         while not marker.exists() and monotonic() < until:
@@ -136,9 +154,9 @@ def test_real_linux_installer_group_stops_on_every_failure(
         assert browser._INSTALL_LOCK.locked() is False
 
         until = monotonic() + 3
-        while is_live(child_pid) and monotonic() < until:
+        while _linux_process_is_live(child_pid) and monotonic() < until:
             sleep(.02)
-        assert not is_live(child_pid), (
+        assert not _linux_process_is_live(child_pid), (
             "Core returned a redacted status while its downloader was running"
         )
         assert spawned[0].poll() is not None
