@@ -290,7 +290,7 @@ class LocalCatalog:
         )
         artifact_was_new = self.storage.artifact_get(artifact.artifact_id) is None
         placement_was_new = self.storage.placement_get(placement_id) is None
-        self.storage.artifact_put(artifact, catalog_epub_name_only=True)
+        self.storage.artifact_put(artifact)
         try:
             relative = str(root.relative_to(self.root.resolve()))
         except ValueError:
@@ -507,7 +507,10 @@ class LocalCatalog:
                 raise OSError("catalog_index_file_changed")
         except OSError as exc:
             raise OSError("catalog_index_file_changed") from exc
-        self.storage.artifact_put(artifact, catalog_epub_name_only=True)
+        if media_format in {"epub", "kepub"}:
+            self.storage.artifact_put(artifact, catalog_epub_name_only=True)
+        else:
+            self.storage.artifact_put(artifact)
         try:
             relative = str(path.relative_to(self.root.resolve()))
         except ValueError:
@@ -842,7 +845,10 @@ class LocalCatalog:
                 )
                 if not same_scanned_file(path, stat):
                     raise OSError("catalog_scan_file_changed")
-                self.storage.artifact_put(artifact, catalog_epub_name_only=True)
+                if media_format in {"epub", "kepub"}:
+                    self.storage.artifact_put(artifact, catalog_epub_name_only=True)
+                else:
+                    self.storage.artifact_put(artifact)
             if not same_scanned_file(path, stat):
                 raise OSError("catalog_scan_file_changed")
             self.storage.placement_put(
