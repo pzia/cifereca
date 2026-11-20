@@ -52,6 +52,7 @@ def mount_guided_tool(window, box, resolved, *, Gtk):
         return False
     lease = admit_guided_maintenance_host(window, resolved)
     view = None
+    disposers = window._guided_maintenance_disposers
     try:
         if lease is None:
             raise ValueError("guided_lease_unavailable")
@@ -59,7 +60,11 @@ def mount_guided_tool(window, box, resolved, *, Gtk):
         if (type(view) is not GuidedMaintenanceView or not isinstance(view.widget, Gtk.Widget)
                 or not callable(view.dispose) or not lease.is_current()):
             raise ValueError("guided_view_unavailable")
+        if window._guided_maintenance_disposers is not disposers:
+            raise ValueError("guided_mount_replaced")
         box.append(view.widget)
+        if not lease.is_current() or window._guided_maintenance_disposers is not disposers:
+            raise ValueError("guided_mount_replaced")
 
         def dispose():
             lease.dispose()
@@ -68,7 +73,7 @@ def mount_guided_tool(window, box, resolved, *, Gtk):
             except Exception:
                 pass
 
-        window._guided_maintenance_disposers.append(dispose)
+        disposers.append(dispose)
     except Exception:
         if lease is not None:
             lease.dispose()
@@ -77,5 +82,6 @@ def mount_guided_tool(window, box, resolved, *, Gtk):
                 view.dispose()
             except Exception:
                 pass
-        box.append(Gtk.Label(label="Outil de maintenance guidé indisponible.", xalign=0))
+        if window._guided_maintenance_disposers is disposers:
+            box.append(Gtk.Label(label="Outil de maintenance guidé indisponible.", xalign=0))
     return True
