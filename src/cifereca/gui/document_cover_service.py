@@ -860,8 +860,9 @@ class DocumentCoverService:
             self._stats["n2_source_refresh_scheduled"] += 1
 
         def work() -> None:
+            retired = False
             try:
-                for _attempt in range(3):
+                for attempt in range(3):
                     with self._lock:
                         if self._closed:
                             return
@@ -885,15 +886,24 @@ class DocumentCoverService:
                         requested = self._refresh_targets.get(document, 0)
                         if (self._closed or requested <= target
                                 or current is not None
-                                and current.revision >= requested):
+                                and current.revision >= requested
+                                or attempt == 2):
+                            # The decision to stop and retirement of this
+                            # flight are ONE locked transition. A producer
+                            # arriving just after unlock may own a new flight;
+                            # this worker must never clear that newer target.
+                            self._refresh_active.discard(document)
+                            self._refresh_targets.pop(document, None)
+                            retired = True
                             return
                     # A newer Core epoch arrived while the worker was
                     # reading the older snapshot. Retry only that exact
                     # source; never fetch a supplier or scan other books.
             finally:
-                with self._lock:
-                    self._refresh_active.discard(document)
-                    self._refresh_targets.pop(document, None)
+                if not retired:
+                    with self._lock:
+                        self._refresh_active.discard(document)
+                        self._refresh_targets.pop(document, None)
 
         try:
             pool.submit(work)
