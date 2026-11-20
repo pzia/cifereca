@@ -37,6 +37,20 @@ def _directory_stamp(fd):
     return (info.st_dev, info.st_ino)
 
 
+def _mount_id(fd):
+    # Linux fdinfo identifies the mount of the opened inode. st_dev alone
+    # does not exclude distinct bind mounts (hardlink can fail with EXDEV).
+    try:
+        with open(f"/proc/self/fdinfo/{fd}", "r", encoding="ascii") as stream:
+            values = [line.split(":", 1)[1].strip() for line in stream
+                      if line.startswith("mnt_id:")]
+        _require(len(values) == 1 and values[0].isascii() and values[0].isdigit(),
+                 "derived_region_mount_unverified")
+        return int(values[0])
+    except (OSError, UnicodeError, ValueError):
+        raise DerivedJournalConflict("derived_region_mount_unverified") from None
+
+
 def _private_directory(fd, *, exact=False):
     info = os.fstat(fd)
     _require(stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid()
@@ -57,6 +71,7 @@ def _marker(region_fd):
     fd = os.open(_MARKER, _FLAGS, dir_fd=region_fd)
     try:
         before = os.fstat(fd)
+        _require(_mount_id(fd) == _mount_id(region_fd), "derived_region_filesystem_mismatch")
         _require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1
                  and before.st_uid == os.geteuid()
                  and stat.S_IMODE(before.st_mode) == 0o600 and before.st_size == 32)
@@ -129,6 +144,9 @@ def _ensure_region(db, *, storage, root, identity_id, placement_id, shared_lock,
         _require(stat.S_ISREG(parent_info.st_mode) and parent_info.st_size > 0
                  and parent_info.st_dev == parent_dir_stamp[0] == profile_stamp[0],
                  "derived_region_filesystem_mismatch")
+        root_mount, profile_mount, parent_mount = map(_mount_id, (root_fd, profile_fd, parent_dir))
+        _require(profile_mount == parent_mount == _mount_id(parent_fd),
+                 "derived_region_filesystem_mismatch")
         parent_stamp = _signature(parent_info)
 
         def scope_paths_current():
@@ -137,18 +155,27 @@ def _ensure_region(db, *, storage, root, identity_id, placement_id, shared_lock,
                      and db.execute("SELECT identity_id,path,state FROM placements WHERE placement_id=?",
                                     (placement_id,)).fetchone() == row,
                      "derived_region_scope_changed")
-            for path, expected in ((root, root_stamp), (profile, profile_stamp),
-                                   (parent.parent, parent_dir_stamp)):
+            for path, expected, expected_mount in (
+                    (root, root_stamp, root_mount), (profile, profile_stamp, profile_mount),
+                    (parent.parent, parent_dir_stamp, parent_mount)):
                 fd = _open_root(path)
                 try:
-                    _require(_directory_stamp(fd) == expected,
+                    _require(_directory_stamp(fd) == expected and _mount_id(fd) == expected_mount,
                              "derived_region_scope_changed")
                 finally:
                     os.close(fd)
-            named = os.stat(parent.name, dir_fd=parent_dir, follow_symlinks=False)
-            _require(stat.S_ISREG(named.st_mode)
-                     and _signature(named) == _signature(os.fstat(parent_fd)) == parent_stamp,
-                     "derived_region_scope_changed")
+            # A bind mount of the same file can preserve stat identity.
+            # Reopen the name through the pinned parent directory to
+            # compare its current mount as well as its physical signature.
+            fresh_parent = os.open(parent.name, _FLAGS, dir_fd=parent_dir)
+            try:
+                named = os.fstat(fresh_parent)
+                _require(stat.S_ISREG(named.st_mode)
+                         and _signature(named) == _signature(os.fstat(parent_fd)) == parent_stamp
+                         and _mount_id(fresh_parent) == _mount_id(parent_fd) == parent_mount,
+                         "derived_region_scope_changed")
+            finally:
+                os.close(fresh_parent)
 
         scope_paths_current()
         created = raw is None
@@ -164,9 +191,11 @@ def _ensure_region(db, *, storage, root, identity_id, placement_id, shared_lock,
                             os.O_CLOEXEC, dir_fd=profile_fd)
         stack.callback(os.close, region_fd)
         region_stamp = _private_directory(region_fd, exact=True)
-        _require(region_stamp[0] == profile_stamp[0], "derived_region_filesystem_mismatch")
+        _require(region_stamp[0] == profile_stamp[0] and _mount_id(region_fd) == profile_mount,
+                 "derived_region_filesystem_mismatch")
         if created:
             scope_paths_current()
+            _require(not os.listdir(region_fd), "derived_region_unregistered_name")
             fd = os.open(_MARKER, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW |
                          os.O_CLOEXEC, 0o600, dir_fd=region_fd)
             with os.fdopen(fd, "wb") as out:
@@ -193,6 +222,7 @@ def _ensure_region(db, *, storage, root, identity_id, placement_id, shared_lock,
         recheck = _open_root(region)
         try:
             _require(_private_directory(recheck, exact=True) == region_stamp
+                     and _mount_id(recheck) == _mount_id(region_fd) == profile_mount
                      and _private_directory(region_fd, exact=True) == region_stamp
                      and _private_directory(profile_fd) == profile_stamp
                      and _marker(recheck) == (nonce, marker_stamp)
