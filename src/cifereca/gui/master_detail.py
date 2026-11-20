@@ -325,6 +325,13 @@ class MasterDetailPage(Gtk.Box):
         """Reserve the narrow page for the active detail without losing list state."""
         self.page_header.set_visible(not active)
         self.toolbar.set_visible(not active)
+        # Search may place the same action bar outside the header. Keep
+        # list-only controls out of the narrow detail without rebuilding them.
+        if self.header_actions.get_parent() is self:
+            self.header_actions.set_visible(not active)
+        self._documentary_summary.set_visible(
+            not active and bool(self._documentary_summary.get_text())
+        )
         sidebar = getattr(self.window, "sidebar", None)
         if sidebar is None:
             return
@@ -376,7 +383,11 @@ class MasterDetailPage(Gtk.Box):
 
     def set_documentary_summary(self, text: str) -> None:
         self._documentary_summary.set_label(text)
-        self._documentary_summary.set_visible(bool(text))
+        # Refreshes may arrive while the narrow detail is active. Store the
+        # new text but leave list context hidden until the list returns.
+        self._documentary_summary.set_visible(
+            bool(text) and self.page_header.get_visible()
+        )
 
     def set_total_only_count(self, enabled: bool = True) -> None:
         self._count_total_only = bool(enabled)
