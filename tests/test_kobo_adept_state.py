@@ -10,6 +10,18 @@ from cifereca.brokers import RuntimeCapabilitiesBrokerImpl
 from cifereca.storage import Storage
 
 
+def _set_adept_runtime(service: LibraryService, reader) -> None:
+    """Inject a fake installed ADEPT service without resurrecting the adapter."""
+    original_required = service._required_plugin_service
+
+    def installed(plugin_id):
+        if plugin_id == "runtime.kobo-adept":
+            return reader()
+        return original_required(plugin_id)
+
+    service._required_plugin_service = installed
+
+
 def _service(tmp_path: Path) -> LibraryService:
     config = Config(tmp_path / "config.json")
     config.set("library.directory", str(tmp_path / "EBooks"))
@@ -62,7 +74,7 @@ def test_optional_status_config_error_does_not_block_core_runtime_state(tmp_path
                 capabilities_ms=7300,
             )
 
-    service._kobo_adapter = lambda: ProbeAdept()
+    _set_adept_runtime(service, lambda: ProbeAdept())
     try:
         state = service.kobo_adept_state(force=True)
 
@@ -102,7 +114,7 @@ def test_status_timeout_is_non_blocking_and_cached_for_ui_calls(tmp_path: Path):
             )
 
     fake = ProbeAdept()
-    service._kobo_adapter = lambda: fake
+    _set_adept_runtime(service, lambda: fake)
     try:
         first = service.kobo_adept_state(force=True)
         second = service.kobo_adept_state()
@@ -155,7 +167,7 @@ def test_cold_start_missing_plugin_does_not_poison_kdrm_runtime_after_activation
             raise ProviderConfigurationError("not yet activated")
         return runtime
 
-    service._kobo_adapter = adapter
+    _set_adept_runtime(service, adapter)
     try:
         cold = service.kobo_adept_state()
         assert cold["available"] is False
@@ -201,7 +213,7 @@ def test_cold_start_missing_cli_does_not_poison_kdrm_runtime_after_install(
             return ["<commande configurée ; arguments masqués>"]
 
     runtime = Runtime()
-    service._kobo_adapter = lambda: runtime
+    _set_adept_runtime(service, lambda: runtime)
     try:
         cold = service.kobo_adept_state()
         assert cold["available"] is False

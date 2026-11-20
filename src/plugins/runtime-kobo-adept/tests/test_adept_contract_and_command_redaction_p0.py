@@ -120,7 +120,9 @@ def test_legacy_contract_reaches_real_core_as_compatible_without_mutating_cli(ve
     service = LibraryService.__new__(LibraryService)
     service._kobo_adept_state_cache = None
     service._kobo_adept_state_cache_at = 0
-    service._kobo_adapter = lambda: adapter
+    service._required_plugin_service = lambda plugin_id: (
+        adapter if plugin_id == "runtime.kobo-adept" else None
+    )
     state = service.kobo_adept_state(force=True)
     assert state["contract_version"] == int(version)
     assert state["compatible"] is True

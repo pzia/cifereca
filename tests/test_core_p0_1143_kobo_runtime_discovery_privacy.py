@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 
 from cifereca.providers import ProviderConfigurationError
-from tests.test_kobo_adept_state import _service
+from tests.test_kobo_adept_state import _service, _set_adept_runtime
 
 
 SECRET = "https://private.invalid/LOAN/book.acsm?token=PRIVATE_RUNTIME_SECRET"
@@ -28,7 +28,7 @@ def test_adapter_failure_has_only_closed_error_code_and_safe_public_message(tmp_
     def unavailable():
         calls.append("adapter")
         raise HostileDiscoveryFailure(SECRET)
-    service._kobo_adapter = unavailable
+    _set_adept_runtime(service, unavailable)
     try:
         state = service.kobo_adept_state(force=True)
         assert state["available"] is False
@@ -53,9 +53,9 @@ def test_adapter_failure_has_only_closed_error_code_and_safe_public_message(tmp_
 
 def test_raw_runtime_configuration_failure_is_not_returned_from_state(tmp_path):
     service = _service(tmp_path)
-    service._kobo_adapter = lambda: (_ for _ in ()).throw(
+    _set_adept_runtime(service, lambda: (_ for _ in ()).throw(
         ProviderConfigurationError(SECRET)
-    )
+    ))
     try:
         status = service.kobo_adept_state()
         assert status["error"]["code"] == "runtime_plugin_unavailable"

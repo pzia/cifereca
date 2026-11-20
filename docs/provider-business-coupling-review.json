@@ -86,23 +86,6 @@
       "reachability": "unproven"
     },
     {
-      "id": "site-ae1253291ec72751637cce03",
-      "classification": "false_positive",
-      "journey": "Inspect ADEPT DRM loan inventory for one already-complete local acquisition",
-      "productive_caller": "LibraryService.adept_loan_choices -> kobo_profiles and _kobo_adapter().loan_inventories",
-      "effect": "Reads local DRM profile/loan states to build choices; no Kobo bookstore acquisition, provider consent or canonical right is conferred.",
-      "authority": "Previously persisted acquisition and DRM profile references; read-only inventory is an observation, not permission.",
-      "replacement_contract": "Retain explicit profile/loan selection; a typed generic DRM inventory contract can replace technical runtime method names.",
-      "tests": [
-        "tests/test_kobo_adept_state.py",
-        "tests/test_adept_manual_binding.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "Two AST anchors in the same ADEPT runtime inspection, not two separate commercial Kobo business decisions.",
-      "decision_group_id": "adept.runtime-loan-inventory",
-      "reachability": "unproven"
-    },
-    {
       "id": "site-8e3e2911b26117134a9d9eea",
       "classification": "false_positive",
       "journey": "Explicit manual association of one local acquisition with an ADEPT runtime loan",
@@ -117,40 +100,6 @@
       "retirement_pr": "",
       "rationale": "False-positive is limited to the runtime calls: it does not classify or retire the enclosing acquisition metadata writer.",
       "decision_group_id": "adept.runtime-manual-loan-association",
-      "reachability": "unproven"
-    },
-    {
-      "id": "site-6e5b2d09c5eda526457fb977",
-      "classification": "false_positive",
-      "journey": "Explicit manual association of one local acquisition with an ADEPT runtime loan",
-      "productive_caller": "LibraryService.attach_adept_loan -> kobo_profiles and _kobo_adapter().loans",
-      "effect": "The AST anchors read runtime profile/loan evidence. The enclosing explicit association DOES write an acquisition metadata receipt under a lock, but the observed calls are not Kobo bookstore provider policy.",
-      "authority": "User-selected exact ADEPT profile/loan and existing complete local acquisition; no automatic provider purchase grant.",
-      "replacement_contract": "Maintain verified explicit association, lock, identity scope and metadata persistence; a generic DRM loan-reader adapter may replace technical calls.",
-      "tests": [
-        "tests/test_kobo_adept_state.py",
-        "tests/test_adept_manual_binding.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "False-positive is limited to the runtime calls: it does not classify or retire the enclosing acquisition metadata writer.",
-      "decision_group_id": "adept.runtime-manual-loan-association",
-      "reachability": "unproven"
-    },
-    {
-      "id": "site-2337f2c628b0365c1fe6ff68",
-      "classification": "false_positive",
-      "journey": "Technical Kobo-ADEPT runtime feature/state discovery",
-      "productive_caller": "LibraryService.kobo_adept_state -> _kobo_adapter",
-      "effect": "Observes version/capability readiness of the DRM runtime; no provider stock, purchase, right or download is authorized.",
-      "authority": "Runtime adapter's installed technical contract; supplier-level provenance and consent are assessed elsewhere.",
-      "replacement_contract": "Retain bounded technical runtime state reporting until a generic DRM runtime registration replaces the brand-named adapter.",
-      "tests": [
-        "tests/test_kobo_adept_state.py",
-        "tests/test_core_p0_1143_kobo_runtime_discovery_privacy.py"
-      ],
-      "retirement_pr": "",
-      "rationale": "The AST source-name match is a technical DRM runtime dependency, not a Kobo commercial-provider business decision.",
-      "decision_group_id": "adept.runtime-state-discovery",
       "reachability": "unproven"
     },
     {
@@ -1743,6 +1692,54 @@
       "pr": "#6656",
       "in_ast_metric": true,
       "original_site_id": "site-7874908d12d351ccb80742b1"
+    },
+    {
+      "id": "struct-p1-7161-adapter-call-cutover-2337f2c628b0365c1fe6ff68",
+      "original": "LibraryService.kobo_adept_state: removed _kobo_adapter() service lookup",
+      "original_classification": "false_positive",
+      "replacement": "Runtime presence and capabilities are now read solely from the installed typed runtime.kobo-adept service; missing plugin remains a negative diagnostic, without a legacy adapter or a provider entitlement decision.",
+      "classification": "neutral_installed_runtime_lookup_cutover",
+      "evidence": "#7172 replaces exactly the retired private _kobo_adapter call in LibraryService.kobo_adept_state -> _kobo_adapter. The original false-positive site no longer exists as an AST expression; no business decision or permission is retired. Same runtime.kobo-adept plugin identity is explicitly required and verified as enabled/ready by the existing Core service broker. The original enclosing scope/lock/read-only constraints still apply.",
+      "tests": [
+        "tests/test_core_p1_7161_runtime_facade_cutover.py",
+        "tests/test_core_p1_7161_profile_inventory.py"
+      ],
+      "pr": "#7172",
+      "in_ast_metric": true,
+      "original_site_id": "site-2337f2c628b0365c1fe6ff68",
+      "retired_at_sha": "8a54651b48a6b3ffb77caf63ba1ce7248deb0966"
+    },
+    {
+      "id": "struct-p1-7161-adapter-call-cutover-6e5b2d09c5eda526457fb977",
+      "original": "LibraryService.attach_adept_loan: removed _kobo_adapter().loans(name)",
+      "original_classification": "false_positive",
+      "replacement": "Explicit user-selected acquisition/profile/loan association still checks the same loan inventory and continues to write only the existing, scoped acquisition metadata under its lock. Only the deleted adapter call is retired, not that writer or its security gates.",
+      "classification": "neutral_installed_runtime_lookup_cutover",
+      "evidence": "#7172 replaces exactly the retired private _kobo_adapter call in LibraryService.attach_adept_loan -> kobo_profiles and _kobo_adapter().loans. The original false-positive site no longer exists as an AST expression; no business decision or permission is retired. Same runtime.kobo-adept plugin identity is explicitly required and verified as enabled/ready by the existing Core service broker. The original enclosing scope/lock/read-only constraints still apply.",
+      "tests": [
+        "tests/test_adept_manual_binding.py",
+        "tests/test_core_p1_7161_profile_inventory.py"
+      ],
+      "pr": "#7172",
+      "in_ast_metric": true,
+      "original_site_id": "site-6e5b2d09c5eda526457fb977",
+      "retired_at_sha": "8a54651b48a6b3ffb77caf63ba1ce7248deb0966"
+    },
+    {
+      "id": "struct-p1-7161-adapter-call-cutover-ae1253291ec72751637cce03",
+      "original": "LibraryService.adept_loan_choices: removed _kobo_adapter().loan_inventories",
+      "original_classification": "false_positive",
+      "replacement": "Existing read-only loan choice and candidate borrower checks remain intact. The installed runtime service supplies the same inventory, not a source of new rights or new ADEPT operations.",
+      "classification": "neutral_installed_runtime_lookup_cutover",
+      "evidence": "#7172 replaces exactly the retired private _kobo_adapter call in LibraryService.adept_loan_choices -> kobo_profiles and _kobo_adapter().loan_inventories. The original false-positive site no longer exists as an AST expression; no business decision or permission is retired. Same runtime.kobo-adept plugin identity is explicitly required and verified as enabled/ready by the existing Core service broker. The original enclosing scope/lock/read-only constraints still apply.",
+      "tests": [
+        "tests/test_adept_manual_binding.py",
+        "tests/test_core_p1_7161_profile_inventory.py"
+      ],
+      "pr": "#7172",
+      "in_ast_metric": true,
+      "original_site_id": "site-ae1253291ec72751637cce03",
+      "retired_at_sha": "8a54651b48a6b3ffb77caf63ba1ce7248deb0966"
     }
   ],
   "guard_installations": [

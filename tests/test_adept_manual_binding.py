@@ -78,7 +78,13 @@ def _runtime(loan: dict):
 
 
 def _configure_profile(service: LibraryService, runtime) -> None:
-    service._kobo_adapter = lambda: runtime
+    # Install the synthetic runtime through the same Core service boundary
+    # used after #7166/#7172; the removed adapter seam must stay absent.
+    original_required = service._required_plugin_service
+    service._required_plugin_service = lambda plugin_id: (
+        runtime if plugin_id == "runtime.kobo-adept"
+        else original_required(plugin_id)
+    )
     service.kobo_profiles = lambda: [{"profile_id": "profile-1", "name": "alexandre"}]
     service.storage.adept_profile_binding_set("identity", "default", "profile-1")
 

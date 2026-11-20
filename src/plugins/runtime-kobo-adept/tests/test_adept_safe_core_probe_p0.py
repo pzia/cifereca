@@ -197,7 +197,7 @@ def test_safe_probe_preserves_real_core_kdrm_fallback_and_explicit_denial(drm, e
         service = LibraryService.__new__(LibraryService)
         service._kobo_adept_state_cache = None
         service._kobo_adept_state_cache_at = 0
-        service._kobo_adapter = lambda: SimpleNamespace(
+        service._required_plugin_service = lambda plugin_id: SimpleNamespace(
             required_contract=8, probe_core=lambda: probe,
         )
         return service.kobo_adept_state(force=True)
