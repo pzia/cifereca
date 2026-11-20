@@ -21,14 +21,22 @@ def test_series_and_language_search_use_only_exact_source_proofs_after_restart(t
             "bibliography_evidence": {
                 "series": {**common, "source_field": "Search.series",
                            "confidence": "linked_search_relation"},
-                "languages": {**common, "raw_tags": ["jpn"],
+                "languages": {**common, "raw_tags": ["ja"],
                               "source_field": "dc.language",
                               "confidence": "explicit_record_field"},
             },
         }
         other = verified_public(record_id="unproved", title="Autre volume",
                                 metadata={"series": ["Cycle Orion"], "languages": ["ja"]})
-        first, second = (persist(db, row) for row in (declared, other))
+        divergent = verified_public(record_id="divergent", title="Témoin divergence")
+        divergent.metadata = {"languages": ["ja"], "bibliography_evidence": {
+            "languages": {**common, "raw_tags": ["jpn"], "source_field": "dc.language",
+                          "confidence": "explicit_record_field"},
+        }}
+        first, second, third = (persist(db, row) for row in (declared, other, divergent))
+        assert first.observation.fields_copy()["public_bibliography"]["language_observation"]["languages"] == ["ja"]
+        assert "language_observation" not in third.observation.fields_copy()["public_bibliography"]
+        persist_exact_public_search_cover(db, third)
         canonical = persist_exact_public_search_cover(db, first)
         persist_exact_public_search_cover(db, second)
 
@@ -38,6 +46,7 @@ def test_series_and_language_search_use_only_exact_source_proofs_after_restart(t
                 page = search_public_notice_c(
                     storage, query, field=field, group_by_document=True, now=100,
                 )
+                assert len(page.hits) == 1, (field, query, page.hits)
                 hit, = page.hits
                 assert hit.document == canonical.document and page.status == "partial"
                 row, = merge_public_notice_c_known_rows([], page, identity_id="alice")
@@ -48,7 +57,7 @@ def test_series_and_language_search_use_only_exact_source_proofs_after_restart(t
             assert storage.entitlements() == [] and storage.acquisitions() == []
 
         check(db)
-        for source in (first, second):
+        for source in (first, second, third):
             assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
     with closing(Storage(path)) as db:
         check(db)
