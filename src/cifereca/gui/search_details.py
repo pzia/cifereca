@@ -74,6 +74,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
 
             from cifereca.gui.search_known_public_c_bibliography import (
                 known_public_detail_metadata, known_public_alternative_section,
+                with_known_public_field_provenance,
             )
             presentation = book_detail_presentation(
                 title=str(item.get("title") or "Sans titre"),
@@ -115,6 +116,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
             if binding is None or not current_c_detail():
                 panel.empty("Notice indisponible", "Source documentaire périmée.")
                 return
+            presentation = with_known_public_field_provenance(presentation, item)
             alternatives = known_public_alternative_section(metadata)
             if alternatives is not None:
                 presentation = replace(
