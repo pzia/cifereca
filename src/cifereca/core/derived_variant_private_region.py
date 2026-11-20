@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 from secrets import token_hex
 import stat
+import sqlite3
 
 from .canonical_dedup_exclusions import ordinary_dedup_path_excluded
 from .derived_variant_journal import DerivedJournalConflict, _encode, _unique_pairs
@@ -245,5 +246,5 @@ def ensure_private_derived_region(storage, *, library_root, identity_id, placeme
         return result
     except DerivedJournalConflict:
         raise
-    except (OSError, ValueError, TypeError, RuntimeError, UnicodeError) as exc:
+    except (OSError, ValueError, TypeError, RuntimeError, sqlite3.Error):
         raise DerivedJournalConflict("derived_region_unverified") from None
