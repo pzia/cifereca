@@ -367,12 +367,15 @@ def configure(
                     # One failed account must not starve its eligible siblings.
                     # Keep private exception text out of TaskRunner feedback.
                     failures += 1
+                if not scope_current():
+                    interrupted = True
+                    break
             if failures:
                 raise RuntimeError("Actualisation des notices des comptes indisponible") from None
             # TaskRunner treats a bare None as an unexecuted/invalidated
             # source-sync. Carry an explicit positive receipt only after a
             # broker-attested attempt; a skipped batch remains unproven.
-            if interrupted and completed:
+            if completed and (interrupted or not scope_current()):
                 return SyncResult(ok=False, facts={"status": "partial",
                                                    "completed": completed})
             return SyncResult(ok=True) if completed else None

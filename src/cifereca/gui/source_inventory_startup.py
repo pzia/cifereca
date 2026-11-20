@@ -115,17 +115,27 @@ def dispatch_after_opening(window: Any) -> bool:
         return False
     window._source_inventory_startup_dispatched = True
 
+    def current():
+        # A new display-only service is not a revocation of the admitted
+        # broker. Broker replacement / window teardown, however, is.
+        return not getattr(window, "_closed", False) and _broker(window) is broker
+
     def work():
         failures = 0
         completed = 0
+        interrupted = False
         for identity_id in identities:
-            if getattr(window, "_closed", False) or _broker(window) is not broker:
+            if not current():
+                interrupted = True
                 break
             # The user may have revoked a source policy while this worker
             # was queued. Re-probe the read-only opt-in before delegating;
             # the broker then revalidates exact rights/bindings at I/O.
             if identity_id not in _due_startup_identities((identity_id,), broker):
                 continue
+            if not current():
+                interrupted = True
+                break
             try:
                 receipt = broker.synchronize_scheduled_inventory(
                     identity_id, "startup",
@@ -138,6 +148,9 @@ def dispatch_after_opening(window: Any) -> bool:
                 # One account's fault does not starve its eligible siblings.
                 # Never reflect signed URLs or private identifiers in tasks.
                 failures += 1
+            if not current():
+                interrupted = True
+                break
         if failures:
             raise RuntimeError(
                 "Actualisation initiale des notices des comptes indisponible"
@@ -145,6 +158,9 @@ def dispatch_after_opening(window: Any) -> bool:
         # The scheduled broker can complete its Core source-sync while this
         # wrapper returns None; do not label that positive Core evidence as
         # a cancelled TaskRunner operation. No attempted source => no success.
+        if completed and (interrupted or not current()):
+            return SyncResult(ok=False, facts={"status": "partial",
+                                               "completed": completed})
         return SyncResult(ok=True) if completed else None
 
     def after_inventory(_result=None):
