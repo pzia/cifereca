@@ -103,6 +103,19 @@ def test_canonical_paris_consumes_first_confirmed_acsm_without_second_get(
         lambda _identity: ("borrower-profile", "configured")
     )
     service._originating_adept_profile_id = lambda *_: "profile-id"
+    # This synthetic service intentionally has no installed ADEPT plugin.
+    # Supply an explicit, verified inventory for the exact borrower; absence
+    # of this proof must fail closed before the one-use attempt (#7161).
+    def inventory(identity_id, *, profile_name):
+        assert identity_id == "A"
+        assert profile_name == "borrower-profile"
+        return [{
+            "name": "borrower-profile", "profile_id": "profile-id",
+            "fetch_capable": True, "provisioning": {"acsm_fetch_ready": True},
+        }]
+
+    service.adept_profiles_for_identity = inventory
+    service._adept_profile_row = lambda _ref, rows: rows[0] if len(rows) == 1 else None
 
     # A second content request, including an old mutating ASSARedirect, would
     # fail immediately. The read-only selected offer is already attested.
