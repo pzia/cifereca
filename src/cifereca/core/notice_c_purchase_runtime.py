@@ -132,7 +132,7 @@ def _capture_sink(service, runtime, executor, account, private):
         executor, private_provider_id=private_id, public_session=public,
         read_response=public.purchase_enrichment_public_response,
         hold_context=hold_context, wake=runtime.request_tick, ttl_seconds=300,
-        input_current_txn=permission_current_txn,
+        input_current_txn=permission_current_txn, on_changed=runtime._notify_purchase,
     )
 
     def record_omissions(snapshot, omissions, candidates, *, context_current):

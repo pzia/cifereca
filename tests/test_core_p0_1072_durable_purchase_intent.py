@@ -158,3 +158,32 @@ def test_reserved_target_cannot_become_public_dependency(tmp_path):
                                 now=100, expected_generation=0)
     finally:
         db.close()
+
+
+def test_report_change_distinguishes_new_replayed_and_replaced_intent(tmp_path):
+    db = Storage(tmp_path / "notifications.sqlite")
+    try:
+        snapshot, candidate = prepare(db)
+        persist_attested_source_references(db, snapshot)
+        set_policy(db, "true")
+
+        def commit(item, guard=lambda: True):
+            return intent.request_purchase_enrichment_intents(
+                db, snapshot, (item,), now=100, context_current=guard,
+                report_change=True,
+            )
+
+        guard = iter((True, False))
+        with pytest.raises(ValueError, match="policy_or_context"):
+            commit(candidate, lambda: next(guard))
+        refs, changed = commit(candidate)
+        assert changed is True
+        assert commit(candidate) == (refs, False)
+        other = replace(candidate, public_locator="https://catalogue.example.org/edition/456")
+        next_refs, changed = commit(other)
+        assert changed is True and next_refs != refs
+        assert commit(other) == (next_refs, False)
+        assert journal.read_job(db, next_refs[0]).state == "pending"
+        assert db.entitlements() == [] and db.acquisitions() == []
+    finally:
+        db.close()

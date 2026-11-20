@@ -86,6 +86,7 @@ def test_runtime_selects_same_read_and_dispatches_only_after_a_commit(rig, monke
                 "requested": 1, "admitted": 1, "deferred": 0, "unrequested": 0,
             }
             assert calls == ["wake"]
+            assert runtime.documentary_revision() == 1  # Intent committed before claim.
             if mode == "revoke":
                 revoke_source_context(service)
             if mode == "policy_aba":
@@ -101,15 +102,18 @@ def test_runtime_selects_same_read_and_dispatches_only_after_a_commit(rig, monke
             hits = search_public_notice_c(db, "synthétique", now=int(time.time())).hits
             if mode == "qualified":
                 assert len(hits) == 1 and calls == ["wake", "get_admitted", "public"]
-                # Subsequent identical inventory does not require another GET.
+                # Subsequent identical inventory does not invalidate or require another GET.
+                before_revision = runtime.documentary_revision()
                 synchronize_account_source(service, service.account)
+                assert runtime.documentary_revision() == before_revision
                 assert reads == ["same-read", "same-read"]
                 assert calls == ["wake", "get_admitted", "public"]
             else:
                 assert not hits and calls == ["wake"]
-        # A committed lease and its terminal receipt both invalidate views,
-        # including a failed transport fence. Refusal before claim does not.
-        assert runtime.documentary_revision() == (2 if mode in ("qualified", "late_revoke") else 0)
+        # Intent commit, lease, terminal receipt are distinct transitions.
+        expected = (0 if mode in ("policy_off", "public_off") else
+                    3 if mode in ("qualified", "late_revoke") else 1)
+        assert runtime.documentary_revision() == expected
         assert db.entitlements() == [] and db.acquisitions() == [] and db.placements() == []
         assert not root.exists()
     finally:

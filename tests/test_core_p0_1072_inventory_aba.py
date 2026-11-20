@@ -208,7 +208,7 @@ def test_omission_handoff_uses_original_runtime_fence_after_a_commit(rig, monkey
             service.session.purchase_enrichment_observation = lambda account: PurchaseEnrichmentObservation(
                 inventory, (candidate,))
             observe_canonical_rights_in_sync(service, service.account)
-            assert runtime.documentary_revision() == 3
+            assert runtime.documentary_revision() == 4  # Omission removal + new intent.
             with db._lock, db._connect() as sql:
                 assert sql.execute("SELECT count(*) FROM metadata WHERE key>=? AND key<?",
                                    (_PREFIX, _PREFIX + "\uffff")).fetchone() == (0,)

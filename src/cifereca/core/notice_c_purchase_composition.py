@@ -36,7 +36,7 @@ class PurchaseHandoffResult:
 
 def make_purchase_enrichment_sink(execution, *, private_provider_id, public_session,
                                   read_response, hold_context, wake, ttl_seconds=120,
-                                  input_current_txn=None):
+                                  input_current_txn=None, on_changed=None):
     """Return the existing Sync sink(snapshot, candidates).
 
     read_response(url, comparison_title, *, check_authority, control) is
@@ -57,6 +57,7 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
             or not _anonymous_session(public_session, getattr(public_session, "provider_id", None))
             or not all(callable(fn) for fn in (read_response, hold_context, wake))
             or (input_current_txn is not None and not callable(input_current_txn))
+            or (on_changed is not None and not callable(on_changed))
             or type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 300):
         raise ValueError("notice_purchase_invalid_composition")
 
@@ -99,14 +100,16 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                 with hold_context() as allowed:
                     if allowed is not True:
                         raise ValueError("notice_purchase_context_changed")
-                    refs = request_purchase_enrichment_intents(
+                    refs, changed = request_purchase_enrichment_intents(
                         execution._storage, portion, chunk, now=execution._now(),
-                        context_current=lambda: allowed is True,
+                        context_current=lambda: allowed is True, report_change=True,
                     )
             except ValueError:
                 if not requested:
                     raise
                 break
+            if changed and on_changed is not None:
+                on_changed()
             requested += len(refs)
             accepted, waiting = offer(portion, chunk, refs)
             admitted += accepted
@@ -125,9 +128,12 @@ def make_purchase_enrichment_sink(execution, *, private_provider_id, public_sess
                         if allowed is not True:
                             deferred += 1
                             continue
-                        ref = reattest_current_purchase_association(
+                        ref, changed = reattest_current_purchase_association(
                             execution._storage, ref, snapshot, candidate, now=execution._now(),
+                            report_change=True,
                         )
+                    if changed and on_changed is not None:
+                        on_changed()
                     job = journal.read_job(execution._storage, ref)
                     if job.state == "current":
                         continue
