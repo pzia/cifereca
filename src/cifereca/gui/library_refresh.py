@@ -27,12 +27,28 @@ def _library_scope(window):
         return None
     return (service, epoch, getattr(identity, "identity_id", None),
             getattr(window, "_identity_context_generation", 0),
+            getattr(window, "_library_scope_generation", 0),
             getattr(window, "_library_all_profiles", False) is True)
 
 
 def _same_library_scope(left, right):
     return (left is not None and right is not None
             and left[0] is right[0] and left[1:] == right[1:])
+
+
+def retire_outdated_library_snapshot(window):
+    """Do not present previously consumed rows under a different read scope.
+
+    Historical projections without a witness retain their existing lazy-load
+    behaviour. The witness belongs to this window only, never to source rights.
+    """
+    loaded = getattr(window, "_library_loaded_scope", None)
+    if loaded is not None and not _same_library_scope(loaded, _library_scope(window)):
+        window._library_loaded_scope = None
+        window._library_loaded_generation = -1
+        window._library_entries_cache = []
+        return True
+    return False
 
 
 def passive_library_refresh(window):
@@ -151,6 +167,7 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
         # A successful *empty* response is still a loaded snapshot for the
         # selected identity. Do not resubmit work on every return to Library.
         self._library_loaded_generation = generation
+        self._library_loaded_scope = scope
     def err(exc: BaseException) -> None:
         if (getattr(self, "_closed", False) or self.service is not service
                 or request_generation != self._library_refresh_generation
