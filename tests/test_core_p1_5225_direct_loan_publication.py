@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -127,7 +128,7 @@ def test_direct_loan_symlink_swap_of_temp_at_link_time_is_not_delivered(
     original_link = os.link
 
     def swap_temp_at_commit(src, dst, **kw):
-        private = Path(src)
+        private = library / src
         private.unlink()
         private.symlink_to(external)
         return original_link(src, dst, **kw)
@@ -139,7 +140,10 @@ def test_direct_loan_symlink_swap_of_temp_at_link_time_is_not_delivered(
         publish(staged, work_dir=work, library_target_dir=library)
     assert external.read_bytes() == b"PRIVATE OTHER USER"
     assert staged.read_bytes() == b"ORIGINAL LOAN"
-    assert not list(library.iterdir())
+    # Both substituted names are ambiguous and must not be cleaned as
+    # Core-owned inodes. No success or local B receipt was returned.
+    assert (library / "book.epub").is_symlink()
+    assert all(path.is_symlink() for path in library.iterdir())
 
 
 def test_direct_loan_same_size_new_stage_inode_before_open_is_refused(
@@ -150,7 +154,7 @@ def test_direct_loan_same_size_new_stage_inode_before_open_is_refused(
     did_replace = []
 
     def swap_source_before_open(path, flags, *args, **kwargs):
-        if Path(path) == staged and not did_replace:
+        if Path(path) == Path(staged.name) and kwargs.get('dir_fd') is not None and not did_replace:
             old = work / "old.epub"
             staged.rename(old)
             staged.write_bytes(b"PAYLOAD B")
@@ -165,3 +169,101 @@ def test_direct_loan_same_size_new_stage_inode_before_open_is_refused(
     assert staged.read_bytes() == b"PAYLOAD B"
     assert (work / "old.epub").read_bytes() == b"PAYLOAD A"
     assert not library.exists() or list(library.iterdir()) == []
+
+
+def test_fsync_final_directory_before_stage_removal(tmp_path, monkeypatch):
+    staged, work, library = _stage(tmp_path)
+    library.mkdir(parents=True)
+    real_fsync = os.fsync
+    observed = []
+
+    def check(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode) and (library / staged.name).exists():
+            assert staged.exists()
+            assert (library / staged.name).read_bytes() == staged.read_bytes()
+            observed.append("directory")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", check)
+    result = publish(staged, work_dir=work, library_target_dir=library)
+    assert observed == ["directory"]
+    assert result.read_bytes() == b"synthetic provider bytes"
+    assert not staged.exists()
+
+
+def test_fsync_refusal_preserves_input_and_other_target(tmp_path, monkeypatch):
+    staged, work, library = _stage(tmp_path)
+    library.mkdir(parents=True)
+    previous = library / "previous.epub"
+    previous.write_bytes(b"older loan")
+    real_fsync = os.fsync
+    faults = []
+
+    def fail(fd):
+        if (not faults and stat.S_ISDIR(os.fstat(fd).st_mode)
+                and (library / staged.name).exists()):
+            faults.append(True)
+            raise OSError("synthetic directory fsync failure")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fail)
+    with pytest.raises(DirectLoanPublicationRefused, match="loan_direct_publication_failed"):
+        publish(staged, work_dir=work, library_target_dir=library)
+    assert faults == [True]
+    assert staged.read_bytes() == b"synthetic provider bytes"
+    assert list(library.iterdir()) == [previous]
+    assert previous.read_bytes() == b"older loan"
+
+
+@pytest.mark.parametrize("phase", ["link", "fsync"])
+def test_destination_rebound_during_commit_preserves_both_directories(tmp_path, monkeypatch, phase):
+    staged, work, library = _stage(tmp_path)
+    library.mkdir(parents=True)
+    previous = library / "previous.epub"
+    previous.write_bytes(b"older loan")
+    moved = library.with_name("retired")
+    replacement = b"foreign scope"
+    mutations = []
+
+    def replace_directory():
+        if mutations:
+            return
+        library.rename(moved)
+        library.mkdir()
+        (library / staged.name).write_bytes(replacement)
+        mutations.append(True)
+
+    real_link = os.link
+    real_fsync = os.fsync
+
+    def link(src, dst, **kw):
+        if phase == "link":
+            replace_directory()
+        return real_link(src, dst, **kw)
+
+    def fsync(fd):
+        if (phase == "fsync" and stat.S_ISDIR(os.fstat(fd).st_mode)
+                and (library / staged.name).exists()):
+            replace_directory()
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "link", link)
+    monkeypatch.setattr(os, "fsync", fsync)
+    with pytest.raises(DirectLoanPublicationRefused, match="loan_direct_target_scope_invalid"):
+        publish(staged, work_dir=work, library_target_dir=library)
+    assert mutations == [True]
+    assert staged.read_bytes() == b"synthetic provider bytes"
+    assert (library / staged.name).read_bytes() == replacement
+    assert list(moved.iterdir()) == [moved / previous.name]
+    assert (moved / previous.name).read_bytes() == b"older loan"
+
+
+def test_nested_symlink_parent_does_not_create_inside_foreign_scope(tmp_path):
+    staged, work, _library = _stage(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(DirectLoanPublicationRefused, match="loan_direct_stage_scope_invalid"):
+        publish(staged, work_dir=work, library_target_dir=alias / "profile" / "provider")
+    assert list(outside.iterdir()) == [] and staged.exists()
