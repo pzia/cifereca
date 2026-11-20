@@ -213,3 +213,35 @@ def test_closed_inert_subtree_and_void_elements_do_not_hide_visible_series(scena
         '<template><template><img src="ignored"></template></template>'
         '<div hidden><br><span>Not a series</span></div>' + SERIES_LINK))
     assert row.metadata["series"] == ["La saga & ses suites"]
+
+
+@pytest.mark.parametrize("scenario", ("CATALOGUE", "EBOOKS"))
+@pytest.mark.parametrize("fragment", (
+    '<title>' + SERIES_LINK + '</title>',
+    '<xmp>' + SERIES_LINK + '</xmp>',
+    '<noembed>' + SERIES_LINK + '</noembed>',
+    '<noframes>' + SERIES_LINK + '</noframes>',
+    '<textarea>' + SERIES_LINK + '</textarea>',
+    '<script>' + SERIES_LINK + '</script>',
+    '<style>' + SERIES_LINK + '</style>',
+    '<div hidden><textarea></div></textarea>' + SERIES_LINK + '</div>',
+    '<div hidden/><span>' + SERIES_LINK + '</span>',
+    '<template/>' + SERIES_LINK,
+    '<plaintext></plaintext>' + SERIES_LINK,
+    '<textarea>unclosed',
+))
+def test_raw_text_and_malformed_inert_boundaries_cannot_attest_series(scenario, fragment):
+    # Synthetic HTML boundaries, not an additional Syracuse field/endpoint.
+    for fields in ({"CustomResult": fragment},
+                   {"CustomResult": fragment, "CompactResult": SERIES_LINK}):
+        row = _record(scenario, **fields)
+        assert "series" not in row.metadata
+        assert "series" not in row.metadata["bibliography_evidence"]
+        assert row.metadata["subjects"] == ["Nature"]
+
+
+@pytest.mark.parametrize("tag", ("title", "xmp", "noembed", "textarea", "noscript"))
+def test_closed_unrelated_raw_text_does_not_suppress_visible_relation(tag):
+    fragment = f"<{tag}>Unrelated text</{tag}>" + SERIES_LINK
+    row = _record("CATALOGUE", CustomResult=fragment)
+    assert row.metadata["series"] == ["La saga & ses suites"]
