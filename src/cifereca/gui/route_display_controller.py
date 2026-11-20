@@ -115,6 +115,8 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
     if route == "dashboard":
         window._render_dashboard()
     elif route == "library":
+        from .library_refresh import passive_library_refresh, retire_outdated_library_snapshot
+        retire_outdated_library_snapshot(window)
         window._render_library(window._library_entries_cache)
         if (
             is_current() and not window._library_entries_cache
@@ -123,7 +125,6 @@ def show_route(window, route: str, *, Gtk, idle_add=None) -> None:
         ):
             # A successful empty snapshot is not the same as an uninitialized
             # cache. Reopening Library must not repeatedly query the provider.
-            from .library_refresh import passive_library_refresh
             passive_library_refresh(window)
     elif route == "readers":
         # Declarative, SQLite-only view. No USB scan or supplier I/O during
