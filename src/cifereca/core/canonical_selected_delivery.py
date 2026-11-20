@@ -229,13 +229,26 @@ def complete_selected_delivery(
         # Older runtime contracts may omit readiness, but a published
         # negative signal remains a hard refusal as in the historical path.
         if source.kind == "loan":
+            # An unavailable profile inventory is NOT evidence that the
+            # selected Adobe identity is usable. Failing open here used to
+            # poison the durable one-use attempt before the runtime rejected
+            # an UUID passed as a CLI profile name (#7161). Keep this check
+            # before begin_loan_adept_attempt and any DRM subprocess.
             try:
                 rows = service.adept_profiles_for_identity(
                     borrower_identity, profile_name=profile,
                 )
-            except Exception:
-                rows = []
-            profile_row = service._adept_profile_row(profile, rows)
+                profile_row = service._adept_profile_row(profile, rows)
+            except Exception as exc:
+                raise ValueError("canonical_delivery_adept_profile_inventory_unavailable") from exc
+            if (type(profile_row) is not dict
+                    or (profile_row.get("name") or profile_row.get("profile")) != profile):
+                raise ValueError("canonical_delivery_adept_profile_unverified")
+            # A present stable reference must identify the same borrower.
+            # Older rows with name-only evidence remain compatible.
+            row_id = profile_row.get("profile_id")
+            if row_id is not None and profile_id is not None and row_id != profile_id:
+                raise ValueError("canonical_delivery_adept_profile_binding_changed")
             if profile_is_explicitly_acsm_unready(profile_row):
                 raise ValueError("adept_profile_acsm_not_ready")
         require_borrower()
