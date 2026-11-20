@@ -1,6 +1,6 @@
 """#4030: one explicitly authorised anonymous catalogue comparison.
 
-Unwired Core operator primitive. No private source, provider connection,
+Core operator primitive. No private source, provider connection,
 write to C, search UI projection, download, association, or right.
 """
 from __future__ import annotations
@@ -52,6 +52,43 @@ def _source(service, request, provider):
     return (session, field, scope) if field and scope else None
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class PublicCatalogueChoice:
+    request: LocalOriginSuggestionRequest
+    provider_id: str
+    session: object
+    field: str
+    scope: str
+
+
+def available_local_public_catalogues(service, request):
+    """Bounded inert discovery after explicit known-C review; no provider call."""
+    try:
+        if (type(request) is not LocalOriginSuggestionRequest
+                or request.service is not service or request.page != 0
+                or not request.current()):
+            return ()
+        sessions = tuple(service._sessions.values())
+        if len(sessions) > 256:
+            return ()
+        ids = set()
+        for session in sessions:
+            state = _inert_search_source_state(session)
+            if (state is not None and state[1:] == ("__public__", True)
+                    and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", state[0])):
+                ids.add(state[0])
+        choices = []
+        for provider in sorted(ids):
+            selected = _source(service, request, provider)
+            if selected is not None:
+                choices.append(PublicCatalogueChoice(request, provider, *selected))
+            if len(choices) >= 8:
+                break
+        return tuple(choices) if request.current() else ()
+    except Exception:
+        return ()
+
+
 def _isbns(metadata):
     values = []
     for field in ("isbn", "isbns"):
@@ -79,7 +116,8 @@ def _comparison(title, authors, local, row, remote):
     return "title_related" if not title_match else "title_concordant_author_unverified"
 
 
-def search_local_public_catalogue(service, request, *, provider_id, confirmed=False):
+def search_local_public_catalogue(service, request, *, provider_id, confirmed=False,
+                                  choice=None, still_current=lambda: True):
     """One synchronous typed call; send title only, never path/bytes/ISBN.
 
     Each invocation requires explicit approval of the selected public source.
@@ -100,14 +138,22 @@ def search_local_public_catalogue(service, request, *, provider_id, confirmed=Fa
             or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", provider_id) is None):
         return report("excluded")
     try:
+        if still_current() is not True:
+            return report("excluded")
         selected = _source(service, request, provider_id)
         if selected is None:
             return report("excluded")
         session, field, scope = selected
+        if choice is not None and (
+                type(choice) is not PublicCatalogueChoice
+                or choice.request is not request or choice.provider_id != provider_id
+                or choice.session is not session
+                or (choice.field, choice.scope) != (field, scope)):
+            return report("scope_changed")
 
         def live():
             current = _source(service, request, provider_id)
-            return (current is not None and current[0] is session
+            return (still_current() is True and current is not None and current[0] is session
                     and current[1:] == (field, scope))
 
         with _verified_candidate(request.storage, library_root=request.root,

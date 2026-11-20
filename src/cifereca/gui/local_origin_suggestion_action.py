@@ -6,6 +6,10 @@ from ..core.local_origin_suggestion_operator import (
     run_local_origin_suggestion,
 )
 from ..core.local_origin_documentary_suggestions import DocumentarySuggestionPage
+from ..core.local_origin_public_catalogue import (
+    PublicCatalogueCandidate, PublicCatalogueChoice, available_local_public_catalogues,
+    search_local_public_catalogue,
+)
 from ..storage import Storage
 from ..task_queue import TaskPriority
 from .local_public_c_detail_guard import local_public_web_selection_check
@@ -16,6 +20,10 @@ _LABELS = {
     "title_concordant_author_unknown": "Titre concordant, auteur inconnu",
     "title_concordant_author_divergent": "Titre concordant, auteur divergent",
     "title_author_concordant": "Titre et auteur concordants",
+    "isbn_title_author_concordant": "ISBN déclaré, titre et auteur concordants",
+    "isbn_claim_ambiguous": "ISBN déclaré ambigu",
+    "isbn_claim_divergent": "ISBN déclarés divergents",
+    "title_concordant_author_unverified": "Titre concordant, auteur non vérifié",
 }
 
 
@@ -69,6 +77,93 @@ def add_local_origin_suggestion_action(window, detail, row, item, *, token):
 
     def active():
         return current() and not getattr(button, "_cifereca_action_context_revoked", False)
+
+    def worker_current(route, request):
+        # No GTK reads in the worker. The original route and selection token
+        # are inert coordinates; the Core request owns identity/epoch checks.
+        return (not getattr(window, "_closed", False)
+                and window.service is core and core.storage is storage
+                and getattr(window, "_route_display_token", None) is route
+                and getattr(window, "_public_web_selection_library", None) is token
+                and request.current())
+
+    public_busy = False
+
+    def add_public_actions(request, route, choices):
+        if type(choices) is not tuple:
+            return
+        for index, choice in enumerate(choices[:8]):
+            if type(choice) is not PublicCatalogueChoice or choice.request is not request:
+                continue
+            public_button = window.action_button(
+                "Envoyer le titre à " + choice.provider_id, "system-search-symbolic",
+            )
+            public_button._cifereca_action_id = "local-origin-public-" + str(index)
+            public_button._cifereca_action_priority = 40
+            public_button.set_tooltip_text(
+                "Recherche explicite dans ce catalogue public ; seul le titre OPF est transmis. "
+                "Ni compte privé, ni téléchargement, ni attribution d'origine."
+            )
+            consumed = [False]
+
+            def lookup(clicked_button, selected=choice, used=consumed):
+                nonlocal public_busy
+                def valid():
+                    mapped = getattr(clicked_button, "get_mapped", None)
+                    return (active() and worker_current(route, request)
+                            and not getattr(clicked_button, "_cifereca_action_context_revoked", False)
+                            and (not callable(mapped) or mapped()))
+                if public_busy or used[0] or not valid():
+                    return
+                public_busy = True
+                used[0] = True
+                delivered = False
+
+                def finish(report):
+                    nonlocal public_busy, delivered
+                    if delivered:
+                        return
+                    delivered = True
+                    public_busy = False
+                    if not valid():
+                        return
+                    if (type(report) is not dict or report.get("status") != "partial"
+                            or type(report.get("candidates")) is not tuple):
+                        window.toast("Comparaison publique indisponible ; aucune absence attestée.")
+                        return
+                    lines = [
+                        ("Portée", "Comparaison documentaire uniquement ; aucune origine ni droit attestés."),
+                        ("Couverture", "Partielle ; réponse éventuellement en cache, fraîcheur réseau non vérifiée."),
+                    ]
+                    for entry in report["candidates"]:
+                        if type(entry) is not PublicCatalogueCandidate or entry.provider_id != selected.provider_id:
+                            continue
+                        lines.append((entry.title, " · ".join(part for part in (
+                            entry.author, entry.provider_id, entry.record_id,
+                            ", ".join(entry.isbns), _LABELS.get(entry.comparison, "Comparaison descriptive"),
+                        ) if part)))
+                    if len(lines) == 2:
+                        lines.append(("Résultat", "Aucune correspondance reçue ; absence non prouvée."))
+                    if valid():
+                        detail.add_group("Catalogue public — " + selected.provider_id, lines)
+
+                def work():
+                    return search_local_public_catalogue(
+                        core, request, provider_id=selected.provider_id, confirmed=True,
+                        choice=selected, still_current=lambda: worker_current(route, request),
+                    )
+
+                try:
+                    window.runner.submit(
+                        "Comparaison catalogue public…", work, finish,
+                        lambda _exc: finish(None), control=clicked_button,
+                        priority=TaskPriority.USER_ACTION, kind="local-origin-public-search", origin="user",
+                    )
+                except Exception:
+                    finish(None)
+
+            public_button.connect("clicked", lookup)
+            detail.add_actions([public_button])
 
     def clicked(_button):
         nonlocal busy, finished, next_request, captured_route
@@ -153,11 +248,21 @@ def add_local_origin_suggestion_action(window, detail, row, item, *, token):
                 finished = following is None
                 if following is not None:
                     button.set_tooltip_text("Afficher la page suivante des correspondances documentaires connues.")
+                if request.page == 0:
+                    add_public_actions(request, route, result.get("public_choices"))
+
+        def work():
+            result = run_local_origin_suggestion(core, request)
+            if (request.page == 0 and worker_current(route, request)
+                    and type(result) is dict and result.get("status") == "partial"
+                    and result.get("metadata_evidence") == "verified_epub_opf_description"):
+                return {**result, "public_choices": available_local_public_catalogues(core, request)}
+            return result
 
         try:
             window.runner.submit(
                 "Comparaison documentaire locale…",
-                lambda: run_local_origin_suggestion(core, request),
+                work,
                 done, failed, control=button, priority=TaskPriority.USER_ACTION,
                 kind="detail-cache", origin="user",
             )
