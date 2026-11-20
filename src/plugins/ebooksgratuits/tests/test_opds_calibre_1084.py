@@ -415,3 +415,57 @@ def test_shared_parser_once_per_response_across_opensearch_and_pagination(monkey
         assert parsed == served
     finally:
         session.close()
+
+
+@pytest.mark.parametrize("kind", ["epub", "html", "both", "identical"])
+def test_opds_competing_links_never_elect_by_order(kind):
+    new_links = []
+    if kind in ("epub", "both", "identical"):
+        dest = "42" if kind == "identical" else "99"
+        new_links.append(
+            f'<link rel="http://opds-spec.org/acquisition/open-access" '
+            f'type="application/epub+zip" href="/index.php/fetch/{dest}.epub"/>'
+        )
+    if kind in ("html", "both", "identical"):
+        dest = "42" if kind == "identical" else "99"
+        new_links.append(f'<link rel="alternate" type="text/html" href="/index.php/book/{dest}"/>')
+    extra = "".join(new_links)
+    for entry in (BOOK.replace("</entry>", extra + "</entry>"),
+                  BOOK.replace("<id>", extra + "<id>", 1)):
+        requests = []
+        def handle(req):
+            requests.append(req)
+            return route(req, entries=entry)
+        session = make_session(handle)
+        try:
+            row, = session.search("Livre")
+            assert row.title == "Livre d'essai"
+            if kind in ("epub", "both"):
+                assert row.download_url is None and row.downloadable is False
+                assert row.format is None
+                assert "available_formats" not in row.metadata
+            else:
+                assert row.download_url == HOST + "/index.php/fetch/42.epub"
+                assert row.downloadable is True
+            assert row.friendly_url == (
+                None if kind in ("html", "both") else HOST + "/index.php/book/42"
+            )
+            assert bool(session.last_search_warnings) is (kind != "identical")
+            assert len(requests) == 3
+        finally:
+            session.close()
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_opds_duplicate_exact_id_dedup_or_refuse_with_sibling(changed):
+    other = BOOK.replace("<title>Livre d'essai</title>", "<title>Autre titre</title>") if changed else BOOK
+    entries = BOOK + other + BOOK + NO_EPUB
+    session = make_session(lambda req: route(req, entries=entries))
+    try:
+        rows = session.search("livre")
+        assert [row.title for row in rows] == (
+            ["Notice sans EPUB"] if changed else ["Livre d'essai", "Notice sans EPUB"]
+        )
+        assert bool(session.last_search_warnings) is changed
+    finally:
+        session.close()

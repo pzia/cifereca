@@ -256,6 +256,13 @@ _BOOK_DETAIL_STAGES = frozenset({
     "component_open_overflow",
     "component_click_hidden",
     "component_lists",
+    "component_keyboard_start",
+    "component_keyboard_menu",
+    "component_keyboard_hidden",
+    "component_keyboard_activate",
+    "component_keyboard_escape",
+    "component_keyboard_close",
+    "component_keyboard_done",
     "component_identity",
     "component_identity_rendered",
 })
@@ -283,15 +290,27 @@ def _failed_book_detail_checkpoint(source: Path, scenario: str) -> dict:
         # Fixed phase names from the isolated synthetic C probe. This cannot
         # disclose an arbitrary exception, fixture title, URL or account.
         stage = data.get("local_c_stage")
-        local_stages = {"seed", "complete"} | {
+        local_stages = {"setup", "seed", "complete", "warm_n2_cold_n3",
+                        "distinct_c_shared_n3", "invalidated_n2_warm_n3"} | {
             prefix + suffix
             for prefix in ("cold_", "offline_")
             for suffix in ("project", "library_route", "library_list",
                            "library_detail", "recent_route", "recent_list",
-                           "recent_detail")
+                           "recent_detail", "search_route", "search_list", "search_detail",
+                           "loans_route", "loans_list", "loans_detail",
+                           "history_route", "history_list", "history_detail",
+                           "recommendations_route", "recommendations_list", "recommendations_detail")
         }
         if type(stage) is str and stage in local_stages:
             result["book_detail_local_c_stage"] = stage
+        # Only individually reviewed, synthetic stages from the C-cover helper.
+        cover_stage = data.get("notice_c_cover_stage")
+        cover_stages = {"tie_setup", "tie_first", "tie_second", "setup", "seed", "complete"} | {
+            prefix + suffix for prefix in ("cold_", "offline_")
+            for suffix in ("texture", "web", "web_choices", "search_list", "search_detail")
+        }
+        if type(cover_stage) is str and cover_stage in cover_stages:
+            result["book_detail_notice_c_cover_stage"] = cover_stage
         last = data.get("public_stage")
         if type(last) is str and last in _BOOK_DETAIL_STAGES:
             result["book_detail_last_stage"] = last

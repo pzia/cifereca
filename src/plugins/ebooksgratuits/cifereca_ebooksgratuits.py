@@ -1015,21 +1015,32 @@ def _opds_items(session,feed,feed_url,*,warnings=None):
             unqualified=True
             continue
         epub=None; alternate=None; thumbnail=None; formats=set()
+        epub_links=set(); html_links=set()
         for rel,mime,raw,_ in _opds_links(entry,feed_url):
             checked=(_opds_source_link(session,feed_url,raw,'download')
                      if mime.split(';',1)[0].strip()=='application/epub+zip'
                      else None)
             if checked and ('/acquisition' in rel or rel=='alternate'):
-                epub=epub or checked; formats.add('EPUB')
+                epub_links.add(checked); formats.add('EPUB')
             # Only a declared HTML alternative can become "Voir en ligne".
             if rel=='alternate' and mime.split(';',1)[0].strip() in {
                 'text/html', 'application/xhtml+xml'
             }:
-                alternate=alternate or _opds_public_html_link(
-                    feed_url,raw
-                )
+                html_link=_opds_public_html_link(feed_url,raw)
+                if html_link: html_links.add(html_link)
             if 'image/thumbnail' in rel or rel.endswith('/thumbnail'):
                 thumbnail=thumbnail or _opds_source_link(session,feed_url,raw,'detail')
+        # A page entry is not a proof that two different targets are
+        # interchangeable. Never elect an offer or a Web page by link order.
+        if len(epub_links)==1:
+            epub=next(iter(epub_links))
+        elif epub_links:
+            formats.discard('EPUB')
+            unqualified=True
+        if len(html_links)==1:
+            alternate=next(iter(html_links))
+        elif html_links:
+            unqualified=True
         author_nodes=entry.findall(ATOM+'author')
         authors=[_opds_text(n,ATOM+'name') for n in author_nodes]
         author=', '.join(n for n in authors if n) or None
@@ -1075,9 +1086,18 @@ def _opds_items(session,feed,feed_url,*,warnings=None):
             source_credential=session.credential_id,
             download_url=epub,content_type='ebook',source_collection='public',
             owned=False,downloadable=bool(epub),metadata=metadata))
-    if unqualified and warnings is not None:
+    by_id={}; conflicts=set()
+    for item in items:
+        if item.id in conflicts:
+            continue
+        if item.id not in by_id:
+            by_id[item.id]=item
+        elif by_id[item.id]!=item:
+            del by_id[item.id]
+            conflicts.add(item.id)
+    if (unqualified or conflicts) and warnings is not None:
         warnings.append('partial_results : entrées OPDS non qualifiées')
-    return items
+    return list(by_id.values())
 
 
 

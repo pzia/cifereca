@@ -1,5 +1,6 @@
 from __future__ import annotations
-from collections import OrderedDict
+from collections import Counter, OrderedDict
+from dataclasses import replace
 import html
 import logging
 from datetime import date, datetime
@@ -30,7 +31,7 @@ from cifereca.plugin_api import (
     ProviderError,
     ProviderPlugin,
     ProviderSession, normalize_language_tag, sanitize_filename_component, description_text, description_element,
-    SearchResult,
+    SearchResult, ProviderSearchResponse, PublicSearchNotice,
 )
 
 ATOM = "http://www.w3.org/2005/Atom"
@@ -289,6 +290,11 @@ class GutenbergSession(ProviderSession):
 
     def connect(self) -> list[Account]:
         self.connected = True
+        if (self.credential_id == "__public__"
+                and type(self.credentials) is dict and not self.credentials):
+            # A singleton catalogue has no borrower or private account.
+            self._accounts = []
+            return []
         self._accounts = [
             Account(
                 display_name="Catalogue public",
@@ -353,7 +359,8 @@ class GutenbergSession(ProviderSession):
         feed = self._read_atom_feed(content, started=started)
         return self._parse_atom_entries(feed, base_url, byte_count=len(content), started=started)
 
-    def _parse_atom_entries(self, feed, base_url, *, byte_count, started, warnings=None):
+    def _parse_atom_entries(self, feed, base_url, *, byte_count, started, warnings=None,
+                            documentary=False):
         entries = feed.entries
         stats = {
             "entries": len(entries),
@@ -364,6 +371,7 @@ class GutenbergSession(ProviderSession):
             "detail_only": 0,
         }
         candidates: dict[str, list[dict[str, Any]]] = {}
+        occurrences = Counter()
         for entry in entries:
             title = self._text(entry.find(f"{{{ATOM}}}title")) or "Sans titre"
             # Gutenberg returns a placeholder entry for no-result queries.
@@ -378,6 +386,16 @@ class GutenbergSession(ProviderSession):
             # establishes the publication date of the described ebook.
             # Only an explicit dcterms:issued may populate published_at.
             issued = _attested_date(self._text(entry.find(f"{{{DCTERMS}}}issued")))
+            if documentary:
+                issued_nodes = entry.findall(f"{{{DCTERMS}}}issued")
+                issued_values = {
+                    _attested_date(self._text(node))
+                    if not len(node) and not node.attrib else None
+                    for node in issued_nodes
+                }
+                issued = (next(iter(issued_values))
+                          if len(issued_values) == 1 and None not in issued_values
+                          else None)
             entry_published = _attested_atom_timestamp(self._text(entry.find(f"{{{ATOM}}}published")))
             entry_updated = _attested_atom_timestamp(self._text(entry.find(f"{{{ATOM}}}updated")))
             language = normalize_language_tag(self._text(entry.find(f"{{{DCTERMS}}}language")))
@@ -415,6 +433,9 @@ class GutenbergSession(ProviderSession):
             detail_url: str | None = None
             epub_links: list[tuple[str, str]] = []
             link_shapes: list[tuple[str, str, str]] = []
+            coordinate_urls: list[str] = []
+            public_alternates: set[str] = set()
+            direct_atom_links = set(entry.findall(f"{{{ATOM}}}link"))
             # OPDS is Atom-based, but be tolerant of servers that serialize link
             # elements with a different/no namespace.  The semantic attributes
             # (rel/type/href) are what matter here.
@@ -437,6 +458,7 @@ class GutenbergSession(ProviderSession):
                 # an EPUB-looking URL only when the relation is acquisition-like.
                 if rel.casefold().startswith(_EPUB_REL) and (is_epub_mime or is_epub_href):
                     epub_links.append((href, link_title))
+                    coordinate_urls.append(href)
                 elif "thumbnail" in rel.casefold():
                     if urlsplit(href).scheme in {"http", "https"}:
                         thumbnail = thumbnail or href
@@ -445,10 +467,34 @@ class GutenbergSession(ProviderSession):
                         cover = cover or href
                 elif rel == "alternate" and typ in {"text/html", "application/xhtml+xml", ""}:
                     friendly = friendly or href
+                    coordinate_urls.append(href)
+                    # Only direct Atom declarations can attest a web link.
+                    if link in direct_atom_links:
+                        public_alternates.add(href)
                 elif rel == "subsection" and re.search(r"/ebooks/\d+\.opds(?:[/?]|$)", href, re.I):
                     detail_url = detail_url or href
+                    coordinate_urls.append(href)
 
             ebook_no = self._ebook_number(entry, friendly, detail_url, *(href for href, _ in epub_links))
+            # Durable admission requires the record's own exact identifier.
+            # Count even entries that the legacy acquisition parser discards.
+            id_nodes = entry.findall(f"{{{ATOM}}}id")
+            title_nodes = entry.findall(f"{{{ATOM}}}title")
+            own_id = self._text(id_nodes[0]) if len(id_nodes) == 1 and not len(id_nodes[0]) else None
+            exact_id = re.fullmatch(
+                r"(?:urn:gutenberg:|https?://www\.gutenberg\.org/ebooks/)([0-9]{1,20})",
+                own_id or "",
+            )
+            if exact_id:
+                occurrences[exact_id.group(1)] += 1
+            own_coordinates = (
+                exact_id is not None and exact_id.group(1) == ebook_no
+                and len(title_nodes) == 1 and self._text(title_nodes[0]) is not None
+                and not len(title_nodes[0])
+                and all(m.group(1) == ebook_no
+                        for url in coordinate_urls
+                        for m in _EBOOK_RE.finditer(url))
+            )
             if not epub_links and not detail_url:
                 stats["without_epub"] += 1
                 _LOG.debug(
@@ -478,6 +524,10 @@ class GutenbergSession(ProviderSession):
                 acquisition, _label = max(epub_links, key=epub_rank)
             candidates.setdefault(ebook_no, []).append({
                 "title": title,
+                "public_coordinates": own_coordinates,
+                "observed_friendly": (
+                    next(iter(public_alternates)) if len(public_alternates) == 1 else None
+                ),
                 "author": author,
                 "description": description,
                 "published": issued,
@@ -507,6 +557,12 @@ class GutenbergSession(ProviderSession):
                 reverse=self.prefer_images,
             )
             row = dict(editions[0])
+            if documentary and (
+                    len(editions) != 1 or occurrences[ebook_no] != 1
+                    or not row["public_coordinates"]):
+                if warnings is not None:
+                    warnings.append("partial_results : notice OPDS exacte non qualifiée")
+                continue
             if not row.get("thumbnail"):
                 sibling = next((edition for edition in editions if edition.get("thumbnail")), None)
                 if sibling:
@@ -568,6 +624,26 @@ class GutenbergSession(ProviderSession):
                     } if row.get("thumbnail") else {}),
                 },
             ))
+            if documentary:
+                # No sibling image, delivery locator, account, rights or
+                # inferred publisher. Keep only facts from this entry.
+                offer = rows[-1]
+                metadata = dict(row["language_proof"] or {})
+                if row["subjects"]:
+                    metadata["subjects"] = list(row["subjects"])
+                web = row["observed_friendly"]
+                if web != f"https://www.gutenberg.org/ebooks/{ebook_no}":
+                    web = None
+                if web is not None:
+                    metadata["public_url_evidence"] = (
+                        self.provider_id + ".public_search_record_identifier"
+                    )
+                rows[-1] = replace(
+                    offer, source_collection="public_catalog",
+                    publisher=None, description=None, thumbnail_url=None,
+                    friendly_url=web, download_url=None, downloadable=False,
+                    owned=False, metadata=metadata,
+                )
         if warnings is not None and (
             stats["without_epub"] or stats["without_ebook_id"]
             or (stats["placeholder"] and stats["entries"] != 1)
@@ -712,7 +788,48 @@ class GutenbergSession(ProviderSession):
         return image
 
     def search(self, query: str, scope: str = "all", page: int = 0, field: str = "all") -> list[SearchResult]:
-        self.last_search_warnings = []
+        warnings = []
+        self.last_search_warnings = warnings
+        return self._search_page(query, scope, page, field, warnings=warnings)
+
+    def search_with_response_facets(
+        self, query: str, scope: str = "all", *, field: str = "all",
+        content_types: tuple[str, ...] = (),
+    ) -> ProviderSearchResponse:
+        """One anonymous descriptive page; the ordinary offer API is unchanged."""
+        if not (self.connected and self.credential_id == "__public__"
+                and type(self.credentials) is dict and not self.credentials
+                and type(self._accounts) is list and not self._accounts
+                and self.opds_search_url == DEFAULT_OPDS_SEARCH_URL):
+            return ProviderSearchResponse([], partial=True)
+        warnings = []
+        self.last_search_warnings = warnings
+        # The CoreUI Format facet sends the file-format family "epub",
+        # not the legacy media category "ebook". Match either explicitly;
+        # unsupported requested formats are not an authoritative zero.
+        if (type(content_types) not in (tuple, list, set, frozenset)
+                or any(type(value) is not str or not 0 < len(value) <= 80
+                       for value in content_types)):
+            raise ProviderCapabilityError("Project Gutenberg : unsupported_content_type")
+        requested = {value.casefold() for value in content_types}
+        supported = {"epub", "ebook"}
+        if requested - supported:
+            warnings.append(
+                "partial_results : formats demandés non pris en charge par Gutenberg"
+            )
+        if requested and not requested & supported:
+            return ProviderSearchResponse([], partial=True, catalogue_complete=False)
+        # Core uses the catalogue-only scope for ownerless sessions.
+        if scope == "catalog":
+            scope = "all"
+        rows = self._search_page(query, scope, 0, field, warnings=warnings,
+                                 documentary=True)
+        return ProviderSearchResponse(
+            rows, partial=bool(warnings), catalogue_complete=False,
+            public_notices=tuple(PublicSearchNotice(row) for row in rows),
+        )
+
+    def _search_page(self, query, scope, page, field, *, warnings, documentary=False):
         if type(field) is not str or field.strip().casefold() not in DESCRIPTOR.search_capabilities.fields:
             raise ProviderCapabilityError("Project Gutenberg : unsupported_field")
         if type(scope) is not str or scope.strip().casefold() not in DESCRIPTOR.search_capabilities.scopes:
@@ -733,7 +850,7 @@ class GutenbergSession(ProviderSession):
             # A skipped one-letter query is not evidence of zero hits at
             # Gutenberg. Keep empty-input clearing silent for the UI.
             if query.strip():
-                self.last_search_warnings.append(
+                warnings.append(
                     "partial_results : requête trop courte ; Gutenberg non interrogé"
                 )
             _LOG.info("TRACE gutenberg search skipped reason=query-too-short query_len=%s", len(query))
@@ -796,7 +913,7 @@ class GutenbergSession(ProviderSession):
                     raise
                 # Current page remains descriptive evidence. Never follow or
                 # certify a broken next declaration, nor discard valid rows.
-                self.last_search_warnings.append(
+                warnings.append(
                     "partial_results : pagination OPDS non vérifiée"
                 )
                 next_url=None
@@ -807,19 +924,27 @@ class GutenbergSession(ProviderSession):
                 # exist. For a specialized field, earlier pages were never
                 # exhaustively searched for a matching author/subject/etc.
                 if field not in ("all", ""):
-                    self.last_search_warnings.append(
+                    warnings.append(
                         "partial_results : filtre local limité à la page OPDS demandée"
                     )
                 self._diagnostic("GUTENBERG", "OPDS pagination", "ok",detail={"requested_page": page, "last_available_page": page_index}, level="detailed")
                 return []
             current_url=next_url; params=None; page_index+=1
         assert response is not None
-        parsed = self._parse_atom_entries(feed, response_url, byte_count=len(content), started=parse_started, warnings=self.last_search_warnings); rows = self._field_filter(parsed, filter_query, field); duration_ms = int((time.perf_counter() - started) * 1000)
+        if documentary and catalogue_url_origin(response_url) != catalogue_url_origin(DEFAULT_OPDS_SEARCH_URL):
+            warnings.append("partial_results : origine OPDS publique non qualifiée")
+            return []
+        parsed = self._parse_atom_entries(
+            feed, response_url, byte_count=len(content), started=parse_started,
+            warnings=warnings, documentary=documentary,
+        )
+        rows = self._field_filter(parsed, filter_query, field)
+        duration_ms = int((time.perf_counter() - started) * 1000)
         if field not in ("all", ""):
             # Filters are applied *after* obtaining one requested OPDS page.
             # Zero rows here are not evidence that the entire corpus lacks
             # a matching author, subject, bookshelf or language.
-            self.last_search_warnings.append(
+            warnings.append(
                 "partial_results : filtre local limité à la page OPDS demandée"
             )
         self._diagnostic("GUTENBERG", "OPDS search", "ok", duration_ms=duration_ms,detail={"results": len(rows), "parsed_results": len(parsed), "query_len": len(query), "field": field, "page": page},level="detailed")
