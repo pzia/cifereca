@@ -96,6 +96,7 @@ def merge_attested_public_listing(owned, public_rows):
         claims = (
             getattr(public, "friendly_url", None) == owned_url,
             getattr(public, "record_id", None) == "numilog:public:" + product_id,
+            getattr(public, "id", None) == "numilog:public:" + product_id,
             type(meta) is dict and meta.get("source_item_id") == product_id,
         )
         # An unrelated card is not evidence. But a card claiming even one
@@ -110,6 +111,11 @@ def merge_attested_public_listing(owned, public_rows):
                 or getattr(public, "source_collection", None) != "public_catalog"
                 or getattr(public, "scenario", None) != "NUMILOG_PUBLIC"
                 or getattr(public, "docbase", None) != "NUMILOG"
+                or getattr(public, "medium", None) != "digital"
+                or getattr(public, "source_account_id", None) is not None
+                or meta.get("public_url_evidence") != (
+                    public.source_provider + ".public_search_product_card"
+                )
                 or getattr(public, "owned", None) is not False
                 or getattr(public, "downloadable", None) is not False
                 or getattr(public, "download_url", None) is not None):
