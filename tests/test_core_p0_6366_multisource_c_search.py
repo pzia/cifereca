@@ -317,3 +317,63 @@ def test_only_exact_unpossessed_public_mirror_coordinates_are_suppressed(tmp_pat
         assert rows[0]["_cover_document_ref"] == group.document
         assert rows[1:] == retained
         assert db.entitlements() == [] and db.acquisitions() == []
+
+
+def test_source_pages_keep_exact_edition_order_across_eviction_and_restart(tmp_path):
+    from contextlib import closing
+    from cifereca.core.notice_cover_repository import evict_notice_cover
+
+    filename = tmp_path / "source-page-ties.sqlite"
+    with closing(Storage(filename)) as db:
+        # All tie on score, title and provider. Three exact immutable
+        # records with two separate revisions must remain six results.
+        observations = [
+            persist(db, verified_public(
+                source_provider="bnf", record_id=f"tie-{index}",
+                revision_id=revision, title="Même titre public",
+            ))
+            for index in range(3) for revision in ("rev-1", "rev-2")
+        ]
+        canonical = [
+            persist_exact_public_search_cover(db, source)
+            for source in observations
+        ]
+        expected = sorted(source.observation.key.edition_id for source in observations)
+        assert len(set(expected)) == 6
+        expected_refs = {
+            source.observation.key.edition_id: index.document
+            for source, index in zip(observations, canonical)
+        }
+
+        def check_pages(storage):
+            for grouped in (False, True):
+                seen = []
+                for number in range(7):
+                    result = search_public_notice_c(
+                        storage, "même titre", page=number, page_size=1,
+                        group_by_document=grouped, now=100,
+                    )
+                    assert result.known_matches == 6
+                    assert result.status == "partial"
+                    assert result.has_more == (number < 5)
+                    if grouped:
+                        assert result.known_documents == 6
+                    if number == 6:
+                        assert not result.hits
+                        continue
+                    hit, = result.hits
+                    seen.append(hit.edition_id)
+                    assert hit.document == expected_refs[hit.edition_id]
+                assert seen == expected
+            assert storage.entitlements() == [] and storage.acquisitions() == []
+
+        check_pages(db)
+        for source in observations[::2]:
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+        check_pages(db)  # live and durable representations mixed
+        for source in observations[1::2]:
+            assert evict_notice_cover(db, source.document, expected_epoch=source.epoch)
+        check_pages(db)
+
+    with closing(Storage(filename)) as reopened:
+        check_pages(reopened)
