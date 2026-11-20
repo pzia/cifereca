@@ -21,6 +21,14 @@ def apply_detail_action_state(button, action) -> None:
     available = state == "available" and executable
     button._cifereca_action_state_blocked = not available
     button.set_sensitive(available)
+    priority = getattr(action, "priority", None)
+    if type(priority) is int:
+        button._cifereca_action_priority = priority
+    destructive = getattr(action, "destructive", False) is True
+    button._cifereca_action_destructive = destructive
+    styler = getattr(button, "add_css_class" if destructive else "remove_css_class", None)
+    if callable(styler):
+        styler("destructive-action")
     raw_reason = getattr(action, "unavailable_reason", "")
     reason = raw_reason.strip() if type(raw_reason) is str else ""
     if state == "available" and not executable:

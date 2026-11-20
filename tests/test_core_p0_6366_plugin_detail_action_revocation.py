@@ -21,6 +21,16 @@ class FakeButton:
         self._clicked = None
         self.sensitive = True
         self.tooltip = ""
+        self.classes = set()
+
+    def add_css_class(self, value):
+        self.classes.add(value)
+
+    def remove_css_class(self, value):
+        self.classes.discard(value)
+
+    def has_css_class(self, value):
+        return value in self.classes
 
     def set_sensitive(self, value):
         self.sensitive = value

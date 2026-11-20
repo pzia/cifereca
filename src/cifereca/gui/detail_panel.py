@@ -660,7 +660,10 @@ class DetailPanel(Gtk.Box):
             if callable(remover):
                 remover('suggested-action')
         for button in current:
-            if not primary_styled and priority(button) < 20:
+            has_class = getattr(button, 'has_css_class', None)
+            destructive = (getattr(button, '_cifereca_action_destructive', False) is True
+                           or (callable(has_class) and has_class('destructive-action')))
+            if not primary_styled and not destructive and priority(button) < 20:
                 adder = getattr(button, 'add_css_class', None)
                 if callable(adder):
                     adder('suggested-action')
@@ -873,7 +876,8 @@ class DetailPanel(Gtk.Box):
                 apply_detail_action_state(button, action)
                 identifier = f"book-cache:{plugin_id}:{action.id}"
                 button._cifereca_action_id = identifier
-                button._cifereca_action_priority = 35
+                if type(getattr(action, "priority", None)) is not int:
+                    button._cifereca_action_priority = 35
                 self._cached_action_ids.add(identifier)
                 buttons.append(button)
         self._actions(buttons)

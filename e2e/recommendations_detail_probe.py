@@ -1785,13 +1785,15 @@ def main():
         master = state["view"]._master
         master.show_detail(UiBookDetailPresentation(
             title="États des actions", actions=(
-                UiBookDetailAction("state-ready", "Ouvrir", callback=lambda: calls.append("ready")),
+                UiBookDetailAction("state-ready", "Ouvrir", callback=lambda: calls.append("ready"), priority=1),
                 UiBookDetailAction("state-off", "Emprunter", callback=lambda: calls.append("off"),
-                                   state="unavailable", unavailable_reason="Compte à reconnecter"),
+                                   state="unavailable", unavailable_reason="Compte à reconnecter",
+                                   priority=5, destructive=True),
                 UiBookDetailAction("state-busy", "Actualiser", callback=lambda: calls.append("busy"),
-                                   state="busy", unavailable_reason="Traitement en cours"),
+                                   state="busy", unavailable_reason="Traitement en cours", priority=4),
                 UiBookDetailAction("state-link", "Fiche fournisseur", uri="https://catalogue.example/book/42",
-                                   state="unavailable", unavailable_reason="Source déconnectée"),
+                                   state="unavailable", unavailable_reason="Source déconnectée", priority=30),
+                UiBookDetailAction("state-missing", "Sans cible"),
             ),
         ))
         later(120, verify_declared_action_states)
@@ -1799,19 +1801,28 @@ def main():
     def verify_declared_action_states():
         panel = state["view"]._master._page.detail
         buttons = {button._cifereca_action_id: button for button in panel._action_buttons}
-        assert set(buttons) == {"state-ready", "state-off", "state-busy", "state-link"}
+        assert set(buttons) == {"state-ready", "state-off", "state-busy", "state-link", "state-missing"}
+        assert [button._cifereca_action_id for button in panel._action_buttons] == [
+            "state-ready", "state-busy", "state-off", "state-link", "state-missing",
+        ]
+        assert buttons["state-off"].has_css_class("destructive-action")
+        assert not buttons["state-off"].has_css_class("suggested-action")
         bar = panel.action_scroll
         # Move the same real buttons into overflow; state must travel with
         # them rather than be copied into newly enabled menu proxies.
         bar._layout_overflow(140)
         for key, reason in (("state-off", "Compte à reconnecter"),
                             ("state-busy", "Traitement en cours"),
-                            ("state-link", "Source déconnectée")):
+                            ("state-link", "Source déconnectée"),
+                            ("state-missing", "Aucune action exécutable")):
             button = buttons[key]
             assert not button.get_sensitive()
             assert reason in button.get_tooltip_text()
             assert button.get_parent() is bar.overflow_box
         assert "En cours" in buttons["state-busy"].get_tooltip_text()
+        assert buttons["state-off"].has_css_class("destructive-action")
+        report["checks"]["P0_3685_declared_action_priority_and_destructive_style_gtk"] = True
+        report["checks"]["P0_3685_missing_target_stays_disabled_with_layout_gtk"] = True
         buttons["state-off"].emit("clicked")
         buttons["state-busy"].emit("clicked")
         assert buttons["state-link"].emit("activate-link") is True

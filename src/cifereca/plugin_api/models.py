@@ -411,6 +411,8 @@ class UiBookDetailAction:
     callback: Callable[[], object] | None = None
     state: str = "available"  # available / unavailable / busy
     unavailable_reason: str = ""
+    priority: int | None = None  # None preserves the existing native order.
+    destructive: bool = False  # Visual declaration, never mutation permission.
 
 
 @dataclass(frozen=True, slots=True)
