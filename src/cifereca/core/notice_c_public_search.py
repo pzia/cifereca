@@ -94,7 +94,7 @@ def _fold(value: str) -> str:
 
 
 def _public_observation(
-    raw: object, *, key_string: object, now: int,
+    raw: object, *, key_string: object, now: int, source_proofs=None,
 ) -> PublicNoticeCHit | None:
     if type(raw) is not str or type(key_string) is not str:
         return None
@@ -187,6 +187,13 @@ def _public_observation(
                 or last_seen < persisted.observation.observed_at
                 or last_seen > 2**63 - 1):
             return None
+        if source_proofs is not None:
+            # Internal read-snapshot proof, not a new public hit field.
+            source_proofs[document.source_key] = (
+                persisted.observation.source_revision, persisted.attribute.state,
+                tuple(sorted({x.url for x in persisted.attribute.candidates}))
+                if persisted.attribute.state == "available" else (),
+            )
         return PublicNoticeCHit(
             document=document, provider_id=key.provider_id,
             record_id=bio["record_id"], docbase=bio["docbase"],
@@ -375,6 +382,7 @@ def search_public_notice_c(
     wanted = set(provider_ids)
     matches: list[PublicNoticeCHit] = []
     seen_source_refs: set[str] = set()
+    source_proofs = {}
     # Exact source ref -> unique admitted canonical index relation. This is
     # read-only, identity-scoped by the source itself, never viewer/profile.
     canonical_routes: dict[str, tuple[object, int, object, str]] = {}
@@ -399,7 +407,8 @@ def search_public_notice_c(
                 exceeded = True
                 break
             scanned += 1
-            record = _public_observation(raw, key_string=key_string, now=now)
+            record = _public_observation(raw, key_string=key_string, now=now,
+                                         source_proofs=source_proofs)
             if record is None:
                 # Older cover-only sources are expected; no false 'missing'.
                 unindexed += 1
@@ -480,7 +489,8 @@ def search_public_notice_c(
                 (json.dumps(keys),),
             )
             for key_string, raw in cursor:
-                current = _public_observation(raw, key_string=key_string, now=now)
+                current = _public_observation(raw, key_string=key_string, now=now,
+                                              source_proofs=source_proofs)
                 if current is None:
                     continue
                 seen_source_refs.add(current.document.source_key)
@@ -587,7 +597,10 @@ def search_public_notice_c(
             if route is not None:
                 ref, epoch, src, cover_state = route
                 bib = src.public_bibliography
-                if (src.source_epoch == hit.epoch
+                if (source_proofs.get(hit.document.source_key) == (
+                        src.source_revision, src.state, tuple(sorted(set(src.urls))),
+                    )
+                        and src.source_epoch == hit.epoch
                         and src.provider_id == hit.provider_id
                         and src.visibility == "public"
                         and bib is not None
