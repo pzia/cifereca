@@ -305,6 +305,19 @@ class _UiHost:
             self.window, title=title, subtitle=subtitle,
             empty_title=empty_title, empty_desc=empty_desc,
         )
+    def mount_maintenance_tools(self, context):
+        """Optional public #7100 content port; no authority or raw registry."""
+        if (not self._window_alive()
+                or getattr(self.window, "_shell_page_rebuild_token", None)
+                is not self._performance_generation):
+            return None
+        from gi.repository import Gtk
+        from ..plugin_api.maintenance_page import MaintenancePageContent
+        from .maintenance_page_mount import mount_page_content
+
+        result = mount_page_content(self.window, context, Gtk=Gtk)
+        return MaintenancePageContent(*result) if result is not None else None
+
     def build_standard_page(self, route: str):
         return self.window._build_standard_page(route)
     def build_local_query_controls(self, *, changed, placeholder: str):
