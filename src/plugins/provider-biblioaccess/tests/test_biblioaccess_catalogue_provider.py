@@ -231,6 +231,35 @@ def test_public_envelope_reports_window_not_exhaustive_catalog(body, expected):
         session.close()
 
 
+def test_public_envelope_does_not_move_a_title_to_another_observed_url():
+    def handler(request):
+        if request.url.path.endswith("SearchResultSummary"):
+            return httpx.Response(302, headers={
+                "location": "/1409/Catalog/Search?query=roman&pageindex=0"})
+        return httpx.Response(200, headers={"content-type": "text/html"}, text=(
+            '<a href="/1409/Catalog/Book/123/fiche"><img src="cover.png"></a>'
+            '<a href="/1409/Catalog/Book/123/roman">Roman exemplaire</a>'
+            '<a href="/1409/Catalog/Book/124/titre"><img src="cover.png"></a>'
+            '<a href="/1409/Catalog/Book/124/titre">Roman exact</a>'
+            '<a href="/1409/Catalog/Book/125/fiche">Premier titre</a>'
+            '<a href="/1409/Catalog/Book/125/roman">Autre titre</a>'))
+
+    session, _ = _session(handler)
+    try:
+        session.connect()
+        response = session.search_with_response_facets("roman", "catalog")
+        assert response.partial is True
+        rows = {row.record_id: row for row in response.results}
+        assert rows["123"].friendly_url.endswith("/123/fiche")
+        assert rows["123"].metadata["bibliographic_evidence"] == "book_link"
+        assert rows["125"].metadata["bibliographic_evidence"] == "book_link"
+        notice, = response.public_notices
+        assert notice.result is rows["124"]
+        assert notice.result.title == "Roman exact"
+    finally:
+        session.close()
+
+
 def test_real_federated_biblioaccess_c_survives_eviction(tmp_path):
     from cifereca.config import Config
     from cifereca.diagnostics import Diagnostics
