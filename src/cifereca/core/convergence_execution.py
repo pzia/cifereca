@@ -36,6 +36,7 @@ from .canonical_recovery import (
 from .convergence_verified_presence import plan_existing_verified_presence
 from .source_convergence import SourceKey
 from .canonical_loan_retry_guard import historical_adept_retry_blocked
+from .canonical_adept_attempt import describe_loan_adept_attempt
 
 _LOG = logging.getLogger("cifereca")
 
@@ -519,6 +520,14 @@ def execute_admitted_convergence(
                 if historical_adept_retry_blocked(
                     initial_storage, account, session, key,
                 ):
+                    # Diagnose only: legacy v1 cannot witness whether CLI
+                    # executed. A missing canonical marker may still coexist
+                    # with a historical ledger hold. Never permit replay here.
+                    hold = describe_loan_adept_attempt(
+                        initial_storage, key, offer_id=row.delivery_offer_id,
+                    )
+                    _LOG.info("TRACE convergence code=canonical_adept_hold_review state=%s",
+                              hold["state"])
                     results.append(ConvergenceOutcome(
                         key, "blocked", "persisted_adept_attention",
                     ))
