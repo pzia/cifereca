@@ -203,6 +203,33 @@ def _naming(scope, path, signature, description):
     return name, "rename_advice_only"
 
 
+def review_organizer_file(scope, artifact_id, row, description):
+    """One exact local filename observation shared with the read-only audit."""
+    pid, raw, state, digest, size, media_format = row
+    path = _ordinary_path(scope, raw)
+
+    def result(current, name, reason, verified_path=None):
+        return ({"placement": pid, "current": current, "proposed_name": name,
+                 "reason": reason}, verified_path)
+
+    if path is None:
+        return result(None, None, "excluded_or_unverified_path")
+    relative = str(path.relative_to(scope.root / scope.directory))
+    if state == "missing":
+        return result(relative, None, "registered_missing")
+    if (state != "present" or media_format not in ("epub", "kepub", "pdf")
+            or type(digest) is not str or artifact_id != "sha256:" + digest):
+        return result(relative, None, "format_or_bundle_held")
+    try:
+        with _verified_variant_file(path, digest, expected_size=size) as recheck:
+            signature = recheck()
+            name, reason = _naming(scope, path, signature, description)
+            recheck()
+        return result(relative, name, reason, path)
+    except (OSError, ValueError, TypeError, RuntimeError):
+        return result(relative, None, "physical_unverified")
+
+
 def _group(scope, group):
     """Classify one inventory group; blocked groups never become a safe batch."""
     report = {"status": group.status, "reason": group.reason,
@@ -221,29 +248,11 @@ def _group(scope, group):
         return {**report, "status": "blocked", "reason": "physical_budget"}, None
     files = []
     named = {}
-    for pid, raw, state, digest, size, media_format in rows:
-        path = _ordinary_path(scope, raw)
-        if path is None:
-            # Not a displayed path or an ordinary keeper candidate.
-            files.append({"placement": pid, "current": None, "proposed_name": None,
-                          "reason": "excluded_or_unverified_path"})
-            continue
-        relative = str(path.relative_to(scope.root / scope.directory))
-        if (state != "present" or media_format not in ("epub", "kepub", "pdf")
-                or type(digest) is not str or group.artifact_id != "sha256:" + digest):
-            files.append({"placement": pid, "current": relative, "proposed_name": None,
-                          "reason": "format_or_bundle_held"})
-            continue
-        try:
-            with _verified_variant_file(path, digest, expected_size=size) as recheck:
-                signature = recheck()
-                name, reason = _naming(scope, path, signature, descriptions[pid])
-                recheck()
-            named[pid] = path
-        except (OSError, ValueError, TypeError, RuntimeError):
-            name, reason = None, "physical_unverified"
-        files.append({"placement": pid, "current": relative,
-                      "proposed_name": name, "reason": reason})
+    for row in rows:
+        file, verified_path = review_organizer_file(scope, group.artifact_id, row, descriptions[row[0]])
+        files.append(file)
+        if verified_path is not None:
+            named[row[0]] = verified_path
     if _placement_facts(scope, group) != snapshot:
         return {**report, "status": "blocked", "reason": "scope_changed"}, None
     review = None
