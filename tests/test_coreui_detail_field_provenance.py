@@ -59,7 +59,11 @@ def test_real_group_keeps_same_value_from_two_sources_and_respects_passive_secti
                         search_books=lambda *a, **kw: pytest.fail("render initiated a search")),
               _append_content=groups.append)
     fields = (field("Source A"), field("Source B"))
-    render(host, section, [(f.label, f.value) for f in fields], fields=fields, field_actions=actions)
+    # Keep exercising the original call shape for active metadata sections.
+    options = {"fields": fields}
+    if not actions:
+        options["field_actions"] = False
+    render(host, section, [(f.label, f.value) for f in fields], **options)
 
     def walk(widget):
         yield widget

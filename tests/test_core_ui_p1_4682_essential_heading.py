@@ -45,7 +45,7 @@ def test_essential_fields_and_summary_order_remain_in_shared_renderer():
         "self._show_description(description)"
     )
     assert renderer.index("self._show_description(description)") < renderer.index(
-        "self._group(section.title, rows)"
+        "self._group(section.title, rows,"
     )
 
 
@@ -65,8 +65,12 @@ def test_recommendations_catalogue_keeps_typed_per_value_affordances():
     # per-field copy/search sink. Scoring/rights context stays passive.
     assert "section.title == 'Détail' or section.title == 'Catalogue'" in renderer
     assert "self._group(section.title, rows, fields=section.fields)" in renderer
-    assert "self._group(section.title, rows)" in renderer
-    assert "if field is not None and field.kind != 'text':" in group
+    assert "self._group(section.title, rows, fields=section.fields, field_actions=False)" in renderer
+    condition = ast.dump(ast.parse(
+        "field_actions and field is not None and field.kind != 'text'", mode="eval",
+    ).body)
+    assert any(isinstance(node, ast.If) and ast.dump(node.test) == condition
+               for node in ast.walk(ast.parse(group)))
     assert "self._add_metadata_actions(row, label, safe_value, field.kind)" in group
     actions = _method("_add_metadata_actions")
     assert "kind in {'title', 'author', 'subject', 'series', 'collection', 'language', 'isbn', 'all'}" in actions

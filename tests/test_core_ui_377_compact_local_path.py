@@ -45,7 +45,7 @@ def test_group_uses_compact_display_and_full_tooltip_values():
 
     assert "display_value, tooltip_value = detail_display_value(label, value)" in source
     assert "row.set_subtitle(display_value)" in source
-    assert "row.set_tooltip_text(label + ' : ' + tooltip_value)" in source
+    assert "annotate_detail_field(row, label, tooltip_value, field," in source
 
 
 def test_search_and_library_keep_using_same_fichier_local_label():

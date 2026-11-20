@@ -56,7 +56,7 @@
     "async": false
   },
   "DetailPanel._group": {
-    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='str', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()))], kwonlyargs=[arg(arg='fields'), arg(arg='parent')], kw_defaults=[Tuple(elts=[], ctx=Load()), Constant(value=None)], defaults=[])",
+    "args": "arguments(posonlyargs=[], args=[arg(arg='self'), arg(arg='title', annotation=Name(id='str', ctx=Load())), arg(arg='rows', annotation=Subscript(value=Name(id='list', ctx=Load()), slice=Subscript(value=Name(id='tuple', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Name(id='str', ctx=Load())], ctx=Load()), ctx=Load()), ctx=Load()))], kwonlyargs=[arg(arg='fields'), arg(arg='parent'), arg(arg='field_actions')], kw_defaults=[Tuple(elts=[], ctx=Load()), Constant(value=None), Constant(value=True)], defaults=[])",
     "returns": null,
     "decorators": [],
     "async": false
