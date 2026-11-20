@@ -239,7 +239,31 @@ def discover_possible_borrow_lenders(
             return ()
     except Exception:
         return ()
-    return _label_lenders(result)
+    # Label disambiguation uses dataclass.replace(), which would otherwise
+    # capture fresh account/notice coordinates after a later candidate's
+    # discovery changed them in place. Never replace the original receipt.
+    if any(not possible_lender_matches(row, row._notice,
+                                       requesting_identity_id=requesting_identity_id)
+           for row in result):
+        return ()
+    captured = {(id(row._account), id(row._notice)): row._captured_fields
+                for row in result}
+    try:
+        labelled = _label_lenders(result)
+        if (service.identity_by_id(requesting_identity_id) is not requester
+                or service._account_context_epoch != context_epoch
+                or service._source_context_epoch != source_epoch
+                or any(not possible_lender_matches(
+                    row, row._notice, requesting_identity_id=requesting_identity_id,
+                ) or captured.get((id(row._account), id(row._notice))) != row._captured_fields
+                       for row in labelled)
+                or any(not possible_lender_matches(
+                    row, row._notice, requesting_identity_id=requesting_identity_id,
+                ) for row in result)):
+            return ()
+    except Exception:
+        return ()
+    return labelled
 
 
 def _label_lenders(result: list[PossibleBorrowLender]) -> tuple[PossibleBorrowLender, ...]:
