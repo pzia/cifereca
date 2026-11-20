@@ -61,3 +61,24 @@ KEPUB comportent l'avertissement notes/marque-pages.
   les trois suffixes, vérifier page entière, RTL/navigation, notes et
   marque-pages ; noter firmware et échec éventuel. Aucun DRM nouveau ni
   mutation de bibliothèque utilisateur.
+
+
+## Réception complémentaire (#6963, #6965 et recette canonique #2835)
+
+- #6963 : fixtures EPUB réelles, suffixes composites, fixed/reflowable ;
+  ressources OPF/XHTML/CSS/viewport/RTL préservées lors de l'optimisation,
+  sortie EPUB générique. Le résultat n'atteste pas le rendu Kobo.
+- #6965 : pour même SHA/taille, un index fondé sur le nom ne réécrit pas
+  un format EPUB-family global déjà enregistré. La convention descriptive
+  est projetée depuis le chemin du Placement present, indépendamment du
+  format. Ni convention ni état SQL ne valent preuve physique ou droit.
+- La recette `test_core_p0_2835_canonical_suffix_reception.py` exerce le
+  vrai writer canonique, le scanner et Sync sur trois suffixes de placements
+  déjà livrés, puis le contre-exemple d'une copie locale FXL non liée :
+  présence exacte implique zéro GET ; doute avec offre et consentement
+  valides implique GET, publication séparée et éventuel dédoublonnage
+  ultérieur. Aucun renommage de convention automatique et aucun backup
+  Kobo historique réintroduit.
+- La recette physique Clara BW demeure conditionnelle à un appareil
+  disponible. Les fixtures ne valident ni les moteurs d'un firmware réel
+  ni une conversion KEPUB ; aucun changement de capacités USB.
