@@ -13,7 +13,7 @@ from ..core.source_refresh_policy import source_refresh_due
 from ..task_queue import TaskPriority
 from ..plugin_api import SyncResult
 from .source_inventory_timer import (
-    _MAX_SOURCES, _attested_scheduled_inventory, _broker,
+    _MAX_SOURCES, _scheduled_inventory_progress, _broker,
     _configured_identity_ids, _policy, _scheduled_refresh_capable,
 )
 
@@ -140,10 +140,9 @@ def dispatch_after_opening(window: Any) -> bool:
                 receipt = broker.synchronize_scheduled_inventory(
                     identity_id, "startup",
                 )
-                if getattr(receipt, "ok", None) is not True:
-                    failures += 1
-                elif _attested_scheduled_inventory(receipt):
-                    completed += 1
+                progressed, failed = _scheduled_inventory_progress(receipt)
+                completed += int(progressed)
+                failures += int(failed)
             except Exception:
                 # One account's fault does not starve its eligible siblings.
                 # Never reflect signed URLs or private identifiers in tasks.
@@ -151,6 +150,10 @@ def dispatch_after_opening(window: Any) -> bool:
             if not current():
                 interrupted = True
                 break
+        if completed and failures:
+            return SyncResult(ok=False, facts={"status": "partial",
+                                               "completed": completed,
+                                               "failed": failures})
         if failures:
             raise RuntimeError(
                 "Actualisation initiale des notices des comptes indisponible"
