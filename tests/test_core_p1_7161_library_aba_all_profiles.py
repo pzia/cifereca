@@ -47,6 +47,8 @@ def test_identity_aba_and_all_profiles_toggle_keep_exact_library_owner(tmp_path)
         ])
         build_library_page(host, Gtk=_gtk(), MasterDetailPage=_page)
         scope_button = controls.primary.children[1]
+        # The minimal headless GTK button has no set_label method.
+        scope_button.set_label = lambda value: setattr(scope_button, "label", value)
         assert host._library_all_profiles is False
 
         host.refresh_library(False)
