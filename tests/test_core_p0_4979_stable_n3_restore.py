@@ -6,7 +6,7 @@ from cifereca.core.epub_cover_failure_qualification import qualify_failed_epub_c
 from tests.test_core_p1_6168_epub_failure_qualification import attested
 
 
-@pytest.mark.parametrize("change", ["parent_rename", "parent_replaced", "file_replaced", "symlink"])
+@pytest.mark.parametrize("change", ["parent_rename", "parent_replaced", "file_replaced", "symlink", "grow"])
 def test_path_rebind_after_member_read_does_not_publish(attested, monkeypatch, change):
     book, resource, image = attested
     root = book.parent
@@ -25,6 +25,9 @@ def test_path_rebind_after_member_read_does_not_publish(attested, monkeypatch, c
             if change == "parent_replaced":
                 folder.mkdir()
                 book.write_bytes((moved / book.name).read_bytes())
+        elif change == "grow":
+            with book.open("ab") as stream:
+                stream.write(b"changed after reading")
         else:
             other = root / "replacement.epub"
             other.write_bytes(book.read_bytes())
@@ -40,7 +43,7 @@ def test_path_rebind_after_member_read_does_not_publish(attested, monkeypatch, c
     assert not image.exists()
     # For a vanished path the existing failure qualifier must also refuse
     # to promote another source. A new identical file requires a new read.
-    if change in ("parent_rename", "symlink"):
+    if change in ("parent_rename", "symlink", "grow"):
         result = qualify_failed_epub_cover(resource, source_path=book)
         assert result.state == "retryable" and not result.permits_url_fallback
 
