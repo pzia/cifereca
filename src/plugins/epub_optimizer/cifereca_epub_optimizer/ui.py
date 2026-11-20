@@ -516,6 +516,12 @@ class OptimizerPage:
                 self.host.toast("Choisissez un document et un fichier de sortie")
                 return
 
+            if suffix == ".epub":
+                from .profiles import is_kobo_compound_output
+                if is_kobo_compound_output(target):
+                    self.host.toast("Cet optimiseur produit un EPUB générique, pas un KEPUB.")
+                    return
+
             # DeviceProfile is an immutable projection. Freeze the remaining
             # execution limits too; the worker has no page-state dependency.
             cpu_workers = self.cpu_workers
