@@ -802,13 +802,26 @@ class GutenbergSession(ProviderSession):
                 and type(self._accounts) is list and not self._accounts
                 and self.opds_search_url == DEFAULT_OPDS_SEARCH_URL):
             return ProviderSearchResponse([], partial=True)
-        if content_types and "ebook" not in content_types:
-            return ProviderSearchResponse([], catalogue_complete=False)
+        warnings = []
+        self.last_search_warnings = warnings
+        # The CoreUI Format facet sends the file-format family "epub",
+        # not the legacy media category "ebook". Match either explicitly;
+        # unsupported requested formats are not an authoritative zero.
+        if (type(content_types) not in (tuple, list, set, frozenset)
+                or any(type(value) is not str or not 0 < len(value) <= 80
+                       for value in content_types)):
+            raise ProviderCapabilityError("Project Gutenberg : unsupported_content_type")
+        requested = {value.casefold() for value in content_types}
+        supported = {"epub", "ebook"}
+        if requested - supported:
+            warnings.append(
+                "partial_results : formats demandés non pris en charge par Gutenberg"
+            )
+        if requested and not requested & supported:
+            return ProviderSearchResponse([], partial=True, catalogue_complete=False)
         # Core uses the catalogue-only scope for ownerless sessions.
         if scope == "catalog":
             scope = "all"
-        warnings = []
-        self.last_search_warnings = warnings
         rows = self._search_page(query, scope, 0, field, warnings=warnings,
                                  documentary=True)
         return ProviderSearchResponse(
