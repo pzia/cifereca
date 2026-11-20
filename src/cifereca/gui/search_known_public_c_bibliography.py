@@ -103,13 +103,24 @@ def known_public_alternative_section(metadata, *, item=None):
     hits = known_public_alternative_facts(item)
     if type(item) is not dict or item.get("metadata") is not metadata or len(hits) != len(alternatives):
         hits = ()
+    return _render_known_public_alternatives(alternatives, hits)
+
+
+def _render_known_public_alternatives(alternatives, hits, *, catalogue_sources=()):
+    """Shared CoreUI projection of already validated alternative facts."""
+    if (type(alternatives) is not list or not 1 <= len(alternatives) <= 31
+            or type(hits) is not tuple or (hits and len(hits) != len(alternatives))
+            or type(catalogue_sources) is not tuple or len(catalogue_sources) > 128
+            or any(type(value) is not str for value in catalogue_sources)):
+        return None
     fields = []
     for index, alternative in enumerate(alternatives, 2):
         if not _native_mapping(alternative):
             continue
         provider = alternative.get("provider_id")
         if (type(provider) is not str
-                or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", provider)):
+                or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,63}", provider)
+                or (catalogue_sources and provider not in catalogue_sources)):
             continue
         proven = _alternative_proven_fields(
             alternative, hits[index - 2] if hits else None, index, provider,

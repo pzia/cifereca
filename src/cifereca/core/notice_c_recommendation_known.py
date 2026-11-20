@@ -12,7 +12,7 @@ from typing import Any
 
 from ..models import SearchResult
 from .notice_c_cover_index import _MAX_SOURCES, is_canonical_cover_document
-from .notice_c_public_search import search_public_notice_c
+from .notice_c_public_search import PublicNoticeCHit, search_public_notice_c
 from .notice_c_known_projection import _series_metadata, _source_alternative
 
 _TOKEN = object()
@@ -40,7 +40,9 @@ def _snapshot(item):
     def freeze(value, depth=0):
         nonlocal remaining, characters
         remaining -= 1
-        if remaining < 0 or depth > 6:
+        # Alternative bibliography evidence nests raw language tags one
+        # level deeper than the primary metadata (DTO depth seven).
+        if remaining < 0 or depth > (7 if count else 6):
             raise ValueError("known_c_snapshot_budget")
         kind = type(value)
         if kind is str:
@@ -95,11 +97,11 @@ def known_public_notice_candidates(
             metadata={"notice_c_known": True, "notice_c_stale": hit.stale,
                       **_series_metadata(hit)},
         )
-        alternatives = [
-            _source_alternative(source)
-            for source in sources_by_document.get(hit.document, ())
+        alternative_hits = tuple(
+            source for source in sources_by_document.get(hit.document, ())
             if source is not hit
-        ]
+        )
+        alternatives = [_source_alternative(source) for source in alternative_hits]
         if alternatives:
             row.metadata["notice_c_source_alternatives"] = alternatives
         # Exact object and full DTO snapshot, not a serialized proof. Sources
@@ -112,7 +114,7 @@ def known_public_notice_candidates(
             # Other independently admitted documents remain usable.
             continue
         row._core_known_public_c_projection = (
-            _TOKEN, id(row), hit.document, hit.epoch, snapshot,
+            _TOKEN, id(row), hit.document, hit.epoch, snapshot, alternative_hits,
         )
         rows.append(row)
     return rows
@@ -122,7 +124,7 @@ def known_public_c_binding_facts(item: object):
     if type(item) is not SearchResult:
         return None
     proof = getattr(item, "_core_known_public_c_projection", None)
-    if (type(proof) is not tuple or len(proof) != 5
+    if (type(proof) is not tuple or len(proof) != 6
             or proof[0] is not _TOKEN or proof[1] != id(item)
             or not is_canonical_cover_document(proof[2])
             or type(proof[3]) is not int or not 1 <= proof[3] < 2**63
@@ -142,3 +144,19 @@ def known_public_c_binding_facts(item: object):
             or item.friendly_url is not None):
         return None
     return proof[2], proof[3]
+
+
+def known_public_c_alternative_hits(item: object):
+    """Return exact retained sources only after the native DTO receipt check."""
+    binding = known_public_c_binding_facts(item)
+    if binding is None:
+        return None
+    hits = item._core_known_public_c_projection[5]
+    alternatives = item.metadata.get("notice_c_source_alternatives", [])
+    if (type(hits) is not tuple or len(hits) >= _MAX_SOURCES
+            or type(alternatives) is not list or len(hits) != len(alternatives)
+            or any(type(hit) is not PublicNoticeCHit
+                   or (hit.document, hit.epoch) != binding for hit in hits)
+            or [_source_alternative(hit) for hit in hits] != alternatives):
+        return None
+    return hits
