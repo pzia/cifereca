@@ -71,7 +71,10 @@ Le générateur crée des données **fictives et déterministes** :
 - `constellations.json` : titres reliés ou isolés, variations d'humeur,
   séries, accès et deux identités ;
 - `optimizer-valid.epub`, `optimizer-corrupt.epub` : première paire
-  succès/erreur technique.
+  succès/erreur technique ;
+- `publication-text.pdf` (deux pages texte), `publication-scan.pdf` (une page
+  image synthétique sans couche texte), `publication-corrupt.pdf` (tronqué) :
+  PDF déterministes sans métadonnées ni DRM, inventoriés par SHA-256.
 
 Les fichiers sont produits dans `--out`, **pas versionnés**, et n'installent
 aucun abonnement, réseau, identité utilisateur ou compte externe.
@@ -84,8 +87,7 @@ Les flux RSS et JSON Feed de critique sont désormais **servis par HTTP local** 
 Constellations sont consultables comme fixtures, mais ne sont **pas des API
 plugins injectées automatiquement**. Les fichiers ne sont pas injectés dans les caches métier,
 ni recettées par le harnais E2E GTK. Elles ne simulent pas les
-pages GUI OpenLibrary (le nouveau serveur HTTP simule leurs contrats),\nla découverte distante, l'ADEPT ni les formats
-PDF/DRM. Lier ces scénarios à des faux services et des tests GUI réels reste
+pages GUI OpenLibrary (le nouveau serveur HTTP simule leurs contrats),\nla découverte distante, ni les parcours ADEPT ou PDF/DRM de bout en bout. Lier ces scénarios à des faux services et des tests GUI réels reste
 à faire dans les tickets dédiés.
 
 ## Éditions Milan — HTTP
@@ -111,7 +113,7 @@ plugin Baen dans Cifereca et ne prouve pas un parcours GUI.
 
 ## Découverte et enrichissement Jeunesse — fixtures conservées, plugins retirés
 
-Le manifeste des JDD spécialisés reste en **version 2** ; les profils
+Le manifeste des JDD spécialisés est en **version 4** ; les profils
 `ux-small`, `ux-all`, `ux-errors` peuvent régénérer les fixtures
 `youth-discovery.json` et `youth-enrichment.json`, proposées par le service
 éditorial local (`GET /youth/discovery.json` et `GET /youth/enrichment.json`).
