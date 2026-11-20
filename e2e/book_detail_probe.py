@@ -37,7 +37,7 @@ from cifereca.gui.main_window import MainWindow
 # Public diagnostic checkpoint names are reviewed *function identifiers*, not
 # supplier metadata or private widget labels. Every new checkpoint requires a
 # deliberate source update; no provider callback can create a public name.
-_PUBLIC_STAGE_CODES = frozenset(["activation","callback_other","search_initial","wait_search","search_detail","expanded_search","verify_tab_order","click_copy","read_clipboard","search_isbn","click_isbn","verify_isbn","library_select","verify_library","finish","reset_library_detail_for_security_audit","security_detail_expanders","audit_mixed_security_values","audit_mixed_security_values_rendered","audit_all_private_values","audit_all_private_values_rendered","begin_stale_public_detail","stale_public_detail_rendered","component_summaries","component_summary_short","component_summary_six_lines","component_summary_seven_lines","component_expand","component_collapse","component_click_collapse","component_overflow","component_open_overflow","component_click_hidden","component_lists","component_identity","component_identity_rendered"])
+_PUBLIC_STAGE_CODES = frozenset(["activation","callback_other","search_initial","wait_search","search_detail","expanded_search","verify_tab_order","click_copy","read_clipboard","search_isbn","click_isbn","verify_isbn","library_select","verify_library","finish","reset_library_detail_for_security_audit","security_detail_expanders","audit_mixed_security_values","audit_mixed_security_values_rendered","audit_all_private_values","audit_all_private_values_rendered","begin_stale_public_detail","stale_public_detail_rendered","component_summaries","component_summary_short","component_summary_six_lines","component_summary_seven_lines","component_expand","component_collapse","component_click_collapse","component_overflow","component_open_overflow","component_click_hidden","component_lists","component_keyboard_start","component_keyboard_menu","component_keyboard_hidden","component_keyboard_activate","component_keyboard_escape","component_keyboard_close","component_keyboard_done","component_identity","component_identity_rendered"])
 
 TITLE = "Camille, le détail UX"
 METADATA = {
@@ -904,6 +904,82 @@ def main():
         assert component["action_calls"] == [component["expected_action"]]
         panel("library").action_scroll.overflow_popover.popdown()
         report["checks"]["overflow_action"] = True
+        later(250, component_keyboard_start)
+
+    def focus_inside(widget):
+        focus = window.get_focus()
+        return focus is not None and (focus is widget or focus.is_ancestor(widget))
+
+    def component_keyboard_start():
+        bar = panel("library").action_scroll
+        assert not bar.overflow_popover.get_mapped()
+        assert bar._overflow_visible_count >= 1
+        last = bar._buttons[bar._overflow_visible_count - 1]
+        assert last.grab_focus() and focus_inside(last)
+        device.key("Tab", True); device.key("Tab", False)
+        later(120, component_keyboard_menu)
+
+    def component_keyboard_menu():
+        bar = panel("library").action_scroll
+        assert focus_inside(bar.overflow_button), "Tab ne rejoint pas Plus d’actions"
+        device.key("space", True); device.key("space", False)
+        later(200, component_keyboard_hidden)
+
+    def component_keyboard_hidden():
+        bar = panel("library").action_scroll
+        assert bar.overflow_popover.get_mapped(), "Espace ne déploie pas le menu"
+        hidden = bar._buttons[bar._overflow_visible_count:]
+        assert hidden and all(button.get_parent() is bar.overflow_box for button in hidden)
+        # Enter the popover's native focus chain. With three items, the
+        # disabled intermediate action must be skipped by physical Tab.
+        first = hidden[0]
+        assert first.grab_focus() and focus_inside(first)
+        target = first
+        if len(hidden) >= 3:
+            hidden[1].set_sensitive(False)
+            target = hidden[2]
+            component["keyboard_disabled"] = hidden[1]
+            device.key("Tab", True); device.key("Tab", False)
+        component["keyboard_target"] = target
+        later(150, component_keyboard_activate)
+
+    def component_keyboard_activate():
+        target = component["keyboard_target"]
+        assert focus_inside(target), "Focus absent sur l’action masquée disponible"
+        if "keyboard_disabled" in component:
+            disabled = component["keyboard_disabled"]
+            assert not disabled.get_sensitive() and not focus_inside(disabled)
+            report["checks"]["P0_3685_overflow_tab_skips_disabled"] = True
+        assert component["action_calls"] == [component["expected_action"]]
+        device.key("Return", True); device.key("Return", False)
+        later(180, component_keyboard_escape)
+
+    def component_keyboard_escape():
+        bar = panel("library").action_scroll
+        target = component.pop("keyboard_target")
+        expected = int(target._cifereca_action_label.rsplit(" ", 1)[1])
+        assert component["action_calls"] == [component["expected_action"], expected]
+        if "keyboard_disabled" in component:
+            component.pop("keyboard_disabled").set_sensitive(True)
+        # Gtk may close the popover on activation. Exercise Escape on an
+        # open menu in either case and check the focus return to its anchor.
+        if not bar.overflow_popover.get_mapped():
+            assert bar.overflow_button.grab_focus()
+            device.key("space", True); device.key("space", False)
+        later(200, component_keyboard_close)
+
+    def component_keyboard_close():
+        bar = panel("library").action_scroll
+        assert bar.overflow_popover.get_mapped()
+        device.key("Escape", True); device.key("Escape", False)
+        later(250, component_keyboard_done)
+
+    def component_keyboard_done():
+        bar = panel("library").action_scroll
+        assert not bar.overflow_popover.get_mapped(), "Escape ne ferme pas le menu"
+        assert focus_inside(bar.overflow_button), "Focus non restitué au menu"
+        assert len(component["action_calls"]) == 2
+        report["checks"]["P0_3685_overflow_keyboard"] = True
         from cifereca.gui.main_window import BookListItem
         page = window.library_page
         page.clear_rows()
