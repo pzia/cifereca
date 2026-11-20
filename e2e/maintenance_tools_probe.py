@@ -68,6 +68,8 @@ class DummyTool:
         self.tool_id = "core.cache.cleanup"
         self.result_ok = True
         self.plan_started = threading.Event()
+        self.release_plan = threading.Event()
+        self.release_plan.set()
         self.version = 0
         self.delay = 0.65
         self.progress_sent = threading.Event()
@@ -93,6 +95,8 @@ class DummyTool:
         self.plan_calls += 1
         self.plan_started.set()
         time.sleep(self.delay)  # an intentionally slow scan, never on GTK
+        if not self.release_plan.wait(8):
+            raise TimeoutError("GTK did not acknowledge simulated analysis")
         return SimpleNamespace(
             tool_id=self.tool_id,
             summary="Aucune suppression réelle",
@@ -370,6 +374,7 @@ def main():
     def fail(exc):
         if report["status"] != "RUNNING":
             return
+        tool.release_plan.set()
         tool.release_run.set()
         report.update(
             status="FAIL", error=f"{type(exc).__name__}: {exc}",
@@ -811,6 +816,9 @@ def main():
         preview_button[0] = next(node for node in walk(window[0]._tools_box)
             if isinstance(node, Gtk.Button)
             and getattr(node, "_cifereca_action_label", "") == "Prévisualiser…")
+        # Keep the simulated worker in analysis until GTK actually observes
+        # that phase. CI scheduling must not race a fixed-duration scan.
+        tool.release_plan.clear()
         tool.plan_started.clear()
         physical(preview_button[0])
         until(lambda: tool.plan_started.is_set() and line_is("Analyse…"), p1_analysis)
@@ -820,6 +828,7 @@ def main():
         assert tool.run_calls == p1_runs[0]
         assert modal() is None
         report["checks"][f"P1_{p1_variants[p1_index[0]][2]}_analysis_indeterminate"] = True
+        tool.release_plan.set()
         until(lambda: modal() is not None and line_is("Confirmation attendue"), p1_cancel_preview)
 
     def p1_cancel_preview():
