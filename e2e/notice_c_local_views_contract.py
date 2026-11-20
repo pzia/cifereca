@@ -154,6 +154,23 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     snapshot=proof, final_sha256=hashlib.sha256(data).hexdigest(),
                     delivery_receipt_ref="synthetic-completed-delivery",
                 )
+                metadata = {
+                    "subjects": ["Astronomie" if provider == "fixture-c-a" else "Cuisine"],
+                    "genre": "Roman" if provider == "fixture-c-a" else "Essai",
+                }
+                if provider == "fixture-c-a":
+                    evidence = {"source": provider + ".fixture", "scope": "search",
+                                "freshness": "search_response"}
+                    metadata.update(
+                        series=["Cycle témoin"], languages=["ja"],
+                        bibliography_evidence={
+                            "series": {**evidence, "source_field": "Search.series",
+                                       "confidence": "linked_search_relation"},
+                            "languages": {**evidence, "source_field": "dc.language",
+                                          "confidence": "explicit_record_field",
+                                          "raw_tags": ["ja"]},
+                        },
+                    )
                 row = SearchResult(
                     id=record, record_id=record, docbase="digital-books",
                     medium="digital", title=title, author="Autrice témoin",
@@ -162,10 +179,7 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     scenario="search", source_provider=provider,
                     source_credential="__public__", source_collection="public_catalog",
                     source_account_id=None, owned=False, downloadable=False,
-                    download_url=None, metadata={
-                        "subjects": ["Astronomie" if provider == "fixture-c-a" else "Cuisine"],
-                        "genre": "Roman" if provider == "fixture-c-a" else "Essai",
-                    },
+                    download_url=None, metadata=metadata,
                 )
                 response = ProviderSearchResponse(
                     results=[row], public_notices=(PublicSearchNotice(row),),
@@ -539,6 +553,27 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                 assert "Astronomie" not in subtitle and "Roman" not in subtitle
                 assert not alternative.has_css_class("detail-metadata-actions")
                 if route == "search":
+                    # Check the native action rows made by the same selection
+                    # whose DetailPanel and cover are mapped above.
+                    for field, value, source_field in (
+                        ("Série", "Cycle témoin", "Search.series"),
+                        ("Langue", "ja", "dc.language"),
+                    ):
+                        metadata_rows = [
+                            widget for widget in walk(page.detail.content)
+                            if isinstance(widget, Adw.ActionRow) and widget.get_title() == field
+                        ]
+                        assert len(metadata_rows) == 1, "missing or duplicate C provenance row: " + field
+                        tooltip = metadata_rows[0].get_tooltip_text() or ""
+                        assert tooltip.splitlines()[:4] == [
+                            f"{field} : {value}",
+                            "Source du champ : fixture-c-a.fixture · " + source_field,
+                            "Fournisseur déclaré : fixture-c-a",
+                            "Référence déclarée : edition-a",
+                        ], "C provenance differs from the primary source: " + field
+                        assert "Observation déclarée : " in tooltip
+                    assert "Source du champ" not in (alternative.get_tooltip_text() or "")
+                    report["checks"]["P0_3688_search_native_field_provenance_" + label] = True
                     state["source_alternative_" + label] = subtitle
                 else:
                     assert subtitle == state["source_alternative_" + label]
