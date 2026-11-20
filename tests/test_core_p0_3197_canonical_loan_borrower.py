@@ -16,7 +16,8 @@ from dataclasses import replace
 
 @pytest.mark.parametrize("scenario", [
     "missing", "v15_only", "confirmed", "revoked_during_get",
-    "revoked_during_adept", "profile_unready",
+    "revoked_during_adept", "profile_unready", "profile_inventory_missing",
+    "profile_inventory_error", "profile_name_mismatch", "profile_id_mismatch",
 ])
 def test_linked_loan_canonical_adept_uses_exact_grant(
     tmp_path, monkeypatch, scenario,
@@ -86,10 +87,21 @@ def test_linked_loan_canonical_adept_uses_exact_grant(
         service._originating_adept_profile_id = (
             lambda identity, _name: db.adept_profile_binding_get("identity", identity)
         )
-        service.adept_profiles_for_identity = lambda *_a, **_kw: [
-            {"name": "bob-adobe", "fetch_capable": scenario != "profile_unready"}
-        ]
-        service._adept_profile_row = lambda _name, rows: rows[0]
+        def profiles_for_identity(*_args, **_kwargs):
+            if scenario == "profile_inventory_error":
+                raise RuntimeError("synthetic inventory unavailable")
+            if scenario == "profile_inventory_missing":
+                return []
+            return [{
+                "name": ("wrong-adobe" if scenario == "profile_name_mismatch"
+                         else "bob-adobe"),
+                "profile_id": ("other-stable-id" if scenario == "profile_id_mismatch"
+                               else db.adept_profile_binding_get("identity", "bob")),
+                "fetch_capable": scenario != "profile_unready",
+            }]
+
+        service.adept_profiles_for_identity = profiles_for_identity
+        service._adept_profile_row = lambda _name, rows: rows[0] if rows else None
 
         def runtime(request):
             calls.append("ADEPT")
@@ -131,8 +143,19 @@ def test_linked_loan_canonical_adept_uses_exact_grant(
             "missing": [], "v15_only": [], "confirmed": ["GET", "ADEPT"],
             "revoked_during_get": ["GET"], "revoked_during_adept": ["GET", "ADEPT"],
             "profile_unready": ["GET"],
+            "profile_inventory_missing": ["GET"],
+            "profile_inventory_error": ["GET"],
+            "profile_name_mismatch": ["GET"],
+            "profile_id_mismatch": ["GET"],
         }
         assert calls == expected[scenario]
+        if scenario in {
+            "profile_unready", "profile_inventory_missing",
+            "profile_inventory_error", "profile_name_mismatch",
+            "profile_id_mismatch",
+        }:
+            from cifereca.core.canonical_adept_attempt import pending_loan_adept_attempt
+            assert pending_loan_adept_attempt(db, source) is False
         assert db.placements() == []  # Only the executor may publish.
         if scenario != "confirmed":
             assert not list(root.rglob("*.acsm"))
