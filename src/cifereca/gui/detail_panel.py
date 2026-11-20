@@ -877,7 +877,12 @@ class DetailPanel(Gtk.Box):
                         return cb()
                     button.connect("clicked", activate_cached)
                 else:
-                    continue
+                    from cifereca.plugin_api.detail_action_descriptor import inactive_without_target
+                    if not inactive_without_target(action):
+                        continue
+                    # A declared inactive state is visible, but has no
+                    # callback, URI or activate-link handler at all.
+                    button = self.window.action_button(str(action.title), str(action.icon_name))
                 from cifereca.gui.detail_action_state import apply_detail_action_state
                 apply_detail_action_state(button, action)
                 identifier = f"book-cache:{plugin_id}:{action.id}"
