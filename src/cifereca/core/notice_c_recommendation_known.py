@@ -11,9 +11,9 @@ from hashlib import sha256
 from typing import Any
 
 from ..models import SearchResult
-from .notice_c_cover_index import is_canonical_cover_document
+from .notice_c_cover_index import _MAX_SOURCES, is_canonical_cover_document
 from .notice_c_public_search import search_public_notice_c
-from .notice_c_known_projection import _series_metadata
+from .notice_c_known_projection import _series_metadata, _source_alternative
 
 _TOKEN = object()
 _DTO_FIELDS = tuple(field.name for field in fields(SearchResult))
@@ -21,8 +21,15 @@ _DTO_FIELDS = tuple(field.name for field in fields(SearchResult))
 
 def _snapshot(item):
     """Bounded native immutable DTO receipt; no deepcopy, repr or coercion."""
-    remaining = 512
-    characters = 65536
+    # The canonical reader bounds a document to 32 sources. Each
+    # admitted alternative needs the same bounded receipt space as one
+    # source; all native-container/depth/string checks remain in force.
+    alternatives = item.metadata.get("notice_c_source_alternatives") if type(item.metadata) is dict else None
+    count = len(alternatives) if type(alternatives) is list else 0
+    if count >= _MAX_SOURCES:
+        raise ValueError("known_c_snapshot_budget")
+    remaining = 512 * (1 + count)
+    characters = 65536 + (131072 if count else 0)
 
     def freeze(value, depth=0):
         nonlocal remaining, characters
@@ -60,6 +67,9 @@ def known_public_notice_candidates(
         group_by_document=True,
     )
     rows = []
+    sources_by_document = {}
+    for source in page.matching_sources:
+        sources_by_document.setdefault(source.document, []).append(source)
     seen = set()
     for hit in page.hits:
         # Use only the canonical C preferred by the existing index. Do not
@@ -79,6 +89,13 @@ def known_public_notice_candidates(
             metadata={"notice_c_known": True, "notice_c_stale": hit.stale,
                       **_series_metadata(hit)},
         )
+        alternatives = [
+            _source_alternative(source)
+            for source in sources_by_document.get(hit.document, ())
+            if source is not hit
+        ]
+        if alternatives:
+            row.metadata["notice_c_source_alternatives"] = alternatives
         # Exact object and full DTO snapshot, not a serialized proof. Sources
         # with missing covers are still descriptive candidates.
         row._core_known_public_c_projection = (
