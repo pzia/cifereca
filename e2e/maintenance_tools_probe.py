@@ -42,6 +42,17 @@ def gtk_phase_2027(phase: str) -> None:
     print(marker, file=sys.stderr, flush=True)
 
 
+def _maintenance_failure_line(exc: BaseException) -> int | None:
+    """Return only the innermost source line in this probe, never traceback text."""
+    line = None
+    traceback = exc.__traceback__
+    while traceback is not None:
+        if traceback.tb_frame.f_globals is globals():
+            line = traceback.tb_lineno
+        traceback = traceback.tb_next
+    return line
+
+
 def walk(widget):
     yield widget
     child = widget.get_first_child()
@@ -364,6 +375,9 @@ def main():
             status="FAIL", error=f"{type(exc).__name__}: {exc}",
             failure_stack=__import__("traceback").format_exc(limit=12),
         )
+        line = _maintenance_failure_line(exc)
+        if line is not None:
+            report["maintenance_failure_line"] = line
         if lock[0] is not None:
             lock[0].release()
             lock[0] = None
