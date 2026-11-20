@@ -9,11 +9,45 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
+from ..core.source_context import source_context_epoch
 from ..task_queue import TaskPriority
 from ..plugin_api import UserFacingError
 
 if TYPE_CHECKING:
     from gi.repository import Gtk
+
+
+def _library_scope(window):
+    """Volatile navigation witness only; never a cache or acquisition grant."""
+    service = window.service
+    identity = service.current_identity
+    try:
+        epoch = source_context_epoch(service)
+    except ValueError:
+        return None
+    return (service, epoch, getattr(identity, "identity_id", None),
+            getattr(window, "_identity_context_generation", 0),
+            getattr(window, "_library_all_profiles", False) is True)
+
+
+def _same_library_scope(left, right):
+    return (left is not None and right is not None
+            and left[0] is right[0] and left[1:] == right[1:])
+
+
+def passive_library_refresh(window):
+    """Only route navigation may join a pending same-scope snapshot.
+
+    A generic refresh can be a publication notification and must retain its
+    established dirty/follow-up semantics. An explicit click always submits.
+    """
+    if getattr(window, "_closed", False):
+        return
+    pending = getattr(window, "_library_pending_scope", None)
+    if (getattr(window, "_library_refresh_pending", False)
+            and _same_library_scope(pending, _library_scope(window))):
+        return
+    window.refresh_library(False)
 
 
 def invalidate_library(self) -> None:
@@ -39,16 +73,22 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
     # A delayed request can be emitted after MainWindow's runner/service close.
     if getattr(self, "_closed", False):
         return
-    if self._library_refresh_pending and control is None:
+    scope = _library_scope(self)
+    previous_scope = getattr(self, "_library_pending_scope", None)
+    # A replacement Core cannot deliver the old pending callback. Admit a
+    # separate read instead of leaving the new window waiting indefinitely.
+    replaced = (previous_scope is not None and previous_scope[0] is not self.service)
+    if self._library_refresh_pending and control is None and not replaced:
         # Coalesce background invalidations, but a newer explicit user
         # refresh already supersedes an ordinary redundant background call.
         # invalidate_library() still records real newly indexed artifacts.
         if not getattr(self, "_library_refresh_explicit_pending", False):
             self._library_refresh_dirty = True
         return
-    if control is not None:
+    if control is not None or replaced:
         self._library_refresh_dirty = False
     self._library_refresh_pending = True
+    self._library_pending_scope = scope
     self._library_refresh_explicit_pending = control is not None
     self._library_refresh_generation = getattr(self, "_library_refresh_generation", 0) + 1
     request_generation = self._library_refresh_generation
@@ -83,15 +123,18 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
         return service.library_entries(identity_id=identity_id, scan=scan and not refresh_covers)
     def ok(entries: list[dict[str, Any]]) -> None:
         if (getattr(self, "_closed", False) or self.service is not service
-                or request_generation != self._library_refresh_generation):
+                or request_generation != self._library_refresh_generation
+                or not self._library_refresh_pending):
             return
         self._library_refresh_pending = False
+        self._library_pending_scope = None
         self._library_refresh_explicit_pending = False
         if getattr(self, "_library_refresh_dirty", False):
             self._library_refresh_dirty = False
             self.refresh_library(False)
             return
-        if not self._identity_request_current(identity_id, generation):
+        if (not self._identity_request_current(identity_id, generation)
+                or (scope is not None and not _same_library_scope(scope, _library_scope(self)))):
             self.refresh_library(False)
             return
         self._show_library_entries(entries)
@@ -110,15 +153,18 @@ def refresh_library(self, scan: bool = False, control: Gtk.Widget | None = None,
         self._library_loaded_generation = generation
     def err(exc: BaseException) -> None:
         if (getattr(self, "_closed", False) or self.service is not service
-                or request_generation != self._library_refresh_generation):
+                or request_generation != self._library_refresh_generation
+                or not self._library_refresh_pending):
             return
         self._library_refresh_pending = False
+        self._library_pending_scope = None
         self._library_refresh_explicit_pending = False
         if getattr(self, "_library_refresh_dirty", False):
             self._library_refresh_dirty = False
             self.refresh_library(False)
             return
-        if not self._identity_request_current(identity_id, generation):
+        if (not self._identity_request_current(identity_id, generation)
+                or (scope is not None and not _same_library_scope(scope, _library_scope(self)))):
             self.refresh_library(False)
             return
         self.diagnostics.add("UI", "library refresh", "error", detail={"code": "library_refresh_failed"})
