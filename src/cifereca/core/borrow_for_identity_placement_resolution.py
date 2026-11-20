@@ -8,6 +8,7 @@ borrow, fetch content, switch identity or send files.
 from __future__ import annotations
 
 from .borrow_for_identity_copy_admission import navigation_epoch_current
+from .borrow_for_identity_delivery_binding import lender_delivery_binding
 
 from dataclasses import dataclass
 
@@ -95,11 +96,13 @@ def resolve_cross_profile_lender_placement(
                 or service._source_context_epoch != source_epoch
                 or type(row) is not dict
                 or row.get("identity_id") != account.identity_id
-                or row.get("provider_id") != account.provider_id
-                or row.get("source_item_id") != notice.record_id
                 or row.get("state") != "present"
                 or type(row.get("placement_id")) is not str
-                or not row["placement_id"]):
+                or not row["placement_id"]
+                or not lender_delivery_binding(service, account, notice, row)
+                or scope_current() is not True
+                or not navigation_epoch_current(service, context_epoch, scope_current)
+                or service._source_context_epoch != source_epoch):
             return LenderLocalPlacement(
                 "unavailable", "lender_delivery_unverified", loan="confirmed",
             )

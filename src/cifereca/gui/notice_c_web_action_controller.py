@@ -42,7 +42,21 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
                 and (not callable(mapped) or mapped())
                 and current())
 
+    initial_pending = True
+
+    def consume_initial():
+        nonlocal initial_pending
+        if not initial_pending:
+            return False
+        initial_pending = False
+        return True
+
+    def load_failed(_error):
+        consume_initial()
+
     def loaded(menu):
+        if not consume_initial():
+            return
         if (not active() or route_token() is not requested_route
                 or type(menu) is not PublicWebChoices
                 or menu.document != document or menu.epoch != expected_epoch
@@ -131,9 +145,10 @@ def request_public_web_actions(host, panel, document, *, expected_epoch, current
         runner.submit(
             "Lecture des fiches web en cache…",
             lambda: read_public_web_choices(storage, document),
-            loaded, lambda _exc: None, priority=TaskPriority.METADATA,
+            loaded, load_failed, priority=TaskPriority.METADATA,
             kind="detail-cache", origin="automatic",
         )
     except Exception:
+        consume_initial()
         return False
     return True

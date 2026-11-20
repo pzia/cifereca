@@ -588,6 +588,71 @@ class NativeAbortDiagnosisTests(unittest.TestCase):
             source.write_text(json.dumps([{"scenario":scenario,"returncode":1}]))
             self.assertNotIn("native_failure_kind", module.safe_summary(source)["results"][0])
 
+    def test_maintenance_failure_location_and_intermediate_checks_are_bounded(self):
+        import ast
+
+        module = _module()
+        probe = ast.parse((ROOT / "e2e/maintenance_tools_probe.py").read_text(
+            encoding="utf-8"))
+        line = next(node.lineno for node in ast.walk(probe)
+                    if isinstance(node, ast.Assert))
+        secret = "PRIVATE-BEARER-TOKEN /home/private"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for scenario in ("maintenance-tools-1280", "maintenance-tools-1600"):
+                folder = root / scenario / scenario
+                folder.mkdir(parents=True)
+                source = root / "summary.json"
+                report = folder / "screen.json"
+                source.write_text(json.dumps([{"scenario": scenario, "returncode": 1}]))
+                data = {
+                    "checks": {"real_tools_route_and_action": True,
+                               "cache_progress_attached_to_real_tool_row": True,
+                               "busy_sync_refuses_preview_before_scan_or_delete": 1,
+                               secret: True},
+                    "maintenance_failure_line": line,
+                    "error": secret, "failure_stack": secret,
+                }
+                report.write_text(json.dumps(data))
+                out = module.safe_summary(source)["results"][0]
+                self.assertEqual(out["maintenance_last_safe_checkpoint"], "maintenance_progress_row")
+                self.assertEqual(out["maintenance_failure_line"], line)
+                self.assertNotIn(secret, repr(out))
+                for invalid in (True, str(line), -1, 999999, secret):
+                    report.write_text(json.dumps(dict(data, maintenance_failure_line=invalid)))
+                    out = module.safe_summary(source)["results"][0]
+                    self.assertNotIn("maintenance_failure_line", out)
+                    self.assertEqual(out["maintenance_last_safe_checkpoint"],
+                                     "maintenance_progress_row")
+                checks = dict(data["checks"], busy_sync_refuses_preview_before_scan_or_delete=True)
+                report.write_text(json.dumps(dict(data, checks=checks)))
+                out = module.safe_summary(source)["results"][0]
+                self.assertEqual(out["maintenance_last_safe_checkpoint"], "maintenance_busy_guard")
+                source.write_text(json.dumps([{"scenario": scenario, "returncode": 0}]))
+                out = module.safe_summary(source)["results"][0]
+                self.assertNotIn("maintenance_failure_line", out)
+                self.assertNotIn("maintenance_last_safe_checkpoint", out)
+
+    def test_maintenance_probe_reports_innermost_own_frame_without_gtk_import(self):
+        import ast
+
+        path = ROOT / "e2e/maintenance_tools_probe.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        helper = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                      and node.name == "_maintenance_failure_line")
+        namespace = {}
+        exec(compile(ast.Module(body=[helper], type_ignores=[]), str(path), "exec"), namespace)
+        exec("def inner():\n    raise AssertionError('PRIVATE')\ndef outer():\n    inner()\n",
+             namespace)
+        try:
+            namespace["outer"]()
+        except AssertionError as exc:
+            self.assertEqual(namespace["_maintenance_failure_line"](exc),
+                             namespace["inner"].__code__.co_firstlineno + 1)
+        else:
+            self.fail("expected fixture failure")
+        self.assertIsNone(namespace["_maintenance_failure_line"](AssertionError("PRIVATE")))
+
     def test_maintenance_sigabrt_exports_only_last_closed_gtk_phase(self):
         module = _module()
         with tempfile.TemporaryDirectory() as tmp:

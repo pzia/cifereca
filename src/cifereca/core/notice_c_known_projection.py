@@ -112,6 +112,7 @@ def merge_public_notice_c_known_rows(
     rows: list[dict[str, Any]] = []
     admitted: set[tuple] = set()
     by_document: dict[str, dict[str, Any]] = {}
+    source_groups: dict[str, list[PublicNoticeCHit]] = {}
     for hit in hits:
         if (type(hit) is not PublicNoticeCHit
                 or hit.document.kind != "public_catalogue"
@@ -120,6 +121,7 @@ def merge_public_notice_c_known_rows(
             continue
         admitted.add((hit.provider_id, hit.record_id, hit.docbase,
                       hit.medium, hit.source_revision))
+        source_groups.setdefault(hit.document.source_key, []).append(hit)
         prior = by_document.get(hit.document.source_key)
         if prior is not None:
             # Distinct providers can contribute different public text to ONE
@@ -159,6 +161,10 @@ def merge_public_notice_c_known_rows(
             "_cover_document_ref": hit.document,
         })
         by_document[hit.document.source_key] = rows[-1]
+    from .notice_c_loaded_filter import attach_filter_sources
+    for key, group in source_groups.items():
+        if len(group) > 1:
+            attach_filter_sources(by_document[key], tuple(group))
     for row in known:
         # Do not replace local placements, verified rights, private sources,
         # different revisions or medium with public descriptive metadata.

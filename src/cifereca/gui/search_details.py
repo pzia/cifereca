@@ -72,6 +72,9 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                     and not value.lstrip().casefold().startswith(("/", "\\", "~/", "file:"))
                 ) else None
 
+            from cifereca.gui.search_known_public_c_bibliography import (
+                known_public_detail_metadata, known_public_alternative_section,
+            )
             presentation = book_detail_presentation(
                 title=str(item.get("title") or "Sans titre"),
                 subtitle=str(item.get("author") or ""),
@@ -86,7 +89,7 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
                     ("Disponibilité", "Non vérifiée"),
                     ("Couverture de recherche", "Partielle"),
                 )),),
-                metadata=None,
+                metadata=known_public_detail_metadata(metadata),
             )
             from cifereca.gui.search_known_public_c_guard import (
                 known_public_c_cell_current,
@@ -112,6 +115,11 @@ def _search_selected(self: SearchDetailHost, row: BookListItem | None) -> None:
             if binding is None or not current_c_detail():
                 panel.empty("Notice indisponible", "Source documentaire périmée.")
                 return
+            alternatives = known_public_alternative_section(metadata)
+            if alternatives is not None:
+                presentation = replace(
+                    presentation, sections=(*presentation.sections, alternatives),
+                )
             with staged_local_public_c_detail(
                 panel, current_c_detail, minimum_revision=binding.epoch,
             ):
