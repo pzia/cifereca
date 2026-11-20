@@ -290,8 +290,11 @@ def build_settings_editors(self, *, box, descriptors, public_ids,
             selected_source = _selected_adept_source(saved, descriptors)
             start_status = _saved_adept_status(admitted_core, saved_id, saved, descriptors)
             if start_status.get("status") != "ready":
+                # No runtime inventory was consulted. Never present the
+                # initial local-only status as if an ADEPT check succeeded.
                 e["normal_adept_status"].set_subtitle(
-                    _local_adept_binding_caption(start_status)
+                    "Contrôle ADEPT non exécuté · "
+                    + _local_adept_binding_caption(start_status)
                 )
                 return
             # No more active Paris-specific Core facade in Settings: both the
