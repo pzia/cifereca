@@ -77,3 +77,17 @@ Ce choix est conservateur pour un ancien fence de preuve pending qui ne
 contient plus le corps : une preuve partielle **modifiée** reste inconnue
 jusqu'à une observation complète. Les sources purgées avant tout fence ne
 sont pas rétroactivement réparées. Aucun nouveau stockage, GET ni droit.
+
+
+### Version du parseur public après éviction
+
+Le même fence accepte le marqueur optionnel `public_search_v2: true` :
+il atteste qu'une observation du parseur public Search v2 a été admise. Il
+ne contient ni texte, ni URL, ni droit supplémentaire. Le writer le maintient
+lors de l'éviction et du refus d'une observation partielle différente.
+Une observation cache-only v1 ne recrée pas ce corps et ne rafraîchit pas
+son watermark. Les anciens fences restent lisibles ; en l'absence du
+marqueur, une C self exacte déjà retenue avec bibliographie publique
+constitue une preuve positive indépendante. Une ancienne fence sans
+marqueur ni C self ne permet pas de reconstituer la version perdue.
+Aucune migration globale, aucun nouveau stockage ou TTL.
