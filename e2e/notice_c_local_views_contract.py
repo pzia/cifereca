@@ -162,7 +162,10 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     scenario="search", source_provider=provider,
                     source_credential="__public__", source_collection="public_catalog",
                     source_account_id=None, owned=False, downloadable=False,
-                    download_url=None, metadata={},
+                    download_url=None, metadata={
+                        "subjects": ["Astronomie" if provider == "fixture-c-a" else "Cuisine"],
+                        "genre": "Roman" if provider == "fixture-c-a" else "Essai",
+                    },
                 )
                 response = ProviderSearchResponse(
                     results=[row], public_notices=(PublicSearchNotice(row),),
@@ -521,6 +524,25 @@ def verify_local_notice_c_views(window, later, capture, report, complete):
                     route, page, row, "detail", monotonic() + 8,
                 )))
                 return
+            if route in ("search", "recommendations"):
+                from gi.repository import Adw
+                alternative_rows = [
+                    widget for widget in walk(page.detail.content)
+                    if isinstance(widget, Adw.ActionRow)
+                    and widget.get_title() == "Source 2 · fixture-c-b"
+                ]
+                assert len(alternative_rows) == 1
+                alternative = alternative_rows[0]
+                assert alternative.get_mapped()
+                subtitle = alternative.get_subtitle()
+                assert "Sujets : Cuisine" in subtitle and "Genre : Essai" in subtitle
+                assert "Astronomie" not in subtitle and "Roman" not in subtitle
+                assert not alternative.has_css_class("detail-metadata-actions")
+                if route == "search":
+                    state["source_alternative_" + label] = subtitle
+                else:
+                    assert subtitle == state["source_alternative_" + label]
+                    report["checks"]["P0_4761_same_source_alternative_search_recommendations_" + label] = True
             if route in narrow_context:
                 receipt = narrow_context[route]
                 assert page._narrow_master_detail and page._narrow_detail_visible
