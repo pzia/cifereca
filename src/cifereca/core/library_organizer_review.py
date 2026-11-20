@@ -66,12 +66,12 @@ class OrganizerScope:
             return False
 
     def bound(self):
-        with self.storage._lock:
-            if self.storage._connect().in_transaction:
-                return False
-            return (self.current()
-                    and self.storage.exact_profile_directory_binding(self.identity)
-                    == (self.directory, True))
+        # The connection is worker-local. The binding API takes its own
+        # non-reentrant lock, so do not hold it across that call.
+        return (self.current()
+                and not self.storage._connect().in_transaction
+                and self.storage.exact_profile_directory_binding(self.identity)
+                == (self.directory, True))
 
 
 @dataclass(frozen=True, slots=True, repr=False)
